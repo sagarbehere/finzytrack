@@ -1,0 +1,2 @@
+# finzytrack
+Personal finance app
