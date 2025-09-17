@@ -1,0 +1,48 @@
+# Finzytrack Backend Configuration
+
+# File paths
+ledger_file: "./data/ledgers/one.beancount"
+backup_dir: "./data/backups"
+
+# Server settings
+server:
+  host: "127.0.0.1"
+  port: 8001
+
+# OFX account mappings for import (populated via "Learn Account" feature)
+ofx_account_mappings:
+  - institution: TEST_BANK
+    account_type: CHECKING
+    account_id: UNIQUE123
+    currency: USD
+    beancount_account: Expenses:Unknown
+    institution_fid: '9999'
+
+# Machine Learning settings
+ml:
+  enabled: false
+  training_data_file: "./data/training.beancount"
+
+# Feature flags
+features:
+  duplicate_detection: true
+  auto_categorization: true
+
+# Backup settings
+backup:
+  enabled: true
+  retention_count: 100
+  cleanup_on_exceed: true
+
+# Logging
+logging:
+  level: "INFO"
+  file: "./logs/finzytrack.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Security settings
+security:
+  # List of allowed CORS origins for the frontend
+  cors_origins:
+    - "http://127.0.0.1:3000"
+    - "http://localhost:3000"

@@ -1,0 +1,46 @@
+{
+  "name": "finzytrack-frontend",
+  "version": "1.0.0",
+  "description": "Finzytrack Frontend - Privacy-focused personal finance application",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint . --fix",
+    "format": "prettier --write src/",
+    "generate-api": "npx openapi-typescript-codegen --input http://localhost:8001/openapi.json --output ./src/services/generated-api"
+  },
+  "dependencies": {
+    "@headlessui/vue": "^1.7.22",
+    "@heroicons/vue": "^2.1.5",
+    "events": "^3.3.0",
+    "ofx-js": "^0.2.0",
+    "vue": "^3.4.0",
+    "vue-router": "^4.4.0"
+  },
+  "devDependencies": {
+    "@esbuild-plugins/node-globals-polyfill": "^0.2.3",
+    "@esbuild-plugins/node-modules-polyfill": "^0.2.2",
+    "@rushstack/eslint-patch": "^1.12.0",
+    "@typescript-eslint/eslint-plugin": "^8.43.0",
+    "@typescript-eslint/parser": "^8.43.0",
+    "@vitejs/plugin-vue": "^5.1.0",
+    "@vue/eslint-config-prettier": "^9.0.0",
+    "autoprefixer": "^10.4.20",
+    "buffer": "^6.0.3",
+    "eslint": "^8.57.0",
+    "eslint-plugin-vue": "^9.27.0",
+    "openapi-typescript-codegen": "^0.29.0",
+    "postcss": "^8.4.45",
+    "prettier": "^3.3.0",
+    "stream-browserify": "^3.0.0",
+    "tailwindcss": "^3.4.0",
+    "timers-browserify": "^2.0.12",
+    "util": "^0.12.5",
+    "vite": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
