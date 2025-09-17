@@ -8,6 +8,8 @@ git clone git@github.com:sagarbehere/finzytrack.git
 ch finzytrack
 python3 -m venv venv
 source venv/bin/activate # Need to do this every time project is opened in a new terminal window
-cd frontend
+cd backend
+pip install -r requirements.txt
+cd ../frontend
 npm install
 ```
