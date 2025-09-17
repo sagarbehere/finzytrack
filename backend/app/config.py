@@ -45,6 +45,7 @@ class FeaturesConfig(BaseModel):
 class BackupConfig(BaseModel):
     """Backup system configuration."""
     enabled: bool = Field(default=True, description="Enable backup system")
+    backup_dir: str = Field(default="./data/backups", description="Backup directory path")
     retention_count: int = Field(default=100, ge=1, description="Number of backups to retain")
     cleanup_on_exceed: bool = Field(default=True, description="Automatically cleanup old backups")
 
@@ -89,7 +90,6 @@ class Config(BaseModel):
     
     # File paths
     ledger_file: str = Field(default="./data/ledgers/main.beancount", description="Path to main Beancount ledger")
-    backup_dir: str = Field(default="./data/backups", description="Backup directory path")
     
     # Nested configuration sections
     server: ServerConfig = Field(default_factory=ServerConfig)
@@ -122,7 +122,7 @@ class Config(BaseModel):
                 raise ValueError(f"Cannot create ledger directory {ledger_dir}: {e}")
         
         # Validate backup directory exists or can be created
-        backup_path = Path(self.backup_dir)
+        backup_path = Path(self.backup.backup_dir)
         if not backup_path.exists():
             # Try to create backup directory
             try:
@@ -195,7 +195,7 @@ class Config(BaseModel):
             
             # File paths (top-level)
             'ledger-file': ('ledger_file',),
-            'backup-dir': ('backup_dir',),
+            'backup-dir': ('backup', 'backup_dir'),
             
             # ML settings
             'ml-enabled': ('ml', 'enabled'),

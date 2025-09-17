@@ -86,7 +86,7 @@ def create_app(config: Config) -> FastAPI:
 
     # 1. Create BackupManager service
     backup_manager = BackupManager(
-        backup_dir=Path(config.backup_dir),
+        backup_dir=Path(config.backup.backup_dir),
         retention_count=config.backup.retention_count
     )
 
@@ -141,7 +141,7 @@ def create_app(config: Config) -> FastAPI:
 
         # Check backup directory writability
         try:
-            backup_path = Path(config.backup_dir)
+            backup_path = Path(config.backup.backup_dir)
             if backup_path.exists() and os.access(backup_path, os.W_OK):
                 checks["backup_dir_writable"] = True
         except Exception:
@@ -179,7 +179,7 @@ def create_app(config: Config) -> FastAPI:
             },
             "files": {
                 "ledger_file": config.ledger_file,
-                "backup_dir": config.backup_dir,
+                "backup_dir": config.backup.backup_dir,
             },
             "ml": {
                 "enabled": config.ml.enabled,

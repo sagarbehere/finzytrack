@@ -2,7 +2,6 @@
 
 # File paths
 ledger_file: "./data/ledgers/one.beancount"
-backup_dir: "./data/backups"
 
 # Server settings
 server:
@@ -31,6 +30,7 @@ features:
 # Backup settings
 backup:
   enabled: true
+  backup_dir: "./data/backups"
   retention_count: 100
   cleanup_on_exceed: true
 
