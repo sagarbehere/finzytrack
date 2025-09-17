@@ -84,16 +84,6 @@ class OFXAccountMapping(BaseModel):
     currency: str = Field(..., description="Currency from OFX")
     beancount_account: str = Field(..., description="Corresponding Beancount account")
 
-# # Legacy class for backward compatibility
-# class AccountMapping(BaseModel):
-#     """Legacy account mapping for OFX import (deprecated - use OFXAccountMapping)."""
-#     institution: str = Field(..., description="Bank institution name")
-#     account_type: str = Field(..., description="Account type (CHECKING, SAVINGS, etc.)")
-#     account_id: str = Field(..., description="Account ID (masked)")
-#     beancount_account: str = Field(..., description="Corresponding Beancount account")
-#     currency: str = Field(default="USD", description="Account currency")
-
-
 class Config(BaseModel):
     """Main application configuration with nested sections."""
     
@@ -122,10 +112,14 @@ class Config(BaseModel):
     @model_validator(mode='after')
     def validate_directory_paths(self) -> 'Config':
         """Validate that required directories exist for file operations."""
-        # Validate ledger file directory exists (so we can create/read ledger file)
+        # Validate ledger file directory exists or can be created
         ledger_dir = Path(self.ledger_file).parent
         if not ledger_dir.exists():
-            raise ValueError(f"Ledger file directory does not exist: {ledger_dir}")
+            # Try to create ledger directory
+            try:
+                ledger_dir.mkdir(parents=True, exist_ok=True)
+            except (PermissionError, OSError) as e:
+                raise ValueError(f"Cannot create ledger directory {ledger_dir}: {e}")
         
         # Validate backup directory exists or can be created
         backup_path = Path(self.backup_dir)
