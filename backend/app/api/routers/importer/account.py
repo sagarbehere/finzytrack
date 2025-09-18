@@ -3,7 +3,7 @@ from app.config import OFXAccountMapping
 from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
 from app.exceptions import APIError
-from app.main import get_config_manager
+from app.dependencies import get_config_manager, get_beancount_manager
 from app.schemas.import_schemas import (
     OFXDetectionRequest,
     DetectionData,
@@ -16,10 +16,6 @@ from app.schemas.response_schemas import ApiResponse
 from app.helpers.response_helpers import success_json_response
 
 router = APIRouter()
-
-def get_beancount_manager(request: Request) -> BeancountManager:
-    """Dependency to get Beancount manager from app state."""
-    return request.app.state.beancount_manager
 
 @router.post("/detect-account", response_model=ApiResponse[DetectionData], operation_id="detectAccount")
 async def detect_account(

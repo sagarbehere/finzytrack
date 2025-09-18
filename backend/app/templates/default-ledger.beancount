@@ -1,0 +1,14 @@
+;; Finzytrack Ledger File
+;; Created: {created_date}
+
+;; Base accounts - modify as needed
+1970-01-01 open Assets:Cash                {default_currency}
+1970-01-01 open Assets:Bank:Checking       {default_currency}
+1970-01-01 open Assets:Bank:Savings        {default_currency}
+1970-01-01 open Liabilities:CreditCard     {default_currency}
+1970-01-01 open Income:Salary              {default_currency}
+1970-01-01 open Expenses:Food              {default_currency}
+1970-01-01 open Expenses:Unknown           {default_currency}
+1970-01-01 open Equity:Opening-Balances    {default_currency}
+
+;; Your transactions will appear below this line

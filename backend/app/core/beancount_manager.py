@@ -21,10 +21,12 @@ class BeancountManager:
     
     def get_accounts(self) -> Set[str]:
         """Get all account names from Beancount ledger with caching."""
-        # Ensure ledger exists
-        if not self.ledger_initializer.ensure_ledger_exists():
+        # The ledger should exist at startup, but double-check for safety
+        if not os.path.exists(self.ledger_file):
+            logger.error(f"Ledger file not found: {self.ledger_file}")
             return set()
-                # Check if file was modified since last cache
+        
+        # Check if file was modified since last cache
         current_modified = os.path.getmtime(self.ledger_file)
         if (
             self._accounts_cache is None
@@ -91,8 +93,9 @@ class BeancountManager:
         """
         Create a new account in the Beancount ledger.
         """
-        # Ensure ledger exists. This will create it if it does not.
-        self.ledger_initializer.ensure_ledger_exists()
+        # The ledger should exist at startup, but double-check for safety
+        if not os.path.exists(self.ledger_file):
+            raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
         
         # Validate account name format
         if not self.validate_account_format(account_name):

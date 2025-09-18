@@ -57,9 +57,7 @@ def setup_logging(level: str, log_file: str, log_format: str) -> None:
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
-def get_config_manager(request: Request) -> ConfigManager:
-    """Dependency to get the ConfigManager from app state."""
-    return request.app.state.config_manager
+
 
 def create_app(config: Config) -> FastAPI:
     """Create FastAPI application with configuration."""
@@ -81,6 +79,9 @@ def create_app(config: Config) -> FastAPI:
     
     # Register centralized exception handlers
     setup_error_handlers(app)
+    
+    # Get logger for this module
+    logger = logging.getLogger(__name__)
     
     # --- New Instantiation Logic ---
 
@@ -113,6 +114,15 @@ def create_app(config: Config) -> FastAPI:
     # 5. Store managers in app state for access in routes
     app.state.config_manager = config_manager
     app.state.beancount_manager = beancount_manager
+    
+    # Ensure ledger exists at startup - fail fast if it can't be created
+    try:
+        if not ledger_initializer.ensure_ledger_exists():
+            raise RuntimeError(f"Failed to create ledger file at {config.ledger_file}")
+        logger.info(f"Ledger verified/created: {config.ledger_file}")
+    except Exception as e:
+        logger.error(f"Fatal: Cannot initialize ledger file {config.ledger_file}: {e}")
+        raise RuntimeError(f"Failed to initialize ledger file {config.ledger_file}: {e}")
     
     # Include API routers
     app.include_router(account.router, prefix="/api/import", tags=["import"])
