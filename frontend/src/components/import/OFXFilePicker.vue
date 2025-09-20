@@ -570,7 +570,7 @@
         account_type: fileDetails.value.accountType,
         account_id: fileDetails.value.accountId,
       }
-      const response = await ImportService.detectAccount(requestBody)
+      const response = await ImportService.detectOfxAccount(requestBody)
 
       if (response.data?.detected) {
         accountDetected.value = true
@@ -605,7 +605,7 @@
         beancount_account: selectedAccount.value,
         currency: selectedCurrency.value,
       }
-      const response = await ImportService.learnAccount(requestBody)
+      const response = await ImportService.learnOfxAccount(requestBody)
 
       if (response.data?.mapping_saved) {
         await detectAccount() // This will update the form-level feedback to show success

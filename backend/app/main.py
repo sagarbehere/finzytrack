@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import Config, ConfigurationError
-from .api.routers.importer import account, transaction
+from .api.routers.importer import ofx_accounts, transaction
 from .core.beancount_manager import BeancountManager
 from .error_handler import setup_error_handlers
 from .core.backup_manager import BackupManager
@@ -125,7 +125,7 @@ def create_app(config: Config) -> FastAPI:
         raise RuntimeError(f"Failed to initialize ledger file {config.ledger_file}: {e}")
     
     # Include API routers
-    app.include_router(account.router, prefix="/api/import", tags=["import"])
+    app.include_router(ofx_accounts.router, prefix="/api/import", tags=["import"])
     app.include_router(transaction.router, prefix="/api/import", tags=["import"])
     
     @app.get("/")

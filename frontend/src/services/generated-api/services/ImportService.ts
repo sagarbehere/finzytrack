@@ -13,17 +13,17 @@ import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class ImportService {
     /**
-     * Detect Account
+     * Detect Ofx Account
      * @param requestBody
      * @returns ApiResponse_DetectionData_ Successful Response
      * @throws ApiError
      */
-    public static detectAccount(
+    public static detectOfxAccount(
         requestBody: OFXDetectionRequest,
     ): CancelablePromise<ApiResponse_DetectionData_> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/import/detect-account',
+            url: '/api/import/detect-ofx-account',
             body: requestBody,
             mediaType: 'application/json',
             errors: {
@@ -32,17 +32,17 @@ export class ImportService {
         });
     }
     /**
-     * Learn Account
+     * Learn Ofx Account
      * @param requestBody
      * @returns ApiResponse_LearnAccountData_ Successful Response
      * @throws ApiError
      */
-    public static learnAccount(
+    public static learnOfxAccount(
         requestBody: LearnAccountRequest,
     ): CancelablePromise<ApiResponse_LearnAccountData_> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/import/learn-account',
+            url: '/api/import/learn-ofx-account',
             body: requestBody,
             mediaType: 'application/json',
             errors: {

@@ -17,8 +17,8 @@ from app.helpers.response_helpers import success_json_response
 
 router = APIRouter()
 
-@router.post("/detect-account", response_model=ApiResponse[DetectionData], operation_id="detectAccount")
-async def detect_account(
+@router.post("/detect-ofx-account", response_model=ApiResponse[DetectionData], operation_id="detectOfxAccount")
+async def detect_ofx_account(
     request: OFXDetectionRequest,
     config_manager: ConfigManager = Depends(get_config_manager),
     beancount_manager: BeancountManager = Depends(get_beancount_manager)
@@ -63,8 +63,8 @@ async def detect_account(
     )
     return success_json_response(detection_data)
 
-@router.post("/learn-account", response_model=ApiResponse[LearnAccountData], operation_id="learnAccount")
-async def learn_account(
+@router.post("/learn-ofx-account", response_model=ApiResponse[LearnAccountData], operation_id="learnOfxAccount")
+async def learn_ofx_account(
     request: LearnAccountRequest,
     config_manager: ConfigManager = Depends(get_config_manager),
     beancount_manager: BeancountManager = Depends(get_beancount_manager)
