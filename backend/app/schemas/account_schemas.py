@@ -33,8 +33,7 @@ class AccountCreateRequest(BaseModel):
     """Request model for creating new Beancount accounts."""
     name: str = Field(..., min_length=1, description="Full Beancount account name with format validation")
     open_date: DateStr = Field(..., description="Opening date")
-    primary_currency: CurrencyStr = Field(..., description="Primary account currency")
-    additional_currencies: Optional[List[CurrencyStr]] = Field(default_factory=list, description="Optional list of additional currencies")
+    currencies: List[CurrencyStr] = Field(..., description="List of currencies for this account (at least one required)")
     description: Optional[str] = Field(None, description="Optional account description or notes")
     metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Optional account metadata")
 

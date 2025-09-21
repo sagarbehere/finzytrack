@@ -146,10 +146,7 @@ async def create_account_endpoint(
                 }
             )
         
-        # Prepare all currencies (primary + additional)
-        all_currencies = [request.primary_currency]
-        if request.additional_currencies:
-            all_currencies.extend(request.additional_currencies)
+        # Use currencies from request (at least one required by schema validation)
         
         # Prepare metadata
         metadata = request.metadata or {}
@@ -157,7 +154,7 @@ async def create_account_endpoint(
             metadata["description"] = request.description
         
         # Create the open directive
-        currencies_str = " ".join(all_currencies)
+        currencies_str = " ".join(request.currencies)
         open_directive = f"{open_date_obj} open {request.name} {currencies_str}"
         
         # Add metadata as inline comments if any
