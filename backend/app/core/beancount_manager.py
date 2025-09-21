@@ -1,15 +1,32 @@
 import os
 import re
 import logging
-from typing import Set, Optional
+from typing import Set, Optional, List, Dict, Any
 from datetime import date
 from beancount import loader
 from beancount.core import data
+from decimal import Decimal
+from dataclasses import dataclass
 
 from app.core.backup_manager import BackupManager
 from .ledger_initializer import LedgerInitializer
 
 logger = logging.getLogger(__name__)
+
+# Data classes for detailed account information
+@dataclass
+class AccountInfo:
+    name: str
+    open_date: Optional[date]
+    close_date: Optional[date]
+    metadata: Dict[str, Any]
+
+@dataclass
+class AccountCurrencySummary:
+    currency: str
+    transaction_count: int
+    last_transaction_date: Optional[date]
+    balance: Decimal
 
 class BeancountManager:
     def __init__(self, ledger_file: str, backup_manager: BackupManager, ledger_initializer: LedgerInitializer):
@@ -137,3 +154,132 @@ class BeancountManager:
         # Clear cache to force reload
         self._accounts_cache = None
         self._last_modified = None
+
+    def get_detailed_accounts(self) -> List[AccountInfo]:
+        """Get comprehensive account information including opening/closing dates and metadata."""
+        if not os.path.exists(self.ledger_file):
+            raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
+        
+        entries, errors, _ = loader.load_file(self.ledger_file)
+        
+        if errors:
+            logger.warning(f"Beancount parsing warnings: {len(errors)} issues found")
+        
+        # Track account information by name
+        account_info_map: Dict[str, AccountInfo] = {}
+        
+        # First pass: collect Open and Close directives
+        for entry in entries:
+            if isinstance(entry, data.Open):
+                account_name = entry.account
+                metadata = entry.meta if hasattr(entry, 'meta') else {}
+                
+                account_info_map[account_name] = AccountInfo(
+                    name=account_name,
+                    open_date=entry.date,
+                    close_date=None,  # Will be set in second pass if closed
+                    metadata=metadata
+                )
+            elif isinstance(entry, data.Close):
+                account_name = entry.account
+                if account_name in account_info_map:
+                    account_info_map[account_name].close_date = entry.date
+                else:
+                    # Account was closed without explicit open directive - use epoch date to indicate error
+                    account_info_map[account_name] = AccountInfo(
+                        name=account_name,
+                        open_date=date(1970, 1, 1),  # Epoch date indicates missing open directive
+                        close_date=entry.date,
+                        metadata={"error": "Account has close directive but no open directive"}
+                    )
+        
+        # Return list of account info
+        return list(account_info_map.values())
+    
+    def get_account_open_date(self, account_name: str) -> Optional[date]:
+        """Get opening date for an account."""
+        if not os.path.exists(self.ledger_file):
+            raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
+        
+        entries, errors, _ = loader.load_file(self.ledger_file)
+        
+        for entry in entries:
+            if isinstance(entry, data.Open) and entry.account == account_name:
+                return entry.date
+        
+        return None
+    
+    def get_account_close_date(self, account_name: str) -> Optional[date]:
+        """Get closing date for an account."""
+        if not os.path.exists(self.ledger_file):
+            raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
+        
+        entries, errors, _ = loader.load_file(self.ledger_file)
+        
+        for entry in entries:
+            if isinstance(entry, data.Close) and entry.account == account_name:
+                return entry.date
+        
+        return None
+    
+    def get_account_metadata(self, account_name: str) -> Dict[str, Any]:
+        """Get metadata for an account."""
+        if not os.path.exists(self.ledger_file):
+            raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
+        
+        entries, errors, _ = loader.load_file(self.ledger_file)
+        
+        for entry in entries:
+            if isinstance(entry, data.Open) and entry.account == account_name:
+                return entry.meta if hasattr(entry, 'meta') else {}
+        
+        return {}
+    
+    def get_account_transactions_summary(self, account_name: str) -> Dict[str, AccountCurrencySummary]:
+        """Get transaction summary per currency for an account."""
+        if not os.path.exists(self.ledger_file):
+            raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
+        
+        entries, errors, _ = loader.load_file(self.ledger_file)
+        
+        if errors:
+            logger.warning(f"Beancount parsing warnings: {len(errors)} issues found")
+        
+        # Track transaction data by currency
+        currency_data: Dict[str, Dict[str, Any]] = {}
+        
+        for entry in entries:
+            if isinstance(entry, data.Transaction):
+                for posting in entry.postings:
+                    if posting.account == account_name:
+                        currency = posting.units.currency if posting.units else "UNKNOWN"
+                        
+                        if currency not in currency_data:
+                            currency_data[currency] = {
+                                "transaction_count": 0,
+                                "last_transaction_date": None,
+                                "balance": Decimal(0)
+                            }
+                        
+                        # Update transaction count
+                        currency_data[currency]["transaction_count"] += 1
+                        
+                        # Update last transaction date
+                        if currency_data[currency]["last_transaction_date"] is None or entry.date > currency_data[currency]["last_transaction_date"]:
+                            currency_data[currency]["last_transaction_date"] = entry.date
+                        
+                        # Update balance
+                        if posting.units:
+                            currency_data[currency]["balance"] += posting.units.number
+        
+        # Convert to AccountCurrencySummary objects
+        result = {}
+        for currency, currency_info in currency_data.items():
+            result[currency] = AccountCurrencySummary(
+                currency=currency,
+                transaction_count=currency_info["transaction_count"],
+                last_transaction_date=currency_info["last_transaction_date"],
+                balance=currency_info["balance"]
+            )
+        
+        return result
