@@ -3,10 +3,10 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ErrorInfo } from './ErrorInfo';
-import type { LearnAccountData } from './LearnAccountData';
-export type ApiResponse_LearnAccountData_ = {
+import type { OFXDetectionData } from './OFXDetectionData';
+export type ApiResponse_OFXDetectionData_ = {
     success: boolean;
-    data?: (LearnAccountData | null);
+    data?: (OFXDetectionData | null);
     error?: (ErrorInfo | null);
 };
 

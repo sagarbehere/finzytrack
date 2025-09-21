@@ -5,7 +5,7 @@
 /**
  * Data model for account detection results.
  */
-export type DetectionData = {
+export type OFXDetectionData = {
     /**
      * Whether account was detected
      */

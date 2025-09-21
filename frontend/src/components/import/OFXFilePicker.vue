@@ -241,7 +241,7 @@
     ApiError,
     type ValidationError,
     type OFXDetectionRequest,
-    type LearnAccountRequest,
+    type LearnOFXAccountRequest,
     type CreateAccountRequest,
   } from '@/services/generated-api'
 
@@ -597,7 +597,7 @@
     isLearning.value = true
 
     try {
-      const requestBody: LearnAccountRequest = {
+      const requestBody: LearnOFXAccountRequest = {
         institution: fileDetails.value.institution,
         institution_fid: fileDetails.value.institutionFid,
         account_type: fileDetails.value.accountType,

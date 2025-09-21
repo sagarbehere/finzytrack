@@ -5,7 +5,7 @@
 /**
  * Request model for learning account mappings.
  */
-export type LearnAccountRequest = {
+export type LearnOFXAccountRequest = {
     /**
      * Institution name from OFX
      */

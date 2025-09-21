@@ -20,14 +20,14 @@ class OFXDetectionRequest(BaseModel):
     account_type: str = Field(..., description="Account type")
     account_id: str = Field(..., description="Full account ID")
 
-class DetectionData(BaseModel):
+class OFXDetectionData(BaseModel):
     """Data model for account detection results."""
     detected: bool = Field(..., description="Whether account was detected")
     beancount_account: str = Field(..., description="Detected or default Beancount account")
     currency: str = Field(..., description="Detected or default currency")
     message: str = Field(..., description="Detection result message")
 
-class LearnAccountRequest(BaseModel):
+class LearnOFXAccountRequest(BaseModel):
     """Request model for learning account mappings."""
     institution: str = Field(..., description="Institution name from OFX")
     institution_fid: Optional[str] = Field(None, description="Financial Institution ID")
@@ -36,7 +36,7 @@ class LearnAccountRequest(BaseModel):
     beancount_account: str = Field(..., description="User-specified Beancount account")
     currency: CurrencyStr
 
-class LearnAccountData(BaseModel):
+class LearnOFXAccountData(BaseModel):
     """Data model for learning account mapping results."""
     mapping_saved: bool = Field(..., description="Whether the mapping was saved to config")
     account_creation_needed: bool = Field(default=False, description="Whether account creation is needed")

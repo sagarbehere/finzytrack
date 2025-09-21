@@ -4,11 +4,11 @@ from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
 from app.exceptions import APIError
 from app.dependencies import get_config_manager, get_beancount_manager
-from app.schemas.import_schemas import (
+from app.schemas.ofx_schemas import (
     OFXDetectionRequest,
-    DetectionData,
-    LearnAccountRequest,
-    LearnAccountData,
+    OFXDetectionData,
+    LearnOFXAccountRequest,
+    LearnOFXAccountData,
     CreateAccountRequest,
     CreateAccountData
 )
@@ -17,7 +17,7 @@ from app.helpers.response_helpers import success_json_response
 
 router = APIRouter()
 
-@router.post("/detect-ofx-account", response_model=ApiResponse[DetectionData], operation_id="detectOfxAccount")
+@router.post("/detect-ofx-account", response_model=ApiResponse[OFXDetectionData], operation_id="detectOfxAccount")
 async def detect_ofx_account(
     request: OFXDetectionRequest,
     config_manager: ConfigManager = Depends(get_config_manager),
@@ -47,7 +47,7 @@ async def detect_ofx_account(
             mapping.account_type.lower() == request.account_type.lower() and
             mapping.account_id == request.account_id):
             
-            detection_data = DetectionData(
+            detection_data = OFXDetectionData(
                 detected=True,
                 beancount_account=mapping.beancount_account,
                 currency=mapping.currency,
@@ -55,7 +55,7 @@ async def detect_ofx_account(
             )
             return success_json_response(detection_data)
     
-    detection_data = DetectionData(
+    detection_data = OFXDetectionData(
         detected=False,
         beancount_account=config.defaults.unknown_account,
         currency=config.defaults.currency,
@@ -63,9 +63,9 @@ async def detect_ofx_account(
     )
     return success_json_response(detection_data)
 
-@router.post("/learn-ofx-account", response_model=ApiResponse[LearnAccountData], operation_id="learnOfxAccount")
+@router.post("/learn-ofx-account", response_model=ApiResponse[LearnOFXAccountData], operation_id="learnOfxAccount")
 async def learn_ofx_account(
-    request: LearnAccountRequest,
+    request: LearnOFXAccountRequest,
     config_manager: ConfigManager = Depends(get_config_manager),
     beancount_manager: BeancountManager = Depends(get_beancount_manager)
 ):
@@ -92,7 +92,7 @@ async def learn_ofx_account(
         raise APIError(message=f"Failed to validate account: {e}", code="UNKNOWN_SERVER_ERROR", status_code=500, details={"path": config.ledger_file})
     
     if request.beancount_account not in existing_accounts:
-        learn_data = LearnAccountData(
+        learn_data = LearnOFXAccountData(
             mapping_saved=False,
             account_creation_needed=True
         )
@@ -121,7 +121,7 @@ async def learn_ofx_account(
 
     try:
         config_manager.add_ofx_mapping(new_mapping)
-        learn_data = LearnAccountData(
+        learn_data = LearnOFXAccountData(
             mapping_saved=True,
             account_creation_needed=False
         )

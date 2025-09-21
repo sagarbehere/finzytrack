@@ -5,7 +5,7 @@
 /**
  * Data model for learning account mapping results.
  */
-export type LearnAccountData = {
+export type LearnOFXAccountData = {
     /**
      * Whether the mapping was saved to config
      */

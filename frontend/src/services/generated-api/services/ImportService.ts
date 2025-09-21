@@ -3,10 +3,10 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ApiResponse_CreateAccountData_ } from '../models/ApiResponse_CreateAccountData_';
-import type { ApiResponse_DetectionData_ } from '../models/ApiResponse_DetectionData_';
-import type { ApiResponse_LearnAccountData_ } from '../models/ApiResponse_LearnAccountData_';
+import type { ApiResponse_LearnOFXAccountData_ } from '../models/ApiResponse_LearnOFXAccountData_';
+import type { ApiResponse_OFXDetectionData_ } from '../models/ApiResponse_OFXDetectionData_';
 import type { CreateAccountRequest } from '../models/CreateAccountRequest';
-import type { LearnAccountRequest } from '../models/LearnAccountRequest';
+import type { LearnOFXAccountRequest } from '../models/LearnOFXAccountRequest';
 import type { OFXDetectionRequest } from '../models/OFXDetectionRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -15,12 +15,12 @@ export class ImportService {
     /**
      * Detect Ofx Account
      * @param requestBody
-     * @returns ApiResponse_DetectionData_ Successful Response
+     * @returns ApiResponse_OFXDetectionData_ Successful Response
      * @throws ApiError
      */
     public static detectOfxAccount(
         requestBody: OFXDetectionRequest,
-    ): CancelablePromise<ApiResponse_DetectionData_> {
+    ): CancelablePromise<ApiResponse_OFXDetectionData_> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/import/detect-ofx-account',
@@ -34,12 +34,12 @@ export class ImportService {
     /**
      * Learn Ofx Account
      * @param requestBody
-     * @returns ApiResponse_LearnAccountData_ Successful Response
+     * @returns ApiResponse_LearnOFXAccountData_ Successful Response
      * @throws ApiError
      */
     public static learnOfxAccount(
-        requestBody: LearnAccountRequest,
-    ): CancelablePromise<ApiResponse_LearnAccountData_> {
+        requestBody: LearnOFXAccountRequest,
+    ): CancelablePromise<ApiResponse_LearnOFXAccountData_> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/import/learn-ofx-account',
