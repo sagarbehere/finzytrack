@@ -10,7 +10,7 @@ from app.schemas.account_schemas import (
     AccountCloseRequest, AccountCloseData, AccountDeleteData,
     AccountDetails, AccountCurrencyData
 )
-from app.core.beancount_manager import BeancountManager, AccountInfo, AccountCurrencySummary
+from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
 from app.dependencies import get_config_manager, get_beancount_manager
 from app.exceptions import APIError
@@ -37,43 +37,8 @@ async def list_accounts(
         # Get detailed account information from BeancountManager
         detailed_accounts = beancount_manager.get_detailed_accounts()
         
-        # Convert to AccountDetails objects
-        account_details_list = []
-        
-        for account_info in detailed_accounts:
-            # Get transaction summary for this account
-            try:
-                transaction_summary = beancount_manager.get_account_transactions_summary(account_info.name)
-            except Exception:
-                # If transaction summary fails, use empty summary
-                transaction_summary = {}
-            
-            # Convert transaction summary to AccountCurrencyData objects
-            currencies_list = []
-            for currency, summary in transaction_summary.items():
-                currency_data = AccountCurrencyData(
-                    currency=summary.currency,
-                    transaction_count=summary.transaction_count,
-                    last_transaction_date=summary.last_transaction_date.isoformat() if summary.last_transaction_date else None,
-                    balance=float(summary.balance)
-                )
-                currencies_list.append(currency_data)
-            
-            # Create AccountDetails object - ensure open_date is always a valid string
-            if account_info.open_date:
-                open_date_str = account_info.open_date.isoformat()
-            else:
-                # This should not happen for valid Beancount accounts, but handle as epoch date
-                open_date_str = "1970-01-01"
-            
-            account_details = AccountDetails(
-                name=account_info.name,
-                open_date=open_date_str,
-                close_date=account_info.close_date.isoformat() if account_info.close_date else None,
-                currencies=currencies_list,
-                metadata=account_info.metadata
-            )
-            account_details_list.append(account_details)
+        # AccountDetails objects are already returned from get_detailed_accounts()
+        account_details_list = detailed_accounts
         
         accounts_data = AccountListData(accounts=account_details_list)
         return success_json_response(accounts_data)
@@ -505,11 +470,12 @@ async def update_account(
                     # Use epoch date to indicate error/missing open directive
                     fallback_open_date = "1970-01-01"
                 
-                # Create proper AccountInfo instance
-                updated_account_info = AccountInfo(
+                # Create proper AccountDetails instance
+                updated_account_info = AccountDetails(
                     name=new_name,
-                    open_date=datetime.strptime(fallback_open_date, "%Y-%m-%d").date(),
-                    close_date=datetime.strptime(request.close_date, "%Y-%m-%d").date() if request.close_date else close_date_obj,
+                    open_date=fallback_open_date,  # Already a string
+                    close_date=request.close_date,  # Already a string
+                    currencies=[],  # Empty for fallback
                     metadata=merged_metadata
                 )
             
@@ -519,27 +485,21 @@ async def update_account(
             except Exception:
                 transaction_summary = {}
             
-            # Convert to AccountDetails - ensure open_date is always a valid string
-            if updated_account_info.open_date:
-                open_date_str = updated_account_info.open_date.isoformat()
-            else:
-                # This should not happen for valid Beancount accounts, but handle as epoch date
-                open_date_str = "1970-01-01"
-            
+            # Convert transaction summary to AccountCurrencyData objects
             currencies_list = []
             for currency, summary in transaction_summary.items():
                 currency_data = AccountCurrencyData(
                     currency=summary.currency,
                     transaction_count=summary.transaction_count,
-                    last_transaction_date=summary.last_transaction_date.isoformat() if summary.last_transaction_date else None,
+                    last_transaction_date=summary.last_transaction_date,  # Already a string from AccountCurrencyData
                     balance=float(summary.balance)
                 )
                 currencies_list.append(currency_data)
             
             account_details = AccountDetails(
                 name=updated_account_info.name,
-                open_date=open_date_str,
-                close_date=updated_account_info.close_date.isoformat() if updated_account_info.close_date else None,
+                open_date=updated_account_info.open_date,  # Already a string from AccountDetails
+                close_date=updated_account_info.close_date,  # Already a string from AccountDetails
                 currencies=currencies_list,
                 metadata=updated_account_info.metadata
             )
