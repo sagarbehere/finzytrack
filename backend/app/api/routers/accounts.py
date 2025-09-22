@@ -176,15 +176,41 @@ async def create_account_endpoint(
         
 
         
-        # Get the created account details
-        # Since we just added it, we'll construct the response manually
-        account_details = AccountDetails(
-            name=request.name,
-            open_date=request.open_date,
-            close_date=None,
-            currencies=[],  # No transactions yet for new account
-            metadata=metadata
-        )
+        # Get the created account details with proper currency detection
+        # This ensures currencies from the open directive are included even with 0 transactions
+        try:
+            detailed_accounts = beancount_manager.get_detailed_accounts()
+            account_details = None
+            for account in detailed_accounts:
+                if account.name == request.name:
+                    account_details = account
+                    break
+            
+            if account_details is None:
+                # This indicates a serious program error - account creation succeeded
+                # but we can't find the account in get_detailed_accounts()
+                logger.error(f"Account creation succeeded but account not found: {request.name}")
+                raise APIError(
+                    message="Account creation succeeded but account data unavailable.",
+                    code="ACCOUNT_CREATION_INCONSISTENCY",
+                    status_code=500,
+                    details={
+                        "account_name": request.name,
+                        "error": "Account created successfully but not found in detailed accounts list"
+                    }
+                )
+        except Exception as e:
+            logger.error(f"Error getting created account details: {e}")
+            # This is also a serious error - we should not proceed with fake data
+            raise APIError(
+                message="Account was created but failed to retrieve account details.",
+                code="ACCOUNT_DETAILS_RETRIEVAL_FAILED",
+                status_code=500,
+                details={
+                    "account_name": request.name,
+                    "error": str(e)
+                }
+            )
         
         create_data = AccountCreateData(
             account_created=True,
