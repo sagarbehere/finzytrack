@@ -41,11 +41,3 @@ class LearnOFXAccountData(BaseModel):
     mapping_saved: bool = Field(..., description="Whether the mapping was saved to config")
     account_creation_needed: bool = Field(default=False, description="Whether account creation is needed")
 
-class CreateAccountRequest(BaseModel):
-    """Request model for creating Beancount accounts."""
-    account_name: str = Field(..., min_length=1, description="Full Beancount account name")
-    currency: CurrencyStr
-
-class CreateAccountData(BaseModel):
-    """Data model for account creation results."""
-    account_created: bool = Field(..., description="Whether account was added to ledger")

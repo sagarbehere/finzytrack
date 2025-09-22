@@ -8,9 +8,7 @@ from app.schemas.ofx_schemas import (
     OFXDetectionRequest,
     OFXDetectionData,
     LearnOFXAccountRequest,
-    LearnOFXAccountData,
-    CreateAccountRequest,
-    CreateAccountData
+    LearnOFXAccountData
 )
 from app.schemas.response_schemas import ApiResponse
 from app.helpers.response_helpers import success_json_response
@@ -142,72 +140,3 @@ async def learn_ofx_account(
             details={"error": str(e)}
         )
 
-@router.post("/create-account", response_model=ApiResponse[CreateAccountData], status_code=201, operation_id="createAccount")
-async def create_account(
-    request: CreateAccountRequest,
-    config_manager: ConfigManager = Depends(get_config_manager),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager)
-):
-    config = config_manager.get_config()
-    if not beancount_manager.validate_account_format(request.account_name):
-        raise APIError(
-            message="Invalid account format",
-            code="VALIDATION_ERROR",
-            status_code=422,
-            details={
-                "field": "account_name",
-                "account_name": request.account_name,
-                "help": "Account name must follow Beancount naming conventions"
-            }
-        )
-    
-    try:
-        account_exists = beancount_manager.is_existing_account(request.account_name)
-    except FileNotFoundError:
-        raise APIError(message="Ledger file not found", code="FILE_NOT_FOUND", status_code=404, details={"path": config.ledger_file})
-    except PermissionError:
-        raise APIError(message="Permission denied accessing ledger file", code="FILE_PERMISSION_ERROR", status_code=403, details={"path": config.ledger_file})
-    except Exception as e:
-        raise APIError(message=f"Failed to validate account exists: {e}", code="UNKNOWN_SERVER_ERROR", status_code=500, details={"path": config.ledger_file})
-    
-    if account_exists:
-        create_data = CreateAccountData(
-            account_created=False
-        )
-        return success_json_response(create_data, status_code=200)
-    
-    try:
-        beancount_manager.create_account(
-            request.account_name,
-            request.currency
-        )
-        
-        create_data = CreateAccountData(
-            account_created=True
-        )
-        return success_json_response(create_data, status_code=201)
-            
-    except FileNotFoundError:
-        raise APIError(message="Ledger file not found", code="FILE_NOT_FOUND", status_code=404, details={"path": config.ledger_file})
-    except PermissionError:
-        raise APIError(
-            message="Permission denied writing to ledger file",
-            code="FILE_PERMISSION_ERROR",
-            status_code=403,
-            details={"path": config.ledger_file}
-        )
-    except Exception as e:
-        if "syntax" in str(e).lower() or "parse" in str(e).lower():
-            raise APIError(
-                message="Ledger file contains syntax errors",
-                code="FILE_SYNTAX_ERROR",
-                status_code=422,
-                details={"path": config.ledger_file, "error": str(e)}
-            )
-        else:
-            raise APIError(
-                message=f"Error creating account: {str(e)}",
-                code="UNKNOWN_SERVER_ERROR",
-                status_code=500,
-                details={"path": config.ledger_file, "operation": "create_account"}
-            )

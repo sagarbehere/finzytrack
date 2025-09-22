@@ -54,50 +54,7 @@ class BeancountManager:
         except Exception:
             return True
     
-    def create_account(self, account_name: str, currency: str) -> None:
-        """
-        Create a new account in the Beancount ledger.
-        """
-        # The ledger should exist at startup, but double-check for safety
-        if not os.path.exists(self.ledger_file):
-            raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
-        
-        # Validate account name format
-        if not self.validate_account_format(account_name):
-            raise ValueError(f"Invalid account name format: {account_name}")
 
-        # Check if account already exists
-        if self.is_existing_account(account_name):
-            return  # Account already exists, consider it success
-        
-        epoch_date = date(1970, 1, 1)
-        open_directive = f"{epoch_date} open {account_name} {currency}"
-
-        with self.backup_manager.atomic_write(self.ledger_file) as f:
-            current_content = f.read()
-            
-            lines = current_content.split('\n')
-            insert_index = 0
-            
-            for i, line in enumerate(lines):
-                if line.strip().startswith('open ') and line.strip().endswith(currency):
-                    insert_index = i + 1
-                elif line.strip().startswith('open '):
-                    insert_index = i + 1
-            
-            if insert_index == 0:
-                for i, line in enumerate(lines):
-                    if not line.strip().startswith(';') and line.strip():
-                        insert_index = i
-                        break
-            
-            lines.insert(insert_index, open_directive)
-            lines.insert(insert_index + 1, "")
-            new_content = '\n'.join(lines)
-
-            f.seek(0)
-            f.write(new_content)
-            f.truncate()
         
 
 
