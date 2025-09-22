@@ -1,6 +1,7 @@
 import os
 import re
 import logging
+import linecache
 from typing import Set, Optional, List, Dict, Any
 from datetime import date
 from beancount import loader
@@ -123,7 +124,7 @@ class BeancountManager:
                     name=account_name,
                     open_date=entry.date.isoformat(),  # Convert date to string
                     close_date=None,  # Will be set in second pass if closed
-                    currencies=[],  # Will populate from transaction analysis
+                    currencies=[],  # Will populate from currency analysis (both open & transactions)
                     metadata=metadata
                 )
             elif isinstance(entry, data.Close):
@@ -136,11 +137,11 @@ class BeancountManager:
                         name=account_name,
                         open_date="1970-01-01",  # Epoch date indicates missing open
                         close_date=entry.date.isoformat(),
-                        currencies=[],
+                        currencies=[],  # Will populate from currency analysis
                         metadata={"error": "Account has close directive but no open directive"}
                     )
         
-        # Get transaction data for each account
+        # Get currency data for each account (includes both open directive and transaction currencies)
         for account_name in account_details_map:
             currency_data = self._get_account_currency_data(account_name, entries)
             account_details_map[account_name].currencies = currency_data
@@ -148,9 +149,29 @@ class BeancountManager:
         return list(account_details_map.values())
     
     def _get_account_currency_data(self, account_name: str, entries) -> List[AccountCurrencyData]:
-        """Extract currency data for an account from transaction entries."""
-        currency_info = {}
+        """Extract currency data for an account from open directives and transaction entries."""
+        currency_info: Dict[str, Dict[str, Any]] = {}
         
+        # First pass: Find the open directive for this account to get declared currencies
+        open_currencies = set()
+        for entry in entries:
+            if isinstance(entry, data.Open) and entry.account == account_name:
+                if hasattr(entry, 'currencies') and entry.currencies:
+                    # Beancount's Open entry has currencies attribute
+                    open_currencies.update(entry.currencies)
+                else:
+                    # Fallback: extract currencies from the raw entry text
+                    open_currencies.update(self._extract_currencies_from_open_entry(entry))
+        
+        # Initialize currency_info with currencies from open directive (0 transactions)
+        for currency in open_currencies:
+            currency_info[currency] = {
+                "transaction_count": 0,
+                "last_transaction_date": None,
+                "balance": Decimal(0)
+            }
+        
+        # Second pass: Process transactions to add transaction data and discover additional currencies
         for entry in entries:
             if isinstance(entry, data.Transaction):
                 for posting in entry.postings:
@@ -158,6 +179,7 @@ class BeancountManager:
                         currency = posting.units.currency if posting.units else "UNKNOWN"
                         
                         if currency not in currency_info:
+                            # Currency discovered from transactions but not in open directive
                             currency_info[currency] = {
                                 "transaction_count": 0,
                                 "last_transaction_date": None,
@@ -183,6 +205,40 @@ class BeancountManager:
             ))
         
         return result
+    
+    def _extract_currencies_from_open_entry(self, open_entry: data.Open) -> Set[str]:
+        """Extract currencies from a Beancount open directive entry."""
+        currencies = set()
+        
+        # Beancount's Open entry should have currencies attribute, but let's handle both cases
+        if hasattr(open_entry, 'currencies') and open_entry.currencies:
+            currencies.update(open_entry.currencies)
+        else:
+            # Fallback: Extract from the source text by finding the line and parsing it
+            # This is less ideal but ensures we don't miss currencies
+            try:
+                # The entry may have meta.filename and meta.lineno that can help
+                safe_meta = getattr(open_entry, 'meta', None)
+                if safe_meta is not None:
+                    filename = getattr(safe_meta, 'filename', None)
+                    lineno = getattr(safe_meta, 'lineno', None)
+                    if filename and lineno:
+                        line = linecache.getline(filename, lineno).strip()
+                        if line.startswith(str(open_entry.date)) and 'open' in line:
+                            parts = line.split()
+                            # Format: <date> open <account> [<currency1> <currency2> ...]
+                            # Account is at index 2, currencies start at index 3
+                            if len(parts) > 3:
+                                potential_currencies = parts[3:]
+                                for part in potential_currencies:
+                                    # Filter out metadata comments
+                                    if part and not part.startswith(';'):
+                                        currencies.add(part)
+            except Exception:
+                # If we can't extract from source, that's okay - the main hasattr check should have caught most cases
+                pass
+        
+        return currencies
     
     def get_account_open_date(self, account_name: str) -> Optional[date]:
         """Get opening date for an account."""
