@@ -88,7 +88,7 @@ async def create_account_endpoint(
             )
         
         # Check if account already exists
-        if beancount_manager.is_valid_account(request.name):
+        if beancount_manager.is_existing_account(request.name):
             raise APIError(
                 message=f"Account already exists: {request.name}",
                 code="ACCOUNT_ALREADY_EXISTS",
@@ -235,7 +235,7 @@ async def update_account(
     
     try:
         # Validate account exists
-        if not beancount_manager.is_valid_account(account_name):
+        if not beancount_manager.is_existing_account(account_name):
             raise APIError(
                 message=f"Account not found: {account_name}",
                 code="ACCOUNT_NOT_FOUND",
@@ -264,7 +264,7 @@ async def update_account(
                 )
             
             # Check if new name already exists (and it's not the same as current name)
-            if request.new_name != account_name and beancount_manager.is_valid_account(request.new_name):
+            if request.new_name != account_name and beancount_manager.is_existing_account(request.new_name):
                 raise APIError(
                     message=f"Account name already exists: {request.new_name}",
                     code="ACCOUNT_ALREADY_EXISTS",
@@ -564,7 +564,7 @@ async def close_account(
     
     try:
         # Validate account exists
-        if not beancount_manager.is_valid_account(account_name):
+        if not beancount_manager.is_existing_account(account_name):
             raise APIError(
                 message=f"Account not found: {account_name}",
                 code="ACCOUNT_NOT_FOUND",
@@ -723,7 +723,7 @@ async def delete_account(
     
     try:
         # Validate account exists
-        if not beancount_manager.is_valid_account(account_name):
+        if not beancount_manager.is_existing_account(account_name):
             raise APIError(
                 message=f"Account not found: {account_name}",
                 code="ACCOUNT_NOT_FOUND",

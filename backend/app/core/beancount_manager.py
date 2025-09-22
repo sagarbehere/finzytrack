@@ -60,7 +60,7 @@ class BeancountManager:
         
         self._accounts_cache = accounts
     
-    def is_valid_account(self, account_name: str) -> bool:
+    def is_existing_account(self, account_name: str) -> bool:
         """Check if account name exists in ledger."""
         accounts = self.get_accounts()
         return account_name in accounts
@@ -104,7 +104,7 @@ class BeancountManager:
             raise ValueError(f"Invalid account name format: {account_name}")
 
         # Check if account already exists
-        if self.is_valid_account(account_name):
+        if self.is_existing_account(account_name):
             return  # Account already exists, consider it success
         
         epoch_date = date(1970, 1, 1)
