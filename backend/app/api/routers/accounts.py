@@ -37,10 +37,7 @@ async def list_accounts(
         # Get detailed account information from BeancountManager
         detailed_accounts = beancount_manager.get_detailed_accounts()
         
-        # AccountDetails objects are already returned from get_detailed_accounts()
-        account_details_list = detailed_accounts
-        
-        accounts_data = AccountListData(accounts=account_details_list)
+        accounts_data = AccountListData(accounts=detailed_accounts)
         return success_json_response(accounts_data)
         
     except FileNotFoundError:
@@ -177,9 +174,7 @@ async def create_account_endpoint(
             f.write(new_content)
             f.truncate()
         
-        # Clear cache to force reload
-        beancount_manager._accounts_cache = None
-        beancount_manager._last_modified = None
+
         
         # Get the created account details
         # Since we just added it, we'll construct the response manually
@@ -449,9 +444,7 @@ async def update_account(
             f.write(new_content)
             f.truncate()
         
-        # Clear cache to force reload
-        beancount_manager._accounts_cache = None
-        beancount_manager._last_modified = None
+
         
         # Get the updated account details for response
         try:
@@ -676,9 +669,7 @@ async def close_account(
             f.write(new_content)
             f.truncate()
         
-        # Clear cache to force reload
-        beancount_manager._accounts_cache = None
-        beancount_manager._last_modified = None
+
         
         close_data = AccountCloseData(
             account_closed=True,
@@ -822,9 +813,7 @@ async def delete_account(
             f.write(new_content)
             f.truncate()
         
-        # Clear cache to force reload
-        beancount_manager._accounts_cache = None
-        beancount_manager._last_modified = None
+
         
         # Prepare success message with warnings if any
         if warnings:

@@ -25,8 +25,8 @@ async def detect_ofx_account(
 ):
     config = config_manager.get_config()
     try:
-        accounts = beancount_manager.get_accounts()
-        if not accounts:
+        detailed_accounts = beancount_manager.get_detailed_accounts()
+        if not detailed_accounts:
             # This is a specific case where the ledger exists but is empty or uninitialized.
             raise APIError(
                 message="Ledger file contains no open accounts.",
@@ -83,7 +83,7 @@ async def learn_ofx_account(
         )
     
     try:
-        existing_accounts = beancount_manager.get_accounts()
+        account_exists = beancount_manager.is_existing_account(request.beancount_account)
     except FileNotFoundError:
         raise APIError(message="Ledger file not found", code="FILE_NOT_FOUND", status_code=404, details={"path": config.ledger_file})
     except PermissionError:
@@ -91,7 +91,7 @@ async def learn_ofx_account(
     except Exception as e:
         raise APIError(message=f"Failed to validate account: {e}", code="UNKNOWN_SERVER_ERROR", status_code=500, details={"path": config.ledger_file})
     
-    if request.beancount_account not in existing_accounts:
+    if not account_exists:
         learn_data = LearnOFXAccountData(
             mapping_saved=False,
             account_creation_needed=True
@@ -162,15 +162,15 @@ async def create_account(
         )
     
     try:
-        existing_accounts = beancount_manager.get_accounts()
+        account_exists = beancount_manager.is_existing_account(request.account_name)
     except FileNotFoundError:
         raise APIError(message="Ledger file not found", code="FILE_NOT_FOUND", status_code=404, details={"path": config.ledger_file})
     except PermissionError:
         raise APIError(message="Permission denied accessing ledger file", code="FILE_PERMISSION_ERROR", status_code=403, details={"path": config.ledger_file})
     except Exception as e:
-        raise APIError(message=f"Failed to read accounts from ledger: {e}", code="UNKNOWN_SERVER_ERROR", status_code=500, details={"path": config.ledger_file})
+        raise APIError(message=f"Failed to validate account exists: {e}", code="UNKNOWN_SERVER_ERROR", status_code=500, details={"path": config.ledger_file})
     
-    if request.account_name in existing_accounts:
+    if account_exists:
         create_data = CreateAccountData(
             account_created=False
         )
