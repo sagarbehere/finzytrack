@@ -127,48 +127,17 @@ async def create_account_endpoint(
                 else:
                     open_directive += f"  ; {key}: {str(value)}"
         
-        # Use atomic write to add the open directive
+        # Use atomic write to add the open directive (SIMPLE APPEND)
         with beancount_manager.backup_manager.atomic_write(beancount_manager.ledger_file) as f:
             current_content = f.read()
             
-            # Find appropriate insertion point
-            lines = current_content.split('\n')
-            insert_index = 0
-            
-            # Look for existing open directives to insert in chronological order
-            open_dates = []
-            for i, line in enumerate(lines):
-                stripped = line.strip()
-                if stripped.startswith('open ') and not stripped.startswith(';'):
-                    parts = stripped.split()
-                    if len(parts) >= 3:
-                        try:
-                            line_date = datetime.strptime(parts[0], "%Y-%m-%d").date()
-                            open_dates.append((line_date, i))
-                        except ValueError:
-                            pass
-            
-            # Sort by date and find insertion point
-            open_dates.sort()
-            for line_date, line_index in open_dates:
-                if open_date_obj <= line_date:
-                    insert_index = line_index
-                    break
-                insert_index = line_index + 1
-            
-            # If no open directives found, insert after comments
-            if insert_index == 0:
-                for i, line in enumerate(lines):
-                    if not line.strip().startswith(';') and line.strip():
-                        insert_index = i
-                        break
-                if insert_index == len(lines):
-                    insert_index = 0  # Insert at beginning if file is empty or all comments
-            
-            # Insert the open directive
-            lines.insert(insert_index, open_directive)
-            lines.insert(insert_index + 1, "")  # Add spacing
-            new_content = '\n'.join(lines)
+            # Simple append with proper formatting
+            if current_content and not current_content.endswith('\n'):
+                current_content += '\n'
+            if current_content and not current_content.endswith('\n\n'):
+                current_content += '\n'
+                
+            new_content = current_content + open_directive + '\n'
             
             f.seek(0)
             f.write(new_content)
@@ -643,62 +612,19 @@ async def close_account(
         if request.reason:
             close_directive += f"  ; reason: {request.reason}"
         
-        # Use atomic write to add the closing directive
-        with beancount_manager.backup_manager.atomic_write(beancount_manager.ledger_file) as f:
-            current_content = f.read()
+        # Use atomic write to add the closing directive (SIMPLE APPEND)
+        with beancount_manager.backup_manager.atomic_write(beancount_manager.ledger_file) as func:
+            current_content = func.read()
             
-            # Find appropriate insertion point
-            lines = current_content.split('\n')
-            insert_index = 0
+            # Simple append with proper formatting
+            if current_content.endswith('\n'):
+                new_content = current_content + close_directive + '\n'
+            else:
+                new_content = current_content + '\n' + close_directive + '\n'
             
-            # Look for existing close directives to insert in chronological order
-            close_dates = []
-            for i, line in enumerate(lines):
-                stripped = line.strip()
-                if stripped.startswith('close ') and not stripped.startswith(';'):
-                    parts = stripped.split()
-                    if len(parts) >= 3:
-                        try:
-                            line_date = datetime.strptime(parts[0], "%Y-%m-%d").date()
-                            close_dates.append((line_date, i))
-                        except ValueError:
-                            pass
-            
-            # Sort by date and find insertion point
-            close_dates.sort()
-            for line_date, line_index in close_dates:
-                if close_date_obj <= line_date:
-                    insert_index = line_index
-                    break
-                insert_index = line_index + 1
-            
-            # If no close directives found, look for the account's open directive
-            if insert_index == 0:
-                for i, line in enumerate(lines):
-                    stripped = line.strip()
-                    if stripped.startswith(f'open {account_name}') and not stripped.startswith(';'):
-                        insert_index = i + 2  # Insert after the open directive and spacing
-                        break
-            
-            # If still no insertion point found, append at end
-            if insert_index == 0:
-                insert_index = len(lines)
-                
-                # Add spacing if not already at end of file with empty line
-                if insert_index > 0 and lines[insert_index - 1].strip() != "":
-                    lines.append("")
-                    insert_index += 1
-            
-            # Insert the closing directive
-            lines.insert(insert_index, close_directive)
-            if insert_index + 1 < len(lines) and lines[insert_index + 1].strip() != "":
-                lines.insert(insert_index + 1, "")  # Add spacing if needed
-            
-            new_content = '\n'.join(lines)
-            
-            f.seek(0)
-            f.write(new_content)
-            f.truncate()
+            func.seek(0)
+            func.write(new_content)
+            func.truncate()
         
 
         
