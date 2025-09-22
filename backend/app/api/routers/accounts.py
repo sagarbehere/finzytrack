@@ -244,6 +244,10 @@ async def create_account_endpoint(
             status_code=500
         )
 
+# FIXME: This update_account() function needs to be rigorously reviewed and updated.
+# FIXME: It has many business logic errors/inadquacies
+# FIXME: Also, implementation sub-optimalities. E.g. at the end, it should not look for different types of errors and raise API errors. 
+# There's already code in setup_error_handlers in error_handler.py that converts any uncaught exception to a 500 APIError.
 @router.put("/accounts/{account_name}", response_model=ApiResponse[AccountUpdateData], operation_id="updateAccount")
 async def update_account(
     request: AccountUpdateRequest,
@@ -571,6 +575,7 @@ async def update_account(
             status_code=500
         )
 
+# FIXME: This function needs to be rigorously reviewed and updated. It has many business logic errors/inadquacies
 @router.post("/accounts/{account_name}/close", response_model=ApiResponse[AccountCloseData], operation_id="closeAccount")
 async def close_account(
     request: AccountCloseRequest,
@@ -728,6 +733,7 @@ async def close_account(
             status_code=500
         )
 
+# FIXME: This function needs to be rigorously reviewed and updated. It has many business logic errors/inadquacies
 @router.delete("/accounts/{account_name}", response_model=ApiResponse[AccountDeleteData], operation_id="deleteAccount")
 async def delete_account(
     account_name: str = Path(..., description="Beancount account name to delete"),
