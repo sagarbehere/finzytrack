@@ -68,11 +68,18 @@ async def create_account_endpoint(
     beancount_manager: BeancountManager = Depends(get_beancount_manager)
 ):
     """Create and open a new Beancount account with comprehensive configuration."""
-    config = config_manager.get_config()
-    
     try:
-        # Validate account name format
-        if not beancount_manager.validate_account_format(request.name):
+        # Delegate account creation to BeancountManager (business logic & ledger operations)
+        create_data = beancount_manager.create_account_directive(request)
+        
+        return success_json_response(create_data, status_code=201)
+        
+    except ValueError as e:
+        # Convert ValueError to appropriate APIError
+        error_message = str(e)
+        
+        # Match specific error patterns
+        if "Invalid account format" in error_message:
             raise APIError(
                 message="Invalid account format",
                 code="VALIDATION_ERROR",
@@ -83,20 +90,14 @@ async def create_account_endpoint(
                     "help": "Account name must follow Beancount naming conventions (e.g., 'Assets:Bank:Checking')"
                 }
             )
-        
-        # Check if account already exists
-        if beancount_manager.is_existing_account(request.name):
+        elif "Account already exists" in error_message:
             raise APIError(
-                message=f"Account already exists: {request.name}",
+                message="Account already exists",
                 code="ACCOUNT_ALREADY_EXISTS",
                 status_code=409,
                 details={"account_name": request.name}
             )
-        
-        # Parse and validate open_date
-        try:
-            open_date_obj = datetime.strptime(request.open_date, "%Y-%m-%d").date()
-        except ValueError:
+        elif "Invalid open_date format" in error_message:
             raise APIError(
                 message="Invalid open_date format",
                 code="VALIDATION_ERROR",
@@ -107,108 +108,47 @@ async def create_account_endpoint(
                     "help": "Date must be in YYYY-MM-DD format"
                 }
             )
-        
-        # Use currencies from request (at least one required by schema validation)
-        
-        # Prepare metadata
-        metadata = request.metadata or {}
-        if request.description:
-            metadata["description"] = request.description
-        
-        # Create the open directive
-        currencies_str = " ".join(request.currencies)
-        open_directive = f"{open_date_obj} open {request.name} {currencies_str}"
-        
-        # Add metadata as inline comments if any
-        if metadata:
-            for key, value in metadata.items():
-                if isinstance(value, str):
-                    open_directive += f"  ; {key}: {value}"
-                else:
-                    open_directive += f"  ; {key}: {str(value)}"
-        
-        # Use atomic write to add the open directive (SIMPLE APPEND)
-        with beancount_manager.backup_manager.atomic_write(beancount_manager.ledger_file) as f:
-            current_content = f.read()
-            
-            # Simple append with proper formatting
-            if current_content and not current_content.endswith('\n'):
-                current_content += '\n'
-            if current_content and not current_content.endswith('\n\n'):
-                current_content += '\n'
-                
-            new_content = current_content + open_directive + '\n'
-            
-            f.seek(0)
-            f.write(new_content)
-            f.truncate()
-        
-
-        
-        # Get the created account details with proper currency detection
-        # This ensures currencies from the open directive are included even with 0 transactions
-        try:
-            detailed_accounts = beancount_manager.get_detailed_accounts()
-            account_details = None
-            for account in detailed_accounts:
-                if account.name == request.name:
-                    account_details = account
-                    break
-            
-            if account_details is None:
-                # This indicates a serious program error - account creation succeeded
-                # but we can't find the account in get_detailed_accounts()
-                logger.error(f"Account creation succeeded but account not found: {request.name}")
-                raise APIError(
-                    message="Account creation succeeded but account data unavailable.",
-                    code="ACCOUNT_CREATION_INCONSISTENCY",
-                    status_code=500,
-                    details={
-                        "account_name": request.name,
-                        "error": "Account created successfully but not found in detailed accounts list"
-                    }
-                )
-        except Exception as e:
-            logger.error(f"Error getting created account details: {e}")
-            # This is also a serious error - we should not proceed with fake data
+        else:
+            # Generic validation error
             raise APIError(
-                message="Account was created but failed to retrieve account details.",
-                code="ACCOUNT_DETAILS_RETRIEVAL_FAILED",
-                status_code=500,
-                details={
-                    "account_name": request.name,
-                    "error": str(e)
-                }
+                message="Validation failed",
+                code="VALIDATION_ERROR",
+                status_code=422,
+                details={"validation_error": error_message}
             )
-        
-        create_data = AccountCreateData(
-            account_created=True,
-            account_details=account_details,
-            message=f"Account '{request.name}' created successfully"
-        )
-        
-        return success_json_response(create_data, status_code=201)
-        
-    except APIError:
-        # Re-raise API errors as-is
-        raise
-    except FileNotFoundError:
+    
+    except FileNotFoundError as e:
         raise APIError(
             message="Ledger file not found", 
             code="FILE_NOT_FOUND", 
             status_code=404, 
-            details={"path": config.ledger_file}
+            details={"path": str(e).split(": ")[-1]}  # Extract file path from exception
         )
-    except PermissionError:
+    except PermissionError as e:
         raise APIError(
             message="Permission denied accessing ledger file", 
             code="FILE_PERMISSION_ERROR", 
             status_code=403, 
-            details={"path": config.ledger_file}
+            details={"path": str(e).split(": ")[-1]}  # Extract file path from exception
         )
     except Exception as e:
+        # Handle unexpected errors from the manager
+        error_message = str(e)
+        
+        # Account creation succeeded but details unavailable (recoverable)
+        if "details unavailable" in error_message:
+            # This means the account was created but we can't get the details
+            # Return a success response with account_details as None
+            create_data = AccountCreateData(
+                account_created=True,
+                account_details=None,
+                message=f"Account '{request.name}' created successfully (details unavailable)"
+            )
+            return success_json_response(create_data, status_code=201)
+        
+        # Handle other unexpected errors
         raise APIError(
-            message=f"Error creating account: {str(e)}", 
+            message=f"Error creating account: {error_message}", 
             code="UNKNOWN_SERVER_ERROR", 
             status_code=500
         )

@@ -3,14 +3,16 @@ import re
 import logging
 import linecache
 from typing import Set, Optional, List, Dict, Any
-from datetime import date
+from datetime import datetime, date
 from beancount import loader
 from beancount.core import data
 from decimal import Decimal
 
 from app.core.backup_manager import BackupManager
 from .ledger_initializer import LedgerInitializer
-from app.schemas.account_schemas import AccountDetails, AccountCurrencyData
+from app.schemas.account_schemas import (
+    AccountDetails, AccountCurrencyData, AccountCreateRequest, AccountCreateData
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +21,7 @@ class BeancountManager:
         self.ledger_file = ledger_file
         self.backup_manager = backup_manager
         self.ledger_initializer = ledger_initializer
-    
-
-    
+      
     def is_existing_account(self, account_name: str) -> bool:
         """Check if account name exists in ledger."""
         detailed_accounts = self.get_detailed_accounts()
@@ -53,9 +53,6 @@ class BeancountManager:
             return len(errors) > 0
         except Exception:
             return True
-    
-
-        
 
 
     def get_detailed_accounts(self) -> List[AccountDetails]:
@@ -255,3 +252,106 @@ class BeancountManager:
             result[currency_summary.currency] = currency_summary
         
         return result
+
+    def create_account_directive(self, request: AccountCreateRequest) -> AccountCreateData:
+        """
+        Create a new account by adding an open directive to the ledger.
+        
+        Args:
+            request: Account creation request with name, open_date, currencies, etc.
+            
+        Returns:
+            AccountCreateData with creation result and created account details
+            
+        Raises:
+            ValueError: Invalid account format, account already exists, invalid date format
+            FileNotFoundError: If ledger file doesn't exist
+            PermissionError: If ledger file cannot be accessed
+            Exception: For other ledger operation errors
+        """
+        # Validate account name format
+        if not self.validate_account_format(request.name):
+            raise ValueError(f"Invalid account format: {request.name}")
+        
+        # Check if account already exists
+        if self.is_existing_account(request.name):
+            raise ValueError(f"Account already exists: {request.name}")
+        
+        # Parse and validate open_date
+        try:
+            open_date_obj = datetime.strptime(request.open_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise ValueError(f"Invalid open_date format: {request.open_date}")
+        
+        # Create the open directive
+        currencies_str = " ".join(request.currencies)
+        open_directive = f"{open_date_obj} open {request.name} {currencies_str}"
+        
+        # Prepare metadata
+        metadata = request.metadata or {}
+        if request.description:
+            metadata["description"] = request.description
+        
+        # Add metadata as inline comments if any
+        if metadata:
+            for key, value in metadata.items():
+                if isinstance(value, str):
+                    open_directive += f"  ; {key}: {value}"
+                else:
+                    open_directive += f"  ; {key}: {str(value)}"
+        
+        # Use atomic write to add the open directive (SIMPLE APPEND)
+        try:
+            with self.backup_manager.atomic_write(self.ledger_file) as f:
+                current_content = f.read()
+                
+                # Simple append with proper formatting
+                if current_content and not current_content.endswith('\n'):
+                    current_content += '\n'
+                if current_content and not current_content.endswith('\n\n'):
+                    current_content += '\n'
+                    
+                new_content = current_content + open_directive + '\n'
+                
+                f.seek(0)
+                f.write(new_content)
+                f.truncate()
+                
+            # Get the created account details with proper currency detection
+            try:
+                detailed_accounts = self.get_detailed_accounts()
+                account_details = None
+                for account in detailed_accounts:
+                    if account.name == request.name:
+                        account_details = account
+                        break
+                
+                if account_details is None:
+                    # This indicates a serious program error
+                    logger.error(f"Account creation succeeded but account not found: {request.name}")
+                    raise ValueError(
+                        f"Account creation succeeded but account not found: {request.name}"
+                    )
+                
+                return AccountCreateData(
+                    account_created=True,
+                    account_details=account_details,
+                    message=f"Account '{request.name}' created successfully"
+                )
+                
+            except Exception as e:
+                logger.error(f"Error getting created account details: {e}")
+                # Account was created but we can't retrieve details
+                return AccountCreateData(
+                    account_created=True,
+                    account_details=None,
+                    message=f"Account '{request.name}' created successfully (details unavailable)"
+                )
+                
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
+        except PermissionError:
+            raise PermissionError(f"Permission denied accessing ledger file: {self.ledger_file}")
+        except Exception as e:
+            logger.error(f"Error creating account directive: {e}")
+            raise Exception(f"Error creating account: {str(e)}")
