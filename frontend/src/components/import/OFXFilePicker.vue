@@ -62,7 +62,7 @@
           </p>
         </div>
         <button
-          @click="clearFile"
+          @click="handleClearFile"
           class="ml-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
           title="Remove file"
         >
@@ -80,7 +80,7 @@
           <p class="text-xs text-red-600 dark:text-red-400">Failed to parse file</p>
         </div>
         <button
-          @click="clearFile"
+          @click="handleClearFile"
           class="ml-4 text-red-400 hover:text-red-600 dark:hover:text-red-300"
           title="Remove file"
         >
@@ -226,141 +226,55 @@
 </template>
 
 <script setup lang="ts">
-  import { ref, computed, watch } from 'vue'
+  import { ref, computed } from 'vue'
   import {
     DocumentArrowUpIcon,
     DocumentCheckIcon,
     ExclamationTriangleIcon,
     XMarkIcon,
   } from '@heroicons/vue/24/outline'
-  import { useToast } from '@/composables/useNotifications'
-  import { errorHandler } from '@/utils/ErrorHandler'
   import FormFeedback from '@/components/common/FormFeedback.vue'
-  import {
-    ImportService,
-    ApiError,
-    type ValidationError,
-    type OFXDetectionRequest,
-    type LearnOFXAccountRequest,
-    type CreateAccountRequest,
-  } from '@/services/generated-api'
+  import { useOfxParser, type OfxFileDetails } from '@/composables/useOfxParser'
+  import { useAccountDetector } from '@/composables/useAccountDetector'
 
-  // Define component-specific types
-  interface OfxFileDetails {
-    institution: string
-    institutionFid: string | null
-    accountType: string
-    accountId: string
-    currency: string
-    transactionCount: number
-    startDate: string | null
-    endDate: string | null
-    balance: number
-  }
-
-  const { success, error, info } = useToast()
-
-  // Props and emits
-  const emit = defineEmits<{ (e: 'fileSelected', payload: { file: File; details: OfxFileDetails }): void
-    (e: 'fileCleared'): void
-    (e: 'parseError', error: string): void
-    (e: 'proceedWithImport', payload: { file: File; details: OfxFileDetails, account: string, currency: string }): void
+  // Emits
+  const emit = defineEmits<{
+    (e: 'proceed', payload: { 
+        file: File; 
+        details: OfxFileDetails, 
+        account: string, 
+        currency: string 
+    }): void
   }>()
 
-  // Reactive state
+  // Composables
+  const { 
+    selectedFile, 
+    fileDetails, 
+    parseError, 
+    isParsing, 
+    processFile, 
+    clearFile 
+  } = useOfxParser()
+
+  const { 
+    selectedAccount, 
+    selectedCurrency, 
+    isDetecting, 
+    isLearning, 
+    fieldErrors, 
+    formLevelMessage, 
+    formLevelSeverity, 
+    learnAccount 
+  } = useAccountDetector(fileDetails)
+
+  // UI State
   const fileInput = ref<HTMLInputElement | null>(null)
-  const selectedFile = ref<File | null>(null)
-  const fileDetails = ref<OfxFileDetails | null>(null)
-  const parseError = ref<string | null>(null)
-  const isProcessing = ref<boolean>(false)
   const isDragOver = ref<boolean>(false)
 
-  const accountDetected = ref<boolean>(false)
-  const selectedAccount = ref<string>('')
-  const selectedCurrency = ref<string>('')
-  const isLearning = ref<boolean>(false)
+  const isProcessing = computed(() => isParsing.value || isDetecting.value || isLearning.value)
 
-  // A single reactive object to hold all form field errors
-  const fieldErrors = ref<{ [key: string]: string }>({});
-
-  // Form-level feedback computed properties
-  const formLevelMessage = computed<string>(() => {
-    if (accountDetected.value) {
-      return 'Account detected successfully'
-    } else if (fileDetails.value && Object.keys(fieldErrors.value).length === 0) {
-      return 'No matching account found. Please verify account details.'
-    }
-    return ''
-  })
-
-  const formLevelSeverity = computed<'success' | 'warning'>(() => {
-    return accountDetected.value ? 'success' : 'warning'
-  })
-
-  // Clear field errors when user types
-  watch(selectedAccount, () => {
-    if (fieldErrors.value.beancount_account) delete fieldErrors.value.beancount_account;
-  })
-  
-  watch(selectedCurrency, () => {
-    if (fieldErrors.value.currency) delete fieldErrors.value.currency;
-  })
-
-  // Error handling logic
-  const handleApiError = (error: unknown) => {
-    // Always clear previous errors on a new API call
-    fieldErrors.value = {};
-    let wasHandledAsFieldLevelError = false;
-
-    if (error instanceof ApiError && error.body?.error?.code === 'VALIDATION_ERROR') {
-      const details = error.body.error.details;
-      const message = error.body.error.message;
-
-      // Case 1: Handle our manual business logic errors (has `details.field`)
-      if (details?.field && typeof details.field === 'string') {
-        fieldErrors.value[details.field] = message;
-        wasHandledAsFieldLevelError = true;
-      }
-
-      // Case 2: Handle Pydantic validation errors (has `details.validation_errors`)
-      if (details?.validation_errors) {
-        (details.validation_errors as ValidationError[]).forEach(err => {
-          // The field name is the last item in the `loc` array
-          const fieldName = err.loc[err.loc.length - 1];
-          if (typeof fieldName === 'string') {
-            fieldErrors.value[fieldName] = err.msg;
-            wasHandledAsFieldLevelError = true;
-          }
-        });
-      }
-    }
-
-    // If the error was not a field-level validation error that we could map,
-    // or if it was any other type of error, pass it to the global handler.
-    // This ensures NO errors are ever swallowed.
-    if (!wasHandledAsFieldLevelError) {
-      errorHandler.display(error);
-    }
-  }
-
-  // Drag and drop handlers
-  const handleDragEnter = (e: DragEvent) => {
-    e.preventDefault()
-    isDragOver.value = true
-  }
-
-  const handleDragOver = (e: DragEvent) => {
-    e.preventDefault()
-    isDragOver.value = true
-  }
-
-  const handleDragLeave = (e: DragEvent) => {
-    e.preventDefault()
-    if (e.currentTarget instanceof HTMLElement && !e.currentTarget.contains(e.relatedTarget as Node)) {
-      isDragOver.value = false
-    }
-  }
-
+  // Event Handlers
   const handleDrop = (e: DragEvent) => {
     e.preventDefault()
     isDragOver.value = false
@@ -370,12 +284,16 @@
     }
   }
 
-  // File selection handlers
-  const openFilePicker = () => {
-    if (fileInput.value) {
-      fileInput.value.click()
+  const handleDragEnter = (e: DragEvent) => { e.preventDefault(); isDragOver.value = true; }
+  const handleDragOver = (e: DragEvent) => { e.preventDefault(); isDragOver.value = true; }
+  const handleDragLeave = (e: DragEvent) => {
+    e.preventDefault()
+    if (e.currentTarget instanceof HTMLElement && !e.currentTarget.contains(e.relatedTarget as Node)) {
+      isDragOver.value = false
     }
   }
+
+  const openFilePicker = () => fileInput.value?.click()
 
   const handleFileSelect = (e: Event) => {
     const target = e.target as HTMLInputElement
@@ -385,154 +303,23 @@
     }
   }
 
-  // File validation
-  const validateFile = (file: File): boolean => {
-    const validExtensions = ['.ofx', '.qfx']
-    const fileName = file.name.toLowerCase()
-    return validExtensions.some((ext) => fileName.endsWith(ext))
-  }
-
-  // File processing
-  const processFile = async (file: File) => {
-    if (!validateFile(file)) {
-      parseError.value = 'Invalid file type. Please select an OFX or QFX file.'
-      return
-    }
-
+  const handleClearFile = () => {
     clearFile()
-    selectedFile.value = file
-    isProcessing.value = true
+    if (fileInput.value) fileInput.value.value = ''
+  }
 
-    try {
-      const fileContent = await readFileAsText(file)
-      await parseOFXContent(fileContent)
-      if (fileDetails.value) {
-        emit('fileSelected', { file: file, details: fileDetails.value })
-      }
-      await detectAccount()
-    } catch (err: any) {
-      console.error('Error processing OFX file:', err)
-      const errorMessage = err.message || 'Failed to parse OFX file. Please check the file format.'
-      parseError.value = errorMessage
-      emit('parseError', errorMessage)
-    } finally {
-      isProcessing.value = false
+  const proceedWithImport = () => {
+    if (selectedFile.value && fileDetails.value && selectedAccount.value && selectedCurrency.value) {
+      emit('proceed', {
+        file: selectedFile.value,
+        details: fileDetails.value,
+        account: selectedAccount.value,
+        currency: selectedCurrency.value,
+      })
     }
   }
 
-  // File reading utility
-  const readFileAsText = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = (e) => resolve(e.target?.result as string)
-      reader.onerror = () => reject(new Error('Failed to read file'))
-      reader.readAsText(file)
-    })
-  }
-
-  // OFX parsing using ofx-js
-  const parseOFXContent = async (content: string) => {
-    try {
-      const { parse } = await import('ofx-js')
-      const parsed = await parse(content)
-      if (!parsed) throw new Error('Invalid OFX file format')
-      fileDetails.value = extractFileDetails(parsed)
-    } catch (err: any) {
-      throw new Error(`OFX parsing failed: ${err.message}`)
-    }
-  }
-
-  function getStatementDateRange(tranlist: any): { startDate: string | null; endDate: string | null } {
-    const parseOfxDate = (dateString: string | undefined): string | null => {
-      if (!dateString || dateString.length < 8) return null;
-      const year = dateString.substring(0, 4);
-      const month = dateString.substring(4, 6);
-      const day = dateString.substring(6, 8);
-      return `${year}-${month}-${day}`;
-    };
-
-    // 1. Prioritize statement dates
-    let startDate = parseOfxDate(tranlist?.DTSTART);
-    let endDate = parseOfxDate(tranlist?.DTEND);
-
-    // 2. Fallback to transaction dates if statement dates are missing
-    if ((!startDate || !endDate) && tranlist && tranlist.STMTTRN) {
-      const transactions = Array.isArray(tranlist.STMTTRN)
-        ? tranlist.STMTTRN
-        : [tranlist.STMTTRN];
-
-      if (transactions.length > 0) {
-        const dates = transactions
-          .map((t: any) => t.DTPOSTED)
-          .filter((d: any) => d)
-          .map((d: string) => new Date(d.substring(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')))
-          .sort((a: Date, b: Date) => a.getTime() - b.getTime());
-
-        if (dates.length > 0) {
-          // Only set if the primary method failed
-          if (!startDate) {
-            startDate = dates[0].toISOString().split('T')[0];
-          }
-          if (!endDate) {
-            endDate = dates[dates.length - 1].toISOString().split('T')[0];
-          }
-        }
-      }
-    }
-
-    return { startDate, endDate };
-  }
-
-  const extractFileDetails = (parsedOFX: any): OfxFileDetails => {
-    const body = parsedOFX.OFX || parsedOFX
-    const signon = body.SIGNONMSGSRSV1?.SONRS?.FI
-    const stmt =
-      body.BANKMSGSRSV1?.STMTTRNRS?.STMTRS || body.CREDITCARDMSGSRSV1?.CCSTMTTRNRS?.CCSTMTRS
-    if (!stmt) throw new Error('No statement data found in OFX file')
-
-    const acctfrom = stmt.BANKACCTFROM || stmt.CCACCTFROM
-    const tranlist = stmt.BANKTRANLIST
-
-    let accountType = ''
-    if (body.CREDITCARDMSGSRSV1) {
-      accountType = ''
-    } else if (body.BANKMSGSRSV1 && acctfrom?.ACCTTYPE) {
-      accountType = acctfrom.ACCTTYPE
-    }
-
-    const { startDate, endDate } = getStatementDateRange(tranlist);
-
-    const details: OfxFileDetails = {
-      institution: signon?.ORG || 'Unknown',
-      institutionFid: signon?.FID || null,
-      accountType: accountType,
-      accountId: acctfrom?.ACCTID || 'Unknown',
-      currency: stmt.CURDEF || 'USD',
-      transactionCount: Array.isArray(tranlist?.STMTTRN) ? tranlist.STMTTRN.length : (tranlist?.STMTTRN ? 1 : 0),
-      startDate: startDate,
-      endDate: endDate,
-      balance: parseFloat(stmt.LEDGERBAL?.BALAMT || stmt.AVAILBAL?.BALAMT || 0),
-    };
-
-    return details;
-  }
-
-  // Utility functions
-  const clearFile = () => {
-    selectedFile.value = null
-    fileDetails.value = null
-    parseError.value = null
-    accountDetected.value = false
-    selectedAccount.value = ''
-    selectedCurrency.value = ''
-    isLearning.value = false
-    fieldErrors.value = {};
-    if (fileInput.value) {
-      fileInput.value.value = ''
-    }
-    emit('fileCleared')
-  }
-
+  // Utility Functions
   const formatFileSize = (bytes: number): string => {
     if (bytes === 0) return '0 Bytes'
     const k = 1024
@@ -555,107 +342,5 @@
   const formatCurrency = (amount: number | null | undefined, currency: string = 'USD'): string => {
     if (amount === null || amount === undefined) return 'Unknown'
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency }).format(amount)
-  }
-
-  // Account detection functions
-  const detectAccount = async () => {
-    if (!fileDetails.value) return
-
-    accountDetected.value = false
-
-    try {
-      const requestBody: OFXDetectionRequest = {
-        institution: fileDetails.value.institution,
-        institution_fid: fileDetails.value.institutionFid,
-        account_type: fileDetails.value.accountType,
-        account_id: fileDetails.value.accountId,
-      }
-      const response = await ImportService.detectOfxAccount(requestBody)
-
-      if (response.data?.detected) {
-        accountDetected.value = true
-        selectedAccount.value = response.data.beancount_account
-        selectedCurrency.value = response.data.currency
-      } else if (response.data) {
-        accountDetected.value = false
-        selectedAccount.value = response.data.beancount_account || ''
-        selectedCurrency.value = response.data.currency || 'USD'
-      }
-    } catch (err) {
-      handleApiError(err)
-      accountDetected.value = false
-      console.error('Account detection failed:', err)
-    }
-  }
-
-  const learnAccount = async () => {
-    if (!fileDetails.value) {
-      error('No File Data', 'No OFX file data available for learning.')
-      return
-    }
-
-    isLearning.value = true
-
-    try {
-      const requestBody: LearnOFXAccountRequest = {
-        institution: fileDetails.value.institution,
-        institution_fid: fileDetails.value.institutionFid,
-        account_type: fileDetails.value.accountType,
-        account_id: fileDetails.value.accountId,
-        beancount_account: selectedAccount.value,
-        currency: selectedCurrency.value,
-      }
-      const response = await ImportService.learnOfxAccount(requestBody)
-
-      if (response.data?.mapping_saved) {
-        await detectAccount() // This will update the form-level feedback to show success
-      } else if (response.data?.account_creation_needed) {
-        const shouldCreate = confirm(
-          `Account ${selectedAccount.value} doesn't exist. Create it?`
-        )
-        if (shouldCreate) {
-          await createAccount(selectedAccount.value, selectedCurrency.value)
-        }
-      }
-    } catch (err) {
-      handleApiError(err)
-      console.error('Learn account failed:', err)
-    } finally {
-      isLearning.value = false
-    }
-  }
-
-  const createAccount = async (accountName: string, currency: string) => {
-    try {
-      const requestBody: CreateAccountRequest = {
-        account_name: accountName,
-        currency: currency,
-      }
-      const response = await ImportService.createAccount(requestBody)
-
-      if (response.data?.account_created) {
-        success('Account Created', `Successfully created ${accountName}.`)
-        await learnAccount() // Retry learning after creation
-      } else {
-        info('Account Exists', `Account ${accountName} already exists.`)
-        await learnAccount() // Retry learning since it exists
-      }
-    } catch (err) {
-      handleApiError(err)
-      console.error('Create account failed:', err)
-    }
-  }
-
-  const proceedWithImport = () => {
-    // Remove frontend validation - let backend handle it
-    if (selectedAccount.value && selectedCurrency.value && selectedFile.value && fileDetails.value) {
-      info('Coming Soon', 'Transaction import will be implemented in a future phase.')
-      emit('proceedWithImport', {
-        file: selectedFile.value,
-        details: fileDetails.value,
-        account: selectedAccount.value,
-        currency: selectedCurrency.value,
-      })
-    }
   }
 </script>

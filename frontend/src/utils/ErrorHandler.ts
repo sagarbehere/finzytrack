@@ -44,40 +44,41 @@ class ErrorHandler {
       return
     }
 
-    const errorCode = error.body?.error?.code || 'UNKNOWN_SERVER_ERROR'
-    const errorMessage = error.body?.error?.message || 'An unknown server error occurred.'
-    const errorDetails = error.body?.error?.details || null
+    const bodyError = error.body?.error;
 
-    const mappings = { ...defaultErrorMappings, ...options }
-    const displayType = mappings[errorCode] || 'Modal' // Default to Modal if code is unknown
+    const errorCode = bodyError?.code || error.status;
+    const errorMessage = bodyError?.message || error.statusText;
+    const errorDetails = bodyError?.details || {
+        url: error.url,
+        method: error.request.method,
+        status: error.status,
+        statusText: error.statusText,
+    };
+
+    const mappings = { ...defaultErrorMappings, ...options };
+    const displayType = mappings[errorCode] || 'Modal'; // Default to Modal if code is unknown
 
     if (typeof displayType === 'function') {
       // Custom handler function
-      displayType(error)
+      displayType(error);
     } else {
       switch (displayType) {
         case 'Toast':
-          this.toast.error('Error', errorMessage)
-          // Add persistent entry to notification panel
-          this.addPersistentError(errorCode, errorMessage, errorDetails)
-          break
+          // Add persistent entry to notification panel, which also acts as a toast
+          this.addPersistentError(String(errorCode), errorMessage, errorDetails);
+          break;
         case 'Modal':
-          // NOTE: A proper modal system is not yet implemented.
-          // For now, we will use a toast with a more prominent title.
-          // This should be replaced when a modal composable is available (Tier 3).
-          this.toast.error(`Error: ${errorCode}`, errorMessage)
-          alert(`MODAL (placeholder):\n\n${errorCode}\n\n${errorMessage}`)
-          // Add persistent entry to notification panel
-          this.addPersistentError(errorCode, errorMessage, errorDetails)
-          break
+          // Add persistent entry to notification panel, which also acts as a toast
+          this.addPersistentError(String(errorCode), errorMessage, errorDetails);
+          break;
         case 'Inline':
           // Inline errors are typically handled by the component itself.
           // This handler can be used to log them or trigger a state change.
-          console.warn(`Inline error occurred: ${errorCode}`, error)
-          break
+          console.warn(`Inline error occurred: ${errorCode}`, error);
+          break;
         default:
-          console.error(`Unknown error display type: ${displayType}`)
-          this.toast.error('An unexpected error occurred', errorMessage)
+          console.error(`Unknown error display type: ${displayType}`);
+          this.toast.error('An unexpected error occurred', errorMessage);
       }
     }
   }

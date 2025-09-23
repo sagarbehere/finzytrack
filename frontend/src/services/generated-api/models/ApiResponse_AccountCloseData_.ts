@@ -2,11 +2,11 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { CreateAccountData } from './CreateAccountData';
+import type { AccountCloseData } from './AccountCloseData';
 import type { ErrorInfo } from './ErrorInfo';
-export type ApiResponse_CreateAccountData_ = {
+export type ApiResponse_AccountCloseData_ = {
     success: boolean;
-    data?: (CreateAccountData | null);
+    data?: (AccountCloseData | null);
     error?: (ErrorInfo | null);
 };
 

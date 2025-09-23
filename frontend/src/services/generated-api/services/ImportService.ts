@@ -2,10 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { ApiResponse_CreateAccountData_ } from '../models/ApiResponse_CreateAccountData_';
 import type { ApiResponse_LearnOFXAccountData_ } from '../models/ApiResponse_LearnOFXAccountData_';
 import type { ApiResponse_OFXDetectionData_ } from '../models/ApiResponse_OFXDetectionData_';
-import type { CreateAccountRequest } from '../models/CreateAccountRequest';
 import type { LearnOFXAccountRequest } from '../models/LearnOFXAccountRequest';
 import type { OFXDetectionRequest } from '../models/OFXDetectionRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
@@ -43,25 +41,6 @@ export class ImportService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/import/learn-ofx-account',
-            body: requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: `Validation Error`,
-            },
-        });
-    }
-    /**
-     * Create Account
-     * @param requestBody
-     * @returns ApiResponse_CreateAccountData_ Successful Response
-     * @throws ApiError
-     */
-    public static createAccount(
-        requestBody: CreateAccountRequest,
-    ): CancelablePromise<ApiResponse_CreateAccountData_> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/import/create-account',
             body: requestBody,
             mediaType: 'application/json',
             errors: {
