@@ -239,7 +239,7 @@
 
   // Emits
   const emit = defineEmits<{
-    (e: 'proceed', payload: { 
+    (e: 'proceedWithImport', payload: { 
         file: File; 
         details: OfxFileDetails, 
         account: string, 
@@ -310,7 +310,7 @@
 
   const proceedWithImport = () => {
     if (selectedFile.value && fileDetails.value && selectedAccount.value && selectedCurrency.value) {
-      emit('proceed', {
+      emit('proceedWithImport', {
         file: selectedFile.value,
         details: fileDetails.value,
         account: selectedAccount.value,

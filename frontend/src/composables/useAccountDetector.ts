@@ -43,10 +43,12 @@ export function useAccountDetector(fileDetails: Ref<OfxFileDetails | null>) {
     if (fieldErrors.value.currency) delete fieldErrors.value.currency;
   })
 
+  // This function sets form field errors (beancount acct and currency inputs) 
+  // or sends the error to the global error handler to be displayed
   const handleApiError = (error: unknown) => {
     fieldErrors.value = {};
     let wasHandledAsFieldLevelError = false;
-
+    // Determine if error is pertaining to Beancount account or currency input fields
     if (error instanceof ApiError && error.body?.error?.code === 'VALIDATION_ERROR') {
       const details = error.body.error.details;
       const message = error.body.error.message;
@@ -55,7 +57,7 @@ export function useAccountDetector(fileDetails: Ref<OfxFileDetails | null>) {
         fieldErrors.value[details.field] = message;
         wasHandledAsFieldLevelError = true;
       }
-
+      // This is for FastAPI validation errors, not business logic errors
       if (details?.validation_errors) {
         (details.validation_errors as ValidationError[]).forEach(err => {
           const fieldName = err.loc[err.loc.length - 1];
