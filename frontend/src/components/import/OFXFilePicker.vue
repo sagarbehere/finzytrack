@@ -97,7 +97,9 @@
           <div
             class="animate-spin h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full"
           ></div>
-          <span class="text-sm font-medium text-gray-900 dark:text-white">Parsing OFX file...</span>
+          <span class="text-sm font-medium text-gray-900 dark:text-white">
+            {{ isParsing ? 'Parsing OFX file...' : isDetecting ? 'Detecting account...' : isLearning ? 'Learning account...' : 'Processing...' }}
+          </span>
         </div>
       </div>
     </div>
