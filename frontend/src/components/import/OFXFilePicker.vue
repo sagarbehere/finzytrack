@@ -153,16 +153,18 @@
           <!-- Editable Account Information -->
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
             <div>
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Beancount Account
-              </label>
-              <input
+              <AccountDropdown 
                 v-model="selectedAccount"
-                v-form-error="fieldErrors.beancount_account"
-                type="text"
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
-                placeholder="Assets:Bank:Account"
+                label="Beancount Account"
+                :account-types="['Assets', 'Liabilities']"
+                :allow-custom="true"
+                placeholder="Select or type account name..."
+                :custom-class="fieldErrors.beancount_account ? 'border-red-300 dark:border-red-600' : ''"
               />
+              <!-- Display field errors for the account dropdown -->
+              <div v-if="fieldErrors.beancount_account" class="mt-1 text-sm text-red-600 dark:text-red-400">
+                {{ fieldErrors.beancount_account }}
+              </div>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -234,6 +236,7 @@
     XMarkIcon,
   } from '@heroicons/vue/24/outline'
   import FormFeedback from '@/components/common/FormFeedback.vue'
+  import AccountDropdown from '@/components/common/AccountDropdown.vue'
   import { useOfxParser, type OfxFileDetails } from '@/composables/useOfxParser'
   import { useAccountDetector } from '@/composables/useAccountDetector'
 
