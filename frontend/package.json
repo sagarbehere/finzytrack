@@ -14,8 +14,10 @@
   "dependencies": {
     "@headlessui/vue": "^1.7.22",
     "@heroicons/vue": "^2.1.5",
+    "@tanstack/vue-table": "^8.21.3",
     "events": "^3.3.0",
     "ofx-js": "^0.2.0",
+    "uuid": "^13.0.0",
     "vue": "^3.4.0",
     "vue-router": "^4.4.0"
   },

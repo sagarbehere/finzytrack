@@ -54,6 +54,7 @@
             @fileSelected="handleFileSelected"
             @fileCleared="handleFileCleared"
             @parseError="handleParseError"
+            @proceedWithImport="handleProceedWithImport"
           />
         </div>
 
@@ -96,21 +97,82 @@
         </div>
       </div>
     </div>
+
+    <!-- Transaction table for raw OFX transactions (appears below the tabs) -->
+    <div v-if="showTransactionTable" class="mt-6">
+      <!-- Buttons above the table -->
+      <div class="flex justify-between items-center mb-4">
+        <button
+          @click="resetTable"
+          class="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2"
+        >
+          Reset
+        </button>
+        <button
+          @click="autocategorize"
+          class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+        >
+          Autocategorize
+        </button>
+      </div>
+      
+      <!-- Transaction table component -->
+      <TransactionTable
+        :transactions="transactionViewModels"
+        :editable="true"
+        :show-search="false"
+        :show-column-filters="false"
+        :show-summary="false"
+        @transactions-updated="handleTransactionsUpdated"
+      />
+      
+      <!-- Button below the table -->
+      <div class="flex justify-end mt-4">
+        <button
+          @click="registerTransactions"
+          class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+        >
+          Register Transactions
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
   import { ref } from 'vue'
   import OFXFilePicker from '@/components/import/OFXFilePicker.vue'
+  import TransactionTable from '@/components/common/TransactionTable.vue'
+  import { v4 as uuidv4 } from 'uuid'
+  import type { TransactionViewModel, PostingViewModel } from '@/types/transactions'
+
+  // Define OFX transaction interface to match what's expected
+  interface OFXTransaction {
+    NAME?: string
+    PAYEE?: string
+    MEMO?: string
+    CHECKNUM?: string
+    TRNAMT?: string
+    DTPOSTED?: string
+    TRNTYPE?: string
+    FITID?: string
+  }
 
   // Tab state
-  const activeTab = ref('ofx')
+  const activeTab = ref<string>('ofx')
 
   // File handling state
-  const selectedFileInfo = ref(null)
+  const selectedFileInfo = ref<{ fileName: string; fileSize: number; details: any } | null>(null)
+  
+  // Transaction table state
+  const showTransactionTable = ref<boolean>(false)
+  const rawTransactions = ref<OFXTransaction[]>([])
+  const transactionViewModels = ref<TransactionViewModel[]>([])
+  const sourceAccount = ref<string>('')
+  const currency = ref<string>('')
 
   // Event handlers
-  const handleFileSelected = (data) => {
+  const handleFileSelected = (data: { file: File; details: any }) => {
     selectedFileInfo.value = {
       fileName: data.file.name,
       fileSize: data.file.size,
@@ -120,10 +182,94 @@
 
   const handleFileCleared = () => {
     selectedFileInfo.value = null
+    showTransactionTable.value = false
+    transactionViewModels.value = []
   }
 
-  const handleParseError = (error) => {
+  const handleParseError = (error: any) => {
     console.error('Parse error:', error)
     selectedFileInfo.value = null
+    showTransactionTable.value = false
+    transactionViewModels.value = []
+  }
+
+  // Handle the Proceed button click from OFXFilePicker
+  const handleProceedWithImport = (payload: { file: File, details: any, account: string, currency: string }) => {
+    // Set the source account and currency
+    sourceAccount.value = payload.account
+    currency.value = payload.currency
+    
+    // Convert raw OFX transactions to TransactionViewModel format
+    rawTransactions.value = payload.details.rawTransactions
+    transactionViewModels.value = convertRawTransactionsToViewModels(payload.details.rawTransactions, payload.account, payload.currency)
+    
+    // Show the transaction table
+    showTransactionTable.value = true
+  }
+
+  // Convert raw OFX transactions to TransactionViewModel format
+  const convertRawTransactionsToViewModels = (rawTransactions: OFXTransaction[], sourceAccount: string, currency: string): TransactionViewModel[] => {
+    return rawTransactions.map(tx => {
+      // Extract payee and memo from the raw transaction
+      const payee = tx.NAME || tx.PAYEE || 'Unknown Payee'
+      const memo = tx.MEMO || tx.CHECKNUM || 'Imported from OFX'
+      const amount = parseFloat(tx.TRNAMT || '0') || 0
+      const date = tx.DTPOSTED ? new Date(tx.DTPOSTED.substring(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
+      
+      // Create postings - source account (negative for expenses) and target account
+      const postings: PostingViewModel[] = [
+        { 
+          account: sourceAccount, 
+          amount: -Math.abs(amount), // Negative for expenses/payments
+          currency: currency 
+        },
+        { 
+          account: 'Expenses:Unknown', // Default category to be updated later
+          amount: Math.abs(amount), // Positive for the expense account
+          currency: currency 
+        }
+      ]
+
+      return {
+        id: uuidv4(), // Generate a unique ID for the transaction
+        date: date,
+        flag: '*',
+        payee: payee,
+        narration: memo,
+        tags: [],
+        links: [],
+        postings: postings,
+        meta: {
+          ofx_id: tx.TRNTYPE ? `${tx.TRNTYPE}_${tx.FITID || tx.DTPOSTED || ''}` : undefined,
+          isNew: true,
+          isModified: false
+        },
+        import_details: {
+          confidence: 0, // No confidence yet
+          is_duplicate: false, // No duplicate check yet
+          duplicate_info: undefined // null is not allowed, use undefined
+        }
+      }
+    })
+  }
+
+  // Handle updates to transactions in the table
+  const handleTransactionsUpdated = (updatedTransactions: TransactionViewModel[]) => {
+    transactionViewModels.value = updatedTransactions
+  }
+
+  // Reset the table to original raw transactions
+  const resetTable = () => {
+    transactionViewModels.value = convertRawTransactionsToViewModels(rawTransactions.value, sourceAccount.value, currency.value)
+  }
+
+  // Autocategorize function (to be implemented later)
+  const autocategorize = () => {
+    alert('Autocategorization is not yet implemented. This will send transactions to the backend for processing.')
+  }
+
+  // Register transactions function (to be implemented later)
+  const registerTransactions = () => {
+    alert('Register Transactions is not yet implemented. This will send transactions to the backend for committing to the ledger.')
   }
 </script>
