@@ -1,5 +1,6 @@
 import { ref, computed, watch, type Ref } from 'vue'
 import { useToast } from '@/composables/useNotifications'
+import { useAccounts } from '@/composables/useAccounts'
 import { errorHandler } from '@/utils/ErrorHandler'
 import { 
   AccountsService, 
@@ -12,7 +13,8 @@ import {
 import type { OfxFileDetails } from './useOfxParser'
 
 export function useAccountDetector(fileDetails: Ref<OfxFileDetails | null>) {
-  const { success, error, info } = useToast()
+  const { success, error } = useToast()
+  const { invalidateCache } = useAccounts()
 
   const accountDetected = ref<boolean>(false)
   const selectedAccount = ref<string>('')
@@ -147,6 +149,9 @@ export function useAccountDetector(fileDetails: Ref<OfxFileDetails | null>) {
           };
           await AccountsService.createAccount(createRequestBody);
           success('Account Created', `Successfully created ${selectedAccount.value}.`);
+          
+          // Invalidate accounts cache after successful creation
+          invalidateCache();
 
           // 3. Final attempt to learn after creation
           const finalLearnResponse = await ImportService.learnOfxAccount(learnRequestBody);
