@@ -10,10 +10,10 @@
       <ComboboxInput 
         :class="[
           'block w-full rounded-md bg-white py-1.5 pr-12 pl-3 text-base text-gray-900',
-          'border border-gray-300 placeholder:text-gray-400',
-          'focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500',
-          'sm:text-sm dark:bg-white/5 dark:text-white dark:border-gray-600',
-          'dark:placeholder:text-gray-500 dark:focus:ring-indigo-500 dark:focus:border-indigo-500',
+          'outline outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400',
+          'focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600',
+          'sm:text-sm dark:bg-white/5 dark:text-white dark:outline-white/10',
+          'dark:placeholder:text-gray-500 dark:focus:outline-indigo-500',
           'disabled:bg-gray-100 disabled:cursor-not-allowed dark:disabled:bg-gray-700',
           customClass
         ]"
