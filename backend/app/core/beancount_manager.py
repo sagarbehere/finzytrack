@@ -13,6 +13,9 @@ from .ledger_initializer import LedgerInitializer
 from app.schemas.account_schemas import (
     AccountDetails, AccountCurrencyData, AccountCreateRequest, AccountCreateData
 )
+from app.schemas.commodity_schemas import (
+    CommodityDetails, CommodityUsageData, CommodityCreateRequest, CommodityCreateData
+)
 
 logger = logging.getLogger(__name__)
 
@@ -355,3 +358,221 @@ class BeancountManager:
         except Exception as e:
             logger.error(f"Error creating account directive: {e}")
             raise Exception(f"Error creating account: {str(e)}")
+
+    # =====================================
+    # Commodity Management Methods
+    # =====================================
+
+    def get_detailed_commodities(self) -> List[CommodityDetails]:
+        """Get comprehensive commodity information including usage statistics and metadata."""
+        if not os.path.exists(self.ledger_file):
+            raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
+        
+        entries, errors, _ = loader.load_file(self.ledger_file)
+        
+        if errors:
+            logger.warning(f"Beancount parsing warnings: {len(errors)} issues found")
+        
+        # Track commodity information by code
+        commodity_details_map: Dict[str, CommodityDetails] = {}
+        
+        # First pass: collect Commodity directives
+        for entry in entries:
+            if isinstance(entry, data.Commodity):
+                commodity_code = entry.currency
+                metadata = entry.meta if hasattr(entry, 'meta') else {}
+                
+                # Extract name and type from metadata
+                name = metadata.get('name')
+                commodity_type = metadata.get('type')
+                
+                commodity_details_map[commodity_code] = CommodityDetails(
+                    code=commodity_code,
+                    name=name,
+                    type=commodity_type,
+                    first_seen=entry.date.isoformat(),  # Start with directive date
+                    last_seen=entry.date.isoformat(),   # Will be updated from transactions
+                    usage=CommodityUsageData(transaction_count=0, total_volume=0.0),
+                    metadata=metadata
+                )
+        
+        # Second pass: discover commodities from transactions and price directives
+        commodity_usage: Dict[str, Dict[str, Any]] = {}
+        
+        for entry in entries:
+            if isinstance(entry, data.Transaction):
+                for posting in entry.postings:
+                    if posting.units:
+                        commodity_code = posting.units.currency
+                        
+                        if commodity_code not in commodity_usage:
+                            commodity_usage[commodity_code] = {
+                                "transaction_count": 0,
+                                "total_volume": Decimal(0),
+                                "first_seen": entry.date,
+                                "last_seen": entry.date
+                            }
+                        
+                        commodity_usage[commodity_code]["transaction_count"] += 1
+                        if posting.units.number is not None:
+                            commodity_usage[commodity_code]["total_volume"] += abs(posting.units.number)
+                        
+                        # Update date range
+                        if entry.date < commodity_usage[commodity_code]["first_seen"]:
+                            commodity_usage[commodity_code]["first_seen"] = entry.date
+                        if entry.date > commodity_usage[commodity_code]["last_seen"]:
+                            commodity_usage[commodity_code]["last_seen"] = entry.date
+                        
+                        # If commodity wasn't in directives, create entry for it
+                        if commodity_code not in commodity_details_map:
+                            commodity_details_map[commodity_code] = CommodityDetails(
+                                code=commodity_code,
+                                name=None,
+                                type=None,
+                                first_seen=entry.date.isoformat(),
+                                last_seen=entry.date.isoformat(),
+                                usage=CommodityUsageData(transaction_count=0, total_volume=0.0),
+                                metadata={}
+                            )
+            
+            elif isinstance(entry, data.Price):
+                # Discover commodities from price directives
+                commodity_code = entry.currency
+                
+                if commodity_code not in commodity_details_map:
+                    commodity_details_map[commodity_code] = CommodityDetails(
+                        code=commodity_code,
+                        name=None,
+                        type=None,
+                        first_seen=entry.date.isoformat(),
+                        last_seen=entry.date.isoformat(),
+                        usage=CommodityUsageData(transaction_count=0, total_volume=0.0),
+                        metadata={}
+                    )
+                else:
+                    # Update date range if price directive extends it
+                    first_seen_str = commodity_details_map[commodity_code].first_seen
+                    last_seen_str = commodity_details_map[commodity_code].last_seen
+                    
+                    current_first = datetime.fromisoformat(first_seen_str).date() if first_seen_str else entry.date
+                    current_last = datetime.fromisoformat(last_seen_str).date() if last_seen_str else entry.date
+                    
+                    if entry.date < current_first:
+                        commodity_details_map[commodity_code].first_seen = entry.date.isoformat()
+                    if entry.date > current_last:
+                        commodity_details_map[commodity_code].last_seen = entry.date.isoformat()
+        
+        # Third pass: merge usage data with commodity details
+        for commodity_code, commodity_detail in commodity_details_map.items():
+            if commodity_code in commodity_usage:
+                usage_data = commodity_usage[commodity_code]
+                
+                # Update usage statistics
+                commodity_detail.usage.transaction_count = usage_data["transaction_count"]
+                commodity_detail.usage.total_volume = float(usage_data["total_volume"])
+                
+                # Update date range (earliest first_seen, latest last_seen)
+                current_first = datetime.fromisoformat(commodity_detail.first_seen).date() if commodity_detail.first_seen else None
+                current_last = datetime.fromisoformat(commodity_detail.last_seen).date() if commodity_detail.last_seen else None
+                
+                usage_first = usage_data["first_seen"]
+                usage_last = usage_data["last_seen"]
+                
+                if current_first is None or usage_first < current_first:
+                    commodity_detail.first_seen = usage_first.isoformat()
+                if current_last is None or usage_last > current_last:
+                    commodity_detail.last_seen = usage_last.isoformat()
+        
+        return list(commodity_details_map.values())
+
+    def create_commodity_directive(self, request: CommodityCreateRequest) -> CommodityCreateData:
+        """Create a new commodity directive in the Beancount ledger."""
+        try:
+            # Validate commodity doesn't already exist
+            existing_commodities = self.get_detailed_commodities()
+            existing_codes = {commodity.code for commodity in existing_commodities}
+            
+            if request.code in existing_codes:
+                raise ValueError(f"Commodity already exists: {request.code}")
+            
+            # Build the commodity directive
+            today = datetime.now().date()
+            directive_lines = [f"{today} commodity {request.code}"]
+            
+            # Add name metadata if provided
+            if request.name:
+                directive_lines.append(f"  name: \"{request.name}\"")
+            
+            # Add type metadata (default to "Unknown" if not provided)
+            commodity_type = request.type or "Unknown"
+            directive_lines.append(f"  type: \"{commodity_type}\"")
+            
+            # Add additional metadata if provided
+            if request.metadata:
+                for key, value in request.metadata.items():
+                    if key not in ['name', 'type']:  # Don't duplicate name/type
+                        if isinstance(value, str):
+                            directive_lines.append(f"  {key}: \"{value}\"")
+                        else:
+                            directive_lines.append(f"  {key}: {value}")
+            
+            directive_text = "\n".join(directive_lines)
+            
+            # Use atomic write to add the directive
+            with self.backup_manager.atomic_write(self.ledger_file) as f:
+                current_content = f.read()
+                
+                # Insert commodity directive at the beginning after any existing commodity directives
+                lines = current_content.split('\n')
+                insert_index = 0
+                
+                # Find the best place to insert (after other commodity directives)
+                for i, line in enumerate(lines):
+                    if line.strip().startswith('commodity '):
+                        insert_index = i + 1
+                        # Skip any metadata lines following this commodity
+                        while (insert_index < len(lines) and 
+                               (lines[insert_index].strip().startswith(' ') or 
+                                lines[insert_index].strip() == '')):
+                            insert_index += 1
+                
+                # Insert the new directive
+                lines.insert(insert_index, directive_text)
+                lines.insert(insert_index + 1, '')  # Add blank line after
+                
+                new_content = '\n'.join(lines)
+                f.seek(0)
+                f.write(new_content)
+                f.truncate()
+            
+            # Get the created commodity details
+            try:
+                updated_commodities = self.get_detailed_commodities()
+                commodity_details = None
+                for commodity in updated_commodities:
+                    if commodity.code == request.code:
+                        commodity_details = commodity
+                        break
+                
+                return CommodityCreateData(
+                    commodity_created=True,
+                    commodity_details=commodity_details,
+                    message=f"Commodity '{request.code}' created successfully"
+                )
+                
+            except Exception as e:
+                logger.error(f"Error getting created commodity details: {e}")
+                # Commodity was created but we can't retrieve details
+                return CommodityCreateData(
+                    commodity_created=True,
+                    commodity_details=None,
+                    message=f"Commodity '{request.code}' created successfully (details unavailable)"
+                )
+                
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
+        except PermissionError:
+            raise PermissionError(f"Permission denied accessing ledger file: {self.ledger_file}")
+        except Exception as e:
+            logger.error(f"Error creating commodity directive: {e}")
+            raise Exception(f"Error creating commodity: {str(e)}")

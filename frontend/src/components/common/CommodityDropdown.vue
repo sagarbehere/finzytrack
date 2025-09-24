@@ -1,5 +1,5 @@
 <template>
-  <Combobox as="div" v-model="selectedAccount" @update:modelValue="handleAccountSelection">
+  <Combobox as="div" v-model="selectedCommodity" @update:modelValue="handleCommoditySelection">
     <ComboboxLabel 
       v-if="label" 
       class="block text-sm/6 font-medium text-gray-900 dark:text-white"
@@ -21,7 +21,7 @@
         :placeholder="placeholder"
         @change="query = $event.target.value" 
         @blur="query = ''" 
-        :display-value="(account: unknown) => (typeof account === 'string' ? account : '')"
+        :display-value="(commodity: unknown) => (typeof commodity === 'string' ? commodity : '')"
       />
       <ComboboxButton 
         class="absolute inset-y-0 right-0 flex items-center rounded-r-md px-2 focus:outline-hidden"
@@ -44,13 +44,13 @@
         leave-to-class="opacity-0"
       >
         <ComboboxOptions 
-          v-if="(filteredAccounts.length > 0 || query.length > 0) && !isLoading" 
+          v-if="(filteredCommodities.length > 0 || query.length > 0) && !isLoading" 
           class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10"
         >
-          <!-- Custom query option - allows user to type new account name -->
+          <!-- Custom query option - allows user to type new commodity code -->
           <ComboboxOption 
-            v-if="queryAccount && allowCustom" 
-            :value="queryAccount" 
+            v-if="queryCommodity && allowCustom" 
+            :value="queryCommodity" 
             as="template" 
             v-slot="{ active }"
           >
@@ -67,11 +67,11 @@
             </li>
           </ComboboxOption>
 
-          <!-- Filtered account options -->
+          <!-- Filtered commodity options -->
           <ComboboxOption 
-            v-for="accountName in filteredAccounts" 
-            :key="accountName" 
-            :value="accountName" 
+            v-for="commodityCode in filteredCommodities" 
+            :key="commodityCode" 
+            :value="commodityCode" 
             as="template" 
             v-slot="{ active }"
           >
@@ -81,18 +81,26 @@
                 ? 'bg-indigo-600 text-white outline-hidden dark:bg-indigo-500' 
                 : 'text-gray-900 dark:text-white'
             ]">
-              <span class="block truncate">
-                {{ accountName }}
-              </span>
+              <div class="flex items-center">
+                <span class="block truncate font-medium">
+                  {{ commodityCode }}
+                </span>
+                <span 
+                  v-if="getCommodityInfo(commodityCode)" 
+                  class="ml-2 text-sm opacity-75 truncate"
+                >
+                  {{ getCommodityInfo(commodityCode) }}
+                </span>
+              </div>
             </li>
           </ComboboxOption>
 
           <!-- No results message -->
           <div 
-            v-if="filteredAccounts.length === 0 && query.length > 0 && !allowCustom"
+            v-if="filteredCommodities.length === 0 && query.length > 0 && !allowCustom"
             class="px-3 py-2 text-gray-500 dark:text-gray-400 text-sm"
           >
-            No accounts found matching "{{ query }}"
+            No commodities found matching "{{ query }}"
           </div>
         </ComboboxOptions>
       </transition>
@@ -101,7 +109,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { ChevronDownIcon } from '@heroicons/vue/20/solid'
 import {
   Combobox,
@@ -111,7 +119,7 @@ import {
   ComboboxOption,
   ComboboxOptions,
 } from '@headlessui/vue'
-import { useAccounts } from '@/composables/useAccounts'
+import { useCommodities } from '@/composables/useCommodities'
 
 interface Props {
   modelValue?: string
@@ -123,43 +131,44 @@ interface Props {
   // Filtering options
   includePattern?: string | RegExp
   excludePattern?: string | RegExp
-  accountTypes?: string[] // e.g., ['Assets', 'Liabilities']
-  openOnly?: boolean
+  commodityTypes?: string[] // e.g., ['Currency', 'Stock']
+  showDetails?: boolean // Show commodity name/type in dropdown
 }
 
 const props = withDefaults(defineProps<Props>(), {
   modelValue: '',
-  placeholder: 'Search accounts...',
+  placeholder: 'Search commodities...',
   disabled: false,
   customClass: '',
   allowCustom: false,
-  openOnly: true
+  showDetails: true
 })
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
 }>()
 
-const { accountNames, accountDetails, isLoading, fetchAccounts } = useAccounts()
+const { commodityCodes, commodityDetails, isLoading, fetchCommodities } = useCommodities()
 
 // Local component state
 const query = ref('')
-const selectedAccount = ref(props.modelValue)
+const selectedCommodity = ref(props.modelValue)
 
-// Auto-fetch accounts on mount (cached, so safe to call everywhere)
+// Auto-fetch commodities on mount (cached, so safe to call everywhere)
 onMounted(() => {
-  fetchAccounts()
+  fetchCommodities()
 })
 
-// Filtered accounts based on query and props
-const filteredAccounts = computed(() => {
-  let accounts = accountNames.value
+// Filtered commodities based on query and props
+const filteredCommodities = computed(() => {
+  let commodities = commodityCodes.value
 
-  // Filter by account types (Assets:*, Liabilities:*, etc.)
-  if (props.accountTypes?.length) {
-    accounts = accounts.filter(name => 
-      props.accountTypes!.some(type => name.startsWith(`${type}:`))
-    )
+  // Filter by commodity types
+  if (props.commodityTypes?.length) {
+    commodities = commodities.filter(code => {
+      const commodity = commodityDetails.value.find(c => c.code === code)
+      return commodity && commodity.type && props.commodityTypes!.includes(commodity.type)
+    })
   }
 
   // Filter by include pattern
@@ -167,7 +176,7 @@ const filteredAccounts = computed(() => {
     const pattern = typeof props.includePattern === 'string' 
       ? new RegExp(props.includePattern, 'i')
       : props.includePattern
-    accounts = accounts.filter(name => pattern.test(name))
+    commodities = commodities.filter(code => pattern.test(code))
   }
 
   // Filter by exclude pattern
@@ -175,42 +184,47 @@ const filteredAccounts = computed(() => {
     const pattern = typeof props.excludePattern === 'string'
       ? new RegExp(props.excludePattern, 'i') 
       : props.excludePattern
-    accounts = accounts.filter(name => !pattern.test(name))
-  }
-
-  // Filter open accounts only
-  if (props.openOnly) {
-    const openAccountNames = accountDetails.value
-      .filter(account => !account.close_date)
-      .map(account => account.name)
-    accounts = accounts.filter(name => openAccountNames.includes(name))
+    commodities = commodities.filter(code => !pattern.test(code))
   }
 
   // Apply search query filter
   if (query.value === '') {
-    return accounts.sort() // Show all when no query
+    return commodities.sort() // Show all when no query
   } else {
-    return accounts
-      .filter(name => name.toLowerCase().includes(query.value.toLowerCase()))
+    return commodities
+      .filter(code => code.toLowerCase().includes(query.value.toLowerCase()))
       .sort()
   }
 })
 
-// Custom query account (for allowing new account names)
-const queryAccount = computed(() => {
-  return query.value === '' ? null : query.value
+// Custom query commodity (for allowing new commodity codes)
+const queryCommodity = computed(() => {
+  return query.value === '' ? null : query.value.toUpperCase()
 })
 
-// Handle account selection
-const handleAccountSelection = (value: string) => {
-  selectedAccount.value = value
+// Get commodity info for display
+const getCommodityInfo = (code: string): string | null => {
+  if (!props.showDetails) return null
+  
+  const commodity = commodityDetails.value.find(c => c.code === code)
+  if (!commodity) return null
+  
+  const parts = []
+  if (commodity.name) parts.push(commodity.name)
+  if (commodity.type) parts.push(`(${commodity.type})`)
+  
+  return parts.length > 0 ? parts.join(' ') : null
+}
+
+// Handle commodity selection
+const handleCommoditySelection = (value: string) => {
+  selectedCommodity.value = value
   emit('update:modelValue', value)
   query.value = '' // Clear search query after selection
 }
 
 // Watch for external changes to modelValue
-import { watch } from 'vue'
 watch(() => props.modelValue, (newValue) => {
-  selectedAccount.value = newValue
+  selectedCommodity.value = newValue
 })
 </script>

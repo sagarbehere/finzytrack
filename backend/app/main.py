@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 
 from .config import Config, ConfigurationError
 from .api.routers.importer import ofx_accounts, transaction
-from .api.routers import accounts
+from .api.routers import accounts, commodities
 from .core.beancount_manager import BeancountManager
 from .error_handler import setup_error_handlers
 from .core.backup_manager import BackupManager
@@ -129,6 +129,7 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(ofx_accounts.router, prefix="/api/import", tags=["import"])
     app.include_router(transaction.router, prefix="/api/import", tags=["import"])
     app.include_router(accounts.router, prefix="/api", tags=["accounts"])
+    app.include_router(commodities.router, prefix="/api", tags=["commodities"])
     
     @app.get("/")
     async def root():
