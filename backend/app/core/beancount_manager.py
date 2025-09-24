@@ -518,29 +518,18 @@ class BeancountManager:
             
             directive_text = "\n".join(directive_lines)
             
-            # Use atomic write to add the directive
+            # Use atomic write to add the directive (SIMPLE APPEND)
             with self.backup_manager.atomic_write(self.ledger_file) as f:
                 current_content = f.read()
                 
-                # Insert commodity directive at the beginning after any existing commodity directives
-                lines = current_content.split('\n')
-                insert_index = 0
+                # Simple append with proper formatting
+                if current_content and not current_content.endswith('\n'):
+                    current_content += '\n'
+                if current_content and not current_content.endswith('\n\n'):
+                    current_content += '\n'
+                    
+                new_content = current_content + directive_text + '\n'
                 
-                # Find the best place to insert (after other commodity directives)
-                for i, line in enumerate(lines):
-                    if line.strip().startswith('commodity '):
-                        insert_index = i + 1
-                        # Skip any metadata lines following this commodity
-                        while (insert_index < len(lines) and 
-                               (lines[insert_index].strip().startswith(' ') or 
-                                lines[insert_index].strip() == '')):
-                            insert_index += 1
-                
-                # Insert the new directive
-                lines.insert(insert_index, directive_text)
-                lines.insert(insert_index + 1, '')  # Add blank line after
-                
-                new_content = '\n'.join(lines)
                 f.seek(0)
                 f.write(new_content)
                 f.truncate()
