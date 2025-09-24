@@ -25,7 +25,9 @@ export function useAccountDetector(fileDetails: Ref<OfxFileDetails | null>) {
   const fieldErrors = ref<{ [key: string]: string }>({});
 
   const formLevelMessage = computed<string>(() => {
-    if (accountDetected.value) {
+    if (isDetecting.value) {
+      return 'Detecting accounts...'
+    } else if (accountDetected.value) {
       return 'Account detected successfully'
     } else if (fileDetails.value && Object.keys(fieldErrors.value).length === 0) {
       return 'No matching account found. Please verify account details.'
