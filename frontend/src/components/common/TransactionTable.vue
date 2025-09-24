@@ -11,226 +11,184 @@
     </div>
 
     <!-- Main table -->
-    <div class="overflow-x-auto border border-gray-200 rounded-lg dark:border-gray-700">
-      <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-        <thead class="bg-gray-50 dark:bg-gray-800">
+    <div class="overflow-x-auto border border-gray-300 rounded-lg dark:border-gray-600">
+      <table class="min-w-full table-auto">
+        <thead class="bg-gray-100 border-b-2 border-gray-300 dark:bg-gray-800 dark:border-gray-600">
           <tr>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400 w-12">#</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400 w-24">Date</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400 w-16">Flag</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">Payee</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">Narration</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">Tags/Links</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">Account</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">Amount</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">Currency</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">Actions</th>
+            <th class="px-2 py-2 text-left text-xs font-bold text-gray-700 border-r border-gray-300 dark:text-gray-300 dark:border-gray-600 w-8">#</th>
+            <th class="px-2 py-2 text-left text-xs font-bold text-gray-700 border-r border-gray-300 dark:text-gray-300 dark:border-gray-600 w-24">Date</th>
+            <th class="px-2 py-2 text-left text-xs font-bold text-gray-700 border-r border-gray-300 dark:text-gray-300 dark:border-gray-600 w-12">Flag</th>
+            <th class="px-2 py-2 text-left text-xs font-bold text-gray-700 border-r border-gray-300 dark:text-gray-300 dark:border-gray-600 w-32">Payee</th>
+            <th class="px-2 py-2 text-left text-xs font-bold text-gray-700 border-r border-gray-300 dark:text-gray-300 dark:border-gray-600 w-48">Narration</th>
+            <th class="px-2 py-2 text-left text-xs font-bold text-gray-700 border-r border-gray-300 dark:text-gray-300 dark:border-gray-600 w-32">Tags/Links</th>
+            <th class="px-2 py-2 text-left text-xs font-bold text-gray-700 border-r border-gray-300 dark:text-gray-300 dark:border-gray-600">Account</th>
+            <th class="px-2 py-2 text-left text-xs font-bold text-gray-700 border-r border-gray-300 dark:text-gray-300 dark:border-gray-600 w-24 text-right">Amount</th>
+            <th class="px-2 py-2 text-left text-xs font-bold text-gray-700 border-r border-gray-300 dark:text-gray-300 dark:border-gray-600 w-16">Currency</th>
+            <th class="px-2 py-2 text-left text-xs font-bold text-gray-700 dark:text-gray-300 w-16">Actions</th>
           </tr>
         </thead>
-        <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-800">
+        <tbody class="bg-white">
           <template v-for="(transaction, transactionIndex) in displayedTransactions" :key="transaction.id">
-            <tr 
-              :class="{
-                'bg-red-100 dark:bg-red-900/30': !isTransactionBalanced(transaction),
-                'bg-gray-50 dark:bg-gray-800': transaction.import_details?.is_duplicate
-              }"
-            >
-              <td class="px-4 py-2 text-sm text-gray-900 dark:text-white">{{ transactionIndex + 1 }}</td>
-              <td class="px-4 py-2 text-sm">
-                <input
-                  v-if="editable"
-                  type="date"
-                  :value="transaction.date"
-                  @input="updateTransactionDate(transaction, ($event.target as HTMLInputElement).value)"
-                  class="w-full px-2 py-1 text-sm border border-gray-300 rounded shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-                />
-                <span v-else class="text-gray-900 dark:text-white">{{ transaction.date }}</span>
-              </td>
-              <td class="px-4 py-2 text-sm">
-                <select
-                  v-if="editable"
-                  :value="transaction.flag"
-                  @change="updateTransactionFlag(transaction, ($event.target as HTMLSelectElement).value)"
-                  class="w-full px-2 py-1 text-sm border border-gray-300 rounded shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-                >
-                  <option value="*">*</option>
-                  <option value="!">!</option>
-                </select>
-                <span v-else class="text-gray-900 dark:text-white">{{ transaction.flag }}</span>
-              </td>
-              <td class="px-4 py-2 text-sm">
-                <input
-                  v-if="editable"
-                  type="text"
-                  :value="transaction.payee"
-                  @input="updateTransactionPayee(transaction, ($event.target as HTMLInputElement).value)"
-                  class="w-full px-2 py-1 text-sm border border-gray-300 rounded shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-                />
-                <span v-else class="text-gray-900 dark:text-white">{{ transaction.payee }}</span>
-              </td>
-              <td class="px-4 py-2 text-sm">
-                <input
-                  v-if="editable"
-                  type="text"
-                  :value="transaction.narration"
-                  @input="updateTransactionNarration(transaction, ($event.target as HTMLInputElement).value)"
-                  class="w-full px-2 py-1 text-sm border border-gray-300 rounded shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-                />
-                <span v-else class="text-gray-900 dark:text-white">{{ transaction.narration }}</span>
-              </td>
-              <td class="px-4 py-2 text-sm">
-                <input
-                  v-if="editable"
-                  type="text"
-                  :value="[...transaction.tags, ...transaction.links.map(l => `^${l}`)].join(' ')"
-                  @input="updateTransactionTagsLinks(transaction, ($event.target as HTMLInputElement).value)"
-                  class="w-full px-2 py-1 text-sm border border-gray-300 rounded shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-                />
-                <span v-else class="text-gray-900 dark:text-white">{{ [...transaction.tags, ...transaction.links.map(l => `^${l}`)].join(' ') }}</span>
-              </td>
-              <td class="px-4 py-2 text-sm">
-                <select
-                  v-if="editable"
-                  :value="transaction.postings[0]?.account || ''"
-                  @change="updateFirstPostingAccount(transaction, ($event.target as HTMLSelectElement).value)"
-                  class="w-full px-2 py-1 text-sm border border-gray-300 rounded shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-                >
-                  <option v-for="account in availableAccounts" :key="account" :value="account">
-                    {{ account }}
-                  </option>
-                </select>
-                <span v-else class="text-gray-900 dark:text-white">{{ transaction.postings[0]?.account || '' }}</span>
-              </td>
-              <td class="px-4 py-2 text-sm">
-                <input
-                  v-if="editable"
-                  type="number"
-                  step="0.01"
-                  :value="transaction.postings[0]?.amount || ''"
-                  @input="updateFirstPostingAmount(transaction, ($event.target as HTMLInputElement).value)"
-                  class="w-full px-2 py-1 text-sm border border-gray-300 rounded shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-                />
-                <span v-else class="text-gray-900 dark:text-white">{{ transaction.postings[0]?.amount }}</span>
-              </td>
-              <td class="px-4 py-2 text-sm">
-                <select
-                  v-if="editable"
-                  :value="transaction.postings[0]?.currency || 'USD'"
-                  @change="updateFirstPostingCurrency(transaction, ($event.target as HTMLSelectElement).value)"
-                  class="w-full px-2 py-1 text-sm border border-gray-300 rounded shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-                >
-                  <option v-for="currency in availableCurrencies" :key="currency" :value="currency">
-                    {{ currency }}
-                  </option>
-                </select>
-                <span v-else class="text-gray-900 dark:text-white">{{ transaction.postings[0]?.currency || 'USD' }}</span>
-              </td>
-              <td class="px-4 py-2 text-sm text-gray-400">Actions</td>
-            </tr>
-            <!-- Posting rows for multi-posting transactions -->
-            <tr 
-              v-for="(posting, postingIndex) in transaction.postings.slice(1)" 
-              :key="`posting-${transaction.id}-${postingIndex}`"
-              :class="{
-                'bg-red-100 dark:bg-red-900/30': !isTransactionBalanced(transaction),
-                'bg-gray-50 dark:bg-gray-800': transaction.import_details?.is_duplicate
-              }"
-            >
-              <td class="px-4 py-2 text-sm text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-700"></td>
-              <td class="px-4 py-2 text-sm text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-700"></td>
-              <td class="px-4 py-2 text-sm text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-700"></td>
-              <td class="px-4 py-2 text-sm text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-700"></td>
-              <td class="px-4 py-2 text-sm text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-700"></td>
-              <td class="px-4 py-2 text-sm text-gray-500 dark:text-gray-400 border-t border-gray-200 dark:border-gray-700"></td>
-              <td class="px-4 py-2 text-sm">
-                <select 
-                  v-if="editable"
-                  :value="posting.account"
-                  @change="updatePostingAccount(transaction, postingIndex + 1, ($event.target as HTMLSelectElement).value)"
-                  class="w-full px-2 py-1 text-sm border border-gray-300 rounded shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-                >
-                  <option v-for="account in availableAccounts" :key="account" :value="account">
-                    {{ account }}
-                  </option>
-                </select>
-                <span v-else class="text-gray-900 dark:text-white">{{ posting.account }}</span>
-              </td>
-              <td class="px-4 py-2 text-sm">
-                <input
-                  v-if="editable"
-                  type="number"
-                  step="0.01"
-                  :value="posting.amount || ''"
-                  @input="updatePostingAmount(transaction, postingIndex + 1, ($event.target as HTMLInputElement).value)"
-                  class="w-full px-2 py-1 text-sm border border-gray-300 rounded shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-                />
-                <span v-else class="text-gray-900 dark:text-white">{{ posting.amount }}</span>
-              </td>
-              <td class="px-4 py-2 text-sm">
-                <select
-                  v-if="editable"
-                  :value="posting.currency"
-                  @change="updatePostingCurrency(transaction, postingIndex + 1, ($event.target as HTMLSelectElement).value)"
-                  class="w-full px-2 py-1 text-sm border border-gray-300 rounded shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-                >
-                  <option v-for="currency in availableCurrencies" :key="currency" :value="currency">
-                    {{ currency }}
-                  </option>
-                </select>
-                <span v-else class="text-gray-900 dark:text-white">{{ posting.currency }}</span>
-              </td>
-              <td v-if="editable" class="px-4 py-2 text-sm">
-                <div class="flex space-x-1">
-                  <button 
-                    @click="removePosting(transaction, postingIndex + 1)"
-                    class="px-2 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600"
+            <template v-for="(posting, postingIndex) in transaction.postings" :key="`posting-${transaction.id}-${postingIndex}`">
+              <tr 
+                :class="[
+                  'transaction-row',
+                  `transaction-${transaction.id}`,
+                  postingIndex === 0 ? 'border-t-2 border-blue-300 dark:border-blue-700' : 'border-t border-gray-200 dark:border-gray-700',
+                  postingIndex === transaction.postings.length - 1 ? 'border-b-2 border-blue-300 dark:border-blue-700' : 'border-b border-gray-200 dark:border-gray-700',
+                  {
+                    'bg-red-100/30 dark:bg-red-900/20': !isTransactionBalanced(transaction),
+                    'bg-gray-50 dark:bg-gray-800/50': transaction.import_details?.is_duplicate
+                  }
+                ]"
+                @mouseenter="highlightTransaction(transaction.id, true)"
+                @mouseleave="highlightTransaction(transaction.id, false)"
+              >
+                <!-- Row Number - only on first posting row -->
+                <td v-if="postingIndex === 0" :rowspan="transaction.postings.length" class="px-2 py-2 text-xs text-gray-500 border-r border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700 align-top">
+                  {{ getRowNumber(transactionIndex) }}
+                </td>
+
+                <!-- Date - only on first posting row -->
+                <td v-if="postingIndex === 0" :rowspan="transaction.postings.length" class="px-2 py-2 border-r border-gray-200 dark:border-gray-700 align-top">
+                  <input
+                    v-if="editable"
+                    type="date"
+                    :value="transaction.date"
+                    @input="updateTransactionDate(transaction, ($event.target as HTMLInputElement).value)"
+                    class="w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 bg-yellow-50 dark:bg-gray-700 dark:text-white text-sm"
+                  />
+                  <span v-else class="text-gray-900 dark:text-white text-sm">{{ transaction.date }}</span>
+                </td>
+
+                <!-- Flag - only on first posting row -->
+                <td v-if="postingIndex === 0" :rowspan="transaction.postings.length" class="px-2 py-2 border-r border-gray-200 dark:border-gray-700 align-top">
+                  <select
+                    v-if="editable"
+                    :value="transaction.flag"
+                    @change="updateTransactionFlag(transaction, ($event.target as HTMLSelectElement).value)"
+                    class="w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 bg-yellow-50 dark:bg-gray-700 dark:text-white text-sm"
                   >
-                    Remove
-                  </button>
-                </div>
-              </td>
-              <td v-else class="px-4 py-2 text-sm"></td>
-            </tr>
-            
-            <!-- Action row for first posting -->
-            <tr 
-              v-if="editable"
-              :key="`actions-${transaction.id}`"
-              :class="{
-                'bg-red-100 dark:bg-red-900/30': !isTransactionBalanced(transaction),
-                'bg-gray-50 dark:bg-gray-800': transaction.import_details?.is_duplicate
-              }"
-            >
-              <td :colspan="9" class="px-4 py-2 text-sm border-t border-gray-200 dark:border-gray-700">
-                <div class="flex justify-between">
-                  <button 
-                    @click="removeTransaction(transaction)"
-                    class="px-3 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600"
+                    <option value="*">*</option>
+                    <option value="!">!</option>
+                  </select>
+                  <span v-else class="text-gray-900 dark:text-white text-sm">{{ transaction.flag }}</span>
+                </td>
+
+                <!-- Payee - only on first posting row -->
+                <td v-if="postingIndex === 0" :rowspan="transaction.postings.length" class="px-2 py-2 border-r border-gray-200 dark:border-gray-700 align-top">
+                  <input
+                    v-if="editable"
+                    type="text"
+                    :value="transaction.payee"
+                    @input="updateTransactionPayee(transaction, ($event.target as HTMLInputElement).value)"
+                    class="w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 bg-yellow-50 dark:bg-gray-700 dark:text-white text-sm"
+                    placeholder="Payee"
+                  />
+                  <span v-else class="text-gray-900 dark:text-white text-sm">{{ transaction.payee }}</span>
+                </td>
+
+                <!-- Narration - only on first posting row -->
+                <td v-if="postingIndex === 0" :rowspan="transaction.postings.length" class="px-2 py-2 border-r border-gray-200 dark:border-gray-700 align-top">
+                  <input
+                    v-if="editable"
+                    type="text"
+                    :value="transaction.narration"
+                    @input="updateTransactionNarration(transaction, ($event.target as HTMLInputElement).value)"
+                    class="w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 bg-yellow-50 dark:bg-gray-700 dark:text-white text-sm"
+                    placeholder="Description"
+                  />
+                  <span v-else class="text-gray-900 dark:text-white text-sm">{{ transaction.narration }}</span>
+                </td>
+
+                <!-- Tags/Links - only on first posting row -->
+                <td v-if="postingIndex === 0" :rowspan="transaction.postings.length" class="px-2 py-2 border-r border-gray-200 dark:border-gray-700 align-top">
+                  <input
+                    v-if="editable"
+                    type="text"
+                    :value="[...transaction.tags, ...transaction.links.map(l => `^${l}`)].join(' ')"
+                    @input="updateTransactionTagsLinks(transaction, ($event.target as HTMLInputElement).value)"
+                    class="w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 dark:bg-gray-700 dark:text-white text-sm"
+                    placeholder="#tag ^link"
+                  />
+                  <span v-else class="text-gray-900 dark:text-white text-sm">{{ [...transaction.tags, ...transaction.links.map(l => `^${l}`)].join(' ') }}</span>
+                </td>
+
+                <!-- Account - one row per posting -->
+                <td class="px-2 py-2 border-r border-gray-200 dark:border-gray-700">
+                  <select
+                    v-if="editable"
+                    :value="posting.account"
+                    @change="updatePostingAccount(transaction, postingIndex, ($event.target as HTMLSelectElement).value)"
+                    class="w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 dark:bg-gray-800 dark:text-white text-sm"
                   >
-                    Remove Transaction
-                  </button>
-                  <div class="flex space-x-2">
+                    <option v-for="account in availableAccounts" :key="account" :value="account">
+                      {{ account }}
+                    </option>
+                  </select>
+                  <span v-else class="text-gray-900 dark:text-white text-sm">{{ posting.account }}</span>
+                </td>
+
+                <!-- Amount - one row per posting -->
+                <td class="px-2 py-2 border-r border-gray-200 dark:border-gray-700 text-right">
+                  <input
+                    v-if="editable"
+                    type="number"
+                    step="0.01"
+                    :value="posting.amount || ''"
+                    @input="updatePostingAmount(transaction, postingIndex, ($event.target as HTMLInputElement).value)"
+                    class="w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 text-right dark:bg-gray-800 dark:text-white text-sm"
+                    :class="posting.amount && posting.amount > 0 ? 'text-green-700 bg-green-50 dark:bg-green-900/20' : posting.amount && posting.amount < 0 ? 'text-red-700 bg-red-50 dark:bg-red-900/20' : ''"
+                  />
+                  <span v-else class="text-gray-900 dark:text-white text-sm" :class="posting.amount && posting.amount > 0 ? 'text-green-700' : posting.amount && posting.amount < 0 ? 'text-red-700' : ''">{{ posting.amount }}</span>
+                </td>
+
+                <!-- Currency - one row per posting -->
+                <td class="px-2 py-2 border-r border-gray-200 dark:border-gray-700">
+                  <select
+                    v-if="editable"
+                    :value="posting.currency"
+                    @change="updatePostingCurrency(transaction, postingIndex, ($event.target as HTMLSelectElement).value)"
+                    class="w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 dark:bg-gray-800 dark:text-white text-sm"
+                  >
+                    <option v-for="currency in availableCurrencies" :key="currency" :value="currency">
+                      {{ currency }}
+                    </option>
+                  </select>
+                  <span v-else class="text-gray-900 dark:text-white text-sm">{{ posting.currency }}</span>
+                </td>
+
+                <!-- Actions - one row per posting -->
+                <td class="px-2 py-2 text-center">
+                  <div v-if="editable" class="flex gap-1 justify-center text-sm">
                     <button 
-                      @click="addPosting(transaction)"
-                      class="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600"
+                      v-if="postingIndex === 0" 
+                      @click="removePosting(transaction, 0)"
+                      class="text-red-600 hover:text-red-800 text-xs px-1 dark:text-red-400 dark:hover:text-red-300"
+                      title="Remove posting"
                     >
-                      Add Posting
+                      ×
+                    </button>
+                    <button 
+                      v-if="postingIndex === 0" 
+                      @click="addPosting(transaction)"
+                      class="text-green-600 hover:text-green-800 text-xs px-1 dark:text-green-400 dark:hover:text-green-300"
+                      title="Add posting"
+                    >
+                      +
+                    </button>
+                    <button 
+                      v-else
+                      @click="removePosting(transaction, postingIndex)"
+                      class="text-red-600 hover:text-red-800 text-xs px-1 dark:text-red-400 dark:hover:text-red-300"
+                      title="Remove posting"
+                    >
+                      ×
                     </button>
                   </div>
-                </div>
-              </td>
-              <td v-if="editable" class="px-4 py-2 text-sm border-t border-gray-200 dark:border-gray-700">
-                <div class="flex justify-end space-x-1">
-                  <button 
-                    @click="removePosting(transaction, 0)"
-                    v-if="transaction.postings.length > 1"
-                    class="px-2 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600"
-                  >
-                    Remove
-                  </button>
-                </div>
-              </td>
-            </tr>
+                </td>
+              </tr>
+            </template>
           </template>
         </tbody>
       </table>
@@ -317,6 +275,11 @@ const globalFilter = ref('')
 const currentPage = ref(1)
 const availableAccounts = ref<string[]>([])
 const availableCurrencies = ref<string[]>([])
+
+// Calculate row number taking pagination into account
+const getRowNumber = (transactionIndex: number) => {
+  return (currentPage.value - 1) * props.pageSize + transactionIndex + 1
+}
 
 // Pagination
 const totalPages = computed(() => {
@@ -407,6 +370,10 @@ const isTransactionBalanced = (transaction: TransactionViewModel): boolean => {
 }
 
 // Pagination methods
+
+
+
+// Pagination methods
 const nextPage = () => {
   if (currentPage.value < totalPages.value) {
     currentPage.value++
@@ -475,41 +442,6 @@ const updateTransactionTagsLinks = (transaction: TransactionViewModel, newValue:
     
     updatedTransactions[txIndex].tags = tags
     updatedTransactions[txIndex].links = links
-    updatedTransactions[txIndex].meta.isModified = true
-    emit('transactionsUpdated', updatedTransactions)
-  }
-}
-
-// Update first posting properties
-const updateFirstPostingAccount = (transaction: TransactionViewModel, newAccount: string) => {
-  const updatedTransactions = [...props.transactions]
-  const txIndex = updatedTransactions.findIndex(t => t.id === transaction.id)
-  
-  if (txIndex !== -1 && updatedTransactions[txIndex].postings[0]) {
-    updatedTransactions[txIndex].postings[0].account = newAccount
-    updatedTransactions[txIndex].meta.isModified = true
-    emit('transactionsUpdated', updatedTransactions)
-  }
-}
-
-const updateFirstPostingAmount = (transaction: TransactionViewModel, newAmount: string) => {
-  const updatedTransactions = [...props.transactions]
-  const txIndex = updatedTransactions.findIndex(t => t.id === transaction.id)
-  
-  if (txIndex !== -1 && updatedTransactions[txIndex].postings[0]) {
-    const amount = newAmount ? parseFloat(newAmount) : null
-    updatedTransactions[txIndex].postings[0].amount = amount
-    updatedTransactions[txIndex].meta.isModified = true
-    emit('transactionsUpdated', updatedTransactions)
-  }
-}
-
-const updateFirstPostingCurrency = (transaction: TransactionViewModel, newCurrency: string) => {
-  const updatedTransactions = [...props.transactions]
-  const txIndex = updatedTransactions.findIndex(t => t.id === transaction.id)
-  
-  if (txIndex !== -1 && updatedTransactions[txIndex].postings[0]) {
-    updatedTransactions[txIndex].postings[0].currency = newCurrency
     updatedTransactions[txIndex].meta.isModified = true
     emit('transactionsUpdated', updatedTransactions)
   }
@@ -623,3 +555,20 @@ defineExpose({
   }
 })
 </script>
+
+<style>
+/* Hover effect for entire transaction rows */
+.transaction-table-container tr:hover {
+  background-color: rgba(219, 234, 254, 0.5) !important; /* Light blue for light mode */
+}
+
+.transaction-table-container .dark tr:hover {
+  background-color: rgba(55, 65, 81, 0.5) !important; /* Gray-700 equivalent for dark mode */
+}
+
+/* Ensure text colors remain readable when row is highlighted */
+.transaction-table-container tr:hover td,
+.transaction-table-container tr:hover th {
+  /* Colors will be controlled by text-gray-900/dark:text-white classes */
+}
+</style>
