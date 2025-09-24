@@ -36,10 +36,8 @@
                   `transaction-${transaction.id}`,
                   postingIndex === 0 ? 'border-t-2 border-blue-300 dark:border-blue-700' : 'border-t border-gray-200 dark:border-gray-700',
                   postingIndex === transaction.postings.length - 1 ? 'border-b-2 border-blue-300 dark:border-blue-700' : 'border-b border-gray-200 dark:border-gray-700',
-                  {
-                    'bg-red-100/30 dark:bg-red-900/20': !isTransactionBalanced(transaction),
-                    'bg-gray-50 dark:bg-gray-800/50': transaction.import_details?.is_duplicate
-                  }
+                  !isTransactionBalanced(transaction) ? 'bg-red-100/30 dark:bg-red-900/20' : '',
+                  transaction.import_details?.is_duplicate ? 'bg-gray-50 dark:bg-gray-800/50' : ''
                 ]"
                 @mouseenter="highlightTransaction(transaction.id, true)"
                 @mouseleave="highlightTransaction(transaction.id, false)"
@@ -240,7 +238,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import type { TransactionViewModel, PostingViewModel } from '@/types/transactions'
+import type { TransactionViewModel } from '@/types/transactions'
 
 // Define props
 interface Props {
@@ -384,6 +382,12 @@ const prevPage = () => {
   if (currentPage.value > 1) {
     currentPage.value--
   }
+}
+
+// Highlight transaction rows
+const highlightTransaction = (_transactionId: string, _highlight: boolean) => {
+  // This function is called on mouse events but doesn't need to do anything
+  // since we're using CSS hover effects
 }
 
 // Update transaction properties
@@ -570,5 +574,6 @@ defineExpose({
 .transaction-table-container tr:hover td,
 .transaction-table-container tr:hover th {
   /* Colors will be controlled by text-gray-900/dark:text-white classes */
+  color: inherit;
 }
 </style>
