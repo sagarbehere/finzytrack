@@ -118,6 +118,7 @@
       
       <!-- Transaction table component -->
       <TransactionTable
+        ref="transactionTableRef"
         :transactions="transactionViewModels"
         :editable="true"
         :show-search="false"
@@ -140,7 +141,7 @@
 </template>
 
 <script setup lang="ts">
-  import { ref } from 'vue'
+  import { ref, nextTick } from 'vue'
   import OFXFilePicker from '@/components/import/OFXFilePicker.vue'
   import TransactionTable from '@/components/common/TransactionTable.vue'
   import { v4 as uuidv4 } from 'uuid'
@@ -170,6 +171,7 @@
   const transactionViewModels = ref<TransactionViewModel[]>([])
   const sourceAccount = ref<string>('')
   const currency = ref<string>('')
+  const transactionTableRef = ref<InstanceType<typeof TransactionTable> | null>(null)
 
   // Event handlers
   const handleFileSelected = (data: { file: File; details: any }) => {
@@ -205,6 +207,13 @@
     
     // Show the transaction table
     showTransactionTable.value = true
+    
+    // Scroll to the transaction table after it's rendered
+    nextTick(() => {
+      if (transactionTableRef.value) {
+        transactionTableRef.value.scrollToTable()
+      }
+    })
   }
 
   // Convert raw OFX transactions to TransactionViewModel format
