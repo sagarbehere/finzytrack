@@ -158,15 +158,17 @@
 
                 <!-- Actions - one row per posting -->
                 <td class="px-2 py-2 text-center">
-                  <div v-if="editable" class="flex gap-1 justify-center text-sm">
+                  <div v-if="editable" class="flex items-center justify-center gap-1 text-sm">
+                    <!-- Remove posting button - appears in same position for all rows -->
                     <button 
-                      v-if="postingIndex === 0" 
-                      @click="removePosting(transaction, 0)"
+                      @click="removePosting(transaction, postingIndex)"
                       class="text-red-600 hover:text-red-800 text-xs px-1 dark:text-red-400 dark:hover:text-red-300"
                       title="Remove posting"
                     >
                       ×
                     </button>
+                    
+                    <!-- Add posting button - only on first posting row -->
                     <button 
                       v-if="postingIndex === 0" 
                       @click="addPosting(transaction)"
@@ -175,14 +177,20 @@
                     >
                       +
                     </button>
+                    <!-- Hidden element to maintain spacing for other rows -->
+                    <span v-else class="text-xs px-1 invisible">+</span>
+                    
+                    <!-- Remove transaction button - only on first posting row -->
                     <button 
-                      v-else
-                      @click="removePosting(transaction, postingIndex)"
+                      v-if="postingIndex === 0" 
+                      @click="removeTransaction(transaction)"
                       class="text-red-600 hover:text-red-800 text-xs px-1 dark:text-red-400 dark:hover:text-red-300"
-                      title="Remove posting"
+                      title="Remove transaction"
                     >
-                      ×
+                      −
                     </button>
+                    <!-- Hidden element to maintain spacing for other rows -->
+                    <span v-else class="text-xs px-1 invisible">−</span>
                   </div>
                 </td>
               </tr>
