@@ -227,16 +227,16 @@
       const amount = parseFloat(tx.TRNAMT || '0') || 0
       const date = tx.DTPOSTED ? new Date(tx.DTPOSTED.substring(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
       
-      // Create postings - source account (negative for expenses) and target account
+      // Create postings - preserve original amount signs from OFX
       const postings: PostingViewModel[] = [
         { 
           account: sourceAccount, 
-          amount: -Math.abs(amount), // Negative for expenses/payments
+          amount: amount, // Preserve the original amount and its sign from OFX file
           currency: currency 
         },
         { 
           account: 'Expenses:Unknown', // Default category to be updated later
-          amount: Math.abs(amount), // Positive for the expense account
+          amount: -amount, // Opposite sign to balance the transaction
           currency: currency 
         }
       ]

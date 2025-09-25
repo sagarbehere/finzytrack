@@ -435,8 +435,7 @@ const columns = [
           'onUpdate:modelValue': (value: string) => updatePostingCurrency(row.original.transaction, row.index, value),
           'custom-class': 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 dark:bg-gray-800 dark:text-white text-sm',
           'allow-custom': false, // Don't allow creating new commodities from the table
-          'commodity-types': ['Currency'], // Only show currencies, not other commodities
-          placeholder: 'Select currency...'
+          placeholder: 'Select commodity...'
         })
       : h('span', { class: 'text-gray-900 dark:text-white text-sm' }, getValue()),
     size: 64,
