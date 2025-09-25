@@ -13,14 +13,14 @@
 
     <!-- Main table -->
     <div class="overflow-x-auto border border-gray-300 rounded-lg dark:border-gray-600">
-      <table class="w-full table-fixed">
+      <table class="w-full table-fixed" style="table-layout: fixed; width: 100%;">
         <thead class="bg-gray-100 border-b-2 border-gray-300 dark:bg-gray-800 dark:border-gray-600">
           <tr v-for="headerGroup in table.getHeaderGroups()" :key="headerGroup.id">
             <th
               v-for="header in headerGroup.headers"
               :key="header.id"
               :style="{ width: `${header.getSize()}px` }"
-              class="px-2 py-2 text-left text-xs font-bold text-gray-700 border-r border-gray-300 dark:text-gray-300 dark:border-gray-600 relative overflow-hidden"
+              class="px-2 py-2 text-left text-xs font-bold text-gray-700 border-r border-gray-300 dark:text-gray-300 dark:border-gray-600 relative"
             >
               <FlexRender
                 :render="header.column.columnDef.header"
@@ -52,13 +52,23 @@
                 <td
                   v-if="!shouldSkipCell(cell)"
                   :rowspan="getRowSpan(cell)"
+                  :data-column-id="cell.column.id"
                   :class="[
                     'px-2 py-2 border-r border-gray-200 dark:border-gray-700 text-sm',
                     { 'align-top': getRowSpan(cell) > 1 },
                     { 'text-right': ['amount'].includes(cell.column.id) },
                     { 'text-center': ['actions'].includes(cell.column.id) },
-                    { 'bg-gray-50 dark:bg-gray-700': cell.column.id === '#' && getRowSpan(cell) > 1 }
+                    { 'bg-gray-50 dark:bg-gray-700': cell.column.id === '#' && getRowSpan(cell) > 1 },
+                    { 'align-top': ['payee', 'narration'].includes(cell.column.id) }
                   ]"
+                  :style="['payee', 'narration'].includes(cell.column.id) ? { 
+                    'white-space': 'normal', 
+                    'word-wrap': 'break-word', 
+                    'overflow-wrap': 'break-word',
+                    'word-break': 'break-word',
+                    'min-width': '0',
+                    'max-width': '100%'
+                  } : {}"
                 >
                   <FlexRender :render="cell.column.columnDef.cell" :props="cell.getContext()" />
                 </td>
@@ -359,32 +369,39 @@ const columns = [
     id: 'payee',
     header: 'Payee',
     cell: ({ row, getValue }) => props.editable
-      ? h('input', {
-          type: 'text',
+      ? h('textarea', {
           value: getValue(),
           onInput: (e: any) => updateTransactionPayee(row.original.transaction, e.target.value),
-          class: 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 bg-yellow-50 dark:bg-gray-700 dark:text-white text-sm',
-          placeholder: 'Payee'
+          class: 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 bg-yellow-50 dark:bg-gray-700 dark:text-white text-sm resize-none overflow-hidden',
+          placeholder: 'Payee',
+          rows: 1,
+          style: 'min-height: 2rem; field-sizing: content;'
         })
-      : h('span', { class: 'text-gray-900 dark:text-white text-sm' }, getValue()),
-    size: 128,
-    minSize: 80,
+      : h('div', { 
+          style: 'width: 80px; border: 1px solid red; white-space: normal; word-wrap: break-word; background: yellow;'
+        }, 'This is a very long text that should definitely wrap within this narrow container to test if wrapping works at all'),
+    size: 100,
+    minSize: 60,
     enableResizing: true,
   }),
   columnHelper.accessor(row => row.transaction.narration, {
     id: 'narration',
     header: 'Narration',
     cell: ({ row, getValue }) => props.editable
-      ? h('input', {
-          type: 'text',
+      ? h('textarea', {
           value: getValue(),
           onInput: (e: any) => updateTransactionNarration(row.original.transaction, e.target.value),
-          class: 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 bg-yellow-50 dark:bg-gray-700 dark:text-white text-sm',
-          placeholder: 'Description'
+          class: 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 bg-yellow-50 dark:bg-gray-700 dark:text-white text-sm resize-none overflow-hidden',
+          placeholder: 'Description',
+          rows: 1,
+          style: 'min-height: 2rem; field-sizing: content;'
         })
-      : h('span', { class: 'text-gray-900 dark:text-white text-sm' }, getValue()),
-    size: 192,
-    minSize: 100,
+      : h('div', { 
+          style: 'white-space: normal; word-wrap: break-word; overflow-wrap: break-word;',
+          class: 'text-gray-900 dark:text-white text-sm'
+        }, getValue()),
+    size: 120,
+    minSize: 80,
     enableResizing: true,
   }),
   columnHelper.accessor(row => [...row.transaction.tags, ...row.transaction.links.map((l: string) => `^${l}`)].join(' '), {
@@ -793,16 +810,40 @@ table.table-fixed td {
   /* Don't set overflow: hidden as it will clip dropdowns */
   overflow: visible;
   /* Make sure cells don't create a containing block for positioned elements that clips them */
-  position: relative;
 }
 
-/* Apply text truncation to simple text content only */
-table.table-fixed td > span:not([class*="dropdown"]):not([class*="combobox"]) {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
+/* Specific styles for payee and narration columns to ensure proper text wrapping */
+table.table-fixed td[data-column-id="payee"],
+table.table-fixed td[data-column-id="narration"] {
+  white-space: normal !important;
+  word-wrap: break-word !important;
+  overflow-wrap: break-word !important;
+  word-break: break-word !important;
+  overflow: hidden !important; /* Hide overflow to prevent sliding behind borders */
+  vertical-align: top !important;
+}
+
+table.table-fixed td[data-column-id="payee"] span,
+table.table-fixed td[data-column-id="narration"] span,
+table.table-fixed td[data-column-id="payee"] input,
+table.table-fixed td[data-column-id="narration"] input {
+  white-space: normal !important;
+  word-wrap: break-word !important;
+  overflow-wrap: break-word !important;
+  word-break: break-word !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  padding: 2px !important;
+  margin: 0 !important;
+  display: block !important;
+}
+
+/* For input elements, we need different handling */
+table.table-fixed td[data-column-id="payee"] input,
+table.table-fixed td[data-column-id="narration"] input {
+  white-space: nowrap !important; /* inputs should not wrap */
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
 }
 
 /* Ensure dropdowns render with high z-index */
