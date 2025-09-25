@@ -211,6 +211,8 @@
     // Scroll to the transaction table after it's rendered
     nextTick(() => {
       if (transactionTableRef.value) {
+        // Reset table state to ensure clean start, then scroll
+        transactionTableRef.value.resetToOriginal()
         transactionTableRef.value.scrollToTable()
       }
     })
