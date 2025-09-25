@@ -112,7 +112,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, h } from 'vue'
+import { ref, computed, onMounted, watch, h, nextTick } from 'vue'
 import {
   useVueTable,
   createColumnHelper,
@@ -190,6 +190,7 @@ const flatData = computed(() => {
     return transaction.postings.map((posting, index) => ({
       ...posting,
       transaction,
+      postingIndex: index,  // Store the original posting index
       isFirstPosting: index === 0,
       isLastPosting: index === transaction.postings.length - 1,
       transactionIndex: transactionCounter,
@@ -225,6 +226,7 @@ const pages = computed(() => {
     const transactionRows = postings.map((posting, index) => ({
       ...posting,
       transaction,
+      postingIndex: index,  // Store the original posting index
       isFirstPosting: index === 0,
       isLastPosting: index === postings.length - 1,
       transactionIndex: transactionCounter,
@@ -440,8 +442,8 @@ const columns = [
       if (!props.editable) return null
       const buttons = [
         h('button', {
-          onClick: () => removePosting(row.original.transaction, row.index),
-          class: 'text-red-600 hover:text-red-800 text-xs px-1 dark:text-red-400 dark:hover:text-red-300',
+          onClick: () => removePosting(row.original.transaction, row.original.postingIndex),
+          class: 'text-red-600 hover:text-red-800 text-xs px-1 dark:text-red-600 dark:hover:text-red-300',
           title: 'Remove posting'
         }, '×'),
       ]
@@ -496,8 +498,23 @@ onMounted(() => {
 })
 
 watch(() => props.transactions, (newTransactions) => {
+  // Preserve the current page if possible when transactions change
+  const preservedPageIndex = currentPageIndex.value
   originalTransactions.value = JSON.parse(JSON.stringify(newTransactions))
-  currentPageIndex.value = 0
+  
+  // After the new pages are calculated, try to maintain the same page
+  // Use nextTick to ensure computed properties are updated first
+  nextTick(() => {
+    if (preservedPageIndex < totalPages.value) {
+      currentPageIndex.value = preservedPageIndex
+    } else if (totalPages.value > 0) {
+      // If the preserved page is no longer valid, go to the last valid page
+      currentPageIndex.value = Math.max(0, totalPages.value - 1)
+    } else {
+      // If there are no pages, go to the first (0) page
+      currentPageIndex.value = 0
+    }
+  })
 }, { deep: true })
 
 const totalAmount = computed(() => {
@@ -535,7 +552,17 @@ const updateTransactionDate = (transaction: TransactionViewModel, newDate: strin
   if (txIndex !== -1) {
     updatedTransactions[txIndex].date = newDate
     updatedTransactions[txIndex].meta.isModified = true
+    // Preserve current page if possible
+    const preservedPageIndex = currentPageIndex.value
     emitUpdate(updatedTransactions)
+    // After update, try to maintain the same page using nextTick to ensure reactivity updates
+    nextTick(() => {
+      if (preservedPageIndex < totalPages.value) {
+        currentPageIndex.value = preservedPageIndex
+      } else if (totalPages.value > 0) {
+        currentPageIndex.value = Math.max(0, totalPages.value - 1)
+      }
+    })
   }
 }
 
@@ -545,7 +572,17 @@ const updateTransactionFlag = (transaction: TransactionViewModel, newFlag: strin
   if (txIndex !== -1) {
     updatedTransactions[txIndex].flag = newFlag
     updatedTransactions[txIndex].meta.isModified = true
+    // Preserve current page if possible
+    const preservedPageIndex = currentPageIndex.value
     emitUpdate(updatedTransactions)
+    // After update, try to maintain the same page using nextTick to ensure reactivity updates
+    nextTick(() => {
+      if (preservedPageIndex < totalPages.value) {
+        currentPageIndex.value = preservedPageIndex
+      } else if (totalPages.value > 0) {
+        currentPageIndex.value = Math.max(0, totalPages.value - 1)
+      }
+    })
   }
 }
 
@@ -555,7 +592,17 @@ const updateTransactionPayee = (transaction: TransactionViewModel, newPayee: str
   if (txIndex !== -1) {
     updatedTransactions[txIndex].payee = newPayee
     updatedTransactions[txIndex].meta.isModified = true
+    // Preserve current page if possible
+    const preservedPageIndex = currentPageIndex.value
     emitUpdate(updatedTransactions)
+    // After update, try to maintain the same page using nextTick to ensure reactivity updates
+    nextTick(() => {
+      if (preservedPageIndex < totalPages.value) {
+        currentPageIndex.value = preservedPageIndex
+      } else if (totalPages.value > 0) {
+        currentPageIndex.value = Math.max(0, totalPages.value - 1)
+      }
+    })
   }
 }
 
@@ -565,7 +612,17 @@ const updateTransactionNarration = (transaction: TransactionViewModel, newNarrat
   if (txIndex !== -1) {
     updatedTransactions[txIndex].narration = newNarration
     updatedTransactions[txIndex].meta.isModified = true
+    // Preserve current page if possible
+    const preservedPageIndex = currentPageIndex.value
     emitUpdate(updatedTransactions)
+    // After update, try to maintain the same page using nextTick to ensure reactivity updates
+    nextTick(() => {
+      if (preservedPageIndex < totalPages.value) {
+        currentPageIndex.value = preservedPageIndex
+      } else if (totalPages.value > 0) {
+        currentPageIndex.value = Math.max(0, totalPages.value - 1)
+      }
+    })
   }
 }
 
@@ -577,7 +634,17 @@ const updateTransactionTagsLinks = (transaction: TransactionViewModel, newValue:
     updatedTransactions[txIndex].tags = parts.filter(p => p.startsWith('#')).map(p => p.substring(1))
     updatedTransactions[txIndex].links = parts.filter(p => p.startsWith('^')).map(p => p.substring(1))
     updatedTransactions[txIndex].meta.isModified = true
+    // Preserve current page if possible
+    const preservedPageIndex = currentPageIndex.value
     emitUpdate(updatedTransactions)
+    // After update, try to maintain the same page using nextTick to ensure reactivity updates
+    nextTick(() => {
+      if (preservedPageIndex < totalPages.value) {
+        currentPageIndex.value = preservedPageIndex
+      } else if (totalPages.value > 0) {
+        currentPageIndex.value = Math.max(0, totalPages.value - 1)
+      }
+    })
   }
 }
 
@@ -587,7 +654,17 @@ const updatePostingAccount = (transaction: TransactionViewModel, postingIndex: n
   if (txIndex !== -1) {
     updatedTransactions[txIndex].postings[postingIndex].account = newAccount
     updatedTransactions[txIndex].meta.isModified = true
+    // Preserve current page if possible
+    const preservedPageIndex = currentPageIndex.value
     emitUpdate(updatedTransactions)
+    // After update, try to maintain the same page using nextTick to ensure reactivity updates
+    nextTick(() => {
+      if (preservedPageIndex < totalPages.value) {
+        currentPageIndex.value = preservedPageIndex
+      } else if (totalPages.value > 0) {
+        currentPageIndex.value = Math.max(0, totalPages.value - 1)
+      }
+    })
   }
 }
 
@@ -597,7 +674,17 @@ const updatePostingAmount = (transaction: TransactionViewModel, postingIndex: nu
   if (txIndex !== -1) {
     updatedTransactions[txIndex].postings[postingIndex].amount = newAmountStr ? parseFloat(newAmountStr) : null
     updatedTransactions[txIndex].meta.isModified = true
+    // Preserve current page if possible
+    const preservedPageIndex = currentPageIndex.value
     emitUpdate(updatedTransactions)
+    // After update, try to maintain the same page using nextTick to ensure reactivity updates
+    nextTick(() => {
+      if (preservedPageIndex < totalPages.value) {
+        currentPageIndex.value = preservedPageIndex
+      } else if (totalPages.value > 0) {
+        currentPageIndex.value = Math.max(0, totalPages.value - 1)
+      }
+    })
   }
 }
 
@@ -607,7 +694,17 @@ const updatePostingCurrency = (transaction: TransactionViewModel, postingIndex: 
   if (txIndex !== -1) {
     updatedTransactions[txIndex].postings[postingIndex].currency = newCurrency
     updatedTransactions[txIndex].meta.isModified = true
+    // Preserve current page if possible
+    const preservedPageIndex = currentPageIndex.value
     emitUpdate(updatedTransactions)
+    // After update, try to maintain the same page using nextTick to ensure reactivity updates
+    nextTick(() => {
+      if (preservedPageIndex < totalPages.value) {
+        currentPageIndex.value = preservedPageIndex
+      } else if (totalPages.value > 0) {
+        currentPageIndex.value = Math.max(0, totalPages.value - 1)
+      }
+    })
   }
 }
 
@@ -617,7 +714,17 @@ const addPosting = (transaction: TransactionViewModel) => {
   if (txIndex !== -1) {
     updatedTransactions[txIndex].postings.push({ account: '', amount: null, currency: 'USD' })
     updatedTransactions[txIndex].meta.isModified = true
+    // Preserve current page if possible
+    const preservedPageIndex = currentPageIndex.value
     emitUpdate(updatedTransactions)
+    // After update, try to maintain the same page using nextTick to ensure reactivity updates
+    nextTick(() => {
+      if (preservedPageIndex < totalPages.value) {
+        currentPageIndex.value = preservedPageIndex
+      } else if (totalPages.value > 0) {
+        currentPageIndex.value = Math.max(0, totalPages.value - 1)
+      }
+    })
   }
 }
 
@@ -627,13 +734,33 @@ const removePosting = (transaction: TransactionViewModel, postingIndex: number) 
   if (txIndex !== -1 && updatedTransactions[txIndex].postings.length > 1) {
     updatedTransactions[txIndex].postings.splice(postingIndex, 1)
     updatedTransactions[txIndex].meta.isModified = true
+    // Preserve current page if possible
+    const preservedPageIndex = currentPageIndex.value
     emitUpdate(updatedTransactions)
+    // After update, try to maintain the same page using nextTick to ensure reactivity updates
+    nextTick(() => {
+      if (preservedPageIndex < totalPages.value) {
+        currentPageIndex.value = preservedPageIndex
+      } else if (totalPages.value > 0) {
+        currentPageIndex.value = Math.max(0, totalPages.value - 1)
+      }
+    })
   }
 }
 
 const removeTransaction = (transaction: TransactionViewModel) => {
   const updatedTransactions = props.transactions.filter(t => t.id !== transaction.id)
+  // Preserve current page if possible
+  const preservedPageIndex = currentPageIndex.value
   emitUpdate(updatedTransactions)
+  // After update, try to maintain the same page using nextTick to ensure reactivity updates
+  nextTick(() => {
+    if (preservedPageIndex < totalPages.value) {
+      currentPageIndex.value = preservedPageIndex
+    } else if (totalPages.value > 0) {
+      currentPageIndex.value = Math.max(0, totalPages.value - 1)
+    }
+  })
 }
 
 const resetToOriginal = () => {
