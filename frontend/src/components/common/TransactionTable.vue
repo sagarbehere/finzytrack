@@ -65,19 +65,24 @@
     <!-- Pagination controls -->
     <div v-if="pageSize > 0" class="flex items-center justify-between mt-4">
       <div class="text-sm text-gray-700 dark:text-gray-300">
-        Showing {{ table.getRowModel().rows.length }} of {{ props.transactions.length }} entries
+        <template v-if="currentPageTransactionCount === 1">
+          Showing transaction {{ firstEntryNumber }} of {{ filteredTransactions.length }}
+        </template>
+        <template v-else>
+          Showing transactions {{ firstEntryNumber }} to {{ lastEntryNumber }} of {{ filteredTransactions.length }}
+        </template>
       </div>
       <div class="flex space-x-2">
         <button
-          @click="() => table.previousPage()"
-          :disabled="!table.getCanPreviousPage()"
+          @click="goToPreviousPage"
+          :disabled="currentPageIndex === 0"
           class="px-3 py-1 text-sm bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
         >
           Previous
         </button>
         <button
-          @click="() => table.nextPage()"
-          :disabled="!table.getCanNextPage()"
+          @click="goToNextPage"
+          :disabled="currentPageIndex >= totalPages - 1"
           class="px-3 py-1 text-sm bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
         >
           Next
@@ -152,10 +157,35 @@ const globalFilter = ref('')
 const availableAccounts = ref<string[]>([])
 const availableCurrencies = ref<string[]>([])
 
-// Data transformation for Tanstack Table
+// Filtered transactions
+const filteredTransactions = computed(() => {
+  if (!globalFilter.value) return props.transactions
+  
+  const filterValue = globalFilter.value.toLowerCase()
+  return props.transactions.filter(transaction => {
+    // Check if the filter value matches any field in the transaction or its postings
+    const transactionMatch = 
+      transaction.date.toLowerCase().includes(filterValue) ||
+      transaction.payee.toLowerCase().includes(filterValue) ||
+      transaction.narration.toLowerCase().includes(filterValue) ||
+      transaction.tags.some(tag => tag.toLowerCase().includes(filterValue)) ||
+      transaction.links.some(link => link.toLowerCase().includes(filterValue))
+    
+    if (transactionMatch) return true
+    
+    // Check if any posting matches
+    return transaction.postings.some(posting => 
+      posting.account.toLowerCase().includes(filterValue) ||
+      posting.currency.toLowerCase().includes(filterValue) ||
+      (posting.amount !== null && posting.amount.toString().toLowerCase().includes(filterValue))
+    )
+  })
+})
+
+// Data transformation for Tanstack Table (without pagination)
 const flatData = computed(() => {
   let transactionCounter = 0;
-  return props.transactions.flatMap((transaction) => {
+  return filteredTransactions.value.flatMap((transaction) => {
     transactionCounter++;
     return transaction.postings.map((posting, index) => ({
       ...posting,
@@ -166,6 +196,114 @@ const flatData = computed(() => {
     }))
   })
 })
+
+// Custom pagination implementation to keep transaction groups together
+const currentPageIndex = ref(0)
+
+// Calculate pages that keep entire transactions together
+const pages = computed(() => {
+  if (props.pageSize <= 0) return []
+  
+  const result = []
+  let currentPage = []
+  let currentSize = 0
+  
+  let transactionCounter = 0
+  
+  for (const transaction of filteredTransactions.value) {
+    transactionCounter++
+    const postings = transaction.postings
+    
+    // If adding this transaction would exceed page size and page isn't empty, start new page
+    if (currentPage.length > 0 && currentSize + postings.length > props.pageSize) {
+      result.push(currentPage)
+      currentPage = []
+      currentSize = 0
+    }
+    
+    // Add all postings for this transaction to current page
+    const transactionRows = postings.map((posting, index) => ({
+      ...posting,
+      transaction,
+      isFirstPosting: index === 0,
+      isLastPosting: index === postings.length - 1,
+      transactionIndex: transactionCounter,
+    }))
+    
+    currentPage.push(...transactionRows)
+    currentSize += postings.length
+  }
+  
+  // Add the last page if it has content
+  if (currentPage.length > 0) {
+    result.push(currentPage)
+  }
+  
+  return result
+})
+
+const totalPages = computed(() => pages.value.length)
+
+const currentPageTransactions = computed(() => {
+  if (pages.value[currentPageIndex.value]) {
+    return pages.value[currentPageIndex.value]
+  }
+  return []
+})
+
+const currentPageTransactionCount = computed(() => {
+  // Count unique transactions in the current page (not the individual posting rows)
+  const currentRows = currentPageTransactions.value
+  if (currentRows.length === 0) return 0
+  
+  // Count how many unique transactions are on this page
+  const uniqueTransactionIds = new Set()
+  currentRows.forEach(row => {
+    uniqueTransactionIds.add(row.transaction.id)
+  })
+  return uniqueTransactionIds.size
+})
+
+// Calculate the first and last transaction numbers for the pagination display
+const firstEntryNumber = computed(() => {
+  if (filteredTransactions.value.length === 0 || currentPageIndex.value >= totalPages.value) {
+    return 0
+  }
+  
+  // Calculate how many transactions appear on pages before the current page
+  let previousTransactionCount = 0
+  for (let i = 0; i < currentPageIndex.value; i++) {
+    const page = pages.value[i] || []
+    const uniqueTransactionIds = new Set()
+    page.forEach(row => {
+      uniqueTransactionIds.add(row.transaction.id)
+    })
+    previousTransactionCount += uniqueTransactionIds.size
+  }
+  
+  // The first entry number is the count of transactions on previous pages + 1
+  return previousTransactionCount + 1
+})
+
+const lastEntryNumber = computed(() => {
+  if (filteredTransactions.value.length === 0 || currentPageIndex.value >= totalPages.value) {
+    return 0
+  }
+  
+  return firstEntryNumber.value + currentPageTransactionCount.value - 1
+})
+
+const goToPreviousPage = () => {
+  if (currentPageIndex.value > 0) {
+    currentPageIndex.value--
+  }
+}
+
+const goToNextPage = () => {
+  if (currentPageIndex.value < totalPages.value - 1) {
+    currentPageIndex.value++
+  }
+}
 
 // Column definitions
 const columnHelper = createColumnHelper<any>()
@@ -329,7 +467,7 @@ const columns = [
 ]
 
 const table = useVueTable({
-  get data() { return flatData.value },
+  get data() { return currentPageTransactions.value },
   columns,
   state: {
     get globalFilter() { return globalFilter.value },
@@ -339,19 +477,19 @@ const table = useVueTable({
   },
   getCoreRowModel: getCoreRowModel(),
   getFilteredRowModel: getFilteredRowModel(),
-  getPaginationRowModel: getPaginationRowModel(),
 })
 
 const onGlobalFilterChange = (e: Event) => {
   globalFilter.value = (e.target as HTMLInputElement).value
+  currentPageIndex.value = 0  // Reset to first page when filter changes
 }
 
 watch(() => props.pageSize, (size) => {
-  table.setPageSize(size)
+  currentPageIndex.value = 0  // Reset to first page when page size changes
 })
 
 onMounted(() => {
-  table.setPageSize(props.pageSize)
+  currentPageIndex.value = 0
   originalTransactions.value = JSON.parse(JSON.stringify(props.transactions))
   availableAccounts.value = ['Assets:Bank:Checking', 'Assets:Bank:Savings', 'Expenses:Groceries', 'Expenses:Utilities', 'Expenses:Entertainment', 'Income:Salary', 'Liabilities:CreditCard']
   availableCurrencies.value = ['USD', 'EUR', 'GBP', 'CAD', 'AUD']
@@ -359,12 +497,12 @@ onMounted(() => {
 
 watch(() => props.transactions, (newTransactions) => {
   originalTransactions.value = JSON.parse(JSON.stringify(newTransactions))
-  table.setPageIndex(0)
+  currentPageIndex.value = 0
 }, { deep: true })
 
 const totalAmount = computed(() => {
   let total = 0
-  props.transactions.forEach(transaction => {
+  filteredTransactions.value.forEach(transaction => {
     transaction.postings.forEach(posting => {
       if (posting.amount) {
         total += posting.amount
@@ -375,7 +513,7 @@ const totalAmount = computed(() => {
 })
 
 const unbalancedCount = computed(() => {
-  return props.transactions.filter(t => !isTransactionBalanced(t)).length
+  return filteredTransactions.value.filter(t => !isTransactionBalanced(t)).length
 })
 
 const isTransactionBalanced = (transaction: TransactionViewModel): boolean => {
@@ -506,7 +644,7 @@ defineExpose({
   resetToOriginal,
   clearState: () => {
     originalTransactions.value = []
-    table.setPageIndex(0)
+    currentPageIndex.value = 0
     emitUpdate([])
   }
 })
