@@ -13,19 +13,26 @@
 
     <!-- Main table -->
     <div class="overflow-x-auto border border-gray-300 rounded-lg dark:border-gray-600">
-      <table class="min-w-full table-auto">
+      <table class="w-full table-fixed">
         <thead class="bg-gray-100 border-b-2 border-gray-300 dark:bg-gray-800 dark:border-gray-600">
           <tr v-for="headerGroup in table.getHeaderGroups()" :key="headerGroup.id">
             <th
               v-for="header in headerGroup.headers"
               :key="header.id"
-              :style="{ width: header.getSize() !== 150 ? `${header.getSize()}px` : undefined }"
-              class="px-2 py-2 text-left text-xs font-bold text-gray-700 border-r border-gray-300 dark:text-gray-300 dark:border-gray-600"
+              :style="{ width: `${header.getSize()}px` }"
+              class="px-2 py-2 text-left text-xs font-bold text-gray-700 border-r border-gray-300 dark:text-gray-300 dark:border-gray-600 relative overflow-hidden"
             >
               <FlexRender
                 :render="header.column.columnDef.header"
                 :props="header.getContext()"
               />
+              <div
+                v-if="header.column.getCanResize()"
+                class="resize-handle"
+                :class="{ 'resizing': header.column.getIsResizing() }"
+                @mousedown="(e) => header.getResizeHandler()(e)"
+                @touchstart="(e) => header.getResizeHandler()(e)"
+              ></div>
             </th>
           </tr>
         </thead>
@@ -118,12 +125,11 @@ import {
   createColumnHelper,
   getCoreRowModel,
   getFilteredRowModel,
-  getPaginationRowModel,
   FlexRender,
 } from '@tanstack/vue-table'
 import AccountDropdown from '@/components/common/AccountDropdown.vue'
 import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
-import type { TransactionViewModel, PostingViewModel } from '@/types/transactions'
+import type { TransactionViewModel } from '@/types/transactions'
 import type { Cell } from '@tanstack/vue-table'
 
 // Define props
@@ -157,6 +163,7 @@ const emit = defineEmits<{
 // State
 const originalTransactions = ref<TransactionViewModel[]>([])
 const globalFilter = ref('')
+const columnSizing = ref({})
 
 // Filtered transactions
 const filteredTransactions = computed(() => {
@@ -183,21 +190,7 @@ const filteredTransactions = computed(() => {
   })
 })
 
-// Data transformation for Tanstack Table (without pagination)
-const flatData = computed(() => {
-  let transactionCounter = 0;
-  return filteredTransactions.value.flatMap((transaction) => {
-    transactionCounter++;
-    return transaction.postings.map((posting, index) => ({
-      ...posting,
-      transaction,
-      postingIndex: index,  // Store the original posting index
-      isFirstPosting: index === 0,
-      isLastPosting: index === transaction.postings.length - 1,
-      transactionIndex: transactionCounter,
-    }))
-  })
-})
+
 
 // Custom pagination implementation to keep transaction groups together
 const currentPageIndex = ref(0)
@@ -330,6 +323,8 @@ const columns = [
     header: '#',
     cell: info => info.getValue(),
     size: 32,
+    minSize: 20,
+    enableResizing: true,
   }),
   columnHelper.accessor(row => row.transaction.date, {
     id: 'date',
@@ -343,6 +338,8 @@ const columns = [
         })
       : h('span', { class: 'text-gray-900 dark:text-white text-sm' }, getValue()),
     size: 96,
+    minSize: 60,
+    enableResizing: true,
   }),
   columnHelper.accessor(row => row.transaction.flag, {
     id: 'flag',
@@ -355,6 +352,8 @@ const columns = [
         }, [h('option', { value: '*' }, '*'), h('option', { value: '!' }, '!')])
       : h('span', { class: 'text-gray-900 dark:text-white text-sm' }, getValue()),
     size: 48,
+    minSize: 30,
+    enableResizing: true,
   }),
   columnHelper.accessor(row => row.transaction.payee, {
     id: 'payee',
@@ -369,6 +368,8 @@ const columns = [
         })
       : h('span', { class: 'text-gray-900 dark:text-white text-sm' }, getValue()),
     size: 128,
+    minSize: 80,
+    enableResizing: true,
   }),
   columnHelper.accessor(row => row.transaction.narration, {
     id: 'narration',
@@ -383,6 +384,8 @@ const columns = [
         })
       : h('span', { class: 'text-gray-900 dark:text-white text-sm' }, getValue()),
     size: 192,
+    minSize: 100,
+    enableResizing: true,
   }),
   columnHelper.accessor(row => [...row.transaction.tags, ...row.transaction.links.map((l: string) => `^${l}`)].join(' '), {
     id: 'tags_links',
@@ -397,6 +400,8 @@ const columns = [
         })
       : h('span', { class: 'text-gray-900 dark:text-white text-sm' }, getValue()),
     size: 128,
+    minSize: 80,
+    enableResizing: true,
   }),
   columnHelper.accessor('account', {
     header: 'Account',
@@ -409,6 +414,9 @@ const columns = [
           placeholder: 'Select account...'
         })
       : h('span', { class: 'text-gray-900 dark:text-white text-sm' }, getValue()),
+    size: 150,
+    minSize: 100,
+    enableResizing: true,
   }),
   columnHelper.accessor('amount', {
     header: 'Amount',
@@ -426,6 +434,8 @@ const columns = [
         : h('span', { class: `text-gray-900 dark:text-white text-sm ${amountClass}` }, amount)
     },
     size: 96,
+    minSize: 60,
+    enableResizing: true,
   }),
   columnHelper.accessor('currency', {
     header: 'Currency',
@@ -438,7 +448,9 @@ const columns = [
           placeholder: 'Select commodity...'
         })
       : h('span', { class: 'text-gray-900 dark:text-white text-sm' }, getValue()),
-    size: 64,
+    size: 80,
+    minSize: 50,
+    enableResizing: true,
   }),
   columnHelper.display({
     id: 'actions',
@@ -447,8 +459,8 @@ const columns = [
       if (!props.editable) return null
       const buttons = [
         h('button', {
-          onClick: () => removePosting(row.original.transaction, row.original.postingIndex),
-          class: 'text-red-600 hover:text-red-800 text-xs px-1 dark:text-red-600 dark:hover:text-red-300',
+          onClick: () => removePosting(row.original.transaction, row.index),
+          class: 'text-red-600 hover:text-red-800 text-xs px-1 dark:text-red-400 dark:hover:text-red-300',
           title: 'Remove posting'
         }, '×'),
       ]
@@ -470,6 +482,8 @@ const columns = [
       return h('div', { class: 'flex items-center justify-center gap-1 text-sm' }, buttons)
     },
     size: 64,
+    minSize: 50,
+    enableResizing: true,
   }),
 ]
 
@@ -478,10 +492,16 @@ const table = useVueTable({
   columns,
   state: {
     get globalFilter() { return globalFilter.value },
+    get columnSizing() { return columnSizing.value },
   },
   onGlobalFilterChange: (filter: string) => {
     globalFilter.value = filter
   },
+  onColumnSizingChange: (updater) => {
+    columnSizing.value = typeof updater === 'function' ? updater(columnSizing.value) : updater
+  },
+  enableColumnResizing: true,
+  columnResizeMode: 'onChange', // or 'onEnd' for performance
   getCoreRowModel: getCoreRowModel(),
   getFilteredRowModel: getFilteredRowModel(),
 })
@@ -491,7 +511,7 @@ const onGlobalFilterChange = (e: Event) => {
   currentPageIndex.value = 0  // Reset to first page when filter changes
 }
 
-watch(() => props.pageSize, (size) => {
+watch(() => props.pageSize, (_size) => {
   currentPageIndex.value = 0  // Reset to first page when page size changes
 })
 
@@ -561,18 +581,17 @@ const preserveCurrentPage = () => {
   })
 }
 
-const updateTransactionDate = (transaction: TransactionViewModel, newDate: string) => {
-  const updatedTransactions = [...props.transactions]
-  const txIndex = findTransactionIndex(transaction)
-  if (txIndex !== -1) {
-    updatedTransactions[txIndex].date = newDate
-    updatedTransactions[txIndex].meta.isModified = true
-    const preservedPageIndex = currentPageIndex.value
-    emitUpdate(updatedTransactions)
-    // After update, try to maintain the same page 
-    preserveCurrentPage()
+  const updateTransactionDate = (transaction: TransactionViewModel, newDate: string) => {
+    const updatedTransactions = [...props.transactions]
+    const txIndex = findTransactionIndex(transaction)
+    if (txIndex !== -1) {
+      updatedTransactions[txIndex].date = newDate
+      updatedTransactions[txIndex].meta.isModified = true
+      emitUpdate(updatedTransactions)
+      // After update, try to maintain the same page 
+      preserveCurrentPage()
+    }
   }
-}
 
 const updateTransactionFlag = (transaction: TransactionViewModel, newFlag: string) => {
   const updatedTransactions = [...props.transactions]
@@ -730,4 +749,66 @@ defineExpose({
 
 <style>
 /* No custom styles needed for hover as it's handled by Tailwind now */
+.resize-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  height: 100%;
+  width: 5px;
+  cursor: col-resize;
+  background-color: transparent;
+  border-right: 2px solid transparent;
+  user-select: none;
+  touch-action: none;
+  z-index: 10;
+}
+
+.resize-handle:hover,
+.resize-handle.resizing {
+  border-right: 2px solid #3b82f6; /* Tailwind blue-500 */
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+th {
+  position: relative;
+}
+
+table {
+  table-layout: fixed;
+}
+
+/* Table cell styles for fixed layout */
+table {
+  table-layout: fixed;
+}
+
+/* Allow dropdowns to overflow cell boundaries */
+.transaction-table-container {
+  position: relative;
+  z-index: 1;
+}
+
+/* For table cells, we need to be careful about clipping contexts */
+table.table-fixed td {
+  /* Don't set overflow: hidden as it will clip dropdowns */
+  overflow: visible;
+  /* Make sure cells don't create a containing block for positioned elements that clips them */
+  position: relative;
+}
+
+/* Apply text truncation to simple text content only */
+table.table-fixed td > span:not([class*="dropdown"]):not([class*="combobox"]) {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* Ensure dropdowns render with high z-index */
+td .account-dropdown,
+td .commodity-dropdown {
+  position: relative;
+  z-index: 50 !important;
+}
 </style>
