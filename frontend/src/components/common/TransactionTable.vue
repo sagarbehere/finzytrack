@@ -425,7 +425,7 @@ const columns = [
     cell: ({ row, getValue }) => props.editable
       ? h(AccountDropdown, {
           modelValue: getValue(),
-          'onUpdate:modelValue': (value: string) => updatePostingAccount(row.original.transaction, row.index, value),
+          'onUpdate:modelValue': (value: string) => updatePostingAccount(row.original.transaction, row.original.postingIndex, value),
           'custom-class': 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 dark:bg-gray-800 dark:text-white text-sm',
           'allow-custom': false, // Don't allow creating new accounts from the table
           placeholder: 'Select account...'
@@ -445,7 +445,7 @@ const columns = [
             type: 'number',
             step: '0.01',
             value: amount || '',
-            onInput: (e: any) => updatePostingAmount(row.original.transaction, row.index, e.target.value),
+            onInput: (e: any) => updatePostingAmount(row.original.transaction, row.original.postingIndex, e.target.value),
             class: `w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 text-right dark:bg-gray-800 dark:text-white text-sm ${amountClass}`
           })
         : h('span', { class: `text-gray-900 dark:text-white text-sm ${amountClass}` }, amount)
@@ -459,7 +459,7 @@ const columns = [
     cell: ({ row, getValue }) => props.editable
       ? h(CommodityDropdown, {
           modelValue: getValue(),
-          'onUpdate:modelValue': (value: string) => updatePostingCurrency(row.original.transaction, row.index, value),
+          'onUpdate:modelValue': (value: string) => updatePostingCurrency(row.original.transaction, row.original.postingIndex, value),
           'custom-class': 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 dark:bg-gray-800 dark:text-white text-sm',
           'allow-custom': false, // Don't allow creating new commodities from the table
           placeholder: 'Select commodity...'
@@ -476,7 +476,7 @@ const columns = [
       if (!props.editable) return null
       const buttons = [
         h('button', {
-          onClick: () => removePosting(row.original.transaction, row.index),
+          onClick: () => removePosting(row.original.transaction, row.original.postingIndex),
           class: 'text-red-600 hover:text-red-800 text-xs px-1 dark:text-red-400 dark:hover:text-red-300',
           title: 'Remove posting'
         }, '×'),
@@ -574,9 +574,16 @@ const unbalancedCount = computed(() => {
 })
 
 const isTransactionBalanced = (transaction: TransactionViewModel): boolean => {
-  const total = transaction.postings.reduce((sum, posting) => sum + (posting.amount || 0), 0)
-  return Math.abs(total) < 0.01
+  const totalInCents = transaction.postings.reduce((sum, posting) => {
+    const amount = posting.amount || 0
+    // Convert to cents to avoid floating point precision issues
+    return sum + Math.round(amount * 100)
+  }, 0)
+  // Check if the total in cents is within 1 cent (the 0.01 threshold)
+  return Math.abs(totalInCents) < 1
 }
+
+
 
 const findTransactionIndex = (transaction: TransactionViewModel) => {
   return props.transactions.findIndex(t => t.id === transaction.id)
