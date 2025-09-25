@@ -121,6 +121,8 @@ import {
   getPaginationRowModel,
   FlexRender,
 } from '@tanstack/vue-table'
+import AccountDropdown from '@/components/common/AccountDropdown.vue'
+import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
 import type { TransactionViewModel, PostingViewModel } from '@/types/transactions'
 import type { Cell } from '@tanstack/vue-table'
 
@@ -155,8 +157,6 @@ const emit = defineEmits<{
 // State
 const originalTransactions = ref<TransactionViewModel[]>([])
 const globalFilter = ref('')
-const availableAccounts = ref<string[]>([])
-const availableCurrencies = ref<string[]>([])
 
 // Filtered transactions
 const filteredTransactions = computed(() => {
@@ -401,11 +401,13 @@ const columns = [
   columnHelper.accessor('account', {
     header: 'Account',
     cell: ({ row, getValue }) => props.editable
-      ? h('select', {
-          value: getValue(),
-          onChange: (e: any) => updatePostingAccount(row.original.transaction, row.index, e.target.value),
-          class: 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 dark:bg-gray-800 dark:text-white text-sm'
-        }, availableAccounts.value.map(acc => h('option', { value: acc }, acc)))
+      ? h(AccountDropdown, {
+          modelValue: getValue(),
+          'onUpdate:modelValue': (value: string) => updatePostingAccount(row.original.transaction, row.index, value),
+          'custom-class': 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 dark:bg-gray-800 dark:text-white text-sm',
+          'allow-custom': false, // Don't allow creating new accounts from the table
+          placeholder: 'Select account...'
+        })
       : h('span', { class: 'text-gray-900 dark:text-white text-sm' }, getValue()),
   }),
   columnHelper.accessor('amount', {
@@ -428,11 +430,14 @@ const columns = [
   columnHelper.accessor('currency', {
     header: 'Currency',
     cell: ({ row, getValue }) => props.editable
-      ? h('select', {
-          value: getValue(),
-          onChange: (e: any) => updatePostingCurrency(row.original.transaction, row.index, e.target.value),
-          class: 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 dark:bg-gray-800 dark:text-white text-sm'
-        }, availableCurrencies.value.map(curr => h('option', { value: curr }, curr)))
+      ? h(CommodityDropdown, {
+          modelValue: getValue(),
+          'onUpdate:modelValue': (value: string) => updatePostingCurrency(row.original.transaction, row.index, value),
+          'custom-class': 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 dark:bg-gray-800 dark:text-white text-sm',
+          'allow-custom': false, // Don't allow creating new commodities from the table
+          'commodity-types': ['Currency'], // Only show currencies, not other commodities
+          placeholder: 'Select currency...'
+        })
       : h('span', { class: 'text-gray-900 dark:text-white text-sm' }, getValue()),
     size: 64,
   }),
@@ -494,8 +499,6 @@ watch(() => props.pageSize, (size) => {
 onMounted(() => {
   currentPageIndex.value = 0
   originalTransactions.value = JSON.parse(JSON.stringify(props.transactions))
-  availableAccounts.value = ['Assets:Bank:Checking', 'Assets:Bank:Savings', 'Expenses:Groceries', 'Expenses:Utilities', 'Expenses:Entertainment', 'Income:Salary', 'Liabilities:CreditCard']
-  availableCurrencies.value = ['USD', 'EUR', 'GBP', 'CAD', 'AUD']
 })
 
 watch(() => props.transactions, (newTransactions) => {
