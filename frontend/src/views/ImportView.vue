@@ -223,7 +223,7 @@
     return rawTransactions.map(tx => {
       // Extract payee and memo from the raw transaction
       const payee = tx.NAME || tx.PAYEE || 'Unknown Payee'
-      const memo = tx.MEMO || tx.CHECKNUM || 'Imported from OFX'
+      const memo = tx.MEMO || tx.CHECKNUM
       const amount = parseFloat(tx.TRNAMT || '0') || 0
       const date = tx.DTPOSTED ? new Date(tx.DTPOSTED.substring(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
       
@@ -241,12 +241,15 @@
         }
       ]
 
+      // Create payee with memo if memo exists
+      const fullPayee = memo ? `${payee} | ${memo}` : payee
+
       return {
         id: uuidv4(), // Generate a unique ID for the transaction
         date: date,
         flag: '*',
-        payee: payee,
-        narration: memo,
+        payee: fullPayee,
+        narration: '',
         tags: [],
         links: [],
         postings: postings,
