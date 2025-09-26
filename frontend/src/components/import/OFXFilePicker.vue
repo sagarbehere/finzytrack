@@ -251,7 +251,8 @@
         details: OfxFileDetails, 
         account: string, 
         currency: string 
-    }): void
+    }): void,
+    (e: 'fileCleared'): void
   }>()
 
   // Composables
@@ -313,6 +314,7 @@
   const handleClearFile = () => {
     clearFile()
     if (fileInput.value) fileInput.value.value = ''
+    emit('fileCleared')
   }
 
   const proceedWithImport = () => {
