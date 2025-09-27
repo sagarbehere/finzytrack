@@ -103,21 +103,21 @@
         <button
           @click="goToPreviousPage"
           :disabled="currentPageIndex === 0"
-          class="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+          class="inline-flex items-center justify-center px-3 py-1.5 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-400 dark:disabled:bg-gray-600 transition-colors"
         >
-          <ChevronLeftIcon class="h-4 w-4 mr-1" />
-          Previous
+          <ChevronLeftIcon class="h-4 w-4 mr-1 flex-shrink-0" />
+          <span class="whitespace-nowrap">Previous</span>
         </button>
-        <span class="text-sm text-gray-700 dark:text-gray-300 px-3">
+        <span class="text-sm text-gray-700 dark:text-gray-300 px-3 whitespace-nowrap">
           Page {{ currentPageIndex + 1 }} of {{ totalPages }}
         </span>
         <button
           @click="goToNextPage"
           :disabled="currentPageIndex >= totalPages - 1"
-          class="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+          class="inline-flex items-center justify-center px-3 py-1.5 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-400 dark:disabled:bg-gray-600 transition-colors"
         >
-          Next
-          <ChevronRightIcon class="h-4 w-4 ml-1" />
+          <span class="whitespace-nowrap">Next</span>
+          <ChevronRightIcon class="h-4 w-4 ml-1 flex-shrink-0" />
         </button>
       </div>
     </div>
@@ -390,6 +390,10 @@ const getDisplayClasses = () => {
 }
 
 const columns = computed(() => {
+  const getColumnConfig = (columnId: string) => {
+    return allColumns.value.find(col => col.id === columnId)
+  }
+
   const baseColumns = [
     columnHelper.display({
       id: 'status',
@@ -397,17 +401,17 @@ const columns = computed(() => {
       cell: ({ row }) => h(TransactionStatusIndicator, {
         transaction: row.original.transaction
       }),
-      size: 40,
-      minSize: 40,
-      enableResizing: false,
+      size: getColumnConfig('status')?.defaultWidth || 60,
+      minSize: getColumnConfig('status')?.minWidth || 60,
+      enableResizing: getColumnConfig('status')?.resizable || false,
     }),
     columnHelper.accessor('transactionIndex', {
       id: 'index',
       header: '#',
       cell: info => h('span', { class: getDisplayClasses() }, info.getValue()),
-      size: 50,
-      minSize: 40,
-      enableResizing: true,
+      size: getColumnConfig('index')?.defaultWidth || 50,
+      minSize: getColumnConfig('index')?.minWidth || 40,
+      enableResizing: getColumnConfig('index')?.resizable ?? true,
     }),
     columnHelper.accessor(row => row.transaction.date, {
       id: 'date',
@@ -420,9 +424,9 @@ const columns = computed(() => {
             class: getEditableInputClasses()
           })
         : h('span', { class: getDisplayClasses() }, getValue()),
-      size: 120,
-      minSize: 100,
-      enableResizing: true,
+      size: getColumnConfig('date')?.defaultWidth || 120,
+      minSize: getColumnConfig('date')?.minWidth || 100,
+      enableResizing: getColumnConfig('date')?.resizable ?? true,
     }),
     columnHelper.accessor(row => row.transaction.flag, {
       id: 'flag',
@@ -437,9 +441,9 @@ const columns = computed(() => {
             h('option', { value: '!' }, '!')
           ])
         : h('span', { class: getDisplayClasses() }, getValue()),
-      size: 60,
-      minSize: 50,
-      enableResizing: true,
+      size: getColumnConfig('flag')?.defaultWidth || 60,
+      minSize: getColumnConfig('flag')?.minWidth || 50,
+      enableResizing: getColumnConfig('flag')?.resizable ?? true,
     }),
     columnHelper.accessor(row => row.transaction.payee, {
       id: 'payee',
@@ -453,12 +457,12 @@ const columns = computed(() => {
             style: { minHeight: '2.5rem', maxHeight: '6rem' },
             'data-placeholder': 'Payee'
           })
-        : h('div', { 
+        : h('div', {
             class: `${getDisplayClasses()} break-words overflow-hidden`
           }, getValue()),
-      size: 150,
-      minSize: 100,
-      enableResizing: true,
+      size: getColumnConfig('payee')?.defaultWidth || 150,
+      minSize: getColumnConfig('payee')?.minWidth || 100,
+      enableResizing: getColumnConfig('payee')?.resizable ?? true,
     }),
     columnHelper.accessor(row => row.transaction.narration, {
       id: 'narration',
@@ -472,12 +476,12 @@ const columns = computed(() => {
             style: { minHeight: '2.5rem' },
             'data-placeholder': 'Description'
           })
-        : h('div', { 
+        : h('div', {
             class: `${getDisplayClasses()} break-words overflow-hidden`
           }, getValue()),
-      size: 200,
-      minSize: 120,
-      enableResizing: true,
+      size: getColumnConfig('narration')?.defaultWidth || 200,
+      minSize: getColumnConfig('narration')?.minWidth || 120,
+      enableResizing: getColumnConfig('narration')?.resizable ?? true,
     }),
     columnHelper.accessor(row => [...row.transaction.tags, ...row.transaction.links.map((l: string) => `^${l}`)].join(' '), {
       id: 'tags_links',
@@ -491,9 +495,9 @@ const columns = computed(() => {
             placeholder: '#tag ^link'
           })
         : h('span', { class: getDisplayClasses() }, getValue()),
-      size: 150,
-      minSize: 100,
-      enableResizing: true,
+      size: getColumnConfig('tags_links')?.defaultWidth || 150,
+      minSize: getColumnConfig('tags_links')?.minWidth || 100,
+      enableResizing: getColumnConfig('tags_links')?.resizable ?? true,
     }),
     columnHelper.accessor('account', {
       id: 'account',
@@ -507,21 +511,21 @@ const columns = computed(() => {
             placeholder: 'Account...'
           })
         : h('span', { class: getDisplayClasses() }, getValue()),
-      size: 180,
-      minSize: 120,
-      enableResizing: true,
+      size: getColumnConfig('account')?.defaultWidth || 180,
+      minSize: getColumnConfig('account')?.minWidth || 120,
+      enableResizing: getColumnConfig('account')?.resizable ?? true,
     }),
     columnHelper.accessor('amount', {
       id: 'amount',
       header: 'Amount',
       cell: ({ row, getValue }) => {
         const amount = getValue()
-        const amountColorClass = (amount ?? 0) > 0 
-          ? 'text-green-700 dark:text-green-400' 
-          : (amount ?? 0) < 0 
-          ? 'text-red-700 dark:text-red-400' 
+        const amountColorClass = (amount ?? 0) > 0
+          ? 'text-green-700 dark:text-green-400'
+          : (amount ?? 0) < 0
+          ? 'text-red-700 dark:text-red-400'
           : 'text-gray-700 dark:text-gray-300'
-        
+
         return props.editable
           ? h('input', {
               type: 'number',
@@ -530,13 +534,13 @@ const columns = computed(() => {
               onInput: (e: any) => updatePostingAmount(row.original.transaction, row.original.postingIndex, e.target.value),
               class: `${getEditableInputClasses('text-right')} ${amountColorClass}`
             })
-          : h('span', { 
-              class: `${getDisplayClasses()} font-mono text-right block ${amountColorClass}` 
+          : h('span', {
+              class: `${getDisplayClasses()} font-mono text-right block ${amountColorClass}`
             }, amount?.toFixed(2) || '')
       },
-      size: 100,
-      minSize: 80,
-      enableResizing: true,
+      size: getColumnConfig('amount')?.defaultWidth || 100,
+      minSize: getColumnConfig('amount')?.minWidth || 80,
+      enableResizing: getColumnConfig('amount')?.resizable ?? true,
     }),
     columnHelper.accessor('currency', {
       id: 'currency',
@@ -551,18 +555,18 @@ const columns = computed(() => {
             placeholder: 'CURR'
           })
         : h('span', { class: getDisplayClasses() }, getValue()),
-      size: 80,
-      minSize: 60,
-      enableResizing: true,
+      size: getColumnConfig('currency')?.defaultWidth || 80,
+      minSize: getColumnConfig('currency')?.minWidth || 60,
+      enableResizing: getColumnConfig('currency')?.resizable ?? true,
     }),
     columnHelper.display({
       id: 'actions',
       header: 'Actions',
       cell: ({ row }) => {
         if (!props.editable) return null
-        
+
         const buttons = []
-        
+
         if (row.original.isFirstPosting) {
           buttons.push(
             h('button', {
@@ -579,7 +583,7 @@ const columns = computed(() => {
             }, '−')
           )
         }
-        
+
         buttons.push(
           h('button', {
             onClick: () => removePosting(row.original.transaction, row.original.postingIndex),
@@ -587,12 +591,12 @@ const columns = computed(() => {
             title: 'Remove posting'
           }, '×')
         )
-        
+
         return h('div', { class: 'flex items-center justify-center gap-1' }, buttons)
       },
-      size: 100,
-      minSize: 80,
-      enableResizing: false,
+      size: getColumnConfig('actions')?.defaultWidth || 100,
+      minSize: getColumnConfig('actions')?.minWidth || 80,
+      enableResizing: getColumnConfig('actions')?.resizable || false,
     }),
   ]
 
