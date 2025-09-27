@@ -568,6 +568,14 @@ const columns = computed(() => {
         const buttons = []
 
         if (row.original.isFirstPosting) {
+          // First posting: × (remove posting) + (add posting) − (remove transaction)
+          buttons.push(
+            h('button', {
+              onClick: () => removePosting(row.original.transaction, row.original.postingIndex),
+              class: 'inline-flex items-center justify-center w-6 h-6 text-red-600 hover:text-red-800 hover:bg-red-50 rounded text-sm dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-900/20',
+              title: 'Remove posting'
+            }, '×')
+          )
           buttons.push(
             h('button', {
               onClick: () => addPosting(row.original.transaction),
@@ -582,15 +590,23 @@ const columns = computed(() => {
               title: 'Remove transaction'
             }, '−')
           )
+        } else {
+          // Subsequent postings: only × (remove posting) in first position to align with first row
+          buttons.push(
+            h('button', {
+              onClick: () => removePosting(row.original.transaction, row.original.postingIndex),
+              class: 'inline-flex items-center justify-center w-6 h-6 text-red-600 hover:text-red-800 hover:bg-red-50 rounded text-sm dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-900/20',
+              title: 'Remove posting'
+            }, '×')
+          )
+          // Add spacer elements to maintain alignment with first row
+          buttons.push(
+            h('div', { class: 'w-6 h-6' }) // Spacer for + button position
+          )
+          buttons.push(
+            h('div', { class: 'w-6 h-6' }) // Spacer for − button position
+          )
         }
-
-        buttons.push(
-          h('button', {
-            onClick: () => removePosting(row.original.transaction, row.original.postingIndex),
-            class: 'inline-flex items-center justify-center w-6 h-6 text-red-600 hover:text-red-800 hover:bg-red-50 rounded text-sm dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-900/20',
-            title: 'Remove posting'
-          }, '×')
-        )
 
         return h('div', { class: 'flex items-center justify-center gap-1' }, buttons)
       },
