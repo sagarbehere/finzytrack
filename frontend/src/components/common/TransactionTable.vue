@@ -681,17 +681,10 @@ const handleCellKeydown = (event: KeyboardEvent, cell: any, rowData: any) => {
   }
 
   // For non-dropdown elements, handle navigation keys
-  if (!['Tab', 'Enter', 'Escape'].includes(event.key)) {
+  if (event.key !== 'Tab') {
     return
   }
 
-  // Special handling for Enter key in contenteditable fields
-  if (event.key === 'Enter' && target?.getAttribute('contenteditable') === 'true') {
-    // Allow Enter to create new lines in contenteditable fields
-    if (!event.ctrlKey && !event.shiftKey) {
-      return
-    }
-  }
 
   // For Tab navigation, prevent default and handle it
   if (event.key === 'Tab') {
@@ -776,10 +769,28 @@ onMounted(() => {
   currentPageIndex.value = 0
   originalTransactions.value = JSON.parse(JSON.stringify(props.transactions))
 
-  // Add global keyboard listener for table navigation initialization
+  // Add global keyboard listener for table navigation initialization and pagination
   const handleGlobalKeydown = (event: KeyboardEvent) => {
+    const target = event.target as Element
+
+    // Only handle if we're inside the transaction table
+    if (target?.closest('.transaction-table-container')) {
+      // Handle pagination with Page Up/Page Down
+      if (event.key === 'PageUp' && currentPageIndex.value > 0) {
+        event.preventDefault()
+        goToPreviousPage()
+        return
+      }
+
+      if (event.key === 'PageDown' && currentPageIndex.value < totalPages.value - 1) {
+        event.preventDefault()
+        goToNextPage()
+        return
+      }
+    }
+
     // Start navigation with F2 or when Tab is pressed on the table container
-    if (event.key === 'F2' || (event.key === 'Tab' && (event.target as Element)?.closest('.transaction-table-container'))) {
+    if (event.key === 'F2' || (event.key === 'Tab' && target?.closest('.transaction-table-container'))) {
       if (filteredTransactions.value.length > 0 && !currentCell.value) {
         // Initialize navigation at the first visible editable cell
         const firstTransaction = filteredTransactions.value[0]

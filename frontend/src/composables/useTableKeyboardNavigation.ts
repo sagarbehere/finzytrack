@@ -185,16 +185,6 @@ export function useTableKeyboardNavigation() {
           getTransactionPostingCount
         )
         break
-      case 'Enter':
-        event.preventDefault()
-        // Enter should focus/edit the current cell if not already focused
-        nextCell = currentPosition
-        break
-      case 'Escape':
-        // Clear current focus
-        currentCell.value = null
-        ;(document.activeElement as HTMLElement)?.blur()
-        break
     }
 
     if (nextCell) {
