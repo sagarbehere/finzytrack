@@ -115,10 +115,19 @@
     </TransitionRoot>
 
     <!-- Desktop sidebar -->
-    <div class="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-72 lg:flex-col">
+    <div
+      class="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:flex-col group"
+      :style="{ width: sidebarWidthPx }"
+    >
       <div
-        class="flex grow flex-col gap-y-5 overflow-y-auto border-r border-gray-200 bg-white px-6 pb-4 dark:border-white/10 dark:bg-gray-900"
+        class="flex grow flex-col gap-y-5 overflow-y-auto border-r border-gray-200 bg-white px-6 pb-4 dark:border-white/10 dark:bg-gray-900 relative"
       >
+        <!-- Resize handle -->
+        <div
+          class="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-500 hover:w-1 transition-all duration-150 z-10 group-hover:bg-gray-300 dark:group-hover:bg-gray-600"
+          @mousedown="startResize"
+          title="Drag to resize sidebar"
+        ></div>
         <div class="flex h-16 shrink-0 items-center">
           <h1 class="text-xl font-bold text-gray-900 dark:text-white">Finzytrack</h1>
         </div>
@@ -180,7 +189,10 @@
     </div>
 
     <!-- Main content area -->
-    <div class="lg:pl-72 bg-white dark:bg-gray-900">
+    <div
+      class="bg-white dark:bg-gray-900"
+      :style="{ paddingLeft: isLargeScreen ? `${sidebarWidth}px` : '0px' }"
+    >
       <!-- Top bar -->
       <div
         class="sticky top-0 z-40 flex h-16 shrink-0 items-center gap-x-4 border-b border-gray-200 bg-white px-4 shadow-sm sm:gap-x-6 sm:px-6 lg:px-8 dark:border-white/10 dark:bg-gray-900"
@@ -275,9 +287,10 @@
 </template>
 
 <script setup>
-  import { ref } from 'vue'
+  import { ref, onMounted, onUnmounted } from 'vue'
   import { useTheme } from '@/composables/useTheme'
   import { useNotifications } from '@/composables/useNotifications'
+  import { useSidebarWidth } from '@/composables/useSidebarWidth'
   import NotificationPanel from '@/components/common/NotificationPanel.vue'
   import { Dialog, DialogPanel, TransitionChild, TransitionRoot } from '@headlessui/vue'
   import {
@@ -311,6 +324,52 @@
   const toggleNotificationPanel = () => {
     showNotificationPanel.value = !showNotificationPanel.value
   }
+
+  // Sidebar resizing
+  const { sidebarWidth, sidebarWidthPx, setSidebarWidth, MIN_WIDTH, MAX_WIDTH } = useSidebarWidth()
+  const isResizing = ref(false)
+  const isLargeScreen = ref(window.innerWidth >= 1024)
+
+  const startResize = (e) => {
+    isResizing.value = true
+    document.addEventListener('mousemove', handleSidebarResize)
+    document.addEventListener('mouseup', stopResize)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    e.preventDefault()
+  }
+
+  const handleSidebarResize = (e) => {
+    if (!isResizing.value) return
+
+    const newWidth = e.clientX
+    setSidebarWidth(newWidth)
+  }
+
+  const stopResize = () => {
+    isResizing.value = false
+    document.removeEventListener('mousemove', handleSidebarResize)
+    document.removeEventListener('mouseup', stopResize)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+
+  // Handle responsive screen size changes
+  const handleWindowResize = () => {
+    isLargeScreen.value = window.innerWidth >= 1024
+  }
+
+  onMounted(() => {
+    window.addEventListener('resize', handleWindowResize)
+  })
+
+  // Cleanup on component unmount
+  onUnmounted(() => {
+    if (isResizing.value) {
+      stopResize()
+    }
+    window.removeEventListener('resize', handleWindowResize)
+  })
 
   // Navigation configuration based on Finzytrack spec
   const mainNavigation = [
