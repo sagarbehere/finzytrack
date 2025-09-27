@@ -11,115 +11,165 @@ export function useTableKeyboardNavigation() {
   const isNavigating = ref(false)
 
   // Define the logical tab order for editable columns
-  const editableColumns = [
-    'date', 'flag', 'payee', 'narration', 'tags_links', 
+  const allEditableColumns = [
+    'date', 'flag', 'payee', 'narration', 'tags_links',
     'account', 'amount', 'currency'
   ]
+
+  // Function to get only visible editable columns
+  const getVisibleEditableColumns = (): string[] => {
+    return allEditableColumns.filter(columnId => {
+      const cell = document.querySelector(`td[data-column-id="${columnId}"]`)
+      return cell !== null
+    })
+  }
 
   const setCellFocus = async (position: CellPosition) => {
     currentCell.value = position
     isNavigating.value = true
-    
+
     await nextTick()
-    
-    // Find the input element for this cell position
-    const selector = `[data-row="${position.rowIndex}"][data-column="${position.columnId}"]${
-      position.postingIndex !== undefined ? `[data-posting="${position.postingIndex}"]` : ''
-    } input, [data-row="${position.rowIndex}"][data-column="${position.columnId}"]${
-      position.postingIndex !== undefined ? `[data-posting="${position.postingIndex}"]` : ''
-    } select, [data-row="${position.rowIndex}"][data-column="${position.columnId}"]${
-      position.postingIndex !== undefined ? `[data-posting="${position.postingIndex}"]` : ''
-    } textarea`
-    
-    const element = document.querySelector(selector) as HTMLElement
-    if (element) {
-      element.focus()
-      
-      // For account dropdowns, open them automatically
-      if (position.columnId === 'account') {
-        const comboboxButton = element.parentElement?.querySelector('[role="combobox"] button')
-        if (comboboxButton) {
-          (comboboxButton as HTMLElement).click()
-        }
-      }
+
+    // Build the correct selector based on the DOM structure
+    // For posting-level cells, we need both transaction index and posting index
+    // For transaction-level cells, we only need transaction index
+    let cellSelector = ''
+
+    if (['account', 'amount', 'currency'].includes(position.columnId)) {
+      // Posting-level fields need posting index
+      cellSelector = `td[data-column-id="${position.columnId}"][data-row="${position.rowIndex + 1}"][data-posting="${position.postingIndex || 0}"]`
+    } else {
+      // Transaction-level fields only need row index
+      cellSelector = `td[data-column-id="${position.columnId}"][data-row="${position.rowIndex + 1}"]`
     }
-    
+
+    // Look for focusable elements within the cell
+    const cell = document.querySelector(cellSelector)
+    if (!cell) {
+      console.warn('Cell not found:', cellSelector)
+      isNavigating.value = false
+      return
+    }
+
+    // Find the appropriate input element within the cell
+    let targetElement: HTMLElement | null = null
+
+    // Try different element types based on the column
+    if (position.columnId === 'payee' || position.columnId === 'narration') {
+      targetElement = cell.querySelector('[contenteditable="true"]') as HTMLElement
+    } else if (position.columnId === 'account' || position.columnId === 'currency') {
+      // For dropdowns, find the ComboboxInput element
+      targetElement = cell.querySelector('input') as HTMLElement
+    } else {
+      // For regular inputs
+      targetElement = cell.querySelector('input, select, textarea') as HTMLElement
+    }
+
+    if (targetElement) {
+      targetElement.focus()
+
+      // For contenteditable elements, place cursor at end
+      if (targetElement.contentEditable === 'true') {
+        const range = document.createRange()
+        const selection = window.getSelection()
+        range.selectNodeContents(targetElement)
+        range.collapse(false)
+        selection?.removeAllRanges()
+        selection?.addRange(range)
+      }
+
+      // For input elements, select all text
+      if (targetElement.tagName === 'INPUT') {
+        (targetElement as HTMLInputElement).select()
+      }
+    } else {
+      console.warn('No focusable element found in cell:', cellSelector)
+    }
+
     isNavigating.value = false
   }
 
-  const getNextCell = (current: CellPosition, direction: 'next' | 'prev' | 'up' | 'down', totalRows: number, getTransactionPostingCount: (rowIndex: number) => number): CellPosition | null => {
-    const currentColumnIndex = editableColumns.indexOf(current.columnId)
+  const getNextCell = (current: CellPosition, direction: 'next' | 'prev', totalRows: number, getTransactionPostingCount: (rowIndex: number) => number): CellPosition | null => {
+    const visibleEditableColumns = getVisibleEditableColumns()
+    const currentColumnIndex = visibleEditableColumns.indexOf(current.columnId)
     if (currentColumnIndex === -1) return null
 
     if (direction === 'next') {
-      // Tab navigation: account → amount → currency → next posting's account
-      if (current.columnId === 'account') {
-        return { ...current, columnId: 'amount' }
-      } else if (current.columnId === 'amount') {
-        return { ...current, columnId: 'currency' }
-      } else if (current.columnId === 'currency') {
-        // Move to next posting's account in same transaction
-        const postingCount = getTransactionPostingCount(current.rowIndex)
-        const nextPostingIndex = (current.postingIndex || 0) + 1
-        
-        if (nextPostingIndex < postingCount) {
-          return { ...current, columnId: 'account', postingIndex: nextPostingIndex }
-        } else {
-          // Move to next transaction's first editable field
-          if (current.rowIndex + 1 < totalRows) {
-            return { rowIndex: current.rowIndex + 1, columnId: 'date', postingIndex: undefined }
+      // Tab navigation follows logical flow: date → flag → payee → narration → tags_links → account(0) → amount(0) → currency(0) → account(1) → ...
+      if (['account', 'amount', 'currency'].includes(current.columnId)) {
+        // Posting-level navigation
+        if (current.columnId === 'account') {
+          return { ...current, columnId: 'amount' }
+        } else if (current.columnId === 'amount') {
+          return { ...current, columnId: 'currency' }
+        } else if (current.columnId === 'currency') {
+          // Move to next posting's account in same transaction
+          const postingCount = getTransactionPostingCount(current.rowIndex)
+          const nextPostingIndex = (current.postingIndex || 0) + 1
+
+          if (nextPostingIndex < postingCount) {
+            return { ...current, columnId: 'account', postingIndex: nextPostingIndex }
+          } else {
+            // Move to next transaction's first field
+            if (current.rowIndex + 1 < totalRows) {
+              return { rowIndex: current.rowIndex + 1, columnId: 'date', postingIndex: undefined }
+            }
           }
         }
       } else {
-        // For transaction-level fields, move to next field or first posting
+        // Transaction-level field navigation
         const nextColumnIndex = currentColumnIndex + 1
-        if (nextColumnIndex < editableColumns.length) {
-          const nextColumnId = editableColumns[nextColumnIndex]
+        if (nextColumnIndex < visibleEditableColumns.length) {
+          const nextColumnId = visibleEditableColumns[nextColumnIndex]
           if (['account', 'amount', 'currency'].includes(nextColumnId)) {
+            // Moving to first posting-level field
             return { ...current, columnId: nextColumnId, postingIndex: 0 }
           } else {
+            // Moving to next transaction-level field
             return { ...current, columnId: nextColumnId, postingIndex: undefined }
           }
         }
       }
     } else if (direction === 'prev') {
       // Shift+Tab navigation: reverse of above logic
-      if (current.columnId === 'currency') {
-        return { ...current, columnId: 'amount' }
-      } else if (current.columnId === 'amount') {
-        return { ...current, columnId: 'account' }
-      } else if (current.columnId === 'account') {
-        // Move to previous posting's currency or transaction field
-        if ((current.postingIndex || 0) > 0) {
-          return { ...current, columnId: 'currency', postingIndex: (current.postingIndex || 1) - 1 }
-        } else {
-          // Move to last transaction-level field
-          return { ...current, columnId: 'tags_links', postingIndex: undefined }
+      if (['account', 'amount', 'currency'].includes(current.columnId)) {
+        // Posting-level navigation (reverse)
+        if (current.columnId === 'currency') {
+          return { ...current, columnId: 'amount' }
+        } else if (current.columnId === 'amount') {
+          return { ...current, columnId: 'account' }
+        } else if (current.columnId === 'account') {
+          const currentPostingIndex = current.postingIndex || 0
+          if (currentPostingIndex > 0) {
+            // Move to previous posting's currency
+            return { ...current, columnId: 'currency', postingIndex: currentPostingIndex - 1 }
+          } else {
+            // Move to last visible transaction-level field
+            const transactionColumns = visibleEditableColumns.filter(col => !['account', 'amount', 'currency'].includes(col))
+            const lastTransactionColumn = transactionColumns[transactionColumns.length - 1]
+            return { ...current, columnId: lastTransactionColumn, postingIndex: undefined }
+          }
         }
       } else {
-        // For transaction-level fields, move to previous field
+        // Transaction-level field navigation (reverse)
         const prevColumnIndex = currentColumnIndex - 1
         if (prevColumnIndex >= 0) {
-          return { ...current, columnId: editableColumns[prevColumnIndex], postingIndex: undefined }
+          return { ...current, columnId: visibleEditableColumns[prevColumnIndex], postingIndex: undefined }
         } else if (current.rowIndex > 0) {
-          // Move to previous transaction's last field
+          // Move to previous transaction's last posting's currency
           const prevRowIndex = current.rowIndex - 1
           const postingCount = getTransactionPostingCount(prevRowIndex)
           return { rowIndex: prevRowIndex, columnId: 'currency', postingIndex: postingCount - 1 }
         }
       }
-    } else if (direction === 'up' && current.rowIndex > 0) {
-      return { ...current, rowIndex: current.rowIndex - 1 }
-    } else if (direction === 'down' && current.rowIndex + 1 < totalRows) {
-      return { ...current, rowIndex: current.rowIndex + 1 }
     }
 
     return null
   }
 
   const handleKeyNavigation = (
-    event: KeyboardEvent, 
-    currentPosition: CellPosition, 
+    event: KeyboardEvent,
+    currentPosition: CellPosition,
     totalRows: number,
     getTransactionPostingCount: (rowIndex: number) => number
   ) => {
@@ -129,19 +179,11 @@ export function useTableKeyboardNavigation() {
       case 'Tab':
         event.preventDefault()
         nextCell = getNextCell(
-          currentPosition, 
-          event.shiftKey ? 'prev' : 'next', 
-          totalRows, 
+          currentPosition,
+          event.shiftKey ? 'prev' : 'next',
+          totalRows,
           getTransactionPostingCount
         )
-        break
-      case 'ArrowUp':
-        event.preventDefault()
-        nextCell = getNextCell(currentPosition, 'up', totalRows, getTransactionPostingCount)
-        break
-      case 'ArrowDown':
-        event.preventDefault()
-        nextCell = getNextCell(currentPosition, 'down', totalRows, getTransactionPostingCount)
         break
       case 'Enter':
         event.preventDefault()
@@ -169,6 +211,7 @@ export function useTableKeyboardNavigation() {
     isNavigating,
     setCellFocus,
     handleKeyNavigation,
-    initializeNavigation
+    initializeNavigation,
+    getNextCell
   }
 }

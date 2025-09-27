@@ -67,8 +67,6 @@
                   `transaction-${row.original.transaction.id}`,
                   getTransactionRowClasses(row.original)
                 ]"
-                @keydown="(e) => handleTableKeydown(e, row.original)"
-                tabindex="-1"
               >
                 <template v-for="cell in row.getVisibleCells()" :key="cell.id">
                   <td
@@ -78,6 +76,8 @@
                     :data-row="row.original.transactionIndex"
                     :data-posting="row.original.postingIndex"
                     :class="getCellClasses(cell)"
+                    @keydown.capture="(e) => handleCellKeydown(e, cell, row.original)"
+                    @click="(e) => handleCellClick(e, cell, row.original)"
                   >
                     <FlexRender :render="cell.column.columnDef.cell" :props="cell.getContext()" />
                   </td>
@@ -148,7 +148,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, h, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, h, nextTick } from 'vue'
 import {
   useVueTable,
   createColumnHelper,
@@ -205,7 +205,12 @@ const {
 } = useTableColumns()
 
 const {
-  handleKeyNavigation
+  currentCell,
+  isNavigating,
+  setCellFocus,
+  handleKeyNavigation,
+  initializeNavigation,
+  getNextCell
 } = useTableKeyboardNavigation()
 
 // State
@@ -642,13 +647,64 @@ const getCellClasses = (cell: Cell<any, any>) => {
 }
 
 // Keyboard navigation
-const handleTableKeydown = (event: KeyboardEvent, rowData: any) => {
-  const position = {
-    rowIndex: rowData.transactionIndex - 1,
-    columnId: 'date', // Default starting column
-    postingIndex: rowData.postingIndex
+const handleCellKeydown = (event: KeyboardEvent, cell: any, rowData: any) => {
+  const target = event.target as Element
+
+  // Check if we're in a dropdown input (ComboboxInput from Headless UI)
+  const isDropdownInput = target?.closest('[role="combobox"]') &&
+                         (target.tagName === 'INPUT' || target.hasAttribute('contenteditable'))
+
+  // For dropdown inputs, only handle Tab key for navigation, let everything else work normally
+  if (isDropdownInput) {
+    if (event.key === 'Tab') {
+      // Only navigate with Tab, not other keys
+      event.preventDefault()
+
+      const position = {
+        rowIndex: rowData.transactionIndex - 1,
+        columnId: cell.column.id,
+        postingIndex: ['account', 'amount', 'currency'].includes(cell.column.id) ? rowData.postingIndex : undefined
+      }
+
+      handleKeyNavigation(
+        event,
+        position,
+        filteredTransactions.value.length,
+        (rowIndex: number) => {
+          const transaction = filteredTransactions.value[rowIndex]
+          return transaction ? transaction.postings.length : 0
+        }
+      )
+    }
+    // For all other keys in dropdown inputs, let the dropdown handle them
+    return
   }
-  
+
+  // For non-dropdown elements, handle navigation keys
+  if (!['Tab', 'Enter', 'Escape'].includes(event.key)) {
+    return
+  }
+
+  // Special handling for Enter key in contenteditable fields
+  if (event.key === 'Enter' && target?.getAttribute('contenteditable') === 'true') {
+    // Allow Enter to create new lines in contenteditable fields
+    if (!event.ctrlKey && !event.shiftKey) {
+      return
+    }
+  }
+
+  // For Tab navigation, prevent default and handle it
+  if (event.key === 'Tab') {
+    event.preventDefault()
+  }
+
+  // Determine current position based on the cell that triggered the event
+  const position = {
+    rowIndex: rowData.transactionIndex - 1, // Convert to 0-based index
+    columnId: cell.column.id,
+    postingIndex: ['account', 'amount', 'currency'].includes(cell.column.id) ? rowData.postingIndex : undefined
+  }
+
   handleKeyNavigation(
     event,
     position,
@@ -658,6 +714,29 @@ const handleTableKeydown = (event: KeyboardEvent, rowData: any) => {
       return transaction ? transaction.postings.length : 0
     }
   )
+}
+
+const handleCellClick = (event: Event, cell: any, rowData: any) => {
+  // Only handle clicks on editable cells
+  if (!isEditableColumn(cell.column.id)) {
+    return
+  }
+
+  event.preventDefault()
+
+  // Set focus to the clicked cell
+  const position = {
+    rowIndex: rowData.transactionIndex - 1,
+    columnId: cell.column.id,
+    postingIndex: ['account', 'amount', 'currency'].includes(cell.column.id) ? rowData.postingIndex : undefined
+  }
+
+  setCellFocus(position)
+}
+
+const isEditableColumn = (columnId: string) => {
+  const editableColumns = ['date', 'flag', 'payee', 'narration', 'tags_links', 'account', 'amount', 'currency']
+  return editableColumns.includes(columnId) && columnVisibility.value[columnId] === true
 }
 
 const table = useVueTable({
@@ -696,6 +775,37 @@ watch(() => props.pageSize, (_size) => {
 onMounted(() => {
   currentPageIndex.value = 0
   originalTransactions.value = JSON.parse(JSON.stringify(props.transactions))
+
+  // Add global keyboard listener for table navigation initialization
+  const handleGlobalKeydown = (event: KeyboardEvent) => {
+    // Start navigation with F2 or when Tab is pressed on the table container
+    if (event.key === 'F2' || (event.key === 'Tab' && (event.target as Element)?.closest('.transaction-table-container'))) {
+      if (filteredTransactions.value.length > 0 && !currentCell.value) {
+        // Initialize navigation at the first visible editable cell
+        const firstTransaction = filteredTransactions.value[0]
+        const visibleEditableColumns = ['date', 'flag', 'payee', 'narration', 'tags_links', 'account', 'amount', 'currency']
+          .filter(col => columnVisibility.value[col] === true)
+
+        if (firstTransaction && visibleEditableColumns.length > 0) {
+          const firstColumn = visibleEditableColumns[0]
+          const initialPosition = {
+            rowIndex: 0,
+            columnId: firstColumn,
+            postingIndex: ['account', 'amount', 'currency'].includes(firstColumn) ? 0 : undefined
+          }
+          setCellFocus(initialPosition)
+          event.preventDefault()
+        }
+      }
+    }
+  }
+
+  document.addEventListener('keydown', handleGlobalKeydown)
+
+  // Cleanup on unmount
+  onUnmounted(() => {
+    document.removeEventListener('keydown', handleGlobalKeydown)
+  })
 })
 
 watch(() => props.transactions, (newTransactions) => {
@@ -994,6 +1104,33 @@ td[data-column-id="currency"] {
 /* Remove focus outline from table rows */
 .transaction-row:focus {
   outline: none;
+}
+
+/* Enhanced focus indicators for input elements within cells */
+td input:focus,
+td select:focus,
+td button:focus,
+td [contenteditable]:focus {
+  outline: 2px solid #3b82f6 !important;
+  outline-offset: -1px;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.2);
+}
+
+.dark td input:focus,
+.dark td select:focus,
+.dark td button:focus,
+.dark td [contenteditable]:focus {
+  outline-color: #60a5fa !important;
+  box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.2);
+}
+
+/* Ensure focused elements are visible above dropdowns */
+td input:focus,
+td select:focus,
+td button:focus,
+td [contenteditable]:focus {
+  position: relative;
+  z-index: 10;
 }
 
 /* Improved button hover states */
