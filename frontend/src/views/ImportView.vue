@@ -259,9 +259,9 @@
           isModified: false
         },
         import_details: {
-          confidence: 0, // No confidence yet
-          is_duplicate: false, // No duplicate check yet
-          duplicate_info: undefined // null is not allowed, use undefined
+          is_duplicate: false // No duplicate check yet
+          // confidence field omitted - will be added by autocategorization
+          // duplicate_info omitted - will be added if duplicates are found
         }
       }
     })
