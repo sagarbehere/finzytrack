@@ -382,7 +382,7 @@ const shouldSkipCell = (cell: Cell<any, any>) => {
 
 // Helper functions for cell styling
 const getEditableInputClasses = (extraClasses = '') => {
-  return `w-full min-w-0 rounded-md border-0 py-1.5 px-3 bg-white text-gray-900 ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm dark:bg-white/5 dark:text-white dark:ring-white/10 dark:placeholder:text-gray-500 dark:focus:ring-blue-500 ${extraClasses}`
+  return `w-full min-w-0 rounded-md border-0 py-1.5 px-3 bg-white text-gray-900 ring-0 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm dark:bg-white/5 dark:text-white dark:placeholder:text-gray-500 dark:focus:ring-blue-500 ${extraClasses}`
 }
 
 const getDisplayClasses = () => {
@@ -506,7 +506,7 @@ const columns = computed(() => {
         ? h(AccountDropdown, {
             modelValue: getValue(),
             'onUpdate:modelValue': (value: string) => updatePostingAccount(row.original.transaction, row.original.postingIndex, value),
-            'custom-class': '!text-xs !py-1 !px-2 !pr-8',
+            'custom-class': '!text-xs !py-1 !px-2 !pr-8 !outline-0',
             'allow-custom': false,
             placeholder: 'Account...'
           })
@@ -549,7 +549,7 @@ const columns = computed(() => {
         ? h(CommodityDropdown, {
             modelValue: getValue(),
             'onUpdate:modelValue': (value: string) => updatePostingCurrency(row.original.transaction, row.original.postingIndex, value),
-            'custom-class': '!text-xs !py-1 !px-2 !pr-8',
+            'custom-class': '!text-xs !py-1 !px-2 !pr-8 !outline-0',
             'allow-custom': false,
             'show-details': false,
             placeholder: 'CURR'
