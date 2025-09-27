@@ -1,86 +1,96 @@
 <template>
   <div class="transaction-table-container">
-    <!-- Global search bar (when enabled) -->
-    <div v-if="showSearch" class="mb-4">
-      <input
-        :value="globalFilter"
-        @input="onGlobalFilterChange"
-        type="text"
-        placeholder="Search all transactions..."
-        class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+    <!-- Table Controls -->
+    <div class="flex items-center justify-between mb-4 gap-4">
+      <!-- Global search bar (when enabled) -->
+      <div v-if="showSearch" class="flex-1 max-w-md">
+        <div class="relative">
+          <MagnifyingGlassIcon 
+            class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" 
+            aria-hidden="true" 
+          />
+          <input
+            :value="globalFilter"
+            @input="onGlobalFilterChange"
+            type="text"
+            placeholder="Search all transactions..."
+            class="block w-full rounded-md border-0 py-1.5 pl-10 pr-3 text-gray-900 ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm dark:bg-white/5 dark:text-white dark:ring-white/10 dark:placeholder:text-gray-500 dark:focus:ring-blue-500"
+          />
+        </div>
+      </div>
+
+      <!-- Column visibility controls -->
+      <ColumnVisibilityControl
+        :column-visibility="columnVisibility"
+        :all-columns="allColumns"
+        :toggle-column-visibility="toggleColumnVisibility"
+        :reset-to-defaults="resetToDefaults"
       />
     </div>
 
     <!-- Main table -->
-    <div class="overflow-x-auto border border-gray-300 rounded-lg dark:border-gray-600">
-      <table class="w-full table-fixed" style="table-layout: fixed; width: 100%;">
-        <thead class="bg-gray-100 border-b-2 border-gray-300 dark:bg-gray-800 dark:border-gray-600">
-          <tr v-for="headerGroup in table.getHeaderGroups()" :key="headerGroup.id">
-            <th
-              v-for="header in headerGroup.headers"
-              :key="header.id"
-              :style="{ width: `${header.getSize()}px` }"
-              class="px-2 py-2 text-left text-xs font-bold text-gray-700 border-r border-gray-300 dark:text-gray-300 dark:border-gray-600 relative"
-            >
-              <FlexRender
-                :render="header.column.columnDef.header"
-                :props="header.getContext()"
-              />
-              <div
-                v-if="header.column.getCanResize()"
-                class="resize-handle"
-                :class="{ 'resizing': header.column.getIsResizing() }"
-                @mousedown="(e) => header.getResizeHandler()(e)"
-                @touchstart="(e) => header.getResizeHandler()(e)"
-              ></div>
-            </th>
-          </tr>
-        </thead>
-        <tbody class="bg-white dark:bg-gray-900">
-          <template v-for="row in table.getRowModel().rows" :key="row.id">
-            <tr
-              :class="[
-                'transaction-row',
-                `transaction-${row.original.transaction.id}`,
-                row.original.isFirstPosting ? 'border-t-2 border-blue-300 dark:border-blue-700' : 'border-t border-gray-200 dark:border-gray-700',
-                row.original.isLastPosting ? 'border-b-2 border-blue-300 dark:border-blue-700' : 'border-b border-gray-200 dark:border-gray-700',
-                !isTransactionBalanced(row.original.transaction) ? 'bg-red-100/30 dark:bg-red-900/20' : '',
-                row.original.transaction.import_details?.is_duplicate ? 'bg-gray-50 dark:bg-gray-800/50' : ''
-              ]"
-            >
-              <template v-for="cell in row.getVisibleCells()" :key="cell.id">
-                <td
-                  v-if="!shouldSkipCell(cell)"
-                  :rowspan="getRowSpan(cell)"
-                  :data-column-id="cell.column.id"
-                  :class="[
-                    'px-2 py-2 border-r border-gray-200 dark:border-gray-700 text-sm',
-                    { 'align-top': getRowSpan(cell) > 1 },
-                    { 'text-right': ['amount'].includes(cell.column.id) },
-                    { 'text-center': ['actions'].includes(cell.column.id) },
-                    { 'bg-gray-50 dark:bg-gray-700': cell.column.id === '#' && getRowSpan(cell) > 1 },
-                    { 'align-top': ['payee', 'narration'].includes(cell.column.id) }
-                  ]"
-                  :style="['payee', 'narration'].includes(cell.column.id) ? { 
-                    'white-space': 'normal', 
-                    'word-wrap': 'break-word', 
-                    'overflow-wrap': 'break-word',
-                    'word-break': 'break-word',
-                    'min-width': '0',
-                    'max-width': '100%'
-                  } : {}"
-                >
-                  <FlexRender :render="cell.column.columnDef.cell" :props="cell.getContext()" />
-                </td>
-              </template>
+    <div class="card overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full table-fixed">
+          <!-- Table Header -->
+          <thead class="bg-gray-50 dark:bg-gray-800/50">
+            <tr v-for="headerGroup in table.getHeaderGroups()" :key="headerGroup.id">
+              <th
+                v-for="header in headerGroup.headers"
+                :key="header.id"
+                :style="{ width: `${header.getSize()}px` }"
+                class="relative px-3 py-3 text-left text-xs font-semibold text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 last:border-r-0"
+              >
+                <FlexRender
+                  :render="header.column.columnDef.header"
+                  :props="header.getContext()"
+                />
+                <!-- Resize handle -->
+                <div
+                  v-if="header.column.getCanResize()"
+                  class="resize-handle"
+                  :class="{ 'resizing': header.column.getIsResizing() }"
+                  @mousedown="(e) => header.getResizeHandler()(e)"
+                  @touchstart="(e) => header.getResizeHandler()(e)"
+                />
+              </th>
             </tr>
-          </template>
-        </tbody>
-      </table>
+          </thead>
+
+          <!-- Table Body -->
+          <tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-800">
+            <template v-for="row in table.getRowModel().rows" :key="row.id">
+              <tr
+                :data-row="row.original.transactionIndex"
+                :class="[
+                  'transaction-row group',
+                  `transaction-${row.original.transaction.id}`,
+                  getTransactionRowClasses(row.original)
+                ]"
+                @keydown="(e) => handleTableKeydown(e, row.original)"
+                tabindex="-1"
+              >
+                <template v-for="cell in row.getVisibleCells()" :key="cell.id">
+                  <td
+                    v-if="!shouldSkipCell(cell)"
+                    :rowspan="getRowSpan(cell)"
+                    :data-column-id="cell.column.id"
+                    :data-row="row.original.transactionIndex"
+                    :data-posting="row.original.postingIndex"
+                    :class="getCellClasses(cell)"
+                  >
+                    <FlexRender :render="cell.column.columnDef.cell" :props="cell.getContext()" />
+                  </td>
+                </template>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <!-- Pagination controls -->
-    <div v-if="pageSize > 0" class="flex items-center justify-between mt-4">
+    <div v-if="pageSize > 0" class="flex items-center justify-between mt-6">
       <div class="text-sm text-gray-700 dark:text-gray-300">
         <template v-if="currentPageTransactionCount === 1">
           Showing transaction {{ firstEntryNumber }} of {{ filteredTransactions.length }}
@@ -89,39 +99,48 @@
           Showing transactions {{ firstEntryNumber }} to {{ lastEntryNumber }} of {{ filteredTransactions.length }}
         </template>
       </div>
-      <div class="flex space-x-2">
+      <div class="flex items-center gap-2">
         <button
           @click="goToPreviousPage"
           :disabled="currentPageIndex === 0"
-          class="px-3 py-1 text-sm bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+          class="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
         >
+          <ChevronLeftIcon class="h-4 w-4 mr-1" />
           Previous
         </button>
+        <span class="text-sm text-gray-700 dark:text-gray-300 px-3">
+          Page {{ currentPageIndex + 1 }} of {{ totalPages }}
+        </span>
         <button
           @click="goToNextPage"
           :disabled="currentPageIndex >= totalPages - 1"
-          class="px-3 py-1 text-sm bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+          class="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Next
+          <ChevronRightIcon class="h-4 w-4 ml-1" />
         </button>
       </div>
     </div>
     
     <!-- Summary section (when enabled) -->
-    <div v-if="showSummary" class="mt-4 p-4 bg-gray-50 rounded-lg border dark:bg-gray-800 dark:border-gray-700">
-      <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">Transaction Summary</h3>
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div class="bg-white p-4 rounded border dark:bg-gray-700 dark:border-gray-600">
-          <p class="text-sm text-gray-500 dark:text-gray-400">Total Transactions</p>
-          <p class="text-2xl font-semibold text-gray-900 dark:text-white">{{ props.transactions.length }}</p>
-        </div>
-        <div class="bg-white p-4 rounded border dark:bg-gray-700 dark:border-gray-600">
-          <p class="text-sm text-gray-500 dark:text-gray-400">Total Amount</p>
-          <p class="text-2xl font-semibold text-gray-900 dark:text-white">{{ totalAmount }}</p>
-        </div>
-        <div class="bg-white p-4 rounded border dark:bg-gray-700 dark:border-gray-600">
-          <p class="text-sm text-gray-500 dark:text-gray-400">Unbalanced</p>
-          <p class="text-2xl font-semibold text-gray-900 dark:text-white">{{ unbalancedCount }}</p>
+    <div v-if="showSummary" class="mt-6">
+      <div class="card">
+        <div class="p-6">
+          <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Transaction Summary</h3>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="text-center">
+              <div class="text-3xl font-bold text-gray-900 dark:text-white">{{ props.transactions.length }}</div>
+              <div class="text-sm text-gray-500 dark:text-gray-400 mt-1">Total Transactions</div>
+            </div>
+            <div class="text-center">
+              <div class="text-3xl font-bold text-gray-900 dark:text-white">{{ totalAmount }}</div>
+              <div class="text-sm text-gray-500 dark:text-gray-400 mt-1">Total Amount</div>
+            </div>
+            <div class="text-center">
+              <div class="text-3xl font-bold text-red-600 dark:text-red-400">{{ unbalancedCount }}</div>
+              <div class="text-sm text-gray-500 dark:text-gray-400 mt-1">Unbalanced</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -137,8 +156,13 @@ import {
   getFilteredRowModel,
   FlexRender,
 } from '@tanstack/vue-table'
+import { MagnifyingGlassIcon, ChevronLeftIcon, ChevronRightIcon } from '@heroicons/vue/20/solid'
 import AccountDropdown from '@/components/common/AccountDropdown.vue'
 import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
+import TransactionStatusIndicator from '@/components/common/TransactionStatusIndicator.vue'
+import ColumnVisibilityControl from '@/components/common/ColumnVisibilityControl.vue'
+import { useTableColumns } from '@/composables/useTableColumns'
+import { useTableKeyboardNavigation } from '@/composables/useTableKeyboardNavigation'
 import type { TransactionViewModel } from '@/types/transactions'
 import type { Cell } from '@tanstack/vue-table'
 
@@ -170,10 +194,23 @@ const emit = defineEmits<{
   (e: 'tableDisplayed'): void
 }>()
 
+// Composables
+const {
+  columnVisibility,
+  columnSizing,
+  allColumns,
+  toggleColumnVisibility,
+  resetToDefaults,
+  setColumnWidth
+} = useTableColumns()
+
+const {
+  handleKeyNavigation
+} = useTableKeyboardNavigation()
+
 // State
 const originalTransactions = ref<TransactionViewModel[]>([])
 const globalFilter = ref('')
-const columnSizing = ref({})
 
 // Filtered transactions
 const filteredTransactions = computed(() => {
@@ -311,10 +348,21 @@ const goToNextPage = () => {
   }
 }
 
-// Column definitions
-const columnHelper = createColumnHelper<any>()
+// Column definitions  
+interface TableRowData {
+  transaction: TransactionViewModel
+  transactionIndex: number
+  postingIndex: number
+  isFirstPosting: boolean
+  isLastPosting: boolean
+  account: string
+  amount: number | null
+  currency: string
+}
 
-const spannedColumnIds = ['#', 'date', 'flag', 'payee', 'narration', 'tags_links']
+const columnHelper = createColumnHelper<TableRowData>()
+
+const spannedColumnIds = ['status', 'index', 'date', 'flag', 'payee', 'narration', 'tags_links']
 
 const getRowSpan = (cell: Cell<any, any>) => {
   if (spannedColumnIds.includes(cell.column.id) && cell.row.original.isFirstPosting) {
@@ -327,186 +375,293 @@ const shouldSkipCell = (cell: Cell<any, any>) => {
   return spannedColumnIds.includes(cell.column.id) && !cell.row.original.isFirstPosting
 }
 
-const columns = [
-  columnHelper.accessor('transactionIndex', {
-    id: '#',
-    header: '#',
-    cell: info => info.getValue(),
-    size: 32,
-    minSize: 20,
-    enableResizing: true,
-  }),
-  columnHelper.accessor(row => row.transaction.date, {
-    id: 'date',
-    header: 'Date',
-    cell: ({ row, getValue }) => props.editable
-      ? h('input', {
-          type: 'date',
-          value: getValue(),
-          onInput: (e: any) => updateTransactionDate(row.original.transaction, e.target.value),
-          class: 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 bg-yellow-50 dark:bg-gray-700 dark:text-white text-sm'
-        })
-      : h('span', { class: 'text-gray-900 dark:text-white text-sm' }, getValue()),
-    size: 96,
-    minSize: 60,
-    enableResizing: true,
-  }),
-  columnHelper.accessor(row => row.transaction.flag, {
-    id: 'flag',
-    header: 'Flag',
-    cell: ({ row, getValue }) => props.editable
-      ? h('select', {
-          value: getValue(),
-          onChange: (e: any) => updateTransactionFlag(row.original.transaction, e.target.value),
-          class: 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 bg-yellow-50 dark:bg-gray-700 dark:text-white text-sm'
-        }, [h('option', { value: '*' }, '*'), h('option', { value: '!' }, '!')])
-      : h('span', { class: 'text-gray-900 dark:text-white text-sm' }, getValue()),
-    size: 48,
-    minSize: 30,
-    enableResizing: true,
-  }),
-  columnHelper.accessor(row => row.transaction.payee, {
-    id: 'payee',
-    header: 'Payee',
-    cell: ({ row, getValue }) => props.editable
-      ? h('textarea', {
-          value: getValue(),
-          onInput: (e: any) => updateTransactionPayee(row.original.transaction, e.target.value),
-          class: 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 bg-yellow-50 dark:bg-gray-700 dark:text-white text-sm resize-none overflow-hidden',
-          placeholder: 'Payee',
-          rows: 1,
-          style: 'min-height: 2rem; field-sizing: content;'
-        })
-      : h('div', { 
-          style: 'width: 80px; border: 1px solid red; white-space: normal; word-wrap: break-word; background: yellow;'
-        }, 'This is a very long text that should definitely wrap within this narrow container to test if wrapping works at all'),
-    size: 100,
-    minSize: 60,
-    enableResizing: true,
-  }),
-  columnHelper.accessor(row => row.transaction.narration, {
-    id: 'narration',
-    header: 'Narration',
-    cell: ({ row, getValue }) => props.editable
-      ? h('textarea', {
-          value: getValue(),
-          onInput: (e: any) => updateTransactionNarration(row.original.transaction, e.target.value),
-          class: 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 bg-yellow-50 dark:bg-gray-700 dark:text-white text-sm resize-none overflow-hidden',
-          placeholder: 'Description',
-          rows: 1,
-          style: 'min-height: 2rem; field-sizing: content;'
-        })
-      : h('div', { 
-          style: 'white-space: normal; word-wrap: break-word; overflow-wrap: break-word;',
-          class: 'text-gray-900 dark:text-white text-sm'
-        }, getValue()),
-    size: 120,
-    minSize: 80,
-    enableResizing: true,
-  }),
-  columnHelper.accessor(row => [...row.transaction.tags, ...row.transaction.links.map((l: string) => `^${l}`)].join(' '), {
-    id: 'tags_links',
-    header: 'Tags/Links',
-    cell: ({ row, getValue }) => props.editable
-      ? h('input', {
-          type: 'text',
-          value: getValue(),
-          onInput: (e: any) => updateTransactionTagsLinks(row.original.transaction, e.target.value),
-          class: 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 dark:bg-gray-700 dark:text-white text-sm',
-          placeholder: '#tag ^link'
-        })
-      : h('span', { class: 'text-gray-900 dark:text-white text-sm' }, getValue()),
-    size: 128,
-    minSize: 80,
-    enableResizing: true,
-  }),
-  columnHelper.accessor('account', {
-    header: 'Account',
-    cell: ({ row, getValue }) => props.editable
-      ? h(AccountDropdown, {
-          modelValue: getValue(),
-          'onUpdate:modelValue': (value: string) => updatePostingAccount(row.original.transaction, row.original.postingIndex, value),
-          'custom-class': 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 dark:bg-gray-800 dark:text-white text-sm',
-          'allow-custom': false, // Don't allow creating new accounts from the table
-          placeholder: 'Select account...'
-        })
-      : h('span', { class: 'text-gray-900 dark:text-white text-sm' }, getValue()),
-    size: 150,
-    minSize: 100,
-    enableResizing: true,
-  }),
-  columnHelper.accessor('amount', {
-    header: 'Amount',
-    cell: ({ row, getValue }) => {
-      const amount = getValue()
-      const amountClass = amount > 0 ? 'text-green-700 bg-green-50 dark:bg-green-900/20' : amount < 0 ? 'text-red-700 bg-red-50 dark:bg-red-900/20' : ''
-      return props.editable
+// Helper functions for cell styling
+const getEditableInputClasses = (extraClasses = '') => {
+  return `w-full min-w-0 rounded-md border-0 py-1.5 px-3 text-gray-900 ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm dark:bg-white/5 dark:text-white dark:ring-white/10 dark:placeholder:text-gray-500 dark:focus:ring-blue-500 ${extraClasses}`
+}
+
+const getDisplayClasses = () => {
+  return 'text-gray-900 dark:text-white text-sm w-full min-w-0'
+}
+
+const columns = computed(() => {
+  const baseColumns = [
+    columnHelper.display({
+      id: 'status',
+      header: 'Status',
+      cell: ({ row }) => h(TransactionStatusIndicator, {
+        transaction: row.original.transaction
+      }),
+      size: 40,
+      minSize: 40,
+      enableResizing: false,
+    }),
+    columnHelper.accessor('transactionIndex', {
+      id: 'index',
+      header: '#',
+      cell: info => h('span', { class: getDisplayClasses() }, info.getValue()),
+      size: 50,
+      minSize: 40,
+      enableResizing: true,
+    }),
+    columnHelper.accessor(row => row.transaction.date, {
+      id: 'date',
+      header: 'Date',
+      cell: ({ row, getValue }) => props.editable
         ? h('input', {
-            type: 'number',
-            step: '0.01',
-            value: amount || '',
-            onInput: (e: any) => updatePostingAmount(row.original.transaction, row.original.postingIndex, e.target.value),
-            class: `w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 text-right dark:bg-gray-800 dark:text-white text-sm ${amountClass}`
+            type: 'date',
+            value: getValue(),
+            onInput: (e: any) => updateTransactionDate(row.original.transaction, e.target.value),
+            class: getEditableInputClasses()
           })
-        : h('span', { class: `text-gray-900 dark:text-white text-sm ${amountClass}` }, amount)
-    },
-    size: 96,
-    minSize: 60,
-    enableResizing: true,
-  }),
-  columnHelper.accessor('currency', {
-    header: 'Currency',
-    cell: ({ row, getValue }) => props.editable
-      ? h(CommodityDropdown, {
-          modelValue: getValue(),
-          'onUpdate:modelValue': (value: string) => updatePostingCurrency(row.original.transaction, row.original.postingIndex, value),
-          'custom-class': 'w-full border-0 focus:ring-1 focus:ring-blue-500 rounded px-1 py-1 dark:bg-gray-800 dark:text-white text-sm',
-          'allow-custom': false, // Don't allow creating new commodities from the table
-          placeholder: 'Select commodity...'
-        })
-      : h('span', { class: 'text-gray-900 dark:text-white text-sm' }, getValue()),
-    size: 80,
-    minSize: 50,
-    enableResizing: true,
-  }),
-  columnHelper.display({
-    id: 'actions',
-    header: 'Actions',
-    cell: ({ row }) => {
-      if (!props.editable) return null
-      const buttons = [
-        h('button', {
-          onClick: () => removePosting(row.original.transaction, row.original.postingIndex),
-          class: 'text-red-600 hover:text-red-800 text-xs px-1 dark:text-red-400 dark:hover:text-red-300',
-          title: 'Remove posting'
-        }, '×'),
-      ]
-      if (row.original.isFirstPosting) {
-        buttons.push(h('button', {
-          onClick: () => addPosting(row.original.transaction),
-          class: 'text-green-600 hover:text-green-800 text-xs px-1 dark:text-green-400 dark:hover:text-green-300',
-          title: 'Add posting'
-        }, '+'))
-        buttons.push(h('button', {
-          onClick: () => removeTransaction(row.original.transaction),
-          class: 'text-red-600 hover:text-red-800 text-xs px-1 dark:text-red-400 dark:hover:text-red-300',
-          title: 'Remove transaction'
-        }, '−'))
-      } else {
-        buttons.push(h('span', { class: 'text-xs px-1 invisible' }, '+'))
-        buttons.push(h('span', { class: 'text-xs px-1 invisible' }, '−'))
-      }
-      return h('div', { class: 'flex items-center justify-center gap-1 text-sm' }, buttons)
-    },
-    size: 64,
-    minSize: 50,
-    enableResizing: true,
-  }),
-]
+        : h('span', { class: getDisplayClasses() }, getValue()),
+      size: 120,
+      minSize: 100,
+      enableResizing: true,
+    }),
+    columnHelper.accessor(row => row.transaction.flag, {
+      id: 'flag',
+      header: 'Flag',
+      cell: ({ row, getValue }) => props.editable
+        ? h('select', {
+            value: getValue(),
+            onChange: (e: any) => updateTransactionFlag(row.original.transaction, e.target.value),
+            class: getEditableInputClasses()
+          }, [
+            h('option', { value: '*' }, '*'),
+            h('option', { value: '!' }, '!')
+          ])
+        : h('span', { class: getDisplayClasses() }, getValue()),
+      size: 60,
+      minSize: 50,
+      enableResizing: true,
+    }),
+    columnHelper.accessor(row => row.transaction.payee, {
+      id: 'payee',
+      header: 'Payee',
+      cell: ({ row, getValue }) => props.editable
+        ? h('div', {
+            contenteditable: true,
+            innerHTML: getValue() || '',
+            onInput: (e: any) => updateTransactionPayee(row.original.transaction, e.target.textContent),
+            class: `${getEditableInputClasses()} min-h-[2.5rem] overflow-y-auto`,
+            style: { minHeight: '2.5rem', maxHeight: '6rem' },
+            'data-placeholder': 'Payee'
+          })
+        : h('div', { 
+            class: `${getDisplayClasses()} break-words overflow-hidden`
+          }, getValue()),
+      size: 150,
+      minSize: 100,
+      enableResizing: true,
+    }),
+    columnHelper.accessor(row => row.transaction.narration, {
+      id: 'narration',
+      header: 'Narration',
+      cell: ({ row, getValue }) => props.editable
+        ? h('div', {
+            contenteditable: true,
+            innerHTML: getValue() || '',
+            onInput: (e: any) => updateTransactionNarration(row.original.transaction, e.target.textContent),
+            class: `${getEditableInputClasses()} min-h-[2.5rem] overflow-y-auto`,
+            style: { minHeight: '2.5rem', maxHeight: '6rem' },
+            'data-placeholder': 'Description'
+          })
+        : h('div', { 
+            class: `${getDisplayClasses()} break-words overflow-hidden`
+          }, getValue()),
+      size: 200,
+      minSize: 120,
+      enableResizing: true,
+    }),
+    columnHelper.accessor(row => [...row.transaction.tags, ...row.transaction.links.map((l: string) => `^${l}`)].join(' '), {
+      id: 'tags_links',
+      header: 'Tags/Links',
+      cell: ({ row, getValue }) => props.editable
+        ? h('input', {
+            type: 'text',
+            value: getValue(),
+            onInput: (e: any) => updateTransactionTagsLinks(row.original.transaction, e.target.value),
+            class: getEditableInputClasses(),
+            placeholder: '#tag ^link'
+          })
+        : h('span', { class: getDisplayClasses() }, getValue()),
+      size: 150,
+      minSize: 100,
+      enableResizing: true,
+    }),
+    columnHelper.accessor('account', {
+      id: 'account',
+      header: 'Account',
+      cell: ({ row, getValue }) => props.editable
+        ? h(AccountDropdown, {
+            modelValue: getValue(),
+            'onUpdate:modelValue': (value: string) => updatePostingAccount(row.original.transaction, row.original.postingIndex, value),
+            'custom-class': 'w-full text-sm',
+            'allow-custom': false,
+            placeholder: 'Select account...'
+          })
+        : h('span', { class: getDisplayClasses() }, getValue()),
+      size: 180,
+      minSize: 120,
+      enableResizing: true,
+    }),
+    columnHelper.accessor('amount', {
+      id: 'amount',
+      header: 'Amount',
+      cell: ({ row, getValue }) => {
+        const amount = getValue()
+        const amountColorClass = (amount ?? 0) > 0 
+          ? 'text-green-700 dark:text-green-400' 
+          : (amount ?? 0) < 0 
+          ? 'text-red-700 dark:text-red-400' 
+          : 'text-gray-700 dark:text-gray-300'
+        
+        return props.editable
+          ? h('input', {
+              type: 'number',
+              step: '0.01',
+              value: amount || '',
+              onInput: (e: any) => updatePostingAmount(row.original.transaction, row.original.postingIndex, e.target.value),
+              class: `${getEditableInputClasses('text-right')} ${amountColorClass}`
+            })
+          : h('span', { 
+              class: `${getDisplayClasses()} font-mono text-right block ${amountColorClass}` 
+            }, amount?.toFixed(2) || '')
+      },
+      size: 100,
+      minSize: 80,
+      enableResizing: true,
+    }),
+    columnHelper.accessor('currency', {
+      id: 'currency',
+      header: 'Currency',
+      cell: ({ row, getValue }) => props.editable
+        ? h(CommodityDropdown, {
+            modelValue: getValue(),
+            'onUpdate:modelValue': (value: string) => updatePostingCurrency(row.original.transaction, row.original.postingIndex, value),
+            'custom-class': 'w-full text-sm',
+            'allow-custom': false,
+            placeholder: 'Currency...'
+          })
+        : h('span', { class: getDisplayClasses() }, getValue()),
+      size: 80,
+      minSize: 60,
+      enableResizing: true,
+    }),
+    columnHelper.display({
+      id: 'actions',
+      header: 'Actions',
+      cell: ({ row }) => {
+        if (!props.editable) return null
+        
+        const buttons = []
+        
+        if (row.original.isFirstPosting) {
+          buttons.push(
+            h('button', {
+              onClick: () => addPosting(row.original.transaction),
+              class: 'inline-flex items-center justify-center w-6 h-6 text-green-600 hover:text-green-800 hover:bg-green-50 rounded text-sm dark:text-green-400 dark:hover:text-green-300 dark:hover:bg-green-900/20',
+              title: 'Add posting'
+            }, '+')
+          )
+          buttons.push(
+            h('button', {
+              onClick: () => removeTransaction(row.original.transaction),
+              class: 'inline-flex items-center justify-center w-6 h-6 text-red-600 hover:text-red-800 hover:bg-red-50 rounded text-sm dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-900/20',
+              title: 'Remove transaction'
+            }, '−')
+          )
+        }
+        
+        buttons.push(
+          h('button', {
+            onClick: () => removePosting(row.original.transaction, row.original.postingIndex),
+            class: 'inline-flex items-center justify-center w-6 h-6 text-red-600 hover:text-red-800 hover:bg-red-50 rounded text-sm dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-900/20',
+            title: 'Remove posting'
+          }, '×')
+        )
+        
+        return h('div', { class: 'flex items-center justify-center gap-1' }, buttons)
+      },
+      size: 100,
+      minSize: 80,
+      enableResizing: false,
+    }),
+  ]
+
+  // Filter columns based on visibility settings
+  return baseColumns.filter(column => {
+    const columnId = column.id
+    return columnId && columnVisibility.value[columnId] === true
+  })
+})
+
+// Helper functions for styling
+const getTransactionRowClasses = (rowData: any) => {
+  const classes = ['hover:bg-gray-50 dark:hover:bg-gray-800/50']
+  
+  // Transaction grouping borders
+  if (rowData.isFirstPosting) {
+    classes.push('border-t-2', 'border-t-blue-200', 'dark:border-t-blue-800')
+  }
+  if (rowData.isLastPosting) {
+    classes.push('border-b-2', 'border-b-blue-200', 'dark:border-b-blue-800')
+  }
+  
+  return classes
+}
+
+const getCellClasses = (cell: Cell<any, any>) => {
+  const classes = [
+    'px-3', 'py-2', 'text-sm',
+    'border-r', 'border-gray-200', 'dark:border-gray-700',
+    'last:border-r-0'
+  ]
+  
+  // Alignment
+  if (['amount'].includes(cell.column.id)) {
+    classes.push('text-right')
+  }
+  if (['actions'].includes(cell.column.id)) {
+    classes.push('text-center')
+  }
+  
+  // Vertical alignment for spanned cells
+  if (getRowSpan(cell) > 1) {
+    classes.push('align-top')
+  }
+  
+  // Special styling for index column when spanned
+  if (cell.column.id === 'index' && getRowSpan(cell) > 1) {
+    classes.push('bg-gray-50', 'dark:bg-gray-800/50')
+  }
+  
+  return classes
+}
+
+// Keyboard navigation
+const handleTableKeydown = (event: KeyboardEvent, rowData: any) => {
+  const position = {
+    rowIndex: rowData.transactionIndex - 1,
+    columnId: 'date', // Default starting column
+    postingIndex: rowData.postingIndex
+  }
+  
+  handleKeyNavigation(
+    event,
+    position,
+    filteredTransactions.value.length,
+    (rowIndex: number) => {
+      const transaction = filteredTransactions.value[rowIndex]
+      return transaction ? transaction.postings.length : 0
+    }
+  )
+}
 
 const table = useVueTable({
   get data() { return currentPageTransactions.value },
-  columns,
+  get columns() { return columns.value },
   state: {
     get globalFilter() { return globalFilter.value },
     get columnSizing() { return columnSizing.value },
@@ -515,10 +670,15 @@ const table = useVueTable({
     globalFilter.value = filter
   },
   onColumnSizingChange: (updater) => {
-    columnSizing.value = typeof updater === 'function' ? updater(columnSizing.value) : updater
+    const newSizing = typeof updater === 'function' ? updater(columnSizing.value) : updater
+    
+    // Update our column widths store
+    Object.keys(newSizing).forEach(columnId => {
+      setColumnWidth(columnId, newSizing[columnId])
+    })
   },
   enableColumnResizing: true,
-  columnResizeMode: 'onChange', // or 'onEnd' for performance
+  columnResizeMode: 'onChange',
   getCoreRowModel: getCoreRowModel(),
   getFilteredRowModel: getFilteredRowModel(),
 })
@@ -771,92 +931,110 @@ defineExpose({
 })
 </script>
 
-<style>
-/* No custom styles needed for hover as it's handled by Tailwind now */
+<style scoped>
+/* Resize handle for column resizing */
 .resize-handle {
   position: absolute;
   right: 0;
   top: 0;
   height: 100%;
-  width: 5px;
+  width: 4px;
   cursor: col-resize;
   background-color: transparent;
-  border-right: 2px solid transparent;
   user-select: none;
   touch-action: none;
   z-index: 10;
+  border-right: 2px solid transparent;
+  transition: all 0.2s ease;
 }
 
 .resize-handle:hover,
 .resize-handle.resizing {
-  border-right: 2px solid #3b82f6; /* Tailwind blue-500 */
-  background-color: rgba(59, 130, 246, 0.1);
+  border-right: 2px solid theme('colors.blue.500');
+  background-color: theme('colors.blue.500 / 0.1');
+}
+
+/* Table styling */
+.transaction-table-container {
+  position: relative;
+}
+
+table {
+  table-layout: fixed;
 }
 
 th {
   position: relative;
 }
 
-table {
-  table-layout: fixed;
+/* Text wrapping for content columns */
+td[data-column-id="payee"],
+td[data-column-id="narration"] {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  vertical-align: top;
+  overflow: hidden;
 }
 
-/* Table cell styles for fixed layout */
-table {
-  table-layout: fixed;
+/* Text content should fill the cell */
+td[data-column-id="payee"] > *,
+td[data-column-id="narration"] > * {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
-/* Allow dropdowns to overflow cell boundaries */
-.transaction-table-container {
-  position: relative;
-  z-index: 1;
-}
-
-/* For table cells, we need to be careful about clipping contexts */
-table.table-fixed td {
-  /* Don't set overflow: hidden as it will clip dropdowns */
+/* Ensure dropdowns can escape table cell boundaries */
+td[data-column-id="account"],
+td[data-column-id="currency"] {
   overflow: visible;
-  /* Make sure cells don't create a containing block for positioned elements that clips them */
 }
 
-/* Specific styles for payee and narration columns to ensure proper text wrapping */
-table.table-fixed td[data-column-id="payee"],
-table.table-fixed td[data-column-id="narration"] {
-  white-space: normal !important;
-  word-wrap: break-word !important;
-  overflow-wrap: break-word !important;
-  word-break: break-word !important;
-  overflow: hidden !important; /* Hide overflow to prevent sliding behind borders */
-  vertical-align: top !important;
+/* Focus styles for keyboard navigation */
+.transaction-row:focus {
+  outline: none;
+  box-shadow: inset 0 0 0 2px #3b82f6;
 }
 
-table.table-fixed td[data-column-id="payee"] span,
-table.table-fixed td[data-column-id="narration"] span,
-table.table-fixed td[data-column-id="payee"] input,
-table.table-fixed td[data-column-id="narration"] input {
-  white-space: normal !important;
-  word-wrap: break-word !important;
-  overflow-wrap: break-word !important;
-  word-break: break-word !important;
-  width: 100% !important;
-  box-sizing: border-box !important;
-  padding: 2px !important;
-  margin: 0 !important;
-  display: block !important;
+.transaction-row:focus-within {
+  background-color: #eff6ff;
 }
 
-/* For input elements, we need different handling */
-table.table-fixed td[data-column-id="payee"] input,
-table.table-fixed td[data-column-id="narration"] input {
-  white-space: nowrap !important; /* inputs should not wrap */
-  overflow: hidden !important;
-  text-overflow: ellipsis !important;
+.dark .transaction-row:focus-within {
+  background-color: rgba(30, 58, 138, 0.1);
 }
 
-/* Ensure dropdowns render with high z-index */
-td .account-dropdown,
-td .commodity-dropdown {
-  position: relative;
-  z-index: 50 !important;
+/* Improved button hover states */
+button:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px #3b82f6, 0 0 0 4px rgba(59, 130, 246, 0.2);
+}
+
+/* Transaction grouping enhancement */
+.transaction-row {
+  transition: background-color 0.15s ease-in-out;
+}
+
+/* Enhanced status column - removed for now as :has() has limited support */
+td[data-column-id="status"] {
+  position: sticky;
+  left: 0;
+  background-color: white;
+  z-index: 10;
+}
+
+.dark td[data-column-id="status"] {
+  background-color: #111827;
+}
+
+/* Contenteditable placeholder styling */
+[contenteditable]:empty:before {
+  content: attr(data-placeholder);
+  color: #9ca3af;
+  pointer-events: none;
+}
+
+.dark [contenteditable]:empty:before {
+  color: #6b7280;
 }
 </style>
