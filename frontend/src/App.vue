@@ -40,9 +40,11 @@
   }
 
   /* Ensure proper dark mode support */
-  @media (prefers-color-scheme: dark) {
-    :root {
-      color-scheme: dark;
-    }
+  :root {
+    color-scheme: light;
+  }
+
+  .dark {
+    color-scheme: dark;
   }
 </style>

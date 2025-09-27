@@ -63,7 +63,7 @@
               <tr
                 :data-row="row.original.transactionIndex"
                 :class="[
-                  'transaction-row group',
+                  'transaction-row',
                   `transaction-${row.original.transaction.id}`,
                   getTransactionRowClasses(row.original)
                 ]"
@@ -377,7 +377,7 @@ const shouldSkipCell = (cell: Cell<any, any>) => {
 
 // Helper functions for cell styling
 const getEditableInputClasses = (extraClasses = '') => {
-  return `w-full min-w-0 rounded-md border-0 py-1.5 px-3 text-gray-900 ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm dark:bg-white/5 dark:text-white dark:ring-white/10 dark:placeholder:text-gray-500 dark:focus:ring-blue-500 ${extraClasses}`
+  return `w-full min-w-0 rounded-md border-0 py-1.5 px-3 bg-white text-gray-900 ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm dark:bg-white/5 dark:text-white dark:ring-white/10 dark:placeholder:text-gray-500 dark:focus:ring-blue-500 ${extraClasses}`
 }
 
 const getDisplayClasses = () => {
@@ -599,8 +599,8 @@ const columns = computed(() => {
 
 // Helper functions for styling
 const getTransactionRowClasses = (rowData: any) => {
-  const classes = ['hover:bg-gray-50 dark:hover:bg-gray-800/50']
-  
+  const classes = []
+
   // Transaction grouping borders
   if (rowData.isFirstPosting) {
     classes.push('border-t-2', 'border-t-blue-200', 'dark:border-t-blue-800')
@@ -608,7 +608,7 @@ const getTransactionRowClasses = (rowData: any) => {
   if (rowData.isLastPosting) {
     classes.push('border-b-2', 'border-b-blue-200', 'dark:border-b-blue-800')
   }
-  
+
   return classes
 }
 
@@ -990,18 +990,9 @@ td[data-column-id="currency"] {
   overflow: visible;
 }
 
-/* Focus styles for keyboard navigation */
+/* Remove focus outline from table rows */
 .transaction-row:focus {
   outline: none;
-  box-shadow: inset 0 0 0 2px #3b82f6;
-}
-
-.transaction-row:focus-within {
-  background-color: #eff6ff;
-}
-
-.dark .transaction-row:focus-within {
-  background-color: rgba(30, 58, 138, 0.1);
 }
 
 /* Improved button hover states */
@@ -1010,10 +1001,6 @@ button:focus {
   box-shadow: 0 0 0 2px #3b82f6, 0 0 0 4px rgba(59, 130, 246, 0.2);
 }
 
-/* Transaction grouping enhancement */
-.transaction-row {
-  transition: background-color 0.15s ease-in-out;
-}
 
 /* Enhanced status column - removed for now as :has() has limited support */
 td[data-column-id="status"] {
@@ -1037,4 +1024,5 @@ td[data-column-id="status"] {
 .dark [contenteditable]:empty:before {
   color: #6b7280;
 }
+
 </style>
