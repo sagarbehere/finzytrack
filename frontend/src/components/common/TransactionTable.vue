@@ -463,8 +463,8 @@ const columns = computed(() => {
             contenteditable: true,
             innerHTML: getValue() || '',
             onInput: (e: any) => updateTransactionNarration(row.original.transaction, e.target.textContent),
-            class: `${getEditableInputClasses()} min-h-[2.5rem] overflow-y-auto`,
-            style: { minHeight: '2.5rem', maxHeight: '6rem' },
+            class: `${getEditableInputClasses()} h-full min-h-[2.5rem] overflow-y-auto`,
+            style: { minHeight: '2.5rem' },
             'data-placeholder': 'Description'
           })
         : h('div', { 
@@ -497,9 +497,9 @@ const columns = computed(() => {
         ? h(AccountDropdown, {
             modelValue: getValue(),
             'onUpdate:modelValue': (value: string) => updatePostingAccount(row.original.transaction, row.original.postingIndex, value),
-            'custom-class': 'w-full text-sm',
+            'custom-class': '!text-xs !py-1 !px-2 !pr-8',
             'allow-custom': false,
-            placeholder: 'Select account...'
+            placeholder: 'Account...'
           })
         : h('span', { class: getDisplayClasses() }, getValue()),
       size: 180,
@@ -540,9 +540,10 @@ const columns = computed(() => {
         ? h(CommodityDropdown, {
             modelValue: getValue(),
             'onUpdate:modelValue': (value: string) => updatePostingCurrency(row.original.transaction, row.original.postingIndex, value),
-            'custom-class': 'w-full text-sm',
+            'custom-class': '!text-xs !py-1 !px-2 !pr-8',
             'allow-custom': false,
-            placeholder: 'Currency...'
+            'show-details': false,
+            placeholder: 'CURR'
           })
         : h('span', { class: getDisplayClasses() }, getValue()),
       size: 80,
