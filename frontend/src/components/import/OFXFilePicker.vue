@@ -241,16 +241,17 @@
   import FormFeedback from '@/components/common/FormFeedback.vue'
   import AccountDropdown from '@/components/common/AccountDropdown.vue'
   import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
-  import { useOfxParser, type OfxFileDetails } from '@/composables/useOfxParser'
+  import { useOfxParser } from '@/composables/useOfxParser'
   import { useAccountDetector } from '@/composables/useAccountDetector'
+  import type { OfxFileDetails } from '@/types/ofx'
 
   // Emits
   const emit = defineEmits<{
-    (e: 'proceedWithImport', payload: { 
-        file: File; 
-        details: OfxFileDetails, 
-        account: string, 
-        currency: string 
+    (e: 'proceedWithImport', payload: {
+        file: File;
+        details: OfxFileDetails,
+        account: string,
+        currency: string
     }): void,
     (e: 'fileCleared'): void
   }>()

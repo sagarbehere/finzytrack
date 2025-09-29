@@ -51,9 +51,7 @@
         <!-- OFX Import Tab -->
         <div v-if="activeTab === 'ofx'">
           <OFXFilePicker
-            @fileSelected="handleFileSelected"
             @fileCleared="handleFileCleared"
-            @parseError="handleParseError"
             @proceedWithImport="handleProceedWithImport"
           />
         </div>
@@ -146,25 +144,11 @@
   import TransactionTable from '@/components/common/TransactionTable.vue'
   import { v4 as uuidv4 } from 'uuid'
   import type { TransactionViewModel, PostingViewModel } from '@/types/transactions'
-
-  // Define OFX transaction interface to match what's expected
-  interface OFXTransaction {
-    NAME?: string
-    PAYEE?: string
-    MEMO?: string
-    CHECKNUM?: string
-    TRNAMT?: string
-    DTPOSTED?: string
-    TRNTYPE?: string
-    FITID?: string
-  }
+  import type { OFXTransaction, OfxFileDetails } from '@/types/ofx'
 
   // Tab state
   const activeTab = ref<string>('ofx')
 
-  // File handling state
-  const selectedFileInfo = ref<{ fileName: string; fileSize: number; details: any } | null>(null)
-  
   // Transaction table state
   const showTransactionTable = ref<boolean>(false)
   const rawTransactions = ref<OFXTransaction[]>([])
@@ -174,29 +158,13 @@
   const transactionTableRef = ref<InstanceType<typeof TransactionTable> | null>(null)
 
   // Event handlers
-  const handleFileSelected = (data: { file: File; details: any }) => {
-    selectedFileInfo.value = {
-      fileName: data.file.name,
-      fileSize: data.file.size,
-      details: data.details,
-    }
-  }
-
   const handleFileCleared = () => {
-    selectedFileInfo.value = null
-    showTransactionTable.value = false
-    transactionViewModels.value = []
-  }
-
-  const handleParseError = (error: any) => {
-    console.error('Parse error:', error)
-    selectedFileInfo.value = null
     showTransactionTable.value = false
     transactionViewModels.value = []
   }
 
   // Handle the Proceed button click from OFXFilePicker
-  const handleProceedWithImport = (payload: { file: File, details: any, account: string, currency: string }) => {
+  const handleProceedWithImport = (payload: { file: File, details: OfxFileDetails, account: string, currency: string }) => {
     // Set the source account and currency
     sourceAccount.value = payload.account
     currency.value = payload.currency

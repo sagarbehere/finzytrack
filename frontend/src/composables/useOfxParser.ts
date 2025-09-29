@@ -1,20 +1,7 @@
 
 import { ref } from 'vue'
 import { parse } from 'ofx-js'
-
-// Define component-specific types
-export interface OfxFileDetails {
-  institution: string
-  institutionFid: string | null
-  accountType: string
-  accountId: string
-  currency: string
-  transactionCount: number
-  startDate: string | null
-  endDate: string | null
-  balance: number
-  rawTransactions: any[]
-}
+import type { OfxFileDetails, OFXTransaction } from '@/types/ofx'
 
 export function useOfxParser() {
   const selectedFile = ref<File | null>(null)
@@ -76,7 +63,7 @@ export function useOfxParser() {
     }
   }
 
-  const getStatementDateRange = (tranlist: any): { startDate: string | null; endDate: string | null } => {
+  const getStatementDateRange = (tranlist: { DTSTART?: string; DTEND?: string; STMTTRN?: OFXTransaction | OFXTransaction[] }): { startDate: string | null; endDate: string | null } => {
     const parseOfxDate = (dateString: string | undefined): string | null => {
       if (!dateString || dateString.length < 8) return null;
       const year = dateString.substring(0, 4);
@@ -89,16 +76,16 @@ export function useOfxParser() {
     let endDate = parseOfxDate(tranlist?.DTEND);
 
     if ((!startDate || !endDate) && tranlist && tranlist.STMTTRN) {
-      const transactions = Array.isArray(tranlist.STMTTRN)
+      const transactions: OFXTransaction[] = Array.isArray(tranlist.STMTTRN)
         ? tranlist.STMTTRN
         : [tranlist.STMTTRN];
 
       if (transactions.length > 0) {
         const dates = transactions
-          .map((t: any) => t.DTPOSTED)
-          .filter((d: any) => d)
-          .map((d: string) => new Date(d.substring(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')))
-          .sort((a: Date, b: Date) => a.getTime() - b.getTime());
+          .map((t) => t.DTPOSTED)
+          .filter((d): d is string => !!d)
+          .map((d) => new Date(d.substring(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')))
+          .sort((a, b) => a.getTime() - b.getTime());
 
         if (dates.length > 0) {
           if (!startDate) {
@@ -114,7 +101,7 @@ export function useOfxParser() {
     return { startDate, endDate };
   }
 
-  const extractFileDetails = (parsedOFX: any): OfxFileDetails => {
+  const extractFileDetails = (parsedOFX: Record<string, any>): OfxFileDetails => {
     const body = parsedOFX.OFX || parsedOFX
     const signon = body.SIGNONMSGSRSV1?.SONRS?.FI
     const stmt =
@@ -123,7 +110,7 @@ export function useOfxParser() {
 
     const acctfrom = stmt.BANKACCTFROM || stmt.CCACCTFROM
     const tranlist = stmt.BANKTRANLIST
-    const transactions = tranlist?.STMTTRN ? (Array.isArray(tranlist.STMTTRN) ? tranlist.STMTTRN : [tranlist.STMTTRN]) : []
+    const transactions: OFXTransaction[] = tranlist?.STMTTRN ? (Array.isArray(tranlist.STMTTRN) ? tranlist.STMTTRN : [tranlist.STMTTRN]) : []
 
 
     let accountType = ''
