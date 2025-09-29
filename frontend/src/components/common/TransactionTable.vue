@@ -210,7 +210,7 @@ const {
   setCellFocus,
   handleKeyNavigation,
   initializeNavigation,
-  getNextCell
+  getVerticalCell
 } = useTableKeyboardNavigation()
 
 // State
@@ -670,63 +670,43 @@ const getCellClasses = (cell: Cell<any, any>) => {
 const handleCellKeydown = (event: KeyboardEvent, cell: any, rowData: any) => {
   const target = event.target as Element
 
-  // Check if we're in a dropdown input (ComboboxInput from Headless UI)
-  const isDropdownInput = target?.closest('[role="combobox"]') &&
-                         (target.tagName === 'INPUT' || target.hasAttribute('contenteditable'))
+  // For dropdown columns (account, currency), check if options list is visible
+  const isDropdownColumn = ['account', 'currency'].includes(cell.column.id)
 
-  // For dropdown inputs, only handle Tab key for navigation, let everything else work normally
-  if (isDropdownInput) {
-    if (event.key === 'Tab') {
-      // Only navigate with Tab, not other keys
-      event.preventDefault()
+  if (isDropdownColumn) {
+    // Find the table cell
+    const tableCell = target.closest('td')
+    if (tableCell) {
+      // Check if there's a ComboboxOptions (ul element) visible in this cell or nearby
+      // The ul is rendered as a sibling to the input's container div
+      const optionsList = tableCell.querySelector('ul')
+      const isDropdownOpen = optionsList !== null
 
-      const position = {
-        rowIndex: rowData.transactionIndex - 1,
-        columnId: cell.column.id,
-        postingIndex: ['account', 'amount', 'currency'].includes(cell.column.id) ? rowData.postingIndex : undefined
+      // If dropdown is open, let it handle Up/Down/Enter/Escape
+      if (isDropdownOpen && ['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(event.key)) {
+        return // Let dropdown handle these keys
       }
-
-      handleKeyNavigation(
-        event,
-        position,
-        filteredTransactions.value.length,
-        (rowIndex: number) => {
-          const transaction = filteredTransactions.value[rowIndex]
-          return transaction ? transaction.postings.length : 0
-        }
-      )
     }
-    // For all other keys in dropdown inputs, let the dropdown handle them
-    return
   }
 
-  // For non-dropdown elements, handle navigation keys
-  if (event.key !== 'Tab') {
-    return
-  }
-
-
-  // For Tab navigation, prevent default and handle it
-  if (event.key === 'Tab') {
-    event.preventDefault()
-  }
-
-  // Determine current position based on the cell that triggered the event
-  const position = {
-    rowIndex: rowData.transactionIndex - 1, // Convert to 0-based index
-    columnId: cell.column.id,
-    postingIndex: ['account', 'amount', 'currency'].includes(cell.column.id) ? rowData.postingIndex : undefined
-  }
-
-  handleKeyNavigation(
-    event,
-    position,
-    filteredTransactions.value.length,
-    (rowIndex: number) => {
-      const transaction = filteredTransactions.value[rowIndex]
-      return transaction ? transaction.postings.length : 0
+  // Handle arrow keys for vertical navigation only
+  if (['ArrowUp', 'ArrowDown'].includes(event.key)) {
+    const position = {
+      rowIndex: rowData.transactionIndex - 1,
+      columnId: cell.column.id,
+      postingIndex: ['account', 'amount', 'currency', 'actions'].includes(cell.column.id) ? rowData.postingIndex : undefined
     }
-  )
+
+    handleKeyNavigation(
+      event,
+      position,
+      filteredTransactions.value.length,
+      (rowIndex: number) => {
+        const transaction = filteredTransactions.value[rowIndex]
+        return transaction ? transaction.postings.length : 0
+      }
+    )
+  }
 }
 
 const handleCellClick = (event: Event, cell: any, rowData: any) => {
@@ -748,7 +728,7 @@ const handleCellClick = (event: Event, cell: any, rowData: any) => {
 }
 
 const isEditableColumn = (columnId: string) => {
-  const editableColumns = ['date', 'flag', 'payee', 'narration', 'tags_links', 'account', 'amount', 'currency']
+  const editableColumns = ['date', 'flag', 'payee', 'narration', 'tags_links', 'account', 'amount', 'currency', 'actions']
   return editableColumns.includes(columnId) && columnVisibility.value[columnId] === true
 }
 
@@ -809,12 +789,12 @@ onMounted(() => {
       }
     }
 
-    // Start navigation with F2 or when Tab is pressed on the table container
-    if (event.key === 'F2' || (event.key === 'Tab' && target?.closest('.transaction-table-container'))) {
-      if (filteredTransactions.value.length > 0 && !currentCell.value) {
+    // Start navigation with F2
+    if (event.key === 'F2') {
+      if (filteredTransactions.value.length > 0) {
         // Initialize navigation at the first visible editable cell
         const firstTransaction = filteredTransactions.value[0]
-        const visibleEditableColumns = ['date', 'flag', 'payee', 'narration', 'tags_links', 'account', 'amount', 'currency']
+        const visibleEditableColumns = ['date', 'flag', 'payee', 'narration', 'tags_links', 'account', 'amount', 'currency', 'actions']
           .filter(col => columnVisibility.value[col] === true)
 
         if (firstTransaction && visibleEditableColumns.length > 0) {
@@ -822,7 +802,7 @@ onMounted(() => {
           const initialPosition = {
             rowIndex: 0,
             columnId: firstColumn,
-            postingIndex: ['account', 'amount', 'currency'].includes(firstColumn) ? 0 : undefined
+            postingIndex: ['account', 'amount', 'currency', 'actions'].includes(firstColumn) ? 0 : undefined
           }
           setCellFocus(initialPosition)
           event.preventDefault()

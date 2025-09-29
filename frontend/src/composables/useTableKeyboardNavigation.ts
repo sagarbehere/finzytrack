@@ -10,11 +10,17 @@ export function useTableKeyboardNavigation() {
   const currentCell = ref<CellPosition | null>(null)
   const isNavigating = ref(false)
 
-  // Define the logical tab order for editable columns
+  // Define all editable columns in visual order
   const allEditableColumns = [
     'date', 'flag', 'payee', 'narration', 'tags_links',
-    'account', 'amount', 'currency'
+    'account', 'amount', 'currency', 'actions'
   ]
+
+  // Columns that span across all postings
+  const spannedColumns = ['date', 'flag', 'payee', 'narration', 'tags_links']
+
+  // Columns that are per-posting
+  const postingColumns = ['account', 'amount', 'currency', 'actions']
 
   // Function to get only visible editable columns
   const getVisibleEditableColumns = (): string[] => {
@@ -35,7 +41,7 @@ export function useTableKeyboardNavigation() {
     // For transaction-level cells, we only need transaction index
     let cellSelector = ''
 
-    if (['account', 'amount', 'currency'].includes(position.columnId)) {
+    if (['account', 'amount', 'currency', 'actions'].includes(position.columnId)) {
       // Posting-level fields need posting index
       cellSelector = `td[data-column-id="${position.columnId}"][data-row="${position.rowIndex + 1}"][data-posting="${position.postingIndex || 0}"]`
     } else {
@@ -60,6 +66,9 @@ export function useTableKeyboardNavigation() {
     } else if (position.columnId === 'account' || position.columnId === 'currency') {
       // For dropdowns, find the ComboboxInput element
       targetElement = cell.querySelector('input') as HTMLElement
+    } else if (position.columnId === 'actions') {
+      // For actions column, focus the first button
+      targetElement = cell.querySelector('button') as HTMLElement
     } else {
       // For regular inputs
       targetElement = cell.querySelector('input, select, textarea') as HTMLElement
@@ -89,77 +98,45 @@ export function useTableKeyboardNavigation() {
     isNavigating.value = false
   }
 
-  const getNextCell = (current: CellPosition, direction: 'next' | 'prev', totalRows: number, getTransactionPostingCount: (rowIndex: number) => number): CellPosition | null => {
-    const visibleEditableColumns = getVisibleEditableColumns()
-    const currentColumnIndex = visibleEditableColumns.indexOf(current.columnId)
-    if (currentColumnIndex === -1) return null
+  // Vertical navigation (ArrowUp/ArrowDown)
+  const getVerticalCell = (
+    current: CellPosition,
+    direction: 'up' | 'down',
+    totalRows: number,
+    getTransactionPostingCount: (rowIndex: number) => number
+  ): CellPosition | null => {
+    if (spannedColumns.includes(current.columnId)) {
+      // For spanned columns, move to next/previous transaction
+      const targetRowIndex = direction === 'down' ? current.rowIndex + 1 : current.rowIndex - 1
+      if (targetRowIndex < 0 || targetRowIndex >= totalRows) return null
+      return { rowIndex: targetRowIndex, columnId: current.columnId, postingIndex: undefined }
+    } else if (postingColumns.includes(current.columnId)) {
+      // For posting columns, move to next/previous posting
+      const postingCount = getTransactionPostingCount(current.rowIndex)
+      const currentPostingIndex = current.postingIndex ?? 0
 
-    if (direction === 'next') {
-      // Tab navigation follows logical flow: date → flag → payee → narration → tags_links → account(0) → amount(0) → currency(0) → account(1) → ...
-      if (['account', 'amount', 'currency'].includes(current.columnId)) {
-        // Posting-level navigation
-        if (current.columnId === 'account') {
-          return { ...current, columnId: 'amount' }
-        } else if (current.columnId === 'amount') {
-          return { ...current, columnId: 'currency' }
-        } else if (current.columnId === 'currency') {
-          // Move to next posting's account in same transaction
-          const postingCount = getTransactionPostingCount(current.rowIndex)
-          const nextPostingIndex = (current.postingIndex || 0) + 1
-
-          if (nextPostingIndex < postingCount) {
-            return { ...current, columnId: 'account', postingIndex: nextPostingIndex }
-          } else {
-            // Move to next transaction's first field
-            if (current.rowIndex + 1 < totalRows) {
-              return { rowIndex: current.rowIndex + 1, columnId: 'date', postingIndex: undefined }
-            }
-          }
+      if (direction === 'down') {
+        const nextPostingIndex = currentPostingIndex + 1
+        if (nextPostingIndex < postingCount) {
+          // Move to next posting in same transaction
+          return { rowIndex: current.rowIndex, columnId: current.columnId, postingIndex: nextPostingIndex }
+        } else {
+          // Move to first posting of next transaction
+          const nextRowIndex = current.rowIndex + 1
+          if (nextRowIndex >= totalRows) return null
+          return { rowIndex: nextRowIndex, columnId: current.columnId, postingIndex: 0 }
         }
       } else {
-        // Transaction-level field navigation
-        const nextColumnIndex = currentColumnIndex + 1
-        if (nextColumnIndex < visibleEditableColumns.length) {
-          const nextColumnId = visibleEditableColumns[nextColumnIndex]
-          if (['account', 'amount', 'currency'].includes(nextColumnId)) {
-            // Moving to first posting-level field
-            return { ...current, columnId: nextColumnId, postingIndex: 0 }
-          } else {
-            // Moving to next transaction-level field
-            return { ...current, columnId: nextColumnId, postingIndex: undefined }
-          }
-        }
-      }
-    } else if (direction === 'prev') {
-      // Shift+Tab navigation: reverse of above logic
-      if (['account', 'amount', 'currency'].includes(current.columnId)) {
-        // Posting-level navigation (reverse)
-        if (current.columnId === 'currency') {
-          return { ...current, columnId: 'amount' }
-        } else if (current.columnId === 'amount') {
-          return { ...current, columnId: 'account' }
-        } else if (current.columnId === 'account') {
-          const currentPostingIndex = current.postingIndex || 0
-          if (currentPostingIndex > 0) {
-            // Move to previous posting's currency
-            return { ...current, columnId: 'currency', postingIndex: currentPostingIndex - 1 }
-          } else {
-            // Move to last visible transaction-level field
-            const transactionColumns = visibleEditableColumns.filter(col => !['account', 'amount', 'currency'].includes(col))
-            const lastTransactionColumn = transactionColumns[transactionColumns.length - 1]
-            return { ...current, columnId: lastTransactionColumn, postingIndex: undefined }
-          }
-        }
-      } else {
-        // Transaction-level field navigation (reverse)
-        const prevColumnIndex = currentColumnIndex - 1
-        if (prevColumnIndex >= 0) {
-          return { ...current, columnId: visibleEditableColumns[prevColumnIndex], postingIndex: undefined }
-        } else if (current.rowIndex > 0) {
-          // Move to previous transaction's last posting's currency
+        // Moving up
+        if (currentPostingIndex > 0) {
+          // Move to previous posting in same transaction
+          return { rowIndex: current.rowIndex, columnId: current.columnId, postingIndex: currentPostingIndex - 1 }
+        } else {
+          // Move to last posting of previous transaction
           const prevRowIndex = current.rowIndex - 1
-          const postingCount = getTransactionPostingCount(prevRowIndex)
-          return { rowIndex: prevRowIndex, columnId: 'currency', postingIndex: postingCount - 1 }
+          if (prevRowIndex < 0) return null
+          const prevPostingCount = getTransactionPostingCount(prevRowIndex)
+          return { rowIndex: prevRowIndex, columnId: current.columnId, postingIndex: prevPostingCount - 1 }
         }
       }
     }
@@ -176,18 +153,16 @@ export function useTableKeyboardNavigation() {
     let nextCell: CellPosition | null = null
 
     switch (event.key) {
-      case 'Tab':
-        event.preventDefault()
-        nextCell = getNextCell(
-          currentPosition,
-          event.shiftKey ? 'prev' : 'next',
-          totalRows,
-          getTransactionPostingCount
-        )
+      case 'ArrowUp':
+        nextCell = getVerticalCell(currentPosition, 'up', totalRows, getTransactionPostingCount)
+        break
+      case 'ArrowDown':
+        nextCell = getVerticalCell(currentPosition, 'down', totalRows, getTransactionPostingCount)
         break
     }
 
     if (nextCell) {
+      event.preventDefault()
       setCellFocus(nextCell)
     }
   }
@@ -202,6 +177,6 @@ export function useTableKeyboardNavigation() {
     setCellFocus,
     handleKeyNavigation,
     initializeNavigation,
-    getNextCell
+    getVerticalCell
   }
 }
