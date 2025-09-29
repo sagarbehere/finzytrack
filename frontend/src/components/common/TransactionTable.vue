@@ -197,7 +197,6 @@ const props = withDefaults(defineProps<Props>(), {
 // Define emits
 const emit = defineEmits<{
   (e: 'transactionsUpdated', transactions: TransactionViewModel[]): void
-  (e: 'tableDisplayed'): void
 }>()
 
 // Composables

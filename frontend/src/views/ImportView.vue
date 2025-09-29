@@ -154,7 +154,7 @@
   const rawTransactions = ref<OFXTransaction[]>([])
   const transactionViewModels = ref<TransactionViewModel[]>([])
   const sourceAccount = ref<string>('')
-  const currency = ref<string>('')
+  const sourceCurrency = ref<string>('')
   const transactionTableRef = ref<InstanceType<typeof TransactionTable> | null>(null)
 
   // Event handlers
@@ -167,8 +167,8 @@
   const handleProceedWithImport = (payload: { file: File, details: OfxFileDetails, account: string, currency: string }) => {
     // Set the source account and currency
     sourceAccount.value = payload.account
-    currency.value = payload.currency
-    
+    sourceCurrency.value = payload.currency
+
     // Convert raw OFX transactions to TransactionViewModel format
     rawTransactions.value = payload.details.rawTransactions
     transactionViewModels.value = convertRawTransactionsToViewModels(payload.details.rawTransactions, payload.account, payload.currency)
@@ -244,7 +244,7 @@
 
   // Reset the table to original raw transactions
   const resetTable = () => {
-    transactionViewModels.value = convertRawTransactionsToViewModels(rawTransactions.value, sourceAccount.value, currency.value)
+    transactionViewModels.value = convertRawTransactionsToViewModels(rawTransactions.value, sourceAccount.value, sourceCurrency.value)
   }
 
   // Autocategorize function (to be implemented later)
