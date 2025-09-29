@@ -25,6 +25,8 @@ export interface TransactionViewModel {
     transaction_id?: string; // For existing ledger transactions
     isNew: boolean;         // True for new transactions being imported
     isModified: boolean;      // True if the user has changed any field
+    source_account?: string;  // The source account for imported transactions
+    source_currency?: string; // The source currency for imported transactions
   };
 
   // Properties specific to the import process, not displayed directly

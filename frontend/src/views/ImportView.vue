@@ -123,7 +123,7 @@
         :editable="true"
         :show-search="false"
         :show-column-filters="false"
-        :show-summary="false"
+        :show-summary="true"
         @transactions-updated="handleTransactionsUpdated"
       />
       
@@ -256,7 +256,9 @@
         meta: {
           ofx_id: tx.TRNTYPE ? `${tx.TRNTYPE}_${tx.FITID || tx.DTPOSTED || ''}` : undefined,
           isNew: true,
-          isModified: false
+          isModified: false,
+          source_account: sourceAccount,
+          source_currency: currency
         },
         import_details: {
           is_duplicate: false // No duplicate check yet

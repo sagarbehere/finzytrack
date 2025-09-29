@@ -123,22 +123,28 @@
     </div>
     
     <!-- Summary section (when enabled) -->
-    <div v-if="showSummary" class="mt-6">
+    <div v-if="showSummary" class="mt-4">
       <div class="card">
-        <div class="p-6">
-          <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Transaction Summary</h3>
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div class="text-center">
-              <div class="text-3xl font-bold text-gray-900 dark:text-white">{{ props.transactions.length }}</div>
-              <div class="text-sm text-gray-500 dark:text-gray-400 mt-1">Total Transactions</div>
+        <div class="px-4 py-3">
+          <div class="flex items-center justify-around gap-6 text-sm">
+            <div class="flex items-center gap-2">
+              <span class="text-gray-600 dark:text-gray-400">Transactions:</span>
+              <span class="font-semibold text-gray-900 dark:text-white">{{ props.transactions.length }}</span>
             </div>
-            <div class="text-center">
-              <div class="text-3xl font-bold text-gray-900 dark:text-white">{{ totalAmount }}</div>
-              <div class="text-sm text-gray-500 dark:text-gray-400 mt-1">Total Amount</div>
+            <div class="flex items-center gap-2">
+              <span class="text-gray-600 dark:text-gray-400">Net Flow:</span>
+              <span class="font-semibold text-gray-900 dark:text-white">
+                <template v-if="Object.keys(netFlowByCurrency).length > 0">
+                  <span v-for="(amount, currency, index) in netFlowByCurrency" :key="currency">
+                    {{ amount }} {{ currency }}<span v-if="index < Object.keys(netFlowByCurrency).length - 1">, </span>
+                  </span>
+                </template>
+                <template v-else>—</template>
+              </span>
             </div>
-            <div class="text-center">
-              <div class="text-3xl font-bold text-red-600 dark:text-red-400">{{ unbalancedCount }}</div>
-              <div class="text-sm text-gray-500 dark:text-gray-400 mt-1">Unbalanced</div>
+            <div class="flex items-center gap-2">
+              <span class="text-gray-600 dark:text-gray-400">Unbalanced:</span>
+              <span class="font-semibold" :class="unbalancedCount > 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'">{{ unbalancedCount }}</span>
             </div>
           </div>
         </div>
@@ -183,7 +189,7 @@ const props = withDefaults(defineProps<Props>(), {
   showColumnFilters: false,
   showTransactionGrouping: true,
   showRunningBalance: false,
-  showSummary: false,
+  showSummary: true,
   editable: true,
   pageSize: 25,
 })
@@ -839,16 +845,32 @@ watch(() => props.transactions, (newTransactions) => {
   })
 }, { deep: true })
 
-const totalAmount = computed(() => {
-  let total = 0
+const netFlowByCurrency = computed(() => {
+  const flows: Record<string, number> = {}
+
   filteredTransactions.value.forEach(transaction => {
-    transaction.postings.forEach(posting => {
-      if (posting.amount) {
-        total += posting.amount
+    // Check if this transaction has source account/currency metadata
+    const sourceAccount = transaction.meta.source_account
+    const sourceCurrency = transaction.meta.source_currency
+
+    if (sourceAccount && sourceCurrency) {
+      // Find the posting for the source account
+      const sourcePosting = transaction.postings.find(p => p.account === sourceAccount)
+      if (sourcePosting && sourcePosting.amount !== null) {
+        if (!flows[sourceCurrency]) {
+          flows[sourceCurrency] = 0
+        }
+        flows[sourceCurrency] += sourcePosting.amount
       }
-    })
+    }
   })
-  return total.toFixed(2)
+
+  // Format each flow to 2 decimal places
+  const formatted: Record<string, string> = {}
+  Object.keys(flows).forEach(currency => {
+    formatted[currency] = flows[currency].toFixed(2)
+  })
+  return formatted
 })
 
 const unbalancedCount = computed(() => {
