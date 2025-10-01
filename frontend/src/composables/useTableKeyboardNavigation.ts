@@ -1,4 +1,4 @@
-import { ref, nextTick } from 'vue'
+import { nextTick } from 'vue'
 
 export interface CellPosition {
   rowIndex: number
@@ -7,33 +7,13 @@ export interface CellPosition {
 }
 
 export function useTableKeyboardNavigation() {
-  const currentCell = ref<CellPosition | null>(null)
-  const isNavigating = ref(false)
-
-  // Define all editable columns in visual order
-  const allEditableColumns = [
-    'date', 'flag', 'payee', 'narration', 'tags_links',
-    'account', 'amount', 'currency', 'actions'
-  ]
-
   // Columns that span across all postings
   const spannedColumns = ['date', 'flag', 'payee', 'narration', 'tags_links']
 
   // Columns that are per-posting
   const postingColumns = ['account', 'amount', 'currency', 'actions']
 
-  // Function to get only visible editable columns
-  const getVisibleEditableColumns = (): string[] => {
-    return allEditableColumns.filter(columnId => {
-      const cell = document.querySelector(`td[data-column-id="${columnId}"]`)
-      return cell !== null
-    })
-  }
-
   const setCellFocus = async (position: CellPosition) => {
-    currentCell.value = position
-    isNavigating.value = true
-
     await nextTick()
 
     // Build the correct selector based on the DOM structure
@@ -53,7 +33,6 @@ export function useTableKeyboardNavigation() {
     const cell = document.querySelector(cellSelector)
     if (!cell) {
       console.warn('Cell not found:', cellSelector)
-      isNavigating.value = false
       return
     }
 
@@ -94,8 +73,6 @@ export function useTableKeyboardNavigation() {
     } else {
       console.warn('No focusable element found in cell:', cellSelector)
     }
-
-    isNavigating.value = false
   }
 
   // Vertical navigation (ArrowUp/ArrowDown)
@@ -167,16 +144,8 @@ export function useTableKeyboardNavigation() {
     }
   }
 
-  const initializeNavigation = (initialPosition: CellPosition) => {
-    setCellFocus(initialPosition)
-  }
-
   return {
-    currentCell,
-    isNavigating,
     setCellFocus,
-    handleKeyNavigation,
-    initializeNavigation,
-    getVerticalCell
+    handleKeyNavigation
   }
 }

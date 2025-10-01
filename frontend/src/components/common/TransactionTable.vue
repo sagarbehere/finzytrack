@@ -210,12 +210,8 @@ const {
 } = useTableColumns()
 
 const {
-  currentCell,
-  isNavigating,
   setCellFocus,
-  handleKeyNavigation,
-  initializeNavigation,
-  getVerticalCell
+  handleKeyNavigation
 } = useTableKeyboardNavigation()
 
 // State
