@@ -118,6 +118,7 @@
       <TransactionTable
         ref="transactionTableRef"
         :transactions="transactionViewModels"
+        :import-context="importContext"
         :editable="true"
         :show-search="false"
         :show-column-filters="false"
@@ -143,7 +144,7 @@
   import OFXFilePicker from '@/components/import/OFXFilePicker.vue'
   import TransactionTable from '@/components/common/TransactionTable.vue'
   import { v4 as uuidv4 } from 'uuid'
-  import type { TransactionViewModel, PostingViewModel } from '@/types/transactions'
+  import type { TransactionViewModel, PostingViewModel, ImportContext, TransactionImportBundle } from '@/types/transactions'
   import type { OFXTransaction, OfxFileDetails } from '@/types/ofx'
 
   // Tab state
@@ -153,6 +154,7 @@
   const showTransactionTable = ref<boolean>(false)
   const rawTransactions = ref<OFXTransaction[]>([])
   const transactionViewModels = ref<TransactionViewModel[]>([])
+  const importContext = ref<Map<string, ImportContext>>(new Map())
   const sourceAccount = ref<string>('')
   const sourceCurrency = ref<string>('')
   const transactionTableRef = ref<InstanceType<typeof TransactionTable> | null>(null)
@@ -161,6 +163,7 @@
   const handleFileCleared = () => {
     showTransactionTable.value = false
     transactionViewModels.value = []
+    importContext.value.clear()
   }
 
   // Handle the Proceed button click from OFXFilePicker
@@ -169,13 +172,15 @@
     sourceAccount.value = payload.account
     sourceCurrency.value = payload.currency
 
-    // Convert raw OFX transactions to TransactionViewModel format
+    // Convert raw OFX transactions to TransactionViewModel format and create import context
     rawTransactions.value = payload.details.rawTransactions
-    transactionViewModels.value = convertRawTransactionsToViewModels(payload.details.rawTransactions, payload.account, payload.currency)
-    
+    const bundle = convertRawTransactionsToViewModels(payload.details.rawTransactions, payload.account, payload.currency)
+    transactionViewModels.value = bundle.transactions
+    importContext.value = bundle.importContext
+
     // Show the transaction table
     showTransactionTable.value = true
-    
+
     // Scroll to the transaction table after it's rendered
     nextTick(() => {
       if (transactionTableRef.value) {
@@ -187,33 +192,38 @@
   }
 
   // Convert raw OFX transactions to TransactionViewModel format
-  const convertRawTransactionsToViewModels = (rawTransactions: OFXTransaction[], sourceAccount: string, currency: string): TransactionViewModel[] => {
-    return rawTransactions.map(tx => {
+  const convertRawTransactionsToViewModels = (rawTransactions: OFXTransaction[], sourceAccount: string, currency: string): TransactionImportBundle => {
+    const transactions: TransactionViewModel[] = []
+    const importContext = new Map<string, ImportContext>()
+
+    rawTransactions.forEach(tx => {
       // Extract payee and memo from the raw transaction
       const payee = tx.NAME || tx.PAYEE || 'Unknown Payee'
       const memo = tx.MEMO || tx.CHECKNUM
       const amount = parseFloat(tx.TRNAMT || '0') || 0
       const date = tx.DTPOSTED ? new Date(tx.DTPOSTED.substring(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
-      
+
       // Create postings - preserve original amount signs from OFX
       const postings: PostingViewModel[] = [
-        { 
-          account: sourceAccount, 
+        {
+          account: sourceAccount,
           amount: amount, // Preserve the original amount and its sign from OFX file
-          currency: currency 
+          currency: currency
         },
-        { 
+        {
           account: 'Expenses:Unknown', // Default category to be updated later
           amount: -amount, // Opposite sign to balance the transaction
-          currency: currency 
+          currency: currency
         }
       ]
 
       // Create payee with memo if memo exists
       const fullPayee = memo ? `${payee} | ${memo}` : payee
 
-      return {
-        id: uuidv4(), // Generate a unique ID for the transaction
+      const transactionId = uuidv4() // Generate a unique ID for the transaction
+
+      const transaction: TransactionViewModel = {
+        id: transactionId,
         date: date,
         flag: '*',
         payee: fullPayee,
@@ -227,24 +237,41 @@
           isModified: false,
           source_account: sourceAccount,
           source_currency: currency
-        },
-        import_details: {
-          is_duplicate: false // No duplicate check yet
-          // confidence field omitted - will be added by autocategorization
-          // duplicate_info omitted - will be added if duplicates are found
         }
       }
+
+      transactions.push(transaction)
+
+      // Create import context for this transaction
+      // Initially, no duplicates detected and no confidence score
+      importContext.set(transactionId, {
+        is_duplicate: false
+        // confidence will be set after autocategorization
+        // duplicate_info will be set if duplicates are found
+      })
     })
+
+    return { transactions, importContext }
   }
 
   // Handle updates to transactions in the table
   const handleTransactionsUpdated = (updatedTransactions: TransactionViewModel[]) => {
     transactionViewModels.value = updatedTransactions
+
+    // Clean up orphaned context entries when transactions are removed
+    const validIds = new Set(updatedTransactions.map(t => t.id))
+    for (const id of importContext.value.keys()) {
+      if (!validIds.has(id)) {
+        importContext.value.delete(id)
+      }
+    }
   }
 
   // Reset the table to original raw transactions
   const resetTable = () => {
-    transactionViewModels.value = convertRawTransactionsToViewModels(rawTransactions.value, sourceAccount.value, sourceCurrency.value)
+    const bundle = convertRawTransactionsToViewModels(rawTransactions.value, sourceAccount.value, sourceCurrency.value)
+    transactionViewModels.value = bundle.transactions
+    importContext.value = bundle.importContext
   }
 
   // Autocategorize function (to be implemented later)

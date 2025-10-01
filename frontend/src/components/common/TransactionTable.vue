@@ -169,12 +169,17 @@ import TransactionStatusIndicator from '@/components/common/TransactionStatusInd
 import ColumnVisibilityControl from '@/components/common/ColumnVisibilityControl.vue'
 import { useTableColumns } from '@/composables/useTableColumns'
 import { useTableKeyboardNavigation } from '@/composables/useTableKeyboardNavigation'
-import type { TransactionViewModel } from '@/types/transactions'
+import type { TransactionViewModel, ImportContext, LedgerContext } from '@/types/transactions'
 import type { Cell } from '@tanstack/vue-table'
 
 // Define props
 interface Props {
   transactions: TransactionViewModel[]
+
+  // Context-specific metadata (optional)
+  importContext?: Map<string, ImportContext>
+  ledgerContext?: Map<string, LedgerContext>
+
   showSearch?: boolean
   showColumnFilters?: boolean
   showTransactionGrouping?: boolean
@@ -215,8 +220,21 @@ const {
 } = useTableKeyboardNavigation()
 
 // State
-const originalTransactions = ref<TransactionViewModel[]>([])
+// Two independent baselines for different purposes:
+// 1. ofxOriginalTransactions: For Reset button (always returns to raw OFX data)
+// 2. editBaselineTransactions: For ✏️ icon (updates after major operations like autocategorization)
+const ofxOriginalTransactions = ref<TransactionViewModel[]>([])
+const editBaselineTransactions = ref<TransactionViewModel[]>([])
 const globalFilter = ref('')
+
+// Helper functions to get context for a transaction
+const getImportContext = (transactionId: string): ImportContext | undefined => {
+  return props.importContext?.get(transactionId)
+}
+
+const getLedgerContext = (transactionId: string): LedgerContext | undefined => {
+  return props.ledgerContext?.get(transactionId)
+}
 
 // Filtered transactions
 const filteredTransactions = computed(() => {
@@ -400,7 +418,9 @@ const columns = computed(() => {
       id: 'status',
       header: 'Status',
       cell: ({ row }) => h(TransactionStatusIndicator, {
-        transaction: row.original.transaction
+        transaction: row.original.transaction,
+        importContext: getImportContext(row.original.transaction.id),
+        ledgerContext: getLedgerContext(row.original.transaction.id)
       }),
       size: getColumnConfig('status')?.defaultWidth || 60,
       minSize: getColumnConfig('status')?.minWidth || 60,
@@ -716,6 +736,13 @@ const handleCellClick = (event: Event, cell: any, rowData: any) => {
     return
   }
 
+  // Don't prevent default for input elements that need browser behavior (e.g., date picker)
+  const target = event.target as HTMLElement
+  if (target.tagName === 'INPUT' && target.getAttribute('type') === 'date') {
+    // Let the browser's native date picker open
+    return
+  }
+
   event.preventDefault()
 
   // Set focus to the clicked cell
@@ -768,7 +795,10 @@ watch(() => props.pageSize, (_size) => {
 
 onMounted(() => {
   currentPageIndex.value = 0
-  originalTransactions.value = JSON.parse(JSON.stringify(props.transactions))
+
+  // Initialize both baselines with the initial props data
+  ofxOriginalTransactions.value = JSON.parse(JSON.stringify(props.transactions))
+  editBaselineTransactions.value = JSON.parse(JSON.stringify(props.transactions))
 
   // Add global keyboard listener for table navigation initialization and pagination
   const handleGlobalKeydown = (event: KeyboardEvent) => {
@@ -820,11 +850,14 @@ onMounted(() => {
   })
 })
 
-watch(() => props.transactions, (newTransactions) => {
+watch(() => props.transactions, () => {
   // Preserve the current page if possible when transactions change
   const preservedPageIndex = currentPageIndex.value
-  originalTransactions.value = JSON.parse(JSON.stringify(newTransactions))
-  
+
+  // DO NOT update baselines here - they should only be updated:
+  // - ofxOriginalTransactions: On mount (when OFX is first loaded)
+  // - editBaselineTransactions: On mount, after Reset, or when parent calls setNewEditBaseline()
+
   // After the new pages are calculated, try to maintain the same page
   // Use nextTick to ensure computed properties are updated first
   nextTick(() => {
@@ -844,18 +877,20 @@ const netFlowByCurrency = computed(() => {
   const flows: Record<string, number> = {}
 
   filteredTransactions.value.forEach(transaction => {
-    // Check if this transaction has source account/currency metadata
+    // Check if this transaction has source account metadata
     const sourceAccount = transaction.meta.source_account
-    const sourceCurrency = transaction.meta.source_currency
 
-    if (sourceAccount && sourceCurrency) {
+    if (sourceAccount) {
       // Find the posting for the source account
       const sourcePosting = transaction.postings.find(p => p.account === sourceAccount)
       if (sourcePosting && sourcePosting.amount !== null) {
-        if (!flows[sourceCurrency]) {
-          flows[sourceCurrency] = 0
+        // Use the actual currency from the posting, not from metadata
+        // This ensures net flow updates when user changes posting currency
+        const currency = sourcePosting.currency
+        if (!flows[currency]) {
+          flows[currency] = 0
         }
-        flows[sourceCurrency] += sourcePosting.amount
+        flows[currency] += sourcePosting.amount
       }
     }
   })
@@ -892,6 +927,38 @@ const emitUpdate = (updatedTransactions: TransactionViewModel[]) => {
   emit('transactionsUpdated', updatedTransactions)
 }
 
+// Check if a transaction has been modified compared to its edit baseline
+// Note: This compares against editBaselineTransactions (which updates after autocategorization),
+// not ofxOriginalTransactions (which is only used for the Reset button)
+const checkIfModified = (transaction: TransactionViewModel): boolean => {
+  const baseline = editBaselineTransactions.value.find(t => t.id === transaction.id)
+  if (!baseline) return false // New transaction or not found
+
+  // Compare all editable fields
+  if (transaction.date !== baseline.date) return true
+  if (transaction.flag !== baseline.flag) return true
+  if (transaction.payee !== baseline.payee) return true
+  if (transaction.narration !== baseline.narration) return true
+
+  // Compare tags and links (arrays)
+  if (transaction.tags.length !== baseline.tags.length) return true
+  if (transaction.tags.some((tag, i) => tag !== baseline.tags[i])) return true
+  if (transaction.links.length !== baseline.links.length) return true
+  if (transaction.links.some((link, i) => link !== baseline.links[i])) return true
+
+  // Compare postings
+  if (transaction.postings.length !== baseline.postings.length) return true
+  for (let i = 0; i < transaction.postings.length; i++) {
+    const posting = transaction.postings[i]
+    const baselinePosting = baseline.postings[i]
+    if (posting.account !== baselinePosting.account) return true
+    if (posting.amount !== baselinePosting.amount) return true
+    if (posting.currency !== baselinePosting.currency) return true
+  }
+
+  return false // No modifications detected
+}
+
 // Utility function to preserve the current page after data changes
 const preserveCurrentPage = () => {
   const preservedPageIndex = currentPageIndex.value
@@ -909,9 +976,9 @@ const preserveCurrentPage = () => {
     const txIndex = findTransactionIndex(transaction)
     if (txIndex !== -1) {
       updatedTransactions[txIndex].date = newDate
-      updatedTransactions[txIndex].meta.isModified = true
+      updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
       emitUpdate(updatedTransactions)
-      // After update, try to maintain the same page 
+      // After update, try to maintain the same page
       preserveCurrentPage()
     }
   }
@@ -921,9 +988,9 @@ const updateTransactionFlag = (transaction: TransactionViewModel, newFlag: strin
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1) {
     updatedTransactions[txIndex].flag = newFlag
-    updatedTransactions[txIndex].meta.isModified = true
+    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
-    // After update, try to maintain the same page 
+    // After update, try to maintain the same page
     preserveCurrentPage()
   }
 }
@@ -933,9 +1000,9 @@ const updateTransactionPayee = (transaction: TransactionViewModel, newPayee: str
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1) {
     updatedTransactions[txIndex].payee = newPayee
-    updatedTransactions[txIndex].meta.isModified = true
+    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
-    // After update, try to maintain the same page 
+    // After update, try to maintain the same page
     preserveCurrentPage()
   }
 }
@@ -945,9 +1012,9 @@ const updateTransactionNarration = (transaction: TransactionViewModel, newNarrat
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1) {
     updatedTransactions[txIndex].narration = newNarration
-    updatedTransactions[txIndex].meta.isModified = true
+    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
-    // After update, try to maintain the same page 
+    // After update, try to maintain the same page
     preserveCurrentPage()
   }
 }
@@ -959,9 +1026,9 @@ const updateTransactionTagsLinks = (transaction: TransactionViewModel, newValue:
     const parts = newValue.split(/\s+/).filter(p => p)
     updatedTransactions[txIndex].tags = parts.filter(p => p.startsWith('#')).map(p => p.substring(1))
     updatedTransactions[txIndex].links = parts.filter(p => p.startsWith('^')).map(p => p.substring(1))
-    updatedTransactions[txIndex].meta.isModified = true
+    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
-    // After update, try to maintain the same page 
+    // After update, try to maintain the same page
     preserveCurrentPage()
   }
 }
@@ -971,9 +1038,9 @@ const updatePostingAccount = (transaction: TransactionViewModel, postingIndex: n
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1) {
     updatedTransactions[txIndex].postings[postingIndex].account = newAccount
-    updatedTransactions[txIndex].meta.isModified = true
+    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
-    // After update, try to maintain the same page 
+    // After update, try to maintain the same page
     preserveCurrentPage()
   }
 }
@@ -983,9 +1050,9 @@ const updatePostingAmount = (transaction: TransactionViewModel, postingIndex: nu
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1) {
     updatedTransactions[txIndex].postings[postingIndex].amount = newAmountStr ? parseFloat(newAmountStr) : null
-    updatedTransactions[txIndex].meta.isModified = true
+    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
-    // After update, try to maintain the same page 
+    // After update, try to maintain the same page
     preserveCurrentPage()
   }
 }
@@ -995,9 +1062,9 @@ const updatePostingCurrency = (transaction: TransactionViewModel, postingIndex: 
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1) {
     updatedTransactions[txIndex].postings[postingIndex].currency = newCurrency
-    updatedTransactions[txIndex].meta.isModified = true
+    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
-    // After update, try to maintain the same page 
+    // After update, try to maintain the same page
     preserveCurrentPage()
   }
 }
@@ -1007,9 +1074,9 @@ const addPosting = (transaction: TransactionViewModel) => {
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1) {
     updatedTransactions[txIndex].postings.push({ account: '', amount: null, currency: 'USD' })
-    updatedTransactions[txIndex].meta.isModified = true
+    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
-    // After update, try to maintain the same page 
+    // After update, try to maintain the same page
     preserveCurrentPage()
   }
 }
@@ -1019,9 +1086,9 @@ const removePosting = (transaction: TransactionViewModel, postingIndex: number) 
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1 && updatedTransactions[txIndex].postings.length > 1) {
     updatedTransactions[txIndex].postings.splice(postingIndex, 1)
-    updatedTransactions[txIndex].meta.isModified = true
+    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
-    // After update, try to maintain the same page 
+    // After update, try to maintain the same page
     preserveCurrentPage()
   }
 }
@@ -1034,7 +1101,13 @@ const removeTransaction = (transaction: TransactionViewModel) => {
 }
 
 const resetToOriginal = () => {
-  emitUpdate(JSON.parse(JSON.stringify(originalTransactions.value)))
+  // Reset to OFX original data (not to autocategorized data)
+  const ofxCopy = JSON.parse(JSON.stringify(ofxOriginalTransactions.value))
+  emitUpdate(ofxCopy)
+
+  // After reset, the edit baseline also goes back to OFX original
+  // (so any subsequent edits will be compared against OFX data)
+  editBaselineTransactions.value = JSON.parse(JSON.stringify(ofxOriginalTransactions.value))
 }
 
 const scrollToTable = () => {
@@ -1062,8 +1135,16 @@ const scrollToTable = () => {
 defineExpose({
   resetToOriginal,
   scrollToTable,
+
+  // Called by parent after major operations (e.g., autocategorization) to establish new edit baseline
+  // This prevents autocategorized transactions from showing the ✏️ icon
+  setNewEditBaseline: () => {
+    editBaselineTransactions.value = JSON.parse(JSON.stringify(props.transactions))
+  },
+
   clearState: () => {
-    originalTransactions.value = []
+    ofxOriginalTransactions.value = []
+    editBaselineTransactions.value = []
     currentPageIndex.value = 0
     emitUpdate([])
   }
