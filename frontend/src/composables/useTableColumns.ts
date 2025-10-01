@@ -7,6 +7,8 @@ export interface ColumnConfig {
   defaultWidth: number
   minWidth: number
   resizable: boolean
+  disabled?: boolean         // Column exists but can't be toggled yet (not implemented)
+  disabledReason?: string   // Tooltip/label text for disabled columns
 }
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
@@ -20,6 +22,7 @@ const COLUMN_CONFIGS: ColumnConfig[] = [
   { id: 'account', label: 'Account', defaultVisible: true, defaultWidth: 180, minWidth: 120, resizable: true },
   { id: 'amount', label: 'Amount', defaultVisible: true, defaultWidth: 100, minWidth: 80, resizable: true },
   { id: 'currency', label: 'Currency', defaultVisible: true, defaultWidth: 80, minWidth: 60, resizable: true },
+  { id: 'balance', label: 'Balance', defaultVisible: false, defaultWidth: 120, minWidth: 100, resizable: true, disabled: true, disabledReason: 'Coming Soon' },
   { id: 'actions', label: 'Actions', defaultVisible: true, defaultWidth: 100, minWidth: 80, resizable: false },
 ]
 

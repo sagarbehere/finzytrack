@@ -183,7 +183,6 @@ interface Props {
   showSearch?: boolean
   showColumnFilters?: boolean
   showTransactionGrouping?: boolean
-  showRunningBalance?: boolean
   showSummary?: boolean
   editable?: boolean
   pageSize?: number
@@ -193,7 +192,6 @@ const props = withDefaults(defineProps<Props>(), {
   showSearch: false,
   showColumnFilters: false,
   showTransactionGrouping: true,
-  showRunningBalance: false,
   showSummary: true,
   editable: true,
   pageSize: 25,
@@ -579,6 +577,26 @@ const columns = computed(() => {
       size: getColumnConfig('currency')?.defaultWidth || 80,
       minSize: getColumnConfig('currency')?.minWidth || 60,
       enableResizing: getColumnConfig('currency')?.resizable ?? true,
+    }),
+    columnHelper.display({
+      id: 'balance',
+      header: 'Balance',
+      cell: ({ row }) => {
+        // Balance column - currently not implemented
+        // When implemented, this will show running balance from ledgerContext
+        const ledgerInfo = getLedgerContext(row.original.transaction.id)
+        const balance = ledgerInfo?.balance
+
+        if (balance !== undefined) {
+          return h('span', {
+            class: `${getDisplayClasses()} font-mono text-right block`
+          }, balance.toFixed(2))
+        }
+        return h('span', { class: 'text-gray-400 text-sm' }, '—')
+      },
+      size: getColumnConfig('balance')?.defaultWidth || 120,
+      minSize: getColumnConfig('balance')?.minWidth || 100,
+      enableResizing: getColumnConfig('balance')?.resizable ?? true,
     }),
     columnHelper.display({
       id: 'actions',

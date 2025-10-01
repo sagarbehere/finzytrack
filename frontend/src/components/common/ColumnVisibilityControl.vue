@@ -42,10 +42,11 @@
                 active ? 'bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-white' : 'text-gray-700 dark:text-gray-300',
                 'group flex w-full items-center px-4 py-2 text-sm'
               ]"
-              :disabled="column.id === 'status' || column.id === 'actions'"
+              :disabled="column.id === 'status' || column.id === 'actions' || column.disabled"
+              :title="column.disabled ? column.disabledReason : undefined"
             >
               <div class="flex items-center justify-between w-full">
-                <span :class="{ 'opacity-50': column.id === 'status' || column.id === 'actions' }">
+                <span :class="{ 'opacity-50': column.id === 'status' || column.id === 'actions' || column.disabled }">
                   {{ column.label }}
                 </span>
                 <div class="flex items-center">
@@ -59,6 +60,12 @@
                     class="text-xs text-gray-400 ml-2"
                   >
                     Required
+                  </span>
+                  <span
+                    v-else-if="column.disabled"
+                    class="text-xs text-gray-400 ml-2"
+                  >
+                    {{ column.disabledReason || 'Coming Soon' }}
                   </span>
                 </div>
               </div>
@@ -96,7 +103,12 @@ import {
 
 interface Props {
   columnVisibility: Record<string, boolean>
-  allColumns: Array<{ id: string; label: string }>
+  allColumns: Array<{
+    id: string
+    label: string
+    disabled?: boolean
+    disabledReason?: string
+  }>
   toggleColumnVisibility: (columnId: string) => void
   resetToDefaults: () => void
 }
