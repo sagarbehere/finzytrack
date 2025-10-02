@@ -115,6 +115,7 @@ def create_app(config: Config) -> FastAPI:
     # 5. Store managers in app state for access in routes
     app.state.config_manager = config_manager
     app.state.beancount_manager = beancount_manager
+    app.state.backup_manager = backup_manager
     
     # Ensure ledger exists at startup - fail fast if it can't be created
     try:

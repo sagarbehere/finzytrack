@@ -23,4 +23,4 @@ def success_json_response(
     # Note: The message from the original success_json_response is not part of the new ApiResponse model.
     # It can be added to the data payload if needed.
     response_envelope = create_success_response(data=data)
-    return JSONResponse(status_code=status_code, content=response_envelope.model_dump())
+    return JSONResponse(status_code=status_code, content=response_envelope.model_dump(mode='json'))

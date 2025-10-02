@@ -5,7 +5,8 @@
       :key="icon.key"
       :title="icon.tooltip"
       class="text-sm leading-none"
-      :class="icon.class"
+      :class="[icon.class, icon.clickable ? 'cursor-pointer hover:scale-110 transition-transform' : '']"
+      @click="icon.clickable ? handleIconClick(icon.key) : null"
     >
       {{ icon.symbol }}
     </div>
@@ -24,12 +25,19 @@ interface Props {
 
 const props = defineProps<Props>()
 
+interface Emits {
+  (e: 'duplicateClick', transactionId: string): void
+}
+
+const emit = defineEmits<Emits>()
+
 interface StatusIcon {
   key: string
   symbol: string
   tooltip: string
   class: string
   priority: number
+  clickable?: boolean
 }
 
 const statusIcons = computed(() => {
@@ -59,16 +67,17 @@ const statusIcons = computed(() => {
     icons.push({
       key: 'duplicate',
       symbol: '👥',
-      tooltip: 'Potential duplicate transaction',
+      tooltip: 'Potential duplicate transaction (click to review)',
       class: 'text-yellow-600 dark:text-yellow-400',
-      priority: 2
+      priority: 2,
+      clickable: true
     })
   }
 
   // Priority 3: Import context - confidence level
   const confidence = props.importContext?.confidence
   if (confidence !== undefined) {
-    if (confidence >= 0.8) {
+    if (confidence >= 0.95) {
       icons.push({
         key: 'high-confidence',
         symbol: '✅',
@@ -76,12 +85,21 @@ const statusIcons = computed(() => {
         class: 'text-green-600 dark:text-green-400',
         priority: 3
       })
-    } else if (confidence < 0.5) {
+    } else if (confidence <= 0.5) {
       icons.push({
         key: 'low-confidence',
         symbol: '❓',
         tooltip: `Low confidence auto-categorization (${Math.round(confidence * 100)}%)`,
         class: 'text-yellow-600 dark:text-yellow-400',
+        priority: 3
+      })
+    } else {
+      // Medium confidence (between 50% and 95%)
+      icons.push({
+        key: 'medium-confidence',
+        symbol: '➖',
+        tooltip: `Medium confidence auto-categorization (${Math.round(confidence * 100)}%)`,
+        class: 'text-blue-600 dark:text-blue-400',
         priority: 3
       })
     }
@@ -134,4 +152,10 @@ const statusIcons = computed(() => {
   // Sort by priority and return
   return icons.sort((a, b) => a.priority - b.priority)
 })
+
+function handleIconClick(iconKey: string) {
+  if (iconKey === 'duplicate') {
+    emit('duplicateClick', props.transaction.id)
+  }
+}
 </script>

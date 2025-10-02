@@ -124,6 +124,7 @@
         :show-column-filters="false"
         :show-summary="true"
         @transactions-updated="handleTransactionsUpdated"
+        @duplicate-click="handleDuplicateIconClick"
       />
       
       <!-- Button below the table -->
@@ -136,6 +137,18 @@
         </button>
       </div>
     </div>
+
+    <!-- Duplicate Comparison Modal -->
+    <DuplicateComparisonModal
+      v-if="selectedTransactionForDuplicateCheck"
+      :is-open="duplicateModalOpen"
+      :new-transaction="selectedTransactionForDuplicateCheck"
+      :duplicate-matches="selectedDuplicateMatches"
+      @close="duplicateModalOpen = false"
+      @keep-transaction="handleKeepTransaction"
+      @remove-duplicate="handleRemoveDuplicate"
+      @remove-all-duplicates="handleRemoveAllDuplicates"
+    />
   </div>
 </template>
 
@@ -143,9 +156,16 @@
   import { ref, nextTick } from 'vue'
   import OFXFilePicker from '@/components/import/OFXFilePicker.vue'
   import TransactionTable from '@/components/common/TransactionTable.vue'
+  import DuplicateComparisonModal from '@/components/import/DuplicateComparisonModal.vue'
   import { v4 as uuidv4 } from 'uuid'
   import type { TransactionViewModel, PostingViewModel, ImportContext, TransactionImportBundle } from '@/types/transactions'
   import type { OFXTransaction, OfxFileDetails } from '@/types/ofx'
+  import type { DuplicateInfo } from '@/services/generated-api'
+  import { useTransactionImporter } from '@/composables/useTransactionImporter'
+  import { useToast } from '@/composables/useNotifications'
+
+  const { performCategorization, performCommit, isLoading, categorizeError, commitError } = useTransactionImporter()
+  const { success: showSuccessToast, error: showErrorToast } = useToast()
 
   // Tab state
   const activeTab = ref<string>('ofx')
@@ -158,6 +178,11 @@
   const sourceAccount = ref<string>('')
   const sourceCurrency = ref<string>('')
   const transactionTableRef = ref<InstanceType<typeof TransactionTable> | null>(null)
+
+  // Duplicate modal state
+  const duplicateModalOpen = ref(false)
+  const selectedTransactionForDuplicateCheck = ref<TransactionViewModel | null>(null)
+  const selectedDuplicateMatches = ref<DuplicateInfo[]>([])
 
   // Event handlers
   const handleFileCleared = () => {
@@ -239,6 +264,7 @@
           source_currency: currency
         }
       }
+      
 
       transactions.push(transaction)
 
@@ -274,13 +300,136 @@
     importContext.value = bundle.importContext
   }
 
-  // Autocategorize function (to be implemented later)
-  const autocategorize = () => {
-    alert('Autocategorization is not yet implemented. This will send transactions to the backend for processing.')
+  // Autocategorize function
+  const autocategorize = async () => {
+    if (!transactionViewModels.value.length) {
+      return
+    }
+
+    try {
+      const results = await performCategorization(
+        transactionViewModels.value,
+        sourceAccount.value,
+        sourceCurrency.value
+      )
+
+      // Verify ordering matches (safety check)
+      results.forEach((result, index) => {
+        const transaction = transactionViewModels.value[index]
+        if (result.date !== transaction.date || parseFloat(result.amount.toString()) !== transaction.postings[0]?.amount) {
+          console.error('Response ordering mismatch!', { result, transaction })
+          throw new Error('Backend returned results in unexpected order')
+        }
+      })
+
+      // Update transactions with suggested categories and import context
+      transactionViewModels.value = transactionViewModels.value.map((tx, index) => {
+        const result = results[index]
+
+        // Update import context
+        const existing = importContext.value.get(tx.id)
+        if (existing) {
+          importContext.value.set(tx.id, {
+            ...existing,
+            confidence: result.confidence ?? undefined,
+            is_duplicate: result.is_duplicate ?? false,
+            duplicate_info: result.duplicate_info ?? undefined
+          })
+        }
+
+        // Update transaction postings with suggested category
+        if (result.suggested_category) {
+          const updatedPostings = [...tx.postings]
+          if (updatedPostings.length >= 2) {
+            updatedPostings[1] = {
+              ...updatedPostings[1],
+              account: result.suggested_category
+            }
+          }
+          return { ...tx, postings: updatedPostings }
+        }
+        return tx
+      })
+
+      // Establish new edit baseline
+      nextTick(() => {
+        transactionTableRef.value?.setNewEditBaseline()
+      })
+
+    } catch (error) {
+      if (categorizeError.value) {
+        showErrorToast('Categorization Failed', categorizeError.value.message)
+      }
+    }
   }
 
-  // Register transactions function (to be implemented later)
-  const registerTransactions = () => {
-    alert('Register Transactions is not yet implemented. This will send transactions to the backend for committing to the ledger.')
+  // Register transactions function
+  const registerTransactions = async () => {
+    if (!transactionViewModels.value.length) {
+      return
+    }
+
+    try {
+      const result = await performCommit(transactionViewModels.value)
+
+      if (result.success) {
+        // Clear state
+        transactionViewModels.value = []
+        importContext.value.clear()
+        showTransactionTable.value = false
+
+        // Show success message
+        showSuccessToast('Transactions Committed', `Successfully committed ${result.count} transactions`)
+      }
+    } catch (error) {
+      if (commitError.value) {
+        showErrorToast('Commit Failed', commitError.value.message)
+      }
+    }
+  }
+
+  // Duplicate modal handlers
+  const handleDuplicateIconClick = (transactionId: string) => {
+    const transaction = transactionViewModels.value.find(t => t.id === transactionId)
+    const context = importContext.value.get(transactionId)
+
+    if (transaction && context?.is_duplicate && context.duplicate_info) {
+      selectedTransactionForDuplicateCheck.value = transaction
+      // Handle single or multiple matches
+      selectedDuplicateMatches.value = Array.isArray(context.duplicate_info)
+        ? context.duplicate_info
+        : [context.duplicate_info]
+      duplicateModalOpen.value = true
+    }
+  }
+
+  const handleKeepTransaction = () => {
+    duplicateModalOpen.value = false
+    // Transaction stays in table, no action needed
+  }
+
+  const handleRemoveDuplicate = () => {
+    if (selectedTransactionForDuplicateCheck.value) {
+      const idToRemove = selectedTransactionForDuplicateCheck.value.id
+      transactionViewModels.value = transactionViewModels.value.filter(t => t.id !== idToRemove)
+      importContext.value.delete(idToRemove)
+    }
+    duplicateModalOpen.value = false
+  }
+
+  const handleRemoveAllDuplicates = () => {
+    // Find all transaction IDs with is_duplicate=true
+    const duplicateIds = new Set<string>()
+    importContext.value.forEach((context, id) => {
+      if (context.is_duplicate) {
+        duplicateIds.add(id)
+      }
+    })
+
+    // Remove from transactions and context
+    transactionViewModels.value = transactionViewModels.value.filter(t => !duplicateIds.has(t.id))
+    duplicateIds.forEach(id => importContext.value.delete(id))
+
+    duplicateModalOpen.value = false
   }
 </script>

@@ -200,6 +200,7 @@ const props = withDefaults(defineProps<Props>(), {
 // Define emits
 const emit = defineEmits<{
   (e: 'transactionsUpdated', transactions: TransactionViewModel[]): void
+  (e: 'duplicateClick', transactionId: string): void
 }>()
 
 // Composables
@@ -418,7 +419,8 @@ const columns = computed(() => {
       cell: ({ row }) => h(TransactionStatusIndicator, {
         transaction: row.original.transaction,
         importContext: getImportContext(row.original.transaction.id),
-        ledgerContext: getLedgerContext(row.original.transaction.id)
+        ledgerContext: getLedgerContext(row.original.transaction.id),
+        onDuplicateClick: (transactionId: string) => emit('duplicateClick', transactionId)
       }),
       size: getColumnConfig('status')?.defaultWidth || 60,
       minSize: getColumnConfig('status')?.minWidth || 60,

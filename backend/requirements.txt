@@ -5,4 +5,9 @@ click>=8.2.1
 pydantic>=2.11.7
 beancount>=3.1.0
 ruamel.yaml>=0.17.0
+scikit-learn>=1.5.0
+rapidfuzz>=3.0.0
+pandas>=2.2.0
+numpy>=1.26.0
+scipy>=1.13.0
 
