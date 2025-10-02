@@ -472,7 +472,7 @@ const columns = computed(() => {
       cell: ({ row, getValue }) => props.editable
         ? h('div', {
             contenteditable: true,
-            innerHTML: getValue() || '',
+            textContent: getValue() || '',
             onInput: (e: any) => updateTransactionPayee(row.original.transaction, e.target.textContent),
             class: `${getEditableInputClasses()} min-h-[2.5rem] overflow-y-auto`,
             style: { minHeight: '2.5rem', maxHeight: '6rem' },
@@ -491,7 +491,7 @@ const columns = computed(() => {
       cell: ({ row, getValue }) => props.editable
         ? h('div', {
             contenteditable: true,
-            innerHTML: getValue() || '',
+            textContent: getValue() || '',
             onInput: (e: any) => updateTransactionNarration(row.original.transaction, e.target.textContent),
             class: `${getEditableInputClasses()} h-full min-h-[2.5rem] overflow-y-auto`,
             style: { minHeight: '2.5rem' },

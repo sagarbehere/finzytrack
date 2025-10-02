@@ -34,8 +34,8 @@ class BackupManager:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             backup_filename = f"{file_path.name}.{timestamp}.backup"
             backup_path = self.backup_dir / backup_filename
-            
-            shutil.copy2(file_path, backup_path)
+
+            shutil.copy(file_path, backup_path)
             logger.info(f"Created backup for {file_path} at {backup_path}")
             return backup_path
         except Exception as e:
@@ -81,17 +81,15 @@ class BackupManager:
 
             fd, temp_path_str = tempfile.mkstemp(dir=file_path.parent, prefix=f".{file_path.name}")
             temp_path = Path(temp_path_str)
-            
+
             if file_path.exists():
-                shutil.copy2(file_path, temp_path)
+                shutil.copy(file_path, temp_path)
 
             with open(temp_path, 'r+', encoding=encoding) as f:
                 temp_file_handle = f
                 f.seek(0)
                 yield f
-            
-            if file_path.exists():
-                shutil.copystat(file_path, temp_path)
+
             os.rename(temp_path, file_path)
             logger.info(f"Successfully wrote to {file_path}")
             temp_file_handle = None

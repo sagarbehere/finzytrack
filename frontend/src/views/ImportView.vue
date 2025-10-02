@@ -51,6 +51,7 @@
         <!-- OFX Import Tab -->
         <div v-if="activeTab === 'ofx'">
           <OFXFilePicker
+            :key="importerKey"
             @fileCleared="handleFileCleared"
             @proceedWithImport="handleProceedWithImport"
           />
@@ -168,6 +169,9 @@
 
   // Tab state
   const activeTab = ref<string>('ofx')
+
+  // Importer reset key - increment to reset all importer components
+  const importerKey = ref<number>(0)
 
   // Transaction table state
   const showTransactionTable = ref<boolean>(false)
@@ -376,6 +380,9 @@
         transactionViewModels.value = []
         importContext.value.clear()
         showTransactionTable.value = false
+
+        // Reset all importer components by incrementing the key
+        importerKey.value++
 
         // Show success message
         showSuccessToast('Transactions Committed', `Successfully committed ${result.count} transactions`)
