@@ -140,14 +140,13 @@
 
     <!-- Duplicate Comparison Modal -->
     <DuplicateComparisonModal
-      v-if="selectedTransactionForDuplicateCheck"
+      v-if="duplicateTransactionsList.length > 0"
       :is-open="duplicateModalOpen"
-      :new-transaction="selectedTransactionForDuplicateCheck"
-      :duplicate-matches="selectedDuplicateMatches"
-      @close="duplicateModalOpen = false"
+      :duplicate-transactions="duplicateTransactionsList"
+      :initial-index="duplicateModalInitialIndex"
+      @close="handleCloseDuplicateModal"
       @keep-transaction="handleKeepTransaction"
       @remove-duplicate="handleRemoveDuplicate"
-      @remove-all-duplicates="handleRemoveAllDuplicates"
     />
   </div>
 </template>
@@ -181,8 +180,8 @@
 
   // Duplicate modal state
   const duplicateModalOpen = ref(false)
-  const selectedTransactionForDuplicateCheck = ref<TransactionViewModel | null>(null)
-  const selectedDuplicateMatches = ref<DuplicateInfo[]>([])
+  const duplicateModalInitialIndex = ref(0)
+  const duplicateTransactionsList = ref<Array<{ transaction: TransactionViewModel; duplicateMatches: DuplicateInfo[] }>>([])
 
   // Event handlers
   const handleFileCleared = () => {
@@ -390,46 +389,65 @@
 
   // Duplicate modal handlers
   const handleDuplicateIconClick = (transactionId: string) => {
-    const transaction = transactionViewModels.value.find(t => t.id === transactionId)
-    const context = importContext.value.get(transactionId)
+    // Build list of all duplicate transactions
+    buildDuplicateTransactionsList()
 
-    if (transaction && context?.is_duplicate && context.duplicate_info) {
-      selectedTransactionForDuplicateCheck.value = transaction
-      // Handle single or multiple matches
-      selectedDuplicateMatches.value = Array.isArray(context.duplicate_info)
-        ? context.duplicate_info
-        : [context.duplicate_info]
+    // Find the index of the clicked transaction
+    const clickedIndex = duplicateTransactionsList.value.findIndex(
+      item => item.transaction.id === transactionId
+    )
+
+    if (clickedIndex >= 0) {
+      duplicateModalInitialIndex.value = clickedIndex
       duplicateModalOpen.value = true
     }
   }
 
-  const handleKeepTransaction = () => {
-    duplicateModalOpen.value = false
-    // Transaction stays in table, no action needed
-  }
+  const buildDuplicateTransactionsList = () => {
+    duplicateTransactionsList.value = []
 
-  const handleRemoveDuplicate = () => {
-    if (selectedTransactionForDuplicateCheck.value) {
-      const idToRemove = selectedTransactionForDuplicateCheck.value.id
-      transactionViewModels.value = transactionViewModels.value.filter(t => t.id !== idToRemove)
-      importContext.value.delete(idToRemove)
-    }
-    duplicateModalOpen.value = false
-  }
+    transactionViewModels.value.forEach(transaction => {
+      const context = importContext.value.get(transaction.id)
+      if (context?.is_duplicate && context.duplicate_info) {
+        const duplicateMatches = Array.isArray(context.duplicate_info)
+          ? context.duplicate_info
+          : [context.duplicate_info]
 
-  const handleRemoveAllDuplicates = () => {
-    // Find all transaction IDs with is_duplicate=true
-    const duplicateIds = new Set<string>()
-    importContext.value.forEach((context, id) => {
-      if (context.is_duplicate) {
-        duplicateIds.add(id)
+        duplicateTransactionsList.value.push({
+          transaction,
+          duplicateMatches
+        })
       }
     })
+  }
 
-    // Remove from transactions and context
-    transactionViewModels.value = transactionViewModels.value.filter(t => !duplicateIds.has(t.id))
-    duplicateIds.forEach(id => importContext.value.delete(id))
-
+  const handleCloseDuplicateModal = () => {
     duplicateModalOpen.value = false
+    // Clear the list when modal closes
+    duplicateTransactionsList.value = []
+  }
+
+  const handleKeepTransaction = (transactionId: string) => {
+    // Transaction stays in table, just rebuild the list
+    buildDuplicateTransactionsList()
+
+    // If no more duplicates, close modal
+    if (duplicateTransactionsList.value.length === 0) {
+      duplicateModalOpen.value = false
+    }
+  }
+
+  const handleRemoveDuplicate = (transactionId: string) => {
+    // Remove transaction from table and context
+    transactionViewModels.value = transactionViewModels.value.filter(t => t.id !== transactionId)
+    importContext.value.delete(transactionId)
+
+    // Rebuild the duplicates list
+    buildDuplicateTransactionsList()
+
+    // If no more duplicates, close modal
+    if (duplicateTransactionsList.value.length === 0) {
+      duplicateModalOpen.value = false
+    }
   }
 </script>

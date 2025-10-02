@@ -24,12 +24,25 @@
             leave-from="opacity-100 scale-100"
             leave-to="opacity-0 scale-95"
           >
-            <DialogPanel class="w-full max-w-4xl transform overflow-hidden rounded-2xl bg-white dark:bg-gray-800 p-6 text-left align-middle shadow-xl transition-all">
+            <DialogPanel class="w-full max-w-4xl transform overflow-hidden rounded-2xl bg-white dark:bg-gray-800 p-6 text-left align-middle shadow-xl transition-all relative">
+              <!-- Close X button -->
+              <button
+                @click="emit('close')"
+                class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 focus:outline-none"
+              >
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+
               <DialogTitle
                 as="h3"
-                class="text-lg font-medium leading-6 text-gray-900 dark:text-white mb-4"
+                class="text-lg font-medium leading-6 text-gray-900 dark:text-white mb-4 pr-8"
               >
                 Potential Duplicate Found
+                <span v-if="totalDuplicates > 1" class="text-sm font-normal text-gray-600 dark:text-gray-400">
+                  ({{ currentIndex + 1 }} of {{ totalDuplicates }})
+                </span>
               </DialogTitle>
 
               <div class="grid grid-cols-2 gap-6">
@@ -39,21 +52,21 @@
                   <div class="space-y-2 text-sm">
                     <div>
                       <span class="text-gray-600 dark:text-gray-400">Date:</span>
-                      <span class="ml-2 font-medium text-gray-900 dark:text-white">{{ newTransaction.date }}</span>
+                      <span class="ml-2 font-medium text-gray-900 dark:text-white">{{ currentTransaction.date }}</span>
                     </div>
                     <div>
                       <span class="text-gray-600 dark:text-gray-400">Payee:</span>
-                      <span class="ml-2 font-medium text-gray-900 dark:text-white">{{ newTransaction.payee }}</span>
+                      <span class="ml-2 font-medium text-gray-900 dark:text-white">{{ currentTransaction.payee }}</span>
                     </div>
                     <div>
                       <span class="text-gray-600 dark:text-gray-400">Amount:</span>
                       <span class="ml-2 font-medium text-gray-900 dark:text-white">
-                        {{ formatAmount(newTransaction.postings[0]?.amount) }} {{ newTransaction.postings[0]?.currency }}
+                        {{ formatAmount(currentTransaction.postings[0]?.amount) }} {{ currentTransaction.postings[0]?.currency }}
                       </span>
                     </div>
                     <div>
                       <span class="text-gray-600 dark:text-gray-400">Account:</span>
-                      <span class="ml-2 font-medium text-gray-900 dark:text-white">{{ newTransaction.postings[0]?.account }}</span>
+                      <span class="ml-2 font-medium text-gray-900 dark:text-white">{{ currentTransaction.postings[0]?.account }}</span>
                     </div>
                   </div>
                 </div>
@@ -61,19 +74,19 @@
                 <!-- Existing Transaction(s) -->
                 <div class="border border-orange-300 dark:border-orange-600 rounded-lg p-4 bg-orange-50 dark:bg-orange-900/20">
                   <h4 class="font-semibold text-orange-900 dark:text-orange-100 mb-3">
-                    Existing Transaction{{ duplicateMatches.length > 1 ? 's' : '' }}
-                    <span v-if="duplicateMatches.length > 1" class="text-xs font-normal">
-                      ({{ duplicateMatches.length }} matches)
+                    Existing Transaction{{ currentDuplicateMatches.length > 1 ? 's' : '' }}
+                    <span v-if="currentDuplicateMatches.length > 1" class="text-xs font-normal">
+                      ({{ currentDuplicateMatches.length }} matches)
                     </span>
                   </h4>
                   <div class="space-y-4 max-h-64 overflow-y-auto">
                     <div
-                      v-for="(match, index) in duplicateMatches"
+                      v-for="(match, index) in currentDuplicateMatches"
                       :key="index"
                       :class="['space-y-2 text-sm', index > 0 ? 'pt-4 border-t border-orange-200 dark:border-orange-700' : '']"
                     >
-                      <div v-if="duplicateMatches.length > 1" class="text-xs text-orange-700 dark:text-orange-300 font-semibold mb-2">
-                        Match {{ index + 1 }} of {{ duplicateMatches.length }}
+                      <div v-if="currentDuplicateMatches.length > 1" class="text-xs text-orange-700 dark:text-orange-300 font-semibold mb-2">
+                        Match {{ index + 1 }} of {{ currentDuplicateMatches.length }}
                       </div>
                       <div>
                         <span class="text-gray-600 dark:text-gray-400">Date:</span>
@@ -105,28 +118,63 @@
                 </div>
               </div>
 
-              <div class="mt-6 flex justify-end space-x-3">
+              <!-- Navigation and Action Buttons -->
+              <div class="mt-6 flex items-center justify-between">
+                <!-- Left Navigation Arrow -->
                 <button
+                  v-if="totalDuplicates > 1"
                   type="button"
-                  class="inline-flex justify-center rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-                  @click="emit('keepTransaction')"
+                  :disabled="currentIndex === 0"
+                  @click="previousDuplicate"
+                  :class="[
+                    'inline-flex items-center justify-center rounded-md p-2 text-gray-700 dark:text-gray-200',
+                    currentIndex === 0
+                      ? 'opacity-50 cursor-not-allowed'
+                      : 'hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500'
+                  ]"
                 >
-                  Keep This Transaction
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+                  </svg>
                 </button>
+                <div v-else class="w-10"></div>
+
+                <!-- Action Buttons -->
+                <div class="flex space-x-3">
+                  <button
+                    type="button"
+                    class="inline-flex justify-center rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                    @click="handleKeep"
+                  >
+                    Keep This Transaction
+                  </button>
+                  <button
+                    type="button"
+                    class="inline-flex justify-center rounded-md border border-transparent bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2"
+                    @click="handleRemove"
+                  >
+                    Remove as Duplicate
+                  </button>
+                </div>
+
+                <!-- Right Navigation Arrow -->
                 <button
+                  v-if="totalDuplicates > 1"
                   type="button"
-                  class="inline-flex justify-center rounded-md border border-transparent bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2"
-                  @click="emit('removeDuplicate')"
+                  :disabled="currentIndex === totalDuplicates - 1"
+                  @click="nextDuplicate"
+                  :class="[
+                    'inline-flex items-center justify-center rounded-md p-2 text-gray-700 dark:text-gray-200',
+                    currentIndex === totalDuplicates - 1
+                      ? 'opacity-50 cursor-not-allowed'
+                      : 'hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500'
+                  ]"
                 >
-                  Remove as Duplicate
+                  <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                  </svg>
                 </button>
-                <button
-                  type="button"
-                  class="inline-flex justify-center rounded-md border border-transparent bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
-                  @click="emit('removeAllDuplicates')"
-                >
-                  Remove All Duplicates
-                </button>
+                <div v-else class="w-10"></div>
               </div>
             </DialogPanel>
           </TransitionChild>
@@ -137,25 +185,85 @@
 </template>
 
 <script setup lang="ts">
+import { ref, computed, watch } from 'vue'
 import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } from '@headlessui/vue'
 import type { TransactionViewModel } from '@/types/transactions'
 import type { DuplicateInfo } from '@/services/generated-api'
 
-interface Props {
-  newTransaction: TransactionViewModel
+interface DuplicateTransaction {
+  transaction: TransactionViewModel
   duplicateMatches: DuplicateInfo[]
+}
+
+interface Props {
+  duplicateTransactions: DuplicateTransaction[]
   isOpen: boolean
+  initialIndex?: number
 }
 
 interface Emits {
   (e: 'close'): void
-  (e: 'keepTransaction'): void
-  (e: 'removeDuplicate'): void
-  (e: 'removeAllDuplicates'): void
+  (e: 'keepTransaction', transactionId: string): void
+  (e: 'removeDuplicate', transactionId: string): void
 }
 
-defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  initialIndex: 0
+})
 const emit = defineEmits<Emits>()
+
+// Current index in the duplicate transactions list
+const currentIndex = ref(props.initialIndex)
+
+// Watch for changes to initialIndex when modal reopens
+watch(() => props.initialIndex, (newIndex) => {
+  currentIndex.value = newIndex
+})
+
+// Computed properties
+const totalDuplicates = computed(() => props.duplicateTransactions.length)
+
+const currentTransaction = computed(() => {
+  return props.duplicateTransactions[currentIndex.value]?.transaction
+})
+
+const currentDuplicateMatches = computed(() => {
+  return props.duplicateTransactions[currentIndex.value]?.duplicateMatches || []
+})
+
+// Navigation functions
+function previousDuplicate() {
+  if (currentIndex.value > 0) {
+    currentIndex.value--
+  }
+}
+
+function nextDuplicate() {
+  if (currentIndex.value < totalDuplicates.value - 1) {
+    currentIndex.value++
+  }
+}
+
+// Action handlers
+function handleKeep() {
+  if (currentTransaction.value) {
+    emit('keepTransaction', currentTransaction.value.id)
+    // Auto-advance to next duplicate or close if this was the last one
+    if (currentIndex.value < totalDuplicates.value - 1) {
+      currentIndex.value++
+    } else {
+      emit('close')
+    }
+  }
+}
+
+function handleRemove() {
+  if (currentTransaction.value) {
+    emit('removeDuplicate', currentTransaction.value.id)
+    // Modal will automatically update when the transaction is removed from the list
+    // If this was the last duplicate, the modal will close
+  }
+}
 
 function formatAmount(amount: number | string | null | undefined): string {
   if (amount === undefined || amount === null) return '0.00'
