@@ -24,10 +24,10 @@ class ServerConfig(BaseModel):
     port: int = Field(default=8000, ge=1, le=65535, description="Server port")
 
 
-class DefaultsConfig(BaseModel):
-    """Default application settings."""
-    currency: str = Field(default="USD", description="Default currency code")
-    unknown_account: str = Field(default="Expenses:Unknown", description="Default account for unknown transactions")
+class AccountsConfig(BaseModel):
+    """Account-related configuration settings."""
+    default_currency: str = Field(default="USD", description="Default currency code")
+    default_unknown_account: str = Field(default="Expenses:Unknown", description="Default account for unknown transactions")
 
 
 class MLConfig(BaseModel):
@@ -93,7 +93,7 @@ class Config(BaseModel):
     
     # Nested configuration sections
     server: ServerConfig = Field(default_factory=ServerConfig)
-    defaults: DefaultsConfig = Field(default_factory=DefaultsConfig)
+    accounts: AccountsConfig = Field(default_factory=AccountsConfig)
     ml: MLConfig = Field(default_factory=MLConfig)
     features: FeaturesConfig = Field(default_factory=FeaturesConfig)
     backup: BackupConfig = Field(default_factory=BackupConfig)

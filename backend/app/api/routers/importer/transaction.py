@@ -84,7 +84,7 @@ async def categorize_transactions(
             categorized_count += 1
         else:
             # Use default category with zero confidence
-            suggested_category = config.defaults.unknown_account
+            suggested_category = config.accounts.default_unknown_account
             confidence = 0.0
 
         # Detect duplicates

@@ -101,7 +101,7 @@ def create_app(config: Config) -> FastAPI:
     # 3. Create LedgerInitializer (which now needs BackupManager)
     ledger_initializer = LedgerInitializer(
         ledger_file=config.ledger_file,
-        default_currency=config.defaults.currency,
+        default_currency=config.accounts.default_currency,
         backup_manager=backup_manager
     )
 
@@ -203,9 +203,9 @@ def create_app(config: Config) -> FastAPI:
                 "level": config.logging.level,
                 "file": config.logging.file
             },
-            "defaults": {
-                "currency": config.defaults.currency,
-                "unknown_account": config.defaults.unknown_account
+            "accounts": {
+                "default_currency": config.accounts.default_currency,
+                "default_unknown_account": config.accounts.default_unknown_account
             },
             "features": {
                 "duplicate_detection": config.features.duplicate_detection,

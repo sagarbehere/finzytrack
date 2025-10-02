@@ -3,6 +3,11 @@
 # File paths
 ledger_file: "./data/ledgers/one.beancount"
 
+# Account settings
+accounts:
+  default_currency: "USD"
+  default_unknown_account: "Expenses:Unknown"
+
 # Server settings
 server:
   host: "127.0.0.1"

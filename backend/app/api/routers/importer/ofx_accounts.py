@@ -55,8 +55,8 @@ async def detect_ofx_account(
     
     detection_data = OFXDetectionData(
         detected=False,
-        beancount_account=config.defaults.unknown_account,
-        currency=config.defaults.currency,
+        beancount_account=config.accounts.default_unknown_account,
+        currency=config.accounts.default_currency,
         message="No matching account configuration found. Please verify account details."
     )
     return success_json_response(detection_data)
