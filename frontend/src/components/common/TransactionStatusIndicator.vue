@@ -4,17 +4,33 @@
       v-for="icon in statusIcons"
       :key="icon.key"
       :title="icon.tooltip"
-      class="text-sm leading-none"
-      :class="[icon.class, icon.clickable ? 'cursor-pointer hover:scale-110 transition-transform' : '']"
+      :class="[
+        icon.clickable ? 'cursor-pointer hover:scale-110 transition-transform' : '',
+        icon.heroIcon ? 'relative w-5 h-5' : 'text-sm leading-none'
+      ]"
       @click="icon.clickable ? handleIconClick(icon.key) : null"
     >
-      {{ icon.symbol }}
+      <!-- Heroicon with circular background -->
+      <component
+        v-if="icon.heroIcon"
+        :is="icon.heroIcon"
+        :class="['w-5 h-5', icon.class]"
+      />
+      <!-- Regular emoji/symbol -->
+      <span v-else :class="icon.class">
+        {{ icon.symbol }}
+      </span>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import {
+  CheckCircleIcon,
+  MinusCircleIcon,
+  ExclamationCircleIcon
+} from '@heroicons/vue/24/solid'
 import type { TransactionViewModel, ImportContext, LedgerContext } from '@/types/transactions'
 
 interface Props {
@@ -33,7 +49,8 @@ const emit = defineEmits<Emits>()
 
 interface StatusIcon {
   key: string
-  symbol: string
+  symbol?: string
+  heroIcon?: any
   tooltip: string
   class: string
   priority: number
@@ -80,7 +97,7 @@ const statusIcons = computed(() => {
     if (confidence >= 0.95) {
       icons.push({
         key: 'high-confidence',
-        symbol: '✅',
+        heroIcon: CheckCircleIcon,
         tooltip: `High confidence auto-categorization (${Math.round(confidence * 100)}%)`,
         class: 'text-green-600 dark:text-green-400',
         priority: 3
@@ -88,16 +105,16 @@ const statusIcons = computed(() => {
     } else if (confidence <= 0.5) {
       icons.push({
         key: 'low-confidence',
-        symbol: '❓',
+        heroIcon: ExclamationCircleIcon,
         tooltip: `Low confidence auto-categorization (${Math.round(confidence * 100)}%)`,
-        class: 'text-yellow-600 dark:text-yellow-400',
+        class: 'text-red-600 dark:text-red-400',
         priority: 3
       })
     } else {
       // Medium confidence (between 50% and 95%)
       icons.push({
         key: 'medium-confidence',
-        symbol: '➖',
+        heroIcon: MinusCircleIcon,
         tooltip: `Medium confidence auto-categorization (${Math.round(confidence * 100)}%)`,
         class: 'text-blue-600 dark:text-blue-400',
         priority: 3
