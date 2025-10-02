@@ -99,9 +99,6 @@ async def categorize_transactions(
 
         if is_duplicate:
             duplicate_count += 1
-            logger.info(f"Duplicate detected: {raw_txn.date} | {raw_txn.payee} | {raw_txn.amount}")
-        else:
-            logger.debug(f"No duplicate for: {raw_txn.date} | {raw_txn.payee} | {raw_txn.amount}")
 
         # Create result
         result = CategorizedTransactionResult(

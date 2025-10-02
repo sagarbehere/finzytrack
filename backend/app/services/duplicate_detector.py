@@ -189,7 +189,7 @@ def check_fuzzy_match(
     - Date: exact match
     - Amount: exact match
     - Account: exact match
-    - Payee: > 90% similarity
+    - Payee: > 80% similarity
 
     Args:
         txn_date: Transaction date
@@ -201,8 +201,6 @@ def check_fuzzy_match(
     Returns:
         DuplicateInfo if match found, None otherwise
     """
-    logger.debug(f"Checking fuzzy match for: date={txn_date}, payee='{payee}', amount={amount}, account={account}")
-
     for existing_txn in existing_transactions:
         # Check exact matches for date, amount, account
         if (existing_txn.date != txn_date or
@@ -212,11 +210,10 @@ def check_fuzzy_match(
 
         # Check payee similarity
         similarity = calculate_payee_similarity(payee, existing_txn.payee)
-        logger.debug(f"  Comparing with existing: '{existing_txn.payee}' | similarity={similarity:.2f}")
 
         if similarity > 0.8:
             # Potential duplicate found
-            logger.info(f"  ✓ Duplicate match! similarity={similarity:.2f}")
+            logger.info(f"Duplicate detected: {txn_date} | {payee} | {amount} (similarity: {similarity:.0%})")
             return DuplicateInfo(
                 transaction_id=existing_txn.transaction_id,
                 date=existing_txn.date,
