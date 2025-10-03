@@ -730,6 +730,20 @@ const getCellClasses = (cell: Cell<any, any>) => {
 const handleCellKeydown = (event: KeyboardEvent, cell: any, rowData: any) => {
   const target = event.target as Element
 
+  // Handle pagination with PageUp/PageDown
+  // This needs to be handled here because dropdown components may prevent bubbling
+  if (event.key === 'PageUp' && currentPageIndex.value > 0) {
+    event.preventDefault()
+    goToPreviousPage()
+    return
+  }
+
+  if (event.key === 'PageDown' && currentPageIndex.value < totalPages.value - 1) {
+    event.preventDefault()
+    goToNextPage()
+    return
+  }
+
   // For dropdown columns (account, currency), check if options list is visible
   const isDropdownColumn = ['account', 'currency'].includes(cell.column.id)
 
