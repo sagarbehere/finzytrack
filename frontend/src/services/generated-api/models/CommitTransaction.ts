@@ -21,6 +21,10 @@ export type CommitTransaction = {
      */
     payee: string;
     /**
+     * OFX memo field
+     */
+    memo?: (string | null);
+    /**
      * Transaction narration
      */
     narration: string;

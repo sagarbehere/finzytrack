@@ -8,7 +8,7 @@ export interface CellPosition {
 
 export function useTableKeyboardNavigation() {
   // Columns that span across all postings
-  const spannedColumns = ['date', 'flag', 'payee', 'narration', 'tags_links']
+  const spannedColumns = ['date', 'flag', 'payee', 'memo', 'narration', 'tags_links']
 
   // Columns that are per-posting
   const postingColumns = ['account', 'amount', 'currency', 'actions']
@@ -40,7 +40,7 @@ export function useTableKeyboardNavigation() {
     let targetElement: HTMLElement | null = null
 
     // Try different element types based on the column
-    if (position.columnId === 'payee' || position.columnId === 'narration') {
+    if (position.columnId === 'payee' || position.columnId === 'memo' || position.columnId === 'narration') {
       targetElement = cell.querySelector('[contenteditable="true"]') as HTMLElement
     } else if (position.columnId === 'account' || position.columnId === 'currency') {
       // For dropdowns, find the ComboboxInput element

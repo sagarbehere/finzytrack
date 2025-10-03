@@ -385,7 +385,7 @@ interface TableRowData {
 
 const columnHelper = createColumnHelper<TableRowData>()
 
-const spannedColumnIds = ['status', 'index', 'date', 'flag', 'payee', 'narration', 'tags_links']
+const spannedColumnIds = ['status', 'index', 'date', 'flag', 'payee', 'memo', 'narration', 'tags_links']
 
 const getRowSpan = (cell: Cell<any, any>) => {
   if (spannedColumnIds.includes(cell.column.id) && cell.row.original.isFirstPosting) {
@@ -484,6 +484,25 @@ const columns = computed(() => {
       size: getColumnConfig('payee')?.defaultWidth || 150,
       minSize: getColumnConfig('payee')?.minWidth || 100,
       enableResizing: getColumnConfig('payee')?.resizable ?? true,
+    }),
+    columnHelper.accessor(row => row.transaction.memo, {
+      id: 'memo',
+      header: 'Memo',
+      cell: ({ row, getValue }) => props.editable
+        ? h('div', {
+            contenteditable: true,
+            textContent: getValue() || '',
+            onInput: (e: any) => updateTransactionMemo(row.original.transaction, e.target.textContent),
+            class: `${getEditableInputClasses()} min-h-[2.5rem] overflow-y-auto`,
+            style: { minHeight: '2.5rem', maxHeight: '6rem' },
+            'data-placeholder': 'Memo'
+          })
+        : h('div', {
+            class: `${getDisplayClasses()} break-words overflow-hidden`
+          }, getValue()),
+      size: getColumnConfig('memo')?.defaultWidth || 150,
+      minSize: getColumnConfig('memo')?.minWidth || 100,
+      enableResizing: getColumnConfig('memo')?.resizable ?? true,
     }),
     columnHelper.accessor(row => row.transaction.narration, {
       id: 'narration',
@@ -958,6 +977,7 @@ const checkIfModified = (transaction: TransactionViewModel): boolean => {
   if (transaction.date !== baseline.date) return true
   if (transaction.flag !== baseline.flag) return true
   if (transaction.payee !== baseline.payee) return true
+  if (transaction.memo !== baseline.memo) return true
   if (transaction.narration !== baseline.narration) return true
 
   // Compare tags and links (arrays)
@@ -1020,6 +1040,18 @@ const updateTransactionPayee = (transaction: TransactionViewModel, newPayee: str
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1) {
     updatedTransactions[txIndex].payee = newPayee
+    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
+    emitUpdate(updatedTransactions)
+    // After update, try to maintain the same page
+    preserveCurrentPage()
+  }
+}
+
+const updateTransactionMemo = (transaction: TransactionViewModel, newMemo: string) => {
+  const updatedTransactions = [...props.transactions]
+  const txIndex = findTransactionIndex(transaction)
+  if (txIndex !== -1) {
+    updatedTransactions[txIndex].memo = newMemo || undefined
     updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page

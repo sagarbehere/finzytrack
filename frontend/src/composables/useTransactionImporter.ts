@@ -40,6 +40,7 @@ export function useTransactionImporter() {
         transactions: transactions.map(tx => ({
           date: tx.date,
           payee: tx.payee,
+          memo: tx.memo,
           narration: tx.narration,
           amount: tx.postings[0]?.amount?.toString() || '0',
           ofx_id: tx.meta.ofx_id
@@ -93,6 +94,7 @@ export function useTransactionImporter() {
         date: tx.date,
         flag: tx.flag,
         payee: tx.payee,
+        memo: tx.memo,
         narration: tx.narration,
         tags: tx.tags,
         links: tx.links,

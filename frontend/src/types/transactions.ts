@@ -20,6 +20,7 @@ export interface TransactionViewModel {
   date: string;
   flag: string;
   payee: string;
+  memo?: string;
   narration: string;
   tags: string[];
   links: string[];

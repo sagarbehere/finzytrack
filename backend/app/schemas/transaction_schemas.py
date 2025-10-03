@@ -22,7 +22,8 @@ class RawTransactionForCategorization(BaseModel):
     Only includes fields required for ML classification and duplicate detection.
     """
     date: DateType = Field(..., description="Transaction date")
-    payee: str = Field(..., description="Combined payee from frontend (includes memo)")
+    payee: str = Field(..., description="Transaction payee")
+    memo: Optional[str] = Field(default=None, description="OFX memo field")
     narration: str = Field(default="", description="User notes (usually empty at this stage)")
     amount: Decimal = Field(..., description="Transaction amount from source account posting")
 
@@ -99,6 +100,7 @@ class CommitTransaction(BaseModel):
     date: DateType = Field(..., description="Transaction date")
     flag: str = Field(..., min_length=1, max_length=1, description="Transaction flag (* or !)")
     payee: str = Field(..., description="Transaction payee")
+    memo: Optional[str] = Field(default=None, description="OFX memo field")
     narration: str = Field(..., description="Transaction narration")
     tags: List[str] = Field(default_factory=list, description="Transaction tags")
     links: List[str] = Field(default_factory=list, description="Transaction links")

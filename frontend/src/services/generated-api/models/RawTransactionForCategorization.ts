@@ -12,9 +12,13 @@ export type RawTransactionForCategorization = {
      */
     date: string;
     /**
-     * Combined payee from frontend (includes memo)
+     * Transaction payee
      */
     payee: string;
+    /**
+     * OFX memo field
+     */
+    memo?: (string | null);
     /**
      * User notes (usually empty at this stage)
      */

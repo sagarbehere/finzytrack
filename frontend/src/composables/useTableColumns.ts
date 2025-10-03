@@ -17,6 +17,7 @@ const COLUMN_CONFIGS: ColumnConfig[] = [
   { id: 'date', label: 'Date', defaultVisible: true, defaultWidth: 120, minWidth: 100, resizable: true },
   { id: 'flag', label: 'Flag', defaultVisible: false, defaultWidth: 60, minWidth: 50, resizable: true },
   { id: 'payee', label: 'Payee', defaultVisible: true, defaultWidth: 150, minWidth: 100, resizable: true },
+  { id: 'memo', label: 'Memo', defaultVisible: false, defaultWidth: 150, minWidth: 100, resizable: true },
   { id: 'narration', label: 'Narration', defaultVisible: true, defaultWidth: 200, minWidth: 120, resizable: true },
   { id: 'tags_links', label: 'Tags/Links', defaultVisible: false, defaultWidth: 150, minWidth: 100, resizable: true },
   { id: 'account', label: 'Account', defaultVisible: true, defaultWidth: 180, minWidth: 120, resizable: true },

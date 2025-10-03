@@ -78,8 +78,11 @@ async def categorize_transactions(
     for raw_txn in request.transactions:
         # Categorize using ML or default
         if classifier:
-            # Combine payee for ML classification
-            description = raw_txn.payee
+            # Combine payee and memo for ML classification
+            description_parts = [raw_txn.payee]
+            if raw_txn.memo:
+                description_parts.append(raw_txn.memo)
+            description = " ".join(description_parts)
             suggested_category, confidence = categorize_transaction(description, classifier)
             categorized_count += 1
         else:
@@ -209,6 +212,8 @@ async def commit_transactions(
             meta = {}
             if commit_txn.ofx_id:
                 meta['ofx_id'] = commit_txn.ofx_id
+            if commit_txn.memo:
+                meta['ofx_memo'] = commit_txn.memo
             meta['source_account'] = commit_txn.source_account
 
             # Create transaction
@@ -328,6 +333,9 @@ def _format_beancount_transaction(txn: data.Transaction, include_transaction_id:
 
     if txn.meta and 'ofx_id' in txn.meta:
         lines.append(f'  ofx_id: "{txn.meta["ofx_id"]}"')
+
+    if txn.meta and 'ofx_memo' in txn.meta:
+        lines.append(f'  ofx_memo: "{txn.meta["ofx_memo"]}"')
 
     # Add postings
     for posting in txn.postings:
