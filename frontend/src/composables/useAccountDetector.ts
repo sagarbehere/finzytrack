@@ -10,7 +10,7 @@ import {
   ImportService,
   type OFXDetectionRequest
 } from '@/services/generated-api'
-import type { OfxFileDetails } from './useOfxParser'
+import type { OfxFileDetails } from '@/types/ofx'
 
 export function useAccountDetector(fileDetails: Ref<OfxFileDetails | null>) {
   const { success, error } = useToast()
