@@ -277,8 +277,8 @@
       </div>
 
       <!-- Main content -->
-      <main class="py-8">
-        <div class="px-4 sm:px-6 lg:px-8">
+      <main class="py-8 min-w-0">
+        <div class="px-4 sm:px-6 lg:px-8 min-w-0">
           <slot />
         </div>
       </main>

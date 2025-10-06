@@ -29,7 +29,7 @@
     </div>
 
     <!-- Main table -->
-    <div class="card overflow-hidden">
+    <div class="card overflow-x-auto">
       <div class="table-scroll-container">
         <table class="w-full table-fixed">
           <!-- Table Header -->
@@ -1468,14 +1468,27 @@ defineExpose({
 </script>
 
 <style scoped>
-/* Horizontal scrolling container with always-visible scrollbar */
+/* Horizontal scrolling container */
 .table-scroll-container {
   overflow-x: auto;
   overflow-y: visible;
+}
 
-  /* Force scrollbar to always show (override macOS auto-hide) */
-  scrollbar-width: thin; /* Firefox */
-  -webkit-overflow-scrolling: touch; /* iOS momentum scrolling */
+/* Let the browser's native scrollbar work naturally */
+.table-scroll-container::-webkit-scrollbar {
+  height: 12px;
+  width: 12px;
+}
+
+/* Basic, natural scrollbar styling */
+.table-scroll-container::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 6px;
+}
+
+.table-scroll-container::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 6px;
 }
 
 /* Webkit browsers (Chrome, Safari, Edge) - always visible scrollbar */
