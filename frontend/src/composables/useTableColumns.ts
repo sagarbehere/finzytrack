@@ -23,6 +23,12 @@ const COLUMN_CONFIGS: ColumnConfig[] = [
   { id: 'account', label: 'Account', defaultVisible: true, defaultWidth: 180, minWidth: 120, resizable: true },
   { id: 'amount', label: 'Amount', defaultVisible: true, defaultWidth: 100, minWidth: 80, resizable: true },
   { id: 'currency', label: 'Currency', defaultVisible: true, defaultWidth: 80, minWidth: 60, resizable: true },
+  { id: 'cost_amount', label: 'Cost Amount', defaultVisible: false, defaultWidth: 120, minWidth: 80, resizable: true },
+  { id: 'cost_currency', label: 'Cost Currency', defaultVisible: false, defaultWidth: 100, minWidth: 60, resizable: true },
+  { id: 'cost_date', label: 'Cost Date', defaultVisible: false, defaultWidth: 120, minWidth: 100, resizable: true },
+  { id: 'price_amount', label: 'Price Amount', defaultVisible: false, defaultWidth: 120, minWidth: 80, resizable: true },
+  { id: 'price_currency', label: 'Price Currency', defaultVisible: false, defaultWidth: 100, minWidth: 60, resizable: true },
+  { id: 'price_type', label: 'Price Type', defaultVisible: false, defaultWidth: 90, minWidth: 70, resizable: true },
   { id: 'balance', label: 'Balance', defaultVisible: false, defaultWidth: 120, minWidth: 100, resizable: true, disabled: true, disabledReason: 'Coming Soon' },
   { id: 'actions', label: 'Actions', defaultVisible: true, defaultWidth: 100, minWidth: 80, resizable: false },
 ]

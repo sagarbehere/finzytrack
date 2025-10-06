@@ -6,7 +6,7 @@ This module defines the request/response schemas for:
 - POST /api/import/commit - Committing transactions to the Beancount ledger
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict
 from datetime import date as DateType
 from decimal import Decimal
 from pydantic import BaseModel, Field
@@ -90,25 +90,48 @@ class CommitPosting(BaseModel):
     amount: Decimal = Field(..., description="Posting amount")
     currency: str = Field(..., description="Currency code")
 
+    # Cost fields
+    cost_amount: Optional[Decimal] = Field(None, description="Cost amount per unit")
+    cost_currency: Optional[str] = Field(None, description="Cost currency")
+    cost_date: Optional[DateType] = Field(None, description="Cost date (optional)")
+
+    # Price fields
+    price_amount: Optional[Decimal] = Field(None, description="Price amount (per-unit or total)")
+    price_currency: Optional[str] = Field(None, description="Price currency")
+    price_type: Optional[str] = Field(None, description="Price type: '@' (per-unit) or '@@' (total)")
+
+    # Posting metadata
+    posting_meta: Optional[Dict[str, str]] = Field(None, description="Arbitrary posting metadata")
+
 
 class CommitTransaction(BaseModel):
     """
     Complete transaction data for committing to the ledger.
-    Includes all Beancount fields needed to write a valid transaction.
+
+    Note: source_account is REQUIRED and provided as a top-level field.
+    The backend automatically copies it into meta dict before writing to ledger.
     """
     # Core Beancount fields
     date: DateType = Field(..., description="Transaction date")
     flag: str = Field(..., min_length=1, max_length=1, description="Transaction flag (* or !)")
     payee: str = Field(..., description="Transaction payee")
-    memo: Optional[str] = Field(default=None, description="OFX memo field")
+    memo: Optional[str] = Field(default=None, description="Convenience field (backend converts to ofx_memo metadata)")
     narration: str = Field(..., description="Transaction narration")
     tags: List[str] = Field(default_factory=list, description="Transaction tags")
     links: List[str] = Field(default_factory=list, description="Transaction links")
     postings: List[CommitPosting] = Field(..., description="Transaction postings (must balance)")
 
-    # Metadata for ledger
-    ofx_id: Optional[str] = Field(default=None, description="OFX transaction ID")
-    source_account: str = Field(..., description="Source account (needed for transaction_id generation)")
+    # REQUIRED: Source account (critical for transaction ID generation and duplicate detection)
+    source_account: str = Field(
+        ...,
+        description="REQUIRED: Source account that originated this transaction. Backend copies this into meta."
+    )
+
+    # OPTIONAL: Additional arbitrary metadata
+    meta: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Additional arbitrary metadata (ofx_id, custom fields, etc.). Backend adds source_account automatically."
+    )
 
 
 class CommitRequest(BaseModel):

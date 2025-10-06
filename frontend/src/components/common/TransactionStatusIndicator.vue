@@ -145,7 +145,7 @@ const statusIcons = computed(() => {
   }
 
   // Priority 6: Modified transaction indicator
-  if (props.transaction.meta.isModified) {
+  if (props.transaction.internal.isModified) {
     icons.push({
       key: 'modified',
       symbol: '✏️',
@@ -156,7 +156,7 @@ const statusIcons = computed(() => {
   }
 
   // Priority 7: Fallback indicator (no specific context)
-  if (icons.length === 0 && props.transaction.meta.isNew) {
+  if (icons.length === 0 && props.transaction.internal.isNew) {
     icons.push({
       key: 'new',
       symbol: '✨',

@@ -189,6 +189,61 @@ async def commit_transactions(
                     }
                 )
 
+        # Validate cost and price fields for each posting
+        for posting in commit_txn.postings:
+            # Validate cost completeness
+            if posting.cost_amount is not None:
+                if posting.cost_currency is None:
+                    raise APIError(
+                        message=f"Cost amount specified but cost currency missing",
+                        code="INVALID_COST",
+                        status_code=422,
+                        details={
+                            "account": posting.account,
+                            "date": str(commit_txn.date),
+                            "cost_amount": str(posting.cost_amount)
+                        }
+                    )
+            elif posting.cost_currency is not None:
+                raise APIError(
+                    message=f"Cost currency specified but cost amount missing",
+                    code="INVALID_COST",
+                    status_code=422,
+                    details={"account": posting.account, "date": str(commit_txn.date)}
+                )
+
+            # Validate price completeness
+            if posting.price_amount is not None:
+                if posting.price_currency is None or posting.price_type is None:
+                    raise APIError(
+                        message=f"Price amount specified but price currency or type missing",
+                        code="INVALID_PRICE",
+                        status_code=422,
+                        details={
+                            "account": posting.account,
+                            "date": str(commit_txn.date),
+                            "price_amount": str(posting.price_amount),
+                            "price_currency": posting.price_currency,
+                            "price_type": posting.price_type
+                        }
+                    )
+            elif posting.price_currency is not None or posting.price_type is not None:
+                raise APIError(
+                    message=f"Price currency or type specified but price amount missing",
+                    code="INVALID_PRICE",
+                    status_code=422,
+                    details={"account": posting.account, "date": str(commit_txn.date)}
+                )
+
+            # Validate price type
+            if posting.price_type is not None and posting.price_type not in ['@', '@@']:
+                raise APIError(
+                    message=f"Invalid price type: {posting.price_type} (must be '@' or '@@')",
+                    code="INVALID_PRICE_TYPE",
+                    status_code=422,
+                    details={"account": posting.account, "date": str(commit_txn.date)}
+                )
+
         # Create Beancount transaction object for validation
         try:
             # Create postings
@@ -198,23 +253,67 @@ async def commit_transactions(
                     Decimal(str(posting.amount)),
                     posting.currency
                 )
+
+                # Create cost object if cost fields present
+                posting_cost = None
+                if posting.cost_amount is not None:
+                    posting_cost = data.Cost(
+                        number=Decimal(str(posting.cost_amount)),
+                        currency=posting.cost_currency,
+                        date=posting.cost_date,  # Can be None
+                        label=None
+                    )
+
+                # Create price object if price fields present
+                posting_price = None
+                if posting.price_amount is not None:
+                    # For @@ (total price), we need to divide by units to get per-unit price
+                    # because Beancount's price field is always per-unit
+                    price_value = Decimal(str(posting.price_amount))
+                    if posting.price_type == '@@':
+                        # Total price: divide by number of units
+                        units_value = abs(Decimal(str(posting.amount)))
+                        if units_value != 0:
+                            price_value = price_value / units_value
+                        else:
+                            raise APIError(
+                                message="Cannot use @@ price with zero units",
+                                code="INVALID_PRICE",
+                                status_code=422,
+                                details={"account": posting.account, "date": str(commit_txn.date)}
+                            )
+
+                    posting_price = amount.Amount(
+                        price_value,
+                        posting.price_currency
+                    )
+
+                # Create posting metadata
+                posting_meta = posting.posting_meta or {}
+
                 beancount_posting = data.Posting(
                     account=posting.account,
                     units=posting_amount,
-                    cost=None,
-                    price=None,
+                    cost=posting_cost,
+                    price=posting_price,
                     flag=None,
-                    meta={}
+                    meta=posting_meta
                 )
                 beancount_postings.append(beancount_posting)
 
-            # Create metadata
-            meta = {}
-            if commit_txn.ofx_id:
-                meta['ofx_id'] = commit_txn.ofx_id
+            # Create transaction metadata
+            # Start with metadata from request (may already contain some fields)
+            meta = dict(commit_txn.meta)
+
+            # ALWAYS use top-level source_account (required field, takes precedence)
+            meta['source_account'] = commit_txn.source_account
+
+            # Add memo as ofx_memo if present (convenience field)
             if commit_txn.memo:
                 meta['ofx_memo'] = commit_txn.memo
-            meta['source_account'] = commit_txn.source_account
+
+            # Note: source_account validation not needed - it's a required field at schema level
+            # Note: transaction_id will be added later by add_transaction_id_to_beancount_transaction()
 
             # Create transaction
             beancount_txn = data.Transaction(
@@ -309,6 +408,9 @@ def _format_beancount_transaction(txn: data.Transaction, include_transaction_id:
     """
     Format a Beancount transaction object as a string.
 
+    Uses Beancount's built-in printer for accurate formatting,
+    then adds transaction_id if needed.
+
     Args:
         txn: Beancount transaction object
         include_transaction_id: Whether to include transaction_id metadata
@@ -316,34 +418,17 @@ def _format_beancount_transaction(txn: data.Transaction, include_transaction_id:
     Returns:
         Formatted transaction string
     """
-    lines = []
+    from beancount.parser import printer
 
-    # Transaction header
-    payee_str = f'"{txn.payee}"' if txn.payee else '""'
-    narration_str = f'"{txn.narration}"' if txn.narration else '""'
-    header = f"{txn.date} {txn.flag} {payee_str} {narration_str}"
-    lines.append(header)
+    # If we need to exclude transaction_id, create a copy without it
+    if not include_transaction_id and txn.meta and 'transaction_id' in txn.meta:
+        # Create new meta dict without transaction_id
+        new_meta = {k: v for k, v in txn.meta.items() if k != 'transaction_id'}
+        # Create new transaction with modified meta
+        txn = txn._replace(meta=new_meta)
 
-    # Add metadata
-    if include_transaction_id and txn.meta and 'transaction_id' in txn.meta:
-        lines.append(f'  transaction_id: "{txn.meta["transaction_id"]}"')
+    # Use Beancount's built-in printer for accurate formatting
+    # This handles cost, price, posting metadata, etc. correctly
+    formatted = printer.format_entry(txn)
 
-    if txn.meta and 'source_account' in txn.meta:
-        lines.append(f'  source_account: "{txn.meta["source_account"]}"')
-
-    if txn.meta and 'ofx_id' in txn.meta:
-        lines.append(f'  ofx_id: "{txn.meta["ofx_id"]}"')
-
-    if txn.meta and 'ofx_memo' in txn.meta:
-        lines.append(f'  ofx_memo: "{txn.meta["ofx_memo"]}"')
-
-    # Add postings
-    for posting in txn.postings:
-        if posting.units:
-            amount_str = f"{posting.units.number:.2f} {posting.units.currency}"
-            lines.append(f"  {posting.account:<50} {amount_str}")
-        else:
-            # Posting without amount (balance assertion)
-            lines.append(f"  {posting.account}")
-
-    return '\n'.join(lines) + '\n'
+    return formatted + '\n'

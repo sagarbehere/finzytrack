@@ -260,16 +260,35 @@
         {
           account: sourceAccount,
           amount: amount, // Preserve the original amount and its sign from OFX file
-          currency: currency
+          currency: currency,
+          // NEW fields (undefined for OFX imports)
+          cost: undefined,
+          price: undefined,
+          meta: undefined
         },
         {
           account: 'Expenses:Unknown', // Default category to be updated later
           amount: -amount, // Opposite sign to balance the transaction
-          currency: currency
+          currency: currency,
+          // NEW fields (undefined for OFX imports)
+          cost: undefined,
+          price: undefined,
+          meta: undefined
         }
       ]
 
       const transactionId = uuidv4() // Generate a unique ID for the transaction
+
+      // Build metadata object conditionally
+      const meta: Record<string, string> = {
+        source_account: sourceAccount
+      }
+
+      // Add ofx_id only if it exists
+      const ofxId = tx.TRNTYPE ? `${tx.TRNTYPE}_${tx.FITID || tx.DTPOSTED || ''}` : null
+      if (ofxId) {
+        meta['ofx_id'] = ofxId
+      }
 
       const transaction: TransactionViewModel = {
         id: transactionId,
@@ -281,11 +300,14 @@
         tags: [],
         links: [],
         postings: postings,
-        meta: {
-          ofx_id: tx.TRNTYPE ? `${tx.TRNTYPE}_${tx.FITID || tx.DTPOSTED || ''}` : undefined,
+
+        // Beancount metadata
+        meta: meta,
+
+        // Frontend-only state
+        internal: {
           isNew: true,
           isModified: false,
-          source_account: sourceAccount,
           source_currency: currency
         }
       }

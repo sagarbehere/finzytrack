@@ -5,7 +5,9 @@
 import type { CommitPosting } from './CommitPosting';
 /**
  * Complete transaction data for committing to the ledger.
- * Includes all Beancount fields needed to write a valid transaction.
+ *
+ * Note: source_account is REQUIRED and provided as a top-level field.
+ * The backend automatically copies it into meta dict before writing to ledger.
  */
 export type CommitTransaction = {
     /**
@@ -21,7 +23,7 @@ export type CommitTransaction = {
      */
     payee: string;
     /**
-     * OFX memo field
+     * Convenience field (backend converts to ofx_memo metadata)
      */
     memo?: (string | null);
     /**
@@ -41,12 +43,12 @@ export type CommitTransaction = {
      */
     postings: Array<CommitPosting>;
     /**
-     * OFX transaction ID
-     */
-    ofx_id?: (string | null);
-    /**
-     * Source account (needed for transaction_id generation)
+     * REQUIRED: Source account that originated this transaction. Backend copies this into meta.
      */
     source_account: string;
+    /**
+     * Additional arbitrary metadata (ofx_id, custom fields, etc.). Backend adds source_account automatically.
+     */
+    meta?: Record<string, string>;
 };
 

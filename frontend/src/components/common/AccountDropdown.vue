@@ -19,9 +19,10 @@
         ]"
         :disabled="isLoading || disabled"
         :placeholder="placeholder"
-        @change="query = $event.target.value" 
-        @blur="query = ''" 
+        @change="query = $event.target.value"
+        @blur="query = ''"
         :display-value="(account: unknown) => (typeof account === 'string' ? account : '')"
+        autocomplete="off"
       />
       <ComboboxButton 
         class="absolute inset-y-0 right-0 flex items-center rounded-r-md px-2 focus:outline-hidden"

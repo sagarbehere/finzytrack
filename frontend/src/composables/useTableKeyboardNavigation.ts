@@ -11,7 +11,18 @@ export function useTableKeyboardNavigation() {
   const spannedColumns = ['date', 'flag', 'payee', 'memo', 'narration', 'tags_links']
 
   // Columns that are per-posting
-  const postingColumns = ['account', 'amount', 'currency', 'actions']
+  const postingColumns = [
+    'account',
+    'amount',
+    'currency',
+    'cost_amount',
+    'cost_currency',
+    'cost_date',
+    'price_amount',
+    'price_currency',
+    'price_type',
+    'actions'
+  ]
 
   const setCellFocus = async (position: CellPosition) => {
     await nextTick()
@@ -21,7 +32,7 @@ export function useTableKeyboardNavigation() {
     // For transaction-level cells, we only need transaction index
     let cellSelector = ''
 
-    if (['account', 'amount', 'currency', 'actions'].includes(position.columnId)) {
+    if (postingColumns.includes(position.columnId)) {
       // Posting-level fields need posting index
       cellSelector = `td[data-column-id="${position.columnId}"][data-row="${position.rowIndex + 1}"][data-posting="${position.postingIndex || 0}"]`
     } else {
@@ -42,14 +53,14 @@ export function useTableKeyboardNavigation() {
     // Try different element types based on the column
     if (position.columnId === 'payee' || position.columnId === 'memo' || position.columnId === 'narration') {
       targetElement = cell.querySelector('[contenteditable="true"]') as HTMLElement
-    } else if (position.columnId === 'account' || position.columnId === 'currency') {
-      // For dropdowns, find the ComboboxInput element
+    } else if (['account', 'currency', 'cost_currency', 'price_currency', 'price_type'].includes(position.columnId)) {
+      // For dropdowns (AccountDropdown/CommodityDropdown/PriceTypeDropdown), find the ComboboxInput element
       targetElement = cell.querySelector('input') as HTMLElement
     } else if (position.columnId === 'actions') {
       // For actions column, focus the first button
       targetElement = cell.querySelector('button') as HTMLElement
     } else {
-      // For regular inputs
+      // For regular inputs (amount, cost_amount, cost_date, price_amount, date, etc.)
       targetElement = cell.querySelector('input, select, textarea') as HTMLElement
     }
 

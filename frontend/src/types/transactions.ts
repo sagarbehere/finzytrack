@@ -4,6 +4,23 @@ export interface PostingViewModel {
   account: string;
   amount: number | null;
   currency: string;
+
+  // Cost fields
+  cost?: {
+    amount?: number;
+    currency?: string;
+    date?: string; // ISO date YYYY-MM-DD
+  };
+
+  // Price fields
+  price?: {
+    amount?: number;
+    currency?: string;
+    type?: '@' | '@@'; // @ = per-unit, @@ = total
+  };
+
+  // Posting-level metadata (arbitrary key-value pairs)
+  meta?: Record<string, string>;
 }
 
 /**
@@ -20,20 +37,21 @@ export interface TransactionViewModel {
   date: string;
   flag: string;
   payee: string;
-  memo?: string;
+  memo?: string; // Convenience field, backend converts to ofx_memo metadata
   narration: string;
   tags: string[];
   links: string[];
   postings: PostingViewModel[];
 
-  // Internal metadata for state management and API communication
-  meta: {
-    ofx_id?: string;
-    transaction_id?: string; // For existing ledger transactions
+  // Beancount metadata (arbitrary key-value pairs)
+  // Common keys: ofx_id, transaction_id, source_account, ofx_memo
+  meta: Record<string, string>;
+
+  // Frontend-only state (NOT sent to backend/ledger)
+  internal: {
     isNew: boolean;         // True for new transactions being imported
-    isModified: boolean;      // True if the user has changed any field
-    source_account?: string;  // The source account for imported transactions
-    source_currency?: string; // The source currency for imported transactions
+    isModified: boolean;    // True if the user has changed any field
+    source_currency?: string; // Helper for frontend logic
   };
 }
 

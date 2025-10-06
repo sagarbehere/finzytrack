@@ -30,7 +30,7 @@
 
     <!-- Main table -->
     <div class="card overflow-hidden">
-      <div class="overflow-x-auto">
+      <div class="table-scroll-container">
         <table class="w-full table-fixed">
           <!-- Table Header -->
           <thead class="bg-gray-50 dark:bg-gray-800/50">
@@ -165,12 +165,22 @@ import {
 import { MagnifyingGlassIcon, ChevronLeftIcon, ChevronRightIcon } from '@heroicons/vue/20/solid'
 import AccountDropdown from '@/components/common/AccountDropdown.vue'
 import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
+import PriceTypeDropdown from '@/components/common/PriceTypeDropdown.vue'
 import TransactionStatusIndicator from '@/components/common/TransactionStatusIndicator.vue'
 import ColumnVisibilityControl from '@/components/common/ColumnVisibilityControl.vue'
 import { useTableColumns } from '@/composables/useTableColumns'
 import { useTableKeyboardNavigation } from '@/composables/useTableKeyboardNavigation'
-import type { TransactionViewModel, ImportContext, LedgerContext } from '@/types/transactions'
+import type { TransactionViewModel, ImportContext, LedgerContext, PostingViewModel } from '@/types/transactions'
 import type { Cell } from '@tanstack/vue-table'
+
+// Define the flattened row type used by the table
+interface TableRowData extends PostingViewModel {
+  transaction: TransactionViewModel
+  postingIndex: number
+  isFirstPosting: boolean
+  isLastPosting: boolean
+  transactionIndex: number
+}
 
 // Define props
 interface Props {
@@ -442,7 +452,8 @@ const columns = computed(() => {
             type: 'date',
             value: getValue(),
             onInput: (e: any) => updateTransactionDate(row.original.transaction, e.target.value),
-            class: getEditableInputClasses()
+            class: getEditableInputClasses(),
+            autocomplete: 'off'
           })
         : h('span', { class: getDisplayClasses() }, getValue()),
       size: getColumnConfig('date')?.defaultWidth || 120,
@@ -532,7 +543,8 @@ const columns = computed(() => {
             value: getValue(),
             onInput: (e: any) => updateTransactionTagsLinks(row.original.transaction, e.target.value),
             class: getEditableInputClasses(),
-            placeholder: '#tag ^link'
+            placeholder: '#tag ^link',
+            autocomplete: 'off'
           })
         : h('span', { class: getDisplayClasses() }, getValue()),
       size: getColumnConfig('tags_links')?.defaultWidth || 150,
@@ -572,7 +584,8 @@ const columns = computed(() => {
               step: '0.01',
               value: amount || '',
               onInput: (e: any) => updatePostingAmount(row.original.transaction, row.original.postingIndex, e.target.value),
-              class: `${getEditableInputClasses('text-right')} ${amountColorClass}`
+              class: `${getEditableInputClasses('text-right')} ${amountColorClass}`,
+              autocomplete: 'off'
             })
           : h('span', {
               class: `${getDisplayClasses()} font-mono text-right block ${amountColorClass}`
@@ -599,6 +612,139 @@ const columns = computed(() => {
       minSize: getColumnConfig('currency')?.minWidth || 60,
       enableResizing: getColumnConfig('currency')?.resizable ?? true,
     }),
+    // Cost Amount column
+    columnHelper.accessor(
+      (row: TableRowData) => row.cost?.amount,
+      {
+        id: 'cost_amount',
+        header: 'Cost Amount',
+        cell: ({ row, getValue }) => {
+          const value = getValue()
+          return props.editable
+            ? h('input', {
+                type: 'number',
+                step: '0.01',
+                value: value ?? '',
+                onInput: (e: any) => updatePostingCostAmount(row.original.transaction, row.original.postingIndex, e.target.value),
+                class: getEditableInputClasses('text-right'),
+                autocomplete: 'off'
+              })
+            : h('span', {
+                class: `${getDisplayClasses()} font-mono text-right block`
+              }, value !== undefined && value !== null ? value.toFixed(2) : '')
+        },
+        size: getColumnConfig('cost_amount')?.defaultWidth || 120,
+        minSize: getColumnConfig('cost_amount')?.minWidth || 80,
+        enableResizing: getColumnConfig('cost_amount')?.resizable ?? true,
+      }
+    ),
+    // Cost Currency column
+    columnHelper.accessor(
+      (row: TableRowData) => row.cost?.currency,
+      {
+        id: 'cost_currency',
+        header: 'Cost Currency',
+        cell: ({ row, getValue }) => props.editable
+          ? h(CommodityDropdown, {
+              modelValue: getValue() || '',
+              'onUpdate:modelValue': (value: string) => updatePostingCostCurrency(row.original.transaction, row.original.postingIndex, value),
+              'custom-class': '!text-sm !py-0.5 !px-1.5 !pr-8 !outline-0',
+              'allow-custom': false,
+              'show-details': false,
+              placeholder: 'CURR'
+            })
+          : h('span', { class: getDisplayClasses() }, getValue() || ''),
+        size: getColumnConfig('cost_currency')?.defaultWidth || 100,
+        minSize: getColumnConfig('cost_currency')?.minWidth || 60,
+        enableResizing: getColumnConfig('cost_currency')?.resizable ?? true,
+      }
+    ),
+    // Cost Date column
+    columnHelper.accessor(
+      (row: TableRowData) => row.cost?.date,
+      {
+        id: 'cost_date',
+        header: 'Cost Date',
+        cell: ({ row, getValue }) => props.editable
+          ? h('input', {
+              type: 'date',
+              value: getValue() || '',
+              onInput: (e: any) => updatePostingCostDate(row.original.transaction, row.original.postingIndex, e.target.value),
+              class: getEditableInputClasses(),
+              autocomplete: 'off'
+            })
+          : h('span', { class: getDisplayClasses() }, getValue() || ''),
+        size: getColumnConfig('cost_date')?.defaultWidth || 120,
+        minSize: getColumnConfig('cost_date')?.minWidth || 100,
+        enableResizing: getColumnConfig('cost_date')?.resizable ?? true,
+      }
+    ),
+    // Price Amount column
+    columnHelper.accessor(
+      (row: TableRowData) => row.price?.amount,
+      {
+        id: 'price_amount',
+        header: 'Price Amount',
+        cell: ({ row, getValue }) => {
+          const value = getValue()
+          return props.editable
+            ? h('input', {
+                type: 'number',
+                step: '0.01',
+                value: value ?? '',
+                onInput: (e: any) => updatePostingPriceAmount(row.original.transaction, row.original.postingIndex, e.target.value),
+                class: getEditableInputClasses('text-right'),
+                autocomplete: 'off'
+              })
+            : h('span', {
+                class: `${getDisplayClasses()} font-mono text-right block`
+              }, value !== undefined && value !== null ? value.toFixed(2) : '')
+        },
+        size: getColumnConfig('price_amount')?.defaultWidth || 120,
+        minSize: getColumnConfig('price_amount')?.minWidth || 80,
+        enableResizing: getColumnConfig('price_amount')?.resizable ?? true,
+      }
+    ),
+    // Price Currency column
+    columnHelper.accessor(
+      (row: TableRowData) => row.price?.currency,
+      {
+        id: 'price_currency',
+        header: 'Price Currency',
+        cell: ({ row, getValue }) => props.editable
+          ? h(CommodityDropdown, {
+              modelValue: getValue() || '',
+              'onUpdate:modelValue': (value: string) => updatePostingPriceCurrency(row.original.transaction, row.original.postingIndex, value),
+              'custom-class': '!text-sm !py-0.5 !px-1.5 !pr-8 !outline-0',
+              'allow-custom': false,
+              'show-details': false,
+              placeholder: 'CURR'
+            })
+          : h('span', { class: getDisplayClasses() }, getValue() || ''),
+        size: getColumnConfig('price_currency')?.defaultWidth || 100,
+        minSize: getColumnConfig('price_currency')?.minWidth || 60,
+        enableResizing: getColumnConfig('price_currency')?.resizable ?? true,
+      }
+    ),
+    // Price Type column
+    columnHelper.accessor(
+      (row: TableRowData) => row.price?.type,
+      {
+        id: 'price_type',
+        header: 'Price Type',
+        cell: ({ row, getValue }) => props.editable
+          ? h(PriceTypeDropdown, {
+              modelValue: getValue() || '',
+              'onUpdate:modelValue': (value: string) => updatePostingPriceType(row.original.transaction, row.original.postingIndex, value),
+              'custom-class': '!text-sm !py-0.5 !px-1.5 !pr-8 !outline-0',
+              placeholder: 'Type'
+            })
+          : h('span', { class: getDisplayClasses() }, getValue() || ''),
+        size: getColumnConfig('price_type')?.defaultWidth || 90,
+        minSize: getColumnConfig('price_type')?.minWidth || 70,
+        enableResizing: getColumnConfig('price_type')?.resizable ?? true,
+      }
+    ),
     columnHelper.display({
       id: 'balance',
       header: 'Balance',
@@ -706,7 +852,7 @@ const getCellClasses = (cell: Cell<any, any>) => {
   ]
   
   // Alignment
-  if (['amount'].includes(cell.column.id)) {
+  if (['amount', 'cost_amount', 'price_amount'].includes(cell.column.id)) {
     classes.push('text-right')
   }
   if (['actions'].includes(cell.column.id)) {
@@ -744,8 +890,8 @@ const handleCellKeydown = (event: KeyboardEvent, cell: any, rowData: any) => {
     return
   }
 
-  // For dropdown columns (account, currency), check if options list is visible
-  const isDropdownColumn = ['account', 'currency'].includes(cell.column.id)
+  // For dropdown columns (account, currency, cost_currency, price_currency, price_type), check if options list is visible
+  const isDropdownColumn = ['account', 'currency', 'cost_currency', 'price_currency', 'price_type'].includes(cell.column.id)
 
   if (isDropdownColumn) {
     // Find the table cell
@@ -765,10 +911,12 @@ const handleCellKeydown = (event: KeyboardEvent, cell: any, rowData: any) => {
 
   // Handle arrow keys for vertical navigation only
   if (['ArrowUp', 'ArrowDown'].includes(event.key)) {
+    // All posting-level columns need postingIndex
+    const postingColumns = ['account', 'amount', 'currency', 'cost_amount', 'cost_currency', 'cost_date', 'price_amount', 'price_currency', 'price_type', 'actions']
     const position = {
       rowIndex: rowData.transactionIndex - 1,
       columnId: cell.column.id,
-      postingIndex: ['account', 'amount', 'currency', 'actions'].includes(cell.column.id) ? rowData.postingIndex : undefined
+      postingIndex: postingColumns.includes(cell.column.id) ? rowData.postingIndex : undefined
     }
 
     handleKeyNavigation(
@@ -799,10 +947,11 @@ const handleCellClick = (event: Event, cell: any, rowData: any) => {
   event.preventDefault()
 
   // Set focus to the clicked cell
+  const postingColumns = ['account', 'amount', 'currency', 'cost_amount', 'cost_currency', 'cost_date', 'price_amount', 'price_currency', 'price_type', 'actions']
   const position = {
     rowIndex: rowData.transactionIndex - 1,
     columnId: cell.column.id,
-    postingIndex: ['account', 'amount', 'currency'].includes(cell.column.id) ? rowData.postingIndex : undefined
+    postingIndex: postingColumns.includes(cell.column.id) ? rowData.postingIndex : undefined
   }
 
   setCellFocus(position)
@@ -931,7 +1080,7 @@ const netFlowByCurrency = computed(() => {
 
   filteredTransactions.value.forEach(transaction => {
     // Check if this transaction has source account metadata
-    const sourceAccount = transaction.meta.source_account
+    const sourceAccount = transaction.meta['source_account']
 
     if (sourceAccount) {
       // Find the posting for the source account
@@ -1030,7 +1179,7 @@ const preserveCurrentPage = () => {
     const txIndex = findTransactionIndex(transaction)
     if (txIndex !== -1) {
       updatedTransactions[txIndex].date = newDate
-      updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
+      updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
       emitUpdate(updatedTransactions)
       // After update, try to maintain the same page
       preserveCurrentPage()
@@ -1042,7 +1191,7 @@ const updateTransactionFlag = (transaction: TransactionViewModel, newFlag: strin
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1) {
     updatedTransactions[txIndex].flag = newFlag
-    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
+    updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
     preserveCurrentPage()
@@ -1054,7 +1203,7 @@ const updateTransactionPayee = (transaction: TransactionViewModel, newPayee: str
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1) {
     updatedTransactions[txIndex].payee = newPayee
-    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
+    updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
     preserveCurrentPage()
@@ -1066,7 +1215,7 @@ const updateTransactionMemo = (transaction: TransactionViewModel, newMemo: strin
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1) {
     updatedTransactions[txIndex].memo = newMemo || undefined
-    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
+    updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
     preserveCurrentPage()
@@ -1078,7 +1227,7 @@ const updateTransactionNarration = (transaction: TransactionViewModel, newNarrat
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1) {
     updatedTransactions[txIndex].narration = newNarration
-    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
+    updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
     preserveCurrentPage()
@@ -1092,7 +1241,7 @@ const updateTransactionTagsLinks = (transaction: TransactionViewModel, newValue:
     const parts = newValue.split(/\s+/).filter(p => p)
     updatedTransactions[txIndex].tags = parts.filter(p => p.startsWith('#')).map(p => p.substring(1))
     updatedTransactions[txIndex].links = parts.filter(p => p.startsWith('^')).map(p => p.substring(1))
-    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
+    updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
     preserveCurrentPage()
@@ -1104,7 +1253,7 @@ const updatePostingAccount = (transaction: TransactionViewModel, postingIndex: n
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1) {
     updatedTransactions[txIndex].postings[postingIndex].account = newAccount
-    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
+    updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
     preserveCurrentPage()
@@ -1116,7 +1265,7 @@ const updatePostingAmount = (transaction: TransactionViewModel, postingIndex: nu
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1) {
     updatedTransactions[txIndex].postings[postingIndex].amount = newAmountStr ? parseFloat(newAmountStr) : null
-    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
+    updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
     preserveCurrentPage()
@@ -1128,9 +1277,103 @@ const updatePostingCurrency = (transaction: TransactionViewModel, postingIndex: 
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1) {
     updatedTransactions[txIndex].postings[postingIndex].currency = newCurrency
-    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
+    updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
+    preserveCurrentPage()
+  }
+}
+
+const updatePostingCostAmount = (transaction: TransactionViewModel, postingIndex: number, newAmountStr: string) => {
+  const updatedTransactions = [...props.transactions]
+  const txIndex = findTransactionIndex(transaction)
+  if (txIndex !== -1) {
+    const posting = updatedTransactions[txIndex].postings[postingIndex]
+    if (!posting.cost) {
+      posting.cost = {}
+    }
+    posting.cost.amount = newAmountStr ? parseFloat(newAmountStr) : undefined
+    // Default cost date to transaction date when user starts entering cost
+    if (posting.cost.amount !== undefined && !posting.cost.date) {
+      posting.cost.date = updatedTransactions[txIndex].date
+    }
+    updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
+    emitUpdate(updatedTransactions)
+    preserveCurrentPage()
+  }
+}
+
+const updatePostingCostCurrency = (transaction: TransactionViewModel, postingIndex: number, newCurrency: string) => {
+  const updatedTransactions = [...props.transactions]
+  const txIndex = findTransactionIndex(transaction)
+  if (txIndex !== -1) {
+    const posting = updatedTransactions[txIndex].postings[postingIndex]
+    if (!posting.cost) {
+      posting.cost = {}
+    }
+    posting.cost.currency = newCurrency || undefined
+    updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
+    emitUpdate(updatedTransactions)
+    preserveCurrentPage()
+  }
+}
+
+const updatePostingCostDate = (transaction: TransactionViewModel, postingIndex: number, newDate: string) => {
+  const updatedTransactions = [...props.transactions]
+  const txIndex = findTransactionIndex(transaction)
+  if (txIndex !== -1) {
+    const posting = updatedTransactions[txIndex].postings[postingIndex]
+    if (!posting.cost) {
+      posting.cost = {}
+    }
+    posting.cost.date = newDate || undefined
+    updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
+    emitUpdate(updatedTransactions)
+    preserveCurrentPage()
+  }
+}
+
+const updatePostingPriceAmount = (transaction: TransactionViewModel, postingIndex: number, newAmountStr: string) => {
+  const updatedTransactions = [...props.transactions]
+  const txIndex = findTransactionIndex(transaction)
+  if (txIndex !== -1) {
+    const posting = updatedTransactions[txIndex].postings[postingIndex]
+    if (!posting.price) {
+      posting.price = {}
+    }
+    posting.price.amount = newAmountStr ? parseFloat(newAmountStr) : undefined
+    updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
+    emitUpdate(updatedTransactions)
+    preserveCurrentPage()
+  }
+}
+
+const updatePostingPriceCurrency = (transaction: TransactionViewModel, postingIndex: number, newCurrency: string) => {
+  const updatedTransactions = [...props.transactions]
+  const txIndex = findTransactionIndex(transaction)
+  if (txIndex !== -1) {
+    const posting = updatedTransactions[txIndex].postings[postingIndex]
+    if (!posting.price) {
+      posting.price = {}
+    }
+    posting.price.currency = newCurrency || undefined
+    updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
+    emitUpdate(updatedTransactions)
+    preserveCurrentPage()
+  }
+}
+
+const updatePostingPriceType = (transaction: TransactionViewModel, postingIndex: number, newType: string) => {
+  const updatedTransactions = [...props.transactions]
+  const txIndex = findTransactionIndex(transaction)
+  if (txIndex !== -1) {
+    const posting = updatedTransactions[txIndex].postings[postingIndex]
+    if (!posting.price) {
+      posting.price = {}
+    }
+    posting.price.type = (newType as '@' | '@@') || undefined
+    updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
+    emitUpdate(updatedTransactions)
     preserveCurrentPage()
   }
 }
@@ -1139,8 +1382,15 @@ const addPosting = (transaction: TransactionViewModel) => {
   const updatedTransactions = [...props.transactions]
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1) {
-    updatedTransactions[txIndex].postings.push({ account: '', amount: null, currency: 'USD' })
-    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
+    updatedTransactions[txIndex].postings.push({
+      account: '',
+      amount: null,
+      currency: 'USD',
+      cost: undefined,
+      price: undefined,
+      meta: undefined
+    })
+    updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
     preserveCurrentPage()
@@ -1152,7 +1402,7 @@ const removePosting = (transaction: TransactionViewModel, postingIndex: number) 
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1 && updatedTransactions[txIndex].postings.length > 1) {
     updatedTransactions[txIndex].postings.splice(postingIndex, 1)
-    updatedTransactions[txIndex].meta.isModified = checkIfModified(updatedTransactions[txIndex])
+    updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
     preserveCurrentPage()
@@ -1218,6 +1468,58 @@ defineExpose({
 </script>
 
 <style scoped>
+/* Horizontal scrolling container with always-visible scrollbar */
+.table-scroll-container {
+  overflow-x: auto;
+  overflow-y: visible;
+
+  /* Force scrollbar to always show (override macOS auto-hide) */
+  scrollbar-width: thin; /* Firefox */
+  -webkit-overflow-scrolling: touch; /* iOS momentum scrolling */
+}
+
+/* Webkit browsers (Chrome, Safari, Edge) - always visible scrollbar */
+.table-scroll-container::-webkit-scrollbar {
+  height: 12px;
+  -webkit-appearance: none;
+}
+
+.table-scroll-container::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+}
+
+.table-scroll-container::-webkit-scrollbar-track:dark {
+  background: #374151;
+  border-color: #4b5563;
+}
+
+.table-scroll-container::-webkit-scrollbar-thumb {
+  background: #9ca3af;
+  border-radius: 10px;
+  border: 2px solid #f1f1f1;
+}
+
+.table-scroll-container::-webkit-scrollbar-thumb:dark {
+  background: #6b7280;
+  border-color: #374151;
+}
+
+.table-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: #6b7280;
+}
+
+.table-scroll-container::-webkit-scrollbar-thumb:hover:dark {
+  background: #9ca3af;
+}
+
+/* Ensure table doesn't compress columns too much */
+.table-scroll-container table {
+  min-width: 100%;
+  width: max-content; /* Allow table to grow wider than container */
+}
+
 /* Resize handle for column resizing */
 .resize-handle {
   position: absolute;
