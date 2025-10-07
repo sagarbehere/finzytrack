@@ -128,10 +128,6 @@
         <div class="px-4 py-3">
           <div class="flex items-center justify-around gap-6 text-sm">
             <div class="flex items-center gap-2">
-              <span class="text-gray-600 dark:text-gray-400">Transactions:</span>
-              <span class="font-semibold text-gray-900 dark:text-white">{{ props.transactions.length }}</span>
-            </div>
-            <div class="flex items-center gap-2">
               <span class="text-gray-600 dark:text-gray-400">Net Flow:</span>
               <span class="font-semibold text-gray-900 dark:text-white">
                 <template v-if="Object.keys(netFlowByCurrency).length > 0">
@@ -141,6 +137,10 @@
                 </template>
                 <template v-else>—</template>
               </span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-gray-600 dark:text-gray-400">Edited:</span>
+              <span class="font-semibold text-gray-900 dark:text-white">{{ editedCount }}</span>
             </div>
             <div class="flex items-center gap-2">
               <span class="text-gray-600 dark:text-gray-400">Unbalanced:</span>
@@ -1153,6 +1153,10 @@ const netFlowByCurrency = computed(() => {
     formatted[currency] = flows[currency].toFixed(2)
   })
   return formatted
+})
+
+const editedCount = computed(() => {
+  return filteredTransactions.value.filter(t => t.internal.isModified).length
 })
 
 const unbalancedCount = computed(() => {
