@@ -38,6 +38,7 @@
               <th
                 v-for="header in headerGroup.headers"
                 :key="header.id"
+                :data-column-id="header.id"
                 :style="{ width: `${header.getSize()}px` }"
                 class="relative px-3 py-3 text-left text-xs font-semibold text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 last:border-r-0"
               >
@@ -1020,11 +1021,14 @@ const table = useVueTable({
   },
   onColumnSizingChange: (updater) => {
     const newSizing = typeof updater === 'function' ? updater(columnSizing.value) : updater
-    
+
     // Update our column widths store
     Object.keys(newSizing).forEach(columnId => {
       setColumnWidth(columnId, newSizing[columnId])
     })
+
+    // Update sticky column positions after resize
+    updateStickyColumnPositions()
   },
   enableColumnResizing: true,
   columnResizeMode: 'onChange',
@@ -1041,12 +1045,39 @@ watch(() => props.pageSize, (_size) => {
   currentPageIndex.value = 0  // Reset to first page when page size changes
 })
 
+// Update sticky columns when column visibility changes
+watch(columnVisibility, () => {
+  updateStickyColumnPositions()
+}, { deep: true })
+
+// Update sticky columns when page changes (DOM re-renders)
+watch(currentPageIndex, () => {
+  updateStickyColumnPositions()
+})
+
+// Update sticky column positions based on actual rendered widths
+const updateStickyColumnPositions = () => {
+  nextTick(() => {
+    const statusCell = document.querySelector('th[data-column-id="status"]') as HTMLElement
+    if (statusCell) {
+      const statusWidth = statusCell.offsetWidth
+      const indexCells = document.querySelectorAll('[data-column-id="index"]') as NodeListOf<HTMLElement>
+      indexCells.forEach(cell => {
+        cell.style.left = `${statusWidth}px`
+      })
+    }
+  })
+}
+
 onMounted(() => {
   currentPageIndex.value = 0
 
   // Initialize both baselines with the initial props data
   ofxOriginalTransactions.value = JSON.parse(JSON.stringify(props.transactions))
   editBaselineTransactions.value = JSON.parse(JSON.stringify(props.transactions))
+
+  // Set sticky column positions after initial render
+  updateStickyColumnPositions()
 
   // Add global keyboard listener for table navigation initialization and pagination
   const handleGlobalKeydown = (event: KeyboardEvent) => {
@@ -1699,6 +1730,8 @@ defineExpose({
 
 table {
   table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0; /* Remove gaps between cells */
 }
 
 /* Sticky header - stays visible when scrolling within table container */
@@ -1774,16 +1807,52 @@ button:focus {
 }
 
 
-/* Enhanced status column - removed for now as :has() has limited support */
+/* Sticky Status column (leftmost) */
+th[data-column-id="status"],
 td[data-column-id="status"] {
   position: sticky;
   left: 0;
-  background-color: white;
   z-index: 10;
 }
 
+th[data-column-id="status"] {
+  background-color: rgb(249 250 251); /* bg-gray-50 */
+}
+
+td[data-column-id="status"] {
+  background-color: white;
+}
+
+.dark th[data-column-id="status"] {
+  background-color: rgba(31, 41, 55, 0.5); /* dark:bg-gray-800/50 */
+}
+
 .dark td[data-column-id="status"] {
-  background-color: #111827;
+  background-color: #111827; /* dark:bg-gray-900 */
+}
+
+/* Sticky Index (#) column (second from left) */
+th[data-column-id="index"],
+td[data-column-id="index"] {
+  position: sticky;
+  left: 0; /* Will be set dynamically by JavaScript based on Status column width */
+  z-index: 10;
+}
+
+th[data-column-id="index"] {
+  background-color: rgb(249 250 251); /* bg-gray-50 */
+}
+
+td[data-column-id="index"] {
+  background-color: white;
+}
+
+.dark th[data-column-id="index"] {
+  background-color: rgba(31, 41, 55, 0.5); /* dark:bg-gray-800/50 */
+}
+
+.dark td[data-column-id="index"] {
+  background-color: #111827; /* dark:bg-gray-900 */
 }
 
 /* Contenteditable placeholder styling */
