@@ -102,14 +102,14 @@
       <!-- Buttons above the table -->
       <div class="flex justify-between items-center mb-4">
         <button
-          @click="resetTable"
+          @click="resetTable($event)"
           :disabled="isLoading"
           class="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Reset
         </button>
         <button
-          @click="autocategorize"
+          @click="autocategorize($event)"
           :disabled="isLoading"
           class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
@@ -341,7 +341,7 @@
   }
 
   // Reset the table to original raw transactions
-  const resetTable = () => {
+  const resetTable = (event?: Event) => {
     const bundle = convertRawTransactionsToViewModels(rawTransactions.value, sourceAccount.value, sourceCurrency.value)
     transactionViewModels.value = bundle.transactions
     importContext.value = bundle.importContext
@@ -352,10 +352,20 @@
         transactionTableRef.value.reinitializeBaselines()
       }
     })
+
+    // Remove focus from the button to hide the focus ring
+    if (event?.target) {
+      (event.target as HTMLElement).blur()
+    }
   }
 
   // Autocategorize function
-  const autocategorize = async () => {
+  const autocategorize = async (event?: Event) => {
+    // Remove focus from the button to hide the focus ring
+    if (event?.target) {
+      (event.target as HTMLElement).blur()
+    }
+
     if (!transactionViewModels.value.length) {
       return
     }

@@ -1144,16 +1144,20 @@ const isEmpty = (value: any): boolean => {
   return value === undefined || value === null || value === '' || value === 0
 }
 
-// Helper function to check if a cost object is empty (all fields undefined/null/empty/0)
+// Helper function to check if a cost object is empty
+// A cost is empty if the amount is empty, regardless of currency/date
+// (because a cost without an amount is meaningless)
 const isCostEmpty = (cost: any): boolean => {
   if (!cost) return true
-  return isEmpty(cost.amount) && isEmpty(cost.currency) && isEmpty(cost.date)
+  return isEmpty(cost.amount)
 }
 
-// Helper function to check if a price object is empty (all fields undefined/null/empty/0)
+// Helper function to check if a price object is empty
+// A price is empty if the amount is empty, regardless of currency/type
+// (because a price without an amount is meaningless)
 const isPriceEmpty = (price: any): boolean => {
   if (!price) return true
-  return isEmpty(price.amount) && isEmpty(price.currency) && isEmpty(price.type)
+  return isEmpty(price.amount)
 }
 
 // Helper function to check if metadata object is empty
@@ -1168,10 +1172,7 @@ const isMetaEmpty = (meta: any): boolean => {
 const checkIfModified = (transaction: TransactionViewModel): boolean => {
   const baseline = editBaselineTransactions.value.find(t => t.id === transaction.id)
   if (!baseline) {
-    // If no baseline found, check if transaction has any edits marker
-    // This shouldn't normally happen, but defensive check
-    console.warn('[checkIfModified] No baseline found for transaction', transaction.id)
-    console.warn('[checkIfModified] Available baseline IDs:', editBaselineTransactions.value.map(t => t.id))
+    // If no baseline found, transaction is likely new or baseline hasn't been initialized yet
     return false
   }
 
@@ -1200,6 +1201,7 @@ const checkIfModified = (transaction: TransactionViewModel): boolean => {
     // Compare cost fields (treat empty cost as equivalent to undefined)
     const costEmpty = isCostEmpty(posting.cost)
     const baselineCostEmpty = isCostEmpty(baselinePosting.cost)
+
     if (!costEmpty || !baselineCostEmpty) {
       // At least one has a non-empty cost, so compare them
       if (costEmpty !== baselineCostEmpty) return true

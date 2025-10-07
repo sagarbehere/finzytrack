@@ -191,8 +191,9 @@ async def commit_transactions(
 
         # Validate cost and price fields for each posting
         for posting in commit_txn.postings:
-            # Validate cost completeness
-            if posting.cost_amount is not None:
+            # Validate cost completeness (treat 0 as empty)
+            cost_amount_is_nonzero = posting.cost_amount is not None and Decimal(str(posting.cost_amount)) != 0
+            if cost_amount_is_nonzero:
                 if posting.cost_currency is None:
                     raise APIError(
                         message=f"Cost amount specified but cost currency missing",
@@ -206,14 +207,15 @@ async def commit_transactions(
                     )
             elif posting.cost_currency is not None:
                 raise APIError(
-                    message=f"Cost currency specified but cost amount missing",
+                    message=f"Cost currency specified but cost amount missing or zero",
                     code="INVALID_COST",
                     status_code=422,
                     details={"account": posting.account, "date": str(commit_txn.date)}
                 )
 
-            # Validate price completeness
-            if posting.price_amount is not None:
+            # Validate price completeness (treat 0 as empty)
+            price_amount_is_nonzero = posting.price_amount is not None and Decimal(str(posting.price_amount)) != 0
+            if price_amount_is_nonzero:
                 if posting.price_currency is None or posting.price_type is None:
                     raise APIError(
                         message=f"Price amount specified but price currency or type missing",
@@ -229,7 +231,7 @@ async def commit_transactions(
                     )
             elif posting.price_currency is not None or posting.price_type is not None:
                 raise APIError(
-                    message=f"Price currency or type specified but price amount missing",
+                    message=f"Price currency or type specified but price amount missing or zero",
                     code="INVALID_PRICE",
                     status_code=422,
                     details={"account": posting.account, "date": str(commit_txn.date)}
@@ -254,9 +256,9 @@ async def commit_transactions(
                     posting.currency
                 )
 
-                # Create cost object if cost fields present
+                # Create cost object if cost fields present and amount is non-zero
                 posting_cost = None
-                if posting.cost_amount is not None:
+                if posting.cost_amount is not None and Decimal(str(posting.cost_amount)) != 0:
                     posting_cost = data.Cost(
                         number=Decimal(str(posting.cost_amount)),
                         currency=posting.cost_currency,
@@ -264,9 +266,9 @@ async def commit_transactions(
                         label=None
                     )
 
-                # Create price object if price fields present
+                # Create price object if price fields present and amount is non-zero
                 posting_price = None
-                if posting.price_amount is not None:
+                if posting.price_amount is not None and Decimal(str(posting.price_amount)) != 0:
                     # For @@ (total price), we need to divide by units to get per-unit price
                     # because Beancount's price field is always per-unit
                     price_value = Decimal(str(posting.price_amount))

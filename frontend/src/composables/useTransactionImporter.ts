@@ -106,8 +106,11 @@ export function useTransactionImporter() {
         for (let j = 0; j < tx.postings.length; j++) {
           const posting = tx.postings[j]
 
-          // Validate cost completeness
-          if (posting.cost?.amount !== undefined && posting.cost?.amount !== null) {
+          // Validate cost completeness (treat 0 as empty)
+          const costAmountIsNonZero = posting.cost?.amount !== undefined &&
+                                      posting.cost?.amount !== null &&
+                                      posting.cost?.amount !== 0
+          if (costAmountIsNonZero) {
             if (!posting.cost?.currency) {
               commitError.value = {
                 message: `Validation failed: Cost amount specified but cost currency missing (row ${rowNum}, posting ${j + 1})`,
@@ -116,16 +119,19 @@ export function useTransactionImporter() {
               throw new Error('Validation failed')
             }
           }
-          if (posting.cost?.currency && (posting.cost?.amount === undefined || posting.cost?.amount === null)) {
+          if (posting.cost?.currency && !costAmountIsNonZero) {
             commitError.value = {
-              message: `Validation failed: Cost currency specified but cost amount missing (row ${rowNum}, posting ${j + 1})`,
+              message: `Validation failed: Cost currency specified but cost amount missing or zero (row ${rowNum}, posting ${j + 1})`,
               details: `Account: ${posting.account}, Date: ${tx.date}`
             }
             throw new Error('Validation failed')
           }
 
-          // Validate price completeness
-          if (posting.price?.amount !== undefined && posting.price?.amount !== null) {
+          // Validate price completeness (treat 0 as empty)
+          const priceAmountIsNonZero = posting.price?.amount !== undefined &&
+                                       posting.price?.amount !== null &&
+                                       posting.price?.amount !== 0
+          if (priceAmountIsNonZero) {
             if (!posting.price?.currency || !posting.price?.type) {
               commitError.value = {
                 message: `Validation failed: Price amount specified but currency or type missing (row ${rowNum}, posting ${j + 1})`,
@@ -135,9 +141,9 @@ export function useTransactionImporter() {
             }
           }
           if (posting.price?.currency || posting.price?.type) {
-            if (posting.price?.amount === undefined || posting.price?.amount === null) {
+            if (!priceAmountIsNonZero) {
               commitError.value = {
-                message: `Validation failed: Price currency or type specified but amount missing (row ${rowNum}, posting ${j + 1})`,
+                message: `Validation failed: Price currency or type specified but amount missing or zero (row ${rowNum}, posting ${j + 1})`,
                 details: `Account: ${posting.account}, Date: ${tx.date}`
               }
               throw new Error('Validation failed')
@@ -164,21 +170,28 @@ export function useTransactionImporter() {
         narration: tx.narration,
         tags: tx.tags,
         links: tx.links,
-        postings: tx.postings.map(p => ({
-          account: p.account,
-          amount: p.amount?.toString() || '0',
-          currency: p.currency,
-          // Cost fields
-          cost_amount: p.cost?.amount?.toString() || null,
-          cost_currency: p.cost?.currency || null,
-          cost_date: p.cost?.date || null,
-          // Price fields
-          price_amount: p.price?.amount?.toString() || null,
-          price_currency: p.price?.currency || null,
-          price_type: p.price?.type || null,
-          // Posting metadata
-          posting_meta: p.meta || null
-        })),
+        postings: tx.postings.map(p => {
+          // Only send cost fields if amount is non-zero and non-empty
+          const hasCost = p.cost?.amount !== undefined && p.cost?.amount !== null && p.cost?.amount !== 0
+          // Only send price fields if amount is non-zero and non-empty
+          const hasPrice = p.price?.amount !== undefined && p.price?.amount !== null && p.price?.amount !== 0
+
+          return {
+            account: p.account,
+            amount: p.amount?.toString() || '0',
+            currency: p.currency,
+            // Cost fields (only if amount is non-zero)
+            cost_amount: hasCost ? p.cost!.amount!.toString() : null,
+            cost_currency: hasCost ? (p.cost!.currency || null) : null,
+            cost_date: hasCost ? (p.cost!.date || null) : null,
+            // Price fields (only if amount is non-zero)
+            price_amount: hasPrice ? p.price!.amount!.toString() : null,
+            price_currency: hasPrice ? (p.price!.currency || null) : null,
+            price_type: hasPrice ? (p.price!.type || null) : null,
+            // Posting metadata
+            posting_meta: p.meta || null
+          }
+        }),
         // Source account (REQUIRED top-level field)
         source_account: tx.meta['source_account'] || '',
 
