@@ -40,7 +40,7 @@
                 :key="header.id"
                 :data-column-id="header.id"
                 :style="{ width: `${header.getSize()}px` }"
-                class="relative px-3 py-3 text-left text-xs font-semibold text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 last:border-r-0"
+                class="relative px-3 py-3 text-left text-xs font-semibold text-gray-900 dark:text-white border-r border-b border-gray-200 dark:border-gray-700 last:border-r-0"
               >
                 <FlexRender
                   :render="header.column.columnDef.header"
@@ -848,7 +848,7 @@ const getTransactionRowClasses = (rowData: any) => {
 const getCellClasses = (cell: Cell<any, any>) => {
   const classes = [
     'px-3', 'py-2', 'text-sm',
-    'border-r', 'border-gray-200', 'dark:border-gray-700',
+    'border-r', 'border-b', 'border-gray-200', 'dark:border-gray-700',
     'last:border-r-0'
   ]
   
