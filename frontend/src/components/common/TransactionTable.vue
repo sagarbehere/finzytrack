@@ -882,7 +882,27 @@ const handleCellKeydown = (event: KeyboardEvent, cell: any, rowData: any) => {
     event.preventDefault()
     event.stopPropagation()
     if (currentPageIndex.value > 0) {
+      // Save current position before changing page
+      const postingColumns = ['account', 'amount', 'currency', 'cost_amount', 'cost_currency', 'cost_date', 'price_amount', 'price_currency', 'price_type', 'actions']
+      const currentPosition = {
+        // Position within the current page (0-based)
+        rowIndex: rowData.transactionIndex - 1 - (firstEntryNumber.value - 1),
+        columnId: cell.column.id,
+        postingIndex: postingColumns.includes(cell.column.id) ? rowData.postingIndex : undefined
+      }
+
       goToPreviousPage()
+
+      // Restore focus after page changes
+      nextTick(() => {
+        const newPageTransactionCount = currentPageTransactionCount.value
+        const targetRow = Math.min(currentPosition.rowIndex, newPageTransactionCount - 1)
+        setCellFocus({
+          rowIndex: firstEntryNumber.value - 1 + targetRow,
+          columnId: currentPosition.columnId,
+          postingIndex: currentPosition.postingIndex
+        })
+      })
     }
     return
   }
@@ -891,7 +911,27 @@ const handleCellKeydown = (event: KeyboardEvent, cell: any, rowData: any) => {
     event.preventDefault()
     event.stopPropagation()
     if (currentPageIndex.value < totalPages.value - 1) {
+      // Save current position before changing page
+      const postingColumns = ['account', 'amount', 'currency', 'cost_amount', 'cost_currency', 'cost_date', 'price_amount', 'price_currency', 'price_type', 'actions']
+      const currentPosition = {
+        // Position within the current page (0-based)
+        rowIndex: rowData.transactionIndex - 1 - (firstEntryNumber.value - 1),
+        columnId: cell.column.id,
+        postingIndex: postingColumns.includes(cell.column.id) ? rowData.postingIndex : undefined
+      }
+
       goToNextPage()
+
+      // Restore focus after page changes
+      nextTick(() => {
+        const newPageTransactionCount = currentPageTransactionCount.value
+        const targetRow = Math.min(currentPosition.rowIndex, newPageTransactionCount - 1)
+        setCellFocus({
+          rowIndex: firstEntryNumber.value - 1 + targetRow,
+          columnId: currentPosition.columnId,
+          postingIndex: currentPosition.postingIndex
+        })
+      })
     }
     return
   }
