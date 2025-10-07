@@ -20,7 +20,7 @@
       leave-to-class="transform opacity-0 scale-95"
     >
       <MenuItems
-        class="absolute right-0 z-50 mt-2 w-56 origin-top-right divide-y divide-gray-100 rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800 dark:divide-gray-700 dark:ring-gray-600"
+        class="absolute left-0 z-50 mt-2 w-[32rem] origin-top-left divide-y divide-gray-100 rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800 dark:divide-gray-700 dark:ring-gray-600"
       >
         <div class="px-4 py-3">
           <p class="text-sm font-medium text-gray-900 dark:text-white">Show Columns</p>
@@ -30,12 +30,13 @@
         </div>
 
         <div class="py-1">
-          <MenuItem
-            v-for="column in allColumns"
-            :key="column.id"
-            v-slot="{ active }"
-            as="div"
-          >
+          <div class="grid grid-cols-2 gap-0">
+            <MenuItem
+              v-for="column in allColumns"
+              :key="column.id"
+              v-slot="{ active }"
+              as="div"
+            >
             <button
               @click="toggleColumnVisibility(column.id)"
               :class="[
@@ -71,6 +72,7 @@
               </div>
             </button>
           </MenuItem>
+          </div>
         </div>
 
         <div class="py-1">
