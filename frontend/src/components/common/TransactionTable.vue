@@ -29,7 +29,7 @@
     </div>
 
     <!-- Main table -->
-    <div class="card overflow-x-auto">
+    <div class="card">
       <div class="table-scroll-container">
         <table class="w-full table-fixed">
           <!-- Table Header -->
@@ -1558,10 +1558,11 @@ defineExpose({
 </script>
 
 <style scoped>
-/* Horizontal scrolling container */
+/* Scrolling container - fixed height with internal scrolling */
 .table-scroll-container {
   overflow-x: auto;
-  overflow-y: visible;
+  overflow-y: auto;
+  max-height: 600px; /* Fixed viewport height - adjust as needed */
 }
 
 /* Let the browser's native scrollbar work naturally */
@@ -1654,6 +1655,13 @@ defineExpose({
 
 table {
   table-layout: fixed;
+}
+
+/* Sticky header - stays visible when scrolling within table container */
+thead {
+  position: sticky;
+  top: 0; /* Stick to top of scroll container */
+  z-index: 20; /* Above table content, below dropdowns */
 }
 
 th {
