@@ -1,5 +1,5 @@
 <template>
-  <div class="flex flex-col items-center justify-center gap-0.5 min-w-[24px] py-1">
+  <div class="flex flex-col items-center justify-start gap-0.5 min-w-[24px] py-1.5">
     <div
       v-for="icon in statusIcons"
       :key="icon.key"
@@ -17,7 +17,7 @@
         :class="['w-5 h-5', icon.class]"
       />
       <!-- Regular emoji/symbol -->
-      <span v-else :class="icon.class">
+      <span v-else :class="icon.class" class="inline-block py-1.5">
         {{ icon.symbol }}
       </span>
     </div>

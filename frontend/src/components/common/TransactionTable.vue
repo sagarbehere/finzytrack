@@ -1839,6 +1839,13 @@ td[data-column-id="index"] {
   z-index: 10;
 }
 
+/* Add padding to index content to match input field alignment */
+td[data-column-id="index"] > * {
+  display: inline-block;
+  padding-top: 0.375rem; /* py-1.5 to match input fields */
+  padding-bottom: 0.375rem;
+}
+
 th[data-column-id="index"] {
   background-color: rgb(249 250 251); /* bg-gray-50 */
 }
