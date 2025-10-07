@@ -1491,40 +1491,42 @@ defineExpose({
   border-radius: 6px;
 }
 
-/* Webkit browsers (Chrome, Safari, Edge) - always visible scrollbar */
+/* Webkit browsers scrollbar with dark mode support */
 .table-scroll-container::-webkit-scrollbar {
   height: 12px;
   -webkit-appearance: none;
 }
 
+/* Clean scrollbar styling that works in both light and dark modes */
 .table-scroll-container::-webkit-scrollbar-track {
   background: #f1f1f1;
   border-radius: 10px;
   border: 1px solid #e5e7eb;
 }
 
-.table-scroll-container::-webkit-scrollbar-track:dark {
-  background: #374151;
-  border-color: #4b5563;
-}
-
 .table-scroll-container::-webkit-scrollbar-thumb {
-  background: #9ca3af;
+  background: #6b7280;
   border-radius: 10px;
   border: 2px solid #f1f1f1;
 }
 
-.table-scroll-container::-webkit-scrollbar-thumb:dark {
-  background: #6b7280;
-  border-color: #374151;
-}
-
 .table-scroll-container::-webkit-scrollbar-thumb:hover {
-  background: #6b7280;
+  background: #4b5563;
 }
 
-.table-scroll-container::-webkit-scrollbar-thumb:hover:dark {
-  background: #9ca3af;
+/* Dark mode scrollbar styling - makes them darker and more integrated */
+.dark .table-scroll-container::-webkit-scrollbar-track {
+  background: #1f2937 !important; /* Tailwind gray-900 */
+  border-color: #374151 !important; /* Tailwind gray-800 */
+}
+
+.dark .table-scroll-container::-webkit-scrollbar-thumb {
+  background: #4b5563 !important; /* Tailwind gray-600 */
+  border-color: #374151 !important; /* Tailwind gray-800 */
+}
+
+.dark .table-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: #6b7280 !important; /* Tailwind gray-500 */
 }
 
 /* Ensure table doesn't compress columns too much */
