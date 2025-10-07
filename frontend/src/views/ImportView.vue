@@ -98,7 +98,7 @@
     </div>
 
     <!-- Transaction table for raw OFX transactions (appears below the tabs) -->
-    <div v-if="showTransactionTable" class="mt-6 overflow-x-auto">
+    <div v-if="showTransactionTable" class="mt-6">
       <!-- Buttons above the table -->
       <div class="flex justify-between items-center mb-4">
         <button
