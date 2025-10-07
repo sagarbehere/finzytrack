@@ -345,6 +345,13 @@
     const bundle = convertRawTransactionsToViewModels(rawTransactions.value, sourceAccount.value, sourceCurrency.value)
     transactionViewModels.value = bundle.transactions
     importContext.value = bundle.importContext
+
+    // Reinitialize child table's baselines since we just regenerated all transaction IDs
+    nextTick(() => {
+      if (transactionTableRef.value) {
+        transactionTableRef.value.reinitializeBaselines()
+      }
+    })
   }
 
   // Autocategorize function

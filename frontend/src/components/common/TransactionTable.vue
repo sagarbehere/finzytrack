@@ -878,15 +878,21 @@ const handleCellKeydown = (event: KeyboardEvent, cell: any, rowData: any) => {
 
   // Handle pagination with PageUp/PageDown
   // This needs to be handled here because dropdown components may prevent bubbling
-  if (event.key === 'PageUp' && currentPageIndex.value > 0) {
+  if (event.key === 'PageUp') {
     event.preventDefault()
-    goToPreviousPage()
+    event.stopPropagation()
+    if (currentPageIndex.value > 0) {
+      goToPreviousPage()
+    }
     return
   }
 
-  if (event.key === 'PageDown' && currentPageIndex.value < totalPages.value - 1) {
+  if (event.key === 'PageDown') {
     event.preventDefault()
-    goToNextPage()
+    event.stopPropagation()
+    if (currentPageIndex.value < totalPages.value - 1) {
+      goToNextPage()
+    }
     return
   }
 
@@ -1009,15 +1015,19 @@ onMounted(() => {
     // Only handle if we're inside the transaction table
     if (target?.closest('.transaction-table-container')) {
       // Handle pagination with Page Up/Page Down
-      if (event.key === 'PageUp' && currentPageIndex.value > 0) {
+      if (event.key === 'PageUp') {
         event.preventDefault()
-        goToPreviousPage()
+        if (currentPageIndex.value > 0) {
+          goToPreviousPage()
+        }
         return
       }
 
-      if (event.key === 'PageDown' && currentPageIndex.value < totalPages.value - 1) {
+      if (event.key === 'PageDown') {
         event.preventDefault()
-        goToNextPage()
+        if (currentPageIndex.value < totalPages.value - 1) {
+          goToNextPage()
+        }
         return
       }
     }
@@ -1129,12 +1139,41 @@ const emitUpdate = (updatedTransactions: TransactionViewModel[]) => {
   emit('transactionsUpdated', updatedTransactions)
 }
 
+// Helper function to check if a value is "empty" (undefined, null, empty string, or 0)
+const isEmpty = (value: any): boolean => {
+  return value === undefined || value === null || value === '' || value === 0
+}
+
+// Helper function to check if a cost object is empty (all fields undefined/null/empty/0)
+const isCostEmpty = (cost: any): boolean => {
+  if (!cost) return true
+  return isEmpty(cost.amount) && isEmpty(cost.currency) && isEmpty(cost.date)
+}
+
+// Helper function to check if a price object is empty (all fields undefined/null/empty/0)
+const isPriceEmpty = (price: any): boolean => {
+  if (!price) return true
+  return isEmpty(price.amount) && isEmpty(price.currency) && isEmpty(price.type)
+}
+
+// Helper function to check if metadata object is empty
+const isMetaEmpty = (meta: any): boolean => {
+  if (!meta) return true
+  return Object.keys(meta).length === 0
+}
+
 // Check if a transaction has been modified compared to its edit baseline
 // Note: This compares against editBaselineTransactions (which updates after autocategorization),
 // not ofxOriginalTransactions (which is only used for the Reset button)
 const checkIfModified = (transaction: TransactionViewModel): boolean => {
   const baseline = editBaselineTransactions.value.find(t => t.id === transaction.id)
-  if (!baseline) return false // New transaction or not found
+  if (!baseline) {
+    // If no baseline found, check if transaction has any edits marker
+    // This shouldn't normally happen, but defensive check
+    console.warn('[checkIfModified] No baseline found for transaction', transaction.id)
+    console.warn('[checkIfModified] Available baseline IDs:', editBaselineTransactions.value.map(t => t.id))
+    return false
+  }
 
   // Compare all editable fields
   if (transaction.date !== baseline.date) return true
@@ -1157,6 +1196,48 @@ const checkIfModified = (transaction: TransactionViewModel): boolean => {
     if (posting.account !== baselinePosting.account) return true
     if (posting.amount !== baselinePosting.amount) return true
     if (posting.currency !== baselinePosting.currency) return true
+
+    // Compare cost fields (treat empty cost as equivalent to undefined)
+    const costEmpty = isCostEmpty(posting.cost)
+    const baselineCostEmpty = isCostEmpty(baselinePosting.cost)
+    if (!costEmpty || !baselineCostEmpty) {
+      // At least one has a non-empty cost, so compare them
+      if (costEmpty !== baselineCostEmpty) return true
+      if (!costEmpty && !baselineCostEmpty) {
+        if (posting.cost!.amount !== baselinePosting.cost!.amount) return true
+        if (posting.cost!.currency !== baselinePosting.cost!.currency) return true
+        if (posting.cost!.date !== baselinePosting.cost!.date) return true
+      }
+    }
+
+    // Compare price fields (treat empty price as equivalent to undefined)
+    const priceEmpty = isPriceEmpty(posting.price)
+    const baselinePriceEmpty = isPriceEmpty(baselinePosting.price)
+    if (!priceEmpty || !baselinePriceEmpty) {
+      // At least one has a non-empty price, so compare them
+      if (priceEmpty !== baselinePriceEmpty) return true
+      if (!priceEmpty && !baselinePriceEmpty) {
+        if (posting.price!.amount !== baselinePosting.price!.amount) return true
+        if (posting.price!.currency !== baselinePosting.price!.currency) return true
+        if (posting.price!.type !== baselinePosting.price!.type) return true
+      }
+    }
+
+    // Compare posting metadata (treat empty meta as equivalent to undefined)
+    const metaEmpty = isMetaEmpty(posting.meta)
+    const baselineMetaEmpty = isMetaEmpty(baselinePosting.meta)
+    if (!metaEmpty || !baselineMetaEmpty) {
+      // At least one has non-empty metadata, so compare them
+      if (metaEmpty !== baselineMetaEmpty) return true
+      if (!metaEmpty && !baselineMetaEmpty) {
+        const metaKeys = Object.keys(posting.meta!)
+        const baselineMetaKeys = Object.keys(baselinePosting.meta!)
+        if (metaKeys.length !== baselineMetaKeys.length) return true
+        for (const key of metaKeys) {
+          if (posting.meta![key] !== baselinePosting.meta![key]) return true
+        }
+      }
+    }
   }
 
   return false // No modifications detected
@@ -1455,6 +1536,13 @@ defineExpose({
   // Called by parent after major operations (e.g., autocategorization) to establish new edit baseline
   // This prevents autocategorized transactions from showing the ✏️ icon
   setNewEditBaseline: () => {
+    editBaselineTransactions.value = JSON.parse(JSON.stringify(props.transactions))
+  },
+
+  // Called by parent when it regenerates transactions (e.g., parent's resetTable)
+  // This reinitializes BOTH baselines with the new transaction objects/IDs
+  reinitializeBaselines: () => {
+    ofxOriginalTransactions.value = JSON.parse(JSON.stringify(props.transactions))
     editBaselineTransactions.value = JSON.parse(JSON.stringify(props.transactions))
   },
 
