@@ -3,6 +3,7 @@ import logging
 from decimal import Decimal
 
 from beancount.core import data, amount
+from beancount.core.position import Cost
 from beancount.parser import parser
 
 from app.core.config_manager import ConfigManager
@@ -259,16 +260,20 @@ async def commit_transactions(
                 # Create cost object if cost fields present and amount is non-zero
                 posting_cost = None
                 if posting.cost_amount is not None and Decimal(str(posting.cost_amount)) != 0:
-                    posting_cost = data.Cost(
+                    # Validation ensures cost_currency is non-None when cost_amount is set
+                    assert posting.cost_currency is not None
+                    posting_cost = Cost(
                         number=Decimal(str(posting.cost_amount)),
                         currency=posting.cost_currency,
-                        date=posting.cost_date,  # Can be None
+                        date=posting.cost_date,  # type: ignore[arg-type]
                         label=None
                     )
 
                 # Create price object if price fields present and amount is non-zero
                 posting_price = None
                 if posting.price_amount is not None and Decimal(str(posting.price_amount)) != 0:
+                    # Validation ensures price_currency is non-None when price_amount is set
+                    assert posting.price_currency is not None
                     # For @@ (total price), we need to divide by units to get per-unit price
                     # because Beancount's price field is always per-unit
                     price_value = Decimal(str(posting.price_amount))
@@ -431,6 +436,7 @@ def _format_beancount_transaction(txn: data.Transaction, include_transaction_id:
 
     # Use Beancount's built-in printer for accurate formatting
     # This handles cost, price, posting metadata, etc. correctly
+    # Note: format_entry() already includes a trailing newline
     formatted = printer.format_entry(txn)
 
-    return formatted + '\n'
+    return formatted
