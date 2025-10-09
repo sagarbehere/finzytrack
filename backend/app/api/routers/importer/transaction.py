@@ -24,7 +24,10 @@ from app.schemas.transaction_schemas import (
 from app.helpers.response_helpers import success_json_response
 from app.services.categorizer import get_or_train_classifier, categorize_transaction
 from app.services.duplicate_detector import load_existing_transactions, find_duplicate
-from app.libs.transaction_id_generator import add_transaction_id_to_beancount_transaction
+from app.libs.transaction_id_generator import (
+    add_transaction_id_to_beancount_transaction,
+    initialize_generator_with_ledger_state
+)
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +166,9 @@ async def commit_transactions(
     """
     config = config_manager.get_config()
 
+    # Initialize generator with existing ledger state for collision detection
+    id_generator = initialize_generator_with_ledger_state(config.ledger_file)
+    
     # Formatted transaction strings
     formatted_transactions = []
 
@@ -354,8 +360,11 @@ async def commit_transactions(
                     }
                 )
 
-            # Add transaction ID
-            beancount_txn_with_id = add_transaction_id_to_beancount_transaction(beancount_txn)
+            # Add transaction ID using the shared generator
+            beancount_txn_with_id = add_transaction_id_to_beancount_transaction(
+                beancount_txn,
+                id_generator=id_generator
+            )
 
             # Format for writing
             formatted_txn = _format_beancount_transaction(beancount_txn_with_id, include_transaction_id=True)

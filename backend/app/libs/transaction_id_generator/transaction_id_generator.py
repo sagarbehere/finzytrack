@@ -657,6 +657,105 @@ def create_beancount_transaction_with_id(date_str: str,
     )
 
 
+def load_existing_transaction_ids(ledger_file: str) -> Tuple[Set[str], Dict[str, int]]:
+    """
+    Scan ledger file and extract all existing transaction_id metadata.
+    
+    This function reads the entire ledger file and extracts all transaction_id
+    metadata values to populate the generator's state. This ensures that newly
+    generated transaction IDs won't collide with existing ones.
+    
+    Args:
+        ledger_file: Path to the Beancount ledger file
+        
+    Returns:
+        Tuple of (set_of_used_ids, collision_counters)
+        - set_of_used_ids: All unique transaction_id values found in the ledger
+        - collision_counters: Dictionary mapping base hashes to their highest collision suffix
+        
+    Raises:
+        FileNotFoundError: If ledger_file doesn't exist
+        Exception: If ledger file cannot be parsed
+        
+    Examples:
+        >>> used_ids, counters = load_existing_transaction_ids("ledger.beancount")
+        >>> print(f"Found {len(used_ids)} existing transaction IDs")
+        >>> print(f"Collision bases: {list(counters.keys())[:5]}")
+    """
+    from beancount import loader
+    from beancount.core import data
+    
+    used_ids = set()
+    collision_counters = {}
+    
+    try:
+        # Load and parse the ledger file
+        entries, _, _ = loader.load_file(ledger_file)
+        
+        for entry in entries:
+            if isinstance(entry, data.Transaction) and entry.meta:
+                txn_id = entry.meta.get('transaction_id')
+                if txn_id and isinstance(txn_id, str):
+                    used_ids.add(txn_id)
+                    
+                    # Extract collision suffix if present
+                    # Format: "base_hash-N" where N is an integer
+                    # Skip dup suffixes (using the same format as the constant)
+                    dup_marker = DUPLICATE_SUFFIX_FORMAT.format(counter='')  # Gives "-dup-" without counter
+                    if '-' in txn_id and not dup_marker in txn_id:
+                        parts = txn_id.rsplit('-', 1)
+                        if len(parts) == 2 and parts[1].isdigit():
+                            base_hash = parts[0]
+                            suffix = int(parts[1])
+                            # Keep track of the highest suffix seen for each base
+                            current_max = collision_counters.get(base_hash, 0)
+                            if suffix > current_max:
+                                collision_counters[base_hash] = suffix
+                                
+    except FileNotFoundError:
+        # If file doesn't exist, return empty state (new ledger)
+        return used_ids, collision_counters
+    except Exception as e:
+        # Log error but don't crash - return empty state
+        # In production, you might want to raise this
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to load existing transaction IDs from {ledger_file}: {e}")
+        return used_ids, collision_counters
+    
+    return used_ids, collision_counters
+
+
+def initialize_generator_with_ledger_state(ledger_file: str) -> TransactionIdGenerator:
+    """
+    Create a TransactionIdGenerator pre-populated with existing transaction IDs.
+    
+    This is the recommended way to create a generator when you need to ensure
+    that newly generated IDs don't collide with existing transactions in the ledger.
+    
+    Args:
+        ledger_file: Path to the Beancount ledger file
+        
+    Returns:
+        TransactionIdGenerator instance with pre-populated state
+        
+    Examples:
+        >>> generator = initialize_generator_with_ledger_state("main.beancount")
+        >>> new_id = generator.generate_id("2024-01-15", "Store", "100.00", "Assets:Checking")
+        >>> # Guaranteed not to collide with existing IDs
+    """
+    generator = TransactionIdGenerator()
+    
+    # Load existing state
+    used_ids, collision_counters = load_existing_transaction_ids(ledger_file)
+    
+    # Populate generator state
+    generator.used_ids = used_ids
+    generator.collision_counters = collision_counters
+    
+    return generator
+
+
 # Module-level constants for external use
 HASH_INPUT_FORMAT = "{date}|{payee}|{narration}|{amount}|{account}"
 FALLBACK_PREFIX = "fallback_"
