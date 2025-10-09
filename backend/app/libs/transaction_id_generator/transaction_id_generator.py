@@ -30,7 +30,7 @@ class TransactionIdGenerator:
     Generates unique transaction IDs using SHA256 hashes of immutable transaction fields.
     
     Features:
-    - Deterministic SHA256 hashing based on date|payee|amount|account
+    - Deterministic SHA256 hashing based on date|payee|narration|amount|account
     - Collision handling with -2, -3, etc. suffixes
     - Duplicate handling with -dup-1, -dup-2, etc. suffixes
     - OFX ID validation and cleaning
@@ -107,7 +107,7 @@ class TransactionIdGenerator:
             if strict_validation:
                 raise TransactionIdValidationError("Mapped account field is empty or whitespace-only")
             random_suffix = secrets.token_hex(4)  # 8 char random string
-            fallback_id = f"fallback_{random_suffix}"
+            fallback_id = f"{FALLBACK_PREFIX}{random_suffix}"
             self.used_ids.add(fallback_id)
             return fallback_id
         
@@ -118,7 +118,13 @@ class TransactionIdGenerator:
         clean_account = str(mapped_account).strip()
         
         # Create hash input
-        hash_input = f"{date}|{clean_payee}|{clean_narration}|{clean_amount}|{clean_account}"
+        hash_input = HASH_INPUT_FORMAT.format(
+            date=date,
+            payee=clean_payee,
+            narration=clean_narration,
+            amount=clean_amount,
+            account=clean_account
+        )
         base_hash = hashlib.sha256(hash_input.encode('utf-8')).hexdigest()
         
         # Handle kept duplicates
@@ -190,9 +196,9 @@ class TransactionIdGenerator:
     def _handle_kept_duplicate(self, base_hash: str) -> str:
         """Handle kept duplicate ID generation with -dup-N suffix."""
         dup_counter = 1
-        while f"{base_hash}-dup-{dup_counter}" in self.used_ids:
+        while f"{base_hash}{DUPLICATE_SUFFIX_FORMAT.format(counter=dup_counter)}" in self.used_ids:
             dup_counter += 1
-        return f"{base_hash}-dup-{dup_counter}"
+        return f"{base_hash}{DUPLICATE_SUFFIX_FORMAT.format(counter=dup_counter)}"
     
     def _handle_collision(self, base_hash: str) -> str:
         """Handle hash collision with -N suffix."""
@@ -204,7 +210,7 @@ class TransactionIdGenerator:
             self.collision_counters[base_hash] = 1
         
         self.collision_counters[base_hash] += 1
-        return f"{base_hash}-{self.collision_counters[base_hash]}"
+        return f"{base_hash}{COLLISION_SUFFIX_FORMAT.format(counter=self.collision_counters[base_hash])}"
     
     def validate_ofx_id(self, ofx_id: Optional[str]) -> Optional[str]:
         """
@@ -253,7 +259,13 @@ class TransactionIdGenerator:
         clean_amount = str(amount) if amount else "0"
         clean_account = str(mapped_account).strip()
         
-        hash_input = f"{date}|{clean_payee}|{clean_narration}|{clean_amount}|{clean_account}"
+        hash_input = HASH_INPUT_FORMAT.format(
+            date=date,
+            payee=clean_payee,
+            narration=clean_narration,
+            amount=clean_amount,
+            account=clean_account
+        )
         hash_output = hashlib.sha256(hash_input.encode('utf-8')).hexdigest()
         
         return hash_input, hash_output
@@ -413,23 +425,32 @@ def select_account_for_transaction_id(postings: list, source_account_metadata: O
                 amount_str = "0 USD"
         return account, amount_str
     
-    # Priority 1: Assets or Liabilities accounts
+    # Single pass: extract and prioritize in one loop
+    income_found = []
+    first_valid = None
+    
     for posting in postings:
         account, amount_str = extract_account_amount(posting)
+        
+        # Store first valid account (Priority 3 fallback)
+        if account and not first_valid:
+            first_valid = (account, amount_str)
+        
+        # Check for Assets/Liabilities (Priority 1)
         if account and (account.startswith('Assets:') or account.startswith('Liabilities:')):
-            return account, amount_str
-    
-    # Priority 2: Income accounts
-    for posting in postings:
-        account, amount_str = extract_account_amount(posting)
+            return account, amount_str  # Immediate return - highest priority
+        
+        # Store Income accounts (Priority 2)
         if account and account.startswith('Income:'):
-            return account, amount_str
+            income_found.append((account, amount_str))
     
-    # Priority 3: First posting with valid account
-    for posting in postings:
-        account, amount_str = extract_account_amount(posting)
-        if account:
-            return account, amount_str
+    # If no Assets/Liabilities found, return first Income (Priority 2)
+    if income_found:
+        return income_found[0]
+    
+    # Fallback to first valid account (Priority 3)
+    if first_valid:
+        return first_valid
     
     # This shouldn't happen if postings are valid
     raise ValueError("No valid account found in postings")
