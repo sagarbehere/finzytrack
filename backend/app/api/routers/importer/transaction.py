@@ -373,6 +373,7 @@ async def commit_transactions(
             )
 
     # Write all transactions to ledger atomically
+    # FIXME: Will this work well even if there are a lot of ledger transactions?
     try:
         with backup_manager.atomic_write(config.ledger_file) as f:
             current_content = f.read()
