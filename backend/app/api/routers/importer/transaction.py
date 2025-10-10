@@ -7,9 +7,8 @@ from beancount.core.position import Cost
 from beancount.parser import parser
 
 from app.core.config_manager import ConfigManager
-from app.core.backup_manager import BackupManager
 from app.core.beancount_manager import BeancountManager
-from app.dependencies import get_config_manager, get_backup_manager, get_beancount_manager
+from app.dependencies import get_config_manager, get_beancount_manager
 from app.exceptions import APIError
 from app.schemas.response_schemas import ApiResponse
 from app.schemas.transaction_schemas import (
@@ -17,16 +16,15 @@ from app.schemas.transaction_schemas import (
     CategorizeResponse,
     CategorizedTransactionResult,
     CategorizationStats,
-    DuplicateInfo,
     CommitRequest,
     CommitResponse
 )
 from app.helpers.response_helpers import success_json_response
-from app.services.categorizer import get_or_train_classifier, categorize_transaction
-from app.services.duplicate_detector import load_existing_transactions, find_duplicate
+from app.services.categorizer import initialize_classifier, categorize_transaction
+from app.services.duplicate_detector import find_duplicate
 from app.libs.transaction_id_generator import (
     add_transaction_id_to_beancount_transaction,
-    initialize_generator_with_ledger_state
+    initialize_generator_with_cached_ids
 )
 
 logger = logging.getLogger(__name__)
@@ -37,7 +35,8 @@ router = APIRouter()
 @router.post("/categorize", response_model=ApiResponse[CategorizeResponse])
 async def categorize_transactions(
     request: CategorizeRequest,
-    config_manager: ConfigManager = Depends(get_config_manager)
+    config_manager: ConfigManager = Depends(get_config_manager),
+    beancount_manager: BeancountManager = Depends(get_beancount_manager)
 ):
     """
     Categorize transactions using ML and detect potential duplicates.
@@ -51,28 +50,24 @@ async def categorize_transactions(
     Args:
         request: CategorizeRequest with transactions to process
         config_manager: Injected config manager
+        beancount_manager: Injected beancount manager (provides cached data)
 
     Returns:
         CategorizeResponse with results and stats
     """
     config = config_manager.get_config()
 
-    # Initialize ML classifier
-    classifier, ml_warning = get_or_train_classifier(
-        ledger_file=config.ledger_file,
+    # Get cached training data and existing transactions (single ledger parse)
+    training_data = beancount_manager.cache.get_training_data()
+    existing_transactions = beancount_manager.cache.get_transactions()
+    logger.info(f"Using cached data: {len(training_data)} training samples, "
+               f"{len(existing_transactions)} existing transactions")
+
+    # Initialize ML classifier with cached training data
+    classifier, ml_warning = initialize_classifier(
+        training_data=training_data,
         ml_enabled=config.ml.enabled
     )
-
-    # Load existing transactions for duplicate detection
-    try:
-        existing_transactions = load_existing_transactions(config.ledger_file)
-        logger.info(f"Loaded {len(existing_transactions)} existing transactions for duplicate detection")
-    except FileNotFoundError:
-        logger.warning("Ledger file not found, skipping duplicate detection")
-        existing_transactions = []
-    except Exception as e:
-        logger.error(f"Failed to load existing transactions: {e}")
-        existing_transactions = []
 
     # Process each transaction
     results = []
@@ -82,10 +77,12 @@ async def categorize_transactions(
     for raw_txn in request.transactions:
         # Categorize using ML or default
         if classifier:
-            # Combine payee and memo for ML classification
+            # Combine payee, memo, and narration for ML classification
             description_parts = [raw_txn.payee]
             if raw_txn.memo:
                 description_parts.append(raw_txn.memo)
+            if raw_txn.narration:
+                description_parts.append(raw_txn.narration)
             description = " ".join(description_parts)
             suggested_category, confidence = categorize_transaction(description, classifier)
             categorized_count += 1
@@ -140,7 +137,6 @@ async def categorize_transactions(
 async def commit_transactions(
     request: CommitRequest,
     config_manager: ConfigManager = Depends(get_config_manager),
-    backup_manager: BackupManager = Depends(get_backup_manager),
     beancount_manager: BeancountManager = Depends(get_beancount_manager)
 ):
     """
@@ -164,11 +160,12 @@ async def commit_transactions(
     Raises:
         APIError: If validation or write fails
     """
-    config = config_manager.get_config()
 
-    # Initialize generator with existing ledger state for collision detection
-    id_generator = initialize_generator_with_ledger_state(config.ledger_file)
-    
+    # Initialize generator with cached transaction IDs for collision detection
+    used_ids = beancount_manager.cache.get_transaction_ids()
+    id_generator = initialize_generator_with_cached_ids(used_ids)
+    logger.info(f"Initialized transaction ID generator with {len(used_ids)} existing IDs")
+
     # Formatted transaction strings
     formatted_transactions = []
 
@@ -381,10 +378,9 @@ async def commit_transactions(
                 details={"date": str(commit_txn.date), "error": str(e)}
             )
 
-    # Write all transactions to ledger atomically
-    # FIXME: Will this work well even if there are a lot of ledger transactions?
+    # Write all transactions to ledger atomically (with automatic cache invalidation)
     try:
-        with backup_manager.atomic_write(config.ledger_file) as f:
+        with beancount_manager.atomic_ledger_write() as f:
             current_content = f.read()
 
             # Ensure proper spacing

@@ -1,14 +1,15 @@
 import os
 import re
 import logging
-import linecache
 from typing import Set, Optional, List, Dict, Any
 from datetime import datetime, date
+from contextlib import contextmanager
 from beancount import loader
 from beancount.core import data
 from decimal import Decimal
 
 from app.core.backup_manager import BackupManager
+from app.core.ledger_cache import LedgerCache
 from .ledger_initializer import LedgerInitializer
 from app.schemas.account_schemas import (
     AccountDetails, AccountCurrencyData, AccountCreateRequest, AccountCreateData
@@ -24,12 +25,34 @@ class BeancountManager:
         self.ledger_file = ledger_file
         self.backup_manager = backup_manager
         self.ledger_initializer = ledger_initializer
-      
+        self.cache = LedgerCache(ledger_file)
+
+    @contextmanager
+    def atomic_ledger_write(self, file_path: Optional[str] = None):
+        """
+        Context manager for atomic ledger writes with automatic cache invalidation.
+
+        This centralizes all ledger write operations and ensures the cache is
+        invalidated after successful writes.
+
+        Args:
+            file_path: Optional path to write to (defaults to self.ledger_file)
+
+        Yields:
+            File handle from backup_manager.atomic_write()
+        """
+        target_file = file_path or self.ledger_file
+
+        with self.backup_manager.atomic_write(target_file) as f:
+            yield f
+
+        # Invalidate cache after successful write
+        self.cache.invalidate()
+        logger.debug(f"Cache invalidated after write to {target_file}")
+
     def is_existing_account(self, account_name: str) -> bool:
-        """Check if account name exists in ledger."""
-        detailed_accounts = self.get_detailed_accounts()
-        account_names = {account.name for account in detailed_accounts}
-        return account_name in account_names
+        """Check if account name exists in ledger (O(1) lookup)."""
+        return account_name in self.cache.get_account_names()
     
     def validate_account_format(self, account_name: str) -> bool:
         """Validate Beancount account name format."""
@@ -50,210 +73,85 @@ class BeancountManager:
         """Check if ledger file has parsing errors."""
         if not os.path.exists(self.ledger_file):
             return False
-        
+
         try:
-            entries, errors, _ = loader.load_file(self.ledger_file)
+            errors = self.cache.get_errors()
             return len(errors) > 0
         except Exception:
             return True
 
 
     def get_detailed_accounts(self) -> List[AccountDetails]:
-        """Get comprehensive account information including opening/closing dates and metadata."""
+        """Get comprehensive account information from cache."""
         if not os.path.exists(self.ledger_file):
             raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
-        
-        entries, errors, _ = loader.load_file(self.ledger_file)
-        
+
+        # Get cached accounts
+        accounts = self.cache.get_accounts()
+        # Check for parsing errors
+        errors = self.cache.get_errors()
         if errors:
             logger.warning(f"Beancount parsing warnings: {len(errors)} issues found")
-        
-        # Track account information by name
-        account_details_map: Dict[str, AccountDetails] = {}
-        
-        # First pass: collect Open directives
-        for entry in entries:
-            if isinstance(entry, data.Open):
-                account_name = entry.account
-                metadata = entry.meta if hasattr(entry, 'meta') else {}
-                
-                account_details_map[account_name] = AccountDetails(
-                    name=account_name,
-                    open_date=entry.date.isoformat(),  # Convert date to string
-                    close_date=None,  # Will be set in second pass if closed
-                    currencies=[],  # Will populate from currency analysis (both open & transactions)
-                    metadata=metadata
-                )
-            elif isinstance(entry, data.Close):
-                account_name = entry.account
-                if account_name in account_details_map:
-                    account_details_map[account_name].close_date = entry.date.isoformat()
-                else:
-                    # Account was closed without explicit open directive
-                    account_details_map[account_name] = AccountDetails(
-                        name=account_name,
-                        open_date="1970-01-01",  # Epoch date indicates missing open
-                        close_date=entry.date.isoformat(),
-                        currencies=[],  # Will populate from currency analysis
-                        metadata={"error": "Account has close directive but no open directive"}
-                    )
-        
-        # Get currency data for each account (includes both open directive and transaction currencies)
-        for account_name in account_details_map:
-            currency_data = self._get_account_currency_data(account_name, entries)
-            account_details_map[account_name].currencies = currency_data
-        
-        return list(account_details_map.values())
-    
-    def _get_account_currency_data(self, account_name: str, entries) -> List[AccountCurrencyData]:
-        """Extract currency data for an account from open directives and transaction entries."""
-        currency_info: Dict[str, Dict[str, Any]] = {}
-        
-        # First pass: Find the open directive for this account to get declared currencies
-        open_currencies = set()
-        for entry in entries:
-            if isinstance(entry, data.Open) and entry.account == account_name:
-                if hasattr(entry, 'currencies') and entry.currencies:
-                    # Beancount's Open entry has currencies attribute
-                    open_currencies.update(entry.currencies)
-                else:
-                    # Fallback: extract currencies from the raw entry text
-                    open_currencies.update(self._extract_currencies_from_open_entry(entry))
-        
-        # Initialize currency_info with currencies from open directive (0 transactions)
-        for currency in open_currencies:
-            currency_info[currency] = {
-                "transaction_count": 0,
-                "last_transaction_date": None,
-                "balance": Decimal(0)
-            }
-        
-        # Second pass: Process transactions to add transaction data and discover additional currencies
-        for entry in entries:
-            if isinstance(entry, data.Transaction):
-                for posting in entry.postings:
-                    if posting.account == account_name:
-                        currency = posting.units.currency if posting.units else "UNKNOWN"
-                        
-                        if currency not in currency_info:
-                            # Currency discovered from transactions but not in open directive
-                            currency_info[currency] = {
-                                "transaction_count": 0,
-                                "last_transaction_date": None,
-                                "balance": Decimal(0)
-                            }
-                        
-                        currency_info[currency]["transaction_count"] += 1
-                        
-                        if currency_info[currency]["last_transaction_date"] is None or entry.date > currency_info[currency]["last_transaction_date"]:
-                            currency_info[currency]["last_transaction_date"] = entry.date
-                        
-                        if posting.units:
-                            currency_info[currency]["balance"] += posting.units.number
-        
-        # Convert to AccountCurrencyData objects
-        result = []
-        for currency, info in currency_info.items():
-            result.append(AccountCurrencyData(
-                currency=currency,
-                transaction_count=info["transaction_count"],
-                last_transaction_date=info["last_transaction_date"].isoformat() if info["last_transaction_date"] else None,
-                balance=float(info["balance"])  # Convert Decimal to float for API
-            ))
-        
-        return result
-    
-    def _extract_currencies_from_open_entry(self, open_entry: data.Open) -> Set[str]:
-        """Extract currencies from a Beancount open directive entry."""
-        currencies = set()
-        
-        # Beancount's Open entry should have currencies attribute, but let's handle both cases
-        if hasattr(open_entry, 'currencies') and open_entry.currencies:
-            currencies.update(open_entry.currencies)
-        else:
-            # Fallback: Extract from the source text by finding the line and parsing it
-            # This is less ideal but ensures we don't miss currencies
-            try:
-                # The entry may have meta.filename and meta.lineno that can help
-                safe_meta = getattr(open_entry, 'meta', None)
-                if safe_meta is not None:
-                    filename = getattr(safe_meta, 'filename', None)
-                    lineno = getattr(safe_meta, 'lineno', None)
-                    if filename and lineno:
-                        line = linecache.getline(filename, lineno).strip()
-                        if line.startswith(str(open_entry.date)) and 'open' in line:
-                            parts = line.split()
-                            # Format: <date> open <account> [<currency1> <currency2> ...]
-                            # Account is at index 2, currencies start at index 3
-                            if len(parts) > 3:
-                                potential_currencies = parts[3:]
-                                for part in potential_currencies:
-                                    # Filter out metadata comments
-                                    if part and not part.startswith(';'):
-                                        currencies.add(part)
-            except Exception:
-                # If we can't extract from source, that's okay - the main hasattr check should have caught most cases
-                pass
-        
-        return currencies
+
+        return list(accounts.values())
     
     def get_account_open_date(self, account_name: str) -> Optional[date]:
-        """Get opening date for an account."""
+        """Get opening date for an account from cache."""
         if not os.path.exists(self.ledger_file):
             raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
-        
-        entries, errors, _ = loader.load_file(self.ledger_file)
-        
-        for entry in entries:
-            if isinstance(entry, data.Open) and entry.account == account_name:
-                return entry.date
-        
+
+        accounts = self.cache.get_accounts()
+        if account_name in accounts:
+            open_date_str = accounts[account_name].open_date
+            if open_date_str:
+                return datetime.fromisoformat(open_date_str).date()
+
         return None
-    
+
     def get_account_close_date(self, account_name: str) -> Optional[date]:
-        """Get closing date for an account."""
+        """Get closing date for an account from cache."""
         if not os.path.exists(self.ledger_file):
             raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
-        
-        entries, errors, _ = loader.load_file(self.ledger_file)
-        
-        for entry in entries:
-            if isinstance(entry, data.Close) and entry.account == account_name:
-                return entry.date
-        
+
+        accounts = self.cache.get_accounts()
+        if account_name in accounts:
+            close_date_str = accounts[account_name].close_date
+            if close_date_str:
+                return datetime.fromisoformat(close_date_str).date()
+
         return None
-    
+
     def get_account_metadata(self, account_name: str) -> Dict[str, Any]:
-        """Get metadata for an account."""
+        """Get metadata for an account from cache."""
         if not os.path.exists(self.ledger_file):
             raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
-        
-        entries, errors, _ = loader.load_file(self.ledger_file)
-        
-        for entry in entries:
-            if isinstance(entry, data.Open) and entry.account == account_name:
-                return entry.meta if hasattr(entry, 'meta') else {}
-        
+
+        accounts = self.cache.get_accounts()
+        if account_name in accounts:
+            return accounts[account_name].metadata
+
         return {}
-    
+
     def get_account_transactions_summary(self, account_name: str) -> Dict[str, AccountCurrencyData]:
-        """Get transaction summary per currency for an account."""
+        """Get transaction summary per currency for an account from cache."""
         if not os.path.exists(self.ledger_file):
             raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
-        
-        entries, errors, _ = loader.load_file(self.ledger_file)
-        
+
+        # Get account from cache
+        accounts = self.cache.get_accounts()
+
+        errors = self.cache.get_errors()
         if errors:
             logger.warning(f"Beancount parsing warnings: {len(errors)} issues found")
-        
-        # Extract currency data using the same helper method
-        currency_data_list = self._get_account_currency_data(account_name, entries)
-        
-        # Convert to dictionary format for backward compatibility
+
+        if account_name not in accounts:
+            return {}
+
+        # Convert currency list to dictionary format for backward compatibility
         result = {}
-        for currency_summary in currency_data_list:
-            result[currency_summary.currency] = currency_summary
-        
+        for currency_data in accounts[account_name].currencies:
+            result[currency_data.currency] = currency_data
+
         return result
 
     def create_account_directive(self, request: AccountCreateRequest) -> AccountCreateData:
@@ -305,7 +203,7 @@ class BeancountManager:
         
         # Use atomic write to add the open directive (SIMPLE APPEND)
         try:
-            with self.backup_manager.atomic_write(self.ledger_file) as f:
+            with self.atomic_ledger_write() as f:
                 current_content = f.read()
                 
                 # Simple append with proper formatting
@@ -364,126 +262,19 @@ class BeancountManager:
     # =====================================
 
     def get_detailed_commodities(self) -> List[CommodityDetails]:
-        """Get comprehensive commodity information including usage statistics and metadata."""
+        """Get comprehensive commodity information from cache."""
         if not os.path.exists(self.ledger_file):
             raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
-        
-        entries, errors, _ = loader.load_file(self.ledger_file)
-        
+
+        # Get cached commodities
+        commodities = self.cache.get_commodities()
+
+        # Check for parsing errors
+        errors = self.cache.get_errors()
         if errors:
             logger.warning(f"Beancount parsing warnings: {len(errors)} issues found")
-        
-        # Track commodity information by code
-        commodity_details_map: Dict[str, CommodityDetails] = {}
-        
-        # First pass: collect Commodity directives
-        for entry in entries:
-            if isinstance(entry, data.Commodity):
-                commodity_code = entry.currency
-                metadata = entry.meta if hasattr(entry, 'meta') else {}
-                
-                # Extract name and type from metadata
-                name = metadata.get('name')
-                commodity_type = metadata.get('type')
-                
-                commodity_details_map[commodity_code] = CommodityDetails(
-                    code=commodity_code,
-                    name=name,
-                    type=commodity_type,
-                    first_seen=entry.date.isoformat(),  # Start with directive date
-                    last_seen=entry.date.isoformat(),   # Will be updated from transactions
-                    usage=CommodityUsageData(transaction_count=0, total_volume=0.0),
-                    metadata=metadata
-                )
-        
-        # Second pass: discover commodities from transactions and price directives
-        commodity_usage: Dict[str, Dict[str, Any]] = {}
-        
-        for entry in entries:
-            if isinstance(entry, data.Transaction):
-                for posting in entry.postings:
-                    if posting.units:
-                        commodity_code = posting.units.currency
-                        
-                        if commodity_code not in commodity_usage:
-                            commodity_usage[commodity_code] = {
-                                "transaction_count": 0,
-                                "total_volume": Decimal(0),
-                                "first_seen": entry.date,
-                                "last_seen": entry.date
-                            }
-                        
-                        commodity_usage[commodity_code]["transaction_count"] += 1
-                        if posting.units.number is not None:
-                            commodity_usage[commodity_code]["total_volume"] += abs(posting.units.number)
-                        
-                        # Update date range
-                        if entry.date < commodity_usage[commodity_code]["first_seen"]:
-                            commodity_usage[commodity_code]["first_seen"] = entry.date
-                        if entry.date > commodity_usage[commodity_code]["last_seen"]:
-                            commodity_usage[commodity_code]["last_seen"] = entry.date
-                        
-                        # If commodity wasn't in directives, create entry for it
-                        if commodity_code not in commodity_details_map:
-                            commodity_details_map[commodity_code] = CommodityDetails(
-                                code=commodity_code,
-                                name=None,
-                                type=None,
-                                first_seen=entry.date.isoformat(),
-                                last_seen=entry.date.isoformat(),
-                                usage=CommodityUsageData(transaction_count=0, total_volume=0.0),
-                                metadata={}
-                            )
-            
-            elif isinstance(entry, data.Price):
-                # Discover commodities from price directives
-                commodity_code = entry.currency
-                
-                if commodity_code not in commodity_details_map:
-                    commodity_details_map[commodity_code] = CommodityDetails(
-                        code=commodity_code,
-                        name=None,
-                        type=None,
-                        first_seen=entry.date.isoformat(),
-                        last_seen=entry.date.isoformat(),
-                        usage=CommodityUsageData(transaction_count=0, total_volume=0.0),
-                        metadata={}
-                    )
-                else:
-                    # Update date range if price directive extends it
-                    first_seen_str = commodity_details_map[commodity_code].first_seen
-                    last_seen_str = commodity_details_map[commodity_code].last_seen
-                    
-                    current_first = datetime.fromisoformat(first_seen_str).date() if first_seen_str else entry.date
-                    current_last = datetime.fromisoformat(last_seen_str).date() if last_seen_str else entry.date
-                    
-                    if entry.date < current_first:
-                        commodity_details_map[commodity_code].first_seen = entry.date.isoformat()
-                    if entry.date > current_last:
-                        commodity_details_map[commodity_code].last_seen = entry.date.isoformat()
-        
-        # Third pass: merge usage data with commodity details
-        for commodity_code, commodity_detail in commodity_details_map.items():
-            if commodity_code in commodity_usage:
-                usage_data = commodity_usage[commodity_code]
-                
-                # Update usage statistics
-                commodity_detail.usage.transaction_count = usage_data["transaction_count"]
-                commodity_detail.usage.total_volume = float(usage_data["total_volume"])
-                
-                # Update date range (earliest first_seen, latest last_seen)
-                current_first = datetime.fromisoformat(commodity_detail.first_seen).date() if commodity_detail.first_seen else None
-                current_last = datetime.fromisoformat(commodity_detail.last_seen).date() if commodity_detail.last_seen else None
-                
-                usage_first = usage_data["first_seen"]
-                usage_last = usage_data["last_seen"]
-                
-                if current_first is None or usage_first < current_first:
-                    commodity_detail.first_seen = usage_first.isoformat()
-                if current_last is None or usage_last > current_last:
-                    commodity_detail.last_seen = usage_last.isoformat()
-        
-        return list(commodity_details_map.values())
+
+        return list(commodities.values())
 
     def create_commodity_directive(self, request: CommodityCreateRequest) -> CommodityCreateData:
         """Create a new commodity directive in the Beancount ledger."""
@@ -517,9 +308,9 @@ class BeancountManager:
                             directive_lines.append(f"  {key}: {value}")
             
             directive_text = "\n".join(directive_lines)
-            
+
             # Use atomic write to add the directive (SIMPLE APPEND)
-            with self.backup_manager.atomic_write(self.ledger_file) as f:
+            with self.atomic_ledger_write() as f:
                 current_content = f.read()
                 
                 # Simple append with proper formatting

@@ -2,21 +2,16 @@
 ML-based transaction categorization service.
 
 This module implements stateless ML categorization using Random Forest with TF-IDF.
-Adapted from the reference implementation to work without session management.
+Uses pre-computed training data from LedgerCache to avoid redundant ledger parsing.
 """
 
-import os
-import re
 import logging
+import re
 from typing import List, Tuple, Optional
-from decimal import Decimal
 
-import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.pipeline import Pipeline
-from beancount import loader
-from beancount.core import data
 
 logger = logging.getLogger(__name__)
 
@@ -75,59 +70,6 @@ def preprocess_text(text: str) -> str:
     result = re.sub(r'\s+', ' ', result).strip()
 
     return result
-
-
-def extract_training_data(ledger_file: str) -> List[Tuple[str, str]]:
-    """
-    Extract training data from ledger file.
-
-    Parses the ledger and extracts (description, category) pairs from
-    existing transactions for ML training.
-
-    Args:
-        ledger_file: Path to Beancount ledger file
-
-    Returns:
-        List of (description, category) tuples
-
-    Raises:
-        FileNotFoundError: If ledger file doesn't exist
-        CategorizerError: If ledger parsing fails
-    """
-    if not os.path.exists(ledger_file):
-        raise FileNotFoundError(f"Ledger file not found: {ledger_file}")
-
-    try:
-        entries, errors, _ = loader.load_file(ledger_file)
-
-        if errors:
-            logger.warning(f"Beancount parsing warnings: {len(errors)} issues found")
-
-        training_data = []
-
-        for entry in entries:
-            if not isinstance(entry, data.Transaction):
-                continue
-
-            # Skip transactions without payee
-            if not entry.payee:
-                continue
-
-            # Combine payee and narration for description
-            description = f"{entry.payee} {entry.narration}".strip()
-
-            # Extract expense categories from postings
-            for posting in entry.postings:
-                if posting.account.startswith('Expenses:') or posting.account.startswith('Income:'):
-                    # Use the account as the category
-                    training_data.append((description, posting.account))
-                    break  # Only use first expense/income account
-
-        logger.info(f"Extracted {len(training_data)} training samples from ledger")
-        return training_data
-
-    except Exception as e:
-        raise CategorizerError(f"Failed to extract training data: {e}")
 
 
 def train_classifier(training_data: List[Tuple[str, str]]) -> Optional[Pipeline]:
@@ -230,15 +172,15 @@ def categorize_transaction(text: str, classifier: Pipeline) -> Tuple[str, float]
         return "Expenses:Unknown", 0.0
 
 
-def get_or_train_classifier(ledger_file: str, ml_enabled: bool) -> Tuple[Optional[Pipeline], Optional[str]]:
+def initialize_classifier(training_data: List[Tuple[str, str]], ml_enabled: bool) -> Tuple[Optional[Pipeline], Optional[str]]:
     """
-    Get trained classifier or return None with warning message.
+    Initialize ML classifier or return None with warning message.
 
     This function encapsulates the logic for ML initialization, including
     graceful degradation when ML is disabled or training fails.
 
     Args:
-        ledger_file: Path to ledger file for training data
+        training_data: Pre-computed training data from LedgerCache
         ml_enabled: Whether ML is enabled in config
 
     Returns:
@@ -250,10 +192,7 @@ def get_or_train_classifier(ledger_file: str, ml_enabled: bool) -> Tuple[Optiona
         return None, "ML is disabled in configuration"
 
     try:
-        # Extract training data from ledger
-        training_data = extract_training_data(ledger_file)
-
-        # Train classifier
+        # Train classifier with pre-computed data
         classifier = train_classifier(training_data)
         return classifier, None
 

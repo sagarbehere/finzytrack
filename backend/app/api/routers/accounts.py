@@ -254,8 +254,8 @@ async def update_account(
                     }
                 )
         
-        # Perform the update using atomic write
-        with beancount_manager.backup_manager.atomic_write(beancount_manager.ledger_file) as f:
+        # Perform the update using atomic write with cache invalidation
+        with beancount_manager.atomic_ledger_write() as f:
             current_content = f.read()
             lines = current_content.split('\n')
             
@@ -552,8 +552,8 @@ async def close_account(
         if request.reason:
             close_directive += f"  ; reason: {request.reason}"
         
-        # Use atomic write to add the closing directive (SIMPLE APPEND)
-        with beancount_manager.backup_manager.atomic_write(beancount_manager.ledger_file) as func:
+        # Use atomic write to add the closing directive (SIMPLE APPEND) with cache invalidation
+        with beancount_manager.atomic_ledger_write() as func:
             current_content = func.read()
             
             # Simple append with proper formatting
@@ -646,8 +646,8 @@ async def delete_account(
             if account_age > 365:  # Older than 1 year
                 warnings.append(f"Account has been active for {account_age} days")
         
-        # Perform the deletion using atomic write
-        with beancount_manager.backup_manager.atomic_write(beancount_manager.ledger_file) as f:
+        # Perform the deletion using atomic write with cache invalidation
+        with beancount_manager.atomic_ledger_write() as f:
             current_content = f.read()
             lines = current_content.split('\n')
             

@@ -3,117 +3,20 @@ Duplicate detection service for identifying potential duplicate transactions.
 
 This module compares new transactions against existing ledger transactions using
 exact matches for date/amount/account and fuzzy matching for payees.
+Uses pre-computed transaction data from LedgerCache.
 """
 
-import os
 import logging
 from typing import List, Optional, Tuple
 from decimal import Decimal
 from datetime import date
 
 from rapidfuzz import fuzz
-from beancount import loader
-from beancount.core import data
 
 from app.schemas.transaction_schemas import DuplicateInfo
+from app.core.ledger_cache import LedgerTransaction
 
 logger = logging.getLogger(__name__)
-
-
-class DuplicateDetectionError(Exception):
-    """Exception raised when duplicate detection fails."""
-    pass
-
-
-class LedgerTransaction:
-    """
-    Internal representation of a ledger transaction for duplicate detection.
-
-    This is a simplified structure used only within the duplicate detector.
-    """
-    def __init__(self, date: date, payee: str, narration: str, amount: Decimal,
-                 account: str, transaction_id: Optional[str] = None, ofx_id: Optional[str] = None):
-        self.date = date
-        self.payee = payee
-        self.narration = narration
-        self.amount = amount
-        self.account = account
-        self.transaction_id = transaction_id
-        self.ofx_id = ofx_id
-
-
-def load_existing_transactions(ledger_file: str) -> List[LedgerTransaction]:
-    """
-    Load existing transactions from the Beancount ledger.
-
-    Args:
-        ledger_file: Path to Beancount ledger file
-
-    Returns:
-        List of LedgerTransaction objects
-
-    Raises:
-        FileNotFoundError: If ledger file doesn't exist
-        DuplicateDetectionError: If ledger parsing fails
-    """
-    if not os.path.exists(ledger_file):
-        raise FileNotFoundError(f"Ledger file not found: {ledger_file}")
-
-    try:
-        entries, errors, _ = loader.load_file(ledger_file)
-
-        if errors:
-            logger.warning(f"Beancount parsing warnings: {len(errors)} issues found")
-
-        transactions = []
-
-        for entry in entries:
-            if not isinstance(entry, data.Transaction):
-                continue
-
-            # Extract payee and narration
-            payee = entry.payee or ''
-            narration = entry.narration or ''
-
-            # Find source account (Assets or Liabilities posting)
-            source_account = None
-            transaction_amount = None
-
-            for posting in entry.postings:
-                if posting.units and posting.account.startswith(('Assets:', 'Liabilities:')):
-                    source_account = posting.account
-                    transaction_amount = posting.units.number
-                    break
-
-            # Skip if no source account found
-            if not source_account or transaction_amount is None:
-                continue
-
-            # Extract metadata
-            transaction_id = None
-            ofx_id = None
-            if hasattr(entry, 'meta') and entry.meta:
-                transaction_id = entry.meta.get('transaction_id')
-                ofx_id = entry.meta.get('ofx_id')
-
-            # Create ledger transaction
-            ledger_txn = LedgerTransaction(
-                date=entry.date,
-                payee=payee,
-                narration=narration,
-                amount=transaction_amount,
-                account=source_account,
-                transaction_id=transaction_id,
-                ofx_id=ofx_id
-            )
-
-            transactions.append(ledger_txn)
-
-        logger.info(f"Loaded {len(transactions)} existing transactions from ledger")
-        return transactions
-
-    except Exception as e:
-        raise DuplicateDetectionError(f"Failed to load existing transactions: {e}")
 
 
 def calculate_payee_similarity(payee1: str, payee2: str) -> float:

@@ -56,20 +56,20 @@ class TransactionIdGenerator:
                    date: str, 
                    payee: str, 
                    amount: Union[str, Decimal, float], 
-                   mapped_account: str, 
+                   source_account: str, 
                    narration: str = "",
                    is_kept_duplicate: bool = False,
                    strict_validation: bool = False) -> str:
         """
         Generate unique transaction ID using SHA256 hash of immutable fields.
         
-        The hash input format is: "{date}|{payee}|{narration}|{amount}|{mapped_account}"
+        The hash input format is: "{date}|{payee}|{narration}|{amount}|{source_account}"
         
         Args:
             date: Transaction date in YYYY-MM-DD format
             payee: Transaction payee/merchant name
             amount: Transaction amount (can be string, Decimal, or float)
-            mapped_account: Beancount account name (e.g., "Assets:Checking")
+            source_account: Beancount account name (e.g., "Assets:Checking")
             narration: Transaction narration/description
             is_kept_duplicate: Whether this is a kept duplicate transaction
             strict_validation: If True, enforce strict validation of all fields
@@ -100,12 +100,12 @@ class TransactionIdGenerator:
         """
         # Perform strict validation if requested
         if strict_validation:
-            self._validate_fields(date, payee, amount, mapped_account, narration)
+            self._validate_fields(date, payee, amount, source_account, narration)
         
-        # Fallback if mapped account not available (disabled in strict mode)
-        if not mapped_account or not str(mapped_account).strip():
+        # Fallback if source account not available (disabled in strict mode)
+        if not source_account or not str(source_account).strip():
             if strict_validation:
-                raise TransactionIdValidationError("Mapped account field is empty or whitespace-only")
+                raise TransactionIdValidationError("Source account field is empty or whitespace-only")
             random_suffix = secrets.token_hex(4)  # 8 char random string
             fallback_id = f"{FALLBACK_PREFIX}{random_suffix}"
             self.used_ids.add(fallback_id)
@@ -115,7 +115,7 @@ class TransactionIdGenerator:
         clean_payee = str(payee) if payee else ""
         clean_narration = str(narration) if narration else ""
         clean_amount = str(amount) if amount else "0"
-        clean_account = str(mapped_account).strip()
+        clean_account = str(source_account).strip()
         
         # Create hash input
         hash_input = HASH_INPUT_FORMAT.format(
@@ -137,7 +137,7 @@ class TransactionIdGenerator:
         self.used_ids.add(final_id)
         return final_id
     
-    def _validate_fields(self, date: str, payee: str, amount: Union[str, Decimal, float], mapped_account: str, narration: str = "") -> None:
+    def _validate_fields(self, date: str, payee: str, amount: Union[str, Decimal, float], source_account: str, narration: str = "") -> None:
         """
         Validate all critical fields required for transaction ID generation.
         
@@ -145,7 +145,7 @@ class TransactionIdGenerator:
             date: Transaction date string 
             payee: Transaction payee string
             amount: Transaction amount
-            mapped_account: Beancount account name
+            source_account: Beancount account name
             narration: Transaction narration string
             
         Raises:
@@ -189,9 +189,9 @@ class TransactionIdGenerator:
         except (InvalidOperation, ValueError):
             raise TransactionIdValidationError(f"Amount field '{amount_str}' does not contain a valid number")
         
-        # Validate mapped account
-        if not mapped_account or not str(mapped_account).strip():
-            raise TransactionIdValidationError("Mapped account field is empty or whitespace-only")
+        # Validate source account
+        if not source_account or not str(source_account).strip():
+            raise TransactionIdValidationError("Source account field is empty or whitespace-only")
     
     def _handle_kept_duplicate(self, base_hash: str) -> str:
         """Handle kept duplicate ID generation with -dup-N suffix."""
@@ -240,7 +240,7 @@ class TransactionIdGenerator:
         
         return cleaned
     
-    def generate_hash_components(self, date: str, payee: str, amount: Union[str, Decimal, float], mapped_account: str, narration: str = "") -> Tuple[str, str]:
+    def generate_hash_components(self, date: str, payee: str, amount: Union[str, Decimal, float], source_account: str, narration: str = "") -> Tuple[str, str]:
         """
         Generate hash components for debugging/testing purposes.
         
@@ -248,7 +248,7 @@ class TransactionIdGenerator:
             date: Transaction date
             payee: Transaction payee
             amount: Transaction amount
-            mapped_account: Beancount account
+            source_account: Beancount account
             narration: Transaction narration/description
             
         Returns:
@@ -257,7 +257,7 @@ class TransactionIdGenerator:
         clean_payee = str(payee) if payee else ""
         clean_narration = str(narration) if narration else ""
         clean_amount = str(amount) if amount else "0"
-        clean_account = str(mapped_account).strip()
+        clean_account = str(source_account).strip()
         
         hash_input = HASH_INPUT_FORMAT.format(
             date=date,
@@ -292,7 +292,7 @@ class TransactionIdGenerator:
 def generate_single_transaction_id(date: str, 
                                  payee: str, 
                                  amount: Union[str, Decimal, float], 
-                                 mapped_account: str,
+                                 source_account: str,
                                  narration: str = "",
                                  strict_validation: bool = False) -> str:
     """
@@ -305,7 +305,7 @@ def generate_single_transaction_id(date: str,
         date: Transaction date in YYYY-MM-DD format
         payee: Transaction payee/merchant name
         amount: Transaction amount
-        mapped_account: Beancount account name
+        source_account: Beancount account name
         narration: Transaction narration/description
         strict_validation: If True, enforce strict validation of all fields
         
@@ -323,25 +323,7 @@ def generate_single_transaction_id(date: str,
         TransactionIdValidationError: Both payee and narration fields are empty - at least one must contain meaningful content
     """
     generator = TransactionIdGenerator()
-    return generator.generate_id(date, payee, amount, mapped_account, narration, strict_validation=strict_validation)
-
-
-def validate_single_ofx_id(ofx_id: Optional[str]) -> Optional[str]:
-    """
-    Convenience function to validate a single OFX ID without instantiating generator.
-    
-    Args:
-        ofx_id: OFX transaction ID to validate
-        
-    Returns:
-        Cleaned OFX ID or None if invalid
-        
-    Example:
-        >>> validate_single_ofx_id("  20240115001234567890  ")
-        '20240115001234567890'
-    """
-    generator = TransactionIdGenerator()
-    return generator.validate_ofx_id(ofx_id)
+    return generator.generate_id(date, payee, amount, source_account, narration, strict_validation=strict_validation)
 
 
 def select_account_for_transaction_id(postings: list, source_account_metadata: Optional[str] = None) -> Tuple[str, str]:
@@ -541,7 +523,7 @@ def add_transaction_id_to_beancount_transaction(transaction,
         date=date_str,
         payee=transaction.payee or '',
         amount=amount_str,
-        mapped_account=account,
+        source_account=account,
         narration=transaction.narration or '',
         is_kept_duplicate=False,  # Could be parameterized in future
         strict_validation=strict_validation
@@ -623,7 +605,7 @@ def create_beancount_transaction_with_id(date_str: str,
         date=date_str,
         payee=payee,
         amount=amount_str,
-        mapped_account=account,
+        source_account=account,
         narration=narration,
         strict_validation=True
     )
@@ -657,102 +639,51 @@ def create_beancount_transaction_with_id(date_str: str,
     )
 
 
-def load_existing_transaction_ids(ledger_file: str) -> Tuple[Set[str], Dict[str, int]]:
+def initialize_generator_with_cached_ids(used_ids: Set[str]) -> TransactionIdGenerator:
     """
-    Scan ledger file and extract all existing transaction_id metadata.
-    
-    This function reads the entire ledger file and extracts all transaction_id
-    metadata values to populate the generator's state. This ensures that newly
-    generated transaction IDs won't collide with existing ones.
-    
-    Args:
-        ledger_file: Path to the Beancount ledger file
-        
-    Returns:
-        Tuple of (set_of_used_ids, collision_counters)
-        - set_of_used_ids: All unique transaction_id values found in the ledger
-        - collision_counters: Dictionary mapping base hashes to their highest collision suffix
-        
-    Raises:
-        FileNotFoundError: If ledger_file doesn't exist
-        Exception: If ledger file cannot be parsed
-        
-    Examples:
-        >>> used_ids, counters = load_existing_transaction_ids("ledger.beancount")
-        >>> print(f"Found {len(used_ids)} existing transaction IDs")
-        >>> print(f"Collision bases: {list(counters.keys())[:5]}")
-    """
-    from beancount import loader
-    from beancount.core import data
-    
-    used_ids = set()
-    collision_counters = {}
-    
-    try:
-        # Load and parse the ledger file
-        entries, _, _ = loader.load_file(ledger_file)
-        
-        for entry in entries:
-            if isinstance(entry, data.Transaction) and entry.meta:
-                txn_id = entry.meta.get('transaction_id')
-                if txn_id and isinstance(txn_id, str):
-                    used_ids.add(txn_id)
-                    
-                    # Extract collision suffix if present
-                    # Format: "base_hash-N" where N is an integer
-                    # Skip dup suffixes (using the same format as the constant)
-                    dup_marker = DUPLICATE_SUFFIX_FORMAT.format(counter='')  # Gives "-dup-" without counter
-                    if '-' in txn_id and not dup_marker in txn_id:
-                        parts = txn_id.rsplit('-', 1)
-                        if len(parts) == 2 and parts[1].isdigit():
-                            base_hash = parts[0]
-                            suffix = int(parts[1])
-                            # Keep track of the highest suffix seen for each base
-                            current_max = collision_counters.get(base_hash, 0)
-                            if suffix > current_max:
-                                collision_counters[base_hash] = suffix
-                                
-    except FileNotFoundError:
-        # If file doesn't exist, return empty state (new ledger)
-        return used_ids, collision_counters
-    except Exception as e:
-        # Log error but don't crash - return empty state
-        # In production, you might want to raise this
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.warning(f"Failed to load existing transaction IDs from {ledger_file}: {e}")
-        return used_ids, collision_counters
-    
-    return used_ids, collision_counters
+    Create a TransactionIdGenerator pre-populated with existing transaction IDs from cache.
 
+    This ensures that newly generated IDs don't collide with existing transactions.
 
-def initialize_generator_with_ledger_state(ledger_file: str) -> TransactionIdGenerator:
-    """
-    Create a TransactionIdGenerator pre-populated with existing transaction IDs.
-    
-    This is the recommended way to create a generator when you need to ensure
-    that newly generated IDs don't collide with existing transactions in the ledger.
-    
     Args:
-        ledger_file: Path to the Beancount ledger file
-        
+        used_ids: Set of existing transaction IDs from LedgerCache
+
     Returns:
         TransactionIdGenerator instance with pre-populated state
-        
+
     Examples:
-        >>> generator = initialize_generator_with_ledger_state("main.beancount")
+        >>> # Get cached IDs from LedgerCache
+        >>> used_ids = cache.get_transaction_ids()
+        >>> generator = initialize_generator_with_cached_ids(used_ids)
         >>> new_id = generator.generate_id("2024-01-15", "Store", "100.00", "Assets:Checking")
-        >>> # Guaranteed not to collide with existing IDs
     """
     generator = TransactionIdGenerator()
-    
-    # Load existing state
-    used_ids, collision_counters = load_existing_transaction_ids(ledger_file)
-    
-    # Populate generator state
-    generator.used_ids = used_ids
+
+    # Populate generator with existing IDs
+    generator.used_ids = used_ids.copy()
+
+    # Extract collision counters from existing IDs
+    collision_counters = {}
+    dup_marker = DUPLICATE_SUFFIX_FORMAT.format(counter='')  # Gives "-dup-" without counter
+
+    for txn_id in used_ids:
+        # Skip dup suffixes
+        if dup_marker in txn_id:
+            continue
+
+        # Extract collision suffix if present: "base_hash-N" where N is an integer
+        if '-' in txn_id:
+            parts = txn_id.rsplit('-', 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                base_hash = parts[0]
+                suffix = int(parts[1])
+                # Keep track of the highest suffix seen for each base
+                current_max = collision_counters.get(base_hash, 0)
+                if suffix > current_max:
+                    collision_counters[base_hash] = suffix
+
     generator.collision_counters = collision_counters
-    
+
     return generator
 
 
