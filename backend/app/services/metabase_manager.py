@@ -493,64 +493,46 @@ class MetabaseManager:
         """Add DuckDB as a data source in Metabase."""
         db_path = str(Path(self.duckdb_path).absolute())
 
-        # The error "Cannot invoke \"java.lang.CharSequence.length()\" because \"this.text\" is null" 
-        # suggests that some field may be unexpectedly null in the request.
-        # Based on Metabase DuckDB connector requirements, we need to ensure all required fields are present.
-        
-        # Try the format that is known to work with DuckDB connector
+        # This payload is modeled after the one captured from a successful
+        # manual setup in the Metabase UI.
         payload = {
             "name": "Finzytrack Ledger",
             "engine": "duckdb",
             "details": {
-                "db": db_path
-            }
+                "database_file": db_path,
+                "read_only": False,
+                "old_implicit_casting": True,
+                "allow_unsigned_extensions": False,
+            },
+            "is_on_demand": False,
+            "is_full_sync": True,
+            "is_sample": False,
+            "cache_ttl": None,
+            "refingerprint": False,
+            "auto_run_queries": True,
+            "schedules": {},
         }
 
         logger.info(f"Adding DuckDB connection with path: {db_path}")
         logger.info(f"Metabase database payload: {json.dumps(payload, indent=2)}")
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"http://localhost:{self.config.port}/api/database",
-                json=payload,
-                headers={"X-Metabase-Session": session_token},
-                timeout=30.0
-            )
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"http://localhost:{self.config.port}/api/database",
+                    json=payload,
+                    headers={"X-Metabase-Session": session_token},
+                    timeout=30.0
+                )
+                response.raise_for_status()
+                data = response.json()
+                logger.info(f"DuckDB connection added successfully with ID: {data['id']}")
+                return data["id"]
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Failed to add DuckDB connection. Status: {e.response.status_code}")
+            logger.error(f"Response body: {e.response.text}")
+            raise e
 
-            # Check for the specific error and handle it
-            if response.status_code == 400:
-                response_text = response.text
-                logger.error(f"Failed to add DuckDB connection. Status: {response.status_code}")
-                logger.error(f"Response body: {response_text}")
-                
-                # If it's the specific null text error, try a different format
-                if "this.text is null" in response_text or "CharSequence.length" in response_text:
-                    logger.info("Received null text error, trying with 'path' field instead of 'db'")
-                    alt_payload = {
-                        "name": "Finzytrack Ledger",
-                        "engine": "duckdb",
-                        "details": {
-                            "path": db_path  # Alternative field name
-                        }
-                    }
-                    
-                    logger.info(f"Alternative DuckDB connection payload: {json.dumps(alt_payload, indent=2)}")
-                    
-                    response = await client.post(
-                        f"http://localhost:{self.config.port}/api/database",
-                        json=alt_payload,
-                        headers={"X-Metabase-Session": session_token},
-                        timeout=30.0
-                    )
-                    
-                    if response.status_code == 400:
-                        logger.error(f"Alternative payload also failed. Status: {response.status_code}")
-                        logger.error(f"Response body: {response_text}")
-
-            response.raise_for_status()
-            data = response.json()
-            logger.info(f"DuckDB connection added successfully with ID: {data['id']}")
-            return data["id"]
 
     async def _is_session_valid(self, session_token: str) -> bool:
         """Check if session token is valid."""
