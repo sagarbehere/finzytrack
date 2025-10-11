@@ -112,7 +112,8 @@ def create_app(config: Config) -> FastAPI:
     # 7. Create Metabase manager
     metabase_manager = MetabaseManager(
         config=config.analytics.metabase,
-        duckdb_path=config.analytics.duckdb.export_path
+        duckdb_path=config.analytics.duckdb.export_path,
+        config_manager=config_manager
     )
 
     # 8. Ensure ledger exists - fail fast if it can't be created
