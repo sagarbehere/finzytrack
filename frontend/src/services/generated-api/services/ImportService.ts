@@ -65,6 +65,7 @@ export class ImportService {
      * Args:
      * request: CategorizeRequest with transactions to process
      * config_manager: Injected config manager
+     * beancount_manager: Injected beancount manager (provides cached data)
      *
      * Returns:
      * CategorizeResponse with results and stats

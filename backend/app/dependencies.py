@@ -24,3 +24,18 @@ def get_beancount_manager(request: Request) -> BeancountManager:
 def get_backup_manager(request: Request) -> BackupManager:
     """Dependency to get Backup manager from app state."""
     return request.app.state.backup_manager
+
+
+def get_duckdb_exporter(request: Request):
+    """Dependency to get DuckDB exporter from app state."""
+    return request.app.state.duckdb_exporter
+
+
+def get_duckdb_sync_manager(request: Request):
+    """Dependency to get DuckDB sync manager from app state."""
+    return request.app.state.duckdb_sync_manager
+
+
+def get_metabase_manager(request: Request):
+    """Dependency to get Metabase manager from app state."""
+    return request.app.state.metabase_manager

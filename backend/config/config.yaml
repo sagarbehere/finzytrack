@@ -51,3 +51,28 @@ security:
   cors_origins:
     - "http://127.0.0.1:3000"
     - "http://localhost:3000"
+
+# Analytics Configuration
+analytics:
+  # DuckDB export settings
+  duckdb:
+    export_path: "./data/ledger.duckdb"
+    auto_sync_enabled: true
+    sync_debounce_seconds: 5.0
+
+  # Metabase analytics settings
+  metabase:
+    version: "0.50.0"
+    port: 3002
+    auto_start: true
+    jar_path: "resources/metabase/metabase.jar"
+    plugins_dir: "resources/metabase/plugins"
+    data_dir: "resources/metabase/data"
+    dashboard_templates_dir: "resources/metabase-templates"
+    java_heap_size: "2g"
+    java_opts: "--add-opens java.base/java.nio=ALL-UNNAMED"
+    initialized: false
+    admin_email: "admin@finzytrack.local"
+    admin_password: ""
+    session_token: ""
+    database_id: null

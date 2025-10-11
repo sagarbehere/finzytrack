@@ -7,6 +7,7 @@ import os
 import sys
 import logging
 from pathlib import Path
+from contextlib import asynccontextmanager
 
 import click
 import uvicorn
@@ -16,12 +17,15 @@ from fastapi.responses import JSONResponse
 
 from .config import Config, ConfigurationError
 from .api.routers.importer import ofx_accounts, transaction
-from .api.routers import accounts, commodities
+from .api.routers import accounts, commodities, ledger_export, metabase
 from .core.beancount_manager import BeancountManager
 from .error_handler import setup_error_handlers
 from .core.backup_manager import BackupManager
 from .core.config_manager import ConfigManager
 from .core.ledger_initializer import LedgerInitializer
+from .services.duckdb_exporter import DuckDBExporter
+from .services.duckdb_sync_manager import DuckDBSyncManager
+from .services.metabase_manager import MetabaseManager
 
 
 def setup_logging(level: str, log_file: str, log_format: str) -> None:
@@ -62,29 +66,10 @@ def setup_logging(level: str, log_file: str, log_format: str) -> None:
 
 def create_app(config: Config) -> FastAPI:
     """Create FastAPI application with configuration."""
-    app = FastAPI(
-        title="Finzytrack Backend",
-        description="Privacy-focused personal finance application backend",
-        version="1.0.0"
-    )
-    
-    
-    # Add CORS middleware for frontend communication
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=config.security.cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-    
-    # Register centralized exception handlers
-    setup_error_handlers(app)
-    
     # Get logger for this module
     logger = logging.getLogger(__name__)
-    
-    # --- New Instantiation Logic ---
+
+    # --- Service Instantiation ---
 
     # 1. Create BackupManager service
     backup_manager = BackupManager(
@@ -97,27 +82,40 @@ def create_app(config: Config) -> FastAPI:
         config=config,
         backup_manager=backup_manager
     )
-    
-    # 3. Create LedgerInitializer (which now needs BackupManager)
+
+    # 3. Create LedgerInitializer
     ledger_initializer = LedgerInitializer(
         ledger_file=config.ledger_file,
         default_currency=config.accounts.default_currency,
         backup_manager=backup_manager
     )
 
-    # 4. Create BeancountManager (which now needs BackupManager and the new Initializer)
+    # 4. Create BeancountManager
     beancount_manager = BeancountManager(
         ledger_file=config.ledger_file,
         backup_manager=backup_manager,
         ledger_initializer=ledger_initializer
     )
 
-    # 5. Store managers in app state for access in routes
-    app.state.config_manager = config_manager
-    app.state.beancount_manager = beancount_manager
-    app.state.backup_manager = backup_manager
-    
-    # Ensure ledger exists at startup - fail fast if it can't be created
+    # 5. Create DuckDB exporter
+    duckdb_exporter = DuckDBExporter(
+        duckdb_path=config.analytics.duckdb.export_path
+    )
+
+    # 6. Create DuckDB sync manager (coordinator with debouncing)
+    duckdb_sync_manager = DuckDBSyncManager(
+        duckdb_exporter=duckdb_exporter,
+        ledger_file=config.ledger_file,
+        delay=config.analytics.duckdb.sync_debounce_seconds
+    )
+
+    # 7. Create Metabase manager
+    metabase_manager = MetabaseManager(
+        config=config.analytics.metabase,
+        duckdb_path=config.analytics.duckdb.export_path
+    )
+
+    # 8. Ensure ledger exists - fail fast if it can't be created
     try:
         if not ledger_initializer.ensure_ledger_exists():
             raise RuntimeError(f"Failed to create ledger file at {config.ledger_file}")
@@ -125,12 +123,102 @@ def create_app(config: Config) -> FastAPI:
     except Exception as e:
         logger.error(f"Fatal: Cannot initialize ledger file {config.ledger_file}: {e}")
         raise RuntimeError(f"Failed to initialize ledger file {config.ledger_file}: {e}")
-    
+
+    # 9. Register DuckDB sync manager's callback with BeancountManager
+    if config.analytics.duckdb.auto_sync_enabled:
+        beancount_manager.register_cache_invalidation_callback(
+            duckdb_sync_manager.on_ledger_changed
+        )
+        logger.info("DuckDB auto-sync enabled with debouncing")
+
+    # 10. Define lifespan event handler
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        """
+        Application lifespan event handler for startup and shutdown tasks.
+
+        This replaces the deprecated @app.on_event decorators.
+        """
+        # STARTUP: Tasks to run when the application starts
+        logger.info("Application starting up...")
+
+        # Export DuckDB on startup if out of date
+        if duckdb_sync_manager._needs_export():
+            try:
+                entries = beancount_manager.cache.get_entries()
+                await duckdb_exporter.export_entries(entries)
+                logger.info("DuckDB exported on startup")
+            except Exception as e:
+                logger.error(f"Failed to export DuckDB on startup: {e}")
+
+        # Auto-start Metabase if configured
+        if config.analytics.metabase.auto_start:
+            try:
+                await metabase_manager.start()
+                logger.info("Metabase auto-started on application startup")
+            except Exception as e:
+                logger.error(f"Failed to auto-start Metabase: {e}")
+
+        logger.info("Application startup complete")
+
+        # YIELD: Application is running, handle requests
+        yield
+
+        # SHUTDOWN: Tasks to run when the application shuts down
+        logger.info("Application shutting down...")
+
+        # Cancel pending DuckDB sync
+        try:
+            await duckdb_sync_manager.cancel_pending_sync()
+            logger.info("Cancelled pending DuckDB sync")
+        except Exception as e:
+            logger.error(f"Error cancelling DuckDB sync: {e}")
+
+        # Stop Metabase gracefully if running
+        if metabase_manager.is_running():
+            try:
+                await metabase_manager.stop()
+                logger.info("Metabase stopped on application shutdown")
+            except Exception as e:
+                logger.error(f"Error stopping Metabase: {e}")
+
+        logger.info("Application shutdown complete")
+
+    # 11. Create FastAPI app with lifespan handler
+    app = FastAPI(
+        title="Finzytrack Backend",
+        description="Privacy-focused personal finance application backend",
+        version="1.0.0",
+        lifespan=lifespan
+    )
+
+    # 12. Add CORS middleware for frontend communication
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.security.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # 13. Register centralized exception handlers
+    setup_error_handlers(app)
+
+    # 14. Store managers in app state for access in routes
+    app.state.config_manager = config_manager
+    app.state.beancount_manager = beancount_manager
+    app.state.backup_manager = backup_manager
+    app.state.duckdb_exporter = duckdb_exporter
+    app.state.duckdb_sync_manager = duckdb_sync_manager
+    app.state.metabase_manager = metabase_manager
+
     # Include API routers
     app.include_router(ofx_accounts.router, prefix="/api/import", tags=["import"])
     app.include_router(transaction.router, prefix="/api/import", tags=["import"])
     app.include_router(accounts.router, prefix="/api", tags=["accounts"])
     app.include_router(commodities.router, prefix="/api", tags=["commodities"])
+    app.include_router(ledger_export.router, prefix="/api/ledger", tags=["ledger"])
+    app.include_router(metabase.router, prefix="/api/metabase", tags=["metabase"])
     
     @app.get("/")
     async def root():

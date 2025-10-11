@@ -85,6 +85,37 @@ class OFXAccountMapping(BaseModel):
     currency: str = Field(..., description="Currency from OFX")
     beancount_account: str = Field(..., description="Corresponding Beancount account")
 
+
+class DuckDBConfig(BaseModel):
+    """DuckDB export configuration."""
+    export_path: str = Field(default="./data/ledger.duckdb", description="Path to DuckDB export file")
+    auto_sync_enabled: bool = Field(default=True, description="Enable automatic sync on ledger changes")
+    sync_debounce_seconds: float = Field(default=5.0, ge=0.0, description="Debounce delay in seconds before syncing")
+
+
+class MetabaseConfig(BaseModel):
+    """Metabase analytics configuration."""
+    version: str = Field(default="0.50.0", description="Metabase version")
+    port: int = Field(default=3001, ge=1, le=65535, description="Metabase server port")
+    auto_start: bool = Field(default=False, description="Auto-start Metabase when app launches")
+    jar_path: str = Field(default="resources/metabase/metabase.jar", description="Path to Metabase JAR file")
+    plugins_dir: str = Field(default="resources/metabase/plugins", description="Path to Metabase plugins directory")
+    data_dir: str = Field(default="resources/metabase/data", description="Path to Metabase data directory")
+    dashboard_templates_dir: str = Field(default="resources/metabase-templates", description="Path to dashboard templates")
+    java_heap_size: str = Field(default="2g", description="Java heap size for Metabase")
+    java_opts: str = Field(default="--add-opens java.base/java.nio=ALL-UNNAMED", description="Additional Java options")
+    initialized: bool = Field(default=False, description="Whether Metabase has been initialized")
+    admin_email: str = Field(default="admin@finzytrack.local", description="Admin email for Metabase")
+    admin_password: str = Field(default="", description="Encrypted admin password")
+    session_token: str = Field(default="", description="Metabase session token for auto-login")
+    database_id: Optional[int] = Field(default=None, description="DuckDB database ID in Metabase")
+
+
+class AnalyticsConfig(BaseModel):
+    """Analytics and reporting configuration."""
+    metabase: MetabaseConfig = Field(default_factory=MetabaseConfig, description="Metabase analytics settings")
+    duckdb: DuckDBConfig = Field(default_factory=DuckDBConfig, description="DuckDB export settings")
+
 class Config(BaseModel):
     """Main application configuration with nested sections."""
     
@@ -102,6 +133,9 @@ class Config(BaseModel):
     
     # OFX account mappings
     ofx_account_mappings: List[OFXAccountMapping] = Field(default_factory=list, description="OFX account mappings")
+
+    # Analytics configuration
+    analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig, description="Analytics and reporting settings")
 
     config_file_path: Optional[Path] = Field(
         default=None,

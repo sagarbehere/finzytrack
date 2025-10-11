@@ -1,7 +1,7 @@
 import os
 import re
 import logging
-from typing import Set, Optional, List, Dict, Any
+from typing import Set, Optional, List, Dict, Any, Callable
 from datetime import datetime, date
 from contextlib import contextmanager
 from beancount import loader
@@ -26,6 +26,20 @@ class BeancountManager:
         self.backup_manager = backup_manager
         self.ledger_initializer = ledger_initializer
         self.cache = LedgerCache(ledger_file)
+        self._on_cache_invalidated_callbacks: List[Callable[[List[Any]], None]] = []
+
+    def register_cache_invalidation_callback(
+        self,
+        callback: Callable[[List[Any]], None]
+    ) -> None:
+        """
+        Register a callback to be called when cache invalidates.
+
+        Args:
+            callback: Function that accepts a list of Beancount entries
+        """
+        self._on_cache_invalidated_callbacks.append(callback)
+        logger.debug(f"Registered cache invalidation callback: {callback.__name__}")
 
     @contextmanager
     def atomic_ledger_write(self, file_path: Optional[str] = None):
@@ -49,6 +63,14 @@ class BeancountManager:
         # Invalidate cache after successful write
         self.cache.invalidate()
         logger.debug(f"Cache invalidated after write to {target_file}")
+
+        # Notify observers
+        entries = self.cache.get_entries()
+        for callback in self._on_cache_invalidated_callbacks:
+            try:
+                callback(entries)
+            except Exception as e:
+                logger.error(f"Error in cache invalidation callback: {e}", exc_info=True)
 
     def is_existing_account(self, account_name: str) -> bool:
         """Check if account name exists in ledger (O(1) lookup)."""
