@@ -5,9 +5,7 @@ This service is responsible for:
 - Starting/stopping Metabase subprocess
 - Health checking
 - First-run initialization (creating admin account, adding DuckDB connection)
-- Auto-login URL generation
 - Schema sync triggers
-- Credential encryption/decryption
 """
 import os
 import asyncio
@@ -22,17 +20,11 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 
 import httpx
-from cryptography.fernet import Fernet
-import keyring
 
 from app.config import MetabaseConfig
 from app.exceptions import APIError
 
 logger = logging.getLogger(__name__)
-
-# Keyring service name
-KEYRING_SERVICE = "finzytrack"
-KEYRING_KEY_NAME = "metabase_encryption_key"
 
 
 class MetabaseManager:
@@ -300,13 +292,10 @@ class MetabaseManager:
             dashboards_imported = 0
             # TODO: Implement dashboard import when templates are ready
 
-            # Step 5: Encrypt and save credentials
-            encrypted_password = self._encrypt_password(admin_password)
-
-            # Save state to config
+            # Step 5: Save state to config, storing password in plaintext
             state = {
                 "initialized": True,
-                "admin_password": encrypted_password,
+                "admin_password": admin_password,
                 "session_token": session_token,
                 "database_id": database_id
             }
@@ -316,7 +305,7 @@ class MetabaseManager:
 
             return {
                 "admin_email": self.config.admin_email,
-                "admin_password": admin_password,  # Return unencrypted for one-time display
+                "admin_password": admin_password,  # Return plaintext password for one-time display
                 "session_token": session_token,
                 "database_id": database_id,
                 "dashboards_imported": dashboards_imported
@@ -329,34 +318,6 @@ class MetabaseManager:
                 code="METABASE_INIT_FAILED",
                 status_code=500
             )
-
-    async def get_auto_login_url(self) -> str:
-        """
-        Generate auto-login URL with session token.
-
-        Returns:
-            Auto-login URL string
-
-        Raises:
-            APIError: If not initialized or session token invalid
-        """
-        if not self.config.initialized or not self.config.session_token:
-            raise APIError(
-                message="Metabase not initialized. Run initialization first.",
-                code="METABASE_NOT_INITIALIZED",
-                status_code=409
-            )
-
-        # Try using existing session token first
-        if await self._is_session_valid(self.config.session_token):
-            return f"http://localhost:{self.config.port}/?session={self.config.session_token}"
-
-        # If session invalid, create new one
-        logger.info("Session token expired, creating new session")
-        decrypted_password = self._decrypt_password(self.config.admin_password)
-        session_token = await self._login(self.config.admin_email, decrypted_password)
-
-        return f"http://localhost:{self.config.port}/?session={session_token}"
 
     async def trigger_schema_refresh(self) -> Dict[str, Any]:
         """
@@ -533,89 +494,13 @@ class MetabaseManager:
             logger.error(f"Response body: {e.response.text}")
             raise e
 
-
-    async def _is_session_valid(self, session_token: str) -> bool:
-        """Check if session token is valid."""
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"http://localhost:{self.config.port}/api/user/current",
-                    headers={"X-Metabase-Session": session_token},
-                    timeout=5.0
-                )
-                return response.status_code == 200
-        except Exception:
-            return False
-
-    async def _login(self, email: str, password: str) -> str:
-        """Login and get new session token."""
-        payload = {
-            "username": email,
-            "password": password
-        }
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"http://localhost:{self.config.port}/api/session",
-                json=payload,
-                timeout=10.0
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data["id"]
-
     @staticmethod
     def _generate_password(length: int = 24) -> str:
         """
-        Generate a secure random password that meets Metabase requirements.
-
-        Metabase requires:
-        - At least one uppercase letter
-        - At least one lowercase letter
-        - At least one digit
-        - At least one special character
-        - Not a common password
+        Generate a secure random password with only alphanumeric characters.
         """
-        # Use a subset of punctuation that's safe and commonly accepted
-        special_chars = "!@#$%^&*-_=+"
-
-        # Ensure we have at least one of each required character type
-        password = [
-            secrets.choice(string.ascii_uppercase),
-            secrets.choice(string.ascii_lowercase),
-            secrets.choice(string.digits),
-            secrets.choice(special_chars),
-        ]
-
-        # Fill the rest with random characters from all categories
-        alphabet = string.ascii_letters + string.digits + special_chars
-        password.extend(secrets.choice(alphabet) for _ in range(length - 4))
-
-        # Shuffle to avoid predictable patterns
-        secrets.SystemRandom().shuffle(password)
-
-        return ''.join(password)
-
-    @staticmethod
-    def _get_or_create_encryption_key() -> str:
-        """Get encryption key from OS keyring or create new one."""
-        key = keyring.get_password(KEYRING_SERVICE, KEYRING_KEY_NAME)
-        if not key:
-            key = Fernet.generate_key().decode()
-            keyring.set_password(KEYRING_SERVICE, KEYRING_KEY_NAME, key)
-            logger.info("Created new encryption key in OS keyring")
-        return key
-
-    @staticmethod
-    def _encrypt_password(password: str) -> str:
-        """Encrypt password for storage."""
-        key = MetabaseManager._get_or_create_encryption_key()
-        f = Fernet(key.encode())
-        return f.encrypt(password.encode()).decode()
-
-    @staticmethod
-    def _decrypt_password(encrypted: str) -> str:
-        """Decrypt stored password."""
-        key = MetabaseManager._get_or_create_encryption_key()
-        f = Fernet(key.encode())
-        return f.decrypt(encrypted.encode()).decode()
+        # Use a simple alphanumeric character set to avoid any potential issues
+        # with special characters during authentication.
+        alphabet = string.ascii_letters + string.digits
+        password = ''.join(secrets.choice(alphabet) for _ in range(length))
+        return password

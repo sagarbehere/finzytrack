@@ -1,6 +1,7 @@
 venv
 data
 ignore
+resources
 
 __pycache__/
 *.pyc

@@ -10,7 +10,6 @@ from app.schemas.metabase_schemas import (
     MetabaseStartData,
     MetabaseStopData,
     MetabaseInitializeData,
-    MetabaseLoginUrlData,
     MetabaseSyncSchemaData
 )
 from app.dependencies import get_metabase_manager, get_config_manager
@@ -98,31 +97,10 @@ async def initialize_metabase(
     3. Imports dashboard templates (if available)
 
     The admin password is returned once and should be saved by the user.
-    Future logins can use the auto-login URL from /login-url endpoint.
     """
     result = await metabase_manager.initialize_first_run(config_manager)
     init_data = MetabaseInitializeData(**result)
     return success_json_response(init_data)
-
-
-@router.get(
-    "/login-url",
-    response_model=ApiResponse[MetabaseLoginUrlData],
-    operation_id="getMetabaseLoginUrl"
-)
-async def get_login_url(
-    metabase_manager: MetabaseManager = Depends(get_metabase_manager)
-):
-    """
-    Get auto-login URL for Metabase.
-
-    This endpoint generates a URL that automatically logs the user into Metabase
-    without requiring manual password entry. The session token expires after
-    a period of inactivity.
-    """
-    url = await metabase_manager.get_auto_login_url()
-    login_data = MetabaseLoginUrlData(url=url, expires_at=None)
-    return success_json_response(login_data)
 
 
 @router.post(
