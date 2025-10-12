@@ -60,8 +60,16 @@ analytics:
     auto_sync_enabled: true
     sync_debounce_seconds: 5.0
 
+  # SQLite export settings
+  sqlite:
+    export_path: "./data/ledger.db"
+    auto_sync_enabled: true
+    sync_debounce_seconds: 5.0
+    enable_wal: true  # Enable WAL mode for concurrent access
+
   # Metabase analytics settings
   metabase:
+    db_type: "duckdb"  # Database type: "duckdb" or "sqlite"
     version: "0.50.0"
     port: 3002
     auto_start: true

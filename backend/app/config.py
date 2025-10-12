@@ -6,6 +6,7 @@ Supports CLI argument overrides using flattened argument names.
 """
 import os
 import yaml
+from enum import Enum
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
@@ -86,6 +87,12 @@ class OFXAccountMapping(BaseModel):
     beancount_account: str = Field(..., description="Corresponding Beancount account")
 
 
+class DatabaseType(str, Enum):
+    """Supported database types for analytics export"""
+    DUCKDB = "duckdb"
+    SQLITE = "sqlite"
+
+
 class DuckDBConfig(BaseModel):
     """DuckDB export configuration."""
     export_path: str = Field(default="./data/ledger.duckdb", description="Path to DuckDB export file")
@@ -93,8 +100,20 @@ class DuckDBConfig(BaseModel):
     sync_debounce_seconds: float = Field(default=5.0, ge=0.0, description="Debounce delay in seconds before syncing")
 
 
+class SQLiteConfig(BaseModel):
+    """SQLite export configuration."""
+    export_path: str = Field(default="./data/ledger.db", description="Path to SQLite export file")
+    auto_sync_enabled: bool = Field(default=True, description="Enable automatic sync on ledger changes")
+    sync_debounce_seconds: float = Field(default=5.0, ge=0.0, description="Debounce delay in seconds before syncing")
+    enable_wal: bool = Field(default=True, description="Enable WAL mode for concurrent access")
+
+
 class MetabaseConfig(BaseModel):
     """Metabase analytics configuration."""
+    db_type: DatabaseType = Field(
+        default=DatabaseType.DUCKDB,
+        description="Database type for Metabase connection"
+    )
     version: str = Field(default="0.50.0", description="Metabase version")
     port: int = Field(default=3001, ge=1, le=65535, description="Metabase server port")
     auto_start: bool = Field(default=False, description="Auto-start Metabase when app launches")
@@ -108,13 +127,14 @@ class MetabaseConfig(BaseModel):
     admin_email: str = Field(default="admin@finzytrack.local", description="Admin email for Metabase")
     admin_password: str = Field(default="", description="Encrypted admin password")
     session_token: str = Field(default="", description="Metabase session token for auto-login")
-    database_id: Optional[int] = Field(default=None, description="DuckDB database ID in Metabase")
+    database_id: Optional[int] = Field(default=None, description="Database ID in Metabase")
 
 
 class AnalyticsConfig(BaseModel):
     """Analytics and reporting configuration."""
     metabase: MetabaseConfig = Field(default_factory=MetabaseConfig, description="Metabase analytics settings")
     duckdb: DuckDBConfig = Field(default_factory=DuckDBConfig, description="DuckDB export settings")
+    sqlite: SQLiteConfig = Field(default_factory=SQLiteConfig, description="SQLite export settings")
 
 class Config(BaseModel):
     """Main application configuration with nested sections."""

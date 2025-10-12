@@ -31,9 +31,16 @@ logger = logging.getLogger(__name__)
 class MetabaseManager:
     """Service for managing Metabase lifecycle and API interactions."""
 
-    def __init__(self, config: MetabaseConfig, duckdb_path: str, config_manager: ConfigManager):
+    def __init__(
+        self,
+        config: MetabaseConfig,
+        duckdb_path: str,
+        sqlite_path: str,
+        config_manager: ConfigManager
+    ):
         self.config = config
         self.duckdb_path = duckdb_path
+        self.sqlite_path = sqlite_path
         self.config_manager = config_manager
         self.process: Optional[subprocess.Popen] = None
         self.start_time: Optional[datetime] = None
@@ -100,7 +107,7 @@ class MetabaseManager:
             setup_token = await self._get_setup_token()
             admin_password = self._generate_password()
             session_token = await self._create_admin_account(setup_token, admin_password)
-            database_id = await self._add_duckdb_connection(session_token)
+            database_id = await self._add_database_connection(session_token)
 
             state = {
                 "initialized": True,
@@ -286,6 +293,46 @@ class MetabaseManager:
             response = await client.post(f"http://localhost:{self.config.port}/api/setup", json=payload, timeout=30.0)
             response.raise_for_status()
             return response.json()["id"]
+
+    async def _add_database_connection(self, session_token: str) -> int:
+        """Add database connection based on configured db_type (Pydantic enum)"""
+        from app.config import DatabaseType
+
+        if self.config.db_type == DatabaseType.DUCKDB:
+            return await self._add_duckdb_connection(session_token)
+        elif self.config.db_type == DatabaseType.SQLITE:
+            return await self._add_sqlite_connection(session_token)
+        else:
+            raise ValueError(f"Unsupported db_type: {self.config.db_type}")
+
+    async def _add_sqlite_connection(self, session_token: str) -> int:
+        """Add SQLite connection to Metabase"""
+        db_path = str(Path(self.sqlite_path).absolute())
+
+        payload = {
+            "name": "Finzytrack Ledger (SQLite)",
+            "engine": "sqlite",
+            "details": {
+                "db": db_path
+                # No read_only flag needed - WAL handles concurrency
+            },
+            "auto_run_queries": True,
+            "is_full_sync": True
+        }
+
+        logger.info(f"Adding SQLite connection: {db_path}")
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"http://localhost:{self.config.port}/api/database",
+                json=payload,
+                headers={"X-Metabase-Session": session_token},
+                timeout=30.0
+            )
+            response.raise_for_status()
+            database_id = response.json()["id"]
+            logger.info(f"SQLite connection added with ID: {database_id}")
+            return database_id
 
     async def _add_duckdb_connection(self, session_token: str) -> int:
         # Identical to previous implementation

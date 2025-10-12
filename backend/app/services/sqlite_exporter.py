@@ -1,37 +1,39 @@
 """
-DuckDB Exporter Service - Converts Beancount entries to DuckDB format.
+SQLite Exporter Service - Converts Beancount entries to SQLite format.
 
 This service is responsible for the actual data conversion (the worker).
-It accepts parsed Beancount entries and exports them to a DuckDB database.
+It accepts parsed Beancount entries and exports them to a SQLite database with WAL mode.
 """
 import os
 import json
 import time
 import asyncio
 import logging
+import sqlite3
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from decimal import Decimal
 from datetime import datetime
 
-import duckdb
 from beancount.core.data import Transaction, Posting
 
 logger = logging.getLogger(__name__)
 
 
-class DuckDBExporter:
-    """Service for exporting Beancount entries to DuckDB format."""
+class SQLiteExporter:
+    """Service for exporting Beancount entries to SQLite format with WAL mode."""
 
-    def __init__(self, duckdb_path: str):
+    def __init__(self, sqlite_path: str, enable_wal: bool = True):
         """
-        Initialize DuckDB exporter.
+        Initialize SQLite exporter.
 
         Args:
-            duckdb_path: Path to the DuckDB database file
+            sqlite_path: Path to the SQLite database file
+            enable_wal: Enable WAL mode for concurrent access (default: True)
         """
-        self.duckdb_path = duckdb_path
-        self.export_path = duckdb_path  # Generic interface
+        self.sqlite_path = sqlite_path
+        self.export_path = sqlite_path  # Generic interface
+        self.enable_wal = enable_wal
 
     async def export_entries(
         self,
@@ -39,7 +41,7 @@ class DuckDBExporter:
         force: bool = False
     ) -> Dict[str, Any]:
         """
-        Export Beancount entries to DuckDB.
+        Export Beancount entries to SQLite.
 
         Args:
             entries: Parsed Beancount entries from cache
@@ -59,11 +61,11 @@ class DuckDBExporter:
         try:
             # Filter for transactions only
             transactions = [e for e in entries if isinstance(e, Transaction)]
-            logger.info(f"Exporting {len(transactions)} transactions to DuckDB")
+            logger.info(f"Exporting {len(transactions)} transactions to SQLite")
 
-            # Run blocking DuckDB operations in thread pool
+            # Run blocking SQLite operations in thread pool
             result = await asyncio.to_thread(
-                self._export_transactions_to_duckdb,
+                self._export_transactions_to_sqlite,
                 transactions
             )
 
@@ -74,17 +76,17 @@ class DuckDBExporter:
                 "postings_count": result["postings_count"],
                 "transactions_count": result["transactions_count"],
                 "duration_ms": duration_ms,
-                "path": str(self.duckdb_path),
+                "path": str(self.sqlite_path),
                 "last_sync": datetime.utcnow().isoformat() + "Z"
             }
 
         except Exception as e:
-            logger.error(f"DuckDB export failed: {e}", exc_info=True)
-            raise Exception(f"Failed to export to DuckDB: {str(e)}")
+            logger.error(f"SQLite export failed: {e}", exc_info=True)
+            raise Exception(f"Failed to export to SQLite: {str(e)}")
 
     async def get_status(self) -> Dict[str, Any]:
         """
-        Get DuckDB export status.
+        Get SQLite export status.
 
         Returns:
             Dictionary with:
@@ -95,12 +97,12 @@ class DuckDBExporter:
                 - postings_count: int (if exists)
         """
         try:
-            db_path = Path(self.duckdb_path)
+            db_path = Path(self.sqlite_path)
 
             if not db_path.exists():
                 return {
                     "exists": False,
-                    "path": str(self.duckdb_path),
+                    "path": str(self.sqlite_path),
                     "size_bytes": 0,
                     "last_modified": None,
                     "postings_count": 0
@@ -117,17 +119,17 @@ class DuckDBExporter:
 
             return {
                 "exists": True,
-                "path": str(self.duckdb_path),
+                "path": str(self.sqlite_path),
                 "size_bytes": stat.st_size,
                 "last_modified": last_modified,
                 "postings_count": postings_count
             }
 
         except Exception as e:
-            logger.error(f"Failed to get DuckDB status: {e}", exc_info=True)
+            logger.error(f"Failed to get SQLite status: {e}", exc_info=True)
             return {
                 "exists": False,
-                "path": str(self.duckdb_path),
+                "path": str(self.sqlite_path),
                 "size_bytes": 0,
                 "last_modified": None,
                 "postings_count": 0,
@@ -137,20 +139,21 @@ class DuckDBExporter:
     def _get_postings_count(self) -> int:
         """Get count of postings in the database (blocking I/O)."""
         try:
-            con = duckdb.connect(self.duckdb_path, read_only=True)
-            result = con.execute("SELECT COUNT(*) FROM postings").fetchone()
+            con = sqlite3.connect(self.sqlite_path)
+            cursor = con.execute("SELECT COUNT(*) FROM postings")
+            result = cursor.fetchone()
             con.close()
             return result[0] if result else 0
         except Exception as e:
             logger.warning(f"Could not get postings count: {e}")
             return 0
 
-    def _export_transactions_to_duckdb(
+    def _export_transactions_to_sqlite(
         self,
         transactions: List[Transaction]
     ) -> Dict[str, Any]:
         """
-        Export transactions to DuckDB (blocking I/O).
+        Export transactions to SQLite (blocking I/O).
 
         This method runs in a thread pool to avoid blocking the event loop.
 
@@ -161,44 +164,62 @@ class DuckDBExporter:
             Dictionary with postings_count and transactions_count
         """
         # Ensure parent directory exists
-        db_path = Path(self.duckdb_path)
+        db_path = Path(self.sqlite_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Create DuckDB connection
-        con = duckdb.connect(self.duckdb_path)
+        # Create SQLite connection
+        con = sqlite3.connect(self.sqlite_path)
+
+        # Enable WAL mode first (must be done before any other operations)
+        if self.enable_wal:
+            # IMPORTANT: Must fetch result for PRAGMA to take effect
+            result = con.execute("PRAGMA journal_mode=WAL").fetchone()
+            logger.info(f"SQLite journal mode set to: {result[0] if result else 'unknown'}")
+
+            con.execute("PRAGMA synchronous=NORMAL").fetchone()
+            con.execute("PRAGMA wal_autocheckpoint=1000").fetchone()
+            con.execute("PRAGMA temp_store=MEMORY").fetchone()
+            logger.debug("SQLite WAL mode and optimizations enabled")
 
         # Drop existing table and create schema
-        con.execute("DROP TABLE IF EXISTS postings;")
+        con.execute("DROP TABLE IF EXISTS postings")
 
         schema_sql = """
         CREATE TABLE postings (
             posting_id INTEGER PRIMARY KEY,
-            transaction_id VARCHAR,
-            transaction_date DATE,
-            transaction_flag VARCHAR,
-            transaction_payee VARCHAR,
-            transaction_narration VARCHAR,
-            transaction_tags VARCHAR[],
-            transaction_links VARCHAR[],
-            account VARCHAR,
-            account_type VARCHAR,
-            amount DOUBLE,
-            currency VARCHAR,
-            cost_amount DOUBLE,
-            cost_currency VARCHAR,
-            price_amount DOUBLE,
-            price_currency VARCHAR,
-            source_account VARCHAR,
-            source_account_type VARCHAR,
-            transaction_metadata_json JSON,
-            posting_metadata_json JSON,
-            year INTEGER,
-            month INTEGER,
-            quarter INTEGER,
-            year_month VARCHAR
-        );
+            transaction_id TEXT NOT NULL,
+            transaction_date TEXT NOT NULL,
+            transaction_flag TEXT,
+            transaction_payee TEXT,
+            transaction_narration TEXT,
+            transaction_tags TEXT,
+            transaction_links TEXT,
+            account TEXT NOT NULL,
+            account_type TEXT NOT NULL,
+            amount REAL,
+            currency TEXT,
+            cost_amount REAL,
+            cost_currency TEXT,
+            price_amount REAL,
+            price_currency TEXT,
+            source_account TEXT,
+            source_account_type TEXT,
+            transaction_metadata_json TEXT,
+            posting_metadata_json TEXT,
+            year INTEGER NOT NULL,
+            month INTEGER NOT NULL,
+            quarter INTEGER NOT NULL,
+            year_month TEXT NOT NULL
+        )
         """
         con.execute(schema_sql)
+
+        # Create indexes for common queries
+        con.execute("CREATE INDEX idx_transaction_date ON postings(transaction_date)")
+        con.execute("CREATE INDEX idx_account ON postings(account)")
+        con.execute("CREATE INDEX idx_account_type ON postings(account_type)")
+        con.execute("CREATE INDEX idx_year_month ON postings(year_month)")
+        con.execute("CREATE INDEX idx_transaction_id ON postings(transaction_id)")
 
         # Prepare data for bulk insert
         posting_id = 0
@@ -206,8 +227,8 @@ class DuckDBExporter:
 
         for txn_index, txn in enumerate(transactions):
             transaction_id = self._get_transaction_id(txn, txn_index)
-            transaction_tags = self._extract_tags(txn)
-            transaction_links = self._extract_links(txn)
+            transaction_tags = self._serialize_array(self._extract_tags(txn))
+            transaction_links = self._serialize_array(self._extract_links(txn))
             transaction_metadata = self._metadata_to_json(txn.meta)
 
             for posting in txn.postings:
@@ -245,7 +266,7 @@ class DuckDBExporter:
                 row = (
                     posting_id,
                     transaction_id,
-                    txn.date,
+                    txn.date.isoformat(),  # Convert date to ISO 8601 string
                     txn.flag,
                     txn.payee,
                     txn.narration,
@@ -277,8 +298,12 @@ class DuckDBExporter:
             )
         """, rows)
 
+        # Commit transaction
+        con.commit()
+
         # Verify
-        result = con.execute("SELECT COUNT(*) FROM postings").fetchone()
+        cursor = con.execute("SELECT COUNT(*) FROM postings")
+        result = cursor.fetchone()
         postings_count = result[0] if result else 0
 
         con.close()
@@ -290,7 +315,7 @@ class DuckDBExporter:
             "transactions_count": len(transactions)
         }
 
-    # Helper methods (adapted from reference script)
+    # Helper methods
 
     @staticmethod
     def _get_account_type(account: str) -> str:
@@ -301,6 +326,11 @@ class DuckDBExporter:
     def _decimal_to_float(value: Optional[Decimal]) -> Optional[float]:
         """Convert Decimal to float for database storage."""
         return float(value) if value is not None else None
+
+    @staticmethod
+    def _serialize_array(arr: List[str]) -> str:
+        """Convert Python list to JSON string for SQLite storage."""
+        return json.dumps(arr) if arr else '[]'
 
     @staticmethod
     def _compute_source_account(
@@ -317,7 +347,7 @@ class DuckDBExporter:
         # Rule 1: Check for explicit source_account metadata
         if txn.meta and 'source_account' in txn.meta:
             source_acc = txn.meta['source_account']
-            return source_acc, DuckDBExporter._get_account_type(source_acc)
+            return source_acc, SQLiteExporter._get_account_type(source_acc)
 
         # Get all postings except the current one
         other_postings = [p for p in txn.postings if p is not current_posting]
@@ -325,21 +355,21 @@ class DuckDBExporter:
         # Rule 2: If only 2 postings total, use the other one
         if len(txn.postings) == 2:
             source_acc = other_postings[0].account
-            return source_acc, DuckDBExporter._get_account_type(source_acc)
+            return source_acc, SQLiteExporter._get_account_type(source_acc)
 
         # Rule 3 & 4: Find Assets/Liabilities accounts
         asset_liability_postings = [
             p for p in other_postings
-            if DuckDBExporter._get_account_type(p.account) in ('Assets', 'Liabilities')
+            if SQLiteExporter._get_account_type(p.account) in ('Assets', 'Liabilities')
         ]
 
         if len(asset_liability_postings) == 1:
             source_acc = asset_liability_postings[0].account
-            return source_acc, DuckDBExporter._get_account_type(source_acc)
+            return source_acc, SQLiteExporter._get_account_type(source_acc)
         elif len(asset_liability_postings) > 1:
             # Pick the first one
             source_acc = asset_liability_postings[0].account
-            return source_acc, DuckDBExporter._get_account_type(source_acc)
+            return source_acc, SQLiteExporter._get_account_type(source_acc)
 
         # No clear source account found
         return None, None
@@ -364,9 +394,9 @@ class DuckDBExporter:
         elif isinstance(value, (str, int, float, bool, type(None))):
             return value
         elif isinstance(value, dict):
-            return {k: DuckDBExporter._convert_value_to_json_serializable(v) for k, v in value.items()}
+            return {k: SQLiteExporter._convert_value_to_json_serializable(v) for k, v in value.items()}
         elif isinstance(value, (list, tuple, set)):
-            return [DuckDBExporter._convert_value_to_json_serializable(item) for item in value]
+            return [SQLiteExporter._convert_value_to_json_serializable(item) for item in value]
         else:
             # Convert other types to string
             return str(value)
@@ -379,7 +409,7 @@ class DuckDBExporter:
 
         # Recursively convert all values to JSON-serializable types
         clean_meta = {
-            k: DuckDBExporter._convert_value_to_json_serializable(v)
+            k: SQLiteExporter._convert_value_to_json_serializable(v)
             for k, v in meta.items()
         }
 
