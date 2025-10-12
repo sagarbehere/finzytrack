@@ -22,6 +22,7 @@ from datetime import datetime
 import httpx
 
 from app.config import MetabaseConfig
+from app.core.config_manager import ConfigManager
 from app.exceptions import APIError
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 class MetabaseManager:
     """Service for managing Metabase lifecycle and API interactions."""
 
-    def __init__(self, config: MetabaseConfig, duckdb_path: str, config_manager):
+    def __init__(self, config: MetabaseConfig, duckdb_path: str, config_manager: ConfigManager):
         self.config = config
         self.duckdb_path = duckdb_path
         self.config_manager = config_manager
@@ -184,7 +185,7 @@ class MetabaseManager:
             raise APIError(message=f"Failed to start Metabase: {str(e)}", code="METABASE_START_FAILED", status_code=500)
 
     async def _stop_process(self) -> Dict[str, Any]:
-        assert self.process is not None
+        assert self.process is not None, "Process must be running to stop it"
         process = self.process
         logger.info(f"Stopping Metabase (PID {process.pid})")
         uptime_seconds = int((datetime.utcnow() - self.start_time).total_seconds()) if self.start_time else 0
@@ -292,7 +293,7 @@ class MetabaseManager:
         payload = {
             "name": "Finzytrack Ledger",
             "engine": "duckdb",
-            "details": {"database_file": db_path, "read_only": False, "old_implicit_casting": True, "allow_unsigned_extensions": False},
+            "details": {"database_file": db_path, "read_only": True, "old_implicit_casting": True, "allow_unsigned_extensions": False},
             "is_on_demand": False,
             "is_full_sync": True,
             "is_sample": False,

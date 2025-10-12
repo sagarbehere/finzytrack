@@ -86,8 +86,7 @@ async def stop_metabase(
     operation_id="initializeMetabase"
 )
 async def initialize_metabase(
-    metabase_manager: MetabaseManager = Depends(get_metabase_manager),
-    config_manager: ConfigManager = Depends(get_config_manager)
+    metabase_manager: MetabaseManager = Depends(get_metabase_manager)
 ):
     """
     Initialize Metabase (first-run setup).
@@ -99,7 +98,7 @@ async def initialize_metabase(
 
     The admin password is returned once and should be saved by the user.
     """
-    result = await metabase_manager.initialize_first_run(config_manager)
+    result = await metabase_manager.initialize_first_run()
     init_data = MetabaseInitializeData(**result)
     return success_json_response(init_data)
 
