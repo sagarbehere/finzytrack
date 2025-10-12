@@ -10,6 +10,7 @@ from app.schemas.metabase_schemas import (
     MetabaseStartData,
     MetabaseStopData,
     MetabaseInitializeData,
+    MetabaseResetData,
     MetabaseSyncSchemaData
 )
 from app.dependencies import get_metabase_manager, get_config_manager
@@ -121,3 +122,26 @@ async def sync_schema(
     result = await metabase_manager.trigger_schema_refresh()
     sync_data = MetabaseSyncSchemaData(**result)
     return success_json_response(sync_data)
+
+
+@router.post(
+    "/reset",
+    response_model=ApiResponse[MetabaseResetData],
+    operation_id="resetMetabase"
+)
+async def reset_metabase(
+    metabase_manager: MetabaseManager = Depends(get_metabase_manager)
+):
+    """
+    Perform a factory reset of the Metabase instance.
+
+    This is a destructive operation that will:
+    1. Stop the Metabase server.
+    2. Delete the Metabase application database file, wiping out all users and settings.
+    3. Reset the application's configuration to the un-initialized state.
+
+    After this, Metabase can be initialized again from scratch.
+    """
+    result = await metabase_manager.reset()
+    reset_data = MetabaseResetData(**result)
+    return success_json_response(reset_data)

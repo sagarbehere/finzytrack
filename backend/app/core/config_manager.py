@@ -80,3 +80,19 @@ class ConfigManager:
         # Update in-memory config as well
         for key, value in state.items():
             setattr(self.config.analytics.metabase, key, value)
+
+    def reset_metabase_state(self) -> None:
+        """
+        Resets the Metabase configuration to its default (un-initialized) state.
+        """
+        from app.config import MetabaseConfig
+        default_metabase_config = MetabaseConfig()
+        
+        reset_state = {
+            "initialized": default_metabase_config.initialized,
+            "admin_password": default_metabase_config.admin_password,
+            "session_token": default_metabase_config.session_token,
+            "database_id": default_metabase_config.database_id
+        }
+        
+        self.save_metabase_state(reset_state)

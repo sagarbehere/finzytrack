@@ -39,10 +39,10 @@ class MetabaseInitializeData(BaseModel):
     dashboards_imported: int = Field(..., description="Number of dashboards imported")
 
 
-class MetabaseLoginUrlData(BaseModel):
-    """Metabase auto-login URL data."""
-    url: str = Field(..., description="Auto-login URL")
-    expires_at: Optional[str] = Field(None, description="Expiration time (ISO format)")
+class MetabaseResetData(BaseModel):
+    """Metabase reset result data."""
+    reset_successful: bool = Field(..., description="Whether the reset was successful")
+    timestamp: str = Field(..., description="Timestamp of the reset (ISO format)")
 
 
 class MetabaseSyncSchemaData(BaseModel):
