@@ -4,11 +4,69 @@
 /* eslint-disable */
 import type { ApiResponse_DuckDBExportData_ } from '../models/ApiResponse_DuckDBExportData_';
 import type { ApiResponse_DuckDBStatusData_ } from '../models/ApiResponse_DuckDBStatusData_';
+import type { ApiResponse_ExportData_ } from '../models/ApiResponse_ExportData_';
+import type { ApiResponse_ExportStatusData_ } from '../models/ApiResponse_ExportStatusData_';
+import type { Body_exportLedger } from '../models/Body_exportLedger';
+import type { DatabaseType } from '../models/DatabaseType';
 import type { DuckDBExportRequest } from '../models/DuckDBExportRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
 export class LedgerService {
+    /**
+     * Export Ledger
+     * Export ledger to specified database or active database.
+     *
+     * This endpoint allows manual export to either DuckDB or SQLite, regardless of
+     * which database is configured as active in analytics.metabase.db_type.
+     *
+     * Examples:
+     * POST /api/ledger/export                           # Export to active database (from config)
+     * POST /api/ledger/export {"db_type": "sqlite"}    # Explicitly export to SQLite
+     * POST /api/ledger/export {"db_type": "duckdb"}    # Explicitly export to DuckDB
+     * @param requestBody
+     * @returns ApiResponse_ExportData_ Successful Response
+     * @throws ApiError
+     */
+    public static exportLedger(
+        requestBody?: Body_exportLedger,
+    ): CancelablePromise<ApiResponse_ExportData_> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/ledger/export',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Get Export Status
+     * Get export status for specified database or active database.
+     *
+     * Examples:
+     * GET /api/ledger/export/status                    # Status of active database
+     * GET /api/ledger/export/status?db_type=sqlite     # Status of SQLite database
+     * GET /api/ledger/export/status?db_type=duckdb     # Status of DuckDB database
+     * @param dbType Database type. If not specified, uses active database from config.
+     * @returns ApiResponse_ExportStatusData_ Successful Response
+     * @throws ApiError
+     */
+    public static getExportStatus(
+        dbType?: (DatabaseType | null),
+    ): CancelablePromise<ApiResponse_ExportStatusData_> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/ledger/export/status',
+            query: {
+                'db_type': dbType,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
     /**
      * Export To Duckdb
      * Export current ledger to DuckDB format.

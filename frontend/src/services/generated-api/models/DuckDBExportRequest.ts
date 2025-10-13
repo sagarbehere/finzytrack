@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Request to export ledger to DuckDB.
+ * Request to export ledger to DuckDB (legacy endpoint).
  */
 export type DuckDBExportRequest = {
     /**

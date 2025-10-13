@@ -3,10 +3,10 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ErrorInfo } from './ErrorInfo';
-import type { MetabaseLoginUrlData } from './MetabaseLoginUrlData';
-export type ApiResponse_MetabaseLoginUrlData_ = {
+import type { ExportData } from './ExportData';
+export type ApiResponse_ExportData_ = {
     success: boolean;
-    data?: (MetabaseLoginUrlData | null);
+    data?: (ExportData | null);
     error?: (ErrorInfo | null);
 };
 

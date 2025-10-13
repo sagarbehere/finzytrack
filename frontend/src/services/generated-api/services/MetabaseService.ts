@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ApiResponse_MetabaseInitializeData_ } from '../models/ApiResponse_MetabaseInitializeData_';
-import type { ApiResponse_MetabaseLoginUrlData_ } from '../models/ApiResponse_MetabaseLoginUrlData_';
+import type { ApiResponse_MetabaseResetData_ } from '../models/ApiResponse_MetabaseResetData_';
 import type { ApiResponse_MetabaseStartData_ } from '../models/ApiResponse_MetabaseStartData_';
 import type { ApiResponse_MetabaseStatusData_ } from '../models/ApiResponse_MetabaseStatusData_';
 import type { ApiResponse_MetabaseStopData_ } from '../models/ApiResponse_MetabaseStopData_';
@@ -67,7 +67,6 @@ export class MetabaseService {
      * 3. Imports dashboard templates (if available)
      *
      * The admin password is returned once and should be saved by the user.
-     * Future logins can use the auto-login URL from /login-url endpoint.
      * @returns ApiResponse_MetabaseInitializeData_ Successful Response
      * @throws ApiError
      */
@@ -75,22 +74,6 @@ export class MetabaseService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/metabase/initialize',
-        });
-    }
-    /**
-     * Get Login Url
-     * Get auto-login URL for Metabase.
-     *
-     * This endpoint generates a URL that automatically logs the user into Metabase
-     * without requiring manual password entry. The session token expires after
-     * a period of inactivity.
-     * @returns ApiResponse_MetabaseLoginUrlData_ Successful Response
-     * @throws ApiError
-     */
-    public static getMetabaseLoginUrl(): CancelablePromise<ApiResponse_MetabaseLoginUrlData_> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/metabase/login-url',
         });
     }
     /**
@@ -107,6 +90,25 @@ export class MetabaseService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/metabase/sync-schema',
+        });
+    }
+    /**
+     * Reset Metabase
+     * Perform a factory reset of the Metabase instance.
+     *
+     * This is a destructive operation that will:
+     * 1. Stop the Metabase server.
+     * 2. Delete the Metabase application database file, wiping out all users and settings.
+     * 3. Reset the application's configuration to the un-initialized state.
+     *
+     * After this, Metabase can be initialized again from scratch.
+     * @returns ApiResponse_MetabaseResetData_ Successful Response
+     * @throws ApiError
+     */
+    public static resetMetabase(): CancelablePromise<ApiResponse_MetabaseResetData_> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/metabase/reset',
         });
     }
 }
