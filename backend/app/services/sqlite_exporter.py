@@ -181,45 +181,55 @@ class SQLiteExporter:
             con.execute("PRAGMA temp_store=MEMORY").fetchone()
             logger.debug("SQLite WAL mode and optimizations enabled")
 
-        # Drop existing table and create schema
-        con.execute("DROP TABLE IF EXISTS postings")
-
-        schema_sql = """
-        CREATE TABLE postings (
-            posting_id INTEGER PRIMARY KEY,
-            transaction_id TEXT NOT NULL,
-            transaction_date TEXT NOT NULL,
-            transaction_flag TEXT,
-            transaction_payee TEXT,
-            transaction_narration TEXT,
-            transaction_tags TEXT,
-            transaction_links TEXT,
-            account TEXT NOT NULL,
-            account_type TEXT NOT NULL,
-            amount REAL,
-            currency TEXT,
-            cost_amount REAL,
-            cost_currency TEXT,
-            price_amount REAL,
-            price_currency TEXT,
-            source_account TEXT,
-            source_account_type TEXT,
-            transaction_metadata_json TEXT,
-            posting_metadata_json TEXT,
-            year INTEGER NOT NULL,
-            month INTEGER NOT NULL,
-            quarter INTEGER NOT NULL,
-            year_month TEXT NOT NULL
+        # Check if table exists
+        cursor = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='postings'"
         )
-        """
-        con.execute(schema_sql)
+        table_exists = cursor.fetchone() is not None
 
-        # Create indexes for common queries
-        con.execute("CREATE INDEX idx_transaction_date ON postings(transaction_date)")
-        con.execute("CREATE INDEX idx_account ON postings(account)")
-        con.execute("CREATE INDEX idx_account_type ON postings(account_type)")
-        con.execute("CREATE INDEX idx_year_month ON postings(year_month)")
-        con.execute("CREATE INDEX idx_transaction_id ON postings(transaction_id)")
+        if not table_exists:
+            # First time: create table and indexes
+            schema_sql = """
+            CREATE TABLE postings (
+                posting_id INTEGER PRIMARY KEY,
+                transaction_id TEXT NOT NULL,
+                transaction_date TEXT NOT NULL,
+                transaction_flag TEXT,
+                transaction_payee TEXT,
+                transaction_narration TEXT,
+                transaction_tags TEXT,
+                transaction_links TEXT,
+                account TEXT NOT NULL,
+                account_type TEXT NOT NULL,
+                amount REAL,
+                currency TEXT,
+                cost_amount REAL,
+                cost_currency TEXT,
+                price_amount REAL,
+                price_currency TEXT,
+                source_account TEXT,
+                source_account_type TEXT,
+                transaction_metadata_json TEXT,
+                posting_metadata_json TEXT,
+                year INTEGER NOT NULL,
+                month INTEGER NOT NULL,
+                quarter INTEGER NOT NULL,
+                year_month TEXT NOT NULL
+            )
+            """
+            con.execute(schema_sql)
+
+            # Create indexes for common queries
+            con.execute("CREATE INDEX idx_transaction_date ON postings(transaction_date)")
+            con.execute("CREATE INDEX idx_account ON postings(account)")
+            con.execute("CREATE INDEX idx_account_type ON postings(account_type)")
+            con.execute("CREATE INDEX idx_year_month ON postings(year_month)")
+            con.execute("CREATE INDEX idx_transaction_id ON postings(transaction_id)")
+            logger.info("Created postings table and indexes")
+        else:
+            # Table exists: delete all rows (preserves schema and is safe with active readers)
+            con.execute("DELETE FROM postings")
+            logger.debug("Cleared existing postings data")
 
         # Prepare data for bulk insert
         posting_id = 0

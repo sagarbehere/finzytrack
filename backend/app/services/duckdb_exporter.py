@@ -167,38 +167,48 @@ class DuckDBExporter:
         # Create DuckDB connection
         con = duckdb.connect(self.duckdb_path)
 
-        # Drop existing table and create schema
-        con.execute("DROP TABLE IF EXISTS postings;")
+        # Check if table exists
+        cursor = con.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_name = 'postings'"
+        )
+        table_exists = cursor.fetchone() is not None
 
-        schema_sql = """
-        CREATE TABLE postings (
-            posting_id INTEGER PRIMARY KEY,
-            transaction_id VARCHAR,
-            transaction_date DATE,
-            transaction_flag VARCHAR,
-            transaction_payee VARCHAR,
-            transaction_narration VARCHAR,
-            transaction_tags VARCHAR[],
-            transaction_links VARCHAR[],
-            account VARCHAR,
-            account_type VARCHAR,
-            amount DOUBLE,
-            currency VARCHAR,
-            cost_amount DOUBLE,
-            cost_currency VARCHAR,
-            price_amount DOUBLE,
-            price_currency VARCHAR,
-            source_account VARCHAR,
-            source_account_type VARCHAR,
-            transaction_metadata_json JSON,
-            posting_metadata_json JSON,
-            year INTEGER,
-            month INTEGER,
-            quarter INTEGER,
-            year_month VARCHAR
-        );
-        """
-        con.execute(schema_sql)
+        if not table_exists:
+            # First time: create table
+            schema_sql = """
+            CREATE TABLE postings (
+                posting_id INTEGER PRIMARY KEY,
+                transaction_id VARCHAR,
+                transaction_date DATE,
+                transaction_flag VARCHAR,
+                transaction_payee VARCHAR,
+                transaction_narration VARCHAR,
+                transaction_tags VARCHAR[],
+                transaction_links VARCHAR[],
+                account VARCHAR,
+                account_type VARCHAR,
+                amount DOUBLE,
+                currency VARCHAR,
+                cost_amount DOUBLE,
+                cost_currency VARCHAR,
+                price_amount DOUBLE,
+                price_currency VARCHAR,
+                source_account VARCHAR,
+                source_account_type VARCHAR,
+                transaction_metadata_json JSON,
+                posting_metadata_json JSON,
+                year INTEGER,
+                month INTEGER,
+                quarter INTEGER,
+                year_month VARCHAR
+            );
+            """
+            con.execute(schema_sql)
+            logger.info("Created postings table")
+        else:
+            # Table exists: delete all rows (preserves schema)
+            con.execute("DELETE FROM postings")
+            logger.debug("Cleared existing postings data")
 
         # Prepare data for bulk insert
         posting_id = 0
