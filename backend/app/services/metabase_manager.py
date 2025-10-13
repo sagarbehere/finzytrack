@@ -166,6 +166,7 @@ class MetabaseManager:
         env["MB_JETTY_PORT"] = str(self.config.port)
         env["MB_DB_FILE"] = str(Path(self.config.data_dir) / "metabase.db")
         env["MB_PLUGINS_DIR"] = str(Path(self.config.plugins_dir).absolute())
+        env["MB_LOAD_SAMPLE_CONTENT"] = "false"  # Disable sample database
 
         java_cmd = ["java", f"-Xmx{self.config.java_heap_size}"]
         if self.config.java_opts:
