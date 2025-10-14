@@ -49,3 +49,9 @@ class MetabaseSyncSchemaData(BaseModel):
     """Metabase schema sync result data."""
     synced_at: str = Field(..., description="Sync time (ISO format)")
     database_id: int = Field(..., description="Database ID that was synced")
+
+
+class MetabaseDiscardFieldsData(BaseModel):
+    """Metabase discard saved fields result data."""
+    refreshed_at: str = Field(..., description="Refresh time (ISO format)")
+    database_id: int = Field(..., description="Database ID that was refreshed")

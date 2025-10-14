@@ -11,7 +11,8 @@ from app.schemas.metabase_schemas import (
     MetabaseStopData,
     MetabaseInitializeData,
     MetabaseResetData,
-    MetabaseSyncSchemaData
+    MetabaseSyncSchemaData,
+    MetabaseDiscardFieldsData
 )
 from app.dependencies import get_metabase_manager, get_config_manager
 from app.services.metabase_manager import MetabaseManager
@@ -121,6 +122,26 @@ async def sync_schema(
     result = await metabase_manager.trigger_schema_refresh()
     sync_data = MetabaseSyncSchemaData(**result)
     return success_json_response(sync_data)
+
+
+@router.post(
+    "/discard-saved-fields",
+    response_model=ApiResponse[MetabaseDiscardFieldsData],
+    operation_id="discardMetabaseSavedFields"
+)
+async def discard_saved_fields(
+    metabase_manager: MetabaseManager = Depends(get_metabase_manager)
+):
+    """
+    Force Metabase to discard saved fields and reconnect fresh.
+
+    This is more aggressive than sync-schema and should be called after
+    full database exports to clear connection state issues that can cause
+    SQLITE_CORRUPT errors when the database file is completely recreated.
+    """
+    result = await metabase_manager.discard_saved_fields()
+    discard_data = MetabaseDiscardFieldsData(**result)
+    return success_json_response(discard_data)
 
 
 @router.post(

@@ -138,6 +138,20 @@ class MetabaseManager:
         logger.info(f"Triggered schema refresh for database {self.config.database_id}")
         return {"synced_at": datetime.utcnow().isoformat() + "Z", "database_id": self.config.database_id}
 
+    async def discard_saved_fields(self) -> Dict[str, Any]:
+        """Force Metabase to discard all cached metadata and reconnect fresh.
+        
+        This is more aggressive than sync_schema and should be called after
+        full database exports to clear connection state issues.
+        """
+        await self._ensure_metabase_is_running()
+        if not self.config.initialized or not self.config.database_id:
+            raise APIError(message="Metabase not initialized or DuckDB not connected", code="METABASE_NOT_CONFIGURED", status_code=409)
+
+        await self._api_request("POST", f"/api/database/{self.config.database_id}/discard_saved_fields")
+        logger.info(f"Discarded saved fields for database {self.config.database_id} - forcing fresh connection")
+        return {"refreshed_at": datetime.utcnow().isoformat() + "Z", "database_id": self.config.database_id}
+
     # =====================================
     # Lifecycle & API Helpers
     # =====================================

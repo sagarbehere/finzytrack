@@ -167,17 +167,23 @@ class SQLiteExporter:
         db_path = Path(self.sqlite_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Create SQLite connection
-        con = sqlite3.connect(self.sqlite_path)
+        # Create connection with timeout and immediate isolation for concurrent access
+        con = sqlite3.connect(
+            self.sqlite_path,
+            timeout=30.0,
+            isolation_level="IMMEDIATE"  # Auto-BEGIN IMMEDIATE
+        )
 
-        # Enable WAL mode first (must be done before any other operations)
+        # Configure WAL for concurrent access
         if self.enable_wal:
             # IMPORTANT: Must fetch result for PRAGMA to take effect
             result = con.execute("PRAGMA journal_mode=WAL").fetchone()
             logger.info(f"SQLite journal mode set to: {result[0] if result else 'unknown'}")
 
             con.execute("PRAGMA synchronous=NORMAL").fetchone()
-            con.execute("PRAGMA wal_autocheckpoint=1000").fetchone()
+            # Important: Don't auto-checkpoint during writes
+            con.execute("PRAGMA wal_autocheckpoint=0").fetchone()
+            con.execute("PRAGMA cache_size=10000").fetchone()
             con.execute("PRAGMA temp_store=MEMORY").fetchone()
             logger.debug("SQLite WAL mode and optimizations enabled")
 
@@ -226,102 +232,105 @@ class SQLiteExporter:
             con.execute("CREATE INDEX idx_year_month ON postings(year_month)")
             con.execute("CREATE INDEX idx_transaction_id ON postings(transaction_id)")
             logger.info("Created postings table and indexes")
-        else:
-            # Table exists: delete all rows (preserves schema and is safe with active readers)
-            con.execute("DELETE FROM postings")
-            logger.debug("Cleared existing postings data")
 
-        # Prepare data for bulk insert
+        # Start atomic transaction (BEGIN IMMEDIATE is automatic due to isolation_level)
         posting_id = 0
         rows = []
 
-        for txn_index, txn in enumerate(transactions):
-            transaction_id = self._get_transaction_id(txn, txn_index)
-            transaction_tags = self._serialize_array(self._extract_tags(txn))
-            transaction_links = self._serialize_array(self._extract_links(txn))
-            transaction_metadata = self._metadata_to_json(txn.meta)
+        try:
+            # Delete all data
+            con.execute("DELETE FROM postings")
+            logger.debug("Cleared existing postings data")
 
-            for posting in txn.postings:
-                posting_id += 1
+            # Prepare data for bulk insert
+            for txn_index, txn in enumerate(transactions):
+                transaction_id = self._get_transaction_id(txn, txn_index)
+                transaction_tags = self._serialize_array(self._extract_tags(txn))
+                transaction_links = self._serialize_array(self._extract_links(txn))
+                transaction_metadata = self._metadata_to_json(txn.meta)
 
-                # Compute source account
-                source_account, source_account_type = self._compute_source_account(txn, posting)
+                for posting in txn.postings:
+                    posting_id += 1
 
-                # Extract posting metadata
-                posting_metadata = self._metadata_to_json(posting.meta) if posting.meta else None
+                    # Compute source account
+                    source_account, source_account_type = self._compute_source_account(txn, posting)
 
-                # Extract cost information
-                cost_amount = None
-                cost_currency = None
-                if posting.cost:
-                    # Use getattr for type-safe access to Cost/CostSpec attributes
-                    cost_number = getattr(posting.cost, 'number', None)
-                    if cost_number is not None:
-                        cost_amount = self._decimal_to_float(cost_number)
-                    cost_currency = getattr(posting.cost, 'currency', None)
+                    # Extract posting metadata
+                    posting_metadata = self._metadata_to_json(posting.meta) if posting.meta else None
 
-                # Extract price information
-                price_amount = None
-                price_currency = None
-                if posting.price:
-                    price_amount = self._decimal_to_float(posting.price.number)
-                    price_currency = posting.price.currency
+                    # Extract cost information
+                    cost_amount = None
+                    cost_currency = None
+                    if posting.cost:
+                        # Use getattr for type-safe access to Cost/CostSpec attributes
+                        cost_number = getattr(posting.cost, 'number', None)
+                        if cost_number is not None:
+                            cost_amount = self._decimal_to_float(cost_number)
+                        cost_currency = getattr(posting.cost, 'currency', None)
 
-                # Time-based fields
-                year = txn.date.year
-                month = txn.date.month
-                quarter = (month - 1) // 3 + 1
-                year_month = f"{year}-{month:02d}"
+                    # Extract price information
+                    price_amount = None
+                    price_currency = None
+                    if posting.price:
+                        price_amount = self._decimal_to_float(posting.price.number)
+                        price_currency = posting.price.currency
 
-                row = (
-                    posting_id,
-                    transaction_id,
-                    txn.date.isoformat(),  # Convert date to ISO 8601 string
-                    txn.flag,
-                    txn.payee,
-                    txn.narration,
-                    transaction_tags,
-                    transaction_links,
-                    posting.account,
-                    self._get_account_type(posting.account),
-                    self._decimal_to_float(posting.units.number) if posting.units else None,
-                    posting.units.currency if posting.units else None,
-                    cost_amount,
-                    cost_currency,
-                    price_amount,
-                    price_currency,
-                    source_account,
-                    source_account_type,
-                    transaction_metadata,
-                    posting_metadata,
-                    year,
-                    month,
-                    quarter,
-                    year_month
+                    # Time-based fields
+                    year = txn.date.year
+                    month = txn.date.month
+                    quarter = (month - 1) // 3 + 1
+                    year_month = f"{year}-{month:02d}"
+
+                    row = (
+                        posting_id,
+                        transaction_id,
+                        txn.date.isoformat(),  # Convert date to ISO 8601 string
+                        txn.flag,
+                        txn.payee,
+                        txn.narration,
+                        transaction_tags,
+                        transaction_links,
+                        posting.account,
+                        self._get_account_type(posting.account),
+                        self._decimal_to_float(posting.units.number) if posting.units else None,
+                        posting.units.currency if posting.units else None,
+                        cost_amount,
+                        cost_currency,
+                        price_amount,
+                        price_currency,
+                        source_account,
+                        source_account_type,
+                        transaction_metadata,
+                        posting_metadata,
+                        year,
+                        month,
+                        quarter,
+                        year_month
+                    )
+                    rows.append(row)
+
+            # Bulk insert all rows
+            con.executemany("""
+                INSERT INTO postings VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
-                rows.append(row)
+            """, rows)
 
-        # Bulk insert
-        con.executemany("""
-            INSERT INTO postings VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-            )
-        """, rows)
-
-        # Commit transaction
-        con.commit()
-
-        # Verify
-        cursor = con.execute("SELECT COUNT(*) FROM postings")
-        result = cursor.fetchone()
-        postings_count = result[0] if result else 0
-
-        con.close()
-
-        logger.info(f"Successfully exported {postings_count} postings from {len(transactions)} transactions")
+            # Commit - makes changes visible atomically
+            con.commit()
+            logger.info(f"Successfully exported {posting_id} postings from {len(transactions)} transactions")
+            
+            # Manual checkpoint after successful commit
+            con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            
+        except Exception:
+            con.rollback()
+            raise
+        finally:
+            con.close()
 
         return {
-            "postings_count": postings_count,
+            "postings_count": posting_id,
             "transactions_count": len(transactions)
         }
 
