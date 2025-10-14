@@ -33,6 +33,7 @@ export type { ApiResponse_DuckDBStatusData_ } from './models/ApiResponse_DuckDBS
 export type { ApiResponse_ExportData_ } from './models/ApiResponse_ExportData_';
 export type { ApiResponse_ExportStatusData_ } from './models/ApiResponse_ExportStatusData_';
 export type { ApiResponse_LearnOFXAccountData_ } from './models/ApiResponse_LearnOFXAccountData_';
+export type { ApiResponse_MetabaseDiscardFieldsData_ } from './models/ApiResponse_MetabaseDiscardFieldsData_';
 export type { ApiResponse_MetabaseInitializeData_ } from './models/ApiResponse_MetabaseInitializeData_';
 export type { ApiResponse_MetabaseResetData_ } from './models/ApiResponse_MetabaseResetData_';
 export type { ApiResponse_MetabaseStartData_ } from './models/ApiResponse_MetabaseStartData_';
@@ -40,6 +41,7 @@ export type { ApiResponse_MetabaseStatusData_ } from './models/ApiResponse_Metab
 export type { ApiResponse_MetabaseStopData_ } from './models/ApiResponse_MetabaseStopData_';
 export type { ApiResponse_MetabaseSyncSchemaData_ } from './models/ApiResponse_MetabaseSyncSchemaData_';
 export type { ApiResponse_OFXDetectionData_ } from './models/ApiResponse_OFXDetectionData_';
+export type { ApiResponse_QueryData_ } from './models/ApiResponse_QueryData_';
 export type { Body_exportLedger } from './models/Body_exportLedger';
 export type { CategorizationStats } from './models/CategorizationStats';
 export type { CategorizedTransactionResult } from './models/CategorizedTransactionResult';
@@ -68,6 +70,7 @@ export type { ExportStatusData } from './models/ExportStatusData';
 export type { HTTPValidationError } from './models/HTTPValidationError';
 export type { LearnOFXAccountData } from './models/LearnOFXAccountData';
 export type { LearnOFXAccountRequest } from './models/LearnOFXAccountRequest';
+export type { MetabaseDiscardFieldsData } from './models/MetabaseDiscardFieldsData';
 export type { MetabaseInitializeData } from './models/MetabaseInitializeData';
 export type { MetabaseResetData } from './models/MetabaseResetData';
 export type { MetabaseStartData } from './models/MetabaseStartData';
@@ -76,6 +79,9 @@ export type { MetabaseStopData } from './models/MetabaseStopData';
 export type { MetabaseSyncSchemaData } from './models/MetabaseSyncSchemaData';
 export type { OFXDetectionData } from './models/OFXDetectionData';
 export type { OFXDetectionRequest } from './models/OFXDetectionRequest';
+export type { QueryColumnInfo } from './models/QueryColumnInfo';
+export type { QueryData } from './models/QueryData';
+export type { QueryRequest } from './models/QueryRequest';
 export type { RawTransactionForCategorization } from './models/RawTransactionForCategorization';
 export type { ValidationError } from './models/ValidationError';
 

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ApiResponse_MetabaseDiscardFieldsData_ } from '../models/ApiResponse_MetabaseDiscardFieldsData_';
 import type { ApiResponse_MetabaseInitializeData_ } from '../models/ApiResponse_MetabaseInitializeData_';
 import type { ApiResponse_MetabaseResetData_ } from '../models/ApiResponse_MetabaseResetData_';
 import type { ApiResponse_MetabaseStartData_ } from '../models/ApiResponse_MetabaseStartData_';
@@ -90,6 +91,22 @@ export class MetabaseService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/metabase/sync-schema',
+        });
+    }
+    /**
+     * Discard Saved Fields
+     * Force Metabase to discard saved fields and reconnect fresh.
+     *
+     * This is more aggressive than sync-schema and should be called after
+     * full database exports to clear connection state issues that can cause
+     * SQLITE_CORRUPT errors when the database file is completely recreated.
+     * @returns ApiResponse_MetabaseDiscardFieldsData_ Successful Response
+     * @throws ApiError
+     */
+    public static discardMetabaseSavedFields(): CancelablePromise<ApiResponse_MetabaseDiscardFieldsData_> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/metabase/discard-saved-fields',
         });
     }
     /**

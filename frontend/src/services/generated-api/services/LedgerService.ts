@@ -6,9 +6,11 @@ import type { ApiResponse_DuckDBExportData_ } from '../models/ApiResponse_DuckDB
 import type { ApiResponse_DuckDBStatusData_ } from '../models/ApiResponse_DuckDBStatusData_';
 import type { ApiResponse_ExportData_ } from '../models/ApiResponse_ExportData_';
 import type { ApiResponse_ExportStatusData_ } from '../models/ApiResponse_ExportStatusData_';
+import type { ApiResponse_QueryData_ } from '../models/ApiResponse_QueryData_';
 import type { Body_exportLedger } from '../models/Body_exportLedger';
 import type { DatabaseType } from '../models/DatabaseType';
 import type { DuckDBExportRequest } from '../models/DuckDBExportRequest';
+import type { QueryRequest } from '../models/QueryRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -104,6 +106,36 @@ export class LedgerService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/ledger/export/duckdb/status',
+        });
+    }
+    /**
+     * Execute Query
+     * Execute a query against the specified database engine.
+     *
+     * Examples:
+     * POST /api/ledger/query {"query": "SELECT * FROM postings LIMIT 10"}
+     * POST /api/ledger/query?db_type=sqlite {"query": "SELECT account, SUM(amount) FROM postings GROUP BY account"}
+     * POST /api/ledger/query?db_type=beanquery {"query": "SELECT account, sum(position) FROM postings GROUP BY account"}
+     * @param requestBody
+     * @param dbType Database/engine type: 'duckdb', 'sqlite', or 'beanquery'. If not specified, uses active database from config.
+     * @returns ApiResponse_QueryData_ Successful Response
+     * @throws ApiError
+     */
+    public static executeQuery(
+        requestBody: QueryRequest,
+        dbType?: (string | null),
+    ): CancelablePromise<ApiResponse_QueryData_> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/ledger/query',
+            query: {
+                'db_type': dbType,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
 }
