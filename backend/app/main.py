@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 
 from .config import Config, ConfigurationError, DatabaseType
 from .api.routers.importer import ofx_accounts, transaction
-from .api.routers import accounts, commodities, ledger_export, metabase
+from .api.routers import accounts, commodities, ledger_export, metabase, query
 from .core.beancount_manager import BeancountManager
 from .error_handler import setup_error_handlers
 from .core.backup_manager import BackupManager
@@ -254,6 +254,8 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(commodities.router, prefix="/api", tags=["commodities"])
     app.include_router(ledger_export.router, prefix="/api/ledger", tags=["ledger"])
     app.include_router(metabase.router, prefix="/api/metabase", tags=["metabase"])
+    app.include_router(query.router, prefix="/api/ledger", tags=["ledger"])
+
     
     @app.get("/")
     async def root():
