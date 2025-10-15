@@ -15,6 +15,7 @@
     "@headlessui/vue": "^1.7.22",
     "@heroicons/vue": "^2.1.5",
     "@tanstack/vue-table": "^8.21.3",
+    "@tanstack/vue-virtual": "^3.13.12",
     "events": "^3.3.0",
     "ofx-js": "^0.2.0",
     "uuid": "^13.0.0",

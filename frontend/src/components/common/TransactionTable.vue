@@ -31,7 +31,7 @@
     <!-- Main table -->
     <div class="card">
       <div class="table-scroll-container">
-        <table class="w-full table-fixed">
+        <table class="w-full table-auto">
           <!-- Table Header -->
           <thead class="bg-gray-50 dark:bg-gray-800/50">
             <tr v-for="headerGroup in table.getHeaderGroups()" :key="headerGroup.id">
@@ -128,7 +128,7 @@
       <div class="card">
         <div class="px-4 py-3">
           <div class="flex items-center justify-around gap-6 text-sm">
-            <div class="flex items-center gap-2">
+            <div v-if="importContext" class="flex items-center gap-2">
               <span class="text-gray-600 dark:text-gray-400">Net Flow:</span>
               <span class="font-semibold text-gray-900 dark:text-white">
                 <template v-if="Object.keys(netFlowByCurrency).length > 0">
@@ -138,6 +138,21 @@
                 </template>
                 <template v-else>—</template>
               </span>
+            </div>
+            <div v-if="importContext" class="flex items-center gap-2">
+              <span class="text-gray-600 dark:text-gray-400">Potential duplicates:</span>
+              <button
+                @click="handleDuplicateSummaryClick"
+                :class="[
+                  'font-semibold',
+                  duplicateCount > 0
+                    ? 'text-orange-600 dark:text-orange-400 hover:underline cursor-pointer'
+                    : 'text-gray-900 dark:text-white cursor-default'
+                ]"
+                :disabled="duplicateCount === 0"
+              >
+                {{ duplicateCount }}
+              </button>
             </div>
             <div class="flex items-center gap-2">
               <span class="text-gray-600 dark:text-gray-400">Edited:</span>
@@ -1194,6 +1209,13 @@ const unbalancedCount = computed(() => {
   return filteredTransactions.value.filter(t => !isTransactionBalanced(t)).length
 })
 
+const duplicateCount = computed(() => {
+  return filteredTransactions.value.filter(t => {
+    const context = getImportContext(t.id)
+    return context?.is_duplicate === true
+  }).length
+})
+
 const isTransactionBalanced = (transaction: TransactionViewModel): boolean => {
   const totalInCents = transaction.postings.reduce((sum, posting) => {
     const amount = posting.amount || 0
@@ -1204,7 +1226,19 @@ const isTransactionBalanced = (transaction: TransactionViewModel): boolean => {
   return Math.abs(totalInCents) < 1
 }
 
+const handleDuplicateSummaryClick = () => {
+  if (duplicateCount.value === 0) return
 
+  // Find the first transaction with duplicates
+  const firstDuplicateTransaction = filteredTransactions.value.find(t => {
+    const context = getImportContext(t.id)
+    return context?.is_duplicate === true
+  })
+
+  if (firstDuplicateTransaction) {
+    emit('duplicateClick', firstDuplicateTransaction.id)
+  }
+}
 
 const findTransactionIndex = (transaction: TransactionViewModel) => {
   return props.transactions.findIndex(t => t.id === transaction.id)
@@ -1729,7 +1763,7 @@ defineExpose({
 }
 
 table {
-  table-layout: fixed;
+  table-layout: auto;
   border-collapse: separate;
   border-spacing: 0; /* Remove gaps between cells */
 }
