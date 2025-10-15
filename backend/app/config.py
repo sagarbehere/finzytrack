@@ -129,6 +129,35 @@ class MetabaseConfig(BaseModel):
     session_token: str = Field(default="", description="Metabase session token for auto-login")
     database_id: Optional[int] = Field(default=None, description="Database ID in Metabase")
 
+    # Field metadata configuration (optional)
+    field_metadata_config: Optional[str] = Field(
+        default=None,
+        description="Path to field metadata configuration JSON file. If null, field metadata configuration is skipped."
+    )
+
+    @field_validator('field_metadata_config')
+    @classmethod
+    def validate_field_metadata_config(cls, v: Optional[str]) -> Optional[str]:
+        """Validate that field metadata config file exists if specified."""
+        if v is None:
+            return None
+
+        # Convert to Path and check existence
+        config_path = Path(v)
+        if not config_path.exists():
+            raise ValueError(
+                f"Field metadata configuration file not found: {v}. "
+                "Either create the file or set field_metadata_config to null."
+            )
+
+        # Check it's a JSON file
+        if config_path.suffix.lower() != '.json':
+            raise ValueError(
+                f"Field metadata configuration must be a JSON file, got: {v}"
+            )
+
+        return v
+
 
 class AnalyticsConfig(BaseModel):
     """Analytics and reporting configuration."""

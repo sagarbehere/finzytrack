@@ -84,3 +84,8 @@ analytics:
     admin_password: ""
     session_token: ""
     database_id: null
+
+    # Field metadata configuration (optional)
+    # Set to null to disable field metadata configuration
+    # For SQLite: use "resources/metabase-templates/sqlite-field-metadata.json"
+    field_metadata_config: null

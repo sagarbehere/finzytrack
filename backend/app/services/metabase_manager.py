@@ -109,6 +109,16 @@ class MetabaseManager:
             session_token = await self._create_admin_account(setup_token, admin_password)
             database_id = await self._add_database_connection(session_token)
 
+            # Wait for schema sync to complete (Metabase needs to discover fields)
+            logger.info("Waiting for Metabase schema sync to complete...")
+            await self._wait_for_schema_sync(database_id, session_token)
+            logger.info("Schema sync completed successfully")
+
+            # Configure field metadata
+            logger.info("Starting field metadata configuration...")
+            await self._configure_field_metadata(database_id, session_token)
+            logger.info("Field metadata configuration completed successfully")
+
             state = {
                 "initialized": True,
                 "admin_password": admin_password,
@@ -380,3 +390,158 @@ class MetabaseManager:
     def _generate_password(length: int = 24) -> str:
         alphabet = string.ascii_letters + string.digits
         return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+    # =====================================
+    # Field Metadata Configuration
+    # =====================================
+
+    async def _wait_for_schema_sync(
+        self,
+        database_id: int,
+        session_token: str,
+        timeout: int = 60
+    ) -> None:
+        """
+        Wait for Metabase to complete initial schema sync.
+
+        After adding a database, Metabase needs time to:
+        1. Connect to the database
+        2. Discover tables
+        3. Discover fields for each table
+
+        This method polls the metadata endpoint until tables are discovered.
+        """
+        logger.info(f"Waiting for schema sync to complete (timeout: {timeout}s)")
+        start = datetime.utcnow()
+
+        while (datetime.utcnow() - start).total_seconds() < timeout:
+            try:
+                metadata = await self._get_database_metadata(database_id, session_token)
+                tables = metadata.get("tables", [])
+
+                if tables:
+                    # Check if postings table exists with fields
+                    postings_table = next(
+                        (t for t in tables if t["name"] == "postings"),
+                        None
+                    )
+                    if postings_table and postings_table.get("fields"):
+                        logger.info(f"Schema sync complete. Found {len(tables)} tables.")
+                        return
+            except Exception as e:
+                logger.debug(f"Schema not ready yet: {e}")
+
+            await asyncio.sleep(2)
+
+        raise TimeoutError(
+            f"Schema sync did not complete within {timeout} seconds. "
+            "Database may not be accessible."
+        )
+
+    async def _configure_field_metadata(self, database_id: int, session_token: str) -> None:
+        """
+        Configure field metadata (type casting, semantic types) for database tables.
+
+        Args:
+            database_id: Metabase database ID
+            session_token: Admin session token
+        """
+        logger.info(f"Configuring field metadata for database {database_id}")
+
+        # Step 1: Get database metadata to find field IDs
+        metadata = await self._get_database_metadata(database_id, session_token)
+
+        # Step 2: Load field configuration
+        field_config = self._load_field_metadata_config()
+
+        if not field_config:
+            logger.info("No field metadata configuration to apply")
+            return
+
+        # Step 3: Apply configuration to each field
+        for table in metadata.get("tables", []):
+            table_name = table["name"]
+
+            if table_name not in field_config:
+                continue
+
+            for field in table.get("fields", []):
+                field_name = field["name"]
+                field_id = field["id"]
+
+                if field_name not in field_config[table_name]:
+                    continue
+
+                # Get desired configuration for this field
+                config = field_config[table_name][field_name]
+
+                # Update field metadata
+                await self._update_field_metadata(field_id, config, session_token)
+                logger.info(f"Configured field {table_name}.{field_name} (ID: {field_id})")
+
+        logger.info("Field metadata configuration complete")
+
+    async def _get_database_metadata(
+        self,
+        database_id: int,
+        session_token: str
+    ) -> Dict[str, Any]:
+        """Get database metadata including all tables and fields."""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"http://localhost:{self.config.port}/api/database/{database_id}/metadata",
+                headers={"X-Metabase-Session": session_token},
+                timeout=30.0
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def _update_field_metadata(
+        self,
+        field_id: int,
+        config: Dict[str, Any],
+        session_token: str
+    ) -> None:
+        """Update metadata for a specific field."""
+        async with httpx.AsyncClient() as client:
+            response = await client.put(
+                f"http://localhost:{self.config.port}/api/field/{field_id}",
+                json=config,
+                headers={"X-Metabase-Session": session_token},
+                timeout=30.0
+            )
+            response.raise_for_status()
+
+    def _load_field_metadata_config(self) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        """
+        Load field metadata configuration from file specified in config.
+
+        Returns:
+            Dictionary mapping table_name -> field_name -> config.
+            Returns empty dict if no config file is specified.
+        """
+        # Check if field metadata configuration is enabled
+        if not self.config.field_metadata_config:
+            logger.info("Field metadata configuration disabled (field_metadata_config is null)")
+            return {}
+
+        # Load from configured path
+        config_path = Path(self.config.field_metadata_config)
+
+        # Note: File existence is already validated by Pydantic validator
+        # But we still check here for robustness
+        if not config_path.exists():
+            logger.error(f"Field metadata config file not found: {config_path}")
+            return {}
+
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            logger.info(f"Loaded field metadata config from: {config_path}")
+            return config
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in field metadata config: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"Failed to load field metadata config: {e}")
+            return {}
