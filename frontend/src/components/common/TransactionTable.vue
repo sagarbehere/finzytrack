@@ -964,15 +964,22 @@ const handleCellKeydown = (event: KeyboardEvent, cell: any, rowData: any) => {
       const optionsList = tableCell.querySelector('ul')
       const isDropdownOpen = optionsList !== null
 
-      // If dropdown is open, let it handle Up/Down/Enter/Escape
-      if (isDropdownOpen && ['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(event.key)) {
+      // If dropdown is open, let it handle Up/Down/Enter/Escape (but not Alt+Arrow)
+      if (isDropdownOpen && ['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(event.key) && !event.altKey) {
         return // Let dropdown handle these keys
       }
     }
   }
 
-  // Handle arrow keys for vertical navigation only
-  if (['ArrowUp', 'ArrowDown'].includes(event.key)) {
+  // Handle arrow keys for navigation
+  // Vertical: ArrowUp/ArrowDown (plain)
+  // Horizontal: ArrowLeft/ArrowRight (with Alt modifier)
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+    // For horizontal navigation, only handle if Alt is pressed
+    if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && !event.altKey) {
+      return // Let the browser handle cursor movement in text fields
+    }
+
     // All posting-level columns need postingIndex
     const postingColumns = ['account', 'amount', 'currency', 'cost_amount', 'cost_currency', 'cost_date', 'price_amount', 'price_currency', 'price_type', 'actions']
     const position = {
@@ -981,6 +988,11 @@ const handleCellKeydown = (event: KeyboardEvent, cell: any, rowData: any) => {
       postingIndex: postingColumns.includes(cell.column.id) ? rowData.postingIndex : undefined
     }
 
+    // Get list of currently visible columns
+    const visibleColumns = Object.keys(columnVisibility.value).filter(
+      col => columnVisibility.value[col] === true
+    )
+
     handleKeyNavigation(
       event,
       position,
@@ -988,7 +1000,8 @@ const handleCellKeydown = (event: KeyboardEvent, cell: any, rowData: any) => {
       (rowIndex: number) => {
         const transaction = filteredTransactions.value[rowIndex]
         return transaction ? transaction.postings.length : 0
-      }
+      },
+      visibleColumns
     )
   }
 }

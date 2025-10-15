@@ -24,6 +24,30 @@ export function useTableKeyboardNavigation() {
     'actions'
   ]
 
+  // Complete column order (for horizontal navigation)
+  // This defines the left-to-right order of all columns
+  const allColumnsInOrder = [
+    'status',
+    'index',
+    'date',
+    'flag',
+    'payee',
+    'memo',
+    'narration',
+    'tags_links',
+    'account',
+    'amount',
+    'currency',
+    'cost_amount',
+    'cost_currency',
+    'cost_date',
+    'price_amount',
+    'price_currency',
+    'price_type',
+    'balance',
+    'actions'
+  ]
+
   const setCellFocus = async (position: CellPosition) => {
     await nextTick()
 
@@ -132,11 +156,63 @@ export function useTableKeyboardNavigation() {
     return null
   }
 
+  // Horizontal navigation (Alt+ArrowLeft/Alt+ArrowRight)
+  const getHorizontalCell = (
+    current: CellPosition,
+    direction: 'left' | 'right',
+    visibleColumns: string[]
+  ): CellPosition | null => {
+    // Filter allColumnsInOrder to only include visible columns
+    const orderedVisibleColumns = allColumnsInOrder.filter(col => visibleColumns.includes(col))
+
+    if (orderedVisibleColumns.length === 0) return null
+
+    // Find current column index in the visible columns
+    const currentIndex = orderedVisibleColumns.indexOf(current.columnId)
+    if (currentIndex === -1) return null
+
+    // Calculate target column index
+    const targetIndex = direction === 'right' ? currentIndex + 1 : currentIndex - 1
+    if (targetIndex < 0 || targetIndex >= orderedVisibleColumns.length) return null
+
+    const targetColumnId = orderedVisibleColumns[targetIndex]
+
+    // Determine the posting index for the target cell
+    if (spannedColumns.includes(targetColumnId)) {
+      // Moving to a transaction-level column - no posting index needed
+      return {
+        rowIndex: current.rowIndex,
+        columnId: targetColumnId,
+        postingIndex: undefined
+      }
+    } else if (postingColumns.includes(targetColumnId)) {
+      // Moving to a posting-level column
+      if (spannedColumns.includes(current.columnId)) {
+        // Coming from a transaction-level column - go to posting 0
+        return {
+          rowIndex: current.rowIndex,
+          columnId: targetColumnId,
+          postingIndex: 0
+        }
+      } else {
+        // Coming from another posting-level column - preserve posting index
+        return {
+          rowIndex: current.rowIndex,
+          columnId: targetColumnId,
+          postingIndex: current.postingIndex ?? 0
+        }
+      }
+    }
+
+    return null
+  }
+
   const handleKeyNavigation = (
     event: KeyboardEvent,
     currentPosition: CellPosition,
     totalRows: number,
-    getTransactionPostingCount: (rowIndex: number) => number
+    getTransactionPostingCount: (rowIndex: number) => number,
+    visibleColumns?: string[]
   ) => {
     let nextCell: CellPosition | null = null
 
@@ -146,6 +222,16 @@ export function useTableKeyboardNavigation() {
         break
       case 'ArrowDown':
         nextCell = getVerticalCell(currentPosition, 'down', totalRows, getTransactionPostingCount)
+        break
+      case 'ArrowLeft':
+        if (event.altKey && visibleColumns) {
+          nextCell = getHorizontalCell(currentPosition, 'left', visibleColumns)
+        }
+        break
+      case 'ArrowRight':
+        if (event.altKey && visibleColumns) {
+          nextCell = getHorizontalCell(currentPosition, 'right', visibleColumns)
+        }
         break
     }
 
