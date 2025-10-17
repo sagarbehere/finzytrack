@@ -30,12 +30,13 @@ class LedgerTransaction:
     This is the same structure used in duplicate_detector.py but defined here
     to avoid circular imports.
     """
+    id: str  # UUIDv7 - stable identifier
+    content_hash: str  # SHA256 - content fingerprint
     date: date
     payee: str
     narration: str
     amount: Decimal
     account: str
-    transaction_id: Optional[str] = None
     ofx_id: Optional[str] = None
 
 
@@ -185,9 +186,13 @@ class LedgerCache:
 
             # Process Transaction entries (most complex)
             elif isinstance(entry, data.Transaction):
-                # Extract transaction ID
+                # Extract transaction IDs (new system: id and content_hash)
                 if hasattr(entry, 'meta') and entry.meta:
-                    txn_id = entry.meta.get('transaction_id')
+                    # New system uses 'id'
+                    txn_id = entry.meta.get('id')
+                    # Fallback to old 'transaction_id' for backward compatibility
+                    if not txn_id:
+                        txn_id = entry.meta.get('transaction_id')
                     if txn_id:
                         transaction_ids.add(txn_id)
 
@@ -235,13 +240,27 @@ class LedgerCache:
                             break
 
                 if source_account and transaction_amount is not None:
+                    # Get IDs from metadata
+                    txn_id = None
+                    content_hash = None
+                    if hasattr(entry, 'meta') and entry.meta:
+                        # New system
+                        txn_id = entry.meta.get('id')
+                        content_hash = entry.meta.get('content_hash')
+                        # Fallback to old system
+                        if not txn_id:
+                            txn_id = entry.meta.get('transaction_id', '')
+                        if not content_hash:
+                            content_hash = entry.meta.get('transaction_id', '')
+
                     transactions.append(LedgerTransaction(
+                        id=txn_id or '',
+                        content_hash=content_hash or '',
                         date=entry.date,
                         payee=entry.payee or '',
                         narration=entry.narration or '',
                         amount=transaction_amount,
                         account=source_account,
-                        transaction_id=entry.meta.get('transaction_id') if hasattr(entry, 'meta') and entry.meta else None,
                         ofx_id=ofx_id
                     ))
 

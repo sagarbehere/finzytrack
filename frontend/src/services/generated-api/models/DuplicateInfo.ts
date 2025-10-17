@@ -7,9 +7,13 @@
  */
 export type DuplicateInfo = {
     /**
-     * Ledger transaction ID of potential duplicate
+     * Stable transaction UUID (UUIDv7)
      */
-    transaction_id?: (string | null);
+    id: string;
+    /**
+     * Content-based SHA256 hash
+     */
+    content_hash: string;
     /**
      * Date of the duplicate transaction
      */
@@ -30,5 +34,9 @@ export type DuplicateInfo = {
      * Account from the matching posting
      */
     account: string;
+    /**
+     * How duplicate was detected: 'ofx_id', 'exact_content', or 'fuzzy'
+     */
+    match_type: string;
 };
 

@@ -22,10 +22,6 @@ from app.schemas.transaction_schemas import (
 from app.helpers.response_helpers import success_json_response
 from app.services.categorizer import initialize_classifier, categorize_transaction
 from app.services.duplicate_detector import find_duplicate
-from app.libs.transaction_id_generator import (
-    add_transaction_id_to_beancount_transaction,
-    initialize_generator_with_cached_ids
-)
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +93,7 @@ async def categorize_transactions(
             payee=raw_txn.payee,
             amount=raw_txn.amount,
             source_account=request.source_account,
+            narration=raw_txn.narration or "",
             ofx_id=raw_txn.ofx_id,
             existing_transactions=existing_transactions
         )
@@ -144,14 +141,13 @@ async def commit_transactions(
 
     This endpoint:
     1. Validates each transaction with Beancount
-    2. Generates transaction IDs
+    2. Generates transaction IDs (UUIDv7 + content_hash)
     3. Formats transactions with proper Beancount syntax
     4. Atomically writes to ledger with backup
 
     Args:
         request: CommitRequest with transactions to commit
         config_manager: Injected config manager
-        backup_manager: Injected backup manager
         beancount_manager: Injected beancount manager
 
     Returns:
@@ -160,11 +156,6 @@ async def commit_transactions(
     Raises:
         APIError: If validation or write fails
     """
-
-    # Initialize generator with cached transaction IDs for collision detection
-    used_ids = beancount_manager.cache.get_transaction_ids()
-    id_generator = initialize_generator_with_cached_ids(used_ids)
-    logger.info(f"Initialized transaction ID generator with {len(used_ids)} existing IDs")
 
     # Formatted transaction strings
     formatted_transactions = []
@@ -311,35 +302,32 @@ async def commit_transactions(
                 )
                 beancount_postings.append(beancount_posting)
 
-            # Create transaction metadata
-            # Start with metadata from request (may already contain some fields)
-            meta = dict(commit_txn.meta)
-
-            # ALWAYS use top-level source_account (required field, takes precedence)
-            meta['source_account'] = commit_txn.source_account
+            # Prepare additional metadata from request
+            additional_meta = dict(commit_txn.meta)
 
             # Add memo as ofx_memo if present (convenience field)
             if commit_txn.memo:
-                meta['ofx_memo'] = commit_txn.memo
+                additional_meta['ofx_memo'] = commit_txn.memo
 
-            # Note: source_account validation not needed - it's a required field at schema level
-            # Note: transaction_id will be added later by add_transaction_id_to_beancount_transaction()
+            # Get OFX ID from metadata if present
+            ofx_id = additional_meta.get('ofx_id')
 
-            # Create transaction
-            beancount_txn = data.Transaction(
-                meta=meta,
-                date=commit_txn.date,
-                flag=commit_txn.flag,
+            # Create transaction with new UUIDv7 + content_hash ID system
+            # This handles all ID generation and metadata setup
+            beancount_txn_with_id = beancount_manager.create_transaction_with_ids(
+                date_obj=commit_txn.date,
                 payee=commit_txn.payee,
                 narration=commit_txn.narration,
-                tags=frozenset(commit_txn.tags),
-                links=frozenset(commit_txn.links),
-                postings=beancount_postings
+                postings=beancount_postings,
+                source_account=commit_txn.source_account,
+                flag=commit_txn.flag,
+                ofx_id=ofx_id,
+                additional_meta=additional_meta
             )
 
             # Validate transaction balance
             # Beancount will check balance during validation
-            test_string = _format_beancount_transaction(beancount_txn, include_transaction_id=False)
+            test_string = _format_beancount_transaction(beancount_txn_with_id, include_transaction_id=False)
 
             # Load and validate with Beancount
             entries, errors, _ = parser.parse_string(test_string)
@@ -356,12 +344,6 @@ async def commit_transactions(
                         "errors": error_messages
                     }
                 )
-
-            # Add transaction ID using the shared generator
-            beancount_txn_with_id = add_transaction_id_to_beancount_transaction(
-                beancount_txn,
-                id_generator=id_generator
-            )
 
             # Format for writing
             formatted_txn = _format_beancount_transaction(beancount_txn_with_id, include_transaction_id=True)
@@ -422,21 +404,24 @@ def _format_beancount_transaction(txn: data.Transaction, include_transaction_id:
     Format a Beancount transaction object as a string.
 
     Uses Beancount's built-in printer for accurate formatting,
-    then adds transaction_id if needed.
+    with optional exclusion of ID fields for validation.
 
     Args:
         txn: Beancount transaction object
-        include_transaction_id: Whether to include transaction_id metadata
+        include_transaction_id: Whether to include id/content_hash/transaction_id metadata
 
     Returns:
         Formatted transaction string
     """
     from beancount.parser import printer
 
-    # If we need to exclude transaction_id, create a copy without it
-    if not include_transaction_id and txn.meta and 'transaction_id' in txn.meta:
-        # Create new meta dict without transaction_id
-        new_meta = {k: v for k, v in txn.meta.items() if k != 'transaction_id'}
+    # If we need to exclude IDs, create a copy without them
+    if not include_transaction_id and txn.meta:
+        # Create new meta dict without ID fields
+        new_meta = {
+            k: v for k, v in txn.meta.items()
+            if k not in ('id', 'content_hash', 'transaction_id')
+        }
         # Create new transaction with modified meta
         txn = txn._replace(meta=new_meta)
 

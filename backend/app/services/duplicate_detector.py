@@ -67,12 +67,14 @@ def check_ofx_id_match(ofx_id: str, existing_transactions: List[LedgerTransactio
         if existing_txn.ofx_id and existing_txn.ofx_id == ofx_id:
             # Exact OFX ID match found
             return DuplicateInfo(
-                transaction_id=existing_txn.transaction_id,
+                id=existing_txn.id,
+                content_hash=existing_txn.content_hash,
                 date=existing_txn.date,
                 payee=existing_txn.payee,
                 narration=existing_txn.narration,
                 amount=existing_txn.amount,
-                account=existing_txn.account
+                account=existing_txn.account,
+                match_type='ofx_id'
             )
 
     return None
@@ -118,12 +120,48 @@ def check_fuzzy_match(
             # Potential duplicate found
             logger.info(f"Duplicate detected: {txn_date} | {payee} | {amount} (similarity: {similarity:.0%})")
             return DuplicateInfo(
-                transaction_id=existing_txn.transaction_id,
+                id=existing_txn.id,
+                content_hash=existing_txn.content_hash,
                 date=existing_txn.date,
                 payee=existing_txn.payee,
                 narration=existing_txn.narration,
                 amount=existing_txn.amount,
-                account=existing_txn.account
+                account=existing_txn.account,
+                match_type='fuzzy'
+            )
+
+    return None
+
+
+def check_content_hash_match(
+    content_hash: str,
+    existing_transactions: List[LedgerTransaction]
+) -> Optional[DuplicateInfo]:
+    """
+    Check if content hash matches any existing transaction.
+
+    Args:
+        content_hash: SHA256 hash of transaction content
+        existing_transactions: List of existing ledger transactions
+
+    Returns:
+        DuplicateInfo if match found, None otherwise
+    """
+    if not content_hash:
+        return None
+
+    for existing_txn in existing_transactions:
+        if existing_txn.content_hash and existing_txn.content_hash == content_hash:
+            # Exact content hash match found
+            return DuplicateInfo(
+                id=existing_txn.id,
+                content_hash=existing_txn.content_hash,
+                date=existing_txn.date,
+                payee=existing_txn.payee,
+                narration=existing_txn.narration,
+                amount=existing_txn.amount,
+                account=existing_txn.account,
+                match_type='exact_content'
             )
 
     return None
@@ -134,34 +172,50 @@ def find_duplicate(
     payee: str,
     amount: Decimal,
     source_account: str,
+    narration: str,
     ofx_id: Optional[str],
     existing_transactions: List[LedgerTransaction]
 ) -> Tuple[bool, Optional[DuplicateInfo]]:
     """
     Find potential duplicate for a transaction.
 
-    Uses two-step detection:
+    Uses three-tier detection:
     1. Check for exact OFX ID match
-    2. Check for fuzzy match on date/amount/account/payee
+    2. Check for exact content hash match
+    3. Check for fuzzy match on date/amount/account/payee
 
     Args:
         txn_date: Transaction date
         payee: Transaction payee
         amount: Transaction amount
         source_account: Source account
+        narration: Transaction narration
         ofx_id: Optional OFX transaction ID
         existing_transactions: List of existing ledger transactions
 
     Returns:
         Tuple of (is_duplicate, duplicate_info)
     """
-    # Step 1: Check OFX ID match (if available)
+    # Tier 1: Check OFX ID match (if available)
     if ofx_id:
         ofx_match = check_ofx_id_match(ofx_id, existing_transactions)
         if ofx_match:
             return True, ofx_match
 
-    # Step 2: Check fuzzy match
+    # Tier 2: Check content hash match
+    from app.libs.content_hash import compute_content_hash
+    content_hash = compute_content_hash(
+        date=str(txn_date),
+        payee=payee,
+        amount=str(amount),
+        source_account=source_account,
+        narration=narration
+    )
+    hash_match = check_content_hash_match(content_hash, existing_transactions)
+    if hash_match:
+        return True, hash_match
+
+    # Tier 3: Check fuzzy match
     fuzzy_match = check_fuzzy_match(txn_date, payee, amount, source_account, existing_transactions)
     if fuzzy_match:
         return True, fuzzy_match

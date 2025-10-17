@@ -40,12 +40,14 @@ class CategorizeRequest(BaseModel):
 
 class DuplicateInfo(BaseModel):
     """Information about a potential duplicate transaction in the ledger."""
-    transaction_id: Optional[str] = Field(default=None, description="Ledger transaction ID of potential duplicate")
+    id: str = Field(..., description="Stable transaction UUID (UUIDv7)")
+    content_hash: str = Field(..., description="Content-based SHA256 hash")
     date: DateType = Field(..., description="Date of the duplicate transaction")
     payee: str = Field(..., description="Payee of the duplicate transaction")
     narration: str = Field(..., description="Narration of the duplicate transaction")
     amount: Decimal = Field(..., description="Amount of the duplicate transaction")
     account: str = Field(..., description="Account from the matching posting")
+    match_type: str = Field(..., description="How duplicate was detected: 'ofx_id', 'exact_content', or 'fuzzy'")
 
 
 class CategorizedTransactionResult(BaseModel):

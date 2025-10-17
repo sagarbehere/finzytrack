@@ -92,14 +92,13 @@ export class ImportService {
      *
      * This endpoint:
      * 1. Validates each transaction with Beancount
-     * 2. Generates transaction IDs
+     * 2. Generates transaction IDs (UUIDv7 + content_hash)
      * 3. Formats transactions with proper Beancount syntax
      * 4. Atomically writes to ledger with backup
      *
      * Args:
      * request: CommitRequest with transactions to commit
      * config_manager: Injected config manager
-     * backup_manager: Injected backup manager
      * beancount_manager: Injected beancount manager
      *
      * Returns:

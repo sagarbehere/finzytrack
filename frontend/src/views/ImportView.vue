@@ -181,7 +181,7 @@
   import OFXFilePicker from '@/components/import/OFXFilePicker.vue'
   import TransactionTable from '@/components/common/TransactionTable.vue'
   import DuplicateComparisonModal from '@/components/import/DuplicateComparisonModal.vue'
-  import { v4 as uuidv4 } from 'uuid'
+  import { v7 as uuidv7 } from 'uuid'
   import type { TransactionViewModel, PostingViewModel, ImportContext, TransactionImportBundle } from '@/types/transactions'
   import type { OFXTransaction, OfxFileDetails } from '@/types/ofx'
   import type { DuplicateInfo } from '@/services/generated-api'
@@ -277,7 +277,7 @@
         }
       ]
 
-      const transactionId = uuidv4() // Generate a unique ID for the transaction
+      const transactionId = uuidv7() // Generate temporary UUIDv7 for frontend preview (backend will replace with its own UUID when committing)
 
       // Build metadata object conditionally
       const meta: Record<string, string> = {

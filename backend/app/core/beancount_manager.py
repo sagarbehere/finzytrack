@@ -1,12 +1,15 @@
 import os
 import re
 import logging
-from typing import Set, Optional, List, Dict, Any, Callable
+from typing import Set, Optional, List, Dict, Any, Callable, Tuple
 from datetime import datetime, date
 from contextlib import contextmanager
 from beancount import loader
 from beancount.core import data
+from beancount.core.data import Transaction, Posting
+from beancount.core.amount import Amount
 from decimal import Decimal
+import uuid_utils as uuid
 
 from app.core.backup_manager import BackupManager
 from app.core.ledger_cache import LedgerCache
@@ -17,6 +20,7 @@ from app.schemas.account_schemas import (
 from app.schemas.commodity_schemas import (
     CommodityDetails, CommodityUsageData, CommodityCreateRequest, CommodityCreateData
 )
+from app.libs.content_hash import compute_content_hash
 
 logger = logging.getLogger(__name__)
 
@@ -378,3 +382,172 @@ class BeancountManager:
         except Exception as e:
             logger.error(f"Error creating commodity directive: {e}")
             raise Exception(f"Error creating commodity: {str(e)}")
+
+    # =====================================
+    # Transaction ID Management Methods
+    # =====================================
+
+    def create_transaction_with_ids(
+        self,
+        date_obj: date,
+        payee: str,
+        narration: str,
+        postings: List[Posting],
+        source_account: str,
+        flag: str = '*',
+        ofx_id: Optional[str] = None,
+        additional_meta: Optional[Dict] = None
+    ) -> Transaction:
+        """
+        Create a Beancount transaction with new UUIDv7 + content_hash ID system.
+
+        Args:
+            date_obj: Transaction date
+            payee: Transaction payee
+            narration: Transaction narration/description
+            postings: List of Beancount Posting objects
+            source_account: The account that originated this transaction
+            flag: Transaction flag (* or !)
+            ofx_id: Optional OFX transaction ID
+            additional_meta: Optional additional metadata
+
+        Returns:
+            beancount.core.data.Transaction object with id and content_hash
+
+        Note:
+            This is the ONLY method that should create transactions with IDs.
+            BeancountManager is the ONLY module that imports beancount library.
+        """
+        # Generate UUIDv7 (time-ordered)
+        transaction_id = str(uuid.uuid7())
+
+        # Compute content hash
+        # Get amount from source account posting
+        amount_str = "0"
+        for posting in postings:
+            if posting.account == source_account and posting.units:
+                amount_str = f"{posting.units.number} {posting.units.currency}"
+                break
+
+        content_hash = compute_content_hash(
+            date=date_obj.isoformat(),
+            payee=payee,
+            amount=amount_str,
+            source_account=source_account,
+            narration=narration
+        )
+
+        # Build metadata
+        meta = {
+            'id': transaction_id,
+            'content_hash': content_hash,
+            'source_account': source_account
+        }
+
+        # Add OFX ID if provided
+        if ofx_id and str(ofx_id).strip():
+            meta['ofx_id'] = str(ofx_id).strip()
+
+        # Add additional metadata
+        if additional_meta:
+            meta.update(additional_meta)
+
+        # Create Beancount transaction
+        return Transaction(
+            meta=meta,
+            date=date_obj,
+            flag=flag,
+            payee=payee,
+            narration=narration,
+            tags=frozenset(),
+            links=frozenset(),
+            postings=postings
+        )
+
+    def add_ids_to_transaction(
+        self,
+        txn: Transaction,
+        force_regenerate: bool = False
+    ) -> Transaction:
+        """
+        Add id and content_hash to an existing transaction.
+
+        Args:
+            txn: Beancount Transaction object
+            force_regenerate: If True, regenerate IDs even if they exist
+
+        Returns:
+            Transaction with id and content_hash in metadata
+
+        Note:
+            Used by migration script and for updating transactions without IDs.
+        """
+        # Check if already has IDs
+        if not force_regenerate and txn.meta:
+            if 'id' in txn.meta and 'content_hash' in txn.meta:
+                return txn
+
+        # Generate new UUIDv7
+        transaction_id = str(uuid.uuid7())
+
+        # Compute content hash from transaction
+        source_account, content_hash = self.compute_hash_from_transaction(txn)
+
+        # Update metadata
+        new_meta = txn.meta.copy() if txn.meta else {}
+        new_meta['id'] = transaction_id
+        new_meta['content_hash'] = content_hash
+
+        # Preserve source_account if not already set
+        if 'source_account' not in new_meta and source_account:
+            new_meta['source_account'] = source_account
+
+        return txn._replace(meta=new_meta)
+
+    def compute_hash_from_transaction(self, txn: Transaction) -> Tuple[str, str]:
+        """
+        Compute content hash from an existing Beancount transaction.
+
+        Args:
+            txn: Beancount Transaction object
+
+        Returns:
+            Tuple of (source_account, content_hash)
+
+        Note:
+            This helper method is here (instead of in content_hash.py) to avoid
+            importing beancount in the utility file. BeancountManager is the ONLY
+            module that should import beancount.
+        """
+        # Get source account from metadata or infer from postings
+        source_account = None
+        if txn.meta and 'source_account' in txn.meta:
+            source_account = txn.meta['source_account']
+        else:
+            # Infer from first Assets/Liabilities posting
+            for posting in txn.postings:
+                if posting.account.startswith(('Assets:', 'Liabilities:')):
+                    source_account = posting.account
+                    break
+
+        if not source_account:
+            # Fallback: use first posting account
+            source_account = txn.postings[0].account if txn.postings else ""
+
+        # Get amount from source account posting
+        amount_str = "0"
+        for posting in txn.postings:
+            if posting.account == source_account and posting.units:
+                amount_str = f"{posting.units.number} {posting.units.currency}"
+                break
+
+        # Compute content hash
+        content_hash = compute_content_hash(
+            date=txn.date.isoformat(),
+            payee=txn.payee or "",
+            amount=amount_str,
+            source_account=source_account,
+            narration=txn.narration or ""
+        )
+
+        return source_account, content_hash

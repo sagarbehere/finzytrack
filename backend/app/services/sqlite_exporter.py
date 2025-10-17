@@ -199,6 +199,7 @@ class SQLiteExporter:
             CREATE TABLE postings (
                 posting_id INTEGER PRIMARY KEY,
                 transaction_id TEXT NOT NULL,
+                transaction_content_hash TEXT,
                 transaction_date TEXT NOT NULL,
                 transaction_flag TEXT,
                 transaction_payee TEXT,
@@ -231,6 +232,7 @@ class SQLiteExporter:
             con.execute("CREATE INDEX idx_account_type ON postings(account_type)")
             con.execute("CREATE INDEX idx_year_month ON postings(year_month)")
             con.execute("CREATE INDEX idx_transaction_id ON postings(transaction_id)")
+            con.execute("CREATE INDEX idx_content_hash ON postings(transaction_content_hash)")
             logger.info("Created postings table and indexes")
 
         # Start atomic transaction (BEGIN IMMEDIATE is automatic due to isolation_level)
@@ -245,6 +247,7 @@ class SQLiteExporter:
             # Prepare data for bulk insert
             for txn_index, txn in enumerate(transactions):
                 transaction_id = self._get_transaction_id(txn, txn_index)
+                transaction_content_hash = self._get_content_hash(txn)
                 transaction_tags = self._serialize_array(self._extract_tags(txn))
                 transaction_links = self._serialize_array(self._extract_links(txn))
                 transaction_metadata = self._metadata_to_json(txn.meta)
@@ -284,6 +287,7 @@ class SQLiteExporter:
                     row = (
                         posting_id,
                         transaction_id,
+                        transaction_content_hash,
                         txn.date.isoformat(),  # Convert date to ISO 8601 string
                         txn.flag,
                         txn.payee,
@@ -312,7 +316,7 @@ class SQLiteExporter:
             # Bulk insert all rows
             con.executemany("""
                 INSERT INTO postings VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
             """, rows)
 
@@ -437,10 +441,32 @@ class SQLiteExporter:
     @staticmethod
     def _get_transaction_id(txn: Transaction, txn_index: int) -> str:
         """
-        Get transaction ID from metadata if present, otherwise generate one.
-        """
-        if txn.meta and 'transaction_id' in txn.meta:
-            return str(txn.meta['transaction_id'])
+        Get transaction ID from metadata.
 
-        # Generate ID from date and index
+        Priority:
+        1. Use 'id' field (new UUIDv7 system)
+        2. Fallback to 'transaction_id' (old system, for migration)
+        3. Generate from date-index (legacy fallback)
+        """
+        if txn.meta:
+            # New system
+            if 'id' in txn.meta:
+                return str(txn.meta['id'])
+
+            # Old system (migration support)
+            if 'transaction_id' in txn.meta:
+                return str(txn.meta['transaction_id'])
+
+        # Legacy fallback
         return f"{txn.date.isoformat()}-{txn_index}"
+
+    @staticmethod
+    def _get_content_hash(txn: Transaction) -> Optional[str]:
+        """
+        Get content hash from metadata.
+
+        Returns None if not present (will be computed on demand).
+        """
+        if txn.meta and 'content_hash' in txn.meta:
+            return str(txn.meta['content_hash'])
+        return None

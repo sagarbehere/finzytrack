@@ -30,7 +30,8 @@ export interface PostingViewModel {
  * to keep this type clean and reusable across different UI contexts.
  */
 export interface TransactionViewModel {
-  // Client-side unique ID for Vue's key binding
+  // Unique ID (UUIDv7 from backend for committed transactions, temporary for import preview)
+  // Backend generates stable UUIDv7 when committing; frontend can use temporary IDs for preview
   id: string;
 
   // Core Beancount Fields, editable by the user in the table
@@ -44,7 +45,8 @@ export interface TransactionViewModel {
   postings: PostingViewModel[];
 
   // Beancount metadata (arbitrary key-value pairs)
-  // Common keys: ofx_id, transaction_id, source_account, ofx_memo
+  // Backend-managed keys: id (UUIDv7), content_hash (SHA256), source_account
+  // User/Import keys: ofx_id, ofx_memo, etc.
   meta: Record<string, string>;
 
   // Frontend-only state (NOT sent to backend/ledger)
