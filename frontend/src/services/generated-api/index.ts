@@ -42,6 +42,7 @@ export type { ApiResponse_MetabaseStopData_ } from './models/ApiResponse_Metabas
 export type { ApiResponse_MetabaseSyncSchemaData_ } from './models/ApiResponse_MetabaseSyncSchemaData_';
 export type { ApiResponse_OFXDetectionData_ } from './models/ApiResponse_OFXDetectionData_';
 export type { ApiResponse_QueryData_ } from './models/ApiResponse_QueryData_';
+export type { ApiResponse_UpdateTransactionResponse_ } from './models/ApiResponse_UpdateTransactionResponse_';
 export type { Body_exportLedger } from './models/Body_exportLedger';
 export type { CategorizationStats } from './models/CategorizationStats';
 export type { CategorizedTransactionResult } from './models/CategorizedTransactionResult';
@@ -83,6 +84,10 @@ export type { QueryColumnInfo } from './models/QueryColumnInfo';
 export type { QueryData } from './models/QueryData';
 export type { QueryRequest } from './models/QueryRequest';
 export type { RawTransactionForCategorization } from './models/RawTransactionForCategorization';
+export type { UpdatePosting } from './models/UpdatePosting';
+export type { UpdateTransaction } from './models/UpdateTransaction';
+export type { UpdateTransactionRequest } from './models/UpdateTransactionRequest';
+export type { UpdateTransactionResponse } from './models/UpdateTransactionResponse';
 export type { ValidationError } from './models/ValidationError';
 
 export { AccountsService } from './services/AccountsService';

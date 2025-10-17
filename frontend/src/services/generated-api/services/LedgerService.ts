@@ -7,10 +7,12 @@ import type { ApiResponse_DuckDBStatusData_ } from '../models/ApiResponse_DuckDB
 import type { ApiResponse_ExportData_ } from '../models/ApiResponse_ExportData_';
 import type { ApiResponse_ExportStatusData_ } from '../models/ApiResponse_ExportStatusData_';
 import type { ApiResponse_QueryData_ } from '../models/ApiResponse_QueryData_';
+import type { ApiResponse_UpdateTransactionResponse_ } from '../models/ApiResponse_UpdateTransactionResponse_';
 import type { Body_exportLedger } from '../models/Body_exportLedger';
 import type { DatabaseType } from '../models/DatabaseType';
 import type { DuckDBExportRequest } from '../models/DuckDBExportRequest';
 import type { QueryRequest } from '../models/QueryRequest';
+import type { UpdateTransactionRequest } from '../models/UpdateTransactionRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -106,6 +108,34 @@ export class LedgerService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/ledger/export/duckdb/status',
+        });
+    }
+    /**
+     * Update Ledger Transactions
+     * Update existing transactions in the ledger.
+     *
+     * This endpoint:
+     * 1. Validates all transactions before making changes (atomic)
+     * 2. Locates transactions by ID (UUIDv7) in the ledger
+     * 3. Updates them atomically in the ledger file
+     * 4. Returns success with count of updated transactions
+     *
+     * If any transaction fails validation, the entire operation is rolled back.
+     * @param requestBody
+     * @returns ApiResponse_UpdateTransactionResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static updateLedgerTransactions(
+        requestBody: UpdateTransactionRequest,
+    ): CancelablePromise<ApiResponse_UpdateTransactionResponse_> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/api/ledger/transactions',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**

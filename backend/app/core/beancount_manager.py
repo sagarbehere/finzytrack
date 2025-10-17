@@ -551,3 +551,117 @@ class BeancountManager:
         )
 
         return source_account, content_hash
+
+    # =====================================
+    # Transaction Update Methods
+    # =====================================
+
+    def update_transactions_by_id(
+        self,
+        transactions: List[Tuple[str, Transaction]]
+    ) -> int:
+        """
+        Update transactions in the ledger by ID.
+
+        Args:
+            transactions: List of (transaction_id, updated_transaction) tuples
+
+        Returns:
+            Number of transactions updated
+
+        Raises:
+            APIError: If any transaction ID is not found or update fails
+        """
+        from app.exceptions import APIError
+        from beancount.parser import printer
+
+        # Build lookup map
+        update_map = {txn_id: txn for txn_id, txn in transactions}
+        transaction_ids = set(update_map.keys())
+
+        # Read current entries
+        entries = self.cache.get_entries()
+
+        # Find and replace transactions
+        updated_entries = []
+        found_ids = set()
+
+        for entry in entries:
+            if isinstance(entry, Transaction):
+                # Check if this transaction should be updated
+                txn_id = entry.meta.get('id') if entry.meta else None
+
+                if txn_id and txn_id in transaction_ids:
+                    # Replace with updated transaction
+                    updated_txn = update_map[txn_id]
+
+                    # Preserve original line number for better error reporting
+                    if entry.meta and 'lineno' in entry.meta:
+                        if not updated_txn.meta:
+                            updated_txn = updated_txn._replace(meta={'lineno': entry.meta['lineno']})
+                        else:
+                            updated_txn.meta['lineno'] = entry.meta['lineno']
+
+                    updated_entries.append(updated_txn)
+                    found_ids.add(txn_id)
+                else:
+                    # Keep original entry
+                    updated_entries.append(entry)
+            else:
+                # Keep non-transaction entries
+                updated_entries.append(entry)
+
+        # Check if all transactions were found
+        not_found = transaction_ids - found_ids
+        if not_found:
+            raise APIError(
+                message=f"Transaction IDs not found: {not_found}",
+                code="TRANSACTIONS_NOT_FOUND",
+                status_code=404,
+                details={"not_found_ids": list(not_found)}
+            )
+
+        # Write updated entries atomically
+        with self.atomic_ledger_write() as f:
+            for entry in updated_entries:
+                entry_str = printer.format_entry(entry)
+                f.write(entry_str)
+                f.write('\n\n')
+
+        logger.info(f"Updated {len(found_ids)} transactions in ledger")
+
+        return len(found_ids)
+
+    def validate_transaction(self, transaction: Transaction) -> List[str]:
+        """
+        Validate a Beancount transaction.
+
+        Returns:
+            List of error messages (empty if valid)
+        """
+        from beancount.parser import parser
+        from beancount.parser import printer
+        from collections import defaultdict
+
+        # Format transaction to string
+        txn_str = printer.format_entry(transaction)
+
+        # Try to parse it back
+        entries, errors, _ = parser.parse_string(txn_str)
+
+        # Check for parsing errors
+        if errors:
+            return [str(e) for e in errors]
+
+        # Check if transaction balances
+        balance = defaultdict(Decimal)
+        for posting in transaction.postings:
+            if posting.units and posting.units.number is not None:
+                balance[posting.units.currency] += posting.units.number
+
+        # Allow small rounding errors (< 0.01 in any currency)
+        for currency, amount in balance.items():
+            if abs(amount) >= Decimal('0.01'):
+                return [f"Transaction does not balance: {currency} off by {amount}"]
+
+        return []
