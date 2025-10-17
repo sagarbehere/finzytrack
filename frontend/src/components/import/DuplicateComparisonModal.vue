@@ -110,8 +110,11 @@
                         <span class="text-gray-600 dark:text-gray-400">Account:</span>
                         <span class="ml-2 font-medium text-gray-900 dark:text-white">{{ match.account }}</span>
                       </div>
-                      <div v-if="match.transaction_id" class="text-xs text-gray-500 dark:text-gray-400">
-                        ID: {{ match.transaction_id }}
+                      <div class="text-xs text-gray-500 dark:text-gray-400 space-y-1">
+                        <div>ID: {{ match.id }}</div>
+                        <div v-if="match.match_type" class="text-xs">
+                          Match: {{ match.match_type }}
+                        </div>
                       </div>
                     </div>
                   </div>
