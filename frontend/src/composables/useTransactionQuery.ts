@@ -23,6 +23,8 @@ export function useTransactionQuery() {
       // Construct SQL query from filters
       const sqlQuery = buildSQLQuery(filters, dbType)
 
+      console.log('Executing SQL query:', sqlQuery)
+
       // Execute query via API
       const queryRequest: QueryRequest = { query: sqlQuery }
       const response = await LedgerService.executeQuery(queryRequest, dbType)
@@ -41,6 +43,7 @@ export function useTransactionQuery() {
     } catch (err: any) {
       error.value = err.message || 'Failed to query transactions'
       console.error('Transaction query error:', err)
+      console.error('Error body:', err.body)
       throw err
     } finally {
       isLoading.value = false

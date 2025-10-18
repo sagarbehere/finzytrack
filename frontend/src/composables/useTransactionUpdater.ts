@@ -86,8 +86,6 @@ export function useTransactionUpdater() {
         })
       }
 
-      console.log('Sending update request:', JSON.stringify(requestBody, null, 2))
-
       // Call API endpoint using generated client
       const response = await LedgerService.updateLedgerTransactions(requestBody)
 
@@ -112,13 +110,6 @@ export function useTransactionUpdater() {
       }
 
       error.value = errorMessage
-      console.error('Transaction update error:', err)
-      console.error('Error details:', JSON.stringify(err.body, null, 2))
-
-      // Log validation details if available
-      if (err.body?.error?.details) {
-        console.error('Validation details:', err.body.error.details)
-      }
 
       // Create a more informative error
       const detailedError = new Error(errorMessage)

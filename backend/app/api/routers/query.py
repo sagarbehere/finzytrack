@@ -62,16 +62,23 @@ async def execute_query(
         # Default to active database if not specified
         engine = config.analytics.metabase.db_type.value
     
-    # Check for ledger errors
+    # Check for ledger errors (filter out warnings like PadError which are non-fatal)
     errors = beancount_manager.cache.get_errors()
-    if errors:
+
+    # Filter to only include actual parsing errors, not warnings
+    fatal_errors = [
+        error for error in errors
+        if not error.__class__.__name__ in ['PadError', 'UnusedPadError']
+    ]
+
+    if fatal_errors:
         raise APIError(
             message="Ledger file has parsing errors",
             code="LEDGER_PARSE_ERROR",
             status_code=400,
             details={
-                "error_count": len(errors),
-                "errors": [str(e) for e in errors[:5]]
+                "error_count": len(fatal_errors),
+                "errors": [str(e) for e in fatal_errors[:5]]
             }
         )
     
