@@ -1,0 +1,21 @@
+; Minimal test case for Beancount pad auto-generation behavior
+;
+; This file demonstrates that loader.load_file() automatically generates
+; a padding transaction when it encounters a pad directive followed by
+; a balance assertion.
+;
+; Expected behavior:
+; 1. File on disk contains only pad directive and balance assertion
+; 2. loader.load_file() returns an auto-generated Transaction with flag 'P'
+; 3. If all entries are written back using printer.format_entry(),
+;    the auto-generated padding transaction gets written to the file
+; 4. This causes bean-check to warn about "Unused Pad entry"
+
+2020-01-01 open Assets:Test USD
+2020-01-01 open Equity:Opening-Balances
+
+; The pad directive tells Beancount to automatically balance this account
+2023-12-31 pad Assets:Test Equity:Opening-Balances
+
+; The balance assertion defines what the balance should be
+2024-01-01 balance Assets:Test 1000.00 USD

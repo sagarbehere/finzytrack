@@ -1,0 +1,17 @@
+2020-01-01 open Assets:Test                                     USD
+
+
+2020-01-01 open Equity:Opening-Balances
+
+
+2023-12-31 pad Assets:Test Equity:Opening-Balances
+
+
+2023-12-31 P "(Padding inserted for Balance of 1000.00 USD for difference 1000.00 USD)"
+  Assets:Test               1000.00 USD
+  Equity:Opening-Balances  -1000.00 USD
+
+
+2024-01-01 balance Assets:Test                                     1000.00 USD
+
+
