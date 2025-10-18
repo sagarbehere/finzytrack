@@ -622,8 +622,20 @@ class BeancountManager:
             )
 
         # Write updated entries atomically
+        # IMPORTANT: Skip auto-generated padding transactions (flag 'P')
+        # These are created by Beancount when it sees pad + balance directives
+        # and should not be written back to the file
         with self.atomic_ledger_write() as f:
             for entry in updated_entries:
+                # Skip auto-generated padding transactions
+                if isinstance(entry, Transaction) and entry.flag == 'P':
+                    # Check if this is an auto-generated padding (no transaction ID)
+                    has_id = entry.meta and ('id' in entry.meta or 'transaction_id' in entry.meta)
+                    if not has_id:
+                        # This is an auto-generated padding transaction, skip it
+                        logger.debug(f"Skipping auto-generated padding transaction: {entry.narration}")
+                        continue
+
                 entry_str = printer.format_entry(entry)
                 f.write(entry_str)
                 f.write('\n\n')
