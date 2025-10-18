@@ -209,6 +209,22 @@
           <option :value="4">Q4 (Oct-Dec)</option>
         </select>
       </div>
+
+      <!-- Max Results -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          Max Results
+        </label>
+        <input
+          v-model.number="limit"
+          type="number"
+          min="1"
+          max="50000"
+          step="1"
+          placeholder="e.g., 1000"
+          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+        />
+      </div>
     </div>
 
     <!-- Action Buttons -->
@@ -241,11 +257,14 @@ interface Props {
 const props = defineProps<Props>()
 
 const emit = defineEmits<{
-  (e: 'filter-changed', filters: TransactionFilters, dbType: 'duckdb' | 'sqlite'): void
+  (e: 'filter-changed', filters: TransactionFilters, dbType: 'duckdb' | 'sqlite', limit: number): void
 }>()
 
 // Database type selection (SQLite as default)
 const dbType = ref<'duckdb' | 'sqlite'>('sqlite')
+
+// Result limit (default 1000, min 1, max 50000)
+const limit = ref<number>(1000)
 
 // Initialize with last 90 days
 const filters = ref<TransactionFilters>({
@@ -266,13 +285,23 @@ const filters = ref<TransactionFilters>({
 })
 
 function handleApply() {
-  emit('filter-changed', { ...filters.value }, dbType.value)
+  // Validate and clamp limit to reasonable bounds
+  let validatedLimit = limit.value
+  if (isNaN(validatedLimit) || validatedLimit < 1) {
+    validatedLimit = 1000 // Default to 1000 if invalid
+    limit.value = validatedLimit
+  } else if (validatedLimit > 50000) {
+    validatedLimit = 50000 // Cap at 50000 to prevent performance issues
+    limit.value = validatedLimit
+  }
+
+  emit('filter-changed', { ...filters.value }, dbType.value, validatedLimit)
 }
 
 function handleClear() {
   filters.value = {
-    dateFrom: getDate90DaysAgo(),
-    dateTo: getTodayDate(),
+    dateFrom: '',
+    dateTo: '',
     amountGreaterThan: undefined,
     amountLessThan: undefined,
     payeeContains: '',
@@ -286,11 +315,13 @@ function handleClear() {
     year: undefined,
     quarter: undefined,
   }
-  handleApply()
+  // Don't auto-apply - let user click "Apply Filters" when ready
 }
 
 // Auto-apply on date changes
 watch(() => [filters.value.dateFrom, filters.value.dateTo], () => {
+  // Only auto-apply if both dates are set (not empty)
+  // This prevents auto-apply when dates are cleared or only one is set
   if (filters.value.dateFrom && filters.value.dateTo) {
     handleApply()
   }

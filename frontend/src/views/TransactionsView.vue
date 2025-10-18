@@ -23,6 +23,26 @@
 
     <!-- Transaction Table -->
     <div v-else-if="transactions.length > 0">
+      <!-- Warning if limit is reached -->
+      <div
+        v-if="totalCount !== null && transactions.length < totalCount"
+        class="mb-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg"
+      >
+        <div class="flex items-start">
+          <svg class="w-5 h-5 text-yellow-600 dark:text-yellow-400 mt-0.5 mr-3" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+          </svg>
+          <div>
+            <h3 class="text-sm font-medium text-yellow-800 dark:text-yellow-300">
+              Showing {{ transactions.length.toLocaleString() }} of {{ totalCount.toLocaleString() }} transactions
+            </h3>
+            <p class="mt-1 text-sm text-yellow-700 dark:text-yellow-400">
+              Increase Max Results or refine filters to see more.
+            </p>
+          </div>
+        </div>
+      </div>
+
       <TransactionTable
         ref="transactionTableRef"
         :transactions="transactions"
@@ -79,10 +99,12 @@ import { useToast } from '@/composables/useNotifications'
 // Refs
 const transactionTableRef = ref<InstanceType<typeof TransactionTable> | null>(null)
 const transactions = ref<TransactionViewModel[]>([])
+const totalCount = ref<number | null>(null)
 const isQuerying = ref(false)
 const isSaving = ref(false)
 const currentFilters = ref<TransactionFilters | null>(null)
 const currentDbType = ref<'duckdb' | 'sqlite'>('sqlite')
+const currentLimit = ref<number>(1000)
 
 // Composables
 const { queryTransactions } = useTransactionQuery()
@@ -99,14 +121,17 @@ const modifiedCount = computed(() => {
 })
 
 // Handlers
-async function handleFilterChanged(filters: TransactionFilters, dbType: 'duckdb' | 'sqlite') {
+async function handleFilterChanged(filters: TransactionFilters, dbType: 'duckdb' | 'sqlite', limit: number) {
   isQuerying.value = true
   currentFilters.value = filters
   currentDbType.value = dbType
+  currentLimit.value = limit
 
   try {
     // Query transactions based on filters
-    transactions.value = await queryTransactions(filters, dbType)
+    const result = await queryTransactions(filters, dbType, limit)
+    transactions.value = result.transactions
+    totalCount.value = result.totalCount
 
     // Reset modification flags on fresh query
     transactions.value.forEach(t => {
@@ -131,7 +156,7 @@ async function handleReset() {
   if (!currentFilters.value) return
 
   // Re-query using current filters to reload from database
-  await handleFilterChanged(currentFilters.value, currentDbType.value)
+  await handleFilterChanged(currentFilters.value, currentDbType.value, currentLimit.value)
 }
 
 async function handleSaveChanges() {
@@ -182,7 +207,7 @@ onMounted(() => {
     dateFrom: getDate90DaysAgo(),
     dateTo: getTodayDate(),
   }
-  handleFilterChanged(defaultFilters, 'sqlite')
+  handleFilterChanged(defaultFilters, 'sqlite', 1000)
 })
 
 // Helper functions
