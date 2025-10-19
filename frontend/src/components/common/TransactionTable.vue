@@ -1682,20 +1682,16 @@ This action will immediately update the ledger and cannot be undone.`
     // After update, try to maintain the same page
     preserveCurrentPage()
 
-    // Show success toast
-    if (isImportContext) {
-      toast.success(
-        'Transaction Removed',
-        'Transaction has been removed from the import list'
-      )
-    } else {
+    // Show success toast and emit event (only for ledger context)
+    if (!isImportContext) {
       toast.success(
         'Transaction Deleted',
         'Transaction has been removed from the ledger'
       )
-      // Emit deletion event so parent can update totalCount (only for ledger context)
+      // Emit deletion event so parent can update totalCount
       emit('transactionDeleted', transaction.id)
     }
+    // In import context: no toast needed - visual feedback is sufficient
   } catch (error: any) {
     // Show error toast
     toast.error(
