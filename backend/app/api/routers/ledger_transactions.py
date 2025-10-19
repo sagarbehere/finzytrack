@@ -12,6 +12,10 @@ from app.schemas.transaction_update_schemas import (
     UpdateTransactionResponse,
     UpdateTransaction,
 )
+from app.schemas.transaction_delete_schemas import (
+    DeleteTransactionRequest,
+    DeleteTransactionResponse,
+)
 from app.dependencies import get_beancount_manager
 from app.core.beancount_manager import BeancountManager
 from app.exceptions import APIError
@@ -179,3 +183,58 @@ def _convert_to_beancount_transaction(update_txn: UpdateTransaction) -> Transact
     )
 
     return txn
+
+
+@router.delete(
+    "/transactions",
+    response_model=ApiResponse[DeleteTransactionResponse],
+    operation_id="deleteLedgerTransactions"
+)
+async def delete_ledger_transactions(
+    request: DeleteTransactionRequest = Body(...),
+    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+):
+    """
+    Delete transactions from the ledger by ID.
+
+    This endpoint:
+    1. Validates that all transaction IDs exist in the ledger
+    2. Removes them atomically from the ledger file
+    3. Returns success with count of deleted transactions
+
+    If any transaction ID is not found, the entire operation is rolled back.
+    """
+    try:
+        transaction_ids = request.transaction_ids
+
+        if not transaction_ids:
+            raise APIError(
+                message="No transaction IDs provided",
+                code="NO_TRANSACTION_IDS",
+                status_code=400
+            )
+
+        logger.info(f"Deleting {len(transaction_ids)} transaction(s)")
+
+        # Delete transactions atomically
+        deleted_count = beancount_manager.delete_transactions_by_id(transaction_ids)
+
+        logger.info(f"Successfully deleted {deleted_count} transaction(s)")
+
+        return success_json_response(
+            DeleteTransactionResponse(
+                deleted_count=deleted_count,
+                message=f"Successfully deleted {deleted_count} transaction(s)"
+            )
+        )
+
+    except APIError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete transactions: {e}", exc_info=True)
+        raise APIError(
+            message="Failed to delete transactions",
+            code="DELETE_FAILED",
+            status_code=500,
+            details={"error": str(e)}
+        )

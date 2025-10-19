@@ -1,5 +1,19 @@
 <template>
   <div class="transaction-table-container">
+    <!-- Confirm Dialog -->
+    <ConfirmDialog
+      :is-open="confirmDialog.isOpen.value"
+      :title="confirmDialog.dialogOptions.value.title"
+      :message="confirmDialog.dialogOptions.value.message"
+      :confirm-text="confirmDialog.dialogOptions.value.confirmText"
+      :cancel-text="confirmDialog.dialogOptions.value.cancelText"
+      :variant="confirmDialog.dialogOptions.value.variant"
+      @confirm="confirmDialog.handleConfirm"
+      @cancel="confirmDialog.handleCancel"
+      @close="confirmDialog.handleClose"
+    />
+
+
     <!-- Table Controls -->
     <div class="flex items-center justify-between mb-4 gap-4">
       <!-- Global search bar (when enabled) -->
@@ -184,8 +198,12 @@ import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
 import PriceTypeDropdown from '@/components/common/PriceTypeDropdown.vue'
 import TransactionStatusIndicator from '@/components/common/TransactionStatusIndicator.vue'
 import ColumnVisibilityControl from '@/components/common/ColumnVisibilityControl.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { useTableColumns } from '@/composables/useTableColumns'
 import { useTableKeyboardNavigation } from '@/composables/useTableKeyboardNavigation'
+import { useConfirmDialog } from '@/composables/useConfirmDialog'
+import { useTransactionDeleter } from '@/composables/useTransactionDeleter'
+import { useToast } from '@/composables/useNotifications'
 import type { TransactionViewModel, ImportContext, LedgerContext, PostingViewModel } from '@/types/transactions'
 import type { Cell } from '@tanstack/vue-table'
 
@@ -227,6 +245,7 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<{
   (e: 'transactionsUpdated', transactions: TransactionViewModel[]): void
   (e: 'duplicateClick', transactionId: string): void
+  (e: 'transactionDeleted', transactionId: string): void
 }>()
 
 // Composables
@@ -243,6 +262,10 @@ const {
   setCellFocus,
   handleKeyNavigation
 } = useTableKeyboardNavigation()
+
+const confirmDialog = useConfirmDialog()
+const { deleteTransactions } = useTransactionDeleter()
+const toast = useToast()
 
 // State
 // Two independent baselines for different purposes:
@@ -1614,11 +1637,53 @@ const removePosting = (transaction: TransactionViewModel, postingIndex: number) 
   }
 }
 
-const removeTransaction = (transaction: TransactionViewModel) => {
-  const updatedTransactions = props.transactions.filter(t => t.id !== transaction.id)
-  emitUpdate(updatedTransactions)
-  // After update, try to maintain the same page 
-  preserveCurrentPage()
+const removeTransaction = async (transaction: TransactionViewModel) => {
+  // Build confirmation message
+  const message = `Are you sure you want to delete this transaction?
+
+Date: ${transaction.date}
+Payee: ${transaction.payee}
+Narration: ${transaction.narration}
+
+This action will immediately update the ledger and cannot be undone.`
+
+  // Show confirmation dialog
+  const confirmed = await confirmDialog.showConfirm({
+    title: 'Delete Transaction?',
+    message: message,
+    confirmText: 'Delete',
+    cancelText: 'Cancel',
+    variant: 'danger'
+  })
+
+  if (!confirmed) return
+
+  try {
+    // Call backend to delete transaction
+    await deleteTransactions([transaction.id])
+
+    // Remove from frontend array after successful deletion
+    const updatedTransactions = props.transactions.filter(t => t.id !== transaction.id)
+    emitUpdate(updatedTransactions)
+
+    // After update, try to maintain the same page
+    preserveCurrentPage()
+
+    // Show success toast
+    toast.success(
+      'Transaction Deleted',
+      'Transaction has been removed from the ledger'
+    )
+
+    // Emit deletion event so parent can update totalCount
+    emit('transactionDeleted', transaction.id)
+  } catch (error: any) {
+    // Show error toast
+    toast.error(
+      'Delete Failed',
+      error.message || 'Failed to delete transaction. Please try again.'
+    )
+  }
 }
 
 const resetToOriginal = () => {

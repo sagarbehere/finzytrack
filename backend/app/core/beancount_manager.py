@@ -626,6 +626,10 @@ class BeancountManager:
         # These are created by Beancount when it sees pad + balance directives
         # and should not be written back to the file
         with self.atomic_ledger_write() as f:
+            # Truncate the file to ensure old content is removed
+            f.seek(0)
+            f.truncate()
+
             for entry in updated_entries:
                 # Skip auto-generated padding transactions
                 if isinstance(entry, Transaction) and entry.flag == 'P':
@@ -641,6 +645,82 @@ class BeancountManager:
                 f.write('\n\n')
 
         logger.info(f"Updated {len(found_ids)} transactions in ledger")
+
+        return len(found_ids)
+
+    def delete_transactions_by_id(self, transaction_ids: List[str]) -> int:
+        """
+        Delete transactions from the ledger by ID.
+
+        Args:
+            transaction_ids: List of transaction IDs (UUIDv7) to delete
+
+        Returns:
+            Number of transactions deleted
+
+        Raises:
+            APIError: If any transaction ID is not found or delete fails
+        """
+        from app.exceptions import APIError
+        from beancount.parser import printer
+
+        transaction_ids_set = set(transaction_ids)
+
+        # Read current entries
+        entries = self.cache.get_entries()
+
+        # Filter out transactions to be deleted
+        remaining_entries = []
+        found_ids = set()
+
+        for entry in entries:
+            if isinstance(entry, Transaction):
+                # Check if this transaction should be deleted
+                txn_id = entry.meta.get('id') if entry.meta else None
+
+                if txn_id and txn_id in transaction_ids_set:
+                    # Mark as found but don't add to remaining_entries (delete it)
+                    found_ids.add(txn_id)
+                    logger.debug(f"Marking transaction {txn_id} for deletion")
+                else:
+                    # Keep this transaction
+                    remaining_entries.append(entry)
+            else:
+                # Keep all non-transaction entries
+                remaining_entries.append(entry)
+
+        # Check if all requested transactions were found
+        not_found = transaction_ids_set - found_ids
+        if not_found:
+            raise APIError(
+                message=f"Transaction IDs not found: {list(not_found)}",
+                code="TRANSACTIONS_NOT_FOUND",
+                status_code=404,
+                details={"not_found_ids": list(not_found)}
+            )
+
+        # Write remaining entries atomically
+        # IMPORTANT: Skip auto-generated padding transactions (flag 'P')
+        with self.atomic_ledger_write() as f:
+            # Truncate the file to ensure old content is removed
+            f.seek(0)
+            f.truncate()
+
+            for entry in remaining_entries:
+                # Skip auto-generated padding transactions
+                if isinstance(entry, Transaction) and entry.flag == 'P':
+                    # Check if this is an auto-generated padding (no transaction ID)
+                    has_id = entry.meta and ('id' in entry.meta or 'transaction_id' in entry.meta)
+                    if not has_id:
+                        # This is an auto-generated padding transaction, skip it
+                        logger.debug(f"Skipping auto-generated padding transaction: {entry.narration}")
+                        continue
+
+                entry_str = printer.format_entry(entry)
+                f.write(entry_str)
+                f.write('\n\n')
+
+        logger.info(f"Deleted {len(found_ids)} transaction(s) from ledger")
 
         return len(found_ids)
 

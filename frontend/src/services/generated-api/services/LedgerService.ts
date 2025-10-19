@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ApiResponse_DeleteTransactionResponse_ } from '../models/ApiResponse_DeleteTransactionResponse_';
 import type { ApiResponse_DuckDBExportData_ } from '../models/ApiResponse_DuckDBExportData_';
 import type { ApiResponse_DuckDBStatusData_ } from '../models/ApiResponse_DuckDBStatusData_';
 import type { ApiResponse_ExportData_ } from '../models/ApiResponse_ExportData_';
@@ -10,6 +11,7 @@ import type { ApiResponse_QueryData_ } from '../models/ApiResponse_QueryData_';
 import type { ApiResponse_UpdateTransactionResponse_ } from '../models/ApiResponse_UpdateTransactionResponse_';
 import type { Body_exportLedger } from '../models/Body_exportLedger';
 import type { DatabaseType } from '../models/DatabaseType';
+import type { DeleteTransactionRequest } from '../models/DeleteTransactionRequest';
 import type { DuckDBExportRequest } from '../models/DuckDBExportRequest';
 import type { QueryRequest } from '../models/QueryRequest';
 import type { UpdateTransactionRequest } from '../models/UpdateTransactionRequest';
@@ -130,6 +132,33 @@ export class LedgerService {
     ): CancelablePromise<ApiResponse_UpdateTransactionResponse_> {
         return __request(OpenAPI, {
             method: 'PUT',
+            url: '/api/ledger/transactions',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Delete Ledger Transactions
+     * Delete transactions from the ledger by ID.
+     *
+     * This endpoint:
+     * 1. Validates that all transaction IDs exist in the ledger
+     * 2. Removes them atomically from the ledger file
+     * 3. Returns success with count of deleted transactions
+     *
+     * If any transaction ID is not found, the entire operation is rolled back.
+     * @param requestBody
+     * @returns ApiResponse_DeleteTransactionResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static deleteLedgerTransactions(
+        requestBody: DeleteTransactionRequest,
+    ): CancelablePromise<ApiResponse_DeleteTransactionResponse_> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
             url: '/api/ledger/transactions',
             body: requestBody,
             mediaType: 'application/json',

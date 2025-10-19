@@ -51,6 +51,7 @@
         :show-column-filters="false"
         :show-summary="true"
         @transactions-updated="handleTransactionsUpdated"
+        @transaction-deleted="handleTransactionDeleted"
       />
 
       <!-- Action Buttons -->
@@ -150,6 +151,13 @@ async function handleFilterChanged(filters: TransactionFilters, dbType: 'duckdb'
 
 function handleTransactionsUpdated(updatedTransactions: TransactionViewModel[]) {
   transactions.value = updatedTransactions
+}
+
+function handleTransactionDeleted(transactionId: string) {
+  // Decrement totalCount when a transaction is deleted
+  if (totalCount.value !== null && totalCount.value > 0) {
+    totalCount.value--
+  }
 }
 
 async function handleReset() {

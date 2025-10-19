@@ -28,6 +28,7 @@ export type { ApiResponse_CommodityCreateData_ } from './models/ApiResponse_Comm
 export type { ApiResponse_CommodityDeleteData_ } from './models/ApiResponse_CommodityDeleteData_';
 export type { ApiResponse_CommodityListData_ } from './models/ApiResponse_CommodityListData_';
 export type { ApiResponse_CommodityUpdateData_ } from './models/ApiResponse_CommodityUpdateData_';
+export type { ApiResponse_DeleteTransactionResponse_ } from './models/ApiResponse_DeleteTransactionResponse_';
 export type { ApiResponse_DuckDBExportData_ } from './models/ApiResponse_DuckDBExportData_';
 export type { ApiResponse_DuckDBStatusData_ } from './models/ApiResponse_DuckDBStatusData_';
 export type { ApiResponse_ExportData_ } from './models/ApiResponse_ExportData_';
@@ -61,6 +62,8 @@ export type { CommodityUpdateData } from './models/CommodityUpdateData';
 export type { CommodityUpdateRequest } from './models/CommodityUpdateRequest';
 export type { CommodityUsageData } from './models/CommodityUsageData';
 export { DatabaseType } from './models/DatabaseType';
+export type { DeleteTransactionRequest } from './models/DeleteTransactionRequest';
+export type { DeleteTransactionResponse } from './models/DeleteTransactionResponse';
 export type { DuckDBExportData } from './models/DuckDBExportData';
 export type { DuckDBExportRequest } from './models/DuckDBExportRequest';
 export type { DuckDBStatusData } from './models/DuckDBStatusData';
