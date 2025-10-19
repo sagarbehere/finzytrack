@@ -1638,8 +1638,19 @@ const removePosting = (transaction: TransactionViewModel, postingIndex: number) 
 }
 
 const removeTransaction = async (transaction: TransactionViewModel) => {
-  // Build confirmation message
-  const message = `Are you sure you want to delete this transaction?
+  // Check if we're in import context (transactions not yet in ledger)
+  const isImportContext = props.importContext !== undefined
+
+  // Build confirmation message based on context
+  const message = isImportContext
+    ? `Are you sure you want to remove this transaction from the import?
+
+Date: ${transaction.date}
+Payee: ${transaction.payee}
+Narration: ${transaction.narration}
+
+This will only remove it from the current import list.`
+    : `Are you sure you want to delete this transaction?
 
 Date: ${transaction.date}
 Payee: ${transaction.payee}
@@ -1649,9 +1660,9 @@ This action will immediately update the ledger and cannot be undone.`
 
   // Show confirmation dialog
   const confirmed = await deleteConfirmDialog.showConfirm({
-    title: 'Delete Transaction?',
+    title: isImportContext ? 'Remove Transaction?' : 'Delete Transaction?',
     message: message,
-    confirmText: 'Delete',
+    confirmText: isImportContext ? 'Remove' : 'Delete',
     cancelText: 'Cancel',
     variant: 'danger'
   })
@@ -1659,10 +1670,12 @@ This action will immediately update the ledger and cannot be undone.`
   if (!confirmed) return
 
   try {
-    // Call backend to delete transaction
-    await deleteTransactions([transaction.id])
+    // If in ledger context, call backend to delete from ledger
+    if (!isImportContext) {
+      await deleteTransactions([transaction.id])
+    }
 
-    // Remove from frontend array after successful deletion
+    // Remove from frontend array
     const updatedTransactions = props.transactions.filter(t => t.id !== transaction.id)
     emitUpdate(updatedTransactions)
 
@@ -1670,18 +1683,24 @@ This action will immediately update the ledger and cannot be undone.`
     preserveCurrentPage()
 
     // Show success toast
-    toast.success(
-      'Transaction Deleted',
-      'Transaction has been removed from the ledger'
-    )
-
-    // Emit deletion event so parent can update totalCount
-    emit('transactionDeleted', transaction.id)
+    if (isImportContext) {
+      toast.success(
+        'Transaction Removed',
+        'Transaction has been removed from the import list'
+      )
+    } else {
+      toast.success(
+        'Transaction Deleted',
+        'Transaction has been removed from the ledger'
+      )
+      // Emit deletion event so parent can update totalCount (only for ledger context)
+      emit('transactionDeleted', transaction.id)
+    }
   } catch (error: any) {
     // Show error toast
     toast.error(
-      'Delete Failed',
-      error.message || 'Failed to delete transaction. Please try again.'
+      isImportContext ? 'Remove Failed' : 'Delete Failed',
+      error.message || 'Failed to remove transaction. Please try again.'
     )
   }
 }
