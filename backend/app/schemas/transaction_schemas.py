@@ -21,6 +21,7 @@ class RawTransactionForCategorization(BaseModel):
     Simplified transaction data needed for categorization.
     Only includes fields required for ML classification and duplicate detection.
     """
+    id: str = Field(..., description="Frontend-generated temporary ID for matching request to response")
     date: DateType = Field(..., description="Transaction date")
     payee: str = Field(..., description="Transaction payee")
     memo: Optional[str] = Field(default=None, description="OFX memo field")
@@ -53,11 +54,10 @@ class DuplicateInfo(BaseModel):
 class CategorizedTransactionResult(BaseModel):
     """
     Result of categorization for a single transaction.
-    Includes safety validation fields and categorization/duplicate detection results.
+    Uses ID-based matching to correlate request and response.
     """
-    # Safety validation fields (for verifying order matches request)
-    date: DateType = Field(..., description="Transaction date (for order verification)")
-    amount: Decimal = Field(..., description="Transaction amount (for order verification)")
+    # ID for matching request to response (replaces order-based matching)
+    id: str = Field(..., description="Frontend-generated temporary ID (matches request)")
 
     # Categorization results
     suggested_category: Optional[str] = Field(default=None, description="ML-suggested expense category (e.g., Expenses:Groceries)")

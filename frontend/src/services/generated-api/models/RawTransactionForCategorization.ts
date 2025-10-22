@@ -8,6 +8,10 @@
  */
 export type RawTransactionForCategorization = {
     /**
+     * Frontend-generated temporary ID for matching request to response
+     */
+    id: string;
+    /**
      * Transaction date
      */
     date: string;

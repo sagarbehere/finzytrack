@@ -38,6 +38,7 @@ export function useTransactionImporter() {
       // Map TransactionViewModel to backend schema
       const request: CategorizeRequest = {
         transactions: transactions.map(tx => ({
+          id: tx.id, // Include frontend-generated ID for request/response correlation
           date: tx.date,
           payee: tx.payee,
           memo: tx.memo,

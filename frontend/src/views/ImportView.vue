@@ -377,18 +377,29 @@
         sourceCurrency.value
       )
 
-      // Verify ordering matches (safety check)
-      results.forEach((result, index) => {
-        const transaction = transactionViewModels.value[index]
-        if (result.date !== transaction.date || parseFloat(result.amount.toString()) !== transaction.postings[0]?.amount) {
-          console.error('Response ordering mismatch!', { result, transaction })
-          throw new Error('Backend returned results in unexpected order')
+      // Build a map of results by ID for O(1) lookup
+      const resultMap = new Map(results.map(r => [r.id, r]))
+
+      // Verify all transactions have corresponding results
+      transactionViewModels.value.forEach(tx => {
+        if (!resultMap.has(tx.id)) {
+          console.error('Missing categorization result for transaction:', tx)
+          throw new Error(`No categorization result found for transaction ${tx.id}`)
         }
       })
 
-      // Update transactions with suggested categories and import context
-      transactionViewModels.value = transactionViewModels.value.map((tx, index) => {
-        const result = results[index]
+      // Verify no extra results were returned
+      if (results.length !== transactionViewModels.value.length) {
+        console.error('Result count mismatch!', {
+          sent: transactionViewModels.value.length,
+          received: results.length
+        })
+        throw new Error('Backend returned unexpected number of results')
+      }
+
+      // Update transactions with suggested categories and import context using ID-based matching
+      transactionViewModels.value = transactionViewModels.value.map(tx => {
+        const result = resultMap.get(tx.id)!
 
         // Update import context
         const existing = importContext.value.get(tx.id)

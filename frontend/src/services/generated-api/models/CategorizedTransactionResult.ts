@@ -5,17 +5,13 @@
 import type { DuplicateInfo } from './DuplicateInfo';
 /**
  * Result of categorization for a single transaction.
- * Includes safety validation fields and categorization/duplicate detection results.
+ * Uses ID-based matching to correlate request and response.
  */
 export type CategorizedTransactionResult = {
     /**
-     * Transaction date (for order verification)
+     * Frontend-generated temporary ID (matches request)
      */
-    date: string;
-    /**
-     * Transaction amount (for order verification)
-     */
-    amount: string;
+    id: string;
     /**
      * ML-suggested expense category (e.g., Expenses:Groceries)
      */

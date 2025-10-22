@@ -101,10 +101,9 @@ async def categorize_transactions(
         if is_duplicate:
             duplicate_count += 1
 
-        # Create result
+        # Create result with ID for matching
         result = CategorizedTransactionResult(
-            date=raw_txn.date,
-            amount=raw_txn.amount,
+            id=raw_txn.id,  # Echo back the ID for request/response correlation
             suggested_category=suggested_category,
             confidence=confidence,
             is_duplicate=is_duplicate,
