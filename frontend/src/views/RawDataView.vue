@@ -1,34 +1,40 @@
 <template>
   <div>
     <div class="mb-6">
-      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Raw Data</h1>
+      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Raw Ledger Data</h1>
       <p class="mt-1 text-gray-600 dark:text-gray-400">
-        Direct Beancount file editing with syntax highlighting
+        View and edit your Beancount ledger file with syntax validation and utilities
       </p>
     </div>
 
     <div class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 p-6">
-      <div class="text-center py-12">
-        <div class="text-gray-400 dark:text-gray-500 text-6xl mb-4">📝</div>
-        <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">Raw Beancount Editor</h3>
-        <p class="text-gray-600 dark:text-gray-400 mb-4">
-          Direct access to your Beancount ledger files
-        </p>
-        <div class="text-sm text-gray-500 dark:text-gray-400">
-          <p><strong>Coming Soon:</strong></p>
-          <ul class="mt-2 text-left max-w-md mx-auto space-y-1">
-            <li>• Syntax highlighting for Beancount format</li>
-            <li>• Real-time validation and error checking</li>
-            <li>• Version history and diff viewing</li>
-            <li>• Search and replace functionality</li>
-            <li>• Automatic backup before changes</li>
-          </ul>
-        </div>
-      </div>
+      <FileEditor
+        file-type="ledger"
+        :allow-edit="true"
+        :show-utilities="true"
+        @saved="handleLedgerSaved"
+        @error="handleError"
+      />
     </div>
   </div>
 </template>
 
-<script setup>
-  // Raw data view component placeholder
+<script setup lang="ts">
+import FileEditor from '@/components/common/FileEditor.vue'
+import { useToast } from '@/composables/useNotifications'
+
+const toast = useToast()
+
+function handleLedgerSaved() {
+  // Toast already shown by FileEditor
+
+  // TODO: Consider reloading other parts of the app that depend on ledger
+  // For now, user should refresh page to see changes reflected in other views
+  console.log('Ledger saved successfully')
+}
+
+function handleError(error: string) {
+  // Error toast already shown by FileEditor
+  console.error('Ledger editor error:', error)
+}
 </script>

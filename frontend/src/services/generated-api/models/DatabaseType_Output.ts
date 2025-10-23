@@ -3,9 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Supported database types for export
+ * Supported database types for analytics export
  */
-export enum DatabaseType {
+export enum DatabaseType_Output {
     DUCKDB = 'duckdb',
     SQLITE = 'sqlite',
 }
