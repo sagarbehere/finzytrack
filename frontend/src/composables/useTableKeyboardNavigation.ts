@@ -76,7 +76,7 @@ export function useTableKeyboardNavigation() {
 
     // Try different element types based on the column
     if (position.columnId === 'payee' || position.columnId === 'memo' || position.columnId === 'narration') {
-      targetElement = cell.querySelector('[contenteditable="true"]') as HTMLElement
+      targetElement = cell.querySelector('textarea') as HTMLElement
     } else if (['account', 'currency', 'cost_currency', 'price_currency', 'price_type'].includes(position.columnId)) {
       // For dropdowns (AccountDropdown/CommodityDropdown/PriceTypeDropdown), find the ComboboxInput element
       targetElement = cell.querySelector('input') as HTMLElement
@@ -91,19 +91,9 @@ export function useTableKeyboardNavigation() {
     if (targetElement) {
       targetElement.focus()
 
-      // For contenteditable elements, place cursor at end
-      if (targetElement.contentEditable === 'true') {
-        const range = document.createRange()
-        const selection = window.getSelection()
-        range.selectNodeContents(targetElement)
-        range.collapse(false)
-        selection?.removeAllRanges()
-        selection?.addRange(range)
-      }
-
-      // For input elements, select all text
-      if (targetElement.tagName === 'INPUT') {
-        (targetElement as HTMLInputElement).select()
+      // For input and textarea elements, select all text
+      if (targetElement.tagName === 'INPUT' || targetElement.tagName === 'TEXTAREA') {
+        (targetElement as HTMLInputElement | HTMLTextAreaElement).select()
       }
     } else {
       console.warn('No focusable element found in cell:', cellSelector)

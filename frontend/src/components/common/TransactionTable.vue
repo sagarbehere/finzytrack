@@ -520,13 +520,12 @@ const columns = computed(() => {
       id: 'payee',
       header: 'Payee',
       cell: ({ row, getValue }) => props.editable
-        ? h('div', {
-            contenteditable: true,
-            textContent: getValue() || '',
-            onInput: (e: any) => updateTransactionPayee(row.original.transaction, e.target.textContent),
-            class: `${getEditableInputClasses()} min-h-[2.5rem] overflow-y-auto`,
-            style: { minHeight: '2.5rem', maxHeight: '6rem' },
-            'data-placeholder': 'Payee'
+        ? h('textarea', {
+            value: getValue() || '',
+            onInput: (e: any) => updateTransactionPayee(row.original.transaction, e.target.value),
+            class: `${getEditableInputClasses()} resize-none overflow-y-auto h-full`,
+            style: { width: '100%', minHeight: '2.5rem', boxSizing: 'border-box', display: 'block' },
+            placeholder: 'Payee'
           })
         : h('div', {
             class: `${getDisplayClasses()} break-words overflow-hidden`
@@ -539,13 +538,12 @@ const columns = computed(() => {
       id: 'memo',
       header: 'Memo',
       cell: ({ row, getValue }) => props.editable
-        ? h('div', {
-            contenteditable: true,
-            textContent: getValue() || '',
-            onInput: (e: any) => updateTransactionMemo(row.original.transaction, e.target.textContent),
-            class: `${getEditableInputClasses()} min-h-[2.5rem] overflow-y-auto`,
-            style: { minHeight: '2.5rem', maxHeight: '6rem' },
-            'data-placeholder': 'Memo'
+        ? h('textarea', {
+            value: getValue() || '',
+            onInput: (e: any) => updateTransactionMemo(row.original.transaction, e.target.value),
+            class: `${getEditableInputClasses()} resize-none overflow-y-auto h-full`,
+            style: { width: '100%', minHeight: '2.5rem', boxSizing: 'border-box', display: 'block' },
+            placeholder: 'Memo'
           })
         : h('div', {
             class: `${getDisplayClasses()} break-words overflow-hidden`
@@ -558,13 +556,12 @@ const columns = computed(() => {
       id: 'narration',
       header: 'Narration',
       cell: ({ row, getValue }) => props.editable
-        ? h('div', {
-            contenteditable: true,
-            textContent: getValue() || '',
-            onInput: (e: any) => updateTransactionNarration(row.original.transaction, e.target.textContent),
-            class: `${getEditableInputClasses()} h-full min-h-[2.5rem] overflow-y-auto`,
-            style: { minHeight: '2.5rem' },
-            'data-placeholder': 'Description'
+        ? h('textarea', {
+            value: getValue() || '',
+            onInput: (e: any) => updateTransactionNarration(row.original.transaction, e.target.value),
+            class: `${getEditableInputClasses()} resize-none overflow-y-auto h-full`,
+            style: { width: '100%', minHeight: '2.5rem', boxSizing: 'border-box', display: 'block' },
+            placeholder: 'Description'
           })
         : h('div', {
             class: `${getDisplayClasses()} break-words overflow-hidden`
@@ -1874,19 +1871,29 @@ th {
 
 /* Text wrapping for content columns */
 td[data-column-id="payee"],
+td[data-column-id="memo"],
 td[data-column-id="narration"] {
   word-wrap: break-word;
   overflow-wrap: break-word;
   vertical-align: top;
   overflow: hidden;
+  height: 1px; /* Force td to shrink-wrap, making height: 100% work on children */
 }
 
 /* Text content should fill the cell */
 td[data-column-id="payee"] > *,
+td[data-column-id="memo"] > *,
 td[data-column-id="narration"] > * {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
+}
+
+/* Textarea should fill cell height */
+td[data-column-id="payee"] textarea,
+td[data-column-id="memo"] textarea,
+td[data-column-id="narration"] textarea {
+  height: 100%;
 }
 
 /* Ensure dropdowns can escape table cell boundaries */
@@ -1987,17 +1994,6 @@ td[data-column-id="index"] {
 
 .dark td[data-column-id="index"] {
   background-color: #111827; /* dark:bg-gray-900 */
-}
-
-/* Contenteditable placeholder styling */
-[contenteditable]:empty:before {
-  content: attr(data-placeholder);
-  color: #9ca3af;
-  pointer-events: none;
-}
-
-.dark [contenteditable]:empty:before {
-  color: #6b7280;
 }
 
 </style>
