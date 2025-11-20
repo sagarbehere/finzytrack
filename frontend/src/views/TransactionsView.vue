@@ -50,6 +50,7 @@
         :show-search="true"
         :show-column-filters="false"
         :show-summary="true"
+        :column-control-align="'right'"
         @transactions-updated="handleTransactionsUpdated"
         @transaction-deleted="handleTransactionDeleted"
       />

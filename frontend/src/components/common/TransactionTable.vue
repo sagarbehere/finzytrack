@@ -39,6 +39,7 @@
         :all-columns="allColumns"
         :toggle-column-visibility="toggleColumnVisibility"
         :reset-to-defaults="resetToDefaults"
+        :align="columnControlAlign"
       />
     </div>
 
@@ -230,6 +231,7 @@ interface Props {
   showSummary?: boolean
   editable?: boolean
   pageSize?: number
+  columnControlAlign?: 'left' | 'right'
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -239,6 +241,7 @@ const props = withDefaults(defineProps<Props>(), {
   showSummary: true,
   editable: true,
   pageSize: 25,
+  columnControlAlign: 'left',
 })
 
 // Define emits

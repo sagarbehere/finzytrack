@@ -20,7 +20,10 @@
       leave-to-class="transform opacity-0 scale-95"
     >
       <MenuItems
-        class="absolute left-0 z-50 mt-2 w-[32rem] origin-top-left divide-y divide-gray-100 rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800 dark:divide-gray-700 dark:ring-gray-600"
+        :class="[
+          'absolute z-50 mt-2 w-[32rem] divide-y divide-gray-100 rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800 dark:divide-gray-700 dark:ring-gray-600',
+          align === 'right' ? 'right-0 origin-top-right' : 'left-0 origin-top-left'
+        ]"
       >
         <div class="px-4 py-3">
           <p class="text-sm font-medium text-gray-900 dark:text-white">Show Columns</p>
@@ -113,7 +116,10 @@ interface Props {
   }>
   toggleColumnVisibility: (columnId: string) => void
   resetToDefaults: () => void
+  align?: 'left' | 'right'
 }
 
-defineProps<Props>()
+withDefaults(defineProps<Props>(), {
+  align: 'left'
+})
 </script>
