@@ -22,7 +22,7 @@
     </div>
 
     <!-- Transaction Table -->
-    <div v-else-if="transactions.length > 0">
+    <div ref="transactionTableContainer" v-if="showTable && transactions.length > 0">
       <!-- Warning if limit is reached -->
       <div
         v-if="totalCount !== null && transactions.length < totalCount"
@@ -89,7 +89,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import TransactionTable from '@/components/common/TransactionTable.vue'
 import TransactionFilterPanel from '@/components/transactions/TransactionFilterPanel.vue'
 import type { TransactionViewModel } from '@/types/transactions'
@@ -100,10 +100,12 @@ import { useToast } from '@/composables/useNotifications'
 
 // Refs
 const transactionTableRef = ref<InstanceType<typeof TransactionTable> | null>(null)
+const transactionTableContainer = ref<HTMLDivElement | null>(null)
 const transactions = ref<TransactionViewModel[]>([])
 const totalCount = ref<number | null>(null)
 const isQuerying = ref(false)
 const isSaving = ref(false)
+const showTable = ref(false)
 const currentFilters = ref<TransactionFilters | null>(null)
 const currentDbType = ref<'duckdb' | 'sqlite'>('sqlite')
 const currentLimit = ref<number>(1000)
@@ -139,6 +141,27 @@ async function handleFilterChanged(filters: TransactionFilters, dbType: 'duckdb'
     transactions.value.forEach(t => {
       t.internal.isModified = false
     })
+
+    // Show table and scroll to it
+    if (transactions.value.length > 0) {
+      showTable.value = true
+
+      nextTick(() => {
+        if (transactionTableContainer.value) {
+          const rect = transactionTableContainer.value.getBoundingClientRect()
+          const scrollTop = window.pageYOffset || document.documentElement.scrollTop
+          const offsetTop = rect.top + scrollTop
+
+          // Offset to account for fixed header
+          const offset = 130
+
+          window.scrollTo({
+            top: offsetTop - offset,
+            behavior: 'smooth'
+          })
+        }
+      })
+    }
   } catch (error: any) {
     console.error('Failed to query transactions:', error)
     toast.error(
