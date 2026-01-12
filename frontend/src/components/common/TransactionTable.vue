@@ -19,9 +19,9 @@
       <!-- Global search bar (when enabled) -->
       <div v-if="showSearch" class="flex-1 max-w-md">
         <div class="relative">
-          <MagnifyingGlassIcon 
-            class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" 
-            aria-hidden="true" 
+          <MagnifyingGlassIcon
+            class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
+            aria-hidden="true"
           />
           <input
             :value="globalFilter"
@@ -33,14 +33,20 @@
         </div>
       </div>
 
-      <!-- Column visibility controls -->
-      <ColumnVisibilityControl
-        :column-visibility="columnVisibility"
-        :all-columns="allColumns"
-        :toggle-column-visibility="toggleColumnVisibility"
-        :reset-to-defaults="resetToDefaults"
-        :align="columnControlAlign"
-      />
+      <!-- Right side: transaction count and column visibility controls -->
+      <div class="flex items-center gap-4">
+        <div class="text-sm text-gray-700 dark:text-gray-300">
+          Showing {{ filteredTransactions.length }} {{ filteredTransactions.length === 1 ? 'transaction' : 'transactions' }}
+        </div>
+
+        <ColumnVisibilityControl
+          :column-visibility="columnVisibility"
+          :all-columns="allColumns"
+          :toggle-column-visibility="toggleColumnVisibility"
+          :reset-to-defaults="resetToDefaults"
+          :align="columnControlAlign"
+        />
+      </div>
     </div>
 
     <!-- Main table -->
