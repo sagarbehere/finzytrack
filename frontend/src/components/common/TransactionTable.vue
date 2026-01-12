@@ -163,7 +163,6 @@ import {
   useVueTable,
   createColumnHelper,
   getCoreRowModel,
-  getFilteredRowModel,
   FlexRender,
 } from '@tanstack/vue-table'
 import { MagnifyingGlassIcon } from '@heroicons/vue/20/solid'
@@ -891,11 +890,7 @@ const table = useVueTable({
   get data() { return currentPageTransactions.value },
   get columns() { return columns.value },
   state: {
-    get globalFilter() { return globalFilter.value },
     get columnSizing() { return columnSizing.value },
-  },
-  onGlobalFilterChange: (filter: string) => {
-    globalFilter.value = filter
   },
   onColumnSizingChange: (updater) => {
     const newSizing = typeof updater === 'function' ? updater(columnSizing.value) : updater
@@ -911,7 +906,6 @@ const table = useVueTable({
   enableColumnResizing: true,
   columnResizeMode: 'onChange',
   getCoreRowModel: getCoreRowModel(),
-  getFilteredRowModel: getFilteredRowModel(),
 })
 
 const onGlobalFilterChange = (e: Event) => {
