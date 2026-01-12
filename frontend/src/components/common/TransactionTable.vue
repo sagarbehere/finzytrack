@@ -105,39 +105,6 @@
       </div>
     </div>
 
-    <!-- Pagination controls -->
-    <div v-if="pageSize > 0" class="flex items-center justify-between mt-6">
-      <div class="text-sm text-gray-700 dark:text-gray-300">
-        <template v-if="currentPageTransactionCount === 1">
-          Showing transaction {{ firstEntryNumber }} of {{ filteredTransactions.length }}
-        </template>
-        <template v-else>
-          Showing transactions {{ firstEntryNumber }} to {{ lastEntryNumber }} of {{ filteredTransactions.length }}
-        </template>
-      </div>
-      <div class="flex items-center gap-2">
-        <button
-          @click="goToPreviousPage"
-          :disabled="currentPageIndex === 0"
-          class="inline-flex items-center justify-center px-3 py-1.5 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-400 dark:disabled:bg-gray-600 transition-colors"
-        >
-          <ChevronLeftIcon class="h-4 w-4 mr-1 flex-shrink-0" />
-          <span class="whitespace-nowrap">Previous</span>
-        </button>
-        <span class="text-sm text-gray-700 dark:text-gray-300 px-3 whitespace-nowrap">
-          Page {{ currentPageIndex + 1 }} of {{ totalPages }}
-        </span>
-        <button
-          @click="goToNextPage"
-          :disabled="currentPageIndex >= totalPages - 1"
-          class="inline-flex items-center justify-center px-3 py-1.5 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-400 dark:disabled:bg-gray-600 transition-colors"
-        >
-          <span class="whitespace-nowrap">Next</span>
-          <ChevronRightIcon class="h-4 w-4 ml-1 flex-shrink-0" />
-        </button>
-      </div>
-    </div>
-    
     <!-- Summary section (when enabled) -->
     <div v-if="showSummary" class="mt-4">
       <div class="card">
@@ -193,7 +160,7 @@ import {
   getFilteredRowModel,
   FlexRender,
 } from '@tanstack/vue-table'
-import { MagnifyingGlassIcon, ChevronLeftIcon, ChevronRightIcon } from '@heroicons/vue/20/solid'
+import { MagnifyingGlassIcon } from '@heroicons/vue/20/solid'
 import AccountDropdown from '@/components/common/AccountDropdown.vue'
 import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
 import PriceTypeDropdown from '@/components/common/PriceTypeDropdown.vue'
@@ -230,7 +197,6 @@ interface Props {
   showTransactionGrouping?: boolean
   showSummary?: boolean
   editable?: boolean
-  pageSize?: number
   columnControlAlign?: 'left' | 'right'
 }
 
@@ -240,7 +206,6 @@ const props = withDefaults(defineProps<Props>(), {
   showTransactionGrouping: true,
   showSummary: true,
   editable: true,
-  pageSize: 25,
   columnControlAlign: 'left',
 })
 
@@ -314,114 +279,30 @@ const filteredTransactions = computed(() => {
 
 
 
-// Custom pagination implementation to keep transaction groups together
-const currentPageIndex = ref(0)
-
-// Calculate pages that keep entire transactions together
-const pages = computed(() => {
-  if (props.pageSize <= 0) return []
-  
+// Flatten transactions into table rows
+const currentPageTransactions = computed(() => {
   const result = []
-  let currentPage = []
-  let currentSize = 0
-  
   let transactionCounter = 0
-  
+
   for (const transaction of filteredTransactions.value) {
     transactionCounter++
     const postings = transaction.postings
-    
-    // If adding this transaction would exceed page size and page isn't empty, start new page
-    if (currentPage.length > 0 && currentSize + postings.length > props.pageSize) {
-      result.push(currentPage)
-      currentPage = []
-      currentSize = 0
-    }
-    
-    // Add all postings for this transaction to current page
+
+    // Add all postings for this transaction
     const transactionRows = postings.map((posting, index) => ({
       ...posting,
       transaction,
-      postingIndex: index,  // Store the original posting index
+      postingIndex: index,
       isFirstPosting: index === 0,
       isLastPosting: index === postings.length - 1,
       transactionIndex: transactionCounter,
     }))
-    
-    currentPage.push(...transactionRows)
-    currentSize += postings.length
+
+    result.push(...transactionRows)
   }
-  
-  // Add the last page if it has content
-  if (currentPage.length > 0) {
-    result.push(currentPage)
-  }
-  
+
   return result
 })
-
-const totalPages = computed(() => pages.value.length)
-
-const currentPageTransactions = computed(() => {
-  if (pages.value[currentPageIndex.value]) {
-    return pages.value[currentPageIndex.value]
-  }
-  return []
-})
-
-const currentPageTransactionCount = computed(() => {
-  // Count unique transactions in the current page (not the individual posting rows)
-  const currentRows = currentPageTransactions.value
-  if (currentRows.length === 0) return 0
-  
-  // Count how many unique transactions are on this page
-  const uniqueTransactionIds = new Set()
-  currentRows.forEach(row => {
-    uniqueTransactionIds.add(row.transaction.id)
-  })
-  return uniqueTransactionIds.size
-})
-
-// Calculate the first and last transaction numbers for the pagination display
-const firstEntryNumber = computed(() => {
-  if (filteredTransactions.value.length === 0 || currentPageIndex.value >= totalPages.value) {
-    return 0
-  }
-  
-  // Calculate how many transactions appear on pages before the current page
-  let previousTransactionCount = 0
-  for (let i = 0; i < currentPageIndex.value; i++) {
-    const page = pages.value[i] || []
-    const uniqueTransactionIds = new Set()
-    page.forEach(row => {
-      uniqueTransactionIds.add(row.transaction.id)
-    })
-    previousTransactionCount += uniqueTransactionIds.size
-  }
-  
-  // The first entry number is the count of transactions on previous pages + 1
-  return previousTransactionCount + 1
-})
-
-const lastEntryNumber = computed(() => {
-  if (filteredTransactions.value.length === 0 || currentPageIndex.value >= totalPages.value) {
-    return 0
-  }
-  
-  return firstEntryNumber.value + currentPageTransactionCount.value - 1
-})
-
-const goToPreviousPage = () => {
-  if (currentPageIndex.value > 0) {
-    currentPageIndex.value--
-  }
-}
-
-const goToNextPage = () => {
-  if (currentPageIndex.value < totalPages.value - 1) {
-    currentPageIndex.value++
-  }
-}
 
 // Column definitions  
 interface TableRowData {
@@ -915,66 +796,6 @@ const getCellClasses = (cell: Cell<any, any>) => {
 const handleCellKeydown = (event: KeyboardEvent, cell: any, rowData: any) => {
   const target = event.target as Element
 
-  // Handle pagination with PageUp/PageDown
-  // This needs to be handled here because dropdown components may prevent bubbling
-  if (event.key === 'PageUp') {
-    event.preventDefault()
-    event.stopPropagation()
-    if (currentPageIndex.value > 0) {
-      // Save current position before changing page
-      const postingColumns = ['account', 'amount', 'currency', 'cost_amount', 'cost_currency', 'cost_date', 'price_amount', 'price_currency', 'price_type', 'actions']
-      const currentPosition = {
-        // Position within the current page (0-based)
-        rowIndex: rowData.transactionIndex - 1 - (firstEntryNumber.value - 1),
-        columnId: cell.column.id,
-        postingIndex: postingColumns.includes(cell.column.id) ? rowData.postingIndex : undefined
-      }
-
-      goToPreviousPage()
-
-      // Restore focus after page changes
-      nextTick(() => {
-        const newPageTransactionCount = currentPageTransactionCount.value
-        const targetRow = Math.min(currentPosition.rowIndex, newPageTransactionCount - 1)
-        setCellFocus({
-          rowIndex: firstEntryNumber.value - 1 + targetRow,
-          columnId: currentPosition.columnId,
-          postingIndex: currentPosition.postingIndex
-        })
-      })
-    }
-    return
-  }
-
-  if (event.key === 'PageDown') {
-    event.preventDefault()
-    event.stopPropagation()
-    if (currentPageIndex.value < totalPages.value - 1) {
-      // Save current position before changing page
-      const postingColumns = ['account', 'amount', 'currency', 'cost_amount', 'cost_currency', 'cost_date', 'price_amount', 'price_currency', 'price_type', 'actions']
-      const currentPosition = {
-        // Position within the current page (0-based)
-        rowIndex: rowData.transactionIndex - 1 - (firstEntryNumber.value - 1),
-        columnId: cell.column.id,
-        postingIndex: postingColumns.includes(cell.column.id) ? rowData.postingIndex : undefined
-      }
-
-      goToNextPage()
-
-      // Restore focus after page changes
-      nextTick(() => {
-        const newPageTransactionCount = currentPageTransactionCount.value
-        const targetRow = Math.min(currentPosition.rowIndex, newPageTransactionCount - 1)
-        setCellFocus({
-          rowIndex: firstEntryNumber.value - 1 + targetRow,
-          columnId: currentPosition.columnId,
-          postingIndex: currentPosition.postingIndex
-        })
-      })
-    }
-    return
-  }
-
   // For dropdown columns (account, currency, cost_currency, price_currency, price_type), check if options list is visible
   const isDropdownColumn = ['account', 'currency', 'cost_currency', 'price_currency', 'price_type'].includes(cell.column.id)
 
@@ -1089,22 +910,12 @@ const table = useVueTable({
 
 const onGlobalFilterChange = (e: Event) => {
   globalFilter.value = (e.target as HTMLInputElement).value
-  currentPageIndex.value = 0  // Reset to first page when filter changes
 }
-
-watch(() => props.pageSize, (_size) => {
-  currentPageIndex.value = 0  // Reset to first page when page size changes
-})
 
 // Update sticky columns when column visibility changes
 watch(columnVisibility, () => {
   updateStickyColumnPositions()
 }, { deep: true })
-
-// Update sticky columns when page changes (DOM re-renders)
-watch(currentPageIndex, () => {
-  updateStickyColumnPositions()
-})
 
 // Update sticky column positions based on actual rendered widths
 const updateStickyColumnPositions = () => {
@@ -1121,8 +932,6 @@ const updateStickyColumnPositions = () => {
 }
 
 onMounted(() => {
-  currentPageIndex.value = 0
-
   // Initialize both baselines with the initial props data
   ofxOriginalTransactions.value = JSON.parse(JSON.stringify(props.transactions))
   editBaselineTransactions.value = JSON.parse(JSON.stringify(props.transactions))
@@ -1130,30 +939,8 @@ onMounted(() => {
   // Set sticky column positions after initial render
   updateStickyColumnPositions()
 
-  // Add global keyboard listener for table navigation initialization and pagination
+  // Add global keyboard listener for table navigation initialization
   const handleGlobalKeydown = (event: KeyboardEvent) => {
-    const target = event.target as Element
-
-    // Only handle if we're inside the transaction table
-    if (target?.closest('.transaction-table-container')) {
-      // Handle pagination with Page Up/Page Down
-      if (event.key === 'PageUp') {
-        event.preventDefault()
-        if (currentPageIndex.value > 0) {
-          goToPreviousPage()
-        }
-        return
-      }
-
-      if (event.key === 'PageDown') {
-        event.preventDefault()
-        if (currentPageIndex.value < totalPages.value - 1) {
-          goToNextPage()
-        }
-        return
-      }
-    }
-
     // Start navigation with F2
     if (event.key === 'F2') {
       if (filteredTransactions.value.length > 0) {
@@ -1185,26 +972,9 @@ onMounted(() => {
 })
 
 watch(() => props.transactions, () => {
-  // Preserve the current page if possible when transactions change
-  const preservedPageIndex = currentPageIndex.value
-
   // DO NOT update baselines here - they should only be updated:
   // - ofxOriginalTransactions: On mount (when OFX is first loaded)
   // - editBaselineTransactions: On mount, after Reset, or when parent calls setNewEditBaseline()
-
-  // After the new pages are calculated, try to maintain the same page
-  // Use nextTick to ensure computed properties are updated first
-  nextTick(() => {
-    if (preservedPageIndex < totalPages.value) {
-      currentPageIndex.value = preservedPageIndex
-    } else if (totalPages.value > 0) {
-      // If the preserved page is no longer valid, go to the last valid page
-      currentPageIndex.value = Math.max(0, totalPages.value - 1)
-    } else {
-      // If there are no pages, go to the first (0) page
-      currentPageIndex.value = 0
-    }
-  })
 }, { deep: true })
 
 const netFlowByCurrency = computed(() => {
@@ -1390,27 +1160,13 @@ const checkIfModified = (transaction: TransactionViewModel): boolean => {
   return false // No modifications detected
 }
 
-// Utility function to preserve the current page after data changes
-const preserveCurrentPage = () => {
-  const preservedPageIndex = currentPageIndex.value
-  nextTick(() => {
-    if (preservedPageIndex < totalPages.value) {
-      currentPageIndex.value = preservedPageIndex
-    } else if (totalPages.value > 0) {
-      currentPageIndex.value = Math.max(0, totalPages.value - 1)
-    }
-  })
-}
-
-  const updateTransactionDate = (transaction: TransactionViewModel, newDate: string) => {
+const updateTransactionDate = (transaction: TransactionViewModel, newDate: string) => {
     const updatedTransactions = [...props.transactions]
     const txIndex = findTransactionIndex(transaction)
     if (txIndex !== -1) {
       updatedTransactions[txIndex].date = newDate
       updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
       emitUpdate(updatedTransactions)
-      // After update, try to maintain the same page
-      preserveCurrentPage()
     }
   }
 
@@ -1422,7 +1178,6 @@ const updateTransactionFlag = (transaction: TransactionViewModel, newFlag: strin
     updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
-    preserveCurrentPage()
   }
 }
 
@@ -1434,7 +1189,6 @@ const updateTransactionPayee = (transaction: TransactionViewModel, newPayee: str
     updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
-    preserveCurrentPage()
   }
 }
 
@@ -1446,7 +1200,6 @@ const updateTransactionMemo = (transaction: TransactionViewModel, newMemo: strin
     updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
-    preserveCurrentPage()
   }
 }
 
@@ -1458,7 +1211,6 @@ const updateTransactionNarration = (transaction: TransactionViewModel, newNarrat
     updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
-    preserveCurrentPage()
   }
 }
 
@@ -1472,7 +1224,6 @@ const updateTransactionTagsLinks = (transaction: TransactionViewModel, newValue:
     updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
-    preserveCurrentPage()
   }
 }
 
@@ -1484,7 +1235,6 @@ const updatePostingAccount = (transaction: TransactionViewModel, postingIndex: n
     updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
-    preserveCurrentPage()
   }
 }
 
@@ -1496,7 +1246,6 @@ const updatePostingAmount = (transaction: TransactionViewModel, postingIndex: nu
     updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
-    preserveCurrentPage()
   }
 }
 
@@ -1508,7 +1257,6 @@ const updatePostingCurrency = (transaction: TransactionViewModel, postingIndex: 
     updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
-    preserveCurrentPage()
   }
 }
 
@@ -1527,7 +1275,6 @@ const updatePostingCostAmount = (transaction: TransactionViewModel, postingIndex
     }
     updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
-    preserveCurrentPage()
   }
 }
 
@@ -1542,7 +1289,6 @@ const updatePostingCostCurrency = (transaction: TransactionViewModel, postingInd
     posting.cost.currency = newCurrency || undefined
     updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
-    preserveCurrentPage()
   }
 }
 
@@ -1557,7 +1303,6 @@ const updatePostingCostDate = (transaction: TransactionViewModel, postingIndex: 
     posting.cost.date = newDate || undefined
     updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
-    preserveCurrentPage()
   }
 }
 
@@ -1572,7 +1317,6 @@ const updatePostingPriceAmount = (transaction: TransactionViewModel, postingInde
     posting.price.amount = newAmountStr ? parseFloat(newAmountStr) : undefined
     updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
-    preserveCurrentPage()
   }
 }
 
@@ -1587,7 +1331,6 @@ const updatePostingPriceCurrency = (transaction: TransactionViewModel, postingIn
     posting.price.currency = newCurrency || undefined
     updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
-    preserveCurrentPage()
   }
 }
 
@@ -1602,7 +1345,6 @@ const updatePostingPriceType = (transaction: TransactionViewModel, postingIndex:
     posting.price.type = (newType as '@' | '@@') || undefined
     updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
-    preserveCurrentPage()
   }
 }
 
@@ -1621,7 +1363,6 @@ const addPosting = (transaction: TransactionViewModel) => {
     updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
-    preserveCurrentPage()
   }
 }
 
@@ -1633,7 +1374,6 @@ const removePosting = (transaction: TransactionViewModel, postingIndex: number) 
     updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
-    preserveCurrentPage()
   }
 }
 
@@ -1680,7 +1420,6 @@ This action will immediately update the ledger and cannot be undone.`
     emitUpdate(updatedTransactions)
 
     // After update, try to maintain the same page
-    preserveCurrentPage()
 
     // Show success toast and emit event (only for ledger context)
     if (!isImportContext) {
@@ -1753,7 +1492,6 @@ defineExpose({
   clearState: () => {
     ofxOriginalTransactions.value = []
     editBaselineTransactions.value = []
-    currentPageIndex.value = 0
     emitUpdate([])
   }
 })
