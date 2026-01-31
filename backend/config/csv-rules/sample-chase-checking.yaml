@@ -1,0 +1,37 @@
+# Sample CSV import rule for Chase Bank checking account
+#
+# This file defines how to parse a CSV export from Chase Bank.
+# Copy and modify this file to create rules for your own bank exports.
+#
+# Each rule file maps CSV columns (by 0-based index) to transaction fields.
+# For a CSV with columns:
+#   Transaction Date, Post Date, Description, Category, Type, Amount, Memo
+#   0                 1          2             3         4     5       6
+#
+# Amount columns:
+#   Use 'amount' for a single signed amount column, OR use both
+#   'amount_debit' and 'amount_credit' for banks that split DR/CR
+#   into separate columns (e.g., Indian bank statements).
+#
+# The parser automatically skips rows where the date column can't be
+# parsed or the amount is empty, so footer/summary lines are usually
+# filtered without needing skip_lines_end.
+
+name: "Chase Checking"
+separator: ","
+encoding: "utf-8"
+skip_lines_start: 1    # Skip the header row
+skip_lines_end: 0
+date_format: "%m/%d/%Y"
+decimal_separator: "."
+negate_amounts: false
+
+columns:
+  date: 0
+  payee: 2
+  narration: 3
+  amount: 5
+  memo: 6
+
+default_account: "Assets:Chase:Checking"
+default_currency: "USD"

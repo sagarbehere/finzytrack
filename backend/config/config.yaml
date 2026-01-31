@@ -14,7 +14,7 @@ server:
   port: 8001
 
 # CSV import rules directory
-csv_rules_dir: "./data/csv-rules"
+csv_rules_dir: "./config/csv-rules"
 
 # OFX account mappings for import (populated via "Learn Account" feature)
 ofx_account_mappings:
