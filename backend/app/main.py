@@ -16,12 +16,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import Config, ConfigurationError, DatabaseType
-from .api.routers.importer import ofx_accounts, transaction
+from .api.routers.importer import ofx_accounts, transaction, csv_rules
 from .api.routers import accounts, commodities, ledger_export, ledger_transactions, metabase, query, config as config_router, files, ledger
 from .core.beancount_manager import BeancountManager
 from .error_handler import setup_error_handlers
 from .core.backup_manager import BackupManager
 from .core.config_manager import ConfigManager
+from .core.csv_rules_manager import CsvRulesManager
 from .core.ledger_initializer import LedgerInitializer
 from .services.duckdb_exporter import DuckDBExporter
 from .services.sqlite_exporter import SQLiteExporter
@@ -83,6 +84,9 @@ def create_app(config: Config) -> FastAPI:
         config=config,
         backup_manager=backup_manager
     )
+
+    # 2b. Create CsvRulesManager
+    csv_rules_manager = CsvRulesManager(rules_dir=config.csv_rules_dir)
 
     # 3. Create LedgerInitializer
     ledger_initializer = LedgerInitializer(
@@ -246,10 +250,12 @@ def create_app(config: Config) -> FastAPI:
     app.state.active_sync_manager = active_sync_manager
     app.state.active_exporter = active_exporter
     app.state.metabase_manager = metabase_manager
+    app.state.csv_rules_manager = csv_rules_manager
 
     # Include API routers
     app.include_router(ofx_accounts.router, prefix="/api/import", tags=["import"])
     app.include_router(transaction.router, prefix="/api/import", tags=["import"])
+    app.include_router(csv_rules.router, prefix="/api/import", tags=["import"])
     app.include_router(accounts.router, prefix="/api", tags=["accounts"])
     app.include_router(commodities.router, prefix="/api", tags=["commodities"])
     app.include_router(ledger_export.router, prefix="/api/ledger", tags=["ledger"])

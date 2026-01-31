@@ -4,6 +4,8 @@
 /* eslint-disable */
 import type { ApiResponse_CategorizeResponse_ } from '../models/ApiResponse_CategorizeResponse_';
 import type { ApiResponse_CommitResponse_ } from '../models/ApiResponse_CommitResponse_';
+import type { ApiResponse_CsvRule_ } from '../models/ApiResponse_CsvRule_';
+import type { ApiResponse_CsvRuleListData_ } from '../models/ApiResponse_CsvRuleListData_';
 import type { ApiResponse_LearnOFXAccountData_ } from '../models/ApiResponse_LearnOFXAccountData_';
 import type { ApiResponse_OFXDetectionData_ } from '../models/ApiResponse_OFXDetectionData_';
 import type { CategorizeRequest } from '../models/CategorizeRequest';
@@ -118,6 +120,37 @@ export class ImportService {
             url: '/api/import/commit',
             body: requestBody,
             mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * List Csv Rules
+     * @returns ApiResponse_CsvRuleListData_ Successful Response
+     * @throws ApiError
+     */
+    public static listCsvRules(): CancelablePromise<ApiResponse_CsvRuleListData_> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/import/csv-rules',
+        });
+    }
+    /**
+     * Get Csv Rule
+     * @param filename
+     * @returns ApiResponse_CsvRule_ Successful Response
+     * @throws ApiError
+     */
+    public static getCsvRule(
+        filename: string,
+    ): CancelablePromise<ApiResponse_CsvRule_> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/import/csv-rules/{filename}',
+            path: {
+                'filename': filename,
+            },
             errors: {
                 422: `Validation Error`,
             },

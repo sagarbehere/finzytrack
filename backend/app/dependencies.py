@@ -9,6 +9,7 @@ from fastapi import Request
 from app.core.config_manager import ConfigManager
 from app.core.beancount_manager import BeancountManager
 from app.core.backup_manager import BackupManager
+from app.core.csv_rules_manager import CsvRulesManager
 
 
 def get_config_manager(request: Request) -> ConfigManager:
@@ -39,3 +40,8 @@ def get_duckdb_sync_manager(request: Request):
 def get_metabase_manager(request: Request):
     """Dependency to get Metabase manager from app state."""
     return request.app.state.metabase_manager
+
+
+def get_csv_rules_manager(request: Request) -> CsvRulesManager:
+    """Dependency to get CSV rules manager from app state."""
+    return request.app.state.csv_rules_manager

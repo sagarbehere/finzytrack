@@ -31,6 +31,10 @@ export type Config = {
      */
     ofx_account_mappings?: Array<OFXAccountMapping>;
     /**
+     * Directory containing CSV import rule YAML files
+     */
+    csv_rules_dir?: (string | null);
+    /**
      * Analytics and reporting settings
      */
     analytics?: AnalyticsConfig;

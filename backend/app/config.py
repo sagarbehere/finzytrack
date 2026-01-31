@@ -183,6 +183,9 @@ class Config(BaseModel):
     # OFX account mappings
     ofx_account_mappings: List[OFXAccountMapping] = Field(default_factory=list, description="OFX account mappings")
 
+    # CSV import rules directory
+    csv_rules_dir: Optional[str] = Field(default=None, description="Directory containing CSV import rule YAML files")
+
     # Analytics configuration
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig, description="Analytics and reporting settings")
 

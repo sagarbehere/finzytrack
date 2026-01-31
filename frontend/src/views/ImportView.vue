@@ -57,22 +57,13 @@
           />
         </div>
 
-        <!-- CSV Import Tab (placeholder) -->
-        <div v-else-if="activeTab === 'csv'" class="text-center py-12">
-          <div class="text-gray-400 dark:text-gray-500 text-6xl mb-4">📊</div>
-          <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">CSV Import</h3>
-          <p class="text-gray-600 dark:text-gray-400 mb-4">
-            Import transactions from CSV files with flexible column mapping
-          </p>
-          <div class="text-sm text-gray-500 dark:text-gray-400">
-            <p><strong>Coming Soon:</strong></p>
-            <ul class="mt-2 text-left max-w-md mx-auto space-y-1">
-              <li>• Auto-detect CSV format and encoding</li>
-              <li>• Visual column mapping interface</li>
-              <li>• Save mapping templates for repeated imports</li>
-              <li>• Support for custom date formats</li>
-            </ul>
-          </div>
+        <!-- CSV Import Tab -->
+        <div v-else-if="activeTab === 'csv'">
+          <CSVFilePicker
+            :key="importerKey"
+            @fileCleared="handleFileCleared"
+            @proceedWithImport="handleCsvProceedWithImport"
+          />
         </div>
 
         <!-- Natural Language Import Tab (placeholder) -->
@@ -97,7 +88,7 @@
       </div>
     </div>
 
-    <!-- Transaction table for raw OFX transactions (appears below the tabs) -->
+    <!-- Transaction table for imported transactions (appears below the tabs) -->
     <div v-if="showTransactionTable" class="mt-6">
       <!-- Buttons above the table -->
       <div class="flex justify-between items-center mb-4">
@@ -179,11 +170,13 @@
 <script setup lang="ts">
   import { ref, nextTick } from 'vue'
   import OFXFilePicker from '@/components/import/OFXFilePicker.vue'
+  import CSVFilePicker from '@/components/import/CSVFilePicker.vue'
   import TransactionTable from '@/components/common/TransactionTable.vue'
   import DuplicateComparisonModal from '@/components/import/DuplicateComparisonModal.vue'
   import { v7 as uuidv7 } from 'uuid'
   import type { TransactionViewModel, PostingViewModel, ImportContext, TransactionImportBundle } from '@/types/transactions'
   import type { OFXTransaction, OfxFileDetails } from '@/types/ofx'
+  import type { CsvParsedTransaction, CsvFileDetails } from '@/types/csv'
   import type { DuplicateInfo } from '@/services/generated-api'
   import { useTransactionImporter } from '@/composables/useTransactionImporter'
   import { useToast } from '@/composables/useNotifications'
@@ -200,6 +193,8 @@
   // Transaction table state
   const showTransactionTable = ref<boolean>(false)
   const rawTransactions = ref<OFXTransaction[]>([])
+  const rawCsvTransactions = ref<CsvParsedTransaction[]>([])
+  const importSource = ref<'ofx' | 'csv'>('ofx')
   const transactionViewModels = ref<TransactionViewModel[]>([])
   const importContext = ref<Map<string, ImportContext>>(new Map())
   const sourceAccount = ref<string>('')
@@ -216,6 +211,7 @@
     showTransactionTable.value = false
     transactionViewModels.value = []
     importContext.value.clear()
+    rawCsvTransactions.value = []
   }
 
   // Handle the Proceed button click from OFXFilePicker
@@ -223,6 +219,7 @@
     // Set the source account and currency
     sourceAccount.value = payload.account
     sourceCurrency.value = payload.currency
+    importSource.value = 'ofx'
 
     // Convert raw OFX transactions to TransactionViewModel format and create import context
     rawTransactions.value = payload.details.rawTransactions
@@ -327,6 +324,91 @@
     return { transactions, importContext }
   }
 
+  // Handle the Proceed button click from CSVFilePicker
+  const handleCsvProceedWithImport = (payload: { file: File, details: CsvFileDetails, account: string, currency: string }) => {
+    sourceAccount.value = payload.account
+    sourceCurrency.value = payload.currency
+    importSource.value = 'csv'
+
+    rawCsvTransactions.value = payload.details.rawTransactions
+    const bundle = convertCsvTransactionsToViewModels(payload.details.rawTransactions, payload.account, payload.currency)
+    transactionViewModels.value = bundle.transactions
+    importContext.value = bundle.importContext
+
+    showTransactionTable.value = true
+
+    nextTick(() => {
+      if (transactionTableRef.value) {
+        transactionTableRef.value.resetToOriginal()
+        transactionTableRef.value.scrollToTable()
+      }
+    })
+  }
+
+  // Convert CSV parsed transactions to TransactionViewModel format
+  const convertCsvTransactionsToViewModels = (csvTransactions: CsvParsedTransaction[], sourceAccount: string, currency: string): TransactionImportBundle => {
+    const transactions: TransactionViewModel[] = []
+    const importContext = new Map<string, ImportContext>()
+
+    csvTransactions.forEach(tx => {
+      const payee = tx.payee || 'Unknown Payee'
+      const memo = tx.memo || ''
+      const amount = tx.amount
+      const date = tx.date
+
+      const postings: PostingViewModel[] = [
+        {
+          account: sourceAccount,
+          amount: amount,
+          currency: currency,
+          cost: undefined,
+          price: undefined,
+          meta: undefined
+        },
+        {
+          account: 'Expenses:Unknown',
+          amount: -amount,
+          currency: currency,
+          cost: undefined,
+          price: undefined,
+          meta: undefined
+        }
+      ]
+
+      const transactionId = uuidv7()
+
+      const meta: Record<string, string> = {
+        source_account: sourceAccount
+      }
+
+      const transaction: TransactionViewModel = {
+        id: transactionId,
+        date: date,
+        flag: '*',
+        payee: payee,
+        memo: memo || undefined,
+        narration: tx.narration || '',
+        tags: [],
+        links: [],
+        postings: postings,
+        meta: meta,
+        internal: {
+          isNew: true,
+          isModified: false,
+          source_currency: currency
+        }
+      }
+
+      transactions.push(transaction)
+
+      importContext.set(transactionId, {
+        is_duplicate: false
+      })
+    })
+
+    return { transactions, importContext }
+  }
+
   // Handle updates to transactions in the table
   const handleTransactionsUpdated = (updatedTransactions: TransactionViewModel[]) => {
     transactionViewModels.value = updatedTransactions
@@ -342,7 +424,9 @@
 
   // Reset the table to original raw transactions
   const resetTable = (event?: Event) => {
-    const bundle = convertRawTransactionsToViewModels(rawTransactions.value, sourceAccount.value, sourceCurrency.value)
+    const bundle = importSource.value === 'csv'
+      ? convertCsvTransactionsToViewModels(rawCsvTransactions.value, sourceAccount.value, sourceCurrency.value)
+      : convertRawTransactionsToViewModels(rawTransactions.value, sourceAccount.value, sourceCurrency.value)
     transactionViewModels.value = bundle.transactions
     importContext.value = bundle.importContext
 
