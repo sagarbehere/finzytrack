@@ -3,7 +3,7 @@
     <div class="mb-6">
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Import Financial Data</h1>
       <p class="mt-1 text-gray-600 dark:text-gray-400">
-        Import transactions from OFX files, CSV files, or natural language
+        Import transactions from OFX files, CSV files, or enter them manually
       </p>
     </div>
 
@@ -34,15 +34,15 @@
             CSV Import
           </button>
           <button
-            @click="activeTab = 'natural'"
+            @click="activeTab = 'manual'"
             :class="[
-              activeTab === 'natural'
+              activeTab === 'manual'
                 ? 'border-blue-500 text-blue-600 dark:text-blue-400'
                 : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300',
               'whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium',
             ]"
           >
-            Natural Language
+            Manual Entry
           </button>
         </nav>
       </div>
@@ -66,24 +66,9 @@
           />
         </div>
 
-        <!-- Natural Language Import Tab (placeholder) -->
-        <div v-else-if="activeTab === 'natural'" class="text-center py-12">
-          <div class="text-gray-400 dark:text-gray-500 text-6xl mb-4">🗣️</div>
-          <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">
-            Natural Language Import
-          </h3>
-          <p class="text-gray-600 dark:text-gray-400 mb-4">
-            Enter transactions using natural language or voice input
-          </p>
-          <div class="text-sm text-gray-500 dark:text-gray-400">
-            <p><strong>Coming Soon:</strong></p>
-            <ul class="mt-2 text-left max-w-md mx-auto space-y-1">
-              <li>• Voice-to-text transaction entry</li>
-              <li>• Natural language parsing ("Coffee $5 yesterday")</li>
-              <li>• Multi-transaction batch entry</li>
-              <li>• Smart date and amount recognition</li>
-            </ul>
-          </div>
+        <!-- Manual Entry Tab -->
+        <div v-else-if="activeTab === 'manual'">
+          <ManualEntryPanel @addTransaction="handleManualAddTransaction" />
         </div>
       </div>
     </div>
@@ -171,6 +156,7 @@
   import { ref, nextTick } from 'vue'
   import OFXFilePicker from '@/components/import/OFXFilePicker.vue'
   import CSVFilePicker from '@/components/import/CSVFilePicker.vue'
+  import ManualEntryPanel from '@/components/import/ManualEntryPanel.vue'
   import TransactionTable from '@/components/common/TransactionTable.vue'
   import DuplicateComparisonModal from '@/components/import/DuplicateComparisonModal.vue'
   import { v7 as uuidv7 } from 'uuid'
@@ -178,6 +164,7 @@
   import type { OFXTransaction, OfxFileDetails } from '@/types/ofx'
   import type { CsvParsedTransaction, CsvFileDetails } from '@/types/csv'
   import type { DuplicateInfo } from '@/services/generated-api'
+  import type { ParsedTransaction } from '@/services/nlParser'
   import { useTransactionImporter } from '@/composables/useTransactionImporter'
   import { useToast } from '@/composables/useNotifications'
 
@@ -194,7 +181,7 @@
   const showTransactionTable = ref<boolean>(false)
   const rawTransactions = ref<OFXTransaction[]>([])
   const rawCsvTransactions = ref<CsvParsedTransaction[]>([])
-  const importSource = ref<'ofx' | 'csv'>('ofx')
+  const importSource = ref<'ofx' | 'csv' | 'manual'>('ofx')
   const transactionViewModels = ref<TransactionViewModel[]>([])
   const importContext = ref<Map<string, ImportContext>>(new Map())
   const sourceAccount = ref<string>('')
@@ -409,6 +396,73 @@
     return { transactions, importContext }
   }
 
+  // Handle the "Add Transaction" click from ManualEntryPanel
+  const handleManualAddTransaction = (payload: { account: string; currency: string; parsed?: ParsedTransaction; scrollToResult: boolean }) => {
+    sourceAccount.value = payload.account || sourceAccount.value
+    sourceCurrency.value = payload.currency || sourceCurrency.value
+    importSource.value = 'manual'
+
+    const transactionId = uuidv7()
+    const today = new Date().toISOString().split('T')[0]
+    const parsed = payload.parsed
+
+    const firstAccount = parsed?.postings?.[0]?.account ?? payload.account
+    const firstCurrency = parsed?.postings?.[0]?.currency ?? payload.currency
+    const secondPosting = parsed?.postings?.[1]
+
+    const transaction: TransactionViewModel = {
+      id: transactionId,
+      date: parsed?.date ?? today,
+      flag: (parsed?.flag as '*' | '!') ?? '*',
+      payee: parsed?.payee ?? '',
+      narration: parsed?.narration ?? '',
+      tags: parsed?.tags ?? [],
+      links: parsed?.links ?? [],
+      postings: [
+        {
+          account: firstAccount,
+          amount: parsed?.postings?.[0]?.amount ?? null,
+          currency: firstCurrency,
+          cost: undefined,
+          price: undefined,
+          meta: undefined
+        },
+        {
+          account: secondPosting?.account ?? 'Expenses:Unknown',
+          amount: secondPosting?.amount ?? null,
+          currency: secondPosting?.currency ?? firstCurrency,
+          cost: undefined,
+          price: undefined,
+          meta: undefined
+        }
+      ],
+      meta: {
+        source_account: firstAccount
+      },
+      internal: {
+        isNew: true,
+        isModified: false,
+        source_currency: firstCurrency
+      }
+    }
+
+    transactionViewModels.value = [...transactionViewModels.value, transaction]
+
+    importContext.value.set(transactionId, {
+      is_duplicate: false
+    })
+
+    showTransactionTable.value = true
+
+    if (payload.scrollToResult) {
+      nextTick(() => {
+        if (transactionTableRef.value) {
+          transactionTableRef.value.scrollToTable()
+        }
+      })
+    }
+  }
+
   // Handle updates to transactions in the table
   const handleTransactionsUpdated = (updatedTransactions: TransactionViewModel[]) => {
     transactionViewModels.value = updatedTransactions
@@ -424,18 +478,25 @@
 
   // Reset the table to original raw transactions
   const resetTable = (event?: Event) => {
-    const bundle = importSource.value === 'csv'
-      ? convertCsvTransactionsToViewModels(rawCsvTransactions.value, sourceAccount.value, sourceCurrency.value)
-      : convertRawTransactionsToViewModels(rawTransactions.value, sourceAccount.value, sourceCurrency.value)
-    transactionViewModels.value = bundle.transactions
-    importContext.value = bundle.importContext
+    if (importSource.value === 'manual') {
+      // No raw source data to re-derive from — clear everything
+      transactionViewModels.value = []
+      importContext.value.clear()
+      showTransactionTable.value = false
+    } else {
+      const bundle = importSource.value === 'csv'
+        ? convertCsvTransactionsToViewModels(rawCsvTransactions.value, sourceAccount.value, sourceCurrency.value)
+        : convertRawTransactionsToViewModels(rawTransactions.value, sourceAccount.value, sourceCurrency.value)
+      transactionViewModels.value = bundle.transactions
+      importContext.value = bundle.importContext
 
-    // Reinitialize child table's baselines since we just regenerated all transaction IDs
-    nextTick(() => {
-      if (transactionTableRef.value) {
-        transactionTableRef.value.reinitializeBaselines()
-      }
-    })
+      // Reinitialize child table's baselines since we just regenerated all transaction IDs
+      nextTick(() => {
+        if (transactionTableRef.value) {
+          transactionTableRef.value.reinitializeBaselines()
+        }
+      })
+    }
 
     // Remove focus from the button to hide the focus ring
     if (event?.target) {
