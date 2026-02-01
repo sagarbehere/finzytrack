@@ -406,8 +406,8 @@
     const today = new Date().toISOString().split('T')[0]
     const parsed = payload.parsed
 
-    const firstAccount = parsed?.postings?.[0]?.account ?? payload.account
-    const firstCurrency = parsed?.postings?.[0]?.currency ?? payload.currency
+    const firstAccount = parsed?.postings?.[0]?.account || payload.account
+    const firstCurrency = parsed?.postings?.[0]?.currency || payload.currency
     const secondPosting = parsed?.postings?.[1]
 
     const transaction: TransactionViewModel = {
