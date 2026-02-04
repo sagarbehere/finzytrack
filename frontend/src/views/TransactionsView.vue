@@ -12,6 +12,7 @@
     <div class="bg-white dark:bg-gray-800 shadow rounded-lg border border-gray-200 dark:border-gray-700 p-6 mb-6">
       <TransactionFilterPanel
         :loading="isQuerying"
+        :initial-filters="initialFilters"
         @filter-changed="handleFilterChanged"
       />
     </div>
@@ -90,6 +91,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
+import { useRoute } from 'vue-router'
 import TransactionTable from '@/components/common/TransactionTable.vue'
 import TransactionFilterPanel from '@/components/transactions/TransactionFilterPanel.vue'
 import type { TransactionViewModel } from '@/types/transactions'
@@ -97,6 +99,8 @@ import type { TransactionFilters } from '@/types/filters'
 import { useTransactionQuery } from '@/composables/useTransactionQuery'
 import { useTransactionUpdater } from '@/composables/useTransactionUpdater'
 import { useToast } from '@/composables/useNotifications'
+
+const route = useRoute()
 
 // Refs
 const transactionTableRef = ref<InstanceType<typeof TransactionTable> | null>(null)
@@ -109,6 +113,34 @@ const showTable = ref(false)
 const currentFilters = ref<TransactionFilters | null>(null)
 const currentDbType = ref<'duckdb' | 'sqlite'>('sqlite')
 const currentLimit = ref<number>(1000)
+
+// Parse URL query parameters into initial filters
+const initialFilters = computed<TransactionFilters | undefined>(() => {
+  const query = route.query
+  if (Object.keys(query).length === 0) return undefined
+
+  const filters: TransactionFilters = {}
+
+  // String filters
+  if (query.dateFrom) filters.dateFrom = String(query.dateFrom)
+  if (query.dateTo) filters.dateTo = String(query.dateTo)
+  if (query.payeeContains) filters.payeeContains = String(query.payeeContains)
+  if (query.narrationContains) filters.narrationContains = String(query.narrationContains)
+  if (query.accountContains) filters.accountContains = String(query.accountContains)
+  if (query.tagsContain) filters.tagsContain = String(query.tagsContain)
+  if (query.linksContain) filters.linksContain = String(query.linksContain)
+  if (query.currency) filters.currency = String(query.currency)
+  if (query.flag) filters.flag = String(query.flag)
+  if (query.accountType) filters.accountType = String(query.accountType)
+
+  // Numeric filters
+  if (query.amountGreaterThan) filters.amountGreaterThan = Number(query.amountGreaterThan)
+  if (query.amountLessThan) filters.amountLessThan = Number(query.amountLessThan)
+  if (query.year) filters.year = Number(query.year)
+  if (query.quarter) filters.quarter = Number(query.quarter)
+
+  return Object.keys(filters).length > 0 ? filters : undefined
+})
 
 // Composables
 const { queryTransactions } = useTransactionQuery()
@@ -233,13 +265,18 @@ async function handleSaveChanges() {
   }
 }
 
-// Initialize with last 90 days on mount
+// Initialize on mount - filter panel handles the initial query
+// If URL has query params, those will be used; otherwise filter panel uses defaults
 onMounted(() => {
-  const defaultFilters: TransactionFilters = {
-    dateFrom: getDate90DaysAgo(),
-    dateTo: getTodayDate(),
+  // Only run default query if no URL query params provided
+  // (filter panel will handle its own initialization when initialFilters is provided)
+  if (!initialFilters.value) {
+    const defaultFilters: TransactionFilters = {
+      dateFrom: getDate90DaysAgo(),
+      dateTo: getTodayDate(),
+    }
+    handleFilterChanged(defaultFilters, 'sqlite', 1000)
   }
-  handleFilterChanged(defaultFilters, 'sqlite', 1000)
 })
 
 // Helper functions

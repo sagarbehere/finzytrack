@@ -131,8 +131,16 @@
 
           <!-- Balance -->
           <td class="px-4 py-3 whitespace-nowrap">
-            <div class="text-sm text-gray-900 dark:text-white">
-              {{ formatBalanceDisplay(node).display }}
+            <div class="text-sm">
+              <button
+                v-if="formatBalanceDisplay(node).display"
+                @click="emit('view-transactions', node)"
+                class="text-blue-600 hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+                title="View transactions for this account"
+              >
+                {{ formatBalanceDisplay(node).display }}
+              </button>
+              <span v-else class="text-gray-900 dark:text-white">—</span>
               <button
                 v-if="formatBalanceDisplay(node).overflow > 0"
                 @click="emit('show-balances', node)"
@@ -227,6 +235,7 @@ interface Emits {
   (e: 'reopen', node: AccountTreeNode): void
   (e: 'delete', node: AccountTreeNode): void
   (e: 'show-balances', node: AccountTreeNode): void
+  (e: 'view-transactions', node: AccountTreeNode): void
 }
 
 const props = defineProps<Props>()

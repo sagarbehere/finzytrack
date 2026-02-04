@@ -247,11 +247,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import type { TransactionFilters } from '@/types/filters'
 
 interface Props {
   loading?: boolean
+  initialFilters?: TransactionFilters
 }
 
 const props = defineProps<Props>()
@@ -266,23 +267,31 @@ const dbType = ref<'duckdb' | 'sqlite'>('sqlite')
 // Result limit (default 1000, min 1, max 50000)
 const limit = ref<number>(1000)
 
-// Initialize with last 90 days
-const filters = ref<TransactionFilters>({
-  dateFrom: getDate90DaysAgo(),
-  dateTo: getTodayDate(),
-  amountGreaterThan: undefined,
-  amountLessThan: undefined,
-  payeeContains: '',
-  narrationContains: '',
-  accountContains: '',
-  tagsContain: '',
-  linksContain: '',
-  currency: '',
-  flag: '',
-  accountType: '',
-  year: undefined,
-  quarter: undefined,
-})
+// Default filter values
+function getDefaultFilters(): TransactionFilters {
+  return {
+    dateFrom: getDate90DaysAgo(),
+    dateTo: getTodayDate(),
+    amountGreaterThan: undefined,
+    amountLessThan: undefined,
+    payeeContains: '',
+    narrationContains: '',
+    accountContains: '',
+    tagsContain: '',
+    linksContain: '',
+    currency: '',
+    flag: '',
+    accountType: '',
+    year: undefined,
+    quarter: undefined,
+  }
+}
+
+// Initialize filters - will be populated on mount with initialFilters if provided
+const filters = ref<TransactionFilters>(getDefaultFilters())
+
+// Track if we should skip the date watcher's auto-apply (during initialization)
+const skipDateWatch = ref(false)
 
 function handleApply() {
   // Validate and clamp limit to reasonable bounds
@@ -318,11 +327,31 @@ function handleClear() {
   // Don't auto-apply - let user click "Apply Filters" when ready
 }
 
-// Auto-apply on date changes
+// Auto-apply on date changes (unless skipped during initialization)
 watch(() => [filters.value.dateFrom, filters.value.dateTo], () => {
+  if (skipDateWatch.value) return
   // Only auto-apply if both dates are set (not empty)
   // This prevents auto-apply when dates are cleared or only one is set
   if (filters.value.dateFrom && filters.value.dateTo) {
+    handleApply()
+  }
+})
+
+// Apply initial filters on mount if provided
+onMounted(() => {
+  if (props.initialFilters && Object.keys(props.initialFilters).length > 0) {
+    // Skip the date watcher during initialization to prevent double-query
+    skipDateWatch.value = true
+
+    // Merge initialFilters with defaults
+    const defaults = getDefaultFilters()
+    filters.value = {
+      ...defaults,
+      ...props.initialFilters,
+    }
+
+    // Re-enable watcher and trigger initial query
+    skipDateWatch.value = false
     handleApply()
   }
 })

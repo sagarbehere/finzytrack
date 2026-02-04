@@ -35,6 +35,7 @@
         @reopen="handleReopen"
         @delete="handleDelete"
         @show-balances="handleShowBalances"
+        @view-transactions="handleViewTransactions"
       />
     </div>
 
@@ -93,6 +94,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import AccountsFilterPanel from '@/components/accounts/AccountsFilterPanel.vue'
 import AccountsTable from '@/components/accounts/AccountsTable.vue'
 import AccountFormModal from '@/components/accounts/AccountFormModal.vue'
@@ -103,6 +105,8 @@ import { useAccounts, type AccountDateFilter } from '@/composables/useAccounts'
 import { useAccountsTree } from '@/composables/useAccountsTree'
 import { useToast } from '@/composables/useNotifications'
 import type { AccountTreeNode, AccountFilters } from '@/types/accounts'
+
+const router = useRouter()
 
 // Composables
 const {
@@ -209,6 +213,23 @@ function handleDelete(node: AccountTreeNode) {
 function handleShowBalances(node: AccountTreeNode) {
   viewingBalanceAccount.value = node
   showBalanceModal.value = true
+}
+
+function handleViewTransactions(node: AccountTreeNode) {
+  // Navigate to Transactions tab with filters for this account
+  const query: Record<string, string> = {
+    accountContains: node.fullPath
+  }
+
+  // Include date range if set
+  if (dateFilter.value.startDate) {
+    query.dateFrom = dateFilter.value.startDate
+  }
+  if (dateFilter.value.endDate) {
+    query.dateTo = dateFilter.value.endDate
+  }
+
+  router.push({ name: 'transactions', query })
 }
 
 // Form submission handlers
