@@ -4,32 +4,118 @@
     <div class="flex flex-wrap items-center gap-3">
       <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Period:</span>
 
-      <!-- Preset Buttons -->
+      <!-- Quick Access Buttons -->
       <div class="flex gap-1">
         <button
-          v-for="preset in datePresets"
+          v-for="preset in quickPresets"
           :key="preset.label"
           @click="applyPreset(preset)"
           :class="[
             'px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
-            isPresetActive(preset)
+            isPresetActive(preset.label)
               ? 'bg-blue-600 text-white'
               : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
           ]"
         >
           {{ preset.label }}
         </button>
+
+        <!-- More Dropdown -->
+        <Menu as="div" class="relative">
+          <MenuButton
+            :class="[
+              'px-3 py-1.5 text-xs font-medium rounded-md transition-colors inline-flex items-center gap-1',
+              isDropdownPresetActive
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+            ]"
+          >
+            {{ activeDropdownLabel || 'More' }}
+            <ChevronDownIcon class="h-3 w-3" />
+          </MenuButton>
+
+          <transition
+            enter-active-class="transition duration-100 ease-out"
+            enter-from-class="transform scale-95 opacity-0"
+            enter-to-class="transform scale-100 opacity-100"
+            leave-active-class="transition duration-75 ease-in"
+            leave-from-class="transform scale-100 opacity-100"
+            leave-to-class="transform scale-95 opacity-0"
+          >
+            <MenuItems class="absolute left-0 mt-1 w-52 origin-top-left rounded-md bg-white dark:bg-gray-800 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none z-10">
+              <!-- Previous Section -->
+              <div class="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                Previous
+              </div>
+              <MenuItem v-for="preset in dropdownPresets.previous" :key="preset.label" v-slot="{ active }">
+                <button
+                  @click="applyPreset(preset)"
+                  :class="[
+                    'block w-full text-left px-3 py-1.5 text-sm',
+                    active ? 'bg-gray-100 dark:bg-gray-700' : '',
+                    isPresetActive(preset.label) ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-gray-300'
+                  ]"
+                >
+                  {{ preset.label }}
+                </button>
+              </MenuItem>
+
+              <!-- Rolling Section -->
+              <div class="border-t border-gray-200 dark:border-gray-700 mt-1 pt-1">
+                <div class="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                  Rolling
+                </div>
+              </div>
+              <MenuItem v-for="preset in dropdownPresets.rolling" :key="preset.label" v-slot="{ active }">
+                <button
+                  @click="applyPreset(preset)"
+                  :class="[
+                    'block w-full text-left px-3 py-1.5 text-sm',
+                    active ? 'bg-gray-100 dark:bg-gray-700' : '',
+                    isPresetActive(preset.label) ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-gray-300'
+                  ]"
+                >
+                  {{ preset.label }}
+                </button>
+              </MenuItem>
+
+              <!-- Custom Rolling Input -->
+              <div class="border-t border-gray-200 dark:border-gray-700 mt-1 pt-2 px-3 pb-2">
+                <div class="flex items-center gap-1.5">
+                  <span class="text-sm text-gray-700 dark:text-gray-300">Last</span>
+                  <input
+                    v-model.number="customRollingDays"
+                    type="number"
+                    min="1"
+                    max="9999"
+                    class="w-14 px-1.5 py-1 text-sm border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-center"
+                    @click.stop
+                    @keydown.enter="applyCustomRolling"
+                  />
+                  <span class="text-sm text-gray-700 dark:text-gray-300">days</span>
+                  <button
+                    @click="applyCustomRolling"
+                    class="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+                  >
+                    Go
+                  </button>
+                </div>
+              </div>
+            </MenuItems>
+          </transition>
+        </Menu>
       </div>
 
       <!-- Custom Date Inputs -->
       <div class="flex items-center gap-2 ml-2">
+        <span class="text-sm text-gray-500 dark:text-gray-400">From:</span>
         <input
           v-model="localDateFilter.startDate"
           type="date"
           class="px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
           @change="onDateChange"
         />
-        <span class="text-gray-500 dark:text-gray-400">to</span>
+        <span class="text-sm text-gray-500 dark:text-gray-400">To:</span>
         <input
           v-model="localDateFilter.endDate"
           type="date"
@@ -101,7 +187,8 @@
 
 <script setup lang="ts">
 import { ref, watch, reactive, computed } from 'vue'
-import { MagnifyingGlassIcon, PlusIcon } from '@heroicons/vue/24/outline'
+import { Menu, MenuButton, MenuItems, MenuItem } from '@headlessui/vue'
+import { MagnifyingGlassIcon, PlusIcon, ChevronDownIcon } from '@heroicons/vue/24/outline'
 import type { AccountFilters } from '@/types/accounts'
 
 interface DateFilter {
@@ -144,10 +231,16 @@ const localDateFilter = reactive<DateFilter>({
 // Track which preset is active (to avoid ambiguity when date ranges overlap)
 const activePreset = ref<string | null>('All Time')
 
+// Custom rolling days input
+const customRollingDays = ref<number>(60)
+
 // Separate ref for debounced search
 const searchInput = ref(props.filters.search)
 
-// Date helper functions
+// =====================
+// Date Helper Functions
+// =====================
+
 function getToday(): string {
   return new Date().toISOString().split('T')[0]
 }
@@ -157,36 +250,123 @@ function getFirstDayOfMonth(): string {
   return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
 }
 
-function getFirstDayOfQuarter(): string {
-  const now = new Date()
-  const quarter = Math.floor(now.getMonth() / 3)
-  return new Date(now.getFullYear(), quarter * 3, 1).toISOString().split('T')[0]
-}
-
 function getFirstDayOfYear(): string {
   const now = new Date()
   return new Date(now.getFullYear(), 0, 1).toISOString().split('T')[0]
 }
 
-// Date presets
-const datePresets: DatePreset[] = [
-  {
-    label: 'All Time',
-    getRange: () => ({ startDate: null, endDate: null })
-  },
-  {
-    label: 'YTD',
-    getRange: () => ({ startDate: getFirstDayOfYear(), endDate: getToday() })
-  },
-  {
-    label: 'This Quarter',
-    getRange: () => ({ startDate: getFirstDayOfQuarter(), endDate: getToday() })
-  },
-  {
-    label: 'This Month',
-    getRange: () => ({ startDate: getFirstDayOfMonth(), endDate: getToday() })
+function getLastMonth(): { startDate: string; endDate: string } {
+  const now = new Date()
+  const firstDay = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+  const lastDay = new Date(now.getFullYear(), now.getMonth(), 0)
+  return {
+    startDate: firstDay.toISOString().split('T')[0],
+    endDate: lastDay.toISOString().split('T')[0]
   }
+}
+
+function getLastQuarter(): { startDate: string; endDate: string } {
+  const now = new Date()
+  const currentQuarter = Math.floor(now.getMonth() / 3)
+  let lastQuarterStart: Date
+  let lastQuarterEnd: Date
+
+  if (currentQuarter === 0) {
+    // Currently in Q1, last quarter is Q4 of previous year
+    lastQuarterStart = new Date(now.getFullYear() - 1, 9, 1)
+    lastQuarterEnd = new Date(now.getFullYear() - 1, 11, 31)
+  } else {
+    lastQuarterStart = new Date(now.getFullYear(), (currentQuarter - 1) * 3, 1)
+    lastQuarterEnd = new Date(now.getFullYear(), currentQuarter * 3, 0)
+  }
+
+  return {
+    startDate: lastQuarterStart.toISOString().split('T')[0],
+    endDate: lastQuarterEnd.toISOString().split('T')[0]
+  }
+}
+
+function getLastYear(): { startDate: string; endDate: string } {
+  const now = new Date()
+  return {
+    startDate: new Date(now.getFullYear() - 1, 0, 1).toISOString().split('T')[0],
+    endDate: new Date(now.getFullYear() - 1, 11, 31).toISOString().split('T')[0]
+  }
+}
+
+function getLastNDays(n: number): { startDate: string; endDate: string } {
+  const now = new Date()
+  const past = new Date(now)
+  past.setDate(past.getDate() - n)
+  return {
+    startDate: past.toISOString().split('T')[0],
+    endDate: now.toISOString().split('T')[0]
+  }
+}
+
+// =====================
+// Preset Definitions
+// =====================
+
+// Quick access presets (shown as buttons)
+const quickPresets: DatePreset[] = [
+  { label: 'All Time', getRange: () => ({ startDate: null, endDate: null }) },
+  { label: 'YTD', getRange: () => ({ startDate: getFirstDayOfYear(), endDate: getToday() }) },
+  { label: 'This Month', getRange: () => ({ startDate: getFirstDayOfMonth(), endDate: getToday() }) },
 ]
+
+// Dropdown presets (grouped)
+const dropdownPresets = {
+  previous: [
+    { label: 'Last Month', getRange: () => getLastMonth() },
+    { label: 'Last Quarter', getRange: () => getLastQuarter() },
+    { label: 'Last Year', getRange: () => getLastYear() },
+  ] as DatePreset[],
+  rolling: [
+    { label: 'Last 30 Days', getRange: () => getLastNDays(30) },
+    { label: 'Last 90 Days', getRange: () => getLastNDays(90) },
+  ] as DatePreset[]
+}
+
+// All dropdown preset labels for checking active state
+const allDropdownLabels = [
+  ...dropdownPresets.previous.map(p => p.label),
+  ...dropdownPresets.rolling.map(p => p.label),
+]
+
+// =====================
+// Computed Properties
+// =====================
+
+// Check if any dropdown preset is active
+const isDropdownPresetActive = computed(() => {
+  const current = activePreset.value
+  if (!current) return false
+
+  // Check if it's a predefined dropdown preset
+  if (allDropdownLabels.includes(current)) return true
+
+  // Check if it's a custom rolling period (e.g., "Last 45 Days")
+  if (current.startsWith('Last ') && current.endsWith(' Days')) {
+    // Make sure it's not one of the quick presets
+    const quickLabels = quickPresets.map(p => p.label)
+    return !quickLabels.includes(current)
+  }
+
+  return false
+})
+
+// Get active dropdown label for display on the button
+const activeDropdownLabel = computed(() => {
+  if (isDropdownPresetActive.value) {
+    return activePreset.value
+  }
+  return null
+})
+
+// =====================
+// Actions
+// =====================
 
 function applyPreset(preset: DatePreset) {
   const range = preset.getRange()
@@ -196,8 +376,18 @@ function applyPreset(preset: DatePreset) {
   emit('update:dateFilter', { ...localDateFilter })
 }
 
-function isPresetActive(preset: DatePreset): boolean {
-  return activePreset.value === preset.label
+function applyCustomRolling() {
+  if (customRollingDays.value < 1) return
+
+  const range = getLastNDays(customRollingDays.value)
+  localDateFilter.startDate = range.startDate
+  localDateFilter.endDate = range.endDate
+  activePreset.value = `Last ${customRollingDays.value} Days`
+  emit('update:dateFilter', { ...localDateFilter })
+}
+
+function isPresetActive(label: string): boolean {
+  return activePreset.value === label
 }
 
 function onDateChange() {
@@ -205,6 +395,10 @@ function onDateChange() {
   activePreset.value = null
   emit('update:dateFilter', { ...localDateFilter })
 }
+
+// =====================
+// Watchers
+// =====================
 
 // Debounce search input
 let searchTimeout: ReturnType<typeof setTimeout> | null = null
