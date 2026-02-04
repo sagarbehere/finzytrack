@@ -297,8 +297,12 @@ function handleViewTransactions(node: AccountTreeNode) {
     accountContains: node.fullPath
   }
 
-  // Include date range if set
-  if (dateFilter.value.startDate) {
+  // Balance sheet accounts (Assets, Liabilities, Equity) show cumulative balance
+  // from ledger start to end date - so don't include startDate for these
+  const isIncomeStatement = node.type === 'Income' || node.type === 'Expenses'
+
+  // Only include start date for income statement accounts
+  if (isIncomeStatement && dateFilter.value.startDate) {
     query.dateFrom = dateFilter.value.startDate
   }
   if (dateFilter.value.endDate) {

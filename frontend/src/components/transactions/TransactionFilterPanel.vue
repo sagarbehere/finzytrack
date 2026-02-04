@@ -343,11 +343,16 @@ onMounted(() => {
     // Skip the date watcher during initialization to prevent double-query
     skipDateWatch.value = true
 
-    // Merge initialFilters with defaults
+    // Start with defaults for non-date fields, but for dates use only what's
+    // explicitly provided in initialFilters (to support balance sheet accounts
+    // which only need dateTo, not dateFrom)
     const defaults = getDefaultFilters()
     filters.value = {
       ...defaults,
       ...props.initialFilters,
+      // Override dates to only use what's in initialFilters (not defaults)
+      dateFrom: props.initialFilters.dateFrom || '',
+      dateTo: props.initialFilters.dateTo || defaults.dateTo,
     }
 
     // Re-enable watcher and trigger initial query
