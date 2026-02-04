@@ -120,6 +120,117 @@ class BeancountManager:
             logger.warning(f"Beancount parsing warnings: {len(errors)} issues found")
 
         return list(accounts.values())
+
+    def get_detailed_accounts_filtered(
+        self,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> List[AccountDetails]:
+        """
+        Get account information with date-filtered balances.
+
+        For Balance Sheet accounts (Assets, Liabilities, Equity):
+            - Balance = sum of all transactions up to end_date
+            - start_date is ignored (balance is a point-in-time snapshot)
+
+        For Income Statement accounts (Income, Expenses):
+            - Balance = sum of transactions within start_date to end_date
+
+        Args:
+            start_date: Start of period (inclusive). None means beginning of time.
+            end_date: End of period (inclusive). None means today.
+
+        Returns:
+            List of AccountDetails with filtered currency data
+        """
+        if not os.path.exists(self.ledger_file):
+            raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
+
+        # Default end_date to today if not specified
+        if end_date is None:
+            end_date = date.today()
+
+        # Get cached accounts (for structure) and entries (for recomputing balances)
+        cached_accounts = self.cache.get_accounts()
+        entries = self.cache.get_entries()
+
+        errors = self.cache.get_errors()
+        if errors:
+            logger.warning(f"Beancount parsing warnings: {len(errors)} issues found")
+
+        # Balance sheet account types (balance = cumulative up to end_date)
+        balance_sheet_prefixes = ('Assets:', 'Liabilities:', 'Equity:')
+        # Also handle root accounts without colon
+        balance_sheet_roots = ('Assets', 'Liabilities', 'Equity')
+
+        result = []
+
+        for account_name, account_detail in cached_accounts.items():
+            # Determine if this is a balance sheet or income statement account
+            is_balance_sheet = (
+                account_name.startswith(balance_sheet_prefixes) or
+                account_name in balance_sheet_roots
+            )
+
+            # Compute filtered currency data
+            currency_info: Dict[str, Dict[str, Any]] = {}
+
+            for entry in entries:
+                if isinstance(entry, data.Transaction):
+                    txn_date = entry.date
+
+                    # Apply date filtering based on account type
+                    if is_balance_sheet:
+                        # Balance sheet: include if transaction is on or before end_date
+                        if txn_date > end_date:
+                            continue
+                    else:
+                        # Income statement: include if transaction is within the period
+                        if start_date and txn_date < start_date:
+                            continue
+                        if txn_date > end_date:
+                            continue
+
+                    # Process postings for this account
+                    for posting in entry.postings:
+                        if posting.account == account_name and posting.units:
+                            currency = posting.units.currency
+
+                            if currency not in currency_info:
+                                currency_info[currency] = {
+                                    "transaction_count": 0,
+                                    "last_transaction_date": None,
+                                    "balance": Decimal(0)
+                                }
+
+                            currency_info[currency]["transaction_count"] += 1
+
+                            if (currency_info[currency]["last_transaction_date"] is None or
+                                txn_date > currency_info[currency]["last_transaction_date"]):
+                                currency_info[currency]["last_transaction_date"] = txn_date
+
+                            currency_info[currency]["balance"] += posting.units.number
+
+            # Convert to AccountCurrencyData objects
+            currencies = []
+            for currency, info in currency_info.items():
+                currencies.append(AccountCurrencyData(
+                    currency=currency,
+                    transaction_count=info["transaction_count"],
+                    last_transaction_date=info["last_transaction_date"].isoformat() if info["last_transaction_date"] else None,
+                    balance=float(info["balance"])
+                ))
+
+            # Create new AccountDetails with filtered currency data
+            result.append(AccountDetails(
+                name=account_detail.name,
+                open_date=account_detail.open_date,
+                close_date=account_detail.close_date,
+                currencies=currencies,
+                metadata=account_detail.metadata
+            ))
+
+        return result
     
     def get_account_open_date(self, account_name: str) -> Optional[date]:
         """Get opening date for an account from cache."""
@@ -723,6 +834,72 @@ class BeancountManager:
         logger.info(f"Deleted {len(found_ids)} transaction(s) from ledger")
 
         return len(found_ids)
+
+    def delete_transactions_for_account(self, account_name: str) -> int:
+        """
+        Delete all transactions that have postings to a specific account.
+
+        Args:
+            account_name: The account name to delete transactions for
+
+        Returns:
+            Number of transactions deleted
+        """
+        from beancount.parser import printer
+
+        # Read current entries
+        entries = self.cache.get_entries()
+
+        # Filter out transactions that have postings to this account
+        remaining_entries = []
+        deleted_count = 0
+
+        for entry in entries:
+            if isinstance(entry, Transaction):
+                # Check if any posting references this account
+                has_account_posting = any(
+                    posting.account == account_name
+                    for posting in entry.postings
+                )
+
+                if has_account_posting:
+                    # Delete this transaction
+                    deleted_count += 1
+                    logger.debug(f"Deleting transaction with posting to {account_name}: {entry.narration}")
+                else:
+                    # Keep this transaction
+                    remaining_entries.append(entry)
+            else:
+                # Keep all non-transaction entries
+                remaining_entries.append(entry)
+
+        if deleted_count == 0:
+            return 0
+
+        # Write remaining entries atomically
+        # IMPORTANT: Skip auto-generated padding transactions (flag 'P')
+        with self.atomic_ledger_write() as f:
+            # Truncate the file to ensure old content is removed
+            f.seek(0)
+            f.truncate()
+
+            for entry in remaining_entries:
+                # Skip auto-generated padding transactions
+                if isinstance(entry, Transaction) and entry.flag == 'P':
+                    # Check if this is an auto-generated padding (no transaction ID)
+                    has_id = entry.meta and ('id' in entry.meta or 'transaction_id' in entry.meta)
+                    if not has_id:
+                        # This is an auto-generated padding transaction, skip it
+                        logger.debug(f"Skipping auto-generated padding transaction: {entry.narration}")
+                        continue
+
+                entry_str = printer.format_entry(entry)
+                f.write(entry_str)
+                f.write('\n\n')
+
+        logger.info(f"Deleted {deleted_count} transaction(s) for account {account_name}")
+
+        return deleted_count
 
     def validate_transaction(self, transaction: Transaction) -> List[str]:
         """

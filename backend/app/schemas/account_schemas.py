@@ -76,3 +76,9 @@ class AccountDeleteData(BaseModel):
     account_deleted: bool = Field(..., description="Whether account was deleted")
     message: str = Field(..., description="Delete result message")
     warnings: Optional[List[str]] = Field(None, description="Any warnings about the deletion")
+    transactions_deleted: Optional[int] = Field(None, description="Number of transactions deleted if delete_transactions was true")
+
+class AccountReopenData(BaseModel):
+    """Response data for account reopen results."""
+    account_reopened: bool = Field(..., description="Whether account was reopened")
+    message: str = Field(..., description="Reopen result message")

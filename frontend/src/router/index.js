@@ -44,6 +44,14 @@ const routes = [
     },
   },
   {
+    path: '/accounts',
+    name: 'accounts',
+    component: () => import('../views/AccountsView.vue'),
+    meta: {
+      title: 'Accounts',
+    },
+  },
+  {
     path: '/raw-data',
     name: 'raw-data',
     component: RawDataView,

@@ -2,13 +2,13 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Query
 from app.schemas.response_schemas import ApiResponse
 from app.schemas.account_schemas import (
     AccountCreateRequest, AccountCreateData, AccountListData,
-    AccountUpdateRequest, AccountUpdateData, 
+    AccountUpdateRequest, AccountUpdateData,
     AccountCloseRequest, AccountCloseData, AccountDeleteData,
-    AccountDetails, AccountCurrencyData
+    AccountReopenData, AccountDetails, AccountCurrencyData
 )
 from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
@@ -22,21 +22,59 @@ router = APIRouter()
 
 @router.get("/accounts", response_model=ApiResponse[AccountListData], operation_id="listAccounts")
 async def list_accounts(
+    start_date: Optional[str] = Query(None, description="Start date for balance filtering (YYYY-MM-DD). For Income/Expenses only."),
+    end_date: Optional[str] = Query(None, description="End date for balance filtering (YYYY-MM-DD). Defaults to today."),
     config_manager: ConfigManager = Depends(get_config_manager),
     beancount_manager: BeancountManager = Depends(get_beancount_manager)
 ):
     """
     Retrieve all accounts with full details including transaction history and balances.
-    
+
+    Supports optional date filtering for balances:
+    - Balance Sheet accounts (Assets, Liabilities, Equity): Balance as of end_date
+    - Income Statement accounts (Income, Expenses): Balance within start_date to end_date
+
     Returns both open and closed accounts. Frontend applications should filter
     accounts based on the close_date field to show open vs closed accounts.
     """
     config = config_manager.get_config()
-    
+
     try:
-        # Get detailed account information from BeancountManager
-        detailed_accounts = beancount_manager.get_detailed_accounts()
-        
+        # Parse date parameters if provided
+        start_date_obj = None
+        end_date_obj = None
+
+        if start_date:
+            try:
+                start_date_obj = datetime.strptime(start_date, "%Y-%m-%d").date()
+            except ValueError:
+                raise APIError(
+                    message="Invalid start_date format",
+                    code="VALIDATION_ERROR",
+                    status_code=422,
+                    details={"field": "start_date", "value": start_date, "help": "Date must be in YYYY-MM-DD format"}
+                )
+
+        if end_date:
+            try:
+                end_date_obj = datetime.strptime(end_date, "%Y-%m-%d").date()
+            except ValueError:
+                raise APIError(
+                    message="Invalid end_date format",
+                    code="VALIDATION_ERROR",
+                    status_code=422,
+                    details={"field": "end_date", "value": end_date, "help": "Date must be in YYYY-MM-DD format"}
+                )
+
+        # Get detailed account information with optional date filtering
+        if start_date_obj is not None or end_date_obj is not None:
+            detailed_accounts = beancount_manager.get_detailed_accounts_filtered(
+                start_date=start_date_obj,
+                end_date=end_date_obj
+            )
+        else:
+            detailed_accounts = beancount_manager.get_detailed_accounts()
+
         accounts_data = AccountListData(accounts=detailed_accounts)
         return success_json_response(accounts_data)
         
@@ -49,15 +87,18 @@ async def list_accounts(
         )
     except PermissionError:
         raise APIError(
-            message="Permission denied accessing ledger file", 
-            code="FILE_PERMISSION_ERROR", 
-            status_code=403, 
+            message="Permission denied accessing ledger file",
+            code="FILE_PERMISSION_ERROR",
+            status_code=403,
             details={"path": config.ledger_file}
         )
+    except APIError:
+        # Re-raise API errors (validation errors for date params, etc.)
+        raise
     except Exception as e:
         raise APIError(
-            message=f"Error accessing ledger: {str(e)}", 
-            code="UNKNOWN_SERVER_ERROR", 
+            message=f"Error accessing ledger: {str(e)}",
+            code="UNKNOWN_SERVER_ERROR",
             status_code=500
         )
 
@@ -594,22 +635,20 @@ async def close_account(
         )
     except Exception as e:
         raise APIError(
-            message=f"Error closing account: {str(e)}", 
-            code="UNKNOWN_SERVER_ERROR", 
+            message=f"Error closing account: {str(e)}",
+            code="UNKNOWN_SERVER_ERROR",
             status_code=500
         )
 
-# FIXME: This function needs to be rigorously reviewed and updated. It has many business logic errors/inadquacies
-@router.delete("/accounts/{account_name}", response_model=ApiResponse[AccountDeleteData], operation_id="deleteAccount")
-async def delete_account(
-    account_name: str = Path(..., description="Beancount account name to delete"),
+@router.post("/accounts/{account_name}/reopen", response_model=ApiResponse[AccountReopenData], operation_id="reopenAccount")
+async def reopen_account(
+    account_name: str = Path(..., description="Beancount account name to reopen"),
     config_manager: ConfigManager = Depends(get_config_manager),
     beancount_manager: BeancountManager = Depends(get_beancount_manager)
 ):
-    """Remove account from ledger (deletes the opening directive)."""
+    """Reopen a closed account by removing the close directive from the ledger."""
     config = config_manager.get_config()
-    warnings = []
-    
+
     try:
         # Validate account exists
         if not beancount_manager.is_existing_account(account_name):
@@ -619,23 +658,122 @@ async def delete_account(
                 status_code=404,
                 details={"account_name": account_name}
             )
-        
+
+        # Check if account is actually closed
+        close_date = beancount_manager.get_account_close_date(account_name)
+        if not close_date:
+            raise APIError(
+                message=f"Account is not closed: {account_name}",
+                code="ACCOUNT_NOT_CLOSED",
+                status_code=409,
+                details={"account_name": account_name}
+            )
+
+        # Remove the close directive using atomic write
+        with beancount_manager.atomic_ledger_write() as f:
+            current_content = f.read()
+            lines = current_content.split('\n')
+
+            close_directive_removed = False
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                # Match close directive: "YYYY-MM-DD close AccountName"
+                if ' close ' in stripped and account_name in stripped and not stripped.startswith(';'):
+                    # Verify this is actually a close directive for this account
+                    parts = stripped.split()
+                    if len(parts) >= 3 and parts[1] == 'close' and parts[2] == account_name:
+                        lines[i] = ""  # Remove the close directive
+                        close_directive_removed = True
+                        break
+
+            if not close_directive_removed:
+                raise APIError(
+                    message=f"Close directive not found for account: {account_name}",
+                    code="CLOSE_DIRECTIVE_NOT_FOUND",
+                    status_code=404,
+                    details={"account_name": account_name}
+                )
+
+            # Clean up empty lines and write back
+            new_lines = [line for line in lines if line.strip() != ""]
+            new_content = '\n'.join(new_lines)
+            if new_content:
+                new_content += '\n'
+
+            f.seek(0)
+            f.write(new_content)
+            f.truncate()
+
+        reopen_data = AccountReopenData(
+            account_reopened=True,
+            message=f"Account '{account_name}' reopened successfully"
+        )
+
+        return success_json_response(reopen_data)
+
+    except APIError:
+        raise
+    except FileNotFoundError:
+        raise APIError(
+            message="Ledger file not found",
+            code="FILE_NOT_FOUND",
+            status_code=404,
+            details={"path": config.ledger_file}
+        )
+    except PermissionError:
+        raise APIError(
+            message="Permission denied accessing ledger file",
+            code="FILE_PERMISSION_ERROR",
+            status_code=403,
+            details={"path": config.ledger_file}
+        )
+    except Exception as e:
+        raise APIError(
+            message=f"Error reopening account: {str(e)}",
+            code="UNKNOWN_SERVER_ERROR",
+            status_code=500
+        )
+
+# FIXME: This function needs to be rigorously reviewed and updated. It has many business logic errors/inadquacies
+@router.delete("/accounts/{account_name}", response_model=ApiResponse[AccountDeleteData], operation_id="deleteAccount")
+async def delete_account(
+    account_name: str = Path(..., description="Beancount account name to delete"),
+    delete_transactions: bool = Query(True, description="Whether to delete transactions associated with this account"),
+    config_manager: ConfigManager = Depends(get_config_manager),
+    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+):
+    """Remove account from ledger. Optionally deletes associated transactions."""
+    config = config_manager.get_config()
+    warnings = []
+    transactions_deleted = 0
+
+    try:
+        # Validate account exists
+        if not beancount_manager.is_existing_account(account_name):
+            raise APIError(
+                message=f"Account not found: {account_name}",
+                code="ACCOUNT_NOT_FOUND",
+                status_code=404,
+                details={"account_name": account_name}
+            )
+
         # Check if account has transactions
+        total_transactions = 0
         try:
             transaction_summary = beancount_manager.get_account_transactions_summary(account_name)
             total_transactions = sum(summary.transaction_count for summary in transaction_summary.values())
-            
-            if total_transactions > 0:
-                warnings.append(f"Account has {total_transactions} transactions associated with it")
+
+            if total_transactions > 0 and not delete_transactions:
+                warnings.append(f"Account has {total_transactions} transactions associated with it (not deleted)")
         except Exception:
             # If we can't check transactions, proceed with caution
             warnings.append("Unable to verify account transaction history")
-        
+
         # Check if account is closed
         close_date = beancount_manager.get_account_close_date(account_name)
         if not close_date:
             warnings.append("Account is still open")
-        
+
         # Get additional account info for warning messages
         open_date = beancount_manager.get_account_open_date(account_name)
         if open_date:
@@ -645,47 +783,43 @@ async def delete_account(
             account_age = (current_date - open_date).days
             if account_age > 365:  # Older than 1 year
                 warnings.append(f"Account has been active for {account_age} days")
-        
-        # Perform the deletion using atomic write with cache invalidation
+
+        # Delete transactions if requested
+        if delete_transactions and total_transactions > 0:
+            transactions_deleted = beancount_manager.delete_transactions_for_account(account_name)
+
+        # Perform the deletion of open/close directives using atomic write
         with beancount_manager.atomic_ledger_write() as f:
             current_content = f.read()
             lines = current_content.split('\n')
-            
+
             # Find and remove the open directive
             open_directive_removed = False
-            close_directive_removed = False
             references_found = 0
-            
+
             for i, line in enumerate(lines):
                 stripped = line.strip()
-                
-                # Remove open directive
-                if stripped.startswith(f'open {account_name}') and not stripped.startswith(';'):
-                    lines[i] = ""  # Remove the open directive
-                    # Remove any adjacent empty lines
-                    if i + 1 < len(lines) and lines[i + 1].strip() == "":
-                        lines[i + 1] = ""
-                    if i > 0 and lines[i - 1].strip() == "":
-                        lines[i - 1] = ""
-                    open_directive_removed = True
-                
-                # Remove close directive if it exists
-                elif stripped.startswith(f'close {account_name}') and not stripped.startswith(';'):
-                    lines[i] = ""  # Remove the close directive
-                    # Remove any adjacent empty lines
-                    if i + 1 < len(lines) and lines[i + 1].strip() == "":
-                        lines[i + 1] = ""
-                    if i > 0 and lines[i - 1].strip() == "":
-                        lines[i - 1] = ""
-                    close_directive_removed = True
-                
-                # Count references in transactions (for warning purposes)
-                elif (not stripped.startswith('open') and 
-                      not stripped.startswith('close') and 
-                      not stripped.startswith(';') and 
-                      f'{account_name}' in line):
+
+                # Match open directive: "YYYY-MM-DD open AccountName ..."
+                if ' open ' in stripped and account_name in stripped and not stripped.startswith(';'):
+                    parts = stripped.split()
+                    if len(parts) >= 3 and parts[1] == 'open' and parts[2] == account_name:
+                        lines[i] = ""  # Remove the open directive
+                        open_directive_removed = True
+
+                # Match close directive: "YYYY-MM-DD close AccountName"
+                elif ' close ' in stripped and account_name in stripped and not stripped.startswith(';'):
+                    parts = stripped.split()
+                    if len(parts) >= 3 and parts[1] == 'close' and parts[2] == account_name:
+                        lines[i] = ""  # Remove the close directive
+
+                # Count remaining references in transactions (for warning purposes)
+                elif (not stripped.startswith(';') and
+                      ' open ' not in stripped and
+                      ' close ' not in stripped and
+                      account_name in line):
                     references_found += 1
-            
+
             if not open_directive_removed:
                 raise APIError(
                     message=f"Account open directive not found: {account_name}",
@@ -693,36 +827,34 @@ async def delete_account(
                     status_code=404,
                     details={"account_name": account_name}
                 )
-            
-            # Add warning about transaction references if any found
-            if references_found > 0:
-                warnings.append(f"Account is referenced in {references_found} transaction lines (these will not be automatically removed)")
-            
+
+            # Add warning about transaction references if any found and not deleted
+            if references_found > 0 and not delete_transactions:
+                warnings.append(f"Account is referenced in {references_found} transaction lines (not deleted)")
+
             # Clean up empty lines and write back
             new_lines = [line for line in lines if line.strip() != ""]
-            while new_lines and new_lines[-1].strip() == "":
-                new_lines.pop()
-            
             new_content = '\n'.join(new_lines)
             if new_content:
                 new_content += '\n'
-            
+
             f.seek(0)
             f.write(new_content)
             f.truncate()
-        
 
-        
-        # Prepare success message with warnings if any
-        if warnings:
+        # Prepare success message
+        if transactions_deleted > 0:
+            message = f"Account '{account_name}' and {transactions_deleted} transaction(s) deleted successfully"
+        elif warnings:
             message = f"Account '{account_name}' deleted with warnings"
         else:
             message = f"Account '{account_name}' deleted successfully"
-        
+
         delete_data = AccountDeleteData(
             account_deleted=True,
             message=message,
-            warnings=warnings if warnings else None
+            warnings=warnings if warnings else None,
+            transactions_deleted=transactions_deleted if delete_transactions else None
         )
         
         return success_json_response(delete_data)

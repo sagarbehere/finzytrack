@@ -18,5 +18,9 @@ export type AccountDeleteData = {
      * Any warnings about the deletion
      */
     warnings?: (Array<string> | null);
+    /**
+     * Number of transactions deleted if delete_transactions was true
+     */
+    transactions_deleted?: (number | null);
 };
 

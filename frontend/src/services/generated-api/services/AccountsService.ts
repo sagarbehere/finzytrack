@@ -9,6 +9,7 @@ import type { ApiResponse_AccountCloseData_ } from '../models/ApiResponse_Accoun
 import type { ApiResponse_AccountCreateData_ } from '../models/ApiResponse_AccountCreateData_';
 import type { ApiResponse_AccountDeleteData_ } from '../models/ApiResponse_AccountDeleteData_';
 import type { ApiResponse_AccountListData_ } from '../models/ApiResponse_AccountListData_';
+import type { ApiResponse_AccountReopenData_ } from '../models/ApiResponse_AccountReopenData_';
 import type { ApiResponse_AccountUpdateData_ } from '../models/ApiResponse_AccountUpdateData_';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -18,15 +19,31 @@ export class AccountsService {
      * List Accounts
      * Retrieve all accounts with full details including transaction history and balances.
      *
+     * Supports optional date filtering for balances:
+     * - Balance Sheet accounts (Assets, Liabilities, Equity): Balance as of end_date
+     * - Income Statement accounts (Income, Expenses): Balance within start_date to end_date
+     *
      * Returns both open and closed accounts. Frontend applications should filter
      * accounts based on the close_date field to show open vs closed accounts.
+     * @param startDate Start date for balance filtering (YYYY-MM-DD). For Income/Expenses only.
+     * @param endDate End date for balance filtering (YYYY-MM-DD). Defaults to today.
      * @returns ApiResponse_AccountListData_ Successful Response
      * @throws ApiError
      */
-    public static listAccounts(): CancelablePromise<ApiResponse_AccountListData_> {
+    public static listAccounts(
+        startDate?: (string | null),
+        endDate?: (string | null),
+    ): CancelablePromise<ApiResponse_AccountListData_> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/accounts',
+            query: {
+                'start_date': startDate,
+                'end_date': endDate,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**
@@ -76,19 +93,24 @@ export class AccountsService {
     }
     /**
      * Delete Account
-     * Remove account from ledger (deletes the opening directive).
+     * Remove account from ledger. Optionally deletes associated transactions.
      * @param accountName Beancount account name to delete
+     * @param deleteTransactions Whether to delete transactions associated with this account
      * @returns ApiResponse_AccountDeleteData_ Successful Response
      * @throws ApiError
      */
     public static deleteAccount(
         accountName: string,
+        deleteTransactions: boolean = true,
     ): CancelablePromise<ApiResponse_AccountDeleteData_> {
         return __request(OpenAPI, {
             method: 'DELETE',
             url: '/api/accounts/{account_name}',
             path: {
                 'account_name': accountName,
+            },
+            query: {
+                'delete_transactions': deleteTransactions,
             },
             errors: {
                 422: `Validation Error`,
@@ -115,6 +137,27 @@ export class AccountsService {
             },
             body: requestBody,
             mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Reopen Account
+     * Reopen a closed account by removing the close directive from the ledger.
+     * @param accountName Beancount account name to reopen
+     * @returns ApiResponse_AccountReopenData_ Successful Response
+     * @throws ApiError
+     */
+    public static reopenAccount(
+        accountName: string,
+    ): CancelablePromise<ApiResponse_AccountReopenData_> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/accounts/{account_name}/reopen',
+            path: {
+                'account_name': accountName,
+            },
             errors: {
                 422: `Validation Error`,
             },

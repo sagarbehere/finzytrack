@@ -307,6 +307,7 @@
     XMarkIcon,
     SunIcon,
     MoonIcon,
+    WalletIcon,
   } from '@heroicons/vue/24/outline'
 
   // Props
@@ -396,6 +397,12 @@
       href: '/transactions',
       icon: TableCellsIcon,
       id: 'transactions',
+    },
+    {
+      name: 'Accounts',
+      href: '/accounts',
+      icon: WalletIcon,
+      id: 'accounts',
     },
     {
       name: 'Raw Data',

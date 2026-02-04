@@ -15,6 +15,7 @@ export type { AccountCurrencyData } from './models/AccountCurrencyData';
 export type { AccountDeleteData } from './models/AccountDeleteData';
 export type { AccountDetails } from './models/AccountDetails';
 export type { AccountListData } from './models/AccountListData';
+export type { AccountReopenData } from './models/AccountReopenData';
 export type { AccountsConfig } from './models/AccountsConfig';
 export type { AccountUpdateData } from './models/AccountUpdateData';
 export type { AccountUpdateRequest } from './models/AccountUpdateRequest';
@@ -23,6 +24,7 @@ export type { ApiResponse_AccountCloseData_ } from './models/ApiResponse_Account
 export type { ApiResponse_AccountCreateData_ } from './models/ApiResponse_AccountCreateData_';
 export type { ApiResponse_AccountDeleteData_ } from './models/ApiResponse_AccountDeleteData_';
 export type { ApiResponse_AccountListData_ } from './models/ApiResponse_AccountListData_';
+export type { ApiResponse_AccountReopenData_ } from './models/ApiResponse_AccountReopenData_';
 export type { ApiResponse_AccountUpdateData_ } from './models/ApiResponse_AccountUpdateData_';
 export type { ApiResponse_CategorizeResponse_ } from './models/ApiResponse_CategorizeResponse_';
 export type { ApiResponse_CommitResponse_ } from './models/ApiResponse_CommitResponse_';
