@@ -141,6 +141,9 @@ const localDateFilter = reactive<DateFilter>({
   endDate: props.dateFilter.endDate
 })
 
+// Track which preset is active (to avoid ambiguity when date ranges overlap)
+const activePreset = ref<string | null>('All Time')
+
 // Separate ref for debounced search
 const searchInput = ref(props.filters.search)
 
@@ -189,15 +192,17 @@ function applyPreset(preset: DatePreset) {
   const range = preset.getRange()
   localDateFilter.startDate = range.startDate
   localDateFilter.endDate = range.endDate
+  activePreset.value = preset.label
   emit('update:dateFilter', { ...localDateFilter })
 }
 
 function isPresetActive(preset: DatePreset): boolean {
-  const range = preset.getRange()
-  return localDateFilter.startDate === range.startDate && localDateFilter.endDate === range.endDate
+  return activePreset.value === preset.label
 }
 
 function onDateChange() {
+  // Clear preset selection when dates are manually changed
+  activePreset.value = null
   emit('update:dateFilter', { ...localDateFilter })
 }
 
