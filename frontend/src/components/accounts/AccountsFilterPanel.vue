@@ -204,11 +204,13 @@ interface DatePreset {
 interface Props {
   filters: AccountFilters
   dateFilter: DateFilter
+  activePreset: string | null
 }
 
 interface Emits {
   (e: 'update:filters', filters: AccountFilters): void
   (e: 'update:dateFilter', dateFilter: DateFilter): void
+  (e: 'update:activePreset', preset: string | null): void
   (e: 'create'): void
 }
 
@@ -228,8 +230,8 @@ const localDateFilter = reactive<DateFilter>({
   endDate: props.dateFilter.endDate
 })
 
-// Track which preset is active (to avoid ambiguity when date ranges overlap)
-const activePreset = ref<string | null>('All Time')
+// Track which preset is active (synced with parent via prop)
+const localActivePreset = ref<string | null>(props.activePreset)
 
 // Custom rolling days input
 const customRollingDays = ref<number>(60)
@@ -348,7 +350,7 @@ const allDropdownLabels = [
 
 // Check if any dropdown preset is active
 const isDropdownPresetActive = computed(() => {
-  const current = activePreset.value
+  const current = localActivePreset.value
   if (!current) return false
 
   // Check if it's a predefined dropdown preset
@@ -367,7 +369,7 @@ const isDropdownPresetActive = computed(() => {
 // Get active dropdown label for display on the button
 const activeDropdownLabel = computed(() => {
   if (isDropdownPresetActive.value) {
-    return activePreset.value
+    return localActivePreset.value
   }
   return null
 })
@@ -380,7 +382,8 @@ function applyPreset(preset: DatePreset) {
   const range = preset.getRange()
   localDateFilter.startDate = range.startDate
   localDateFilter.endDate = range.endDate
-  activePreset.value = preset.label
+  localActivePreset.value = preset.label
+  emit('update:activePreset', preset.label)
   emit('update:dateFilter', { ...localDateFilter })
 }
 
@@ -390,17 +393,20 @@ function applyCustomRolling() {
   const range = getLastNDays(customRollingDays.value)
   localDateFilter.startDate = range.startDate
   localDateFilter.endDate = range.endDate
-  activePreset.value = `Last ${customRollingDays.value} Days`
+  const presetLabel = `Last ${customRollingDays.value} Days`
+  localActivePreset.value = presetLabel
+  emit('update:activePreset', presetLabel)
   emit('update:dateFilter', { ...localDateFilter })
 }
 
 function isPresetActive(label: string): boolean {
-  return activePreset.value === label
+  return localActivePreset.value === label
 }
 
 function onDateChange() {
   // Clear preset selection when dates are manually changed
-  activePreset.value = null
+  localActivePreset.value = null
+  emit('update:activePreset', null)
   emit('update:dateFilter', { ...localDateFilter })
 }
 
@@ -434,4 +440,8 @@ watch(() => props.dateFilter, (newDateFilter) => {
   localDateFilter.startDate = newDateFilter.startDate
   localDateFilter.endDate = newDateFilter.endDate
 }, { deep: true })
+
+watch(() => props.activePreset, (newPreset) => {
+  localActivePreset.value = newPreset
+})
 </script>

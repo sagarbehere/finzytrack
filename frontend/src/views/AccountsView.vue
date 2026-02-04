@@ -13,8 +13,10 @@
       <AccountsFilterPanel
         :filters="filters"
         :date-filter="dateFilter"
+        :active-preset="activePreset"
         @update:filters="filters = $event"
         @update:date-filter="handleDateFilterChange"
+        @update:active-preset="activePreset = $event"
         @create="showCreateModal = true"
       />
     </div>
@@ -93,8 +95,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import AccountsFilterPanel from '@/components/accounts/AccountsFilterPanel.vue'
 import AccountsTable from '@/components/accounts/AccountsTable.vue'
 import AccountFormModal from '@/components/accounts/AccountFormModal.vue'
@@ -107,6 +109,7 @@ import { useToast } from '@/composables/useNotifications'
 import type { AccountTreeNode, AccountFilters } from '@/types/accounts'
 
 const router = useRouter()
+const route = useRoute()
 
 // Composables
 const {
@@ -134,18 +137,62 @@ const {
 
 const toast = useToast()
 
+// Date helpers for YTD default
+function getFirstDayOfYear(): string {
+  return `${new Date().getFullYear()}-01-01`
+}
+
+function getToday(): string {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+// Parse URL query params into filter state
+function getFiltersFromQuery(): { filters: AccountFilters; dateFilter: AccountDateFilter; preset: string | null } {
+  const query = route.query
+  return {
+    filters: {
+      search: query.search ? String(query.search) : '',
+      type: query.type ? String(query.type) as AccountFilters['type'] : 'All',
+      status: query.status ? String(query.status) as AccountFilters['status'] : 'All'
+    },
+    dateFilter: {
+      // Default to YTD if no dates specified
+      startDate: query.startDate ? String(query.startDate) : getFirstDayOfYear(),
+      endDate: query.endDate ? String(query.endDate) : getToday()
+    },
+    preset: query.preset ? String(query.preset) : 'YTD'
+  }
+}
+
+// Update URL to reflect current filter state (without adding to history)
+function updateUrlFromFilters() {
+  const query: Record<string, string> = {}
+
+  // Only include non-default values
+  if (filters.value.search) query.search = filters.value.search
+  if (filters.value.type !== 'All') query.type = filters.value.type
+  if (filters.value.status !== 'All') query.status = filters.value.status
+  if (dateFilter.value.startDate) query.startDate = dateFilter.value.startDate
+  if (dateFilter.value.endDate) query.endDate = dateFilter.value.endDate
+  if (activePreset.value && activePreset.value !== 'YTD') query.preset = activePreset.value
+
+  // Use replace to avoid polluting browser history on every filter change
+  router.replace({ query })
+}
+
 // Filter state (for tree filtering - search, type, status)
-const filters = ref<AccountFilters>({
-  search: '',
-  type: 'All',
-  status: 'All'
-})
+const initialState = getFiltersFromQuery()
+const filters = ref<AccountFilters>(initialState.filters)
 
 // Date filter state (for balance computation - sent to backend)
-const dateFilter = ref<AccountDateFilter>({
-  startDate: null,
-  endDate: null
-})
+const dateFilter = ref<AccountDateFilter>(initialState.dateFilter)
+
+// Active date preset (for highlighting the correct button)
+const activePreset = ref<string | null>(initialState.preset)
 
 // Modal state
 const showCreateModal = ref(false)
@@ -181,12 +228,41 @@ async function loadAccounts() {
 // Handle date filter changes
 async function handleDateFilterChange(newDateFilter: AccountDateFilter) {
   dateFilter.value = newDateFilter
+  updateUrlFromFilters()
   await loadAccounts()
 }
 
-// Fetch accounts on mount (all-time by default)
+// Fetch accounts on mount
 onMounted(() => {
   loadAccounts()
+})
+
+// Watch filters and update URL when they change
+watch(filters, () => {
+  updateUrlFromFilters()
+}, { deep: true })
+
+// Watch route query for back/forward navigation
+watch(() => route.query, (newQuery, oldQuery) => {
+  // Only react if we're on the accounts route and query actually changed
+  if (route.name !== 'accounts') return
+  if (JSON.stringify(newQuery) === JSON.stringify(oldQuery)) return
+
+  const newState = getFiltersFromQuery()
+
+  // Update filters (this won't trigger loadAccounts, just tree filtering)
+  filters.value = newState.filters
+
+  // Update active preset
+  activePreset.value = newState.preset
+
+  // Update date filter and reload if it changed
+  const dateChanged = newState.dateFilter.startDate !== dateFilter.value.startDate ||
+                      newState.dateFilter.endDate !== dateFilter.value.endDate
+  if (dateChanged) {
+    dateFilter.value = newState.dateFilter
+    loadAccounts()
+  }
 })
 
 // Modal handlers
