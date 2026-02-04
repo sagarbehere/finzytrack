@@ -22,7 +22,16 @@
             Currencies
           </th>
           <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">
-            Balance
+            <div class="flex items-center gap-1">
+              Balance
+              <div class="relative group">
+                <InformationCircleIcon class="h-4 w-4 cursor-help text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" />
+                <div class="absolute left-0 top-6 z-50 hidden group-hover:block w-64 p-2 text-xs font-normal normal-case tracking-normal bg-gray-900 text-white rounded shadow-lg dark:bg-gray-700">
+                  <p class="mb-1"><strong>Balance sheet</strong> (Assets, Liabilities, Equity): cumulative balance up to end date.</p>
+                  <p><strong>Income statement</strong> (Income, Expenses): balance within the date range.</p>
+                </div>
+              </div>
+            </div>
           </th>
           <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">
             Notes
@@ -199,7 +208,8 @@ import {
   PencilIcon,
   TrashIcon,
   XCircleIcon,
-  ArrowPathIcon
+  ArrowPathIcon,
+  InformationCircleIcon
 } from '@heroicons/vue/24/outline'
 import type { AccountTreeNode } from '@/types/accounts'
 import { typeColors, statusColors } from '@/types/accounts'
