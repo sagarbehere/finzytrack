@@ -21,7 +21,7 @@
         </button>
 
         <!-- More Dropdown -->
-        <Menu as="div" class="relative">
+        <Menu as="div" class="relative" v-slot="{ close }">
           <MenuButton
             :class="[
               'px-3 py-1.5 text-xs font-medium rounded-md transition-colors inline-flex items-center gap-1',
@@ -90,11 +90,11 @@
                     max="9999"
                     class="w-14 px-1.5 py-1 text-sm border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-center"
                     @click.stop
-                    @keydown.enter="applyCustomRolling"
+                    @keydown.enter="applyCustomRolling(); close()"
                   />
                   <span class="text-sm text-gray-700 dark:text-gray-300">days</span>
                   <button
-                    @click="applyCustomRolling"
+                    @click="applyCustomRolling(); close()"
                     class="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
                   >
                     Go
@@ -241,18 +241,25 @@ const searchInput = ref(props.filters.search)
 // Date Helper Functions
 // =====================
 
+// Format a Date object as YYYY-MM-DD in local timezone (avoids UTC conversion issues)
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function getToday(): string {
-  return new Date().toISOString().split('T')[0]
+  return formatLocalDate(new Date())
 }
 
 function getFirstDayOfMonth(): string {
   const now = new Date()
-  return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
+  return formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1))
 }
 
 function getFirstDayOfYear(): string {
-  const now = new Date()
-  return new Date(now.getFullYear(), 0, 1).toISOString().split('T')[0]
+  return `${new Date().getFullYear()}-01-01`
 }
 
 function getLastMonth(): { startDate: string; endDate: string } {
@@ -260,8 +267,8 @@ function getLastMonth(): { startDate: string; endDate: string } {
   const firstDay = new Date(now.getFullYear(), now.getMonth() - 1, 1)
   const lastDay = new Date(now.getFullYear(), now.getMonth(), 0)
   return {
-    startDate: firstDay.toISOString().split('T')[0],
-    endDate: lastDay.toISOString().split('T')[0]
+    startDate: formatLocalDate(firstDay),
+    endDate: formatLocalDate(lastDay)
   }
 }
 
@@ -281,16 +288,17 @@ function getLastQuarter(): { startDate: string; endDate: string } {
   }
 
   return {
-    startDate: lastQuarterStart.toISOString().split('T')[0],
-    endDate: lastQuarterEnd.toISOString().split('T')[0]
+    startDate: formatLocalDate(lastQuarterStart),
+    endDate: formatLocalDate(lastQuarterEnd)
   }
 }
 
 function getLastYear(): { startDate: string; endDate: string } {
   const now = new Date()
+  const year = now.getFullYear() - 1
   return {
-    startDate: new Date(now.getFullYear() - 1, 0, 1).toISOString().split('T')[0],
-    endDate: new Date(now.getFullYear() - 1, 11, 31).toISOString().split('T')[0]
+    startDate: `${year}-01-01`,
+    endDate: `${year}-12-31`
   }
 }
 
@@ -299,8 +307,8 @@ function getLastNDays(n: number): { startDate: string; endDate: string } {
   const past = new Date(now)
   past.setDate(past.getDate() - n)
   return {
-    startDate: past.toISOString().split('T')[0],
-    endDate: now.toISOString().split('T')[0]
+    startDate: formatLocalDate(past),
+    endDate: formatLocalDate(now)
   }
 }
 
