@@ -1,139 +1,85 @@
 <template>
-  <div>
-    <div class="mb-6">
-      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
-      <p class="mt-1 text-gray-600 dark:text-gray-400">Overview of your financial status</p>
-    </div>
+  <div class="h-full flex flex-col">
+    <!-- Tab bar -->
+    <DashboardTabs
+      :tabs="tabs"
+      :activeTabId="activeTabId"
+      @select="setActiveTab"
+      @remove="removeTab"
+      @add="showPicker = true"
+    />
 
-    <!-- Dashboard content placeholder -->
-    <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
-      <!-- Summary cards -->
-      <div class="lg:col-span-3">
-        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div
-            class="bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg border dark:border-gray-700"
-          >
-            <div class="p-5">
-              <div class="flex items-center">
-                <div class="flex-shrink-0">
-                  <div class="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
-                    <span class="text-white text-sm font-semibold">$</span>
-                  </div>
-                </div>
-                <div class="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
-                      Total Balance
-                    </dt>
-                    <dd class="text-lg font-semibold text-gray-900 dark:text-white">$12,345.67</dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div
-            class="bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg border dark:border-gray-700"
-          >
-            <div class="p-5">
-              <div class="flex items-center">
-                <div class="flex-shrink-0">
-                  <div class="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                    <span class="text-white text-sm font-semibold">↑</span>
-                  </div>
-                </div>
-                <div class="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
-                      This Month Income
-                    </dt>
-                    <dd class="text-lg font-semibold text-gray-900 dark:text-white">$5,234.00</dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div
-            class="bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg border dark:border-gray-700"
-          >
-            <div class="p-5">
-              <div class="flex items-center">
-                <div class="flex-shrink-0">
-                  <div class="w-8 h-8 bg-red-500 rounded-full flex items-center justify-center">
-                    <span class="text-white text-sm font-semibold">↓</span>
-                  </div>
-                </div>
-                <div class="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
-                      This Month Expenses
-                    </dt>
-                    <dd class="text-lg font-semibold text-gray-900 dark:text-white">$3,456.78</dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div
-            class="bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg border dark:border-gray-700"
-          >
-            <div class="p-5">
-              <div class="flex items-center">
-                <div class="flex-shrink-0">
-                  <div class="w-8 h-8 bg-purple-500 rounded-full flex items-center justify-center">
-                    <span class="text-white text-sm font-semibold">#</span>
-                  </div>
-                </div>
-                <div class="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
-                      Transactions
-                    </dt>
-                    <dd class="text-lg font-semibold text-gray-900 dark:text-white">127</dd>
-                  </dl>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Recent transactions placeholder -->
-      <div class="lg:col-span-2">
-        <div class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700">
-          <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-            <h3 class="text-lg font-medium text-gray-900 dark:text-white">Recent Transactions</h3>
-          </div>
-          <div class="p-6">
-            <div class="text-center py-8">
-              <div class="text-gray-400 dark:text-gray-500 text-4xl mb-4">📊</div>
-              <p class="text-gray-500 dark:text-gray-400">Recent transactions will appear here</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Account balances placeholder -->
-      <div class="lg:col-span-1">
-        <div class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700">
-          <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-            <h3 class="text-lg font-medium text-gray-900 dark:text-white">Account Balances</h3>
-          </div>
-          <div class="p-6">
-            <div class="text-center py-8">
-              <div class="text-gray-400 dark:text-gray-500 text-4xl mb-4">🏦</div>
-              <p class="text-gray-500 dark:text-gray-400">Account balances will appear here</p>
-            </div>
-          </div>
-        </div>
+    <!-- Dashboard content -->
+    <div class="flex-1 overflow-auto p-6">
+      <RecipeDashboard
+        v-if="activeDashboard"
+        :dashboard="activeDashboard"
+        :key="activeTabId ?? undefined"
+        db-type="sqlite"
+      />
+      <div v-else class="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
+        <div class="text-lg mb-2">No dashboard selected</div>
+        <button
+          @click="showPicker = true"
+          class="text-blue-600 dark:text-blue-400 hover:underline"
+        >
+          Click here to add one
+        </button>
       </div>
     </div>
+
+    <!-- Picker modal -->
+    <DashboardPicker
+      :isOpen="showPicker"
+      :availableDashboards="allDashboards"
+      :selectedIds="selectedDashboardIds"
+      @close="showPicker = false"
+      @select="handleAddDashboard"
+    />
   </div>
 </template>
 
-<script setup>
-  // Dashboard view component
-  // This is a placeholder that will be enhanced with real data and visualizations
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import RecipeDashboard from '@/components/recipes/RecipeDashboard.vue'
+import DashboardTabs from '@/components/dashboard/DashboardTabs.vue'
+import DashboardPicker from '@/components/dashboard/DashboardPicker.vue'
+import { useRecipeLoader } from '@/composables/useRecipeLoader'
+import { useDashboardTabs } from '@/composables/useDashboardTabs'
+
+const { loadUserRecipes, getAllDashboardIds, getDashboard } = useRecipeLoader()
+const { tabs, activeTabId, addTab, removeTab, setActiveTab, loadTabs, activeDashboard } = useDashboardTabs()
+
+const showPicker = ref(false)
+
+// Computed: all available dashboards with metadata
+const allDashboards = computed(() => {
+  return getAllDashboardIds().map((id) => {
+    const d = getDashboard(id)
+    return {
+      id,
+      title: d?.title || id,
+      description: d?.description,
+    }
+  })
+})
+
+// Computed: IDs of dashboards already in tabs
+const selectedDashboardIds = computed(() => tabs.value.map((t) => t.id))
+
+// Add dashboard handler
+function handleAddDashboard(id: string) {
+  const dashboard = getDashboard(id)
+  if (dashboard) {
+    addTab(id, dashboard.title)
+    setActiveTab(id)
+  }
+  showPicker.value = false
+}
+
+// Initialize on mount
+onMounted(async () => {
+  await loadUserRecipes()
+  await loadTabs()
+})
 </script>

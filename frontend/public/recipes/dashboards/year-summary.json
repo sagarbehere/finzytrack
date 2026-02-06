@@ -1,0 +1,46 @@
+{
+  "id": "year-summary",
+  "title": "Year Summary",
+  "description": "Annual financial summary with income, expenses, taxes, and savings breakdown",
+  "parameters": [
+    {
+      "name": "year",
+      "label": "Year",
+      "type": "select",
+      "default": { "$gen": "currentYear" },
+      "options": { "$gen": "yearRange", "count": 6 }
+    }
+  ],
+  "layout": {
+    "columns": 12,
+    "gap": "1.5rem",
+    "rowHeight": "140px",
+    "widgets": [
+      {
+        "widgetId": "total-income",
+        "gridArea": "1 / 1 / 2 / 4"
+      },
+      {
+        "widgetId": "total-expenses",
+        "gridArea": "1 / 4 / 2 / 7"
+      },
+      {
+        "widgetId": "estimated-taxes",
+        "gridArea": "1 / 7 / 2 / 10"
+      },
+      {
+        "widgetId": "savings",
+        "gridArea": "1 / 10 / 2 / 13"
+      },
+      {
+        "widgetId": "monthly-income-expenses",
+        "gridArea": "2 / 1 / 5 / 13"
+      },
+      {
+        "widgetId": "expenses-pivot-table",
+        "gridArea": "5 / 1 / 9 / 13"
+      }
+    ]
+  },
+  "widgets": []
+}

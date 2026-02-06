@@ -16,12 +16,14 @@
     "@heroicons/vue": "^2.1.5",
     "@tanstack/vue-table": "^8.21.3",
     "@tanstack/vue-virtual": "^3.13.12",
+    "echarts": "^6.0.0",
     "events": "^3.3.0",
     "monaco-editor": "^0.54.0",
     "ofx-js": "^0.2.0",
     "papaparse": "^5.5.3",
     "uuid": "^13.0.0",
     "vue": "^3.4.0",
+    "vue-echarts": "^8.0.1",
     "vue-router": "^4.4.0"
   },
   "devDependencies": {
