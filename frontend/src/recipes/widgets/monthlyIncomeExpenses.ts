@@ -62,6 +62,10 @@ export const monthlyIncomeExpensesWidget: WidgetRecipe = {
       SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END) as expenses
     FROM postings
     WHERE year = :year AND currency = 'USD'
+      AND (
+        LOWER(account) LIKE 'income:net:%'
+        OR LOWER(account) LIKE 'expenses:%'
+      )
     GROUP BY year_month
     ORDER BY year_month
   `,
@@ -91,7 +95,7 @@ export const monthlyIncomeExpensesWidget: WidgetRecipe = {
       // Only link Income and Expenses bars (not Savings, which is derived)
       let accountType: string | undefined
       if (seriesName === 'Income') {
-        accountType = 'Income'
+        accountType = 'Income:Net'
       } else if (seriesName === 'Expenses') {
         accountType = 'Expenses'
       } else {
