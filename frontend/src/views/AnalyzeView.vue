@@ -3,32 +3,239 @@
     <div class="mb-6">
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Analyze</h1>
       <p class="mt-1 text-gray-600 dark:text-gray-400">
-        Query builder and financial analysis tools
+        Query your financial data using natural language or SQL
       </p>
     </div>
 
-    <div class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 p-6">
-      <div class="text-center py-12">
-        <div class="text-gray-400 dark:text-gray-500 text-6xl mb-4">📈</div>
-        <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-2">Financial Analysis</h3>
-        <p class="text-gray-600 dark:text-gray-400 mb-4">
-          Powerful tools for analyzing your financial data
-        </p>
-        <div class="text-sm text-gray-500 dark:text-gray-400">
-          <p><strong>Coming Soon:</strong></p>
-          <ul class="mt-2 text-left max-w-md mx-auto space-y-1">
-            <li>• Interactive query builder</li>
-            <li>• Custom reports and visualizations</li>
-            <li>• Trend analysis and forecasting</li>
-            <li>• Budget tracking and planning</li>
-            <li>• Spending category analysis</li>
-          </ul>
+    <!-- Natural Language Input -->
+    <div class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 p-4 mb-4">
+      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+        Ask a question in plain English
+      </label>
+      <p v-if="!llmConfigured" class="text-xs text-amber-600 dark:text-amber-400 mb-2">
+        LLM not configured. Set VITE_LLM_API_URL to enable natural language queries.
+      </p>
+      <textarea
+        v-model="nlQuery"
+        :disabled="!llmConfigured"
+        placeholder="e.g. Show me my top 10 expense categories this year"
+        rows="2"
+        class="w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+        @keydown.meta.enter="handleGenerateSQL"
+        @keydown.ctrl.enter="handleGenerateSQL"
+      />
+      <button
+        @click="handleGenerateSQL"
+        :disabled="!nlQuery.trim() || isGenerating || !llmConfigured"
+        class="mt-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-2"
+      >
+        <svg v-if="isGenerating" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <span>{{ isGenerating ? 'Generating...' : 'Generate SQL' }}</span>
+      </button>
+    </div>
+
+    <!-- SQL Editor -->
+    <div class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 p-4 mb-4">
+      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+        SQL Query
+      </label>
+      <textarea
+        v-model="sqlQuery"
+        placeholder="SELECT account, SUM(amount) as total FROM postings WHERE account_type = 'Expenses' GROUP BY account ORDER BY total DESC LIMIT 10"
+        rows="6"
+        spellcheck="false"
+        class="w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 font-mono text-sm"
+        @keydown.meta.enter="handleExecuteSQL"
+        @keydown.ctrl.enter="handleExecuteSQL"
+      />
+      <div class="mt-2 flex items-center gap-2">
+        <button
+          @click="handleExecuteSQL"
+          :disabled="!sqlQuery.trim() || isExecuting"
+          class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-2"
+        >
+          <svg v-if="isExecuting" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <span>{{ isExecuting ? 'Executing...' : 'Execute' }}</span>
+        </button>
+        <button
+          @click="clearSQL"
+          class="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-md hover:bg-gray-300 dark:hover:bg-gray-500 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 text-sm"
+        >
+          Clear
+        </button>
+        <span v-if="executionTime !== null" class="text-xs text-gray-500 dark:text-gray-400 ml-auto">
+          {{ resultRows.length }} row{{ resultRows.length !== 1 ? 's' : '' }} in {{ executionTime }}ms
+        </span>
+      </div>
+    </div>
+
+    <!-- Error Display -->
+    <div v-if="errorMessage" class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-4">
+      <div class="flex items-start">
+        <div class="flex-shrink-0">
+          <svg class="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd" />
+          </svg>
         </div>
+        <div class="ml-3">
+          <h3 class="text-sm font-medium text-red-800 dark:text-red-300">Error</h3>
+          <p class="mt-1 text-sm text-red-700 dark:text-red-400 whitespace-pre-wrap">{{ errorMessage }}</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Results Table -->
+    <div v-if="resultColumns.length > 0" class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-900">
+            <tr>
+              <th
+                v-for="col in resultColumns"
+                :key="col"
+                class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider whitespace-nowrap"
+              >
+                {{ col }}
+              </th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+            <tr
+              v-for="(row, idx) in resultRows"
+              :key="idx"
+              class="hover:bg-gray-50 dark:hover:bg-gray-700/50"
+            >
+              <td
+                v-for="col in resultColumns"
+                :key="col"
+                class="px-4 py-2 text-sm text-gray-900 dark:text-gray-200 whitespace-nowrap"
+              >
+                {{ formatCellValue(row[col]) }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Empty State (no results yet) -->
+    <div v-else-if="!errorMessage && !isExecuting" class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 p-6">
+      <div class="text-center py-8 text-gray-500 dark:text-gray-400">
+        <p class="text-sm">Write an SQL query or ask a question above, then execute to see results here.</p>
+        <p class="text-xs mt-2 text-gray-400 dark:text-gray-500">
+          Tip: Press Cmd+Enter (or Ctrl+Enter) to execute quickly.
+        </p>
       </div>
     </div>
   </div>
 </template>
 
-<script setup>
-  // Analyze view component placeholder
+<script setup lang="ts">
+  import { ref } from 'vue'
+  import { generateSQL, isSQLAssistantConfigured } from '@/services/sqlAssistant'
+  import { LedgerService } from '@/services/generated-api'
+  import type { QueryRequest } from '@/services/generated-api'
+  import { useToast } from '@/composables/useNotifications'
+
+  const toast = useToast()
+
+  const nlQuery = ref('')
+  const sqlQuery = ref('')
+  const isGenerating = ref(false)
+  const isExecuting = ref(false)
+  const errorMessage = ref('')
+  const resultColumns = ref<string[]>([])
+  const resultRows = ref<Record<string, unknown>[]>([])
+  const executionTime = ref<number | null>(null)
+  const llmConfigured = isSQLAssistantConfigured()
+
+  async function handleGenerateSQL() {
+    if (!nlQuery.value.trim() || isGenerating.value) return
+
+    isGenerating.value = true
+    errorMessage.value = ''
+    try {
+      const sql = await generateSQL(nlQuery.value.trim())
+      sqlQuery.value = sql
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to generate SQL'
+      errorMessage.value = msg
+      toast.error('Generation Failed', msg)
+    } finally {
+      isGenerating.value = false
+    }
+  }
+
+  async function handleExecuteSQL() {
+    if (!sqlQuery.value.trim() || isExecuting.value) return
+
+    isExecuting.value = true
+    errorMessage.value = ''
+    resultColumns.value = []
+    resultRows.value = []
+    executionTime.value = null
+
+    const startTime = performance.now()
+
+    try {
+      const request: QueryRequest = { query: sqlQuery.value.trim() }
+      const response = await LedgerService.executeQuery(request, 'sqlite')
+
+      executionTime.value = Math.round(performance.now() - startTime)
+
+      if (!response.success) {
+        const msg = (response as Record<string, unknown>).message as string || 'Query execution failed'
+        throw new Error(msg)
+      }
+
+      const data = response.data
+      if (!data || !data.rows) {
+        resultColumns.value = []
+        resultRows.value = []
+        return
+      }
+
+      const rows = data.rows as Record<string, unknown>[]
+      resultRows.value = rows
+
+      // Derive columns from the first row, or from response.data.columns if available
+      if (data.columns && Array.isArray(data.columns) && data.columns.length > 0) {
+        resultColumns.value = data.columns.map((c) => typeof c === 'string' ? c : c.name)
+      } else if (rows.length > 0) {
+        resultColumns.value = Object.keys(rows[0])
+      } else {
+        resultColumns.value = []
+      }
+    } catch (e: unknown) {
+      executionTime.value = Math.round(performance.now() - startTime)
+      const msg = e instanceof Error ? e.message : 'Query execution failed'
+      errorMessage.value = msg
+    } finally {
+      isExecuting.value = false
+    }
+  }
+
+  function clearSQL() {
+    sqlQuery.value = ''
+    errorMessage.value = ''
+    resultColumns.value = []
+    resultRows.value = []
+    executionTime.value = null
+  }
+
+  function formatCellValue(value: unknown): string {
+    if (value === null || value === undefined) return ''
+    if (typeof value === 'number') {
+      // Format numbers with reasonable precision
+      if (Number.isInteger(value)) return value.toLocaleString()
+      return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    }
+    return String(value)
+  }
 </script>
