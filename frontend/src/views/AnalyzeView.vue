@@ -90,9 +90,38 @@
       </div>
     </div>
 
-    <!-- Results Table -->
+    <!-- Results Panel with Tabs -->
     <div v-if="resultColumns.length > 0" class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 overflow-hidden">
-      <div class="overflow-x-auto">
+      <!-- Tab Bar -->
+      <div class="border-b border-gray-200 dark:border-gray-700">
+        <nav class="flex -mb-px">
+          <button
+            @click="activeTab = 'table'"
+            :class="[
+              'px-4 py-3 text-sm font-medium border-b-2 focus:outline-none',
+              activeTab === 'table'
+                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600',
+            ]"
+          >
+            Table
+          </button>
+          <button
+            @click="activeTab = 'chart'"
+            :class="[
+              'px-4 py-3 text-sm font-medium border-b-2 focus:outline-none',
+              activeTab === 'chart'
+                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600',
+            ]"
+          >
+            Chart
+          </button>
+        </nav>
+      </div>
+
+      <!-- Table Tab -->
+      <div v-if="activeTab === 'table'" class="overflow-x-auto">
         <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
           <thead class="bg-gray-50 dark:bg-gray-900">
             <tr>
@@ -122,6 +151,79 @@
           </tbody>
         </table>
       </div>
+
+      <!-- Chart Tab -->
+      <div v-if="activeTab === 'chart'" class="p-4">
+        <!-- Chart Controls -->
+        <div class="flex flex-wrap items-end gap-4 mb-4">
+          <!-- Chart Type -->
+          <div>
+            <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Type</label>
+            <div class="flex gap-1">
+              <button
+                v-for="ct in chartTypes"
+                :key="ct"
+                @click="chartType = ct"
+                :class="[
+                  'px-3 py-1.5 text-xs rounded-md font-medium capitalize',
+                  chartType === ct
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600',
+                ]"
+              >
+                {{ ct }}
+              </button>
+            </div>
+          </div>
+
+          <!-- X / Category Column -->
+          <div class="min-w-[140px]">
+            <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+              {{ chartType === 'pie' ? 'Name' : 'X Axis' }}
+            </label>
+            <select
+              v-model="chartXColumn"
+              class="w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-sm py-1.5"
+            >
+              <option value="">-- select --</option>
+              <option v-for="col in resultColumns" :key="col" :value="col">{{ col }}</option>
+            </select>
+          </div>
+
+          <!-- Y / Value Columns -->
+          <div class="min-w-[200px]">
+            <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+              {{ chartType === 'pie' ? 'Value' : 'Y Axis' }}
+              <span v-if="chartType !== 'pie'" class="font-normal">(multi-select)</span>
+            </label>
+            <select
+              v-if="chartType === 'pie'"
+              v-model="chartYColumnSingle"
+              class="w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-sm py-1.5"
+            >
+              <option value="">-- select --</option>
+              <option v-for="col in numericColumns" :key="col" :value="col">{{ col }}</option>
+            </select>
+            <select
+              v-else
+              v-model="chartYColumns"
+              multiple
+              :size="Math.min(numericColumns.length, 4)"
+              class="w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-sm py-1"
+            >
+              <option v-for="col in numericColumns" :key="col" :value="col">{{ col }}</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Chart -->
+        <div v-if="chartReady" class="h-[400px]">
+          <RecipeChart :chart-options="builtChartOptions" :data="resultRows" />
+        </div>
+        <div v-else class="h-[400px] flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
+          Select columns above to render a chart.
+        </div>
+      </div>
     </div>
 
     <!-- Empty State (no results yet) -->
@@ -137,14 +239,18 @@
 </template>
 
 <script setup lang="ts">
-  import { ref } from 'vue'
+  import { ref, computed, watch } from 'vue'
   import { generateSQL, isSQLAssistantConfigured } from '@/services/sqlAssistant'
   import { LedgerService } from '@/services/generated-api'
   import type { QueryRequest } from '@/services/generated-api'
   import { useToast } from '@/composables/useNotifications'
+  import RecipeChart from '@/components/recipes/RecipeChart.vue'
+  import { SUPPORTED_CHART_TYPES, type ChartType } from '@/types/recipes'
+  import type { EChartsOption } from 'echarts'
 
   const toast = useToast()
 
+  // --- Query state ---
   const nlQuery = ref('')
   const sqlQuery = ref('')
   const isGenerating = ref(false)
@@ -154,6 +260,97 @@
   const resultRows = ref<Record<string, unknown>[]>([])
   const executionTime = ref<number | null>(null)
   const llmConfigured = isSQLAssistantConfigured()
+
+  // --- Results tab state ---
+  const activeTab = ref<'table' | 'chart'>('table')
+
+  // --- Chart config state ---
+  const chartTypes = SUPPORTED_CHART_TYPES
+  const chartType = ref<ChartType>('bar')
+  const chartXColumn = ref('')
+  const chartYColumns = ref<string[]>([])
+  // For pie charts, only one Y column is meaningful
+  const chartYColumnSingle = ref('')
+
+  /** Columns whose first non-null value is a number */
+  const numericColumns = computed(() => {
+    if (resultRows.value.length === 0) return resultColumns.value
+    return resultColumns.value.filter((col) => {
+      const sample = resultRows.value.find((r) => r[col] !== null && r[col] !== undefined)
+      return sample ? typeof sample[col] === 'number' : false
+    })
+  })
+
+  /** The effective Y columns list, accounting for pie's single-select */
+  const effectiveYColumns = computed(() => {
+    if (chartType.value === 'pie') {
+      return chartYColumnSingle.value ? [chartYColumnSingle.value] : []
+    }
+    return chartYColumns.value
+  })
+
+  /** True when enough config is set to render a chart */
+  const chartReady = computed(() => {
+    return chartXColumn.value !== '' && effectiveYColumns.value.length > 0
+  })
+
+  /** Build ECharts options from user selections */
+  const builtChartOptions = computed<EChartsOption>(() => {
+    const x = chartXColumn.value
+    const yCols = effectiveYColumns.value
+    const type = chartType.value
+
+    if (type === 'pie') {
+      return {
+        tooltip: { trigger: 'item' },
+        series: [
+          {
+            type: 'pie',
+            radius: ['30%', '70%'],
+            encode: { itemName: x, value: yCols[0] },
+          },
+        ],
+      }
+    }
+
+    // For area charts, ECharts uses type 'line' with areaStyle
+    const echartsSeriesType = type === 'area' ? 'line' : type
+
+    const series = yCols.map((yCol) => ({
+      name: yCol,
+      type: echartsSeriesType,
+      encode: { x, y: yCol },
+      ...(type === 'area' ? { areaStyle: {} } : {}),
+    }))
+
+    return {
+      tooltip: { trigger: 'axis' },
+      legend: yCols.length > 1 ? { data: yCols } : undefined,
+      xAxis: { type: 'category' as const },
+      yAxis: { type: 'value' as const },
+      series,
+    }
+  })
+
+  // Auto-select sensible defaults when results change
+  watch(resultColumns, (cols) => {
+    if (cols.length === 0) return
+
+    // Pick first non-numeric column as X, first numeric as Y
+    const numCols = numericColumns.value
+    const nonNumCols = cols.filter((c) => !numCols.includes(c))
+
+    chartXColumn.value = nonNumCols.length > 0 ? nonNumCols[0] : cols[0]
+    if (numCols.length > 0) {
+      chartYColumns.value = [numCols[0]]
+      chartYColumnSingle.value = numCols[0]
+    } else {
+      chartYColumns.value = []
+      chartYColumnSingle.value = ''
+    }
+  })
+
+  // --- Handlers ---
 
   async function handleGenerateSQL() {
     if (!nlQuery.value.trim() || isGenerating.value) return
@@ -232,7 +429,6 @@
   function formatCellValue(value: unknown): string {
     if (value === null || value === undefined) return ''
     if (typeof value === 'number') {
-      // Format numbers with reasonable precision
       if (Number.isInteger(value)) return value.toLocaleString()
       return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     }

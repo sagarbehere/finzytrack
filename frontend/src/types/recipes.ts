@@ -25,7 +25,10 @@ export interface RecipeParameter {
 
 // Visualization types
 export type VisualizationType = 'chart' | 'kpi' | 'table' | 'pivot'
-export type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'scatter'
+// Define as const array so it's available at runtime (e.g. for the Analysis chart picker).
+// Adding a new entry here automatically extends the ChartType union AND makes it selectable.
+export const SUPPORTED_CHART_TYPES = ['bar', 'line', 'pie', 'area', 'scatter'] as const
+export type ChartType = (typeof SUPPORTED_CHART_TYPES)[number]
 
 /**
  * Context passed to getSeriesClickLink for chart click handling
