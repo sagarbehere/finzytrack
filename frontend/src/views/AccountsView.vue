@@ -325,7 +325,7 @@ async function handleCreateSubmit(data: { name: string; openDate: string; curren
     toast.success('Account Created', `Account "${data.name}" created successfully.`)
     // Reload with current date filter
     await loadAccounts()
-  } catch (error) {
+  } catch (_error) {
     // Error is already displayed by the composable
   }
 }
@@ -343,7 +343,7 @@ async function handleEditSubmit(data: { name: string; openDate: string; currenci
     toast.success('Account Updated', `Account "${editingAccount.value.fullPath}" updated successfully.`)
     // Reload with current date filter
     await loadAccounts()
-  } catch (error) {
+  } catch (_error) {
     // Error is already displayed by the composable
   }
 }
@@ -360,7 +360,7 @@ async function handleCloseSubmit(data: { closeDate: string; reason?: string }) {
     toast.success('Account Closed', `Account "${closingAccount.value.fullPath}" closed successfully.`)
     // Reload with current date filter
     await loadAccounts()
-  } catch (error) {
+  } catch (_error) {
     // Error is already displayed by the composable
   }
 }
@@ -371,7 +371,7 @@ async function performReopen(node: AccountTreeNode) {
     toast.success('Account Reopened', `Account "${node.fullPath}" reopened successfully.`)
     // Reload with current date filter
     await loadAccounts()
-  } catch (error) {
+  } catch (_error) {
     // Error is already displayed by the composable
   }
 }
@@ -390,7 +390,7 @@ async function handleDeleteSubmit(data: { deleteTransactions: boolean }) {
     toast.success('Account Deleted', message)
     // Reload with current date filter
     await loadAccounts()
-  } catch (error) {
+  } catch (_error) {
     // Error is already displayed by the composable
     showDeleteModal.value = false
   }

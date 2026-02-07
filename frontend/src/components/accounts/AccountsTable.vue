@@ -238,7 +238,7 @@ interface Emits {
   (e: 'view-transactions', node: AccountTreeNode): void
 }
 
-const props = defineProps<Props>()
+defineProps<Props>()
 const emit = defineEmits<Emits>()
 
 function formatBalanceDisplay(node: AccountTreeNode) {

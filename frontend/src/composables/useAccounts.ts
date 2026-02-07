@@ -1,4 +1,4 @@
-import { ref, computed, readonly, type Ref } from 'vue'
+import { ref, computed, type Ref } from 'vue'
 import {
   AccountsService,
   type AccountDetails,

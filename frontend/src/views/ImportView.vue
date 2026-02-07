@@ -576,7 +576,7 @@
         transactionTableRef.value?.setNewEditBaseline()
       })
 
-    } catch (error) {
+    } catch (_error) {
       if (categorizeError.value) {
         showErrorToast('Categorization Failed', categorizeError.value.message)
       }
@@ -604,7 +604,7 @@
         // Show success message
         showSuccessToast('Transactions Committed', `Successfully committed ${result.count} transactions`)
       }
-    } catch (error) {
+    } catch (_error) {
       if (commitError.value) {
         showErrorToast('Commit Failed', commitError.value.message)
       }
@@ -651,7 +651,7 @@
     duplicateTransactionsList.value = []
   }
 
-  const handleKeepTransaction = (transactionId: string) => {
+  const handleKeepTransaction = (_transactionId: string) => {
     // Transaction stays in table, just rebuild the list
     buildDuplicateTransactionsList()
 

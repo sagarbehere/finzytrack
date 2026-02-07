@@ -131,7 +131,7 @@
 import { ref, computed, watch } from 'vue'
 import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } from '@headlessui/vue'
 import { MagnifyingGlassIcon, ChevronUpIcon } from '@heroicons/vue/24/outline'
-import type { AccountTreeNode, AggregatedBalance } from '@/types/accounts'
+import type { AccountTreeNode } from '@/types/accounts'
 
 interface Props {
   open: boolean

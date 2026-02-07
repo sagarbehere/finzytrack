@@ -21,9 +21,6 @@
 
 <script setup lang="ts">
 import FileEditor from '@/components/common/FileEditor.vue'
-import { useToast } from '@/composables/useNotifications'
-
-const toast = useToast()
 
 function handleLedgerSaved() {
   // Toast already shown by FileEditor

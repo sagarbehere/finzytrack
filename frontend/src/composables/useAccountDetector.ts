@@ -139,7 +139,7 @@ export function useAccountDetector(fileDetails: Ref<OfxFileDetails | null>) {
       // 2. If needed, create the account
       if (learnResponse.data?.account_creation_needed) {
         const shouldCreate = confirm(
-          `Account ${selectedAccount.value} doesn\'t exist. Create it?`
+          `Account ${selectedAccount.value} doesn't exist. Create it?`
         );
 
         if (shouldCreate) {

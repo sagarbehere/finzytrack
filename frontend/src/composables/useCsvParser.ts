@@ -168,7 +168,7 @@ function parseAmountStr(amountStr: string, decimalSep: string): number | null {
   if (decimalSep !== '.') {
     normalized = normalized.replace(/\./g, '').replace(decimalSep, '.')
   }
-  normalized = normalized.replace(/[^0-9.\-]/g, '')
+  normalized = normalized.replace(/[^0-9.-]/g, '')
   const value = parseFloat(normalized)
   if (isNaN(value)) return null
   return isParensNegative ? -Math.abs(value) : value

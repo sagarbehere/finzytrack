@@ -209,7 +209,7 @@ function handleTransactionsUpdated(updatedTransactions: TransactionViewModel[]) 
   transactions.value = updatedTransactions
 }
 
-function handleTransactionDeleted(transactionId: string) {
+function handleTransactionDeleted(_transactionId: string) {
   // Decrement totalCount when a transaction is deleted
   if (totalCount.value !== null && totalCount.value > 0) {
     totalCount.value--

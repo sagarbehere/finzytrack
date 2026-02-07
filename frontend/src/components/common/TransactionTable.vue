@@ -324,18 +324,7 @@ const currentPageTransactions = computed(() => {
   return result
 })
 
-// Column definitions  
-interface TableRowData {
-  transaction: TransactionViewModel
-  transactionIndex: number
-  postingIndex: number
-  isFirstPosting: boolean
-  isLastPosting: boolean
-  account: string
-  amount: number | null
-  currency: string
-}
-
+// Column definitions
 const columnHelper = createColumnHelper<TableRowData>()
 
 const spannedColumnIds = ['status', 'index', 'date', 'flag', 'payee', 'memo', 'narration', 'tags_links']
@@ -938,7 +927,7 @@ const updateStickyColumnPositions = () => {
     const statusCell = document.querySelector('th[data-column-id="status"]') as HTMLElement
     if (statusCell) {
       const statusWidth = statusCell.offsetWidth
-      const indexCells = document.querySelectorAll('[data-column-id="index"]') as NodeListOf<HTMLElement>
+      const indexCells = document.querySelectorAll('[data-column-id="index"]') as globalThis.NodeListOf<HTMLElement>
       indexCells.forEach(cell => {
         cell.style.left = `${statusWidth}px`
       })

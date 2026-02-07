@@ -327,7 +327,7 @@
   }
 
   // Sidebar resizing
-  const { sidebarWidth, sidebarWidthPx, setSidebarWidth, MIN_WIDTH, MAX_WIDTH } = useSidebarWidth()
+  const { sidebarWidth, sidebarWidthPx, setSidebarWidth } = useSidebarWidth()
   const isResizing = ref(false)
   const isLargeScreen = ref(window.innerWidth >= 1024)
 

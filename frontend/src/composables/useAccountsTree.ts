@@ -1,4 +1,4 @@
-import { computed, ref, type Ref, type ComputedRef } from 'vue'
+import { ref, type Ref } from 'vue'
 import type { AccountDetails } from '@/services/generated-api'
 import type { AccountTreeNode, AccountFilters, AccountType, AggregatedBalance } from '@/types/accounts'
 
@@ -33,9 +33,6 @@ function getAccountType(fullPath: string): AccountType {
  * Build a hierarchical tree from flat account list
  */
 function buildTree(accounts: AccountDetails[]): AccountTreeNode[] {
-  // Create a set of existing account paths for virtual node detection
-  const existingPaths = new Set(accounts.map(a => a.name))
-
   // Map to store all nodes by their full path
   const nodeMap = new Map<string, AccountTreeNode>()
 
