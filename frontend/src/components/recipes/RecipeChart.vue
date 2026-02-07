@@ -33,9 +33,16 @@ echarts.use([
 interface Props {
   chartOptions: EChartsOption
   data: unknown[]
+  clickable?: boolean
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  clickable: false,
+})
+
+const emit = defineEmits<{
+  seriesClick: [context: { seriesName: string; seriesIndex: number; dataIndex: number; data: Record<string, unknown> }]
+}>()
 
 const chartContainer = ref<HTMLElement | null>(null)
 let chartInstance: ECharts | null = null
@@ -152,6 +159,27 @@ function initChart() {
     renderer: 'canvas',
   })
   chartInstance.setOption(finalOptions.value)
+
+  // Emit click events for series elements
+  chartInstance.on('click', (params) => {
+    const data = (params.value ?? params.data) as Record<string, unknown>
+    if (data) {
+      emit('seriesClick', {
+        seriesName: params.seriesName as string,
+        seriesIndex: params.seriesIndex as number,
+        dataIndex: params.dataIndex as number,
+        data,
+      })
+    }
+  })
+
+  // Show pointer cursor on hoverable series when clickable
+  if (props.clickable) {
+    chartInstance.getZr().on('mousemove', (params) => {
+      const target = params.target
+      chartContainer.value!.style.cursor = target ? 'pointer' : 'default'
+    })
+  }
 }
 
 // Update chart when options change

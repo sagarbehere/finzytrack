@@ -27,10 +27,26 @@ export interface RecipeParameter {
 export type VisualizationType = 'chart' | 'kpi' | 'table' | 'pivot'
 export type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'scatter'
 
+/**
+ * Context passed to getSeriesClickLink for chart click handling
+ */
+export interface ChartClickContext {
+  seriesName: string
+  seriesIndex: number
+  dataIndex: number
+  data: Record<string, unknown> // The row from the dataset
+  parameters: Record<string, string | number> // Current widget parameters
+}
+
 export interface ChartVisualization {
   type: 'chart'
   chartType: ChartType
   options: Record<string, unknown> // ECharts options
+  /**
+   * Function to generate a navigation link when a chart series element is clicked.
+   * Return null/undefined for no link.
+   */
+  getSeriesClickLink?: (context: ChartClickContext) => ValueLinkConfig | null | undefined
 }
 
 export interface KPIVisualization {

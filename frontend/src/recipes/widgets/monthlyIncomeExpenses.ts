@@ -1,4 +1,4 @@
-import type { WidgetRecipe } from '@/types/recipes'
+import type { WidgetRecipe, ChartClickContext, ValueLinkConfig } from '@/types/recipes'
 
 /**
  * Generate year options for the select parameter
@@ -73,6 +73,7 @@ export const monthlyIncomeExpensesWidget: WidgetRecipe = {
 
       return {
         month: formatMonth(String(row.month)),
+        yearMonth: String(row.month), // Keep original YYYY-MM for click links
         expenses,
         income,
         savings,
@@ -82,6 +83,36 @@ export const monthlyIncomeExpensesWidget: WidgetRecipe = {
   visualization: {
     type: 'chart',
     chartType: 'bar',
+    getSeriesClickLink: (context: ChartClickContext): ValueLinkConfig | null => {
+      const { seriesName, data } = context
+      const yearMonth = data.yearMonth as string
+      if (!yearMonth) return null
+
+      // Only link Income and Expenses bars (not Savings, which is derived)
+      let accountType: string | undefined
+      if (seriesName === 'Income') {
+        accountType = 'Income'
+      } else if (seriesName === 'Expenses') {
+        accountType = 'Expenses'
+      } else {
+        return null
+      }
+
+      // Build date range for the month
+      const [year, month] = yearMonth.split('-')
+      const lastDay = new Date(Number(year), Number(month), 0).getDate()
+      const dateFrom = `${yearMonth}-01`
+      const dateTo = `${yearMonth}-${String(lastDay).padStart(2, '0')}`
+
+      return {
+        name: 'transactions',
+        query: {
+          accountContains: accountType,
+          dateFrom,
+          dateTo,
+        },
+      }
+    },
     options: {
       tooltip: {
         trigger: 'axis',

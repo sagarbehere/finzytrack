@@ -43,7 +43,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, watch, onMounted } from 'vue'
 import type {
   DashboardRecipe,
   JsonDashboardRecipe,
@@ -57,11 +57,16 @@ import RecipeParameters from './RecipeParameters.vue'
 interface Props {
   dashboard: DashboardRecipe | JsonDashboardRecipe
   dbType?: 'duckdb' | 'sqlite'
+  initialParameters?: Record<string, string | number>
 }
 
 const props = withDefaults(defineProps<Props>(), {
   dbType: 'sqlite',
 })
+
+const emit = defineEmits<{
+  'update:parameters': [params: Record<string, string | number>]
+}>()
 
 const { getWidget } = useRecipeLoader()
 
@@ -94,7 +99,7 @@ function getWidgetById(widgetId: string): WidgetRecipe | JsonWidgetRecipe {
   )
 }
 
-// Initialize dashboard parameters with defaults
+// Initialize dashboard parameters with defaults, then overlay any initial values from URL
 function initializeParameters() {
   const params: Record<string, string | number> = {}
   if (props.dashboard.parameters) {
@@ -102,8 +107,21 @@ function initializeParameters() {
       params[param.name] = param.default
     }
   }
+  // Override defaults with initial parameters (e.g., from URL query params)
+  if (props.initialParameters) {
+    for (const [key, value] of Object.entries(props.initialParameters)) {
+      if (key in params) {
+        params[key] = value
+      }
+    }
+  }
   dashboardParameters.value = params
 }
+
+// Emit parameter changes to parent for URL sync
+watch(dashboardParameters, (newParams) => {
+  emit('update:parameters', { ...newParams })
+}, { deep: true })
 
 onMounted(() => {
   initializeParameters()

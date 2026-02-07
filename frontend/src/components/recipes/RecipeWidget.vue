@@ -82,7 +82,9 @@
           v-else-if="recipe.visualization.type === 'chart'"
           :chartOptions="recipe.visualization.options"
           :data="Array.isArray(data) ? data : []"
+          :clickable="hasChartClickHandler()"
           class="h-full"
+          @series-click="handleChartSeriesClick"
         />
 
         <!-- Table -->
@@ -117,9 +119,12 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import type {
   KPIVisualization,
   JsonKPIVisualization,
+  ChartVisualization,
+  ChartClickContext,
   TableColumn,
   JsonTableColumn,
   ValueFormat,
@@ -149,6 +154,7 @@ const props = withDefaults(defineProps<Props>(), {
   dbType: 'sqlite',
 })
 
+const router = useRouter()
 const { executeRecipe, getDefaultParameters, isLoading, error } = useRecipeExecutor()
 
 // Local parameters (for widget-level params not controlled by dashboard)
@@ -336,6 +342,32 @@ function getPivotGetValueLink(): ((context: PivotLinkContext) => ValueLinkConfig
   // For now, JSON pivot links are not supported - would need template resolution
 
   return undefined
+}
+
+// Check if chart visualization has a click handler
+function hasChartClickHandler(): boolean {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'chart') return false
+  return typeof (viz as ChartVisualization).getSeriesClickLink === 'function'
+}
+
+// Handle chart series click events
+function handleChartSeriesClick(clickData: { seriesName: string; seriesIndex: number; dataIndex: number; data: Record<string, unknown> }) {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'chart') return
+
+  const chartViz = viz as ChartVisualization
+  if (!chartViz.getSeriesClickLink) return
+
+  const context: ChartClickContext = {
+    ...clickData,
+    parameters: mergedParameters.value,
+  }
+
+  const link = chartViz.getSeriesClickLink(context)
+  if (link) {
+    router.push({ name: link.name, query: link.query })
+  }
 }
 
 // Re-execute when parameters change
