@@ -292,7 +292,7 @@ export function useRecipeExecutor() {
       const response = await LedgerService.executeQuery(queryRequest, dbType)
 
       if (!response.success || !response.data) {
-        throw new Error(response.message || 'Query failed: No data returned')
+        throw new Error(response.error?.message || 'Query failed: No data returned')
       }
 
       const rows = response.data.rows as Record<string, unknown>[]

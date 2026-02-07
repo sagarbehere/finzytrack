@@ -14,7 +14,8 @@ import {
   DatasetComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import type { EChartsOption, ECharts } from 'echarts'
+import type { EChartsOption } from 'echarts'
+import type { ECharts as EChartsInstance } from 'echarts/core'
 
 // Register ECharts components
 echarts.use([
@@ -45,7 +46,7 @@ const emit = defineEmits<{
 }>()
 
 const chartContainer = ref<HTMLElement | null>(null)
-let chartInstance: ECharts | null = null
+let chartInstance: EChartsInstance | null = null
 
 // Detect dark mode
 function isDarkMode(): boolean {
@@ -145,7 +146,7 @@ const finalOptions = computed<EChartsOption>(() => {
           ...((props.chartOptions.yAxis as object) || {}),
         },
     dataset: {
-      source: props.data,
+      source: props.data as Record<string, unknown>[],
     },
     series: applySeriesLabelStyles(props.chartOptions.series, dark, textColor),
   }
@@ -155,13 +156,14 @@ const finalOptions = computed<EChartsOption>(() => {
 function initChart() {
   if (!chartContainer.value) return
 
-  chartInstance = echarts.init(chartContainer.value, undefined, {
+  const instance = echarts.init(chartContainer.value, undefined, {
     renderer: 'canvas',
   })
-  chartInstance.setOption(finalOptions.value)
+  chartInstance = instance
+  instance.setOption(finalOptions.value)
 
   // Emit click events for series elements
-  chartInstance.on('click', (params) => {
+  instance.on('click', (params) => {
     const data = (params.value ?? params.data) as Record<string, unknown>
     if (data) {
       emit('seriesClick', {
@@ -175,7 +177,7 @@ function initChart() {
 
   // Show pointer cursor on hoverable series when clickable
   if (props.clickable) {
-    chartInstance.getZr().on('mousemove', (params) => {
+    instance.getZr().on('mousemove', (params) => {
       const target = params.target
       chartContainer.value!.style.cursor = target ? 'pointer' : 'default'
     })
