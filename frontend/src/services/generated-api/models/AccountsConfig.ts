@@ -11,10 +11,6 @@ export type AccountsConfig = {
      */
     default_currency?: string;
     /**
-     * Operating currency for reporting and conversions
-     */
-    operating_currency?: string;
-    /**
      * Default account for unknown transactions
      */
     default_unknown_account?: string;

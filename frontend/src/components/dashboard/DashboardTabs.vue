@@ -1,11 +1,14 @@
 <template>
   <div class="flex items-center border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
     <!-- Tabs -->
-    <button
+    <div
       v-for="tab in tabs"
       :key="tab.id"
+      role="tab"
+      tabindex="0"
       @click="emit('select', tab.id)"
-      class="group relative flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors"
+      @keydown.enter="emit('select', tab.id)"
+      class="group relative flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors cursor-pointer"
       :class="[
         tab.id === activeTabId
           ? 'text-gray-900 dark:text-white bg-white dark:bg-gray-800 border-b-2 border-blue-500 -mb-px'
@@ -21,7 +24,7 @@
       >
         <XMarkIcon class="h-4 w-4" />
       </button>
-    </button>
+    </div>
 
     <!-- Add button -->
     <button
