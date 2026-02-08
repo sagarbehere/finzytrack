@@ -132,6 +132,7 @@ import type {
   PivotVisualization,
   PivotLinkContext,
   ValueLinkConfig,
+  QueryEngineType,
 } from '@/types/recipes'
 import {
   useRecipeExecutor,
@@ -147,7 +148,7 @@ import RecipeParameters from './RecipeParameters.vue'
 interface Props {
   recipe: AnyWidgetRecipe
   dashboardParameters?: Record<string, string | number>
-  dbType?: 'duckdb' | 'sqlite'
+  dbType?: QueryEngineType
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -173,7 +174,9 @@ const data = ref<unknown>(null)
 // Execute query
 async function executeQuery() {
   try {
-    data.value = await executeRecipe(props.recipe, mergedParameters.value, props.dbType)
+    // Recipe-level dbType takes priority over dashboard/view-level dbType
+    const engine = props.recipe.dbType ?? props.dbType
+    data.value = await executeRecipe(props.recipe, mergedParameters.value, engine)
   } catch {
     // Error is already set by useRecipeExecutor
   }

@@ -49,6 +49,7 @@ import type {
   JsonDashboardRecipe,
   WidgetRecipe,
   JsonWidgetRecipe,
+  QueryEngineType,
 } from '@/types/recipes'
 import { useRecipeLoader } from '@/composables/useRecipeLoader'
 import RecipeWidget from './RecipeWidget.vue'
@@ -56,7 +57,7 @@ import RecipeParameters from './RecipeParameters.vue'
 
 interface Props {
   dashboard: DashboardRecipe | JsonDashboardRecipe
-  dbType?: 'duckdb' | 'sqlite'
+  dbType?: QueryEngineType
   initialParameters?: Record<string, string | number>
 }
 

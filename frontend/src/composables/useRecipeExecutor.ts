@@ -5,6 +5,7 @@ import type {
   SimpleTransformType,
   TransformConfig,
   ValueFormat,
+  QueryEngineType,
 } from '@/types/recipes'
 import { LedgerService } from '@/services/generated-api'
 import type { QueryRequest } from '@/services/generated-api'
@@ -277,7 +278,7 @@ export function useRecipeExecutor() {
   async function executeRecipe(
     recipe: AnyWidgetRecipe,
     parameters: Record<string, string | number>,
-    dbType: 'duckdb' | 'sqlite' = 'sqlite'
+    dbType: QueryEngineType = 'sqlite'
   ): Promise<unknown> {
     isLoading.value = true
     error.value = null

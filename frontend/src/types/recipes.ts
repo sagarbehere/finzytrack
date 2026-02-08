@@ -167,13 +167,17 @@ export type RecipeVisualization =
   | TableVisualization
   | PivotVisualization
 
+// Query engine types
+export type QueryEngineType = 'sqlite' | 'duckdb' | 'beanquery'
+
 // Widget Recipe
 export interface WidgetRecipe {
   id: string
   title: string
   description?: string
   parameters?: RecipeParameter[]
-  query: string // SQL query with :paramName placeholders
+  dbType?: QueryEngineType // Query engine for this widget (defaults to dashboard/view setting)
+  query: string // SQL or BQL query with :paramName placeholders
   transform?: (rows: Record<string, unknown>[]) => unknown // Transform query results
   visualization: RecipeVisualization
 }
@@ -336,6 +340,7 @@ export interface JsonWidgetRecipe {
   title: string
   description?: string
   parameters?: RecipeParameter[]
+  dbType?: QueryEngineType // Query engine for this widget (defaults to dashboard/view setting)
   query: string
   transform?: TransformType // Predefined transform instead of function
   visualization: JsonRecipeVisualization
