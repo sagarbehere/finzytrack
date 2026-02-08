@@ -16,7 +16,6 @@
         :dashboard="activeDashboard"
         :key="activeTabId ?? undefined"
         :initialParameters="initialDashboardParams"
-        db-type="sqlite"
         @update:parameters="handleDashboardParamsChange"
       />
       <div v-else class="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">

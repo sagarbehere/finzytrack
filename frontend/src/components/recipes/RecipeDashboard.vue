@@ -35,7 +35,6 @@
         :key="widgetLayout.widgetId"
         :recipe="getWidgetById(widgetLayout.widgetId)"
         :dashboardParameters="dashboardParameters"
-        :dbType="dbType"
         :style="{ gridArea: widgetLayout.gridArea }"
       />
     </div>
@@ -49,7 +48,6 @@ import type {
   JsonDashboardRecipe,
   WidgetRecipe,
   JsonWidgetRecipe,
-  QueryEngineType,
 } from '@/types/recipes'
 import { useRecipeLoader } from '@/composables/useRecipeLoader'
 import RecipeWidget from './RecipeWidget.vue'
@@ -57,13 +55,10 @@ import RecipeParameters from './RecipeParameters.vue'
 
 interface Props {
   dashboard: DashboardRecipe | JsonDashboardRecipe
-  dbType?: QueryEngineType
   initialParameters?: Record<string, string | number>
 }
 
-const props = withDefaults(defineProps<Props>(), {
-  dbType: 'sqlite',
-})
+const props = defineProps<Props>()
 
 const emit = defineEmits<{
   'update:parameters': [params: Record<string, string | number>]
