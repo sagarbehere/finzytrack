@@ -67,18 +67,25 @@ function applySeriesLabelStyles(
     textBorderWidth: 2,
   }
 
+  // Text border helps readability when labels overlap colored elements (bar, line).
+  // For other chart types (pie, scatter), disable text border to avoid a halo effect.
+  const overlayTypes = new Set(['bar', 'line'])
+
   if (Array.isArray(series)) {
     return series.map((s) => {
-      if (typeof s === 'object' && s !== null && 'label' in s && s.label) {
-        return {
-          ...s,
-          label: {
-            ...(s.label as object),
-            ...labelStyle,
-          },
-        }
+      if (typeof s !== 'object' || s === null) return s
+      const seriesType = (s as { type?: string }).type
+      const existingLabel = ('label' in s && s.label ? s.label : {}) as object
+      const style = overlayTypes.has(seriesType || '')
+        ? labelStyle
+        : { color: textColor, textBorderWidth: 0 }
+      return {
+        ...s,
+        label: {
+          ...existingLabel,
+          ...style,
+        },
       }
-      return s
     })
   }
 
