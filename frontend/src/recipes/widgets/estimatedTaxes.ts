@@ -1,14 +1,5 @@
 import type { WidgetRecipe } from '@/types/recipes'
 
-function formatCurrency(value: number): string {
-  return value.toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })
-}
-
 function generateYearOptions() {
   const currentYear = new Date().getFullYear()
   const years = []
@@ -21,7 +12,7 @@ function generateYearOptions() {
 /**
  * Estimated Taxes KPI Widget
  *
- * Estimates taxes as 50% of gross income (Income:Gross* accounts).
+ * Estimates taxes as 50% of gross income (Income:Gross* accounts), per currency.
  * This is a rough estimate assuming ~50% effective tax rate on gross income.
  */
 export const estimatedTaxesWidget: WidgetRecipe = {
@@ -41,21 +32,26 @@ export const estimatedTaxesWidget: WidgetRecipe = {
   ],
 
   query: `
-    SELECT (SUM(amount) / 2.0) * -1 AS estimated_taxes
+    SELECT currency, (SUM(amount) / 2.0) * -1 AS amount
     FROM postings
     WHERE account_type = 'Income'
       AND LOWER(account) LIKE 'income:gross%'
       AND year = :year
+    GROUP BY currency
+    HAVING amount != 0
+    ORDER BY ABS(amount) DESC
   `,
 
   transform: (rows) => {
-    if (rows.length === 0) return { value: 0 }
-    return { value: Number(rows[0].estimated_taxes) || 0 }
+    return rows.map((row) => ({
+      amount: Number(row.amount) || 0,
+      currency: String(row.currency),
+    }))
   },
 
   visualization: {
     type: 'kpi',
     icon: '%',
-    formatValue: formatCurrency,
+    multiCurrency: true,
   },
 }

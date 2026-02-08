@@ -6,6 +6,7 @@
  */
 
 import type { RecipeParameterOption } from '@/types/recipes'
+import { useConfig } from '@/composables/useConfig'
 
 export interface GeneratorConfig {
   [key: string]: unknown
@@ -217,11 +218,34 @@ export function datePresets(): RecipeParameterOption[] {
 }
 
 /**
+ * Returns the configured default currency
+ *
+ * Usage: { "$gen": "defaultCurrency" }
+ * Returns: "USD" (or whatever is configured in accounts.default_currency)
+ */
+export function defaultCurrency(): string {
+  const { config } = useConfig()
+  return config.value?.accounts?.default_currency || 'USD'
+}
+
+/**
+ * Generates currency options from an explicit list
+ *
+ * Usage: { "$gen": "currencyOptions", "currencies": ["USD", "INR", "EUR"] }
+ * Returns: [{ value: "USD", label: "USD" }, { value: "INR", label: "INR" }, ...]
+ */
+export function currencyOptions(config: GeneratorConfig = {}): RecipeParameterOption[] {
+  const currencies = (config.currencies as string[]) || ['USD']
+  return currencies.map((code) => ({ value: code, label: code }))
+}
+
+/**
  * Registry of all available generators
  */
 export const generators: Record<string, GeneratorFunction> = {
   // Value generators
   currentYear,
+  defaultCurrency,
 
   // Option generators
   yearRange,
@@ -229,6 +253,7 @@ export const generators: Record<string, GeneratorFunction> = {
   quarterOptions,
   accountTypeOptions,
   datePresets,
+  currencyOptions,
 
   // Date generators
   today,

@@ -12,7 +12,18 @@
       <p class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
         {{ label }}
       </p>
-      <p class="text-2xl font-bold text-gray-900 dark:text-white">
+      <!-- Multi-currency stacked values -->
+      <template v-if="values && values.length > 0">
+        <p
+          v-for="(item, index) in values"
+          :key="index"
+          class="text-2xl font-bold text-gray-900 dark:text-white"
+        >
+          {{ formatCurrencyAmount(item) }}
+        </p>
+      </template>
+      <!-- Single value (backward compatible) -->
+      <p v-else class="text-2xl font-bold text-gray-900 dark:text-white">
         {{ formattedValue }}
       </p>
       <div v-if="showTrend && trend !== null" class="flex items-center mt-1">
@@ -30,6 +41,8 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { CurrencyAmount } from '@/types/recipes'
+import { formatAmount } from '@/utils/currencyFormat'
 
 interface Props {
   value: number
@@ -39,6 +52,7 @@ interface Props {
   formatValue?: (value: number) => string
   showTrend?: boolean
   trend?: number | null
+  values?: CurrencyAmount[]
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -65,6 +79,10 @@ const formattedValue = computed(() => {
   }
   return String(props.value)
 })
+
+function formatCurrencyAmount(item: CurrencyAmount): string {
+  return formatAmount(item.amount, item.currency)
+}
 
 function formatTrend(value: number): string {
   return value.toLocaleString('en-US', {

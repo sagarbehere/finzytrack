@@ -1,14 +1,5 @@
 import type { WidgetRecipe } from '@/types/recipes'
 
-function formatCurrency(value: number): string {
-  return value.toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })
-}
-
 function generateYearOptions() {
   const currentYear = new Date().getFullYear()
   const years = []
@@ -21,7 +12,7 @@ function generateYearOptions() {
 /**
  * Savings KPI Widget
  *
- * Calculates estimated savings as:
+ * Calculates estimated savings per currency as:
  * Total Income - Estimated Taxes - Total Expenses
  *
  * Where:
@@ -47,6 +38,7 @@ export const savingsWidget: WidgetRecipe = {
 
   query: `
     SELECT
+      currency,
       (
         -- Total Income (negated since income is stored as negative)
         -1 * SUM(CASE WHEN account_type = 'Income' THEN amount ELSE 0 END)
@@ -56,19 +48,24 @@ export const savingsWidget: WidgetRecipe = {
       ) - (
         -- Total Expenses
         SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END)
-      ) AS estimated_savings
+      ) AS amount
     FROM postings
     WHERE year = :year
+    GROUP BY currency
+    HAVING amount != 0
+    ORDER BY ABS(amount) DESC
   `,
 
   transform: (rows) => {
-    if (rows.length === 0) return { value: 0 }
-    return { value: Number(rows[0].estimated_savings) || 0 }
+    return rows.map((row) => ({
+      amount: Number(row.amount) || 0,
+      currency: String(row.currency),
+    }))
   },
 
   visualization: {
     type: 'kpi',
     icon: '$',
-    formatValue: formatCurrency,
+    multiCurrency: true,
   },
 }

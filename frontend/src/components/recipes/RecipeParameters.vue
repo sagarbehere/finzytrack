@@ -21,7 +21,7 @@
         class="block rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white"
       >
         <option
-          v-for="option in param.options"
+          v-for="option in getOptions(param)"
           :key="String(option.value)"
           :value="option.value"
         >
@@ -55,7 +55,9 @@
 </template>
 
 <script setup lang="ts">
-import type { RecipeParameter } from '@/types/recipes'
+import { ref, onMounted } from 'vue'
+import type { RecipeParameter, RecipeParameterOption } from '@/types/recipes'
+import { useCommodities } from '@/composables/useCommodities'
 
 interface Props {
   parameters: RecipeParameter[]
@@ -69,10 +71,30 @@ interface Emits {
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
+const { commodityDetails, fetchCommodities } = useCommodities()
+const dynamicCurrencyOptions = ref<RecipeParameterOption[]>([])
+
+function getOptions(param: RecipeParameter): RecipeParameterOption[] {
+  if (param.optionsFrom === 'currencies') {
+    return dynamicCurrencyOptions.value
+  }
+  return param.options || []
+}
+
 function updateParam(name: string, value: string | number) {
   emit('update:modelValue', {
     ...props.modelValue,
     [name]: value,
   })
 }
+
+onMounted(async () => {
+  const hasDynamicCurrencies = props.parameters.some((p) => p.optionsFrom === 'currencies')
+  if (hasDynamicCurrencies) {
+    await fetchCommodities()
+    dynamicCurrencyOptions.value = commodityDetails.value
+      .filter((c) => c.type === 'Currency' || c.type === null || c.type === undefined)
+      .map((c) => ({ value: c.code, label: c.code }))
+  }
+})
 </script>

@@ -5,6 +5,12 @@
  * Each widget contains: SQL query, transform function, and visualization config.
  */
 
+// Multi-currency KPI values
+export interface CurrencyAmount {
+  amount: number
+  currency: string
+}
+
 // Parameter types for recipe inputs
 export type RecipeParameterType = 'date' | 'select' | 'number'
 
@@ -19,6 +25,7 @@ export interface RecipeParameter {
   type: RecipeParameterType
   default: string | number
   options?: RecipeParameterOption[] // For select type
+  optionsFrom?: 'currencies' // Dynamic option source
   min?: number // For number type
   max?: number // For number type
 }
@@ -58,6 +65,7 @@ export interface KPIVisualization {
   formatValue?: (value: number) => string
   showTrend?: boolean
   trendField?: string
+  multiCurrency?: boolean
 }
 
 export interface TableColumn {
@@ -280,6 +288,9 @@ export interface JsonKPIVisualization {
   format?: ValueFormat // Predefined format (default: 'number')
   showTrend?: boolean
   trendField?: string
+  multiCurrency?: boolean
+  amountField?: string // Field name for amount (default: 'amount')
+  currencyField?: string // Field name for currency code (default: 'currency')
 }
 
 /**

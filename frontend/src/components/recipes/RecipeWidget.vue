@@ -75,6 +75,7 @@
           :formatValue="getKPIFormatFunction()"
           :showTrend="recipe.visualization.showTrend"
           :trend="getTrendValue()"
+          :values="getKPIValues()"
         />
 
         <!-- Chart -->
@@ -132,6 +133,7 @@ import type {
   PivotVisualization,
   PivotLinkContext,
   ValueLinkConfig,
+  CurrencyAmount,
 } from '@/types/recipes'
 import {
   useRecipeExecutor,
@@ -217,6 +219,29 @@ function getKPIValue(): number {
     }
   }
   return 0
+}
+
+// Helper to extract multi-currency KPI values from data
+function getKPIValues(): CurrencyAmount[] | undefined {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'kpi') return undefined
+  if (!viz.multiCurrency) return undefined
+  if (data.value === null) return undefined
+
+  // For TypeScript recipes: transform returns CurrencyAmount[] directly
+  if (Array.isArray(data.value)) {
+    const amountField = (isJsonKPIVisualization(viz) && viz.amountField) || 'amount'
+    const currencyField = (isJsonKPIVisualization(viz) && viz.currencyField) || 'currency'
+
+    return data.value
+      .map((row: Record<string, unknown>) => ({
+        amount: Number(row[amountField]) || 0,
+        currency: String(row[currencyField] || 'USD'),
+      }))
+      .filter((item: CurrencyAmount) => item.amount !== 0)
+  }
+
+  return undefined
 }
 
 // Get KPI icon

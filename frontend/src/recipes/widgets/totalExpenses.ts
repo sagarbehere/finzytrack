@@ -1,14 +1,5 @@
 import type { WidgetRecipe } from '@/types/recipes'
 
-function formatCurrency(value: number): string {
-  return value.toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })
-}
-
 function generateYearOptions() {
   const currentYear = new Date().getFullYear()
   const years = []
@@ -21,7 +12,7 @@ function generateYearOptions() {
 /**
  * Total Expenses KPI Widget
  *
- * Shows total expenses for a selected year.
+ * Shows total expenses for a selected year, per currency.
  */
 export const totalExpensesWidget: WidgetRecipe = {
   id: 'total-expenses',
@@ -40,19 +31,24 @@ export const totalExpensesWidget: WidgetRecipe = {
   ],
 
   query: `
-    SELECT SUM(amount) AS total_expenses
+    SELECT currency, SUM(amount) AS amount
     FROM postings
     WHERE account_type = 'Expenses' AND year = :year
+    GROUP BY currency
+    HAVING amount != 0
+    ORDER BY ABS(amount) DESC
   `,
 
   transform: (rows) => {
-    if (rows.length === 0) return { value: 0 }
-    return { value: Number(rows[0].total_expenses) || 0 }
+    return rows.map((row) => ({
+      amount: Number(row.amount) || 0,
+      currency: String(row.currency),
+    }))
   },
 
   visualization: {
     type: 'kpi',
-    icon: '↓',
-    formatValue: formatCurrency,
+    icon: '\u2193',
+    multiCurrency: true,
   },
 }

@@ -9,6 +9,7 @@ import type {
 } from '@/types/recipes'
 import { LedgerService } from '@/services/generated-api'
 import type { QueryRequest } from '@/services/generated-api'
+import { formatAmount, formatSignedAmount } from '@/utils/currencyFormat'
 
 /**
  * Union type for any widget recipe (TypeScript or JSON)
@@ -114,25 +115,12 @@ export const predefinedFormats: Record<ValueFormat, (value: unknown) => string> 
   // Number formats
   currency: (value) => {
     const num = typeof value === 'number' ? value : parseFloat(String(value)) || 0
-    return num.toLocaleString('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    })
+    return formatAmount(num, 'USD')
   },
 
   signedCurrency: (value) => {
     const num = typeof value === 'number' ? value : parseFloat(String(value)) || 0
-    const formatted = Math.abs(num).toLocaleString('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    })
-    if (num > 0) return '+' + formatted
-    if (num < 0) return '-' + formatted
-    return formatted
+    return formatSignedAmount(num, 'USD')
   },
 
   percent: (value) => {
