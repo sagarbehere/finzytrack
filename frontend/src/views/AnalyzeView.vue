@@ -273,7 +273,7 @@
 <script setup lang="ts">
   import { ref, computed, watch } from 'vue'
   import { generateQuery, isSQLAssistantConfigured, type QueryLanguage } from '@/services/sqlAssistant'
-  import { LedgerService } from '@/services/generated-api'
+  import { LedgerService, ApiError } from '@/services/generated-api'
   import type { QueryRequest } from '@/services/generated-api'
   import { useToast } from '@/composables/useNotifications'
   import RecipeChart from '@/components/recipes/RecipeChart.vue'
@@ -452,8 +452,7 @@
       }
     } catch (e: unknown) {
       executionTime.value = Math.round(performance.now() - startTime)
-      const msg = e instanceof Error ? e.message : 'Query execution failed'
-      errorMessage.value = msg
+      errorMessage.value = extractErrorMessage(e)
     } finally {
       isExecuting.value = false
     }
@@ -465,6 +464,17 @@
     resultColumns.value = []
     resultRows.value = []
     executionTime.value = null
+  }
+
+  /** Extract a detailed error message from ApiError or fall back to generic message */
+  function extractErrorMessage(e: unknown): string {
+    if (e instanceof ApiError && e.body?.error) {
+      const detail = e.body.error.details?.error
+      const message = e.body.error.message
+      // Prefer the raw DB error detail, fall back to the structured message
+      return detail || message || e.message
+    }
+    return e instanceof Error ? e.message : 'Query execution failed'
   }
 
   function formatCellValue(value: unknown): string {
