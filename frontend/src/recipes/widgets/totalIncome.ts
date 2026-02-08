@@ -28,6 +28,7 @@ export const totalIncomeWidget: WidgetRecipe = {
   id: 'total-income',
   title: 'Total Income',
   description: 'Sum of all income for the selected year',
+  dbType: 'sqlite',
 
   parameters: [
     {

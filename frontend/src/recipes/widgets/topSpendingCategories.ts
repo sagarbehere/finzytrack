@@ -18,6 +18,7 @@ export const topSpendingCategoriesWidget: WidgetRecipe = {
   id: 'top-spending-categories',
   title: 'Top Spending Categories',
   description: 'Highest expense accounts by total amount',
+  dbType: 'sqlite',
   parameters: [
     {
       name: 'limit',

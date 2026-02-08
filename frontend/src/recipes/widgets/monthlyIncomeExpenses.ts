@@ -46,6 +46,7 @@ export const monthlyIncomeExpensesWidget: WidgetRecipe = {
   id: 'monthly-income-expenses',
   title: 'Monthly Expense NetIncome bar chart',
   description: 'Comparison of monthly expenses, income, and savings',
+  dbType: 'sqlite',
   parameters: [
     {
       name: 'year',

@@ -27,6 +27,7 @@ export const totalExpensesWidget: WidgetRecipe = {
   id: 'total-expenses',
   title: 'Total Expenses',
   description: 'Sum of all expenses for the selected year',
+  dbType: 'sqlite',
 
   parameters: [
     {

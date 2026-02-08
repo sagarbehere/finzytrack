@@ -2,6 +2,7 @@
   "id": "transaction-count",
   "title": "Transaction Count",
   "description": "Total number of transactions for the selected year",
+  "dbType": "sqlite",
   "parameters": [
     {
       "name": "year",

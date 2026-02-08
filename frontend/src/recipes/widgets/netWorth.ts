@@ -21,6 +21,7 @@ export const netWorthWidget: WidgetRecipe = {
   id: 'net-worth',
   title: 'Net Worth',
   description: 'Total assets minus liabilities',
+  dbType: 'sqlite',
   query: `
     SELECT
       SUM(CASE WHEN account_type = 'Assets' THEN amount ELSE 0 END) as total_assets,

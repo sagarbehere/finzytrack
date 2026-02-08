@@ -28,6 +28,7 @@ export const estimatedTaxesWidget: WidgetRecipe = {
   id: 'estimated-taxes',
   title: 'Estimated Taxes',
   description: 'Estimated taxes (50% of gross income)',
+  dbType: 'sqlite',
 
   parameters: [
     {

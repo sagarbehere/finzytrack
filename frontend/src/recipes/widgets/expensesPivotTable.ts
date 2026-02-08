@@ -52,6 +52,7 @@ export const expensesPivotTableWidget: WidgetRecipe = {
   id: 'expenses-pivot-table',
   title: 'Expenses Pivot Table',
   description: 'Monthly breakdown of expenses by account',
+  dbType: 'sqlite',
 
   parameters: [
     {

@@ -33,6 +33,7 @@ export const savingsWidget: WidgetRecipe = {
   id: 'savings',
   title: 'Savings',
   description: 'Estimated savings (Income - Taxes - Expenses)',
+  dbType: 'sqlite',
 
   parameters: [
     {
