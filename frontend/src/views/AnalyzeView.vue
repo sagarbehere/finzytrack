@@ -1,10 +1,40 @@
 <template>
   <div>
-    <div class="mb-6">
-      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Analyze</h1>
-      <p class="mt-1 text-gray-600 dark:text-gray-400">
-        Query your financial data using natural language or SQL
-      </p>
+    <div class="mb-6 flex items-start justify-between">
+      <div>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Analyze</h1>
+        <p class="mt-1 text-gray-600 dark:text-gray-400">
+          Query your financial data using natural language or {{ queryLanguage === 'sqlite' ? 'SQL' : 'BQL' }}
+        </p>
+      </div>
+
+      <!-- Language Toggle -->
+      <div class="flex rounded-md shadow-sm" role="group">
+        <button
+          @click="queryLanguage = 'sqlite'"
+          :class="[
+            'px-4 py-2 text-sm font-medium border focus:outline-none focus:z-10',
+            'rounded-l-md',
+            queryLanguage === 'sqlite'
+              ? 'bg-blue-600 text-white border-blue-600'
+              : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700',
+          ]"
+        >
+          SQLite
+        </button>
+        <button
+          @click="queryLanguage = 'beanquery'"
+          :class="[
+            'px-4 py-2 text-sm font-medium border focus:outline-none focus:z-10',
+            '-ml-px rounded-r-md',
+            queryLanguage === 'beanquery'
+              ? 'bg-blue-600 text-white border-blue-600'
+              : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700',
+          ]"
+        >
+          BQL
+        </button>
+      </div>
     </div>
 
     <!-- Natural Language Input -->
@@ -21,11 +51,11 @@
         placeholder="e.g. Show me my top 10 expense categories this year"
         rows="2"
         class="w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-        @keydown.meta.enter="handleGenerateSQL"
-        @keydown.ctrl.enter="handleGenerateSQL"
+        @keydown.meta.enter="handleGenerate"
+        @keydown.ctrl.enter="handleGenerate"
       />
       <button
-        @click="handleGenerateSQL"
+        @click="handleGenerate"
         :disabled="!nlQuery.trim() || isGenerating || !llmConfigured"
         class="mt-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-2"
       >
@@ -33,28 +63,28 @@
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
-        <span>{{ isGenerating ? 'Generating...' : 'Generate SQL' }}</span>
+        <span>{{ isGenerating ? 'Generating...' : generateButtonLabel }}</span>
       </button>
     </div>
 
-    <!-- SQL Editor -->
+    <!-- Query Editor -->
     <div class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 p-4 mb-4">
       <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-        SQL Query
+        {{ queryLanguage === 'sqlite' ? 'SQL Query' : 'BQL Query' }}
       </label>
       <textarea
-        v-model="sqlQuery"
-        placeholder="SELECT account, SUM(amount) as total FROM postings WHERE account_type = 'Expenses' GROUP BY account ORDER BY total DESC LIMIT 10"
+        v-model="queryText"
+        :placeholder="queryPlaceholder"
         rows="6"
         spellcheck="false"
         class="w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 font-mono text-sm"
-        @keydown.meta.enter="handleExecuteSQL"
-        @keydown.ctrl.enter="handleExecuteSQL"
+        @keydown.meta.enter="handleExecute"
+        @keydown.ctrl.enter="handleExecute"
       />
       <div class="mt-2 flex items-center gap-2">
         <button
-          @click="handleExecuteSQL"
-          :disabled="!sqlQuery.trim() || isExecuting"
+          @click="handleExecute"
+          :disabled="!queryText.trim() || isExecuting"
           class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-2"
         >
           <svg v-if="isExecuting" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -64,7 +94,7 @@
           <span>{{ isExecuting ? 'Executing...' : 'Execute' }}</span>
         </button>
         <button
-          @click="clearSQL"
+          @click="clearQuery"
           class="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-md hover:bg-gray-300 dark:hover:bg-gray-500 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 text-sm"
         >
           Clear
@@ -229,7 +259,9 @@
     <!-- Empty State (no results yet) -->
     <div v-else-if="!errorMessage && !isExecuting" class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 p-6">
       <div class="text-center py-8 text-gray-500 dark:text-gray-400">
-        <p class="text-sm">Write an SQL query or ask a question above, then execute to see results here.</p>
+        <p class="text-sm">
+          Write {{ queryLanguage === 'sqlite' ? 'an SQL' : 'a BQL' }} query or ask a question above, then execute to see results here.
+        </p>
         <p class="text-xs mt-2 text-gray-400 dark:text-gray-500">
           Tip: Press Cmd+Enter (or Ctrl+Enter) to execute quickly.
         </p>
@@ -240,7 +272,7 @@
 
 <script setup lang="ts">
   import { ref, computed, watch } from 'vue'
-  import { generateSQL, isSQLAssistantConfigured } from '@/services/sqlAssistant'
+  import { generateQuery, isSQLAssistantConfigured, type QueryLanguage } from '@/services/sqlAssistant'
   import { LedgerService } from '@/services/generated-api'
   import type { QueryRequest } from '@/services/generated-api'
   import { useToast } from '@/composables/useNotifications'
@@ -250,9 +282,22 @@
 
   const toast = useToast()
 
+  // --- Language mode ---
+  const queryLanguage = ref<QueryLanguage>('sqlite')
+
+  const generateButtonLabel = computed(() =>
+    queryLanguage.value === 'sqlite' ? 'Generate SQL' : 'Generate BQL'
+  )
+
+  const queryPlaceholder = computed(() =>
+    queryLanguage.value === 'sqlite'
+      ? 'SELECT account, SUM(amount) as total FROM postings WHERE account_type = \'Expenses\' GROUP BY account ORDER BY total DESC LIMIT 10'
+      : 'SELECT account, COST(SUM(position)) AS total WHERE account ~ \'Expenses\' GROUP BY 1 ORDER BY 2 DESC LIMIT 10'
+  )
+
   // --- Query state ---
   const nlQuery = ref('')
-  const sqlQuery = ref('')
+  const queryText = ref('')
   const isGenerating = ref(false)
   const isExecuting = ref(false)
   const errorMessage = ref('')
@@ -269,7 +314,6 @@
   const chartType = ref<ChartType>('bar')
   const chartXColumn = ref('')
   const chartYColumns = ref<string[]>([])
-  // For pie charts, only one Y column is meaningful
   const chartYColumnSingle = ref('')
 
   /** Columns whose first non-null value is a number */
@@ -313,7 +357,6 @@
       }
     }
 
-    // For area charts, ECharts uses type 'line' with areaStyle
     const echartsSeriesType = type === 'area' ? 'line' : type
 
     const series = yCols.map((yCol) => ({
@@ -336,7 +379,6 @@
   watch(resultColumns, (cols) => {
     if (cols.length === 0) return
 
-    // Pick first non-numeric column as X, first numeric as Y
     const numCols = numericColumns.value
     const nonNumCols = cols.filter((c) => !numCols.includes(c))
 
@@ -352,16 +394,16 @@
 
   // --- Handlers ---
 
-  async function handleGenerateSQL() {
+  async function handleGenerate() {
     if (!nlQuery.value.trim() || isGenerating.value) return
 
     isGenerating.value = true
     errorMessage.value = ''
     try {
-      const sql = await generateSQL(nlQuery.value.trim())
-      sqlQuery.value = sql
+      const query = await generateQuery(nlQuery.value.trim(), queryLanguage.value)
+      queryText.value = query
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Failed to generate SQL'
+      const msg = e instanceof Error ? e.message : 'Failed to generate query'
       errorMessage.value = msg
       toast.error('Generation Failed', msg)
     } finally {
@@ -369,8 +411,8 @@
     }
   }
 
-  async function handleExecuteSQL() {
-    if (!sqlQuery.value.trim() || isExecuting.value) return
+  async function handleExecute() {
+    if (!queryText.value.trim() || isExecuting.value) return
 
     isExecuting.value = true
     errorMessage.value = ''
@@ -381,8 +423,8 @@
     const startTime = performance.now()
 
     try {
-      const request: QueryRequest = { query: sqlQuery.value.trim() }
-      const response = await LedgerService.executeQuery(request, 'sqlite')
+      const request: QueryRequest = { query: queryText.value.trim() }
+      const response = await LedgerService.executeQuery(request, queryLanguage.value)
 
       executionTime.value = Math.round(performance.now() - startTime)
 
@@ -401,7 +443,6 @@
       const rows = data.rows as Record<string, unknown>[]
       resultRows.value = rows
 
-      // Derive columns from the first row, or from response.data.columns if available
       if (data.columns && Array.isArray(data.columns) && data.columns.length > 0) {
         resultColumns.value = data.columns.map((c) => typeof c === 'string' ? c : c.name)
       } else if (rows.length > 0) {
@@ -418,8 +459,8 @@
     }
   }
 
-  function clearSQL() {
-    sqlQuery.value = ''
+  function clearQuery() {
+    queryText.value = ''
     errorMessage.value = ''
     resultColumns.value = []
     resultRows.value = []
