@@ -128,6 +128,8 @@ import type {
   ChartClickContext,
   TableColumn,
   JsonTableColumn,
+  JsonValueLinkConfig,
+  JsonPivotVisualization,
   ValueFormat,
   PivotData,
   PivotVisualization,
@@ -294,6 +296,29 @@ function getTrendValue(): number | null {
   return null
 }
 
+/**
+ * Resolve a JSON template link config into a ValueLinkConfig by interpolating
+ * template variables like {{row.fieldName}}, {{column}}, {{value}}.
+ */
+function resolveTemplateLink(
+  template: JsonValueLinkConfig,
+  vars: Record<string, unknown>,
+): ValueLinkConfig | null {
+  const query: Record<string, string> = {}
+  for (const [key, tmpl] of Object.entries(template.query)) {
+    query[key] = tmpl.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_, path: string) => {
+      const parts = path.split('.')
+      let current: unknown = vars
+      for (const part of parts) {
+        if (current === null || current === undefined || typeof current !== 'object') return ''
+        current = (current as Record<string, unknown>)[part]
+      }
+      return current === null || current === undefined ? '' : String(current)
+    })
+  }
+  return { name: template.name, query }
+}
+
 // Get table columns (handles both TypeScript and JSON recipes)
 function getTableColumns(): TableColumn[] {
   const viz = props.recipe.visualization
@@ -302,9 +327,9 @@ function getTableColumns(): TableColumn[] {
   // Convert JSON table columns to TableColumn format
   return viz.columns.map((col: TableColumn | JsonTableColumn) => {
     if ('format' in col && typeof col.format === 'string') {
-      // JSON column with format string
+      // JSON column with format string (and optional template link)
       const jsonCol = col as JsonTableColumn
-      return {
+      const result: TableColumn = {
         key: jsonCol.key,
         label: jsonCol.label,
         align: jsonCol.align,
@@ -317,6 +342,33 @@ function getTableColumns(): TableColumn[] {
             }
           : undefined,
       }
+      if (jsonCol.link) {
+        const linkTemplate = jsonCol.link
+        result.getLink = (context) =>
+          resolveTemplateLink(linkTemplate, {
+            row: context.row,
+            value: context.value,
+            column: context.column.key,
+          })
+      }
+      return result
+    }
+    // Check for JSON column without format but with link
+    if ('link' in col && col.link && typeof col.link === 'object' && 'name' in col.link) {
+      const jsonCol = col as JsonTableColumn
+      const result: TableColumn = {
+        key: jsonCol.key,
+        label: jsonCol.label,
+        align: jsonCol.align,
+      }
+      const linkTemplate = jsonCol.link!
+      result.getLink = (context) =>
+        resolveTemplateLink(linkTemplate, {
+          row: context.row,
+          value: context.value,
+          column: context.column.key,
+        })
+      return result
     }
     // TypeScript column with function
     return col as TableColumn
@@ -360,8 +412,21 @@ function getPivotGetValueLink(): ((context: PivotLinkContext) => ValueLinkConfig
     return viz.getValueLink
   }
 
-  // JSON recipe with valueLink template (TODO: implement template interpolation)
-  // For now, JSON pivot links are not supported - would need template resolution
+  // JSON recipe with valueLink template
+  const jsonViz = viz as unknown as JsonPivotVisualization
+  if (jsonViz.valueLink) {
+    const linkTemplate = jsonViz.valueLink
+    return (context: PivotLinkContext) =>
+      resolveTemplateLink(linkTemplate, {
+        row: {
+          label: context.rowLabel,
+          ...context.rowData.meta,
+        },
+        column: context.column,
+        columnIndex: context.columnIndex,
+        value: context.value,
+      })
+  }
 
   return undefined
 }
