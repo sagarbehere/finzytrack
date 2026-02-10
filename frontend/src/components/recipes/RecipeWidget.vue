@@ -66,17 +66,22 @@
       <!-- Visualization -->
       <template v-else-if="data !== null">
         <!-- KPI -->
-        <RecipeKPI
+        <div
           v-if="recipe.visualization.type === 'kpi'"
-          :value="getKPIValue()"
-          :label="recipe.title"
-          :icon="getKPIIcon()"
-          :iconColor="getKPIIconColor()"
-          :formatValue="getKPIFormatFunction()"
-          :showTrend="recipe.visualization.showTrend"
-          :trend="getTrendValue()"
-          :values="getKPIValues()"
-        />
+          :class="hasKPIClickLink() ? 'h-full cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded-lg transition-colors' : 'h-full'"
+          @click="hasKPIClickLink() && handleKPIClick()"
+        >
+          <RecipeKPI
+            :value="getKPIValue()"
+            :label="recipe.title"
+            :icon="getKPIIcon()"
+            :iconColor="getKPIIconColor()"
+            :formatValue="getKPIFormatFunction()"
+            :showTrend="recipe.visualization.showTrend"
+            :trend="getTrendValue()"
+            :values="getKPIValues()"
+          />
+        </div>
 
         <!-- Chart -->
         <RecipeChart
@@ -469,6 +474,40 @@ function handleChartSeriesClick(clickData: { seriesName: string; seriesIndex: nu
     if (link) {
       router.push({ name: link.name, query: link.query })
     }
+  }
+}
+
+// Check if KPI visualization has a click link
+function hasKPIClickLink(): boolean {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'kpi') return false
+  return !!(viz as KPIVisualization | JsonKPIVisualization).clickLink
+}
+
+// Handle KPI click
+function handleKPIClick() {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'kpi') return
+
+  const clickLink = (viz as KPIVisualization | JsonKPIVisualization).clickLink
+  if (!clickLink) return
+
+  // Compute date convenience vars from year+month parameters
+  const params = mergedParameters.value
+  const year = String(params.year || new Date().getFullYear())
+  const month = String(params.month || new Date().getMonth() + 1).padStart(2, '0')
+  const lastDay = new Date(Number(year), Number(month), 0).getDate()
+  const dateFrom = `${year}-${month}-01`
+  const dateTo = `${year}-${month}-${String(lastDay).padStart(2, '0')}`
+
+  const link = resolveTemplateLink(clickLink, {
+    parameters: params,
+    dateFrom,
+    dateTo,
+  })
+
+  if (link) {
+    router.push({ name: link.name, query: link.query })
   }
 }
 

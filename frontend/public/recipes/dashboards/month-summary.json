@@ -50,7 +50,15 @@
         "type": "kpi",
         "icon": "\u2191",
         "iconColor": "green",
-        "multiCurrency": true
+        "multiCurrency": true,
+        "clickLink": {
+          "name": "transactions",
+          "query": {
+            "accountContains": "Income:Net",
+            "dateFrom": "{{dateFrom}}",
+            "dateTo": "{{dateTo}}"
+          }
+        }
       }
     },
     {
@@ -61,7 +69,15 @@
         "type": "kpi",
         "icon": "\u2193",
         "iconColor": "red",
-        "multiCurrency": true
+        "multiCurrency": true,
+        "clickLink": {
+          "name": "transactions",
+          "query": {
+            "accountContains": "Expenses",
+            "dateFrom": "{{dateFrom}}",
+            "dateTo": "{{dateTo}}"
+          }
+        }
       }
     },
     {
