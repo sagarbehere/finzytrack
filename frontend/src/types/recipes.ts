@@ -72,6 +72,7 @@ export interface KPIVisualization {
   trendField?: string
   multiCurrency?: boolean
   clickLink?: JsonValueLinkConfig
+  helpText?: string
 }
 
 export interface TableColumn {
@@ -298,6 +299,7 @@ export interface JsonKPIVisualization {
   amountField?: string // Field name for amount (default: 'amount')
   currencyField?: string // Field name for currency code (default: 'currency')
   clickLink?: JsonValueLinkConfig
+  helpText?: string
 }
 
 /**

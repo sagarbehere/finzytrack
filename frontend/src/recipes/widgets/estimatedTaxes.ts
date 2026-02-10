@@ -53,5 +53,6 @@ export const estimatedTaxesWidget: WidgetRecipe = {
     type: 'kpi',
     icon: '%',
     multiCurrency: true,
+    helpText: 'Estimated as 50% of Income:Gross',
   },
 }

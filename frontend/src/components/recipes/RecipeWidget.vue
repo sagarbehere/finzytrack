@@ -6,8 +6,14 @@
     <div
       class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between"
     >
-      <h3 class="text-sm font-medium text-gray-900 dark:text-white">
+      <h3 class="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-1.5">
         {{ recipe.title }}
+        <span v-if="getKPIHelpText()" class="group relative">
+          <span class="text-gray-400 dark:text-gray-500 text-xs cursor-help select-none">ⓘ</span>
+          <span class="invisible group-hover:visible absolute left-1/2 -translate-x-1/2 top-full mt-1 z-10 px-2.5 py-1.5 text-xs font-normal text-white bg-gray-800 dark:bg-gray-900 rounded shadow-lg whitespace-nowrap">
+            {{ getKPIHelpText() }}
+          </span>
+        </span>
       </h3>
       <!-- Widget-level parameters (if any and not controlled by dashboard) -->
       <RecipeParameters
@@ -256,6 +262,13 @@ function getKPIIcon(): string | undefined {
   const viz = props.recipe.visualization
   if (viz.type !== 'kpi') return undefined
   return viz.icon
+}
+
+// Get KPI help text
+function getKPIHelpText(): string | undefined {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'kpi') return undefined
+  return viz.helpText
 }
 
 // Get KPI icon color (for JSON recipes)
