@@ -25,11 +25,15 @@
     "widgets": [
       {
         "widgetId": "monthly-income",
-        "gridArea": "1 / 1 / 2 / 7"
+        "gridArea": "1 / 1 / 2 / 5"
       },
       {
         "widgetId": "monthly-expenses",
-        "gridArea": "1 / 7 / 2 / 13"
+        "gridArea": "1 / 5 / 2 / 9"
+      },
+      {
+        "widgetId": "monthly-savings",
+        "gridArea": "1 / 9 / 2 / 13"
       },
       {
         "widgetId": "expense-treemap",
@@ -40,8 +44,8 @@
   "widgets": [
     {
       "id": "monthly-income",
-      "title": "Monthly Income",
-      "query": "SELECT currency, SUM(amount) * -1 AS amount FROM postings WHERE account_type = 'Income' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY ABS(amount) DESC",
+      "title": "Monthly Net Income",
+      "query": "SELECT currency, SUM(amount) * -1 AS amount FROM postings WHERE LOWER(account) LIKE 'income:net:%' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY ABS(amount) DESC",
       "visualization": {
         "type": "kpi",
         "icon": "\u2191",
@@ -57,6 +61,17 @@
         "type": "kpi",
         "icon": "\u2193",
         "iconColor": "red",
+        "multiCurrency": true
+      }
+    },
+    {
+      "id": "monthly-savings",
+      "title": "Monthly Savings",
+      "query": "SELECT currency, SUM(amount) * -1 AS amount FROM postings WHERE (LOWER(account) LIKE 'income:net:%' OR LOWER(account) LIKE 'expenses:%') AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY ABS(amount) DESC",
+      "visualization": {
+        "type": "kpi",
+        "icon": "\u2261",
+        "iconColor": "blue",
         "multiCurrency": true
       }
     }
