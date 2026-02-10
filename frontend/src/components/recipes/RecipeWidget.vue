@@ -435,7 +435,8 @@ function getPivotGetValueLink(): ((context: PivotLinkContext) => ValueLinkConfig
 function hasChartClickHandler(): boolean {
   const viz = props.recipe.visualization
   if (viz.type !== 'chart') return false
-  return typeof (viz as ChartVisualization).getSeriesClickLink === 'function'
+  const chartViz = viz as ChartVisualization
+  return typeof chartViz.getSeriesClickLink === 'function' || !!chartViz.clickLink
 }
 
 // Handle chart series click events
@@ -444,16 +445,30 @@ function handleChartSeriesClick(clickData: { seriesName: string; seriesIndex: nu
   if (viz.type !== 'chart') return
 
   const chartViz = viz as ChartVisualization
-  if (!chartViz.getSeriesClickLink) return
 
-  const context: ChartClickContext = {
-    ...clickData,
-    parameters: mergedParameters.value,
+  // TypeScript recipe with function-based click handler
+  if (typeof chartViz.getSeriesClickLink === 'function') {
+    const context: ChartClickContext = {
+      ...clickData,
+      parameters: mergedParameters.value,
+    }
+    const link = chartViz.getSeriesClickLink(context)
+    if (link) {
+      router.push({ name: link.name, query: link.query })
+    }
+    return
   }
 
-  const link = chartViz.getSeriesClickLink(context)
-  if (link) {
-    router.push({ name: link.name, query: link.query })
+  // JSON recipe with template-based click link
+  if (chartViz.clickLink) {
+    const link = resolveTemplateLink(chartViz.clickLink, {
+      data: clickData.data,
+      seriesName: clickData.seriesName,
+      parameters: mergedParameters.value,
+    })
+    if (link) {
+      router.push({ name: link.name, query: link.query })
+    }
   }
 }
 

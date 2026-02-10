@@ -5,7 +5,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts/core'
-import { BarChart, LineChart, PieChart, ScatterChart } from 'echarts/charts'
+import { BarChart, LineChart, PieChart, ScatterChart, TreemapChart } from 'echarts/charts'
+import { VisualMapComponent } from 'echarts/components'
 import {
   TitleComponent,
   TooltipComponent,
@@ -23,11 +24,13 @@ echarts.use([
   LineChart,
   PieChart,
   ScatterChart,
+  TreemapChart,
   TitleComponent,
   TooltipComponent,
   LegendComponent,
   GridComponent,
   DatasetComponent,
+  VisualMapComponent,
   CanvasRenderer,
 ])
 
@@ -69,12 +72,15 @@ function applySeriesLabelStyles(
 
   // Text border helps readability when labels overlap colored elements (bar, line).
   // For other chart types (pie, scatter), disable text border to avoid a halo effect.
+  // Treemap is skipped entirely — it auto-adjusts label colors based on node background.
   const overlayTypes = new Set(['bar', 'line'])
+  const skipLabelOverride = new Set(['treemap'])
 
   if (Array.isArray(series)) {
     return series.map((s) => {
       if (typeof s !== 'object' || s === null) return s
       const seriesType = (s as { type?: string }).type
+      if (skipLabelOverride.has(seriesType || '')) return s
       const existingLabel = ('label' in s && s.label ? s.label : {}) as object
       const style = overlayTypes.has(seriesType || '')
         ? labelStyle
@@ -92,13 +98,34 @@ function applySeriesLabelStyles(
   return series
 }
 
+// Detect if any series is a treemap (treemap doesn't support dataset.source)
+function isTreemapChart(): boolean {
+  const series = props.chartOptions.series
+  if (!Array.isArray(series)) return false
+  return series.some((s) => typeof s === 'object' && s !== null && (s as { type?: string }).type === 'treemap')
+}
+
+// Inject data into treemap series
+function injectTreemapData(series: EChartsOption['series']): EChartsOption['series'] {
+  if (!Array.isArray(series)) return series
+  return series.map((s) => {
+    if (typeof s !== 'object' || s === null) return s
+    if ((s as { type?: string }).type !== 'treemap') return s
+    return { ...s, data: props.data } as typeof s
+  })
+}
+
 // Build final chart options with data and theme
 const finalOptions = computed<EChartsOption>(() => {
   const dark = isDarkMode()
   const textColor = dark ? '#e5e7eb' : '#374151'
   const axisLineColor = dark ? '#4b5563' : '#d1d5db'
+  const treemap = isTreemapChart()
 
-  return {
+  const styledSeries = applySeriesLabelStyles(props.chartOptions.series, dark, textColor)
+  const finalSeries = treemap ? injectTreemapData(styledSeries) : styledSeries
+
+  const result: EChartsOption = {
     backgroundColor: 'transparent',
     textStyle: {
       color: textColor,
@@ -108,7 +135,7 @@ const finalOptions = computed<EChartsOption>(() => {
       ...((props.chartOptions.title as object) || {}),
     },
     tooltip: {
-      trigger: 'axis',
+      trigger: treemap ? 'item' : 'axis',
       backgroundColor: dark ? '#1f2937' : '#ffffff',
       borderColor: dark ? '#374151' : '#e5e7eb',
       textStyle: { color: textColor },
@@ -118,15 +145,20 @@ const finalOptions = computed<EChartsOption>(() => {
       textStyle: { color: textColor },
       ...((props.chartOptions.legend as object) || {}),
     },
-    grid: {
+    series: finalSeries,
+  }
+
+  // Only include axis/grid/dataset for non-treemap charts
+  if (!treemap) {
+    result.grid = {
       containLabel: true,
       left: 16,
       right: 16,
       top: 40,
       bottom: 16,
       ...((props.chartOptions.grid as object) || {}),
-    },
-    xAxis: Array.isArray(props.chartOptions.xAxis)
+    }
+    result.xAxis = Array.isArray(props.chartOptions.xAxis)
       ? props.chartOptions.xAxis.map((axis) => ({
           axisLine: { lineStyle: { color: axisLineColor } },
           axisLabel: { color: textColor },
@@ -138,8 +170,8 @@ const finalOptions = computed<EChartsOption>(() => {
           axisLabel: { color: textColor },
           splitLine: { lineStyle: { color: axisLineColor, opacity: 0.3 } },
           ...((props.chartOptions.xAxis as object) || {}),
-        },
-    yAxis: Array.isArray(props.chartOptions.yAxis)
+        }
+    result.yAxis = Array.isArray(props.chartOptions.yAxis)
       ? props.chartOptions.yAxis.map((axis) => ({
           axisLine: { lineStyle: { color: axisLineColor } },
           axisLabel: { color: textColor },
@@ -151,12 +183,13 @@ const finalOptions = computed<EChartsOption>(() => {
           axisLabel: { color: textColor },
           splitLine: { lineStyle: { color: axisLineColor, opacity: 0.3 } },
           ...((props.chartOptions.yAxis as object) || {}),
-        },
-    dataset: {
+        }
+    result.dataset = {
       source: props.data as Record<string, unknown>[],
-    },
-    series: applySeriesLabelStyles(props.chartOptions.series, dark, textColor),
+    }
   }
+
+  return result
 })
 
 // Initialize chart
@@ -171,7 +204,10 @@ function initChart() {
 
   // Emit click events for series elements
   instance.on('click', (params) => {
-    const data = (params.value ?? params.data) as Record<string, unknown>
+    // For treemap, params.value is a number (the node value), not the data object.
+    // Prefer params.data when params.value is not an object.
+    const value = params.value
+    const data = (typeof value === 'object' && value !== null ? value : params.data) as Record<string, unknown>
     if (data) {
       emit('seriesClick', {
         seriesName: params.seriesName as string,

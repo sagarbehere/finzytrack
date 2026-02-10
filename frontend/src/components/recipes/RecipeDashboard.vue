@@ -42,7 +42,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch } from 'vue'
 import type {
   DashboardRecipe,
   JsonDashboardRecipe,
@@ -114,14 +114,14 @@ function initializeParameters() {
   dashboardParameters.value = params
 }
 
+// Initialize parameters synchronously during setup so child RecipeWidgets
+// receive correct dashboardParameters on first render (before their onMounted fires).
+initializeParameters()
+
 // Emit parameter changes to parent for URL sync
 watch(dashboardParameters, (newParams) => {
   emit('update:parameters', { ...newParams })
 }, { deep: true })
-
-onMounted(() => {
-  initializeParameters()
-})
 </script>
 
 <style scoped>

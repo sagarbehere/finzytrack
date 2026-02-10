@@ -81,10 +81,16 @@ function getOptions(param: RecipeParameter): RecipeParameterOption[] {
   return param.options || []
 }
 
+function coerceValue(value: string | number): string | number {
+  if (typeof value === 'number') return value
+  const num = Number(value)
+  return !isNaN(num) && String(num) === value ? num : value
+}
+
 function updateParam(name: string, value: string | number) {
   emit('update:modelValue', {
     ...props.modelValue,
-    [name]: value,
+    [name]: coerceValue(value),
   })
 }
 

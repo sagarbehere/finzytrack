@@ -34,7 +34,7 @@ export interface RecipeParameter {
 export type VisualizationType = 'chart' | 'kpi' | 'table' | 'pivot'
 // Define as const array so it's available at runtime (e.g. for the Analysis chart picker).
 // Adding a new entry here automatically extends the ChartType union AND makes it selectable.
-export const SUPPORTED_CHART_TYPES = ['bar', 'line', 'pie', 'area', 'scatter'] as const
+export const SUPPORTED_CHART_TYPES = ['bar', 'line', 'pie', 'area', 'scatter', 'treemap'] as const
 export type ChartType = (typeof SUPPORTED_CHART_TYPES)[number]
 
 /**
@@ -57,6 +57,11 @@ export interface ChartVisualization {
    * Return null/undefined for no link.
    */
   getSeriesClickLink?: (context: ChartClickContext) => ValueLinkConfig | null | undefined
+  /**
+   * Template-based click link for JSON recipes (alternative to getSeriesClickLink).
+   * Uses {{data.fieldName}}, {{seriesName}}, {{parameters.paramName}} interpolation.
+   */
+  clickLink?: JsonValueLinkConfig
 }
 
 export interface KPIVisualization {

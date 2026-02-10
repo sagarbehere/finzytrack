@@ -1,0 +1,64 @@
+{
+  "id": "month-summary",
+  "title": "Month Summary",
+  "description": "Monthly financial summary with income, expenses, and expense treemap breakdown",
+  "parameters": [
+    {
+      "name": "year",
+      "label": "Year",
+      "type": "select",
+      "default": { "$gen": "currentYear" },
+      "options": { "$gen": "yearRange", "count": 5 }
+    },
+    {
+      "name": "month",
+      "label": "Month",
+      "type": "select",
+      "default": { "$gen": "currentMonth" },
+      "options": { "$gen": "monthOptions" }
+    }
+  ],
+  "layout": {
+    "columns": 12,
+    "gap": "1.5rem",
+    "rowHeight": "140px",
+    "widgets": [
+      {
+        "widgetId": "monthly-income",
+        "gridArea": "1 / 1 / 2 / 7"
+      },
+      {
+        "widgetId": "monthly-expenses",
+        "gridArea": "1 / 7 / 2 / 13"
+      },
+      {
+        "widgetId": "expense-treemap",
+        "gridArea": "2 / 1 / 6 / 13"
+      }
+    ]
+  },
+  "widgets": [
+    {
+      "id": "monthly-income",
+      "title": "Monthly Income",
+      "query": "SELECT currency, SUM(amount) * -1 AS amount FROM postings WHERE account_type = 'Income' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY ABS(amount) DESC",
+      "visualization": {
+        "type": "kpi",
+        "icon": "\u2191",
+        "iconColor": "green",
+        "multiCurrency": true
+      }
+    },
+    {
+      "id": "monthly-expenses",
+      "title": "Monthly Expenses",
+      "query": "SELECT currency, SUM(amount) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY ABS(amount) DESC",
+      "visualization": {
+        "type": "kpi",
+        "icon": "\u2193",
+        "iconColor": "red",
+        "multiCurrency": true
+      }
+    }
+  ]
+}

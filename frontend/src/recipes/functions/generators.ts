@@ -25,6 +25,16 @@ export function currentYear(): number {
 }
 
 /**
+ * Returns the current month as a number (1-12)
+ *
+ * Usage: { "$gen": "currentMonth" }
+ * Returns: 2 (for February)
+ */
+export function currentMonth(): number {
+  return new Date().getMonth() + 1
+}
+
+/**
  * Generates an array of year options for select parameters
  *
  * Usage: { "$gen": "yearRange", "count": 5 }
@@ -245,6 +255,7 @@ export function currencyOptions(config: GeneratorConfig = {}): RecipeParameterOp
 export const generators: Record<string, GeneratorFunction> = {
   // Value generators
   currentYear,
+  currentMonth,
   defaultCurrency,
 
   // Option generators
