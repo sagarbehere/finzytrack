@@ -86,7 +86,7 @@
       "query": "SELECT currency, SUM(amount) * -1 AS amount FROM postings WHERE (LOWER(account) LIKE 'income:net:%' OR LOWER(account) LIKE 'expenses:%') AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY ABS(amount) DESC",
       "visualization": {
         "type": "kpi",
-        "icon": "\u2261",
+        "icon": "$",
         "iconColor": "blue",
         "multiCurrency": true
       }
