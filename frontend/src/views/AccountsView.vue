@@ -160,9 +160,10 @@ function getFiltersFromQuery(): { filters: AccountFilters; dateFilter: AccountDa
       status: query.status ? String(query.status) as AccountFilters['status'] : 'All'
     },
     dateFilter: {
-      // Default to YTD if no dates specified
-      startDate: query.startDate ? String(query.startDate) : getFirstDayOfYear(),
-      endDate: query.endDate ? String(query.endDate) : getToday()
+      // Default to YTD only on fresh load (no preset in URL).
+      // If a preset is present but dates aren't, keep null — the preset governs intent.
+      startDate: query.startDate ? String(query.startDate) : (query.preset ? null : getFirstDayOfYear()),
+      endDate: query.endDate ? String(query.endDate) : (query.preset ? null : getToday()),
     },
     preset: query.preset ? String(query.preset) : null
   }
@@ -226,11 +227,29 @@ async function loadAccounts() {
   }
 }
 
+// Derive the earliest account open date from loaded data
+function getEarliestAccountDate(): string | null {
+  const dates = accountDetails.value
+    .map(a => a.open_date)
+    .filter(d => d)
+    .sort()
+  return dates.length > 0 ? dates[0] : null
+}
+
 // Handle date filter changes
 async function handleDateFilterChange(newDateFilter: AccountDateFilter) {
   dateFilter.value = newDateFilter
   updateUrlFromFilters()
   await loadAccounts()
+
+  // After "All Time" fetch, populate date pickers with actual ledger range
+  if (activePreset.value === 'All Time' && accountDetails.value.length > 0) {
+    const earliest = getEarliestAccountDate()
+    if (earliest) {
+      dateFilter.value = { startDate: earliest, endDate: getToday() }
+      updateUrlFromFilters()
+    }
+  }
 }
 
 // Fetch accounts on mount
