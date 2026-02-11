@@ -32,6 +32,7 @@ import {
   ExclamationCircleIcon
 } from '@heroicons/vue/24/solid'
 import type { TransactionViewModel, ImportContext, LedgerContext } from '@/types/transactions'
+import { isTransactionBalanced } from '@/utils/transactions'
 
 interface Props {
   transaction: TransactionViewModel
@@ -61,15 +62,7 @@ const statusIcons = computed(() => {
   const icons: StatusIcon[] = []
 
   // Priority 1: Unbalanced (always check, highest priority)
-  const isUnbalanced = computed(() => {
-    const totalInCents = props.transaction.postings.reduce((sum, posting) => {
-      const amount = posting.amount || 0
-      return sum + Math.round(amount * 100)
-    }, 0)
-    return Math.abs(totalInCents) >= 1
-  })
-
-  if (isUnbalanced.value) {
+  if (!isTransactionBalanced(props.transaction)) {
     icons.push({
       key: 'unbalanced',
       symbol: '⚠️',

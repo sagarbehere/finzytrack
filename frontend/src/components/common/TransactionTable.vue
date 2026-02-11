@@ -193,6 +193,7 @@ import { useDeleteConfirmation } from '@/composables/useDeleteConfirmation'
 import { useTransactionDeleter } from '@/composables/useTransactionDeleter'
 import { useToast } from '@/composables/useNotifications'
 import type { TransactionViewModel, ImportContext, LedgerContext, PostingViewModel } from '@/types/transactions'
+import { isTransactionBalanced } from '@/utils/transactions'
 import type { Cell } from '@tanstack/vue-table'
 
 // Define the flattened row type used by the table
@@ -1083,16 +1084,6 @@ const accountSumsByCurrency = computed(() => {
 
   return sums
 })
-
-const isTransactionBalanced = (transaction: TransactionViewModel): boolean => {
-  const totalInCents = transaction.postings.reduce((sum, posting) => {
-    const amount = posting.amount || 0
-    // Convert to cents to avoid floating point precision issues
-    return sum + Math.round(amount * 100)
-  }, 0)
-  // Check if the total in cents is within 1 cent (the 0.01 threshold)
-  return Math.abs(totalInCents) < 1
-}
 
 const handleDuplicateSummaryClick = () => {
   if (duplicateCount.value === 0) return
