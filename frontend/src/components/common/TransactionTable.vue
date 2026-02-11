@@ -431,14 +431,12 @@ const columns = computed(() => {
       id: 'flag',
       header: 'Flag',
       cell: ({ row, getValue }) => props.editable
-        ? h('select', {
+        ? h('input', {
+            type: 'text',
             value: getValue(),
             onChange: (e: any) => updateTransactionFlag(row.original.transaction, e.target.value),
             class: getEditableInputClasses()
-          }, [
-            h('option', { value: '*' }, '*'),
-            h('option', { value: '!' }, '!')
-          ])
+          })
         : h('span', { class: getDisplayClasses() }, getValue()),
       size: getColumnConfig('flag')?.defaultWidth || 60,
       minSize: getColumnConfig('flag')?.minWidth || 50,
