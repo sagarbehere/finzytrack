@@ -107,21 +107,29 @@
       </div>
 
       <!-- Custom Date Inputs -->
-      <div class="flex items-center gap-2 ml-2">
+      <div class="flex items-center gap-2 ml-2 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5">
         <span class="text-sm text-gray-500 dark:text-gray-400">From:</span>
         <input
-          v-model="localDateFilter.startDate"
+          :value="localDateFilter.startDate"
           type="date"
           class="px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-          @change="onDateChange"
+          @change="onDateChange($event, 'startDate')"
+          @keydown.enter="applyDateInputs"
         />
         <span class="text-sm text-gray-500 dark:text-gray-400">To:</span>
         <input
-          v-model="localDateFilter.endDate"
+          :value="localDateFilter.endDate"
           type="date"
           class="px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-          @change="onDateChange"
+          @change="onDateChange($event, 'endDate')"
+          @keydown.enter="applyDateInputs"
         />
+        <button
+          @click="applyDateInputs"
+          class="px-2.5 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700"
+        >
+          Go
+        </button>
       </div>
     </div>
 
@@ -403,10 +411,15 @@ function isPresetActive(label: string): boolean {
   return localActivePreset.value === label
 }
 
-function onDateChange() {
+function onDateChange(event: Event, field: 'startDate' | 'endDate') {
+  const value = (event.target as HTMLInputElement).value || null
+  localDateFilter[field] = value
   // Clear preset selection when dates are manually changed
   localActivePreset.value = null
   emit('update:activePreset', null)
+}
+
+function applyDateInputs() {
   emit('update:dateFilter', { ...localDateFilter })
 }
 

@@ -247,7 +247,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import type { TransactionFilters } from '@/types/filters'
 
 interface Props {
@@ -290,9 +290,6 @@ function getDefaultFilters(): TransactionFilters {
 // Initialize filters - will be populated on mount with initialFilters if provided
 const filters = ref<TransactionFilters>(getDefaultFilters())
 
-// Track if we should skip the date watcher's auto-apply (during initialization)
-const skipDateWatch = ref(false)
-
 function handleApply() {
   // Validate and clamp limit to reasonable bounds
   let validatedLimit = limit.value
@@ -327,22 +324,9 @@ function handleClear() {
   // Don't auto-apply - let user click "Apply Filters" when ready
 }
 
-// Auto-apply on date changes (unless skipped during initialization)
-watch(() => [filters.value.dateFrom, filters.value.dateTo], () => {
-  if (skipDateWatch.value) return
-  // Only auto-apply if both dates are set (not empty)
-  // This prevents auto-apply when dates are cleared or only one is set
-  if (filters.value.dateFrom && filters.value.dateTo) {
-    handleApply()
-  }
-})
-
 // Apply initial filters on mount if provided
 onMounted(() => {
   if (props.initialFilters && Object.keys(props.initialFilters).length > 0) {
-    // Skip the date watcher during initialization to prevent double-query
-    skipDateWatch.value = true
-
     // Start with defaults for non-date fields, but for dates use only what's
     // explicitly provided in initialFilters (to support balance sheet accounts
     // which only need dateTo, not dateFrom)
@@ -355,8 +339,6 @@ onMounted(() => {
       dateTo: props.initialFilters.dateTo || defaults.dateTo,
     }
 
-    // Re-enable watcher and trigger initial query
-    skipDateWatch.value = false
     handleApply()
   }
 })
