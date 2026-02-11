@@ -596,12 +596,14 @@ async def close_account(
         # Use atomic write to add the closing directive (SIMPLE APPEND) with cache invalidation
         with beancount_manager.atomic_ledger_write() as func:
             current_content = func.read()
-            
+
             # Simple append with proper formatting
-            if current_content.endswith('\n'):
-                new_content = current_content + close_directive + '\n'
-            else:
-                new_content = current_content + '\n' + close_directive + '\n'
+            if current_content and not current_content.endswith('\n'):
+                current_content += '\n'
+            if current_content and not current_content.endswith('\n\n'):
+                current_content += '\n'
+
+            new_content = current_content + close_directive + '\n'
             
             func.seek(0)
             func.write(new_content)
