@@ -19,6 +19,7 @@ export const estimatedTaxesWidget: WidgetRecipe = {
   id: 'estimated-taxes',
   title: 'Estimated Taxes',
   description: 'Estimated taxes (50% of gross income)',
+  helpText: 'Estimated as 50% of Income:Gross',
   dbType: 'sqlite',
 
   parameters: [
@@ -53,6 +54,5 @@ export const estimatedTaxesWidget: WidgetRecipe = {
     type: 'kpi',
     icon: '%',
     multiCurrency: true,
-    helpText: 'Estimated as 50% of Income:Gross',
   },
 }

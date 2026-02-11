@@ -87,12 +87,12 @@
     {
       "id": "monthly-estimated-taxes",
       "title": "Estimated Taxes",
+      "helpText": "Estimated as 50% of Income:Gross",
       "query": "SELECT currency, (SUM(amount) / 2.0) * -1 AS amount FROM postings WHERE account_type = 'Income' AND LOWER(account) LIKE 'income:gross%' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY currency",
       "visualization": {
         "type": "kpi",
         "icon": "%",
-        "multiCurrency": true,
-        "helpText": "Estimated as 50% of Income:Gross"
+        "multiCurrency": true
       }
     },
     {

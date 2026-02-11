@@ -44,7 +44,7 @@ function formatMonth(yearMonth: string): string {
  */
 export const monthlyIncomeExpensesWidget: WidgetRecipe = {
   id: 'monthly-income-expenses',
-  title: 'Monthly Expense NetIncome bar chart',
+  title: 'Monthly Expense Income bar chart',
   description: 'Comparison of monthly expenses, income, and savings',
   dbType: 'sqlite',
   parameters: [
@@ -55,6 +55,13 @@ export const monthlyIncomeExpensesWidget: WidgetRecipe = {
       default: new Date().getFullYear(),
       options: generateYearOptions(),
     },
+    {
+      name: 'currency',
+      label: 'Currency',
+      type: 'select',
+      default: 'USD',
+      optionsFrom: 'currencies',
+    },
   ],
   query: `
     SELECT
@@ -62,11 +69,8 @@ export const monthlyIncomeExpensesWidget: WidgetRecipe = {
       SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) as income,
       SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END) as expenses
     FROM postings
-    WHERE year = :year AND currency = 'USD'
-      AND (
-        LOWER(account) LIKE 'income:net:%'
-        OR LOWER(account) LIKE 'expenses:%'
-      )
+    WHERE year = :year AND currency = :currency
+      AND account_type IN ('Income', 'Expenses')
     GROUP BY year_month
     ORDER BY year_month
   `,
@@ -96,7 +100,7 @@ export const monthlyIncomeExpensesWidget: WidgetRecipe = {
       // Only link Income and Expenses bars (not Savings, which is derived)
       let accountType: string | undefined
       if (seriesName === 'Income') {
-        accountType = 'Income:Net'
+        accountType = 'Income'
       } else if (seriesName === 'Expenses') {
         accountType = 'Expenses'
       } else {
@@ -129,7 +133,7 @@ export const monthlyIncomeExpensesWidget: WidgetRecipe = {
           params.forEach((p) => {
             const field = p.seriesName.toLowerCase()
             const val = p.value[field] as number
-            html += `<span style="color:${p.color}">●</span> ${p.seriesName}: $${val.toLocaleString()}<br/>`
+            html += `<span style="color:${p.color}">●</span> ${p.seriesName}: ${val.toLocaleString()}<br/>`
           })
           return html
         },

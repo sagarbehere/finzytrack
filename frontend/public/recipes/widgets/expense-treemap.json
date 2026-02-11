@@ -2,6 +2,7 @@
   "id": "expense-treemap",
   "title": "Expense Treemap",
   "description": "Treemap visualization of expenses by account for a given month",
+  "helpText": "Only shows categories with net positive expenses",
   "parameters": [
     {
       "name": "year",

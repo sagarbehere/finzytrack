@@ -1,6 +1,10 @@
 <template>
   <div
-    class="bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg border dark:border-gray-700 flex flex-col h-full"
+    :class="[
+      'bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg border dark:border-gray-700 flex flex-col h-full',
+      hasKPIClickLink() ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors' : '',
+    ]"
+    @click="hasKPIClickLink() && handleKPIClick()"
   >
     <!-- Header -->
     <div
@@ -8,17 +12,17 @@
     >
       <h3 class="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-1.5">
         {{ recipe.title }}
-        <span v-if="getKPIHelpText()" class="group relative">
+        <span v-if="getHelpText()" class="group relative">
           <span class="text-gray-400 dark:text-gray-500 text-xs cursor-help select-none">ⓘ</span>
           <span class="invisible group-hover:visible absolute left-1/2 -translate-x-1/2 top-full mt-1 z-10 px-2.5 py-1.5 text-xs font-normal text-white bg-gray-800 dark:bg-gray-900 rounded shadow-lg whitespace-nowrap">
-            {{ getKPIHelpText() }}
+            {{ getHelpText() }}
           </span>
         </span>
       </h3>
-      <!-- Widget-level parameters (if any and not controlled by dashboard) -->
+      <!-- Widget-level parameters (those not already provided by dashboard) -->
       <RecipeParameters
-        v-if="recipe.parameters && recipe.parameters.length > 0 && !dashboardParameters"
-        :parameters="recipe.parameters"
+        v-if="widgetOnlyParameters.length > 0"
+        :parameters="widgetOnlyParameters"
         v-model="localParameters"
         class="ml-4"
       />
@@ -72,22 +76,17 @@
       <!-- Visualization -->
       <template v-else-if="data !== null">
         <!-- KPI -->
-        <div
+        <RecipeKPI
           v-if="recipe.visualization.type === 'kpi'"
-          :class="hasKPIClickLink() ? 'h-full cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded-lg transition-colors' : 'h-full'"
-          @click="hasKPIClickLink() && handleKPIClick()"
-        >
-          <RecipeKPI
-            :value="getKPIValue()"
-            :label="recipe.title"
-            :icon="getKPIIcon()"
-            :iconColor="getKPIIconColor()"
-            :formatValue="getKPIFormatFunction()"
-            :showTrend="recipe.visualization.showTrend"
-            :trend="getTrendValue()"
-            :values="getKPIValues()"
-          />
-        </div>
+          :value="getKPIValue()"
+          :label="recipe.title"
+          :icon="getKPIIcon()"
+          :iconColor="getKPIIconColor()"
+          :formatValue="getKPIFormatFunction()"
+          :showTrend="recipe.visualization.showTrend"
+          :trend="getTrendValue()"
+          :values="getKPIValues()"
+        />
 
         <!-- Chart -->
         <RecipeChart
@@ -171,6 +170,13 @@ const { executeRecipe, getDefaultParameters, isLoading, error } = useRecipeExecu
 
 // Local parameters (for widget-level params not controlled by dashboard)
 const localParameters = ref<Record<string, string | number>>({})
+
+// Widget parameters that are NOT provided by the dashboard (shown in widget header)
+const widgetOnlyParameters = computed(() => {
+  if (!props.recipe.parameters) return []
+  if (!props.dashboardParameters) return props.recipe.parameters
+  return props.recipe.parameters.filter((p) => !(p.name in props.dashboardParameters!))
+})
 
 // Merged parameters: dashboard params override local params
 const mergedParameters = computed(() => ({
@@ -264,11 +270,9 @@ function getKPIIcon(): string | undefined {
   return viz.icon
 }
 
-// Get KPI help text
-function getKPIHelpText(): string | undefined {
-  const viz = props.recipe.visualization
-  if (viz.type !== 'kpi') return undefined
-  return viz.helpText
+// Get widget help text
+function getHelpText(): string | undefined {
+  return props.recipe.helpText
 }
 
 // Get KPI icon color (for JSON recipes)

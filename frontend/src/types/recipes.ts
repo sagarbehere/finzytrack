@@ -72,7 +72,6 @@ export interface KPIVisualization {
   trendField?: string
   multiCurrency?: boolean
   clickLink?: JsonValueLinkConfig
-  helpText?: string
 }
 
 export interface TableColumn {
@@ -190,6 +189,7 @@ export interface WidgetRecipe {
   id: string
   title: string
   description?: string
+  helpText?: string // Shown as ⓘ tooltip in the widget header
   parameters?: RecipeParameter[]
   dbType?: QueryEngineType // Query engine for this widget (defaults to dashboard/view setting)
   query: string // SQL or BQL query with :paramName placeholders
@@ -299,7 +299,6 @@ export interface JsonKPIVisualization {
   amountField?: string // Field name for amount (default: 'amount')
   currencyField?: string // Field name for currency code (default: 'currency')
   clickLink?: JsonValueLinkConfig
-  helpText?: string
 }
 
 /**
@@ -359,6 +358,7 @@ export interface JsonWidgetRecipe {
   id: string
   title: string
   description?: string
+  helpText?: string // Shown as ⓘ tooltip in the widget header
   parameters?: RecipeParameter[]
   dbType?: QueryEngineType // Query engine for this widget (defaults to dashboard/view setting)
   query: string
