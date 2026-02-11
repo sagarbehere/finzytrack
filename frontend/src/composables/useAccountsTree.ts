@@ -227,7 +227,16 @@ function filterTree(nodes: AccountTreeNode[], filters: AccountFilters): AccountT
       .map(filterNode)
       .filter((n): n is AccountTreeNode => n !== null)
 
-    // If this node matches or has matching children, include it
+    // Virtual nodes only appear if they have matching children — their own
+    // status is synthetic and shouldn't influence filtering.
+    if (node.isVirtual) {
+      if (filteredChildren.length > 0) {
+        return { ...node, children: filteredChildren }
+      }
+      return null
+    }
+
+    // Real nodes: include if they match or have matching children
     if (nodeMatches(node) || filteredChildren.length > 0) {
       return {
         ...node,
