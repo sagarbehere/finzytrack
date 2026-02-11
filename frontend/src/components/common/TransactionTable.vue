@@ -263,6 +263,40 @@ const ofxOriginalTransactions = ref<TransactionViewModel[]>([])
 const editBaselineTransactions = ref<TransactionViewModel[]>([])
 const globalFilter = ref('')
 
+// Track raw input strings for numeric fields to preserve trailing dots/zeros during editing.
+// Without this, typing "12.0" gets parsed to 12 by parseFloat, Vue re-renders value=12,
+// and the user can never type "12.03". The raw string is stored during active editing
+// and cleared on blur so the display normalizes.
+const rawAmountStrings = ref<Record<string, string>>({})
+
+const numericInputProps = (
+  txId: string, postingIdx: number, field: string,
+  currentValue: number | null | undefined,
+  updateFn: (raw: string) => void,
+  extraClasses: string = ''
+) => {
+  const key = `${txId}-${postingIdx}-${field}`
+  const rawStr = rawAmountStrings.value[key]
+  const fallback = currentValue !== null && currentValue !== undefined ? String(currentValue) : ''
+  return {
+    type: 'text',
+    inputmode: 'decimal',
+    value: rawStr !== undefined ? rawStr : fallback,
+    onInput: (e: any) => {
+      const raw: string = e.target.value
+      if (raw !== '' && !/^-?\d*\.?\d*$/.test(raw)) {
+        e.target.value = rawAmountStrings.value[key] ?? fallback
+        return
+      }
+      rawAmountStrings.value[key] = raw
+      updateFn(raw)
+    },
+    onBlur: () => { delete rawAmountStrings.value[key] },
+    class: extraClasses,
+    autocomplete: 'off'
+  }
+}
+
 // Helper functions to get context for a transaction
 const getImportContext = (transactionId: string): ImportContext | undefined => {
   return props.importContext?.get(transactionId)
@@ -507,18 +541,17 @@ const columns = computed(() => {
           ? 'text-red-700 dark:text-red-400'
           : 'text-gray-700 dark:text-gray-300'
 
-        return props.editable
-          ? h('input', {
-              type: 'number',
-              step: '0.01',
-              value: amount || '',
-              onInput: (e: any) => updatePostingAmount(row.original.transaction, row.original.postingIndex, e.target.value),
-              class: `${getEditableInputClasses('text-right')} ${amountColorClass}`,
-              autocomplete: 'off'
-            })
-          : h('span', {
-              class: `${getDisplayClasses()} font-mono text-right block ${amountColorClass}`
-            }, amount?.toFixed(2) || '')
+        if (props.editable) {
+          return h('input', numericInputProps(
+            row.original.transaction.id, row.original.postingIndex, 'amount',
+            amount,
+            (raw) => updatePostingAmount(row.original.transaction, row.original.postingIndex, raw),
+            `${getEditableInputClasses('text-right')} ${amountColorClass}`
+          ))
+        }
+        return h('span', {
+          class: `${getDisplayClasses()} font-mono text-right block ${amountColorClass}`
+        }, amount?.toFixed(2) || '')
       },
       size: getColumnConfig('amount')?.defaultWidth || 100,
       minSize: getColumnConfig('amount')?.minWidth || 80,
@@ -549,18 +582,17 @@ const columns = computed(() => {
         header: 'Cost Amount',
         cell: ({ row, getValue }) => {
           const value = getValue()
-          return props.editable
-            ? h('input', {
-                type: 'number',
-                step: '0.01',
-                value: value ?? '',
-                onInput: (e: any) => updatePostingCostAmount(row.original.transaction, row.original.postingIndex, e.target.value),
-                class: getEditableInputClasses('text-right'),
-                autocomplete: 'off'
-              })
-            : h('span', {
-                class: `${getDisplayClasses()} font-mono text-right block`
-              }, value !== undefined && value !== null ? value.toFixed(2) : '')
+          if (props.editable) {
+            return h('input', numericInputProps(
+              row.original.transaction.id, row.original.postingIndex, 'cost_amount',
+              value,
+              (raw) => updatePostingCostAmount(row.original.transaction, row.original.postingIndex, raw),
+              getEditableInputClasses('text-right')
+            ))
+          }
+          return h('span', {
+            class: `${getDisplayClasses()} font-mono text-right block`
+          }, value !== undefined && value !== null ? value.toFixed(2) : '')
         },
         size: getColumnConfig('cost_amount')?.defaultWidth || 120,
         minSize: getColumnConfig('cost_amount')?.minWidth || 80,
@@ -616,18 +648,17 @@ const columns = computed(() => {
         header: 'Price Amount',
         cell: ({ row, getValue }) => {
           const value = getValue()
-          return props.editable
-            ? h('input', {
-                type: 'number',
-                step: '0.01',
-                value: value ?? '',
-                onInput: (e: any) => updatePostingPriceAmount(row.original.transaction, row.original.postingIndex, e.target.value),
-                class: getEditableInputClasses('text-right'),
-                autocomplete: 'off'
-              })
-            : h('span', {
-                class: `${getDisplayClasses()} font-mono text-right block`
-              }, value !== undefined && value !== null ? value.toFixed(2) : '')
+          if (props.editable) {
+            return h('input', numericInputProps(
+              row.original.transaction.id, row.original.postingIndex, 'price_amount',
+              value,
+              (raw) => updatePostingPriceAmount(row.original.transaction, row.original.postingIndex, raw),
+              getEditableInputClasses('text-right')
+            ))
+          }
+          return h('span', {
+            class: `${getDisplayClasses()} font-mono text-right block`
+          }, value !== undefined && value !== null ? value.toFixed(2) : '')
         },
         size: getColumnConfig('price_amount')?.defaultWidth || 120,
         minSize: getColumnConfig('price_amount')?.minWidth || 80,

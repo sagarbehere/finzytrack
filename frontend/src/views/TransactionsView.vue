@@ -174,6 +174,10 @@ async function handleFilterChanged(filters: TransactionFilters, dbType: 'duckdb'
       t.internal.isModified = false
     })
 
+    // Reinitialize baselines so edit detection works with the new transactions
+    await nextTick()
+    transactionTableRef.value?.reinitializeBaselines()
+
     // Show table and scroll to it
     if (transactions.value.length > 0) {
       showTable.value = true
