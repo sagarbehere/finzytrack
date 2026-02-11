@@ -36,7 +36,7 @@ export const totalExpensesWidget: WidgetRecipe = {
     WHERE account_type = 'Expenses' AND year = :year
     GROUP BY currency
     HAVING amount != 0
-    ORDER BY ABS(amount) DESC
+    ORDER BY currency
   `,
 
   transform: (rows) => {

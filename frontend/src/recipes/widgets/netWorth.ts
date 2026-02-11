@@ -18,7 +18,7 @@ export const netWorthWidget: WidgetRecipe = {
     FROM postings
     GROUP BY currency
     HAVING amount != 0
-    ORDER BY ABS(amount) DESC
+    ORDER BY currency
   `,
   transform: (rows) => {
     return rows.map((row) => ({

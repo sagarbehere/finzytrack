@@ -39,7 +39,7 @@ export const estimatedTaxesWidget: WidgetRecipe = {
       AND year = :year
     GROUP BY currency
     HAVING amount != 0
-    ORDER BY ABS(amount) DESC
+    ORDER BY currency
   `,
 
   transform: (rows) => {

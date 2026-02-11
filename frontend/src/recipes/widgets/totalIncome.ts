@@ -37,7 +37,7 @@ export const totalIncomeWidget: WidgetRecipe = {
     WHERE account_type = 'Income' AND year = :year
     GROUP BY currency
     HAVING amount != 0
-    ORDER BY ABS(amount) DESC
+    ORDER BY currency
   `,
 
   transform: (rows) => {
