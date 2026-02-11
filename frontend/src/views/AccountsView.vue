@@ -26,37 +26,56 @@
       <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
     </div>
 
-    <!-- Table -->
-    <div v-else class="bg-white dark:bg-gray-800 shadow rounded-lg border border-gray-200 dark:border-gray-700">
-      <AccountsTable
-        :display-nodes="displayNodes"
-        :expanded-ids="expandedIds"
-        @toggle="toggleExpand"
-        @edit="handleEdit"
-        @close="handleClose"
-        @reopen="handleReopen"
-        @delete="handleDelete"
-        @show-balances="handleShowBalances"
-        @view-transactions="handleViewTransactions"
-      />
-    </div>
+    <template v-else>
+      <!-- Expand/Collapse All Controls (above table) -->
+      <div v-if="treeRoots.length > 0" class="mb-2 flex justify-end gap-2">
+        <button
+          @click="expandAll(filteredTree)"
+          class="text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
+        >
+          Expand All
+        </button>
+        <span class="text-gray-300 dark:text-gray-600">|</span>
+        <button
+          @click="collapseAll"
+          class="text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
+        >
+          Collapse All
+        </button>
+      </div>
 
-    <!-- Expand/Collapse All Controls -->
-    <div v-if="!isLoading && treeRoots.length > 0" class="mt-4 flex justify-end gap-2">
-      <button
-        @click="expandAll(filteredTree)"
-        class="text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
-      >
-        Expand All
-      </button>
-      <span class="text-gray-300 dark:text-gray-600">|</span>
-      <button
-        @click="collapseAll"
-        class="text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
-      >
-        Collapse All
-      </button>
-    </div>
+      <!-- Table -->
+      <div class="bg-white dark:bg-gray-800 shadow rounded-lg border border-gray-200 dark:border-gray-700">
+        <AccountsTable
+          :display-nodes="displayNodes"
+          :expanded-ids="expandedIds"
+          @toggle="toggleExpand"
+          @edit="handleEdit"
+          @close="handleClose"
+          @reopen="handleReopen"
+          @delete="handleDelete"
+          @show-balances="handleShowBalances"
+          @view-transactions="handleViewTransactions"
+        />
+      </div>
+
+      <!-- Expand/Collapse All Controls (below table) -->
+      <div v-if="treeRoots.length > 0" class="mt-4 flex justify-end gap-2">
+        <button
+          @click="expandAll(filteredTree)"
+          class="text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
+        >
+          Expand All
+        </button>
+        <span class="text-gray-300 dark:text-gray-600">|</span>
+        <button
+          @click="collapseAll"
+          class="text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
+        >
+          Collapse All
+        </button>
+      </div>
+    </template>
 
     <!-- Create/Edit Modal -->
     <AccountFormModal
