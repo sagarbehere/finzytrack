@@ -164,7 +164,7 @@ function getFiltersFromQuery(): { filters: AccountFilters; dateFilter: AccountDa
       startDate: query.startDate ? String(query.startDate) : getFirstDayOfYear(),
       endDate: query.endDate ? String(query.endDate) : getToday()
     },
-    preset: query.preset ? String(query.preset) : 'YTD'
+    preset: query.preset ? String(query.preset) : null
   }
 }
 
@@ -178,7 +178,7 @@ function updateUrlFromFilters() {
   if (filters.value.status !== 'All') query.status = filters.value.status
   if (dateFilter.value.startDate) query.startDate = dateFilter.value.startDate
   if (dateFilter.value.endDate) query.endDate = dateFilter.value.endDate
-  if (activePreset.value && activePreset.value !== 'YTD') query.preset = activePreset.value
+  if (activePreset.value) query.preset = activePreset.value
 
   // Use replace to avoid polluting browser history on every filter change
   router.replace({ query })
@@ -192,7 +192,8 @@ const filters = ref<AccountFilters>(initialState.filters)
 const dateFilter = ref<AccountDateFilter>(initialState.dateFilter)
 
 // Active date preset (for highlighting the correct button)
-const activePreset = ref<string | null>(initialState.preset)
+// Default to 'YTD' on fresh load (no query params); otherwise use what the URL says
+const activePreset = ref<string | null>(initialState.preset ?? (Object.keys(route.query).length === 0 ? 'YTD' : null))
 
 // Modal state
 const showCreateModal = ref(false)

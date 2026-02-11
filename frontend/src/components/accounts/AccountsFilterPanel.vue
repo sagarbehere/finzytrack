@@ -11,7 +11,7 @@
           :key="preset.label"
           @click="applyPreset(preset)"
           :class="[
-            'px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
+            'px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
             isPresetActive(preset.label)
               ? 'bg-blue-600 text-white'
               : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
@@ -24,7 +24,7 @@
         <Menu as="div" class="relative" v-slot="{ close }">
           <MenuButton
             :class="[
-              'px-3 py-1.5 text-xs font-medium rounded-md transition-colors inline-flex items-center gap-1',
+              'px-3 py-1.5 text-sm font-medium rounded-md transition-colors inline-flex items-center gap-1',
               isDropdownPresetActive
                 ? 'bg-blue-600 text-white'
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
@@ -107,12 +107,12 @@
       </div>
 
       <!-- Custom Date Inputs -->
-      <div class="flex items-center gap-2 ml-2 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-1.5">
+      <div class="flex items-center gap-2 ml-2 border border-gray-200 dark:border-gray-600 rounded-md px-2 py-0.5">
         <span class="text-sm text-gray-500 dark:text-gray-400">From:</span>
         <input
           :value="localDateFilter.startDate"
           type="date"
-          class="px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+          class="px-1.5 py-1 text-sm bg-transparent border-none focus:outline-none focus:ring-0 dark:text-white"
           @change="onDateChange($event, 'startDate')"
           @keydown.enter="applyDateInputs"
         />
@@ -120,13 +120,13 @@
         <input
           :value="localDateFilter.endDate"
           type="date"
-          class="px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+          class="px-1.5 py-1 text-sm bg-transparent border-none focus:outline-none focus:ring-0 dark:text-white"
           @change="onDateChange($event, 'endDate')"
           @keydown.enter="applyDateInputs"
         />
         <button
           @click="applyDateInputs"
-          class="px-2.5 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          class="px-2 py-1 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
         >
           Go
         </button>
