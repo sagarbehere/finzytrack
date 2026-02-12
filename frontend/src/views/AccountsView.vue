@@ -56,6 +56,7 @@
           @delete="handleDelete"
           @show-balances="handleShowBalances"
           @show-balance-directives="handleShowBalanceDirectives"
+          @show-statement="handleShowStatement"
           @view-transactions="handleViewTransactions"
         />
       </div>
@@ -117,6 +118,12 @@
       v-model:open="showBalanceDirectivesModal"
       :account="balanceDirectivesAccount"
     />
+
+    <!-- Account Statement Modal -->
+    <AccountStatementModal
+      v-model:open="showStatementModal"
+      :account="statementAccount"
+    />
   </div>
 </template>
 
@@ -130,6 +137,7 @@ import AccountCloseModal from '@/components/accounts/AccountCloseModal.vue'
 import AccountDeleteModal from '@/components/accounts/AccountDeleteModal.vue'
 import BalanceBreakdownModal from '@/components/accounts/BalanceBreakdownModal.vue'
 import BalanceDirectivesModal from '@/components/accounts/BalanceDirectivesModal.vue'
+import AccountStatementModal from '@/components/accounts/AccountStatementModal.vue'
 import { useAccounts, type AccountDateFilter } from '@/composables/useAccounts'
 import { useAccountsTree } from '@/composables/useAccountsTree'
 import { useToast } from '@/composables/useNotifications'
@@ -230,6 +238,7 @@ const showCloseModal = ref(false)
 const showDeleteModal = ref(false)
 const showBalanceModal = ref(false)
 const showBalanceDirectivesModal = ref(false)
+const showStatementModal = ref(false)
 
 const editingAccount = ref<AccountTreeNode | null>(null)
 const closingAccount = ref<AccountTreeNode | null>(null)
@@ -237,6 +246,7 @@ const deletingAccount = ref<AccountTreeNode | null>(null)
 const deletingAccountTxCount = ref(0)
 const viewingBalanceAccount = ref<AccountTreeNode | null>(null)
 const balanceDirectivesAccount = ref<AccountTreeNode | null>(null)
+const statementAccount = ref<AccountTreeNode | null>(null)
 
 // Computed: Build tree from account details
 const treeRoots = computed(() => buildTree(accountDetails.value))
@@ -343,6 +353,11 @@ function handleShowBalances(node: AccountTreeNode) {
 function handleShowBalanceDirectives(node: AccountTreeNode) {
   balanceDirectivesAccount.value = node
   showBalanceDirectivesModal.value = true
+}
+
+function handleShowStatement(node: AccountTreeNode) {
+  statementAccount.value = node
+  showStatementModal.value = true
 }
 
 function handleViewTransactions(node: AccountTreeNode) {

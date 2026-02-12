@@ -168,6 +168,15 @@
                 <PencilIcon class="h-4 w-4" />
               </button>
 
+              <!-- Account Statement -->
+              <button
+                @click="emit('show-statement', node)"
+                class="text-gray-500 hover:text-teal-600 dark:text-gray-400 dark:hover:text-teal-400"
+                title="Account statement"
+              >
+                <DocumentTextIcon class="h-4 w-4" />
+              </button>
+
               <!-- Balance Directives -->
               <button
                 @click="emit('show-balance-directives', node)"
@@ -228,6 +237,7 @@ import {
   ArrowPathIcon,
   InformationCircleIcon,
   ScaleIcon,
+  DocumentTextIcon,
 } from '@heroicons/vue/24/outline'
 import type { AccountTreeNode } from '@/types/accounts'
 import { typeColors, statusColors } from '@/types/accounts'
@@ -246,6 +256,7 @@ interface Emits {
   (e: 'delete', node: AccountTreeNode): void
   (e: 'show-balances', node: AccountTreeNode): void
   (e: 'show-balance-directives', node: AccountTreeNode): void
+  (e: 'show-statement', node: AccountTreeNode): void
   (e: 'view-transactions', node: AccountTreeNode): void
 }
 
