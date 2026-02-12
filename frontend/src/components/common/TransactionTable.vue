@@ -933,9 +933,6 @@ const table = useVueTable({
     Object.keys(newSizing).forEach(columnId => {
       setColumnWidth(columnId, newSizing[columnId])
     })
-
-    // Update sticky column positions after resize
-    updateStickyColumnPositions()
   },
   enableColumnResizing: true,
   columnResizeMode: 'onChange',
@@ -946,32 +943,10 @@ const onGlobalFilterChange = (e: Event) => {
   globalFilter.value = (e.target as HTMLInputElement).value
 }
 
-// Update sticky columns when column visibility changes
-watch(columnVisibility, () => {
-  updateStickyColumnPositions()
-}, { deep: true })
-
-// Update sticky column positions based on actual rendered widths
-const updateStickyColumnPositions = () => {
-  nextTick(() => {
-    const statusCell = document.querySelector('th[data-column-id="status"]') as HTMLElement
-    if (statusCell) {
-      const statusWidth = statusCell.offsetWidth
-      const indexCells = document.querySelectorAll('[data-column-id="index"]') as globalThis.NodeListOf<HTMLElement>
-      indexCells.forEach(cell => {
-        cell.style.left = `${statusWidth}px`
-      })
-    }
-  })
-}
-
 onMounted(() => {
   // Initialize both baselines with the initial props data
   ofxOriginalTransactions.value = JSON.parse(JSON.stringify(props.transactions))
   editBaselineTransactions.value = JSON.parse(JSON.stringify(props.transactions))
-
-  // Set sticky column positions after initial render
-  updateStickyColumnPositions()
 
   // Add global keyboard listener for table navigation initialization
   const handleGlobalKeydown = (event: KeyboardEvent) => {
@@ -1733,12 +1708,15 @@ button:focus {
 }
 
 
-/* Sticky Status column (leftmost) */
+/* Sticky Status column (leftmost) — lock to 60px so index column's left: 60px is exact */
 th[data-column-id="status"],
 td[data-column-id="status"] {
   position: sticky;
   left: 0;
   z-index: 10;
+  border-right: none; /* separator provided by index column's box-shadow */
+  min-width: 60px;
+  max-width: 60px;
 }
 
 th[data-column-id="status"] {
@@ -1757,12 +1735,18 @@ td[data-column-id="status"] {
   background-color: #111827; /* dark:bg-gray-900 */
 }
 
-/* Sticky Index (#) column (second from left) */
+/* Sticky Index (#) column (second from left, after 60px Status column) */
 th[data-column-id="index"],
 td[data-column-id="index"] {
   position: sticky;
-  left: 0; /* Will be set dynamically by JavaScript based on Status column width */
+  left: 60px;
   z-index: 10;
+  box-shadow: -1px 0 0 0 #e5e7eb; /* left separator visible when sticking */
+}
+
+.dark th[data-column-id="index"],
+.dark td[data-column-id="index"] {
+  box-shadow: -1px 0 0 0 #374151; /* dark mode separator */
 }
 
 /* Add padding to index content to match input field alignment */
