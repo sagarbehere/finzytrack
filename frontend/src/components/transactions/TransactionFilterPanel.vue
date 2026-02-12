@@ -1,44 +1,15 @@
 <template>
   <div class="transaction-filter-panel">
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      <!-- Date From -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Date From
-        </label>
-        <input
-          v-model="filters.dateFrom"
-          type="date"
-          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-        />
-      </div>
+    <!-- Date Preset Selector -->
+    <DatePresetSelector
+      :start-date="filters.dateFrom || null"
+      :end-date="filters.dateTo || null"
+      :active-preset="activePreset"
+      @update:active-preset="activePreset = $event"
+      @change="handleDatePresetChange"
+    />
 
-      <!-- Date To -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Date To
-        </label>
-        <input
-          v-model="filters.dateTo"
-          type="date"
-          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-        />
-      </div>
-
-      <!-- Database Type -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-          Database
-        </label>
-        <select
-          v-model="dbType"
-          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-        >
-          <option value="sqlite">SQLite</option>
-          <option value="duckdb">DuckDB</option>
-        </select>
-      </div>
-
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
       <!-- Amount Greater Than -->
       <div>
         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -248,6 +219,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import DatePresetSelector from '@/components/common/DatePresetSelector.vue'
 import type { TransactionFilters } from '@/types/filters'
 
 interface Props {
@@ -261,11 +233,11 @@ const emit = defineEmits<{
   (e: 'filter-changed', filters: TransactionFilters, dbType: 'duckdb' | 'sqlite', limit: number): void
 }>()
 
-// Database type selection (SQLite as default)
-const dbType = ref<'duckdb' | 'sqlite'>('sqlite')
-
 // Result limit (default 1000, min 1, max 50000)
 const limit = ref<number>(1000)
+
+// Track active date preset
+const activePreset = ref<string | null>(props.initialFilters ? null : 'Last 90 Days')
 
 // Default filter values
 function getDefaultFilters(): TransactionFilters {
@@ -290,18 +262,23 @@ function getDefaultFilters(): TransactionFilters {
 // Initialize filters - will be populated on mount with initialFilters if provided
 const filters = ref<TransactionFilters>(getDefaultFilters())
 
+function handleDatePresetChange(range: { startDate: string | null; endDate: string | null }) {
+  filters.value.dateFrom = range.startDate ?? ''
+  filters.value.dateTo = range.endDate ?? ''
+}
+
 function handleApply() {
   // Validate and clamp limit to reasonable bounds
   let validatedLimit = limit.value
   if (isNaN(validatedLimit) || validatedLimit < 1) {
-    validatedLimit = 1000 // Default to 1000 if invalid
+    validatedLimit = 1000
     limit.value = validatedLimit
   } else if (validatedLimit > 50000) {
-    validatedLimit = 50000 // Cap at 50000 to prevent performance issues
+    validatedLimit = 50000
     limit.value = validatedLimit
   }
 
-  emit('filter-changed', { ...filters.value }, dbType.value, validatedLimit)
+  emit('filter-changed', { ...filters.value }, 'sqlite', validatedLimit)
 }
 
 function handleClear() {
@@ -321,20 +298,16 @@ function handleClear() {
     year: undefined,
     quarter: undefined,
   }
-  // Don't auto-apply - let user click "Apply Filters" when ready
+  activePreset.value = null
 }
 
 // Apply initial filters on mount if provided
 onMounted(() => {
   if (props.initialFilters && Object.keys(props.initialFilters).length > 0) {
-    // Start with defaults for non-date fields, but for dates use only what's
-    // explicitly provided in initialFilters (to support balance sheet accounts
-    // which only need dateTo, not dateFrom)
     const defaults = getDefaultFilters()
     filters.value = {
       ...defaults,
       ...props.initialFilters,
-      // Override dates to only use what's in initialFilters (not defaults)
       dateFrom: props.initialFilters.dateFrom || '',
       dateTo: props.initialFilters.dateTo || defaults.dateTo,
     }
