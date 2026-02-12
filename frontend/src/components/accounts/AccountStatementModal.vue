@@ -33,7 +33,7 @@
               </p>
 
               <!-- Date filter -->
-              <div class="mb-4">
+              <div class="mb-4 relative z-20">
                 <DatePresetSelector
                   :start-date="dateStartDate"
                   :end-date="dateEndDate"
@@ -256,6 +256,11 @@ async function loadTransactions() {
     )
     allTransactions.value = transactions
     computeEnrichedTransactions()
+    // Populate date pickers with actual range for "All Time"
+    if (enrichedTransactions.value.length > 0) {
+      dateStartDate.value = enrichedTransactions.value[0].date
+      dateEndDate.value = enrichedTransactions.value[enrichedTransactions.value.length - 1].date
+    }
   } catch {
     allTransactions.value = []
     enrichedTransactions.value = []
