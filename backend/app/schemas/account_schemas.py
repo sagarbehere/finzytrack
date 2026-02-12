@@ -82,3 +82,56 @@ class AccountReopenData(BaseModel):
     """Response data for account reopen results."""
     account_reopened: bool = Field(..., description="Whether account was reopened")
     message: str = Field(..., description="Reopen result message")
+
+# =====================================
+# Balance & Pad Directive Schemas
+# =====================================
+
+class BalanceDirectiveData(BaseModel):
+    """A balance assertion directive with optional associated pad."""
+    date: DateStr
+    currency: str
+    expected_balance: float
+    has_pad: bool
+    pad_source_account: Optional[str] = None
+    has_error: bool = False
+    error_message: Optional[str] = None
+
+class BalanceDirectiveListData(BaseModel):
+    """Response for listing balance directives."""
+    account: str
+    directives: List[BalanceDirectiveData]
+
+class BalanceDirectiveCreateRequest(BaseModel):
+    """Request to create a balance assertion (optionally with pad)."""
+    date: DateStr
+    currency: str
+    amount: float
+    include_pad: bool = False
+    pad_source_account: Optional[str] = None  # Required when include_pad=True
+
+class BalanceDirectiveUpdateRequest(BaseModel):
+    """Request to update an existing balance directive."""
+    original_date: DateStr          # To identify the existing directive
+    original_currency: str          # To identify the existing directive
+    original_amount: float          # To identify the existing directive
+    new_date: Optional[DateStr] = None
+    new_currency: Optional[str] = None
+    new_amount: Optional[float] = None
+    include_pad: Optional[bool] = None
+    pad_source_account: Optional[str] = None
+
+class BalanceDirectiveCreateData(BaseModel):
+    """Response for balance directive creation."""
+    created: bool
+    message: str
+
+class BalanceDirectiveUpdateData(BaseModel):
+    """Response for balance directive update."""
+    updated: bool
+    message: str
+
+class BalanceDirectiveDeleteData(BaseModel):
+    """Response for balance directive deletion."""
+    deleted: bool
+    message: str

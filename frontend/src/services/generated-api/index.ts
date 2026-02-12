@@ -26,6 +26,10 @@ export type { ApiResponse_AccountDeleteData_ } from './models/ApiResponse_Accoun
 export type { ApiResponse_AccountListData_ } from './models/ApiResponse_AccountListData_';
 export type { ApiResponse_AccountReopenData_ } from './models/ApiResponse_AccountReopenData_';
 export type { ApiResponse_AccountUpdateData_ } from './models/ApiResponse_AccountUpdateData_';
+export type { ApiResponse_BalanceDirectiveCreateData_ } from './models/ApiResponse_BalanceDirectiveCreateData_';
+export type { ApiResponse_BalanceDirectiveDeleteData_ } from './models/ApiResponse_BalanceDirectiveDeleteData_';
+export type { ApiResponse_BalanceDirectiveListData_ } from './models/ApiResponse_BalanceDirectiveListData_';
+export type { ApiResponse_BalanceDirectiveUpdateData_ } from './models/ApiResponse_BalanceDirectiveUpdateData_';
 export type { ApiResponse_CategorizeResponse_ } from './models/ApiResponse_CategorizeResponse_';
 export type { ApiResponse_CommitResponse_ } from './models/ApiResponse_CommitResponse_';
 export type { ApiResponse_CommodityCreateData_ } from './models/ApiResponse_CommodityCreateData_';
@@ -57,6 +61,13 @@ export type { ApiResponse_OFXDetectionData_ } from './models/ApiResponse_OFXDete
 export type { ApiResponse_QueryData_ } from './models/ApiResponse_QueryData_';
 export type { ApiResponse_UpdateTransactionResponse_ } from './models/ApiResponse_UpdateTransactionResponse_';
 export type { BackupConfig } from './models/BackupConfig';
+export type { BalanceDirectiveCreateData } from './models/BalanceDirectiveCreateData';
+export type { BalanceDirectiveCreateRequest } from './models/BalanceDirectiveCreateRequest';
+export type { BalanceDirectiveData } from './models/BalanceDirectiveData';
+export type { BalanceDirectiveDeleteData } from './models/BalanceDirectiveDeleteData';
+export type { BalanceDirectiveListData } from './models/BalanceDirectiveListData';
+export type { BalanceDirectiveUpdateData } from './models/BalanceDirectiveUpdateData';
+export type { BalanceDirectiveUpdateRequest } from './models/BalanceDirectiveUpdateRequest';
 export type { Body_exportLedger } from './models/Body_exportLedger';
 export type { CategorizationStats } from './models/CategorizationStats';
 export type { CategorizedTransactionResult } from './models/CategorizedTransactionResult';

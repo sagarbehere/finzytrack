@@ -15,7 +15,8 @@ from app.core.backup_manager import BackupManager
 from app.core.ledger_cache import LedgerCache
 from .ledger_initializer import LedgerInitializer
 from app.schemas.account_schemas import (
-    AccountDetails, AccountCurrencyData, AccountCreateRequest, AccountCreateData
+    AccountDetails, AccountCurrencyData, AccountCreateRequest, AccountCreateData,
+    BalanceDirectiveData, BalanceDirectiveCreateRequest, BalanceDirectiveUpdateRequest
 )
 from app.schemas.commodity_schemas import (
     CommodityDetails, CommodityUsageData, CommodityCreateRequest, CommodityCreateData
@@ -900,6 +901,332 @@ class BeancountManager:
         logger.info(f"Deleted {deleted_count} transaction(s) for account {account_name}")
 
         return deleted_count
+
+    # =====================================
+    # Balance & Pad Directive Management
+    # =====================================
+
+    def get_balance_directives(self, account_name: str) -> List[BalanceDirectiveData]:
+        """
+        Get all balance directives for an account, with associated pad info and error status.
+
+        Args:
+            account_name: The Beancount account name
+
+        Returns:
+            List of BalanceDirectiveData sorted by date ascending
+        """
+        entries = self.cache.get_entries()
+        errors = self.cache.get_errors()
+
+        # Build a set of error source lines for quick lookup
+        # Beancount balance errors reference the balance entry's source line
+        error_by_line: Dict[int, str] = {}
+        for err in errors:
+            if err.source:
+                lineno = err.source.get('lineno', 0)
+                if lineno and 'balance' in err.message.lower():
+                    error_by_line[lineno] = err.message
+
+        # Single-pass: track the most recent pad for this account, consume it
+        # when the next balance for the same account is encountered.
+        # This mirrors how beancount pairs pad→balance (a pad applies to the
+        # next balance directive for that account, regardless of date).
+        pending_pad_source: Optional[str] = None
+        pending_pad_date: Optional[date] = None
+        result: List[BalanceDirectiveData] = []
+
+        for entry in entries:
+            if isinstance(entry, data.Pad) and entry.account == account_name:
+                # Remember the most recent pad; if another pad appears before
+                # a balance, it overwrites (beancount would flag that anyway).
+                pending_pad_source = entry.source_account
+                pending_pad_date = entry.date
+
+            elif isinstance(entry, data.Balance) and entry.account == account_name:
+                entry_lineno = entry.meta.get('lineno', 0) if entry.meta else 0
+
+                # A pending pad is associated if it's for the same account and
+                # its date is on or before the balance date (typically 1 day before).
+                pad_source: Optional[str] = None
+                if pending_pad_source is not None and pending_pad_date is not None:
+                    if pending_pad_date <= entry.date:
+                        pad_source = pending_pad_source
+                        # Consume the pad so it isn't reused for the next balance
+                        pending_pad_source = None
+                        pending_pad_date = None
+
+                # Check for balance errors
+                has_error = entry_lineno in error_by_line
+                error_message = error_by_line.get(entry_lineno)
+
+                result.append(BalanceDirectiveData(
+                    date=entry.date.isoformat(),
+                    currency=entry.amount.currency,
+                    expected_balance=float(entry.amount.number),
+                    has_pad=pad_source is not None,
+                    pad_source_account=pad_source,
+                    has_error=has_error,
+                    error_message=error_message,
+                ))
+
+        # Sort by date ascending
+        result.sort(key=lambda d: d.date)
+        return result
+
+    def add_balance_directive(self, account_name: str, request: BalanceDirectiveCreateRequest) -> None:
+        """
+        Add a balance assertion (and optionally a pad directive) to the ledger.
+
+        Args:
+            account_name: The Beancount account name
+            request: Create request with date, currency, amount, and optional pad info
+
+        Raises:
+            ValueError: If account doesn't exist or pad_source_account is invalid
+        """
+        if not self.is_existing_account(account_name):
+            raise ValueError(f"Account not found: {account_name}")
+
+        if request.include_pad:
+            if not request.pad_source_account:
+                raise ValueError("pad_source_account is required when include_pad is True")
+            if not self.is_existing_account(request.pad_source_account):
+                raise ValueError(f"Pad source account not found: {request.pad_source_account}")
+
+        # Build directive text
+        # Pad must be dated before the balance (balance checks at start-of-day),
+        # so we date the pad one day prior.
+        directive_lines = []
+        if request.include_pad and request.pad_source_account:
+            pad_date = self._day_before(request.date)
+            directive_lines.append(f"{pad_date} pad {account_name} {request.pad_source_account}")
+        directive_lines.append(f"{request.date} balance {account_name} {request.amount} {request.currency}")
+
+        directive_text = "\n".join(directive_lines)
+
+        # Append to ledger
+        with self.atomic_ledger_write() as f:
+            current_content = f.read()
+
+            if current_content and not current_content.endswith('\n'):
+                current_content += '\n'
+            if current_content and not current_content.endswith('\n\n'):
+                current_content += '\n'
+
+            new_content = current_content + directive_text + '\n'
+
+            f.seek(0)
+            f.write(new_content)
+            f.truncate()
+
+    def update_balance_directive(self, account_name: str, request: BalanceDirectiveUpdateRequest) -> None:
+        """
+        Update an existing balance directive (and optionally its associated pad) in the ledger.
+
+        Args:
+            account_name: The Beancount account name
+            request: Update request with original identifiers and new values
+
+        Raises:
+            ValueError: If the directive is not found or validation fails
+        """
+        if not self.is_existing_account(account_name):
+            raise ValueError(f"Account not found: {account_name}")
+
+        if request.pad_source_account and not self.is_existing_account(request.pad_source_account):
+            raise ValueError(f"Pad source account not found: {request.pad_source_account}")
+
+        with self.atomic_ledger_write() as f:
+            current_content = f.read()
+            lines = current_content.split('\n')
+
+            # Build match patterns for the original balance line
+            # Pattern: "{date} balance {account} {amount} {currency}"
+            balance_line_idx = -1
+            pad_line_idx = -1
+
+            original_amount_str = self._format_amount(request.original_amount)
+
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                if stripped.startswith(';'):
+                    continue
+
+                # Match balance directive
+                if balance_line_idx == -1 and ' balance ' in stripped:
+                    parts = stripped.split()
+                    if (len(parts) >= 4 and
+                        parts[0] == request.original_date and
+                        parts[1] == 'balance' and
+                        parts[2] == account_name and
+                        self._amounts_match(parts[3], original_amount_str) and
+                        (len(parts) < 5 or parts[4] == request.original_currency)):
+                        balance_line_idx = i
+
+            if balance_line_idx == -1:
+                raise ValueError(
+                    f"Balance directive not found: {request.original_date} balance {account_name} "
+                    f"{request.original_amount} {request.original_currency}"
+                )
+
+            # Search backward from the balance line for the nearest pad for this account
+            pad_line_idx = self._find_pad_before_balance(lines, balance_line_idx, account_name)
+
+            # Compute new values
+            new_date = request.new_date or request.original_date
+            new_amount = request.new_amount if request.new_amount is not None else request.original_amount
+            new_currency = request.new_currency or request.original_currency
+            new_amount_str = self._format_amount(new_amount)
+
+            # Update the balance line
+            lines[balance_line_idx] = f"{new_date} balance {account_name} {new_amount_str} {new_currency}"
+
+            # Handle pad directive changes
+            # Pad must be dated one day before the balance date
+            new_pad_date = self._day_before(new_date)
+            include_pad = request.include_pad
+            if include_pad is True:
+                pad_source = request.pad_source_account
+                if not pad_source:
+                    raise ValueError("pad_source_account is required when include_pad is True")
+                if pad_line_idx >= 0:
+                    # Update existing pad
+                    lines[pad_line_idx] = f"{new_pad_date} pad {account_name} {pad_source}"
+                else:
+                    # Insert new pad line before the balance line
+                    lines.insert(balance_line_idx, f"{new_pad_date} pad {account_name} {pad_source}")
+            elif include_pad is False and pad_line_idx >= 0:
+                # Remove existing pad
+                lines.pop(pad_line_idx)
+            elif pad_line_idx >= 0:
+                # include_pad is None (no change requested), but update the date if it changed
+                if new_date != request.original_date:
+                    old_pad = lines[pad_line_idx].strip().split()
+                    pad_source = old_pad[3] if len(old_pad) >= 4 else ''
+                    lines[pad_line_idx] = f"{new_pad_date} pad {account_name} {pad_source}"
+
+            # Write back
+            new_content = '\n'.join(lines)
+            f.seek(0)
+            f.write(new_content)
+            f.truncate()
+
+    def delete_balance_directive(
+        self,
+        account_name: str,
+        directive_date: str,
+        currency: str,
+        amount: float,
+        delete_pad: bool = True
+    ) -> None:
+        """
+        Delete a balance directive (and optionally its associated pad) from the ledger.
+
+        Args:
+            account_name: The Beancount account name
+            directive_date: Date string (YYYY-MM-DD)
+            currency: Currency code
+            amount: Expected balance amount
+            delete_pad: Whether to also delete the associated pad directive
+
+        Raises:
+            ValueError: If the directive is not found
+        """
+        with self.atomic_ledger_write() as f:
+            current_content = f.read()
+            lines = current_content.split('\n')
+
+            amount_str = self._format_amount(amount)
+
+            balance_line_idx = -1
+
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                if stripped.startswith(';'):
+                    continue
+
+                # Match balance directive
+                if balance_line_idx == -1 and ' balance ' in stripped:
+                    parts = stripped.split()
+                    if (len(parts) >= 4 and
+                        parts[0] == directive_date and
+                        parts[1] == 'balance' and
+                        parts[2] == account_name and
+                        self._amounts_match(parts[3], amount_str) and
+                        (len(parts) < 5 or parts[4] == currency)):
+                        balance_line_idx = i
+
+            if balance_line_idx == -1:
+                raise ValueError(
+                    f"Balance directive not found: {directive_date} balance {account_name} "
+                    f"{amount} {currency}"
+                )
+
+            # Search backward for associated pad
+            pad_line_idx = -1
+            if delete_pad:
+                pad_line_idx = self._find_pad_before_balance(lines, balance_line_idx, account_name)
+
+            # Remove lines (remove higher index first to preserve indices)
+            indices_to_remove = [balance_line_idx]
+            if pad_line_idx >= 0:
+                indices_to_remove.append(pad_line_idx)
+            indices_to_remove.sort(reverse=True)
+
+            for idx in indices_to_remove:
+                lines.pop(idx)
+
+            # Clean up double blank lines
+            new_content = '\n'.join(lines)
+            f.seek(0)
+            f.write(new_content)
+            f.truncate()
+
+    @staticmethod
+    def _find_pad_before_balance(lines: List[str], balance_line_idx: int, account_name: str) -> int:
+        """Search backward from a balance line for the nearest pad directive for the same account.
+
+        Skips blank lines and comments. Stops at the first non-blank, non-comment,
+        non-pad directive line to avoid matching a pad that belongs to a different
+        balance.
+
+        Returns:
+            Line index of the pad, or -1 if not found.
+        """
+        for i in range(balance_line_idx - 1, -1, -1):
+            stripped = lines[i].strip()
+            if not stripped or stripped.startswith(';'):
+                continue  # skip blank lines and comments
+            parts = stripped.split()
+            if len(parts) >= 4 and parts[1] == 'pad' and parts[2] == account_name:
+                return i
+            # Hit a non-pad directive — stop searching
+            break
+        return -1
+
+    @staticmethod
+    def _day_before(date_str: str) -> str:
+        """Return the date string one day before the given YYYY-MM-DD date."""
+        from datetime import timedelta
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+        return (d - timedelta(days=1)).isoformat()
+
+    @staticmethod
+    def _format_amount(amount: float) -> str:
+        """Format a float amount to a string, removing unnecessary trailing zeros."""
+        if amount == int(amount):
+            return str(int(amount))
+        # Format with enough precision, then strip trailing zeros
+        return f"{amount:.10f}".rstrip('0').rstrip('.')
+
+    @staticmethod
+    def _amounts_match(file_amount: str, expected_amount: str) -> bool:
+        """Compare two amount strings, tolerating formatting differences."""
+        try:
+            return abs(float(file_amount) - float(expected_amount)) < 0.001
+        except ValueError:
+            return file_amount == expected_amount
 
     def validate_transaction(self, transaction: Transaction) -> List[str]:
         """

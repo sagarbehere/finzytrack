@@ -8,7 +8,10 @@ from app.schemas.account_schemas import (
     AccountCreateRequest, AccountCreateData, AccountListData,
     AccountUpdateRequest, AccountUpdateData,
     AccountCloseRequest, AccountCloseData, AccountDeleteData,
-    AccountReopenData, AccountDetails, AccountCurrencyData
+    AccountReopenData, AccountDetails, AccountCurrencyData,
+    BalanceDirectiveListData, BalanceDirectiveCreateRequest,
+    BalanceDirectiveCreateData, BalanceDirectiveUpdateRequest,
+    BalanceDirectiveUpdateData, BalanceDirectiveDeleteData,
 )
 from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
@@ -880,7 +883,156 @@ async def delete_account(
         )
     except Exception as e:
         raise APIError(
-            message=f"Error deleting account: {str(e)}", 
-            code="UNKNOWN_SERVER_ERROR", 
+            message=f"Error deleting account: {str(e)}",
+            code="UNKNOWN_SERVER_ERROR",
             status_code=500
+        )
+
+# =====================================
+# Balance & Pad Directive Endpoints
+# =====================================
+
+@router.get(
+    "/accounts/{account_name}/balance-directives",
+    response_model=ApiResponse[BalanceDirectiveListData],
+    operation_id="listBalanceDirectives"
+)
+async def list_balance_directives(
+    account_name: str = Path(..., description="Beancount account name"),
+    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+):
+    """List all balance directives for an account, including pad and error info."""
+    if not beancount_manager.is_existing_account(account_name):
+        raise APIError(
+            message=f"Account not found: {account_name}",
+            code="ACCOUNT_NOT_FOUND",
+            status_code=404,
+            details={"account_name": account_name}
+        )
+
+    directives = beancount_manager.get_balance_directives(account_name)
+    return success_json_response(BalanceDirectiveListData(
+        account=account_name,
+        directives=directives,
+    ))
+
+
+@router.post(
+    "/accounts/{account_name}/balance-directives",
+    response_model=ApiResponse[BalanceDirectiveCreateData],
+    status_code=201,
+    operation_id="createBalanceDirective"
+)
+async def create_balance_directive(
+    request: BalanceDirectiveCreateRequest,
+    account_name: str = Path(..., description="Beancount account name"),
+    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+):
+    """Create a balance assertion (optionally with a pad directive)."""
+    try:
+        beancount_manager.add_balance_directive(account_name, request)
+        pad_msg = " with pad directive" if request.include_pad else ""
+        return success_json_response(
+            BalanceDirectiveCreateData(
+                created=True,
+                message=f"Balance directive created for {account_name}{pad_msg}",
+            ),
+            status_code=201,
+        )
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg:
+            raise APIError(
+                message=error_msg,
+                code="ACCOUNT_NOT_FOUND",
+                status_code=404,
+                details={"account_name": account_name}
+            )
+        raise APIError(
+            message=error_msg,
+            code="VALIDATION_ERROR",
+            status_code=422,
+            details={"account_name": account_name}
+        )
+
+
+@router.put(
+    "/accounts/{account_name}/balance-directives",
+    response_model=ApiResponse[BalanceDirectiveUpdateData],
+    operation_id="updateBalanceDirective"
+)
+async def update_balance_directive(
+    request: BalanceDirectiveUpdateRequest,
+    account_name: str = Path(..., description="Beancount account name"),
+    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+):
+    """Update an existing balance directive."""
+    if not beancount_manager.is_existing_account(account_name):
+        raise APIError(
+            message=f"Account not found: {account_name}",
+            code="ACCOUNT_NOT_FOUND",
+            status_code=404,
+            details={"account_name": account_name}
+        )
+
+    try:
+        beancount_manager.update_balance_directive(account_name, request)
+        return success_json_response(BalanceDirectiveUpdateData(
+            updated=True,
+            message=f"Balance directive updated for {account_name}",
+        ))
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise APIError(
+                message=error_msg,
+                code="DIRECTIVE_NOT_FOUND",
+                status_code=404,
+                details={"account_name": account_name}
+            )
+        raise APIError(
+            message=error_msg,
+            code="VALIDATION_ERROR",
+            status_code=422,
+            details={"account_name": account_name}
+        )
+
+
+@router.delete(
+    "/accounts/{account_name}/balance-directives",
+    response_model=ApiResponse[BalanceDirectiveDeleteData],
+    operation_id="deleteBalanceDirective"
+)
+async def delete_balance_directive(
+    account_name: str = Path(..., description="Beancount account name"),
+    date: str = Query(..., description="Directive date (YYYY-MM-DD)"),
+    currency: str = Query(..., description="Currency code"),
+    amount: float = Query(..., description="Expected balance amount"),
+    delete_pad: bool = Query(True, description="Also delete associated pad directive"),
+    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+):
+    """Delete a balance directive (and optionally its associated pad)."""
+    if not beancount_manager.is_existing_account(account_name):
+        raise APIError(
+            message=f"Account not found: {account_name}",
+            code="ACCOUNT_NOT_FOUND",
+            status_code=404,
+            details={"account_name": account_name}
+        )
+
+    try:
+        beancount_manager.delete_balance_directive(
+            account_name, date, currency, amount, delete_pad
+        )
+        pad_msg = " and pad directive" if delete_pad else ""
+        return success_json_response(BalanceDirectiveDeleteData(
+            deleted=True,
+            message=f"Balance directive{pad_msg} deleted for {account_name}",
+        ))
+    except ValueError as e:
+        raise APIError(
+            message=str(e),
+            code="DIRECTIVE_NOT_FOUND",
+            status_code=404,
+            details={"account_name": account_name}
         )

@@ -11,6 +11,12 @@ import type { ApiResponse_AccountDeleteData_ } from '../models/ApiResponse_Accou
 import type { ApiResponse_AccountListData_ } from '../models/ApiResponse_AccountListData_';
 import type { ApiResponse_AccountReopenData_ } from '../models/ApiResponse_AccountReopenData_';
 import type { ApiResponse_AccountUpdateData_ } from '../models/ApiResponse_AccountUpdateData_';
+import type { ApiResponse_BalanceDirectiveCreateData_ } from '../models/ApiResponse_BalanceDirectiveCreateData_';
+import type { ApiResponse_BalanceDirectiveDeleteData_ } from '../models/ApiResponse_BalanceDirectiveDeleteData_';
+import type { ApiResponse_BalanceDirectiveListData_ } from '../models/ApiResponse_BalanceDirectiveListData_';
+import type { ApiResponse_BalanceDirectiveUpdateData_ } from '../models/ApiResponse_BalanceDirectiveUpdateData_';
+import type { BalanceDirectiveCreateRequest } from '../models/BalanceDirectiveCreateRequest';
+import type { BalanceDirectiveUpdateRequest } from '../models/BalanceDirectiveUpdateRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -157,6 +163,112 @@ export class AccountsService {
             url: '/api/accounts/{account_name}/reopen',
             path: {
                 'account_name': accountName,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * List Balance Directives
+     * List all balance directives for an account, including pad and error info.
+     * @param accountName Beancount account name
+     * @returns ApiResponse_BalanceDirectiveListData_ Successful Response
+     * @throws ApiError
+     */
+    public static listBalanceDirectives(
+        accountName: string,
+    ): CancelablePromise<ApiResponse_BalanceDirectiveListData_> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/accounts/{account_name}/balance-directives',
+            path: {
+                'account_name': accountName,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Create Balance Directive
+     * Create a balance assertion (optionally with a pad directive).
+     * @param accountName Beancount account name
+     * @param requestBody
+     * @returns ApiResponse_BalanceDirectiveCreateData_ Successful Response
+     * @throws ApiError
+     */
+    public static createBalanceDirective(
+        accountName: string,
+        requestBody: BalanceDirectiveCreateRequest,
+    ): CancelablePromise<ApiResponse_BalanceDirectiveCreateData_> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/accounts/{account_name}/balance-directives',
+            path: {
+                'account_name': accountName,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Update Balance Directive
+     * Update an existing balance directive.
+     * @param accountName Beancount account name
+     * @param requestBody
+     * @returns ApiResponse_BalanceDirectiveUpdateData_ Successful Response
+     * @throws ApiError
+     */
+    public static updateBalanceDirective(
+        accountName: string,
+        requestBody: BalanceDirectiveUpdateRequest,
+    ): CancelablePromise<ApiResponse_BalanceDirectiveUpdateData_> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/api/accounts/{account_name}/balance-directives',
+            path: {
+                'account_name': accountName,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Delete Balance Directive
+     * Delete a balance directive (and optionally its associated pad).
+     * @param accountName Beancount account name
+     * @param date Directive date (YYYY-MM-DD)
+     * @param currency Currency code
+     * @param amount Expected balance amount
+     * @param deletePad Also delete associated pad directive
+     * @returns ApiResponse_BalanceDirectiveDeleteData_ Successful Response
+     * @throws ApiError
+     */
+    public static deleteBalanceDirective(
+        accountName: string,
+        date: string,
+        currency: string,
+        amount: number,
+        deletePad: boolean = true,
+    ): CancelablePromise<ApiResponse_BalanceDirectiveDeleteData_> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/accounts/{account_name}/balance-directives',
+            path: {
+                'account_name': accountName,
+            },
+            query: {
+                'date': date,
+                'currency': currency,
+                'amount': amount,
+                'delete_pad': deletePad,
             },
             errors: {
                 422: `Validation Error`,

@@ -4,7 +4,10 @@ import {
   type AccountDetails,
   type AccountCreateRequest,
   type AccountUpdateRequest,
-  type AccountCloseRequest
+  type AccountCloseRequest,
+  type BalanceDirectiveData,
+  type BalanceDirectiveCreateRequest,
+  type BalanceDirectiveUpdateRequest,
 } from '@/services/generated-api'
 import { errorHandler } from '@/utils/ErrorHandler'
 
@@ -41,6 +44,12 @@ interface UseAccountsReturn {
 
   // Helper to get transaction count for an account
   getAccountTransactionCount: (name: string) => number
+
+  // Balance directive CRUD
+  fetchBalanceDirectives: (accountName: string) => Promise<BalanceDirectiveData[]>
+  addBalanceDirective: (accountName: string, request: BalanceDirectiveCreateRequest) => Promise<void>
+  updateBalanceDirective: (accountName: string, request: BalanceDirectiveUpdateRequest) => Promise<void>
+  deleteBalanceDirective: (accountName: string, date: string, currency: string, amount: number, deletePad?: boolean) => Promise<void>
 }
 
 // Module-level state (singleton behavior)
@@ -194,6 +203,51 @@ const getAccountTransactionCount = (name: string): number => {
   return account.currencies.reduce((sum, c) => sum + c.transaction_count, 0)
 }
 
+// Balance directive CRUD
+
+const fetchBalanceDirectives = async (accountName: string): Promise<BalanceDirectiveData[]> => {
+  try {
+    const response = await AccountsService.listBalanceDirectives(accountName)
+    return response.data?.directives ?? []
+  } catch (err) {
+    errorHandler.display(err)
+    throw err
+  }
+}
+
+const addBalanceDirective = async (accountName: string, request: BalanceDirectiveCreateRequest): Promise<void> => {
+  try {
+    await AccountsService.createBalanceDirective(accountName, request)
+  } catch (err) {
+    errorHandler.display(err)
+    throw err
+  }
+}
+
+const updateBalanceDirective = async (accountName: string, request: BalanceDirectiveUpdateRequest): Promise<void> => {
+  try {
+    await AccountsService.updateBalanceDirective(accountName, request)
+  } catch (err) {
+    errorHandler.display(err)
+    throw err
+  }
+}
+
+const deleteBalanceDirective = async (
+  accountName: string,
+  date: string,
+  currency: string,
+  amount: number,
+  deletePad = true
+): Promise<void> => {
+  try {
+    await AccountsService.deleteBalanceDirective(accountName, date, currency, amount, deletePad)
+  } catch (err) {
+    errorHandler.display(err)
+    throw err
+  }
+}
+
 // Export composable function with proper TypeScript typing
 export function useAccounts(): UseAccountsReturn {
   return {
@@ -210,6 +264,10 @@ export function useAccounts(): UseAccountsReturn {
     closeAccount,
     reopenAccount,
     deleteAccount,
-    getAccountTransactionCount
+    getAccountTransactionCount,
+    fetchBalanceDirectives,
+    addBalanceDirective,
+    updateBalanceDirective,
+    deleteBalanceDirective,
   }
 }

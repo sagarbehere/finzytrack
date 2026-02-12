@@ -24,6 +24,16 @@ export interface AccountTreeNode {
   currencyBadges: string[];             // From accountDetails.currencies
 }
 
+export interface BalanceDirective {
+  date: string
+  currency: string
+  expectedBalance: number
+  hasPad: boolean
+  padSourceAccount: string | null
+  hasError: boolean
+  errorMessage: string | null
+}
+
 export interface AccountFilters {
   search: string;
   type: AccountType | 'All';

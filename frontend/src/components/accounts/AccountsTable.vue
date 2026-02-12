@@ -168,6 +168,15 @@
                 <PencilIcon class="h-4 w-4" />
               </button>
 
+              <!-- Balance Directives -->
+              <button
+                @click="emit('show-balance-directives', node)"
+                class="text-gray-500 hover:text-purple-600 dark:text-gray-400 dark:hover:text-purple-400"
+                title="Balance assertions"
+              >
+                <ScaleIcon class="h-4 w-4" />
+              </button>
+
               <!-- Close/Reopen -->
               <button
                 v-if="node.status === 'open'"
@@ -217,7 +226,8 @@ import {
   TrashIcon,
   XCircleIcon,
   ArrowPathIcon,
-  InformationCircleIcon
+  InformationCircleIcon,
+  ScaleIcon,
 } from '@heroicons/vue/24/outline'
 import type { AccountTreeNode } from '@/types/accounts'
 import { typeColors, statusColors } from '@/types/accounts'
@@ -235,6 +245,7 @@ interface Emits {
   (e: 'reopen', node: AccountTreeNode): void
   (e: 'delete', node: AccountTreeNode): void
   (e: 'show-balances', node: AccountTreeNode): void
+  (e: 'show-balance-directives', node: AccountTreeNode): void
   (e: 'view-transactions', node: AccountTreeNode): void
 }
 
