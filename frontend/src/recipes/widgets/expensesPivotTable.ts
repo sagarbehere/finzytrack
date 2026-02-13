@@ -62,6 +62,13 @@ export const expensesPivotTableWidget: WidgetRecipe = {
       default: new Date().getFullYear(),
       options: generateYearOptions(),
     },
+    {
+      name: 'currency',
+      label: 'Currency',
+      type: 'select',
+      default: 'USD',
+      optionsFrom: 'currencies' as const,
+    },
   ],
 
   query: `
@@ -72,7 +79,7 @@ export const expensesPivotTableWidget: WidgetRecipe = {
     FROM postings
     WHERE account_type = 'Expenses'
       AND year = :year
-      AND currency = 'USD'
+      AND currency = :currency
     GROUP BY account, year_month
     ORDER BY account, year_month
   `,
