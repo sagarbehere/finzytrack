@@ -267,7 +267,7 @@ watch(() => props.open, async (isOpen) => {
     dateStartDate.value = null
     dateEndDate.value = null
     dateActivePreset.value = 'All Time'
-    dateSortOrder.value = 'asc'
+    dateSortOrder.value = 'desc'
     hasLoaded.value = false
     await loadTransactions()
   }
