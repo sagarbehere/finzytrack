@@ -90,8 +90,8 @@
                 </button>
               </div>
 
-              <!-- Loading state -->
-              <div v-if="isLoading" class="flex justify-center py-12">
+              <!-- Loading state (initial load only, not refresh) -->
+              <div v-if="isLoading && !hasLoaded" class="flex justify-center py-12">
                 <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
               </div>
 
@@ -224,6 +224,7 @@ const dateStartDate = ref<string | null>(null)
 const dateEndDate = ref<string | null>(null)
 const dateActivePreset = ref<string | null>('All Time')
 const dateSortOrder = ref<'asc' | 'desc'>('asc')
+const hasLoaded = ref(false)
 
 // Computed: visible currencies sorted
 const visibleCurrenciesSorted = computed(() =>
@@ -267,6 +268,7 @@ watch(() => props.open, async (isOpen) => {
     dateEndDate.value = null
     dateActivePreset.value = 'All Time'
     dateSortOrder.value = 'asc'
+    hasLoaded.value = false
     await loadTransactions()
   }
 })
@@ -283,10 +285,11 @@ async function loadTransactions() {
     allTransactions.value = transactions
     computeEnrichedTransactions()
     // Populate date pickers with actual range for "All Time"
-    if (enrichedTransactions.value.length > 0) {
+    if (!hasLoaded.value && enrichedTransactions.value.length > 0) {
       dateStartDate.value = enrichedTransactions.value[0].date
       dateEndDate.value = enrichedTransactions.value[enrichedTransactions.value.length - 1].date
     }
+    hasLoaded.value = true
   } catch {
     allTransactions.value = []
     enrichedTransactions.value = []
