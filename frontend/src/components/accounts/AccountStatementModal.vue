@@ -284,8 +284,8 @@ async function loadTransactions() {
     )
     allTransactions.value = transactions
     computeEnrichedTransactions()
-    // Populate date pickers with actual range for "All Time"
-    if (!hasLoaded.value && enrichedTransactions.value.length > 0) {
+    // Populate date pickers with actual range for "All Time" (initial load + refresh)
+    if (enrichedTransactions.value.length > 0 && dateActivePreset.value === 'All Time') {
       dateStartDate.value = enrichedTransactions.value[0].date
       dateEndDate.value = enrichedTransactions.value[enrichedTransactions.value.length - 1].date
     }
