@@ -105,6 +105,13 @@ function isTreemapChart(): boolean {
   return series.some((s) => typeof s === 'object' && s !== null && (s as { type?: string }).type === 'treemap')
 }
 
+// Detect if all series are pie charts (pie charts don't use axes)
+function isPieChart(): boolean {
+  const series = props.chartOptions.series
+  if (!Array.isArray(series)) return false
+  return series.every((s) => typeof s === 'object' && s !== null && (s as { type?: string }).type === 'pie')
+}
+
 // Inject data into treemap series
 function injectTreemapData(series: EChartsOption['series']): EChartsOption['series'] {
   if (!Array.isArray(series)) return series
@@ -121,6 +128,8 @@ const finalOptions = computed<EChartsOption>(() => {
   const textColor = dark ? '#e5e7eb' : '#374151'
   const axisLineColor = dark ? '#4b5563' : '#d1d5db'
   const treemap = isTreemapChart()
+  const pie = isPieChart()
+  const needsAxes = !treemap && !pie
 
   const styledSeries = applySeriesLabelStyles(props.chartOptions.series, dark, textColor)
   const finalSeries = treemap ? injectTreemapData(styledSeries) : styledSeries
@@ -136,6 +145,7 @@ const finalOptions = computed<EChartsOption>(() => {
     },
     tooltip: {
       trigger: treemap ? 'item' : 'axis',
+      confine: true,
       backgroundColor: dark ? '#1f2937' : '#ffffff',
       borderColor: dark ? '#374151' : '#e5e7eb',
       textStyle: { color: textColor },
@@ -148,8 +158,8 @@ const finalOptions = computed<EChartsOption>(() => {
     series: finalSeries,
   }
 
-  // Only include axis/grid/dataset for non-treemap charts
-  if (!treemap) {
+  // Only include axis/grid for charts that use cartesian coordinates
+  if (needsAxes) {
     result.grid = {
       containLabel: true,
       left: 16,
@@ -184,6 +194,13 @@ const finalOptions = computed<EChartsOption>(() => {
           splitLine: { lineStyle: { color: axisLineColor, opacity: 0.3 } },
           ...((props.chartOptions.yAxis as object) || {}),
         }
+    result.dataset = {
+      source: props.data as Record<string, unknown>[],
+    }
+  }
+
+  // Pie charts still need dataset for encode to work, but no axes
+  if (pie) {
     result.dataset = {
       source: props.data as Record<string, unknown>[],
     }

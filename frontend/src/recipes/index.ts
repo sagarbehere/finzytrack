@@ -18,7 +18,7 @@ import { savingsWidget } from './widgets/savings'
 import { expensesPivotTableWidget } from './widgets/expensesPivotTable'
 
 // Dashboards
-import { financialOverviewDashboard } from './dashboards/financialOverview'
+// financialOverviewDashboard moved to JSON: public/recipes/dashboards/financial-overview.json
 
 /**
  * Recipe registry for lookup by ID
@@ -34,9 +34,7 @@ export const recipeRegistry: RecipeRegistry = {
     [savingsWidget.id]: savingsWidget,
     [expensesPivotTableWidget.id]: expensesPivotTableWidget,
   },
-  dashboards: {
-    [financialOverviewDashboard.id]: financialOverviewDashboard,
-  },
+  dashboards: {},
 }
 
 // Re-export individual recipes for direct imports
@@ -48,4 +46,3 @@ export { totalExpensesWidget } from './widgets/totalExpenses'
 export { estimatedTaxesWidget } from './widgets/estimatedTaxes'
 export { savingsWidget } from './widgets/savings'
 export { expensesPivotTableWidget } from './widgets/expensesPivotTable'
-export { financialOverviewDashboard } from './dashboards/financialOverview'

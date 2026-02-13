@@ -5,6 +5,7 @@
   ],
   "dashboards": [
     "dashboards/year-summary.json",
-    "dashboards/month-summary.json"
+    "dashboards/month-summary.json",
+    "dashboards/financial-overview.json"
   ]
 }

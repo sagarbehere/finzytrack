@@ -14,7 +14,7 @@
         {{ recipe.title }}
         <span v-if="getHelpText()" class="group relative">
           <span class="text-gray-400 dark:text-gray-500 text-xs cursor-help select-none">ⓘ</span>
-          <span class="invisible group-hover:visible absolute left-1/2 -translate-x-1/2 top-full mt-1 z-10 px-2.5 py-1.5 text-xs font-normal text-white bg-gray-800 dark:bg-gray-900 rounded shadow-lg whitespace-nowrap">
+          <span class="invisible group-hover:visible absolute left-0 top-full mt-1 z-10 px-2.5 py-1.5 text-xs font-normal text-white bg-gray-800 dark:bg-gray-900 rounded shadow-lg w-64">
             {{ getHelpText() }}
           </span>
         </span>
