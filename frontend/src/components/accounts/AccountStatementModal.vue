@@ -75,10 +75,20 @@
                 </div>
               </div>
 
-              <!-- Transaction count -->
-              <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
-                Showing {{ filteredTransactions.length }} of {{ enrichedTransactions.length }} transactions
-              </p>
+              <!-- Transaction count + refresh -->
+              <div class="mb-2 flex items-center gap-2">
+                <p class="text-xs text-gray-500 dark:text-gray-400">
+                  Showing {{ filteredTransactions.length }} of {{ enrichedTransactions.length }} transactions
+                </p>
+                <button
+                  @click="loadTransactions"
+                  :disabled="isLoading"
+                  class="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 disabled:opacity-50"
+                  title="Refresh"
+                >
+                  <ArrowPathIcon class="h-3.5 w-3.5" :class="{ 'animate-spin': isLoading }" />
+                </button>
+              </div>
 
               <!-- Loading state -->
               <div v-if="isLoading" class="flex justify-center py-12">
@@ -96,7 +106,16 @@
                   <thead class="bg-gray-50 dark:bg-gray-700 sticky top-0 z-10">
                     <tr>
                       <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase dark:text-gray-400 w-[50px]">#</th>
-                      <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase dark:text-gray-400 w-[100px]">Date</th>
+                      <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase dark:text-gray-400 w-[100px]">
+                        <button
+                          @click="dateSortOrder = dateSortOrder === 'asc' ? 'desc' : 'asc'"
+                          class="inline-flex items-center gap-1 hover:text-gray-700 dark:hover:text-gray-200"
+                        >
+                          Date
+                          <ChevronUpIcon v-if="dateSortOrder === 'asc'" class="h-3 w-3" />
+                          <ChevronDownIcon v-else class="h-3 w-3" />
+                        </button>
+                      </th>
                       <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase dark:text-gray-400">Description</th>
                       <template v-for="ccy in visibleCurrenciesSorted" :key="ccy">
                         <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase dark:text-gray-400 w-[120px]">
@@ -161,7 +180,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } from '@headlessui/vue'
-import { MagnifyingGlassIcon } from '@heroicons/vue/24/outline'
+import { MagnifyingGlassIcon, ChevronUpIcon, ChevronDownIcon, ArrowPathIcon } from '@heroicons/vue/24/outline'
 import type { AccountTreeNode } from '@/types/accounts'
 import type { TransactionViewModel } from '@/types/transactions'
 import { useTransactionQuery } from '@/composables/useTransactionQuery'
@@ -204,6 +223,7 @@ const searchText = ref('')
 const dateStartDate = ref<string | null>(null)
 const dateEndDate = ref<string | null>(null)
 const dateActivePreset = ref<string | null>('All Time')
+const dateSortOrder = ref<'asc' | 'desc'>('asc')
 
 // Computed: visible currencies sorted
 const visibleCurrenciesSorted = computed(() =>
@@ -231,6 +251,11 @@ const filteredTransactions = computed(() => {
     )
   }
 
+  // Sort by date
+  if (dateSortOrder.value === 'desc') {
+    result = [...result].reverse()
+  }
+
   return result
 })
 
@@ -241,6 +266,7 @@ watch(() => props.open, async (isOpen) => {
     dateStartDate.value = null
     dateEndDate.value = null
     dateActivePreset.value = 'All Time'
+    dateSortOrder.value = 'asc'
     await loadTransactions()
   }
 })
