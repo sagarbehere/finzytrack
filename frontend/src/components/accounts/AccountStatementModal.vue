@@ -223,7 +223,7 @@ const searchText = ref('')
 const dateStartDate = ref<string | null>(null)
 const dateEndDate = ref<string | null>(null)
 const dateActivePreset = ref<string | null>('All Time')
-const dateSortOrder = ref<'asc' | 'desc'>('asc')
+const dateSortOrder = ref<'asc' | 'desc'>('desc')
 const hasLoaded = ref(false)
 
 // Computed: visible currencies sorted

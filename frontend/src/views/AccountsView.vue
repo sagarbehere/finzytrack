@@ -21,14 +21,23 @@
       />
     </div>
 
-    <!-- Loading State -->
-    <div v-if="isLoading" class="flex justify-center items-center py-12">
+    <!-- Loading State (initial load only) -->
+    <div v-if="isLoading && !hasLoaded" class="flex justify-center items-center py-12">
       <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
     </div>
 
-    <template v-else>
+    <template v-else-if="hasLoaded">
       <!-- Expand/Collapse All Controls (above table) -->
-      <div v-if="treeRoots.length > 0" class="mb-2 flex justify-end gap-2">
+      <div v-if="treeRoots.length > 0" class="mb-2 flex justify-end items-center gap-2">
+        <button
+          @click="loadAccounts"
+          :disabled="isLoading"
+          class="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 disabled:opacity-50"
+          title="Refresh"
+        >
+          <ArrowPathIcon class="h-4 w-4" :class="{ 'animate-spin': isLoading }" />
+        </button>
+        <span class="text-gray-300 dark:text-gray-600">|</span>
         <button
           @click="expandAll(filteredTree)"
           class="text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
@@ -62,7 +71,16 @@
       </div>
 
       <!-- Expand/Collapse All Controls (below table) -->
-      <div v-if="treeRoots.length > 0" class="mt-4 flex justify-end gap-2">
+      <div v-if="treeRoots.length > 0" class="mt-4 flex justify-end items-center gap-2">
+        <button
+          @click="loadAccounts"
+          :disabled="isLoading"
+          class="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 disabled:opacity-50"
+          title="Refresh"
+        >
+          <ArrowPathIcon class="h-4 w-4" :class="{ 'animate-spin': isLoading }" />
+        </button>
+        <span class="text-gray-300 dark:text-gray-600">|</span>
         <button
           @click="expandAll(filteredTree)"
           class="text-sm text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
@@ -138,6 +156,7 @@ import AccountDeleteModal from '@/components/accounts/AccountDeleteModal.vue'
 import BalanceBreakdownModal from '@/components/accounts/BalanceBreakdownModal.vue'
 import BalanceDirectivesModal from '@/components/accounts/BalanceDirectivesModal.vue'
 import AccountStatementModal from '@/components/accounts/AccountStatementModal.vue'
+import { ArrowPathIcon } from '@heroicons/vue/24/outline'
 import { useAccounts, type AccountDateFilter } from '@/composables/useAccounts'
 import { useAccountsTree } from '@/composables/useAccountsTree'
 import { useToast } from '@/composables/useNotifications'
@@ -247,6 +266,7 @@ const deletingAccountTxCount = ref(0)
 const viewingBalanceAccount = ref<AccountTreeNode | null>(null)
 const balanceDirectivesAccount = ref<AccountTreeNode | null>(null)
 const statementAccount = ref<AccountTreeNode | null>(null)
+const hasLoaded = ref(false)
 
 // Computed: Build tree from account details
 const treeRoots = computed(() => buildTree(accountDetails.value))
@@ -292,8 +312,14 @@ async function handleDateFilterChange(newDateFilter: AccountDateFilter) {
 }
 
 // Fetch accounts on mount
-onMounted(() => {
-  loadAccounts()
+onMounted(async () => {
+  await loadAccounts()
+  hasLoaded.value = true
+})
+
+// Auto-refresh accounts when data-modifying modals close
+watch(showBalanceDirectivesModal, (isOpen, wasOpen) => {
+  if (wasOpen && !isOpen) loadAccounts()
 })
 
 // Watch filters and update URL when they change
