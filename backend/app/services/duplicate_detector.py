@@ -49,12 +49,18 @@ def calculate_payee_similarity(payee1: str, payee2: str) -> float:
     return max(ratio_score, partial_ratio_score, token_sort_score, token_set_score)
 
 
-def check_ofx_id_match(ofx_id: str, existing_transactions: List[LedgerTransaction]) -> Optional[DuplicateInfo]:
+def check_ofx_id_match(ofx_id: str, amount: Decimal, existing_transactions: List[LedgerTransaction]) -> Optional[DuplicateInfo]:
     """
     Check if OFX ID matches any existing transaction.
 
+    Some banks (e.g. Chase) assign the same FITID to a foreign transaction and
+    its associated fee, so multiple ledger entries can share the same ofx_id.
+    Amount must also match exactly — two transactions with different amounts
+    cannot be duplicates regardless of their ofx_id.
+
     Args:
         ofx_id: OFX transaction ID to check
+        amount: Amount of the incoming transaction
         existing_transactions: List of existing ledger transactions
 
     Returns:
@@ -63,21 +69,24 @@ def check_ofx_id_match(ofx_id: str, existing_transactions: List[LedgerTransactio
     if not ofx_id:
         return None
 
-    for existing_txn in existing_transactions:
-        if existing_txn.ofx_id and existing_txn.ofx_id == ofx_id:
-            # Exact OFX ID match found
-            return DuplicateInfo(
-                id=existing_txn.id,
-                content_hash=existing_txn.content_hash,
-                date=existing_txn.date,
-                payee=existing_txn.payee,
-                narration=existing_txn.narration,
-                amount=existing_txn.amount,
-                account=existing_txn.account,
-                match_type='ofx_id'
-            )
+    best = next(
+        (t for t in existing_transactions if t.ofx_id == ofx_id and t.amount == amount),
+        None
+    )
 
-    return None
+    if best is None:
+        return None
+
+    return DuplicateInfo(
+        id=best.id,
+        content_hash=best.content_hash,
+        date=best.date,
+        payee=best.payee,
+        narration=best.narration,
+        amount=best.amount,
+        account=best.account,
+        match_type='ofx_id'
+    )
 
 
 def check_fuzzy_match(
@@ -198,7 +207,7 @@ def find_duplicate(
     """
     # Tier 1: Check OFX ID match (if available)
     if ofx_id:
-        ofx_match = check_ofx_id_match(ofx_id, existing_transactions)
+        ofx_match = check_ofx_id_match(ofx_id, amount, existing_transactions)
         if ofx_match:
             return True, ofx_match
 
