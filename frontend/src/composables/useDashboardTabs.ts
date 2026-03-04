@@ -1,6 +1,7 @@
 import { ref, computed, readonly } from 'vue'
 import type { DashboardRecipe, JsonDashboardRecipe } from '@/types/recipes'
 import { useRecipeLoader } from './useRecipeLoader'
+import { getStorageAdapter, STORAGE_KEYS } from '@/services/storage'
 
 export interface DashboardTab {
   id: string
@@ -12,7 +13,6 @@ interface StoredTabState {
   activeTabId: string | null
 }
 
-const STORAGE_KEY = 'finzytrack:dashboard-tabs'
 const DEFAULT_DASHBOARD_ID = 'financial-overview'
 
 // Shared state across all component instances
@@ -20,42 +20,24 @@ const tabs = ref<DashboardTab[]>([])
 const activeTabId = ref<string | null>(null)
 const isInitialized = ref(false)
 
-/**
- * Load saved state from localStorage
- */
 function loadFromStorage(): StoredTabState | null {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) {
-      return JSON.parse(stored)
-    }
-  } catch (err) {
-    console.warn('[DashboardTabs] Failed to load from localStorage:', err)
-  }
-  return null
+  return getStorageAdapter().get<StoredTabState>(STORAGE_KEYS.DASHBOARD_TABS)
 }
 
-/**
- * Save current state to localStorage
- */
 function saveToStorage(): void {
-  try {
-    const state: StoredTabState = {
-      tabs: tabs.value.map((t) => t.id),
-      activeTabId: activeTabId.value,
-    }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-  } catch (err) {
-    console.warn('[DashboardTabs] Failed to save to localStorage:', err)
+  const state: StoredTabState = {
+    tabs: tabs.value.map((t) => t.id),
+    activeTabId: activeTabId.value,
   }
+  getStorageAdapter().set(STORAGE_KEYS.DASHBOARD_TABS, state)
 }
 
 export function useDashboardTabs() {
   const { getDashboard, getAllDashboardIds } = useRecipeLoader()
 
   /**
-   * Initialize tabs from localStorage or defaults
-   * Should be called after user recipes are loaded
+   * Initialize tabs from storage or defaults.
+   * Should be called after user recipes are loaded.
    */
   async function loadTabs(): Promise<void> {
     if (isInitialized.value) return

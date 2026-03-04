@@ -1,4 +1,5 @@
 import { ref, computed, watch } from 'vue'
+import { getStorageAdapter, STORAGE_KEYS } from '@/services/storage'
 
 export interface ColumnConfig {
   id: string
@@ -33,29 +34,14 @@ const COLUMN_CONFIGS: ColumnConfig[] = [
   { id: 'actions', label: 'Actions', defaultVisible: true, defaultWidth: 100, minWidth: 80, resizable: false },
 ]
 
-const STORAGE_KEYS = {
-  VISIBLE_COLUMNS: 'finzytrack_table_visible_columns',
-  COLUMN_WIDTHS: 'finzytrack_table_column_widths'
-}
-
 export function useTableColumns() {
-  // Load persisted settings from localStorage
+  // Load persisted settings via storage adapter
   const loadPersistedVisibility = (): Record<string, boolean> => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.VISIBLE_COLUMNS)
-      return saved ? JSON.parse(saved) : {}
-    } catch {
-      return {}
-    }
+    return getStorageAdapter().get<Record<string, boolean>>(STORAGE_KEYS.TABLE_VISIBLE_COLUMNS) ?? {}
   }
 
   const loadPersistedWidths = (): Record<string, number> => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEYS.COLUMN_WIDTHS)
-      return saved ? JSON.parse(saved) : {}
-    } catch {
-      return {}
-    }
+    return getStorageAdapter().get<Record<string, number>>(STORAGE_KEYS.TABLE_COLUMN_WIDTHS) ?? {}
   }
 
   // Initialize visibility from defaults + persisted overrides
@@ -126,21 +112,13 @@ export function useTableColumns() {
     return COLUMN_CONFIGS.find(config => config.id === columnId)
   }
 
-  // Persist changes to localStorage
+  // Persist changes via storage adapter
   watch(columnVisibility, (newVisibility) => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.VISIBLE_COLUMNS, JSON.stringify(newVisibility))
-    } catch (error) {
-      console.warn('Failed to save column visibility to localStorage:', error)
-    }
+    getStorageAdapter().set(STORAGE_KEYS.TABLE_VISIBLE_COLUMNS, newVisibility)
   }, { deep: true })
 
   watch(columnWidths, (newWidths) => {
-    try {
-      localStorage.setItem(STORAGE_KEYS.COLUMN_WIDTHS, JSON.stringify(newWidths))
-    } catch (error) {
-      console.warn('Failed to save column widths to localStorage:', error)
-    }
+    getStorageAdapter().set(STORAGE_KEYS.TABLE_COLUMN_WIDTHS, newWidths)
   }, { deep: true })
 
   return {

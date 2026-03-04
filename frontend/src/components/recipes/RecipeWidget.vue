@@ -131,6 +131,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { getStorageAdapter, STORAGE_KEYS } from '@/services/storage'
 import type {
   KPIVisualization,
   JsonKPIVisualization,
@@ -531,9 +532,24 @@ function handleKPIClick() {
 // Re-execute when parameters change
 watch(mergedParameters, () => executeQuery(), { deep: true })
 
-// Initial execution
+// Persist widget-level parameter selections when they change
+watch(localParameters, (newParams) => {
+  if (!props.recipe.id || !props.recipe.parameters?.length) return
+  const all = getStorageAdapter().get<Record<string, Record<string, string | number>>>(STORAGE_KEYS.WIDGET_SETTINGS) ?? {}
+  all[props.recipe.id] = newParams
+  getStorageAdapter().set(STORAGE_KEYS.WIDGET_SETTINGS, all)
+}, { deep: true })
+
+// Initial execution — restore saved parameters if available
 onMounted(() => {
-  localParameters.value = getDefaultParameters(props.recipe)
+  const defaults = getDefaultParameters(props.recipe)
+  if (props.recipe.id && props.recipe.parameters?.length) {
+    const all = getStorageAdapter().get<Record<string, Record<string, string | number>>>(STORAGE_KEYS.WIDGET_SETTINGS) ?? {}
+    const saved = all[props.recipe.id]
+    localParameters.value = saved ? { ...defaults, ...saved } : defaults
+  } else {
+    localParameters.value = defaults
+  }
   executeQuery()
 })
 </script>

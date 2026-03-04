@@ -1,21 +1,16 @@
 import { ref, computed, watch } from 'vue'
+import { getStorageAdapter, STORAGE_KEYS } from '@/services/storage'
 
-const STORAGE_KEY = 'finzytrack_sidebar_width'
 const DEFAULT_WIDTH = 288 // 18rem = 288px (equivalent to w-72)
 const MIN_WIDTH = 200 // Minimum width in pixels
 const MAX_WIDTH = 500 // Maximum width in pixels
 
 export function useSidebarWidth() {
-  // Load persisted width from localStorage
+  // Load persisted width via storage adapter
   const loadPersistedWidth = (): number => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY)
-      if (saved) {
-        const width = parseInt(saved, 10)
-        return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, width))
-      }
-    } catch {
-      // Ignore localStorage errors
+    const saved = getStorageAdapter().get<number>(STORAGE_KEYS.SIDEBAR_WIDTH)
+    if (saved !== null) {
+      return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, saved))
     }
     return DEFAULT_WIDTH
   }
@@ -42,13 +37,9 @@ export function useSidebarWidth() {
     sidebarWidth.value = DEFAULT_WIDTH
   }
 
-  // Watch for changes and persist to localStorage
+  // Persist changes via storage adapter
   watch(sidebarWidth, (newWidth) => {
-    try {
-      localStorage.setItem(STORAGE_KEY, newWidth.toString())
-    } catch (error) {
-      console.warn('Failed to save sidebar width to localStorage:', error)
-    }
+    getStorageAdapter().set(STORAGE_KEYS.SIDEBAR_WIDTH, newWidth)
   })
 
   return {
@@ -60,6 +51,6 @@ export function useSidebarWidth() {
     resetSidebarWidth,
     MIN_WIDTH,
     MAX_WIDTH,
-    DEFAULT_WIDTH
+    DEFAULT_WIDTH,
   }
 }

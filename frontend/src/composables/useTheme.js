@@ -1,4 +1,5 @@
 import { ref, computed, onMounted, watch } from 'vue'
+import { getStorageAdapter, STORAGE_KEYS } from '@/services/storage'
 
 // Theme options
 export const THEMES = {
@@ -49,20 +50,16 @@ export function useTheme() {
     }
   }
 
-  // Save theme to localStorage
+  // Save theme via storage adapter
   const saveTheme = (theme) => {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('finzytrack-theme', theme)
-    }
+    getStorageAdapter().set(STORAGE_KEYS.THEME, theme)
   }
 
-  // Load theme from localStorage
+  // Load theme via storage adapter
   const loadTheme = () => {
-    if (typeof localStorage !== 'undefined') {
-      const saved = localStorage.getItem('finzytrack-theme')
-      if (saved && Object.values(THEMES).includes(saved)) {
-        return saved
-      }
+    const saved = getStorageAdapter().get(STORAGE_KEYS.THEME)
+    if (saved && Object.values(THEMES).includes(saved)) {
+      return saved
     }
     return THEMES.SYSTEM
   }
