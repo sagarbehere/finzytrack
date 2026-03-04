@@ -10,8 +10,6 @@ export function formatAmount(value: number, currencyCode: string): string {
   return value.toLocaleString(getLocale(currencyCode), {
     style: 'currency',
     currency: currencyCode,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
   })
 }
 
