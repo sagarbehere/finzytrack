@@ -79,7 +79,6 @@
         <RecipeKPI
           v-if="recipe.visualization.type === 'kpi'"
           :value="getKPIValue()"
-          :label="recipe.title"
           :icon="getKPIIcon()"
           :iconColor="getKPIIconColor()"
           :formatValue="getKPIFormatFunction()"

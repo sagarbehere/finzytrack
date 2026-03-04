@@ -1,6 +1,6 @@
 <template>
-  <div class="flex items-center h-full">
-    <div v-if="icon" class="flex-shrink-0 mr-4">
+  <div class="flex items-start h-full overflow-hidden">
+    <div v-if="icon" class="flex-shrink-0 mr-4 mt-1">
       <div
         class="w-12 h-12 rounded-full flex items-center justify-center"
         :class="iconBgClass"
@@ -8,8 +8,8 @@
         <span class="text-white text-xl font-semibold">{{ icon }}</span>
       </div>
     </div>
-    <div class="flex-1 min-w-0">
-      <p class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
+    <div class="flex-1 min-w-0 overflow-hidden">
+      <p v-if="label" class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
         {{ label }}
       </p>
       <!-- Multi-currency stacked values -->
@@ -17,7 +17,10 @@
         <p
           v-for="(item, index) in values"
           :key="index"
-          class="text-2xl font-bold text-gray-900 dark:text-white"
+          :class="[
+            'font-bold text-gray-900 dark:text-white truncate',
+            values.length >= 3 ? 'text-lg' : values.length === 2 ? 'text-xl' : 'text-2xl',
+          ]"
         >
           {{ formatCurrencyAmount(item) }}
         </p>
