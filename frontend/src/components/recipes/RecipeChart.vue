@@ -17,6 +17,7 @@ import {
 import { CanvasRenderer } from 'echarts/renderers'
 import type { EChartsOption } from 'echarts'
 import type { ECharts as EChartsInstance } from 'echarts/core'
+import { formatAmount } from '@/utils/currencyFormat'
 
 // Register ECharts components
 echarts.use([
@@ -38,6 +39,7 @@ interface Props {
   chartOptions: EChartsOption
   data: unknown[]
   clickable?: boolean
+  currency?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -149,6 +151,20 @@ const finalOptions = computed<EChartsOption>(() => {
       backgroundColor: dark ? '#1f2937' : '#ffffff',
       borderColor: dark ? '#374151' : '#e5e7eb',
       textStyle: { color: textColor },
+      // Currency-aware formatter for item-trigger charts (pie, treemap).
+      // Only applied when a currency is known and the recipe hasn't defined its own formatter.
+      // Recipe formatters spread below will override this if present.
+      ...(props.currency && (treemap || pie)
+        ? {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            formatter: ((params: any) => {
+              const name = params.name ?? ''
+              const value = formatAmount(Number(params.value ?? 0), props.currency!)
+              const percent = params.percent != null ? ` (${params.percent.toFixed(1)}%)` : ''
+              return `${name}<br/>${value}${percent}`
+            }) as any,
+          }
+        : {}),
       ...((props.chartOptions.tooltip as object) || {}),
     },
     legend: {

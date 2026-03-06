@@ -93,6 +93,7 @@
           :chartOptions="recipe.visualization.options"
           :data="Array.isArray(data) ? data : []"
           :clickable="hasChartClickHandler()"
+          :currency="mergedParameters.currency as string | undefined"
           class="h-full"
           @series-click="handleChartSeriesClick"
         />
