@@ -159,7 +159,12 @@ const finalOptions = computed<EChartsOption>(() => {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             formatter: ((params: any) => {
               const name = params.name ?? ''
-              const value = formatAmount(Number(params.value ?? 0), props.currency!)
+              // For dataset-driven charts (pie uses dataset.source + encode), params.value
+              // is the full dataset row, not a plain number. Fall back to params.data.value.
+              const raw = typeof params.value === 'number'
+                ? params.value
+                : (params.data?.value ?? 0)
+              const value = formatAmount(Number(raw), props.currency!)
               const percent = params.percent != null ? ` (${params.percent.toFixed(1)}%)` : ''
               return `${name}<br/>${value}${percent}`
             }) as any,
