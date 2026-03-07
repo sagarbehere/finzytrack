@@ -16,6 +16,8 @@ export interface NLParserConfig {
   apiUrl?: string // e.g. "http://127.0.0.1:1234"
   model?: string // e.g. "gpt-oss-20b"
   apiKey?: string // optional, some local servers don't need one
+  temperature?: number
+  maxTokens?: number
 }
 
 export interface NLParserContext {
@@ -135,8 +137,8 @@ async function parseLLM(text: string, context?: NLParserContext): Promise<Parsed
     },
     body: JSON.stringify({
       model: _config.model || 'gpt-oss-20b',
-      temperature: 0.1,
-      max_tokens: 2048,
+      temperature: _config.temperature ?? 0.1,
+      max_tokens: _config.maxTokens ?? 2048,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: text },

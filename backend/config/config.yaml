@@ -20,10 +20,18 @@ csv_rules_dir: "./config/csv-rules"
 ofx_mappings_file: "./config/ofx_mappings.yaml"
 
 
-# Machine Learning settings
-ml:
-  enabled: false
-  training_data_file: "./data/training.beancount"
+# AI settings (categorization and LLM)
+ai:
+  categorization:
+    enabled: false
+    engine: "classifier"  # "classifier" (scikit-learn) or "llm" (future, requires ai.llm to be configured)
+    training_data_file: "./data/training.beancount"  # used when engine=local
+  llm:
+    api_url: ""       # OpenAI-compatible endpoint, e.g. http://127.0.0.1:1234 or https://api.openai.com
+    api_key: ""       # Required for cloud providers (OpenAI, Groq, etc.), leave empty for local LLMs
+    model: ""         # e.g. gpt-4o, llama-3.1-8b-instruct, openai/gpt-oss-20b
+    temperature: 0.1  # Low = more deterministic (recommended for parsing/SQL)
+    max_tokens: 2048
 
 # Feature flags
 features:

@@ -62,7 +62,7 @@ async def categorize_transactions(
     # Initialize ML classifier with cached training data
     classifier, ml_warning = initialize_classifier(
         training_data=training_data,
-        ml_enabled=config.ml.enabled
+        ml_enabled=config.ai.categorization.enabled
     )
 
     # Process each transaction

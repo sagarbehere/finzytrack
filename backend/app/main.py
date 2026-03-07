@@ -298,11 +298,11 @@ def create_app(config: Config) -> FastAPI:
             checks["backup_dir_writable"] = False
 
         # Conditionally check ML training data file
-        if config.ml.enabled:
+        if config.ai.categorization.enabled:
             checks["ml_training_data_readable"] = False
-            if config.ml.training_data_file:
+            if config.ai.categorization.training_data_file:
                 try:
-                    training_file_path = Path(config.ml.training_data_file)
+                    training_file_path = Path(config.ai.categorization.training_data_file)
                     if training_file_path.exists() and os.access(training_file_path, os.R_OK):
                         checks["ml_training_data_readable"] = True
                 except Exception:

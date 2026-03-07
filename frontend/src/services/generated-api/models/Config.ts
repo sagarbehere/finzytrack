@@ -3,11 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { AccountsConfig } from './AccountsConfig';
+import type { AIConfig } from './AIConfig';
 import type { AnalyticsConfig } from './AnalyticsConfig';
 import type { BackupConfig } from './BackupConfig';
 import type { FeaturesConfig } from './FeaturesConfig';
 import type { LoggingConfig } from './LoggingConfig';
-import type { MLConfig } from './MLConfig';
 import type { SecurityConfig } from './SecurityConfig';
 import type { ServerConfig } from './ServerConfig';
 /**
@@ -20,11 +20,14 @@ export type Config = {
     ledger_file?: string;
     server?: ServerConfig;
     accounts?: AccountsConfig;
-    ml?: MLConfig;
     features?: FeaturesConfig;
     backup?: BackupConfig;
     logging?: LoggingConfig;
     security?: SecurityConfig;
+    /**
+     * AI and machine learning settings
+     */
+    ai?: AIConfig;
     /**
      * Path to OFX account mappings YAML file
      */

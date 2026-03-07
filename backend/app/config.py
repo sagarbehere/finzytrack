@@ -31,10 +31,20 @@ class AccountsConfig(BaseModel):
     default_unknown_account: str = Field(default="Expenses:Unknown", description="Default account for unknown transactions")
 
 
-class MLConfig(BaseModel):
-    """Machine learning configuration."""
-    enabled: bool = Field(default=True, description="Enable ML categorization")
-    training_data_file: Optional[str] = Field(default="./data/training.beancount", description="Path to training data file")
+class CategorizationEngine(str, Enum):
+    """Categorization engine selection."""
+    CLASSIFIER = "classifier"  # scikit-learn classifier trained on local beancount history
+    LLM = "llm"                # LLM-based categorization (future)
+
+
+class CategorizationConfig(BaseModel):
+    """Transaction auto-categorization configuration."""
+    enabled: bool = Field(default=True, description="Enable auto-categorization")
+    engine: CategorizationEngine = Field(
+        default=CategorizationEngine.CLASSIFIER,
+        description="Categorization engine: 'classifier' (scikit-learn) or 'llm' (future, requires ai.llm to be configured)"
+    )
+    training_data_file: Optional[str] = Field(default="./data/training.beancount", description="Path to training data file (used when engine=local)")
 
 
 class FeaturesConfig(BaseModel):
@@ -75,6 +85,21 @@ class SecurityConfig(BaseModel):
         default=["http://127.0.0.1:3000", "http://localhost:3000"],
         description="List of allowed CORS origins for the frontend"
     )
+
+
+class LLMConfig(BaseModel):
+    """LLM API configuration for natural language features."""
+    api_url: str = Field(default="", description="OpenAI-compatible API base URL (e.g. http://127.0.0.1:1234 or https://api.openai.com)")
+    api_key: str = Field(default="", description="API key (required for cloud providers, leave empty for local)")
+    model: str = Field(default="", description="Model name (e.g. gpt-4o, llama-3.1-8b)")
+    temperature: float = Field(default=0.1, ge=0.0, le=2.0, description="Sampling temperature (0=deterministic, 2=very random)")
+    max_tokens: int = Field(default=2048, ge=1, description="Maximum tokens in LLM response")
+
+
+class AIConfig(BaseModel):
+    """AI and machine learning settings."""
+    categorization: CategorizationConfig = Field(default_factory=CategorizationConfig, description="Transaction auto-categorization settings")
+    llm: LLMConfig = Field(default_factory=LLMConfig, description="LLM API settings for natural language features")
 
 
 class OFXAccountMapping(BaseModel):
@@ -174,12 +199,12 @@ class Config(BaseModel):
     # Nested configuration sections
     server: ServerConfig = Field(default_factory=ServerConfig)
     accounts: AccountsConfig = Field(default_factory=AccountsConfig)
-    ml: MLConfig = Field(default_factory=MLConfig)
     features: FeaturesConfig = Field(default_factory=FeaturesConfig)
     backup: BackupConfig = Field(default_factory=BackupConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
-    
+    ai: AIConfig = Field(default_factory=AIConfig, description="AI and machine learning settings")
+
     # OFX account mappings file
     ofx_mappings_file: Optional[str] = Field(default=None, description="Path to OFX account mappings YAML file")
 
@@ -216,11 +241,12 @@ class Config(BaseModel):
             except (PermissionError, OSError) as e:
                 raise ValueError(f"Cannot create backup directory {backup_path}: {e}")
         
-        # Validate training data file exists and is readable (if training file is specified)
-        if self.ml.enabled and self.ml.training_data_file is None:
-            raise ValueError("ML is enabled but no training data file is specified.")
-        if self.ml.enabled and self.ml.training_data_file:
-            training_file = Path(self.ml.training_data_file)
+        # Validate training data file exists and is readable (if local categorization is enabled)
+        cat = self.ai.categorization
+        if cat.enabled and cat.engine == CategorizationEngine.CLASSIFIER and cat.training_data_file is None:
+            raise ValueError("Categorization is enabled with engine=local but no training_data_file is specified.")
+        if cat.enabled and cat.engine == CategorizationEngine.CLASSIFIER and cat.training_data_file:
+            training_file = Path(cat.training_data_file)
             if not training_file.exists():
                 raise ValueError(f"ML training data file does not exist: {training_file}")
             if not training_file.is_file():
