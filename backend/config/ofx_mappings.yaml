@@ -1,0 +1,6 @@
+- institution: TEST_BANK
+  institution_fid: '9999'
+  account_type: CHECKING
+  account_id: UNIQUE123
+  currency: USD
+  beancount_account: Expenses:Unknown

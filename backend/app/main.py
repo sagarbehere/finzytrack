@@ -328,7 +328,7 @@ def create_app(config: Config) -> FastAPI:
         # Add runtime information that's not in the config model
         config_dict["_runtime"] = {
             "active_database": active_db_type.value,
-            "ofx_account_mappings_count": len(config.ofx_account_mappings)
+            "ofx_account_mappings_count": len(config_manager.get_ofx_mappings())
         }
 
         return config_dict

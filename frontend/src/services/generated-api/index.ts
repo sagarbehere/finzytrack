@@ -125,7 +125,6 @@ export type { MetabaseStatusData } from './models/MetabaseStatusData';
 export type { MetabaseStopData } from './models/MetabaseStopData';
 export type { MetabaseSyncSchemaData } from './models/MetabaseSyncSchemaData';
 export type { MLConfig } from './models/MLConfig';
-export type { OFXAccountMapping } from './models/OFXAccountMapping';
 export type { OFXDetectionData } from './models/OFXDetectionData';
 export type { OFXDetectionRequest } from './models/OFXDetectionRequest';
 export type { QueryColumnInfo } from './models/QueryColumnInfo';

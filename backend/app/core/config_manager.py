@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple
 from ruamel.yaml import YAML
 import logging
 
@@ -19,34 +19,51 @@ class ConfigManager:
         """Returns the raw configuration data object."""
         return self.config
 
+    def _get_ofx_mappings_path(self) -> Path:
+        """Get the path to the OFX mappings file."""
+        if self.config.ofx_mappings_file:
+            return Path(self.config.ofx_mappings_file)
+        # Default: same directory as config file
+        config_dir = (self.config.config_file_path or Path('./config/config.yaml')).parent
+        return config_dir / 'ofx_mappings.yaml'
+
+    def get_ofx_mappings(self) -> List[OFXAccountMapping]:
+        """Load OFX account mappings from the dedicated mappings file."""
+        mappings_file = self._get_ofx_mappings_path()
+        if not mappings_file.exists():
+            return []
+
+        yaml = YAML()
+        with open(mappings_file, 'r') as f:
+            data = yaml.load(f)
+
+        if not data:
+            return []
+
+        return [OFXAccountMapping.model_validate(m) for m in data]
+
     def add_ofx_mapping(self, mapping: OFXAccountMapping) -> None:
         """
-        Adds a new OFX account mapping and saves it to the config file
+        Adds a new OFX account mapping to the dedicated mappings file
         using an atomic, backed-up write.
         """
-        config_file = self.config.config_file_path or Path('./config/config.yaml')
-        config_file.parent.mkdir(parents=True, exist_ok=True)
+        mappings_file = self._get_ofx_mappings_path()
+        mappings_file.parent.mkdir(parents=True, exist_ok=True)
 
-        with self.backup_manager.atomic_write(str(config_file)) as f:
+        with self.backup_manager.atomic_write(str(mappings_file)) as f:
             yaml = YAML()
             yaml.indent(mapping=2, sequence=4, offset=2)
             yaml.preserve_quotes = True
             yaml.width = 4096
-            
-            data = yaml.load(f) or {}
 
-            if 'ofx_account_mappings' not in data:
-                data['ofx_account_mappings'] = []
+            data = yaml.load(f) or []
 
             mapping_dict = mapping.model_dump(exclude_none=True)
-            data['ofx_account_mappings'].insert(0, mapping_dict)
+            data.insert(0, mapping_dict)
 
             f.seek(0)
             yaml.dump(data, f)
             f.truncate()
-
-        # Update the in-memory config object as well
-        self.config.ofx_account_mappings.insert(0, mapping)
 
     def save_metabase_state(self, state: Dict[str, Any]) -> None:
         """

@@ -39,7 +39,7 @@ async def detect_ofx_account(
     except Exception as e:
         raise APIError(message=f"Failed to read ledger file: {e}", code="UNKNOWN_SERVER_ERROR", status_code=500, details={"path": config.ledger_file})
     
-    for mapping in config.ofx_account_mappings:
+    for mapping in config_manager.get_ofx_mappings():
         if (mapping.institution.lower() == request.institution.lower() and
             (mapping.institution_fid or "").lower() == (request.institution_fid or "").lower() and
             mapping.account_type.lower() == request.account_type.lower() and
@@ -105,7 +105,7 @@ async def learn_ofx_account(
         beancount_account=request.beancount_account
     )
     
-    for existing_mapping in config.ofx_account_mappings:
+    for existing_mapping in config_manager.get_ofx_mappings():
         if (existing_mapping.institution.lower() == request.institution.lower() and
             (existing_mapping.institution_fid or "").lower() == (request.institution_fid or "").lower() and
             existing_mapping.account_type.lower() == request.account_type.lower() and

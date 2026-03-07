@@ -8,7 +8,6 @@ import type { BackupConfig } from './BackupConfig';
 import type { FeaturesConfig } from './FeaturesConfig';
 import type { LoggingConfig } from './LoggingConfig';
 import type { MLConfig } from './MLConfig';
-import type { OFXAccountMapping } from './OFXAccountMapping';
 import type { SecurityConfig } from './SecurityConfig';
 import type { ServerConfig } from './ServerConfig';
 /**
@@ -27,9 +26,9 @@ export type Config = {
     logging?: LoggingConfig;
     security?: SecurityConfig;
     /**
-     * OFX account mappings
+     * Path to OFX account mappings YAML file
      */
-    ofx_account_mappings?: Array<OFXAccountMapping>;
+    ofx_mappings_file?: (string | null);
     /**
      * Directory containing CSV import rule YAML files
      */

@@ -16,14 +16,9 @@ server:
 # CSV import rules directory
 csv_rules_dir: "./config/csv-rules"
 
-# OFX account mappings for import (populated via "Learn Account" feature)
-ofx_account_mappings:
-  - institution: TEST_BANK
-    account_type: CHECKING
-    account_id: UNIQUE123
-    currency: USD
-    beancount_account: Expenses:Unknown
-    institution_fid: '9999'
+# OFX account mappings file (populated via "Learn Account" feature)
+ofx_mappings_file: "./config/ofx_mappings.yaml"
+
 
 # Machine Learning settings
 ml:
