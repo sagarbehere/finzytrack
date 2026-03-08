@@ -592,9 +592,9 @@ async def close_account(
         # Create the closing directive
         close_directive = f"{close_date_obj} close {account_name}"
         
-        # Add reason as inline comment if provided
+        # Add reason as Beancount metadata (survives parse→print roundtrips, unlike inline comments)
         if request.reason:
-            close_directive += f"  ; reason: {request.reason}"
+            close_directive += f"\n  reason: \"{request.reason}\""
         
         # Use atomic write to add the closing directive (SIMPLE APPEND) with cache invalidation
         with beancount_manager.atomic_ledger_write() as func:
