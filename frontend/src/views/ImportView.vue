@@ -149,16 +149,30 @@
       @keep-transaction="handleKeepTransaction"
       @remove-duplicate="handleRemoveDuplicate"
     />
+
+    <!-- Register Transactions Confirmation Modal -->
+    <DeleteConfirmDialog
+      :is-open="registerConfirmOpen"
+      title="Issues Detected"
+      :message="registerConfirmMessage"
+      confirm-text="Register Anyway"
+      cancel-text="Go Back"
+      variant="warning"
+      @confirm="doRegisterTransactions"
+      @cancel="registerConfirmOpen = false"
+      @close="registerConfirmOpen = false"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-  import { ref, nextTick } from 'vue'
+  import { ref, computed, nextTick } from 'vue'
   import OFXFilePicker from '@/components/import/OFXFilePicker.vue'
   import CSVFilePicker from '@/components/import/CSVFilePicker.vue'
   import ManualEntryPanel from '@/components/import/ManualEntryPanel.vue'
   import TransactionTable from '@/components/common/TransactionTable.vue'
   import DuplicateComparisonModal from '@/components/import/DuplicateComparisonModal.vue'
+  import DeleteConfirmDialog from '@/components/common/DeleteConfirmDialog.vue'
   import { v7 as uuidv7 } from 'uuid'
   import type { TransactionViewModel, PostingViewModel, ImportContext, TransactionImportBundle } from '@/types/transactions'
   import type { OFXTransaction, OfxFileDetails } from '@/types/ofx'
@@ -167,6 +181,7 @@
   import type { ParsedTransaction } from '@/services/nlParser'
   import { useTransactionImporter } from '@/composables/useTransactionImporter'
   import { useToast } from '@/composables/useNotifications'
+  import { isTransactionBalanced } from '@/utils/transactions'
 
   const { performCategorization, performCommit, isLoading, categorizeError, commitError } = useTransactionImporter()
   const { success: showSuccessToast, error: showErrorToast } = useToast()
@@ -192,6 +207,31 @@
   const duplicateModalOpen = ref(false)
   const duplicateModalInitialIndex = ref(0)
   const duplicateTransactionsList = ref<Array<{ transaction: TransactionViewModel; duplicateMatches: DuplicateInfo[] }>>([])
+
+  // Register confirmation modal state
+  const registerConfirmOpen = ref(false)
+
+  const pendingDuplicateCount = computed(() =>
+    transactionViewModels.value.filter(t => importContext.value.get(t.id)?.is_duplicate === true).length
+  )
+
+  const pendingUnbalancedCount = computed(() =>
+    transactionViewModels.value.filter(t => !isTransactionBalanced(t)).length
+  )
+
+  const registerConfirmMessage = computed(() => {
+    const lines: string[] = ['The following issues were detected:']
+    if (pendingDuplicateCount.value > 0) {
+      const n = pendingDuplicateCount.value
+      lines.push(`• ${n} potential duplicate transaction${n !== 1 ? 's' : ''}`)
+    }
+    if (pendingUnbalancedCount.value > 0) {
+      const n = pendingUnbalancedCount.value
+      lines.push(`• ${n} unbalanced transaction${n !== 1 ? 's' : ''}`)
+    }
+    lines.push('\nDo you want to proceed with registering all transactions anyway?')
+    return lines.join('\n')
+  })
 
   // Event handlers
   const handleFileCleared = () => {
@@ -584,10 +624,19 @@
   }
 
   // Register transactions function
-  const registerTransactions = async () => {
-    if (!transactionViewModels.value.length) {
+  const registerTransactions = () => {
+    if (!transactionViewModels.value.length) return
+
+    if (pendingDuplicateCount.value > 0 || pendingUnbalancedCount.value > 0) {
+      registerConfirmOpen.value = true
       return
     }
+
+    doRegisterTransactions()
+  }
+
+  const doRegisterTransactions = async () => {
+    registerConfirmOpen.value = false
 
     try {
       const result = await performCommit(transactionViewModels.value)

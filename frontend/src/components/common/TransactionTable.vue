@@ -1529,6 +1529,7 @@ defineExpose({
   overflow-x: auto;
   overflow-y: auto;
   max-height: 600px; /* Fixed viewport height - adjust as needed */
+  will-change: transform; /* Promote to GPU compositing layer for smooth scroll with sticky elements */
 }
 
 /* Let the browser's native scrollbar work naturally */
@@ -1605,7 +1606,7 @@ defineExpose({
   touch-action: none;
   z-index: 10;
   border-right: 2px solid transparent;
-  transition: all 0.2s ease;
+  transition: border-right 0.2s ease, background-color 0.2s ease;
 }
 
 .resize-handle:hover,
@@ -1630,6 +1631,11 @@ thead {
   position: sticky;
   top: 0; /* Stick to top of scroll container */
   z-index: 20; /* Above table content, below dropdowns */
+  background-color: rgb(249 250 251); /* Match th bg-gray-50 so no content bleeds through during scroll */
+}
+
+.dark thead {
+  background-color: rgba(31, 41, 55, 0.5); /* Match dark:bg-gray-800/50 */
 }
 
 th {
