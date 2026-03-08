@@ -141,7 +141,7 @@
                     >
                       <td class="px-3 py-2 text-sm text-gray-900 dark:text-white whitespace-nowrap">{{ directive.date }}</td>
                       <td class="px-3 py-2 text-sm text-gray-900 dark:text-white">{{ directive.currency }}</td>
-                      <td class="px-3 py-2 text-sm text-right text-gray-900 dark:text-white">{{ formatBalance(directive.expected_balance) }}</td>
+                      <td class="px-3 py-2 text-sm text-right text-gray-900 dark:text-white">{{ formatBalance(directive.expected_balance, directive.currency) }}</td>
                       <td class="px-3 py-2 text-center">
                         <span
                           v-if="directive.has_pad"
@@ -332,6 +332,7 @@ import { useAccounts } from '@/composables/useAccounts'
 import { useToast } from '@/composables/useNotifications'
 import AccountDropdown from '@/components/common/AccountDropdown.vue'
 import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
+import { getLocale } from '@/utils/currencyFormat'
 
 interface Props {
   open: boolean
@@ -518,8 +519,8 @@ async function performDelete() {
   }
 }
 
-function formatBalance(value: number): string {
-  return value.toLocaleString(undefined, {
+function formatBalance(value: number, currency: string): string {
+  return value.toLocaleString(getLocale(currency), {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })

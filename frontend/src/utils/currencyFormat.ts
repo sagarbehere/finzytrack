@@ -2,7 +2,7 @@ const CURRENCY_LOCALES: Record<string, string> = {
   INR: 'en-IN',
 }
 
-function getLocale(currencyCode: string): string {
+export function getLocale(currencyCode: string): string {
   return CURRENCY_LOCALES[currencyCode] || 'en-US'
 }
 

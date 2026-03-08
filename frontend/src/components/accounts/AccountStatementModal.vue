@@ -142,10 +142,10 @@
                         <td class="px-3 py-2 text-sm text-right tabular-nums whitespace-nowrap"
                           :class="amountColor(txAmount(tx, ccy))"
                         >
-                          {{ formatAmount(txAmount(tx, ccy)) }}
+                          {{ formatAmount(txAmount(tx, ccy), ccy) }}
                         </td>
                         <td class="px-3 py-2 text-sm text-right tabular-nums whitespace-nowrap text-gray-900 dark:text-white">
-                          {{ formatBalance(tx.runningBalances[ccy]) }}
+                          {{ formatBalance(tx.runningBalances[ccy], ccy) }}
                         </td>
                       </template>
                     </tr>
@@ -183,6 +183,7 @@ import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } fro
 import { MagnifyingGlassIcon, ChevronUpIcon, ChevronDownIcon, ArrowPathIcon } from '@heroicons/vue/24/outline'
 import type { AccountTreeNode } from '@/types/accounts'
 import type { TransactionViewModel } from '@/types/transactions'
+import { getLocale } from '@/utils/currencyFormat'
 import { useTransactionQuery } from '@/composables/useTransactionQuery'
 import DatePresetSelector from '@/components/common/DatePresetSelector.vue'
 
@@ -387,17 +388,17 @@ function txAmount(tx: EnrichedTransaction, currency: string): number | null {
   return found ? total : null
 }
 
-function formatAmount(value: number | null): string {
+function formatAmount(value: number | null, currency: string): string {
   if (value === null) return '—'
-  return value.toLocaleString(undefined, {
+  return value.toLocaleString(getLocale(currency), {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })
 }
 
-function formatBalance(value: number | undefined): string {
+function formatBalance(value: number | undefined, currency: string): string {
   if (value === undefined) return '—'
-  return value.toLocaleString(undefined, {
+  return value.toLocaleString(getLocale(currency), {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })

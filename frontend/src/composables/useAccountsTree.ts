@@ -1,6 +1,7 @@
 import { ref, type Ref } from 'vue'
 import type { AccountDetails } from '@/services/generated-api'
 import type { AccountTreeNode, AccountFilters, AccountType, AggregatedBalance } from '@/types/accounts'
+import { getLocale } from '@/utils/currencyFormat'
 
 interface UseAccountsTreeReturn {
   // Tree state
@@ -319,7 +320,7 @@ export function formatBalances(balances: AggregatedBalance[], maxShow = 2): { di
   const shown = sorted.slice(0, maxShow)
 
   const display = shown
-    .map(b => `${b.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${b.currency}`)
+    .map(b => `${b.balance.toLocaleString(getLocale(b.currency), { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${b.currency}`)
     .join(', ')
 
   return { display, overflow: Math.max(0, sorted.length - maxShow) }

@@ -97,7 +97,7 @@
                             : 'text-red-600 dark:text-red-400'
                         ]"
                       >
-                        {{ formatBalance(balance.balance) }}
+                        {{ formatBalance(balance.balance, balance.currency) }}
                       </td>
                     </tr>
                     <tr v-if="filteredBalances.length === 0">
@@ -132,6 +132,7 @@ import { ref, computed, watch } from 'vue'
 import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } from '@headlessui/vue'
 import { MagnifyingGlassIcon, ChevronUpIcon } from '@heroicons/vue/24/outline'
 import type { AccountTreeNode } from '@/types/accounts'
+import { getLocale } from '@/utils/currencyFormat'
 
 interface Props {
   open: boolean
@@ -192,8 +193,8 @@ function toggleSort(field: 'currency' | 'balance') {
   }
 }
 
-function formatBalance(value: number): string {
-  return value.toLocaleString(undefined, {
+function formatBalance(value: number, currency: string): string {
+  return value.toLocaleString(getLocale(currency), {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   })
