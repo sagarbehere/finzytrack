@@ -77,7 +77,7 @@ export function useTransactionQuery() {
       transactionLevelWhereClauses.push(`LOWER(transaction_narration) LIKE LOWER('%${escapeSQLString(filters.narrationContains)}%')`)
     }
     if (filters.flag) {
-      transactionLevelWhereClauses.push(`transaction_flag = '${escapeSQLString(filters.flag)}'`)
+      transactionLevelWhereClauses.push(`LOWER(transaction_flag) = LOWER('${escapeSQLString(filters.flag)}')`)
     }
     if (filters.tagsContain) {
       transactionLevelWhereClauses.push(`LOWER(transaction_tags) LIKE LOWER('%${escapeSQLString(filters.tagsContain)}%')`)
@@ -103,10 +103,10 @@ export function useTransactionQuery() {
       postingLevelFilters.push(`ABS(amount) < ${filters.amountLessThan}`)
     }
     if (filters.currency) {
-      postingLevelFilters.push(`currency = '${escapeSQLString(filters.currency)}'`)
+      postingLevelFilters.push(`LOWER(currency) = LOWER('${escapeSQLString(filters.currency)}')`)
     }
     if (filters.accountType) {
-      postingLevelFilters.push(`account_type = '${escapeSQLString(filters.accountType)}'`)
+      postingLevelFilters.push(`LOWER(account_type) = LOWER('${escapeSQLString(filters.accountType)}')`)
     }
 
     if (postingLevelFilters.length > 0) {
