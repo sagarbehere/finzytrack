@@ -91,14 +91,13 @@
                     </span>
                   </div>
                   <div class="flex gap-2">
-                    <input
-                      id="currencies"
-                      v-model="currencyInput"
-                      type="text"
-                      placeholder="Add currency (e.g., USD)"
-                      @keydown.enter.prevent="addCurrency"
-                      class="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                    />
+                    <div class="flex-1">
+                      <CommodityDropdown
+                        v-model="currencyInput"
+                        placeholder="Add currency (e.g., USD)"
+                        :allow-custom="true"
+                      />
+                    </div>
                     <button
                       type="button"
                       @click="addCurrency"
@@ -157,6 +156,7 @@ import { ref, reactive, watch } from 'vue'
 import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } from '@headlessui/vue'
 import { XMarkIcon } from '@heroicons/vue/24/outline'
 import type { AccountTreeNode } from '@/types/accounts'
+import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
 
 interface Props {
   open: boolean

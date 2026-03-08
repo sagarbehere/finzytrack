@@ -69,11 +69,10 @@
                   </div>
                   <div>
                     <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Currency</label>
-                    <input
+                    <CommodityDropdown
                       v-model="addForm.currency"
-                      type="text"
-                      placeholder="USD"
-                      class="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm uppercase dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="e.g. USD"
+                      :allow-custom="true"
                     />
                   </div>
                 </div>
@@ -230,10 +229,9 @@
                   </div>
                   <div>
                     <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Currency</label>
-                    <input
+                    <CommodityDropdown
                       v-model="editForm.newCurrency"
-                      type="text"
-                      class="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm uppercase dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      :allow-custom="true"
                     />
                   </div>
                 </div>
@@ -333,6 +331,7 @@ import type { BalanceDirectiveData } from '@/services/generated-api'
 import { useAccounts } from '@/composables/useAccounts'
 import { useToast } from '@/composables/useNotifications'
 import AccountDropdown from '@/components/common/AccountDropdown.vue'
+import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
 
 interface Props {
   open: boolean
@@ -434,7 +433,7 @@ async function submitAdd() {
   try {
     await addBalanceDirective(props.account.fullPath, {
       date: addForm.value.date,
-      currency: addForm.value.currency.toUpperCase(),
+      currency: addForm.value.currency,
       amount: addForm.value.amount,
       include_pad: addForm.value.includePad,
       pad_source_account: addForm.value.includePad ? addForm.value.padSourceAccount : undefined,
@@ -476,7 +475,7 @@ async function submitEdit() {
       original_currency: original.currency,
       original_amount: original.expected_balance,
       new_date: editForm.value.newDate,
-      new_currency: editForm.value.newCurrency.toUpperCase(),
+      new_currency: editForm.value.newCurrency,
       new_amount: editForm.value.newAmount,
       include_pad: editForm.value.includePad,
       pad_source_account: editForm.value.includePad ? editForm.value.padSourceAccount : undefined,
