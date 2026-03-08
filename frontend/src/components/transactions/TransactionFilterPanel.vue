@@ -230,7 +230,7 @@ interface Props {
 const props = defineProps<Props>()
 
 const emit = defineEmits<{
-  (e: 'filter-changed', filters: TransactionFilters, dbType: 'duckdb' | 'sqlite', limit: number): void
+  (e: 'filter-changed', filters: TransactionFilters, limit: number): void
 }>()
 
 // Result limit (default 1000, min 1, max 50000)
@@ -278,7 +278,7 @@ function handleApply() {
     limit.value = validatedLimit
   }
 
-  emit('filter-changed', { ...filters.value }, 'sqlite', validatedLimit)
+  emit('filter-changed', { ...filters.value }, validatedLimit)
 }
 
 function handleClear() {

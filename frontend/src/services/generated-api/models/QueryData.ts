@@ -12,7 +12,7 @@ export type QueryData = {
      */
     query: string;
     /**
-     * Query engine used (duckdb, sqlite, or beanquery)
+     * Query engine used (sqlite or beanquery)
      */
     engine: string;
     /**

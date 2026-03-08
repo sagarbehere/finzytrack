@@ -3,15 +3,15 @@ Query router - handles executing queries on the ledger.
 """
 import asyncio
 import logging
+import sqlite3
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Body
 
 from app.schemas.response_schemas import ApiResponse
 from app.schemas.query_schemas import QueryRequest, QueryData
-from app.schemas.export_schemas import DatabaseType
 from app.dependencies import get_beancount_manager, get_config_manager
-from app.services.duckdb_exporter import DuckDBExporter
 from app.services.sqlite_exporter import SQLiteExporter
 from app.services.beanquery_service import BeanqueryService
 from app.core.beancount_manager import BeancountManager
@@ -33,7 +33,7 @@ async def execute_query(
     request: QueryRequest = Body(...),
     db_type: Optional[str] = Query(
         None,
-        description="Database/engine type: 'duckdb', 'sqlite', or 'beanquery'. If not specified, uses active database from config."
+        description="Database/engine type: 'sqlite' or 'beanquery'. Defaults to 'sqlite'."
     ),
     beancount_manager: BeancountManager = Depends(get_beancount_manager),
     config_manager: ConfigManager = Depends(get_config_manager)
@@ -46,26 +46,18 @@ async def execute_query(
         POST /api/ledger/query?db_type=sqlite {"query": "SELECT account, SUM(amount) FROM postings GROUP BY account"}
         POST /api/ledger/query?db_type=beanquery {"query": "SELECT account, sum(position) FROM postings GROUP BY account"}
     """
-    config = config_manager.get_config()
-    
-    # Determine the query engine
-    if db_type:
-        engine = db_type.lower()
-        if engine not in ["duckdb", "sqlite", "beanquery"]:
-            raise APIError(
-                message="Invalid database/engine type",
-                code="ENGINE_NOT_SUPPORTED",
-                status_code=400,
-                details={"supported_engines": ["duckdb", "sqlite", "beanquery"]}
-            )
-    else:
-        # Default to active database if not specified
-        engine = config.analytics.metabase.db_type.value
-    
+    engine = (db_type or "sqlite").lower()
+
+    if engine not in ["sqlite", "beanquery"]:
+        raise APIError(
+            message="Invalid database/engine type",
+            code="ENGINE_NOT_SUPPORTED",
+            status_code=400,
+            details={"supported_engines": ["sqlite", "beanquery"]}
+        )
+
     # Check for ledger errors (filter out warnings like PadError which are non-fatal)
     errors = beancount_manager.cache.get_errors()
-
-    # Filter to only include actual parsing errors, not warnings
     fatal_errors = [
         error for error in errors
         if not error.__class__.__name__ in ['PadError', 'UnusedPadError']
@@ -81,14 +73,12 @@ async def execute_query(
                 "errors": [str(e) for e in fatal_errors[:5]]
             }
         )
-    
-    # Execute query based on engine
+
     if engine == "beanquery":
-        # Use beanquery service
         beanquery_service = BeanqueryService()
         entries = beancount_manager.cache.get_entries()
         options = beancount_manager.cache.get_cached_data().options
-        
+
         try:
             result = await asyncio.wait_for(
                 beanquery_service.execute_query(entries, options, request.query),
@@ -101,7 +91,6 @@ async def execute_query(
                 status_code=408
             )
         except Exception as e:
-            # Parse beanquery errors for better error messages
             error_msg = str(e)
             if "syntax error" in error_msg.lower():
                 raise APIError(
@@ -117,28 +106,23 @@ async def execute_query(
                     status_code=500,
                     details={"error": error_msg}
                 )
-    
-    else:
-        # Use SQL database (DuckDB or SQLite)
-        if engine == DatabaseType.DUCKDB.value:
-            exporter = DuckDBExporter(duckdb_path=config.analytics.duckdb.export_path)
-        else:  # DatabaseType.SQLITE
-            exporter = SQLiteExporter(sqlite_path=config.analytics.sqlite.export_path)
-        
-        # Check if database exists
+
+    else:  # sqlite
+        config = config_manager.get_config()
+        exporter = SQLiteExporter(sqlite_path=config.analytics.sqlite.export_path)
+
         status = await exporter.get_status()
         if not status["exists"]:
             raise APIError(
-                message=f"Database {engine} does not exist. Please export the ledger first.",
+                message="SQLite database does not exist. Please export the ledger first.",
                 code="DATABASE_NOT_FOUND",
                 status_code=404,
-                details={"db_type": engine, "path": exporter.export_path}
+                details={"db_type": "sqlite", "path": exporter.export_path}
             )
-        
-        # Execute SQL query
+
         try:
             result = await asyncio.wait_for(
-                _execute_sql_query(exporter, request.query),
+                asyncio.to_thread(_execute_sqlite_query, exporter.export_path, request.query),
                 timeout=30.0
             )
         except asyncio.TimeoutError:
@@ -148,7 +132,6 @@ async def execute_query(
                 status_code=408
             )
         except Exception as e:
-            # Parse SQL errors for better error messages
             error_msg = str(e)
             if "syntax error" in error_msg.lower() or "parse error" in error_msg.lower():
                 raise APIError(
@@ -171,8 +154,7 @@ async def execute_query(
                     status_code=500,
                     details={"error": error_msg}
                 )
-    
-    # Build response
+
     query_data = QueryData(
         query=request.query,
         engine=engine,
@@ -181,119 +163,31 @@ async def execute_query(
         columns=result["columns"],
         rows=result["rows"]
     )
-    
+
     return success_json_response(query_data)
-
-
-async def _execute_sql_query(exporter, query_str: str) -> dict:
-    """
-    Execute SQL query on DuckDB or SQLite database.
-    
-    This is a helper function that abstracts the SQL execution logic.
-    """
-    import time
-    from pathlib import Path
-    
-    start_time = time.time()
-    
-    # Determine database type and execute query accordingly
-    if hasattr(exporter, 'duckdb_path'):  # DuckDB
-        import duckdb
-        
-        # Run blocking DuckDB operations in thread pool
-        result = await asyncio.to_thread(
-            _execute_duckdb_query,
-            exporter.duckdb_path,
-            query_str
-        )
-    else:  # SQLite
-        import sqlite3
-        
-        # Run blocking SQLite operations in thread pool
-        result = await asyncio.to_thread(
-            _execute_sqlite_query,
-            exporter.export_path,
-            query_str
-        )
-    
-    execution_time_ms = int((time.time() - start_time) * 1000)
-    result["execution_time_ms"] = execution_time_ms
-    
-    return result
-
-
-def _execute_duckdb_query(db_path: str, query_str: str) -> dict:
-    """Execute DuckDB query (blocking I/O)."""
-    import duckdb
-    
-    # DuckDB doesn't have a read_only pragma like SQLite
-    # We'll connect normally and rely on not using write operations
-    con = duckdb.connect(db_path, read_only=True)
-    
-    try:
-        # Execute query and get results
-        result = con.execute(query_str)
-        
-        # Get column information
-        columns = []
-        for desc in result.description:
-            columns.append({
-                "name": desc[0],
-                "type": str(desc[1]) if desc[1] else "UNKNOWN"
-            })
-        
-        # Fetch all rows
-        rows = result.fetchall()
-        
-        # Convert rows to list of dictionaries
-        row_dicts = []
-        for row in rows:
-            row_dict = {}
-            for i, value in enumerate(row):
-                column_name = columns[i]["name"] if i < len(columns) else f"col_{i}"
-                # Convert DuckDB types to JSON-serializable format
-                if hasattr(value, '__dict__'):  # DuckDB objects
-                    row_dict[column_name] = str(value)
-                else:
-                    row_dict[column_name] = value
-            row_dicts.append(row_dict)
-        
-        return {
-            "success": True,
-            "row_count": len(row_dicts),
-            "columns": columns,
-            "rows": row_dicts
-        }
-    
-    finally:
-        con.close()
 
 
 def _execute_sqlite_query(db_path: str, query_str: str) -> dict:
     """Execute SQLite query (blocking I/O)."""
-    import sqlite3
-    
+    start_time = time.time()
+
     con = sqlite3.connect(db_path, uri=True)
-    # Set read-only mode using URI
     con.execute('PRAGMA query_only = true')
-    con.row_factory = sqlite3.Row  # Enable row factory for column access
-    
+    con.row_factory = sqlite3.Row
+
     try:
         cursor = con.execute(query_str)
-        
-        # Get column information
+
         columns = []
         if cursor.description:
             for desc in cursor.description:
                 columns.append({
                     "name": desc[0],
-                    "type": "TEXT"  # SQLite doesn't have rich type info in cursor.description
+                    "type": "TEXT"
                 })
-        
-        # Fetch all rows
+
         rows = cursor.fetchall()
-        
-        # Convert rows to list of dictionaries
+
         row_dicts = []
         for row in rows:
             row_dict = {}
@@ -301,13 +195,14 @@ def _execute_sqlite_query(db_path: str, query_str: str) -> dict:
                 column_name = columns[i]["name"] if i < len(columns) else f"col_{i}"
                 row_dict[column_name] = value
             row_dicts.append(row_dict)
-        
+
         return {
             "success": True,
+            "execution_time_ms": int((time.time() - start_time) * 1000),
             "row_count": len(row_dicts),
             "columns": columns,
             "rows": row_dicts
         }
-    
+
     finally:
         con.close()

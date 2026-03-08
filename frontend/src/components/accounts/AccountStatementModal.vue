@@ -279,7 +279,6 @@ async function loadTransactions() {
   try {
     const { transactions } = await queryTransactions(
       { accountContains: props.account.fullPath },
-      'sqlite',
       50000
     )
     allTransactions.value = transactions

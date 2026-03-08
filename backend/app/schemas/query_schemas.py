@@ -19,7 +19,7 @@ class QueryColumnInfo(BaseModel):
 class QueryData(BaseModel):
     """Query result data."""
     query: str = Field(..., description="The executed query")
-    engine: str = Field(..., description="Query engine used (duckdb, sqlite, or beanquery)")
+    engine: str = Field(..., description="Query engine used (sqlite or beanquery)")
     execution_time_ms: int = Field(..., description="Query execution time in milliseconds")
     row_count: int = Field(..., description="Number of rows returned")
     columns: List[QueryColumnInfo] = Field(..., description="Column information")

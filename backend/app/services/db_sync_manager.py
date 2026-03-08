@@ -1,9 +1,9 @@
 """
-DB Sync Manager - Orchestrates WHEN to export with debouncing (database-agnostic).
+DB Sync Manager - Orchestrates WHEN to export with debouncing.
 
 This service manages the timing and orchestration of database exports,
 implementing debouncing logic to prevent thrashing during bulk imports.
-It delegates the actual export work to the provided exporter (DuckDB or SQLite).
+It delegates the actual export work to the provided exporter.
 """
 import os
 import asyncio
@@ -18,7 +18,7 @@ class DBSyncManager:
 
     def __init__(
         self,
-        exporter: Any,  # Union[DuckDBExporter, SQLiteExporter]
+        exporter: Any,
         ledger_file: str,
         delay: float = 5.0,
         db_type: str = "database"
@@ -30,7 +30,7 @@ class DBSyncManager:
             exporter: Exporter instance with export_entries() method and export_path attribute
             ledger_file: Path to Beancount ledger file (for mtime checking)
             delay: Debounce delay in seconds (default 5.0)
-            db_type: Database type name for logging (e.g., "duckdb", "sqlite")
+            db_type: Database type name for logging (e.g., "sqlite")
         """
         self.exporter = exporter
         self.ledger_file = ledger_file

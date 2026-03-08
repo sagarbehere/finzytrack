@@ -40,7 +40,7 @@ function formatMonth(yearMonth: string): string {
  * Monthly Income vs Expenses Chart Widget
  *
  * Shows a bar chart of monthly expenses, income, and savings for a selected year.
- * Styled to match Metabase with data labels, full month names, and muted colors.
+ * Styled with data labels, full month names, and muted colors.
  */
 export const monthlyIncomeExpensesWidget: WidgetRecipe = {
   id: 'monthly-income-expenses',

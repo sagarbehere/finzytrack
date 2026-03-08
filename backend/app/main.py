@@ -15,19 +15,17 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .config import Config, ConfigurationError, DatabaseType
+from .config import Config, ConfigurationError
 from .api.routers.importer import ofx_accounts, transaction, csv_rules
-from .api.routers import accounts, commodities, ledger_export, ledger_transactions, metabase, query, config as config_router, files, ledger
+from .api.routers import accounts, commodities, ledger_export, ledger_transactions, query, config as config_router, files, ledger
 from .core.beancount_manager import BeancountManager
 from .error_handler import setup_error_handlers
 from .core.backup_manager import BackupManager
 from .core.config_manager import ConfigManager
 from .core.csv_rules_manager import CsvRulesManager
 from .core.ledger_initializer import LedgerInitializer
-from .services.duckdb_exporter import DuckDBExporter
 from .services.sqlite_exporter import SQLiteExporter
 from .services.db_sync_manager import DBSyncManager
-from .services.metabase_manager import MetabaseManager
 
 
 def setup_logging(level: str, log_file: str, log_format: str) -> None:
@@ -102,51 +100,20 @@ def create_app(config: Config) -> FastAPI:
         ledger_initializer=ledger_initializer
     )
 
-    # 5. Create exporters for both databases
-    duckdb_exporter = DuckDBExporter(
-        duckdb_path=config.analytics.duckdb.export_path
-    )
-
+    # 5. Create SQLite exporter and sync manager
     sqlite_exporter = SQLiteExporter(
         sqlite_path=config.analytics.sqlite.export_path,
         enable_wal=config.analytics.sqlite.enable_wal
-    )
-
-    # 6. Create sync managers for both databases
-    duckdb_sync_manager = DBSyncManager(
-        exporter=duckdb_exporter,
-        ledger_file=config.ledger_file,
-        delay=config.analytics.duckdb.sync_debounce_seconds,
-        db_type=DatabaseType.DUCKDB.value
     )
 
     sqlite_sync_manager = DBSyncManager(
         exporter=sqlite_exporter,
         ledger_file=config.ledger_file,
         delay=config.analytics.sqlite.sync_debounce_seconds,
-        db_type=DatabaseType.SQLITE.value
+        db_type="sqlite"
     )
 
-    # 7. Determine active sync manager based on metabase db_type (Pydantic enum)
-    active_db_type = config.analytics.metabase.db_type  # This is a DatabaseType enum
-    active_sync_manager = (
-        sqlite_sync_manager if active_db_type == DatabaseType.SQLITE
-        else duckdb_sync_manager
-    )
-    active_exporter = (
-        sqlite_exporter if active_db_type == DatabaseType.SQLITE
-        else duckdb_exporter
-    )
-
-    # 8. Create Metabase manager with both database paths
-    metabase_manager = MetabaseManager(
-        config=config.analytics.metabase,
-        duckdb_path=config.analytics.duckdb.export_path,
-        sqlite_path=config.analytics.sqlite.export_path,
-        config_manager=config_manager
-    )
-
-    # 9. Ensure ledger exists - fail fast if it can't be created
+    # 6. Ensure ledger exists - fail fast if it can't be created
     try:
         if not ledger_initializer.ensure_ledger_exists():
             raise RuntimeError(f"Failed to create ledger file at {config.ledger_file}")
@@ -155,18 +122,14 @@ def create_app(config: Config) -> FastAPI:
         logger.error(f"Fatal: Cannot initialize ledger file {config.ledger_file}: {e}")
         raise RuntimeError(f"Failed to initialize ledger file {config.ledger_file}: {e}")
 
-    # 10. Register callback for active database only
-    # Access the specific config section using enum value as key
-    active_db_config_key = active_db_type.value  # "duckdb" or "sqlite"
-    active_db_config = getattr(config.analytics, active_db_config_key)
-
-    if active_sync_manager and active_db_config.auto_sync_enabled:
+    # 7. Register SQLite sync callback
+    if config.analytics.sqlite.auto_sync_enabled:
         beancount_manager.register_cache_invalidation_callback(
-            active_sync_manager.on_ledger_changed
+            sqlite_sync_manager.on_ledger_changed
         )
-        logger.info(f"{active_db_type.value.upper()} auto-sync enabled with debouncing")
+        logger.info("SQLite auto-sync enabled with debouncing")
 
-    # 11. Define lifespan event handler
+    # 8. Define lifespan event handler
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         """
@@ -177,22 +140,14 @@ def create_app(config: Config) -> FastAPI:
         # STARTUP: Tasks to run when the application starts
         logger.info("Application starting up...")
 
-        # Export active database on startup if out of date
-        if active_sync_manager._needs_export():
+        # Export SQLite on startup if out of date
+        if sqlite_sync_manager._needs_export():
             try:
                 entries = beancount_manager.cache.get_entries()
-                await active_exporter.export_entries(entries)
-                logger.info(f"{active_db_type.value.upper()} exported on startup")
+                await sqlite_exporter.export_entries(entries)
+                logger.info("SQLite exported on startup")
             except Exception as e:
-                logger.error(f"Failed to export {active_db_type.value} on startup: {e}")
-
-        # Auto-start Metabase if configured
-        if config.analytics.metabase.auto_start:
-            try:
-                await metabase_manager.start()
-                logger.info("Metabase auto-started on application startup")
-            except Exception as e:
-                logger.error(f"Failed to auto-start Metabase: {e}")
+                logger.error(f"Failed to export SQLite on startup: {e}")
 
         logger.info("Application startup complete")
 
@@ -202,20 +157,11 @@ def create_app(config: Config) -> FastAPI:
         # SHUTDOWN: Tasks to run when the application shuts down
         logger.info("Application shutting down...")
 
-        # Cancel pending sync for active manager
         try:
-            await active_sync_manager.cancel_pending_sync()
-            logger.info(f"Cancelled pending {active_db_type.value} sync")
+            await sqlite_sync_manager.cancel_pending_sync()
+            logger.info("Cancelled pending SQLite sync")
         except Exception as e:
             logger.error(f"Error cancelling sync: {e}")
-
-        # Stop Metabase gracefully if running
-        if metabase_manager.is_running():
-            try:
-                await metabase_manager.stop()
-                logger.info("Metabase stopped on application shutdown")
-            except Exception as e:
-                logger.error(f"Error stopping Metabase: {e}")
 
         logger.info("Application shutdown complete")
 
@@ -241,15 +187,11 @@ def create_app(config: Config) -> FastAPI:
 
     # 14. Store managers in app state for access in routes
     app.state.config_manager = config_manager
+    app.state.config_manager = config_manager
     app.state.beancount_manager = beancount_manager
     app.state.backup_manager = backup_manager
-    app.state.duckdb_exporter = duckdb_exporter
     app.state.sqlite_exporter = sqlite_exporter
-    app.state.duckdb_sync_manager = duckdb_sync_manager
     app.state.sqlite_sync_manager = sqlite_sync_manager
-    app.state.active_sync_manager = active_sync_manager
-    app.state.active_exporter = active_exporter
-    app.state.metabase_manager = metabase_manager
     app.state.csv_rules_manager = csv_rules_manager
 
     # Include API routers
@@ -260,7 +202,6 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(commodities.router, prefix="/api", tags=["commodities"])
     app.include_router(ledger_export.router, prefix="/api/ledger", tags=["ledger"])
     app.include_router(ledger_transactions.router, prefix="/api/ledger", tags=["ledger"])
-    app.include_router(metabase.router, prefix="/api/metabase", tags=["metabase"])
     app.include_router(query.router, prefix="/api/ledger", tags=["ledger"])
     # Settings and file editor routers
     app.include_router(config_router.router, prefix="/api", tags=["config"])
@@ -327,7 +268,7 @@ def create_app(config: Config) -> FastAPI:
 
         # Add runtime information that's not in the config model
         config_dict["_runtime"] = {
-            "active_database": active_db_type.value,
+            "active_database": "sqlite",
             "ofx_account_mappings_count": len(config_manager.get_ofx_mappings())
         }
 

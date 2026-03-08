@@ -14,30 +14,24 @@ export function useTransactionQuery() {
    */
   async function queryTransactions(
     filters: TransactionFilters,
-    dbType: 'duckdb' | 'sqlite' = 'sqlite',
     limit: number = 1000
   ): Promise<{ transactions: TransactionViewModel[], totalCount: number | null }> {
     isLoading.value = true
     error.value = null
 
     try {
-      // Construct SQL query from filters
-      const sqlQuery = buildSQLQuery(filters, dbType, limit)
+      const sqlQuery = buildSQLQuery(filters, limit)
 
       console.log('Executing SQL query:', sqlQuery)
 
-      // Execute query via API
       const queryRequest: QueryRequest = { query: sqlQuery }
-      const response = await LedgerService.executeQuery(queryRequest, dbType)
+      const response = await LedgerService.executeQuery(queryRequest, 'sqlite')
 
       if (!response.success || !response.data) {
         throw new Error('Query failed: No data returned')
       }
 
-      const queryData = response.data
-
-      // Transform query results to TransactionViewModel[]
-      const result = transformQueryResultsToTransactions(queryData.rows, dbType)
+      const result = transformQueryResultsToTransactions(response.data.rows)
 
       return result
 
@@ -55,16 +49,12 @@ export function useTransactionQuery() {
    * Build SQL query from filter parameters.
    *
    * Strategy:
-   * 1. Query the postings table (DuckDB or SQLite, exported by backend)
+   * 1. Query the postings table (SQLite, exported by backend)
    * 2. Group by transaction_id to reconstruct transactions
    * 3. Apply WHERE clauses based on filters
-   * 4. Use aggregation to collect postings per transaction
-   *
-   * Database Differences:
-   * - DuckDB: Uses LIST() and STRUCT_PACK() for aggregation, native array support
-   * - SQLite: Arrays stored as JSON strings, requires json_group_array() for aggregation
+   * 4. Use json_group_array() to collect postings per transaction
    */
-  function buildSQLQuery(filters: TransactionFilters, dbType: 'duckdb' | 'sqlite' = 'sqlite', limit: number = 1000): string {
+  function buildSQLQuery(filters: TransactionFilters, limit: number = 1000): string {
     // Separate filters into two categories:
     // 1. Transaction-level filters: Apply to transaction fields (safe to use in WHERE before GROUP BY)
     //    These work because all postings in a transaction share the same transaction-level values
@@ -74,91 +64,53 @@ export function useTransactionQuery() {
     const transactionLevelWhereClauses: string[] = []
     const postingLevelFilters: string[] = []
 
-    // Date filters (transaction-level - all postings in same transaction have same date)
     if (filters.dateFrom) {
       transactionLevelWhereClauses.push(`transaction_date >= '${filters.dateFrom}'`)
     }
     if (filters.dateTo) {
       transactionLevelWhereClauses.push(`transaction_date <= '${filters.dateTo}'`)
     }
-
-    // Payee filter (transaction-level - all postings in same transaction have same payee)
     if (filters.payeeContains) {
       transactionLevelWhereClauses.push(`LOWER(transaction_payee) LIKE LOWER('%${escapeSQLString(filters.payeeContains)}%')`)
     }
-
-    // Narration filter (transaction-level - all postings in same transaction have same narration)
     if (filters.narrationContains) {
       transactionLevelWhereClauses.push(`LOWER(transaction_narration) LIKE LOWER('%${escapeSQLString(filters.narrationContains)}%')`)
     }
-
-    // Flag filter (transaction-level - all postings in same transaction have same flag)
     if (filters.flag) {
       transactionLevelWhereClauses.push(`transaction_flag = '${escapeSQLString(filters.flag)}'`)
     }
-
-    // Tags filter (transaction-level - all postings in same transaction have same tags)
     if (filters.tagsContain) {
-      if (dbType === 'duckdb') {
-        transactionLevelWhereClauses.push(`EXISTS(SELECT 1 FROM unnest(transaction_tags) AS tag WHERE LOWER(tag) LIKE LOWER('%${escapeSQLString(filters.tagsContain)}%'))`)
-      } else {
-        transactionLevelWhereClauses.push(`LOWER(transaction_tags) LIKE LOWER('%${escapeSQLString(filters.tagsContain)}%')`)
-      }
+      transactionLevelWhereClauses.push(`LOWER(transaction_tags) LIKE LOWER('%${escapeSQLString(filters.tagsContain)}%')`)
     }
-
-    // Links filter (transaction-level - all postings in same transaction have same links)
     if (filters.linksContain) {
-      if (dbType === 'duckdb') {
-        transactionLevelWhereClauses.push(`EXISTS(SELECT 1 FROM unnest(transaction_links) AS link WHERE LOWER(link) LIKE LOWER('%${escapeSQLString(filters.linksContain)}%'))`)
-      } else {
-        transactionLevelWhereClauses.push(`LOWER(transaction_links) LIKE LOWER('%${escapeSQLString(filters.linksContain)}%')`)
-      }
+      transactionLevelWhereClauses.push(`LOWER(transaction_links) LIKE LOWER('%${escapeSQLString(filters.linksContain)}%')`)
     }
-
-    // Year filter (transaction-level - all postings in same transaction have same year)
     if (filters.year !== undefined) {
       transactionLevelWhereClauses.push(`year = ${filters.year}`)
     }
-
-    // Quarter filter (transaction-level - all postings in same transaction have same quarter)
     if (filters.quarter !== undefined) {
       transactionLevelWhereClauses.push(`quarter = ${filters.quarter}`)
     }
 
     // POSTING-LEVEL FILTERS
-    // These filters apply to individual posting fields that can differ within a transaction
-    // We use a subquery to find transactions with at least one matching posting,
-    // then include ALL postings from those transactions to keep them balanced
-
-    // Account filter (posting-level - different postings have different accounts)
     if (filters.accountContains) {
       postingLevelFilters.push(`LOWER(account) LIKE LOWER('%${escapeSQLString(filters.accountContains)}%')`)
     }
-
-    // Amount filters (posting-level - different postings have different amounts)
     if (filters.amountGreaterThan !== undefined) {
       postingLevelFilters.push(`ABS(amount) > ${filters.amountGreaterThan}`)
     }
     if (filters.amountLessThan !== undefined) {
       postingLevelFilters.push(`ABS(amount) < ${filters.amountLessThan}`)
     }
-
-    // Currency filter (posting-level - different postings can have different currencies)
     if (filters.currency) {
       postingLevelFilters.push(`currency = '${escapeSQLString(filters.currency)}'`)
     }
-
-    // Account Type filter (posting-level - different postings have different account types)
     if (filters.accountType) {
       postingLevelFilters.push(`account_type = '${escapeSQLString(filters.accountType)}'`)
     }
 
-    // Build WHERE clause
-    // If we have posting-level filters, add a subquery to find matching transaction IDs
     if (postingLevelFilters.length > 0) {
       const postingFilterClause = postingLevelFilters.join(' AND ')
-      // Subquery: Find all transaction IDs where at least one posting matches the filter
-      // Main query: Include ALL postings from those transactions
       transactionLevelWhereClauses.push(
         `transaction_id IN (SELECT DISTINCT transaction_id FROM postings WHERE ${postingFilterClause})`
       )
@@ -168,142 +120,67 @@ export function useTransactionQuery() {
       ? `WHERE ${transactionLevelWhereClauses.join(' AND ')}`
       : ''
 
-    // SQL Query to reconstruct transactions
-    // Different aggregation syntax for DuckDB vs SQLite
-    let query: string
-
-    if (dbType === 'duckdb') {
-      // DuckDB: Use LIST() and STRUCT_PACK() for structured aggregation
-      query = `
-        WITH grouped_transactions AS (
-          SELECT
-            transaction_id,
-            transaction_content_hash,
-            transaction_date,
-            transaction_flag,
-            transaction_payee,
-            transaction_narration,
-            transaction_tags,
-            transaction_links,
-            transaction_metadata_json,
-            LIST(STRUCT_PACK(
-              account := account,
-              amount := amount,
-              currency := currency,
-              cost_amount := cost_amount,
-              cost_currency := cost_currency,
-              price_amount := price_amount,
-              price_currency := price_currency,
-              posting_metadata_json := posting_metadata_json
-            )) AS postings
-          FROM postings
-          ${whereClause}
-          GROUP BY
-            transaction_id,
-            transaction_content_hash,
-            transaction_date,
-            transaction_flag,
-            transaction_payee,
-            transaction_narration,
-            transaction_tags,
-            transaction_links,
-            transaction_metadata_json
-        )
+    return `
+      WITH grouped_transactions AS (
         SELECT
-          *,
-          COUNT(*) OVER() as total_count
-        FROM grouped_transactions
-        ORDER BY transaction_date DESC, transaction_id
-        LIMIT ${limit}
-      `.trim()
-    } else {
-      // SQLite: Use json_group_array() and json_object() for aggregation
-      query = `
-        WITH grouped_transactions AS (
-          SELECT
-            transaction_id,
-            transaction_content_hash,
-            transaction_date,
-            transaction_flag,
-            transaction_payee,
-            transaction_narration,
-            transaction_tags,
-            transaction_links,
-            transaction_metadata_json,
-            json_group_array(
-              json_object(
-                'account', account,
-                'amount', amount,
-                'currency', currency,
-                'cost_amount', cost_amount,
-                'cost_currency', cost_currency,
-                'price_amount', price_amount,
-                'price_currency', price_currency,
-                'posting_metadata_json', posting_metadata_json
-              )
-            ) AS postings
-          FROM postings
-          ${whereClause}
-          GROUP BY
-            transaction_id,
-            transaction_content_hash,
-            transaction_date,
-            transaction_flag,
-            transaction_payee,
-            transaction_narration,
-            transaction_tags,
-            transaction_links,
-            transaction_metadata_json
-        )
-        SELECT
-          *,
-          COUNT(*) OVER() as total_count
-        FROM grouped_transactions
-        ORDER BY transaction_date DESC, transaction_id
-        LIMIT ${limit}
-      `.trim()
-    }
-
-    return query
+          transaction_id,
+          transaction_content_hash,
+          transaction_date,
+          transaction_flag,
+          transaction_payee,
+          transaction_narration,
+          transaction_tags,
+          transaction_links,
+          transaction_metadata_json,
+          json_group_array(
+            json_object(
+              'account', account,
+              'amount', amount,
+              'currency', currency,
+              'cost_amount', cost_amount,
+              'cost_currency', cost_currency,
+              'price_amount', price_amount,
+              'price_currency', price_currency,
+              'posting_metadata_json', posting_metadata_json
+            )
+          ) AS postings
+        FROM postings
+        ${whereClause}
+        GROUP BY
+          transaction_id,
+          transaction_content_hash,
+          transaction_date,
+          transaction_flag,
+          transaction_payee,
+          transaction_narration,
+          transaction_tags,
+          transaction_links,
+          transaction_metadata_json
+      )
+      SELECT
+        *,
+        COUNT(*) OVER() as total_count
+      FROM grouped_transactions
+      ORDER BY transaction_date DESC, transaction_id
+      LIMIT ${limit}
+    `.trim()
   }
 
   /**
-   * Transform SQL query results into TransactionViewModel array.
-   * Handles both DuckDB and SQLite result formats.
+   * Transform SQLite query results into TransactionViewModel array.
    */
-  function transformQueryResultsToTransactions(rows: any[], dbType: 'duckdb' | 'sqlite' = 'sqlite'): { transactions: TransactionViewModel[], totalCount: number | null } {
-    // Extract total count from first row (all rows have same total_count due to window function)
+  function transformQueryResultsToTransactions(rows: any[]): { transactions: TransactionViewModel[], totalCount: number | null } {
     const totalCount = rows.length > 0 && rows[0].total_count !== undefined ? rows[0].total_count : null
 
     const transactions = rows.map((row) => {
-      // Parse metadata JSON
       const metadata = row.transaction_metadata_json ? JSON.parse(row.transaction_metadata_json) : {}
 
-      // Parse tags and links
-      // DuckDB: Native arrays
-      // SQLite: JSON string arrays that need parsing
-      let tags: string[] = []
-      let links: string[] = []
+      // SQLite stores tags/links as JSON strings
+      const tags: string[] = row.transaction_tags ? JSON.parse(row.transaction_tags) : []
+      const links: string[] = row.transaction_links ? JSON.parse(row.transaction_links) : []
 
-      if (dbType === 'duckdb') {
-        tags = row.transaction_tags || []
-        links = row.transaction_links || []
-      } else {
-        // SQLite: Parse JSON strings
-        tags = row.transaction_tags ? JSON.parse(row.transaction_tags) : []
-        links = row.transaction_links ? JSON.parse(row.transaction_links) : []
-      }
-
-      // Parse postings
-      // DuckDB: Array of structs
-      // SQLite: JSON string that needs parsing
-      let postingsData: any[]
-      if (dbType === 'duckdb') {
-        postingsData = row.postings || []
-      } else {
-        // SQLite: json_group_array() returns a JSON string
-        postingsData = typeof row.postings === 'string' ? JSON.parse(row.postings) : row.postings
-      }
+      // SQLite: json_group_array() returns a JSON string
+      const postingsData: any[] = typeof row.postings === 'string' ? JSON.parse(row.postings) : row.postings
 
       const postings: PostingViewModel[] = postingsData.map((p: any) => {
         const posting: PostingViewModel = {
@@ -312,7 +189,6 @@ export function useTransactionQuery() {
           currency: p.currency,
         }
 
-        // Add cost if present
         if (p.cost_amount !== null || p.cost_currency !== null) {
           posting.cost = {
             amount: p.cost_amount,
@@ -320,16 +196,14 @@ export function useTransactionQuery() {
           }
         }
 
-        // Add price if present
         if (p.price_amount !== null || p.price_currency !== null) {
           posting.price = {
             amount: p.price_amount,
             currency: p.price_currency,
-            type: '@', // Default to per-unit
+            type: '@',
           }
         }
 
-        // Add posting metadata if present
         if (p.posting_metadata_json) {
           posting.meta = JSON.parse(p.posting_metadata_json)
         }
@@ -337,16 +211,15 @@ export function useTransactionQuery() {
         return posting
       })
 
-      // Construct TransactionViewModel
       const transaction: TransactionViewModel = {
         id: row.transaction_id,
         date: row.transaction_date,
         flag: row.transaction_flag,
         payee: row.transaction_payee,
         narration: row.transaction_narration,
-        tags: tags,
-        links: links,
-        postings: postings,
+        tags,
+        links,
+        postings,
         meta: metadata,
         internal: {
           isNew: false,
@@ -354,7 +227,6 @@ export function useTransactionQuery() {
         },
       }
 
-      // Extract memo if present in metadata
       if (metadata.ofx_memo) {
         transaction.memo = metadata.ofx_memo
       }

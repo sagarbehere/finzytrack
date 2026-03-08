@@ -182,7 +182,7 @@ export type RecipeVisualization =
   | PivotVisualization
 
 // Query engine types
-export type QueryEngineType = 'sqlite' | 'duckdb' | 'beanquery'
+export type QueryEngineType = 'sqlite' | 'beanquery'
 
 // Widget Recipe
 export interface WidgetRecipe {

@@ -111,7 +111,6 @@ const isQuerying = ref(false)
 const isSaving = ref(false)
 const showTable = ref(false)
 const currentFilters = ref<TransactionFilters | null>(null)
-const currentDbType = ref<'duckdb' | 'sqlite'>('sqlite')
 const currentLimit = ref<number>(1000)
 
 // Parse URL query parameters into initial filters
@@ -157,15 +156,13 @@ const modifiedCount = computed(() => {
 })
 
 // Handlers
-async function handleFilterChanged(filters: TransactionFilters, dbType: 'duckdb' | 'sqlite', limit: number) {
+async function handleFilterChanged(filters: TransactionFilters, limit: number) {
   isQuerying.value = true
   currentFilters.value = filters
-  currentDbType.value = dbType
   currentLimit.value = limit
 
   try {
-    // Query transactions based on filters
-    const result = await queryTransactions(filters, dbType, limit)
+    const result = await queryTransactions(filters, limit)
     transactions.value = result.transactions
     totalCount.value = result.totalCount
 
@@ -224,7 +221,7 @@ async function handleReset() {
   if (!currentFilters.value) return
 
   // Re-query using current filters to reload from database
-  await handleFilterChanged(currentFilters.value, currentDbType.value, currentLimit.value)
+  await handleFilterChanged(currentFilters.value, currentLimit.value)
 }
 
 async function handleSaveChanges() {
@@ -279,7 +276,7 @@ onMounted(() => {
       dateFrom: getDate90DaysAgo(),
       dateTo: getTodayDate(),
     }
-    handleFilterChanged(defaultFilters, 'sqlite', 1000)
+    handleFilterChanged(defaultFilters, 1000)
   }
 })
 
