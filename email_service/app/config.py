@@ -56,21 +56,30 @@ class EmailServiceConfig(BaseModel):
 _config: Optional[EmailServiceConfig] = None
 
 
-def load_config() -> EmailServiceConfig:
+def load_config(config_path: Optional[str] = None) -> EmailServiceConfig:
+    """
+    Load configuration from file.
+
+    Priority:
+      1. Explicit config_path argument (set by CLI -c option)
+      2. EMAIL_CONFIG_PATH environment variable
+      3. Default: config/config.yaml relative to email_service/
+    """
     global _config
     if _config is not None:
         return _config
 
-    config_path = Path(
-        os.environ.get('EMAIL_CONFIG_PATH', str(_BASE_DIR / 'config' / 'config.yaml'))
+    resolved_path = Path(
+        config_path
+        or os.environ.get('EMAIL_CONFIG_PATH', str(_BASE_DIR / 'config' / 'config.yaml'))
     ).resolve()
 
-    if not config_path.exists():
+    if not resolved_path.exists():
         # Return default config (email service starts with defaults)
         _config = EmailServiceConfig()
         return _config
 
-    with open(config_path, 'r') as f:
+    with open(resolved_path, 'r') as f:
         raw = yaml.safe_load(f) or {}
 
     _config = EmailServiceConfig.model_validate(raw)
