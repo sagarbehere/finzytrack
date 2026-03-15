@@ -7,6 +7,7 @@ import { OpenAPI } from './services/generated-api'
 import { ConfigService } from './services/generated-api'
 import { configureNLParser } from './services/nlParser'
 import { configureSQLAssistant } from './services/sqlAssistant'
+import { configureEmailService } from './composables/useEmailImporter'
 
 async function initApp() {
   OpenAPI.BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001'
@@ -25,6 +26,10 @@ async function initApp() {
       configureNLParser(llmConfig)
       configureSQLAssistant(llmConfig)
     }
+
+    // Configure email service
+    const emailServiceUrl = response.data?.email_service?.base_url || ''
+    configureEmailService(emailServiceUrl)
   } catch (e) {
     console.warn('Could not load LLM config from backend; LLM features disabled.', e)
   }

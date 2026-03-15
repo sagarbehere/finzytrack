@@ -44,7 +44,8 @@ export function useTransactionImporter() {
           memo: tx.memo,
           narration: tx.narration,
           amount: tx.postings[0]?.amount?.toString() || '0',
-          ofx_id: tx.meta['ofx_id']
+          external_id: tx.meta['external_id'],
+          external_id_type: tx.meta['external_id_type'],
         })),
         source_account: sourceAccount,
         currency: sourceCurrency

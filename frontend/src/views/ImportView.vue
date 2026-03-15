@@ -3,7 +3,7 @@
     <div class="mb-6">
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Import Financial Data</h1>
       <p class="mt-1 text-gray-600 dark:text-gray-400">
-        Import transactions from OFX files, CSV files, or enter them manually
+        Import transactions from OFX files, CSV files, email, or enter them manually
       </p>
     </div>
 
@@ -44,6 +44,18 @@
           >
             Manual Entry
           </button>
+          <button
+            v-if="emailServiceUrl"
+            @click="activeTab = 'email'"
+            :class="[
+              activeTab === 'email'
+                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300',
+              'whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium',
+            ]"
+          >
+            Email Import
+          </button>
         </nav>
       </div>
 
@@ -69,6 +81,15 @@
         <!-- Manual Entry Tab -->
         <div v-else-if="activeTab === 'manual'">
           <ManualEntryPanel @addTransaction="handleManualAddTransaction" />
+        </div>
+
+        <!-- Email Import Tab -->
+        <div v-else-if="activeTab === 'email'">
+          <EmailImportPanel
+            :key="importerKey"
+            :email-service-url="emailServiceUrl"
+            @proceedWithImport="handleEmailProceedWithImport"
+          />
         </div>
       </div>
     </div>
@@ -170,6 +191,9 @@
   import OFXFilePicker from '@/components/import/OFXFilePicker.vue'
   import CSVFilePicker from '@/components/import/CSVFilePicker.vue'
   import ManualEntryPanel from '@/components/import/ManualEntryPanel.vue'
+  import EmailImportPanel from '@/components/import/EmailImportPanel.vue'
+  import { useEmailImporter } from '@/composables/useEmailImporter'
+  import type { EmailParsedTransaction } from '@/composables/useEmailImporter'
   import TransactionTable from '@/components/common/TransactionTable.vue'
   import DuplicateComparisonModal from '@/components/import/DuplicateComparisonModal.vue'
   import DeleteConfirmDialog from '@/components/common/DeleteConfirmDialog.vue'
@@ -186,6 +210,9 @@
   const { performCategorization, performCommit, isLoading, categorizeError, commitError } = useTransactionImporter()
   const { success: showSuccessToast, error: showErrorToast } = useToast()
 
+  // Email service URL (empty string = Email tab hidden)
+  const { emailServiceUrl } = useEmailImporter()
+
   // Tab state
   const activeTab = ref<string>('ofx')
 
@@ -196,7 +223,7 @@
   const showTransactionTable = ref<boolean>(false)
   const rawTransactions = ref<OFXTransaction[]>([])
   const rawCsvTransactions = ref<CsvParsedTransaction[]>([])
-  const importSource = ref<'ofx' | 'csv' | 'manual'>('ofx')
+  const importSource = ref<'ofx' | 'csv' | 'manual' | 'email'>('ofx')
   const transactionViewModels = ref<TransactionViewModel[]>([])
   const importContext = ref<Map<string, ImportContext>>(new Map())
   const sourceAccount = ref<string>('')
@@ -308,10 +335,11 @@
         source_account: sourceAccount
       }
 
-      // Add ofx_id only if it exists
-      const ofxId = tx.TRNTYPE ? `${tx.TRNTYPE}_${tx.FITID || tx.DTPOSTED || ''}` : null
-      if (ofxId) {
-        meta['ofx_id'] = ofxId
+      // Add external_id if FITID is available
+      const fitId = tx.FITID || null
+      if (fitId) {
+        meta['external_id'] = fitId
+        meta['external_id_type'] = 'OFX'
       }
 
       const transaction: TransactionViewModel = {
@@ -436,6 +464,92 @@
     return { transactions, importContext }
   }
 
+  // Handle the Proceed event from EmailImportPanel
+  // beancount_account and currency come from the profile — not from separate dropdowns
+  const handleEmailProceedWithImport = (payload: {
+    transactions: EmailParsedTransaction[]
+    account: string      // profile.beancount_account
+    currency: string     // profile.default_currency (possibly overridden by user)
+  }) => {
+    sourceAccount.value = payload.account
+    sourceCurrency.value = payload.currency
+    importSource.value = 'email'
+
+    const bundle = convertEmailTransactionsToViewModels(
+      payload.transactions, payload.account, payload.currency
+    )
+    transactionViewModels.value = bundle.transactions
+    importContext.value = bundle.importContext
+
+    showTransactionTable.value = true
+
+    nextTick(() => {
+      if (transactionTableRef.value) {
+        transactionTableRef.value.resetToOriginal()
+        transactionTableRef.value.scrollToTable()
+      }
+    })
+  }
+
+  // Convert email parsed transactions to TransactionViewModel format
+  const convertEmailTransactionsToViewModels = (
+    emailTransactions: EmailParsedTransaction[],
+    account: string,
+    currency: string
+  ): TransactionImportBundle => {
+    const transactions: TransactionViewModel[] = []
+    const context = new Map<string, ImportContext>()
+
+    emailTransactions.forEach(tx => {
+      const transactionId = uuidv7()
+      const amount = Number(tx.amount)  // already signed
+
+      const postings: PostingViewModel[] = [
+        {
+          account,
+          amount,
+          currency,
+          cost: undefined, price: undefined, meta: undefined
+        },
+        {
+          account: 'Expenses:Unknown',
+          amount: -amount,
+          currency,
+          cost: undefined, price: undefined, meta: undefined
+        }
+      ]
+
+      const meta: Record<string, string> = {
+        source_account: account,
+        source_rule: tx.source_rule,
+      }
+      if (tx.external_id) {
+        meta['external_id'] = tx.external_id
+        meta['external_id_type'] = tx.external_id_type || 'EMAIL_MESSAGE_ID'
+      }
+
+      const transaction: TransactionViewModel = {
+        id: transactionId,
+        date: typeof tx.date === 'string'
+          ? tx.date
+          : (tx.date as Date).toISOString().split('T')[0],
+        flag: '!',   // pending — requires user review before commit
+        payee: tx.payee || '',
+        narration: '',
+        tags: [],
+        links: [],
+        postings,
+        meta,
+        internal: { isNew: true, isModified: false, source_currency: currency }
+      }
+
+      transactions.push(transaction)
+      context.set(transactionId, { is_duplicate: false })
+    })
+
+    return { transactions, importContext: context }
+  }
+
   // Handle the "Add Transaction" click from ManualEntryPanel
   const handleManualAddTransaction = (payload: { account: string; currency: string; parsed?: ParsedTransaction; scrollToResult: boolean }) => {
     sourceAccount.value = payload.account || sourceAccount.value
@@ -518,7 +632,7 @@
 
   // Reset the table to original raw transactions
   const resetTable = (event?: Event) => {
-    if (importSource.value === 'manual') {
+    if (importSource.value === 'manual' || importSource.value === 'email') {
       // No raw source data to re-derive from — clear everything
       transactionViewModels.value = []
       importContext.value.clear()

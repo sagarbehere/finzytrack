@@ -46,7 +46,7 @@ export interface TransactionViewModel {
 
   // Beancount metadata (arbitrary key-value pairs)
   // Backend-managed keys: id (UUIDv7), content_hash (SHA256), source_account
-  // User/Import keys: ofx_id, ofx_memo, etc.
+  // Import keys: external_id, external_id_type, ofx_memo, source_rule, etc.
   meta: Record<string, string>;
 
   // Frontend-only state (NOT sent to backend/ledger)
