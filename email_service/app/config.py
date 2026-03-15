@@ -37,11 +37,17 @@ class LLMConfig(BaseModel):
     max_tokens: int = 1024
 
 
+class ServerConfig(BaseModel):
+    host: str = "127.0.0.1"
+    port: int = 8100
+
+
 class EmailServiceConfig(BaseModel):
     rules_directory: str = "config/email_rules/"
     default_lookback_days: int = 7
     max_emails: int = 500         # max emails to fetch per request; truncate with warning
     parsing_mode: str = "regex"   # "regex" or "llm"; overridden per account or per rule
+    server: ServerConfig = Field(default_factory=ServerConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
 
     @property

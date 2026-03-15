@@ -57,14 +57,12 @@ app = create_app()
               show_default=True,
               help='Path to configuration file')
 @click.option('--host',
-              default='127.0.0.1',
-              show_default=True,
-              help='Server host address')
+              default=None,
+              help='Server host address (overrides config)')
 @click.option('--port',
-              default=8100,
-              show_default=True,
+              default=None,
               type=int,
-              help='Server port')
+              help='Server port (overrides config)')
 @click.option('--log-level',
               default='INFO',
               show_default=True,
@@ -83,12 +81,15 @@ def main(config: str, host: str, port: int, log_level: str, debug: bool) -> None
         cfg = load_config(config)
         logger.info(f"Configuration loaded from: {config}")
         logger.info(f"Rules directory: {cfg.rules_path}")
-        logger.info(f"Starting email service on {host}:{port}")
+
+        effective_host = host or cfg.server.host
+        effective_port = port or cfg.server.port
+        logger.info(f"Starting email service on {effective_host}:{effective_port}")
 
         uvicorn.run(
             app,
-            host=host,
-            port=port,
+            host=effective_host,
+            port=effective_port,
             log_config=None,
         )
     except FileNotFoundError as e:

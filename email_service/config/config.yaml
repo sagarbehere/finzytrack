@@ -1,6 +1,11 @@
 # Email Service Global Configuration
 # IMAP credentials are in per-account YAML files under email_rules/
 
+# Server settings
+server:
+  host: "127.0.0.1"
+  port: 8100
+
 rules_directory: "config/email_rules/"
 default_lookback_days: 7
 max_emails: 500
