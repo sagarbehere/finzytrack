@@ -88,6 +88,7 @@ export type { CsvRuleSummary } from './models/CsvRuleSummary';
 export type { DeleteTransactionRequest } from './models/DeleteTransactionRequest';
 export type { DeleteTransactionResponse } from './models/DeleteTransactionResponse';
 export type { DuplicateInfo } from './models/DuplicateInfo';
+export type { EmailServiceConfig } from './models/EmailServiceConfig';
 export type { ErrorInfo } from './models/ErrorInfo';
 export type { ExportData } from './models/ExportData';
 export type { ExportStatusData } from './models/ExportStatusData';

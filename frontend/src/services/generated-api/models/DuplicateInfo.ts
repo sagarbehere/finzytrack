@@ -35,7 +35,7 @@ export type DuplicateInfo = {
      */
     account: string;
     /**
-     * How duplicate was detected: 'ofx_id', 'exact_content', or 'fuzzy'
+     * How duplicate was detected: 'external_id', 'exact_content', or 'fuzzy'
      */
     match_type: string;
 };

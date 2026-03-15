@@ -47,7 +47,7 @@ export type CommitTransaction = {
      */
     source_account: string;
     /**
-     * Additional arbitrary metadata (ofx_id, custom fields, etc.). Backend adds source_account automatically.
+     * Additional arbitrary metadata (external_id, external_id_type, custom fields, etc.). Backend adds source_account automatically.
      */
     meta?: Record<string, string>;
 };

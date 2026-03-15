@@ -6,6 +6,7 @@ import type { AccountsConfig } from './AccountsConfig';
 import type { AIConfig } from './AIConfig';
 import type { AnalyticsConfig } from './AnalyticsConfig';
 import type { BackupConfig } from './BackupConfig';
+import type { EmailServiceConfig } from './EmailServiceConfig';
 import type { FeaturesConfig } from './FeaturesConfig';
 import type { LoggingConfig } from './LoggingConfig';
 import type { SecurityConfig } from './SecurityConfig';
@@ -40,5 +41,9 @@ export type Config = {
      * Analytics and reporting settings
      */
     analytics?: AnalyticsConfig;
+    /**
+     * Email import microservice settings
+     */
+    email_service?: EmailServiceConfig;
 };
 

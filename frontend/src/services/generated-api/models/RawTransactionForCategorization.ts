@@ -32,8 +32,12 @@ export type RawTransactionForCategorization = {
      */
     amount: (number | string);
     /**
-     * OFX transaction ID for duplicate detection
+     * External transaction ID for duplicate detection (e.g. OFX FITID, UPI reference)
      */
-    ofx_id?: (string | null);
+    external_id?: (string | null);
+    /**
+     * Type of external_id: OFX, UPI, NEFT, IMPS, EMAIL_MESSAGE_ID, CSV
+     */
+    external_id_type?: (string | null);
 };
 
