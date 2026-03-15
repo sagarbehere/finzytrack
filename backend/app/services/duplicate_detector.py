@@ -49,28 +49,31 @@ def calculate_payee_similarity(payee1: str, payee2: str) -> float:
     return max(ratio_score, partial_ratio_score, token_sort_score, token_set_score)
 
 
-def check_ofx_id_match(ofx_id: str, amount: Decimal, existing_transactions: List[LedgerTransaction]) -> Optional[DuplicateInfo]:
+def check_external_id_match(
+    external_id: str,
+    amount: Decimal,
+    existing_transactions: List[LedgerTransaction]
+) -> Optional[DuplicateInfo]:
     """
-    Check if OFX ID matches any existing transaction.
+    Check if external_id matches any existing transaction.
 
-    Some banks (e.g. Chase) assign the same FITID to a foreign transaction and
-    its associated fee, so multiple ledger entries can share the same ofx_id.
-    Amount must also match exactly — two transactions with different amounts
-    cannot be duplicates regardless of their ofx_id.
+    Matches by external_id value + exact amount regardless of external_id_type.
+    A UPI reference is the same transaction whether it came from email, CSV, or OFX.
 
     Args:
-        ofx_id: OFX transaction ID to check
+        external_id: External transaction ID to check (OFX FITID, UPI ref, etc.)
         amount: Amount of the incoming transaction
         existing_transactions: List of existing ledger transactions
 
     Returns:
         DuplicateInfo if match found, None otherwise
     """
-    if not ofx_id:
+    if not external_id:
         return None
 
     best = next(
-        (t for t in existing_transactions if t.ofx_id == ofx_id and t.amount == amount),
+        (t for t in existing_transactions
+         if t.external_id == external_id and t.amount == amount),
         None
     )
 
@@ -85,7 +88,7 @@ def check_ofx_id_match(ofx_id: str, amount: Decimal, existing_transactions: List
         narration=best.narration,
         amount=best.amount,
         account=best.account,
-        match_type='ofx_id'
+        match_type='external_id'
     )
 
 
@@ -182,14 +185,15 @@ def find_duplicate(
     amount: Decimal,
     source_account: str,
     narration: str,
-    ofx_id: Optional[str],
-    existing_transactions: List[LedgerTransaction]
+    existing_transactions: List[LedgerTransaction],
+    external_id: Optional[str] = None,
+    external_id_type: Optional[str] = None,
 ) -> Tuple[bool, Optional[DuplicateInfo]]:
     """
     Find potential duplicate for a transaction.
 
     Uses three-tier detection:
-    1. Check for exact OFX ID match
+    1. Check for exact external_id match (cross-type: UPI ref matches regardless of source)
     2. Check for exact content hash match
     3. Check for fuzzy match on date/amount/account/payee
 
@@ -199,17 +203,18 @@ def find_duplicate(
         amount: Transaction amount
         source_account: Source account
         narration: Transaction narration
-        ofx_id: Optional OFX transaction ID
         existing_transactions: List of existing ledger transactions
+        external_id: Optional external transaction ID (OFX FITID, UPI ref, etc.)
+        external_id_type: Optional type of external_id (for provenance, not matching)
 
     Returns:
         Tuple of (is_duplicate, duplicate_info)
     """
-    # Tier 1: Check OFX ID match (if available)
-    if ofx_id:
-        ofx_match = check_ofx_id_match(ofx_id, amount, existing_transactions)
-        if ofx_match:
-            return True, ofx_match
+    # Tier 1: Check external ID match (cross-type: UPI ref matches regardless of source)
+    if external_id:
+        ext_match = check_external_id_match(external_id, amount, existing_transactions)
+        if ext_match:
+            return True, ext_match
 
     # Tier 2: Check content hash match
     from app.libs.content_hash import compute_content_hash

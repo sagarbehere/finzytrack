@@ -124,6 +124,16 @@ class AnalyticsConfig(BaseModel):
     """Analytics and reporting configuration."""
     sqlite: SQLiteConfig = Field(default_factory=SQLiteConfig, description="SQLite export settings")
 
+
+class EmailServiceConfig(BaseModel):
+    """Email import microservice configuration."""
+    base_url: str = Field(
+        default="",
+        description="Base URL of the email import service (e.g. http://localhost:8100). "
+                    "Empty string disables the email import tab in the frontend."
+    )
+
+
 class Config(BaseModel):
     """Main application configuration with nested sections."""
     
@@ -147,6 +157,12 @@ class Config(BaseModel):
 
     # Analytics configuration
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig, description="Analytics and reporting settings")
+
+    # Email import microservice
+    email_service: EmailServiceConfig = Field(
+        default_factory=EmailServiceConfig,
+        description="Email import microservice settings"
+    )
 
     config_file_path: Optional[Path] = Field(
         default=None,

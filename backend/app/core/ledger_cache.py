@@ -37,7 +37,8 @@ class LedgerTransaction:
     narration: str
     amount: Decimal
     account: str
-    ofx_id: Optional[str] = None
+    external_id: Optional[str] = None       # replaces ofx_id
+    external_id_type: Optional[str] = None  # new: OFX, UPI, NEFT, etc.
 
 
 @dataclass
@@ -220,11 +221,15 @@ class LedgerCache:
                 # Find source account (from metadata or posting)
                 source_account = None
                 transaction_amount = None
-                ofx_id = None
+                external_id = None
+                external_id_type = None
 
                 if hasattr(entry, 'meta') and entry.meta:
                     source_account = entry.meta.get('source_account')
-                    ofx_id = entry.meta.get('ofx_id')
+                    # Read external_id, falling back to legacy ofx_id for unmigrated entries
+                    ofx_id = entry.meta.get('ofx_id')  # legacy fallback
+                    external_id = entry.meta.get('external_id') or ofx_id
+                    external_id_type = entry.meta.get('external_id_type') or ('OFX' if ofx_id else None)
 
                 # Find transaction amount from the posting that matches the source account
                 for posting in entry.postings:
@@ -261,7 +266,8 @@ class LedgerCache:
                         narration=entry.narration or '',
                         amount=transaction_amount,
                         account=source_account,
-                        ofx_id=ofx_id
+                        external_id=external_id,
+                        external_id_type=external_id_type
                     ))
 
                 # Track commodity usage

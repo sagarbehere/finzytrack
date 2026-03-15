@@ -58,6 +58,10 @@ security:
     - "http://127.0.0.1:3000"
     - "http://localhost:3000"
 
+# Email import microservice
+email_service:
+  base_url: ""   # Set to "http://localhost:8100" when the email service is running
+
 # Analytics Configuration
 analytics:
   # SQLite export settings

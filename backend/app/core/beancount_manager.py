@@ -507,7 +507,8 @@ class BeancountManager:
         postings: List[Posting],
         source_account: str,
         flag: str = '*',
-        ofx_id: Optional[str] = None,
+        external_id: Optional[str] = None,
+        external_id_type: Optional[str] = None,
         additional_meta: Optional[Dict] = None
     ) -> Transaction:
         """
@@ -520,7 +521,8 @@ class BeancountManager:
             postings: List of Beancount Posting objects
             source_account: The account that originated this transaction
             flag: Transaction flag (* or !)
-            ofx_id: Optional OFX transaction ID
+            external_id: Optional external transaction ID (OFX FITID, UPI ref, etc.)
+            external_id_type: Optional type of external_id (OFX, UPI, NEFT, etc.)
             additional_meta: Optional additional metadata
 
         Returns:
@@ -556,9 +558,11 @@ class BeancountManager:
             'source_account': source_account
         }
 
-        # Add OFX ID if provided
-        if ofx_id and str(ofx_id).strip():
-            meta['ofx_id'] = str(ofx_id).strip()
+        # Add external ID if provided
+        if external_id and str(external_id).strip():
+            meta['external_id'] = str(external_id).strip()
+            if external_id_type:
+                meta['external_id_type'] = str(external_id_type).strip()
 
         # Add additional metadata
         if additional_meta:

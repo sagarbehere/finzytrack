@@ -29,7 +29,8 @@ class RawTransactionForCategorization(BaseModel):
     amount: Decimal = Field(..., description="Transaction amount from source account posting")
 
     # Metadata for duplicate detection
-    ofx_id: Optional[str] = Field(default=None, description="OFX transaction ID for duplicate detection")
+    external_id: Optional[str] = Field(default=None, description="External transaction ID for duplicate detection (e.g. OFX FITID, UPI reference)")
+    external_id_type: Optional[str] = Field(default=None, description="Type of external_id: OFX, UPI, NEFT, IMPS, EMAIL_MESSAGE_ID, CSV")
 
 
 class CategorizeRequest(BaseModel):
@@ -48,7 +49,7 @@ class DuplicateInfo(BaseModel):
     narration: str = Field(..., description="Narration of the duplicate transaction")
     amount: Decimal = Field(..., description="Amount of the duplicate transaction")
     account: str = Field(..., description="Account from the matching posting")
-    match_type: str = Field(..., description="How duplicate was detected: 'ofx_id', 'exact_content', or 'fuzzy'")
+    match_type: str = Field(..., description="How duplicate was detected: 'external_id', 'exact_content', or 'fuzzy'")
 
 
 class CategorizedTransactionResult(BaseModel):
@@ -132,7 +133,7 @@ class CommitTransaction(BaseModel):
     # OPTIONAL: Additional arbitrary metadata
     meta: Dict[str, str] = Field(
         default_factory=dict,
-        description="Additional arbitrary metadata (ofx_id, custom fields, etc.). Backend adds source_account automatically."
+        description="Additional arbitrary metadata (external_id, external_id_type, custom fields, etc.). Backend adds source_account automatically."
     )
 
 

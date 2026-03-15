@@ -94,8 +94,9 @@ async def categorize_transactions(
             amount=raw_txn.amount,
             source_account=request.source_account,
             narration=raw_txn.narration or "",
-            ofx_id=raw_txn.ofx_id,
-            existing_transactions=existing_transactions
+            existing_transactions=existing_transactions,
+            external_id=raw_txn.external_id,
+            external_id_type=raw_txn.external_id_type,
         )
 
         if is_duplicate:
@@ -308,8 +309,15 @@ async def commit_transactions(
             if commit_txn.memo:
                 additional_meta['ofx_memo'] = commit_txn.memo
 
-            # Get OFX ID from metadata if present
-            ofx_id = additional_meta.get('ofx_id')
+            # Extract external ID fields from metadata
+            external_id = additional_meta.pop('external_id', None)
+            external_id_type = additional_meta.pop('external_id_type', None)
+            # Legacy fallback: read old ofx_id key if present
+            if not external_id:
+                legacy_ofx_id = additional_meta.pop('ofx_id', None)
+                if legacy_ofx_id:
+                    external_id = legacy_ofx_id
+                    external_id_type = 'OFX'
 
             # Create transaction with new UUIDv7 + content_hash ID system
             # This handles all ID generation and metadata setup
@@ -320,7 +328,8 @@ async def commit_transactions(
                 postings=beancount_postings,
                 source_account=commit_txn.source_account,
                 flag=commit_txn.flag,
-                ofx_id=ofx_id,
+                external_id=external_id,
+                external_id_type=external_id_type,
                 additional_meta=additional_meta
             )
 
