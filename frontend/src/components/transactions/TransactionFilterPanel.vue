@@ -10,6 +10,19 @@
     />
 
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
+      <!-- Search (payee or narration) -->
+      <div class="md:col-span-2 lg:col-span-3">
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          Search
+        </label>
+        <input
+          v-model="filters.search"
+          type="text"
+          placeholder="Search payee or narration..."
+          class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+        />
+      </div>
+
       <!-- Amount Greater Than -->
       <div>
         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -246,6 +259,7 @@ function getDefaultFilters(): TransactionFilters {
     dateTo: getTodayDate(),
     amountGreaterThan: undefined,
     amountLessThan: undefined,
+    search: '',
     payeeContains: '',
     narrationContains: '',
     accountContains: '',
@@ -287,6 +301,7 @@ function handleClear() {
     dateTo: '',
     amountGreaterThan: undefined,
     amountLessThan: undefined,
+    search: '',
     payeeContains: '',
     narrationContains: '',
     accountContains: '',

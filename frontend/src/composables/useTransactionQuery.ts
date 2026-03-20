@@ -70,6 +70,10 @@ export function useTransactionQuery() {
     if (filters.dateTo) {
       transactionLevelWhereClauses.push(`transaction_date <= '${filters.dateTo}'`)
     }
+    if (filters.search) {
+      const term = escapeSQLString(filters.search)
+      transactionLevelWhereClauses.push(`(LOWER(transaction_payee) LIKE LOWER('%${term}%') OR LOWER(transaction_narration) LIKE LOWER('%${term}%'))`)
+    }
     if (filters.payeeContains) {
       transactionLevelWhereClauses.push(`LOWER(transaction_payee) LIKE LOWER('%${escapeSQLString(filters.payeeContains)}%')`)
     }

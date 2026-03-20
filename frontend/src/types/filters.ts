@@ -11,6 +11,7 @@ export interface TransactionFilters {
   amountLessThan?: number
 
   // Text filters
+  search?: string             // Matches payee OR narration (used by global search)
   payeeContains?: string
   narrationContains?: string
   accountContains?: string

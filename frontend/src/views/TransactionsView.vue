@@ -123,6 +123,7 @@ const initialFilters = computed<TransactionFilters | undefined>(() => {
   // String filters
   if (query.dateFrom) filters.dateFrom = String(query.dateFrom)
   if (query.dateTo) filters.dateTo = String(query.dateTo)
+  if (query.search) filters.search = String(query.search)
   if (query.payeeContains) filters.payeeContains = String(query.payeeContains)
   if (query.narrationContains) filters.narrationContains = String(query.narrationContains)
   if (query.accountContains) filters.accountContains = String(query.accountContains)

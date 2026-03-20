@@ -213,18 +213,7 @@
         <!-- Top bar content -->
         <div class="flex flex-1 gap-x-4 self-stretch lg:gap-x-6">
           <!-- Search bar -->
-          <form class="grid flex-1 grid-cols-1" action="#" method="GET">
-            <input
-              name="search"
-              aria-label="Search"
-              class="col-start-1 row-start-1 block size-full bg-white pl-8 text-base text-gray-900 outline-none placeholder:text-gray-400 sm:text-sm/6 dark:bg-gray-900 dark:text-white dark:placeholder:text-gray-500"
-              placeholder="Search transactions, accounts..."
-            />
-            <MagnifyingGlassIcon
-              class="pointer-events-none col-start-1 row-start-1 size-5 self-center text-gray-400"
-              aria-hidden="true"
-            />
-          </form>
+          <GlobalSearch />
 
           <!-- Right side actions -->
           <div class="flex items-center gap-x-4 lg:gap-x-6">
@@ -292,6 +281,7 @@
   import { useNotifications } from '@/composables/useNotifications'
   import { useSidebarWidth } from '@/composables/useSidebarWidth'
   import NotificationPanel from '@/components/common/NotificationPanel.vue'
+  import GlobalSearch from '@/components/layout/GlobalSearch.vue'
   import { Dialog, DialogPanel, TransitionChild, TransitionRoot } from '@headlessui/vue'
   import {
     Bars3Icon,
@@ -301,7 +291,6 @@
     ComputerDesktopIcon,
     HomeIcon,
     ArrowUpTrayIcon,
-    MagnifyingGlassIcon,
     TableCellsIcon,
     DocumentIcon,
     XMarkIcon,

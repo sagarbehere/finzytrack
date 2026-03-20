@@ -338,6 +338,13 @@ watch(filters, () => {
   updateUrlFromFilters()
 }, { deep: true })
 
+// Auto-expand all matching nodes when a search term is active
+watch(filteredTree, (newTree) => {
+  if (filters.value.search) {
+    expandAll(newTree)
+  }
+})
+
 // Watch route query for back/forward navigation
 watch(() => route.query, (newQuery, oldQuery) => {
   // Only react if we're on the accounts route and query actually changed
