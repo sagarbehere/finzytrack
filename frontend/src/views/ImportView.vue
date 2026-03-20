@@ -298,8 +298,8 @@
     // Convert raw OFX transactions to TransactionViewModel format and create import context
     rawTransactions.value = payload.details.rawTransactions
     const bundle = convertRawTransactionsToViewModels(payload.details.rawTransactions, payload.account, payload.currency)
-    transactionViewModels.value = bundle.transactions
-    importContext.value = bundle.importContext
+    transactionViewModels.value = [...transactionViewModels.value, ...bundle.transactions]
+    bundle.importContext.forEach((v, k) => importContext.value.set(k, v))
 
     // Show the transaction table
     showTransactionTable.value = true
@@ -307,8 +307,8 @@
     // Scroll to the transaction table after it's rendered
     nextTick(() => {
       if (transactionTableRef.value) {
-        // Reset table state to ensure clean start, then scroll
-        transactionTableRef.value.resetToOriginal()
+        // Reinitialize baselines to include newly appended transactions, then scroll
+        transactionTableRef.value.reinitializeBaselines()
         transactionTableRef.value.scrollToTable()
       }
     })
@@ -407,14 +407,14 @@
 
     rawCsvTransactions.value = payload.details.rawTransactions
     const bundle = convertCsvTransactionsToViewModels(payload.details.rawTransactions, payload.account, payload.currency)
-    transactionViewModels.value = bundle.transactions
-    importContext.value = bundle.importContext
+    transactionViewModels.value = [...transactionViewModels.value, ...bundle.transactions]
+    bundle.importContext.forEach((v, k) => importContext.value.set(k, v))
 
     showTransactionTable.value = true
 
     nextTick(() => {
       if (transactionTableRef.value) {
-        transactionTableRef.value.resetToOriginal()
+        transactionTableRef.value.reinitializeBaselines()
         transactionTableRef.value.scrollToTable()
       }
     })
@@ -498,14 +498,14 @@
     const bundle = convertEmailTransactionsToViewModels(
       payload.transactions, payload.account, payload.currency
     )
-    transactionViewModels.value = bundle.transactions
-    importContext.value = bundle.importContext
+    transactionViewModels.value = [...transactionViewModels.value, ...bundle.transactions]
+    bundle.importContext.forEach((v, k) => importContext.value.set(k, v))
 
     showTransactionTable.value = true
 
     nextTick(() => {
       if (transactionTableRef.value) {
-        transactionTableRef.value.resetToOriginal()
+        transactionTableRef.value.reinitializeBaselines()
         transactionTableRef.value.scrollToTable()
       }
     })
