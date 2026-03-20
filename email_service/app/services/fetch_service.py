@@ -102,6 +102,7 @@ def _run_fetch_thread(
                 until_date=until_date,
                 bank_emails=profile.bank_emails,
                 max_emails=config.max_emails,
+                timeout_secs=config.imap_timeout_secs,
                 progress_callback=fetch_progress,
             )
         except Exception as e:

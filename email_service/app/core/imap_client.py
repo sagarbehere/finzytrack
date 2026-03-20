@@ -112,6 +112,7 @@ def fetch_emails(
     until_date: Optional[date] = None,
     bank_emails: Optional[List[str]] = None,
     max_emails: int = 500,
+    timeout_secs: int = 30,
     progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> FetchResult:
     """
@@ -135,6 +136,8 @@ def fetch_emails(
     results: List[RawEmail] = []
 
     with imaplib.IMAP4_SSL(server, port) as imap:
+        if timeout_secs > 0:
+            imap.socket().settimeout(timeout_secs)
         imap.login(username, password)
         imap.select(folder, readonly=True)
 
