@@ -67,13 +67,16 @@
               <span v-else class="w-5 mr-2"></span>
 
               <!-- Account name -->
+              <button
+                v-if="!node.isVirtual"
+                @click="emit('show-detail', node)"
+                class="text-sm font-medium text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 text-left"
+              >
+                {{ node.name }}
+              </button>
               <span
-                class="text-sm font-medium"
-                :class="[
-                  node.isVirtual
-                    ? 'text-gray-400 italic dark:text-gray-500'
-                    : 'text-gray-900 dark:text-white'
-                ]"
+                v-else
+                class="text-sm font-medium text-gray-400 italic dark:text-gray-500"
               >
                 {{ node.name }}
               </span>
@@ -258,6 +261,7 @@ interface Emits {
   (e: 'show-balance-directives', node: AccountTreeNode): void
   (e: 'show-statement', node: AccountTreeNode): void
   (e: 'view-transactions', node: AccountTreeNode): void
+  (e: 'show-detail', node: AccountTreeNode): void
 }
 
 defineProps<Props>()

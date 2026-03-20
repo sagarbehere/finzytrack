@@ -22,6 +22,7 @@ export interface AccountTreeNode {
   aggregatedBalances: AggregatedBalance[];
   notes: string | null;                 // From metadata.description
   currencyBadges: string[];             // From accountDetails.currencies
+  metadata: Record<string, string>;     // All metadata from beancount open directive
 }
 
 export interface BalanceDirective {

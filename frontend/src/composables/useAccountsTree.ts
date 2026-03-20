@@ -49,6 +49,17 @@ function buildTree(accounts: AccountDetails[]): AccountTreeNode[] {
       balance: c.balance
     }))
 
+    // Extract metadata, filtering out beancount internal keys
+    const INTERNAL_KEYS = new Set(['filename', 'lineno'])
+    const metadata: Record<string, string> = {}
+    if (account.metadata) {
+      for (const [k, v] of Object.entries(account.metadata)) {
+        if (!INTERNAL_KEYS.has(k)) {
+          metadata[k] = String(v)
+        }
+      }
+    }
+
     const node: AccountTreeNode = {
       id: account.name,
       name,
@@ -62,7 +73,8 @@ function buildTree(accounts: AccountDetails[]): AccountTreeNode[] {
       closeDate: account.close_date || null,
       aggregatedBalances,
       notes: account.metadata?.description || null,
-      currencyBadges: account.currencies.map(c => c.currency)
+      currencyBadges: account.currencies.map(c => c.currency),
+      metadata,
     }
 
     nodeMap.set(account.name, node)
@@ -92,7 +104,8 @@ function buildTree(accounts: AccountDetails[]): AccountTreeNode[] {
           closeDate: null,
           aggregatedBalances: [],
           notes: null,
-          currencyBadges: []
+          currencyBadges: [],
+          metadata: {},
         }
         nodeMap.set(parentPath, virtualNode)
       }

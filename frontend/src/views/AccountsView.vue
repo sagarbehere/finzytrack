@@ -67,6 +67,7 @@
           @show-balance-directives="handleShowBalanceDirectives"
           @show-statement="handleShowStatement"
           @view-transactions="handleViewTransactions"
+          @show-detail="handleShowDetail"
         />
       </div>
 
@@ -142,6 +143,13 @@
       v-model:open="showStatementModal"
       :account="statementAccount"
     />
+
+    <!-- Account Detail Drawer -->
+    <AccountDetailDrawer
+      v-model:open="showDetailDrawer"
+      :account="detailAccount"
+      @edit="handleEditFromDrawer"
+    />
   </div>
 </template>
 
@@ -156,6 +164,7 @@ import AccountDeleteModal from '@/components/accounts/AccountDeleteModal.vue'
 import BalanceBreakdownModal from '@/components/accounts/BalanceBreakdownModal.vue'
 import BalanceDirectivesModal from '@/components/accounts/BalanceDirectivesModal.vue'
 import AccountStatementModal from '@/components/accounts/AccountStatementModal.vue'
+import AccountDetailDrawer from '@/components/accounts/AccountDetailDrawer.vue'
 import { ArrowPathIcon } from '@heroicons/vue/24/outline'
 import { useAccounts, type AccountDateFilter } from '@/composables/useAccounts'
 import { useAccountsTree } from '@/composables/useAccountsTree'
@@ -258,6 +267,7 @@ const showDeleteModal = ref(false)
 const showBalanceModal = ref(false)
 const showBalanceDirectivesModal = ref(false)
 const showStatementModal = ref(false)
+const showDetailDrawer = ref(false)
 
 const editingAccount = ref<AccountTreeNode | null>(null)
 const closingAccount = ref<AccountTreeNode | null>(null)
@@ -266,6 +276,7 @@ const deletingAccountTxCount = ref(0)
 const viewingBalanceAccount = ref<AccountTreeNode | null>(null)
 const balanceDirectivesAccount = ref<AccountTreeNode | null>(null)
 const statementAccount = ref<AccountTreeNode | null>(null)
+const detailAccount = ref<AccountTreeNode | null>(null)
 const hasLoaded = ref(false)
 
 // Computed: Build tree from account details
@@ -386,6 +397,16 @@ function handleShowStatement(node: AccountTreeNode) {
   showStatementModal.value = true
 }
 
+function handleShowDetail(node: AccountTreeNode) {
+  detailAccount.value = node
+  showDetailDrawer.value = true
+}
+
+function handleEditFromDrawer(node: AccountTreeNode) {
+  showDetailDrawer.value = false
+  handleEdit(node)
+}
+
 function handleViewTransactions(node: AccountTreeNode) {
   // Navigate to Transactions tab with filters for this account
   const query: Record<string, string> = {
@@ -408,13 +429,14 @@ function handleViewTransactions(node: AccountTreeNode) {
 }
 
 // Form submission handlers
-async function handleCreateSubmit(data: { name: string; openDate: string; currencies: string[]; description: string }) {
+async function handleCreateSubmit(data: { name: string; openDate: string; currencies: string[]; description: string; metadata: Record<string, string> }) {
   try {
     await createAccount({
       name: data.name,
       open_date: data.openDate,
       currencies: data.currencies,
-      description: data.description || undefined
+      description: data.description || undefined,
+      metadata: Object.keys(data.metadata).length > 0 ? data.metadata : undefined,
     })
     showCreateModal.value = false
     toast.success('Account Created', `Account "${data.name}" created successfully.`)
@@ -425,14 +447,16 @@ async function handleCreateSubmit(data: { name: string; openDate: string; curren
   }
 }
 
-async function handleEditSubmit(data: { name: string; openDate: string; currencies: string[]; description: string }) {
+async function handleEditSubmit(data: { name: string; openDate: string; currencies: string[]; description: string; metadata: Record<string, string> }) {
   if (!editingAccount.value) return
 
   try {
+    const metadata: Record<string, string> = { ...data.metadata }
+    if (data.description) metadata['description'] = data.description
     await updateAccount(editingAccount.value.fullPath, {
       open_date: data.openDate,
       currencies: data.currencies,
-      metadata: data.description ? { description: data.description } : undefined
+      metadata,
     })
     showEditModal.value = false
     toast.success('Account Updated', `Account "${editingAccount.value.fullPath}" updated successfully.`)
