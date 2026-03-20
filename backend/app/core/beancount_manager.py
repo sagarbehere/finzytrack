@@ -322,35 +322,31 @@ class BeancountManager:
         except ValueError:
             raise ValueError(f"Invalid open_date format: {request.open_date}")
         
-        # Create the open directive
-        currencies_str = " ".join(request.currencies)
-        open_directive = f"{open_date_obj} open {request.name} {currencies_str}"
-        
-        # Prepare metadata
-        metadata = request.metadata or {}
+        # Build metadata dict for the Open entry
+        meta: Dict[str, Any] = {'filename': str(self.ledger_file), 'lineno': 0}
         if request.description:
-            metadata["description"] = request.description
-        
-        # Add metadata as proper Beancount attributes (survives parse→print roundtrips,
-        # unlike inline comments which are discarded by Beancount's parser)
-        if metadata:
-            for key, value in metadata.items():
-                if isinstance(value, str):
-                    open_directive += f"\n  {key}: \"{value}\""
-                else:
-                    open_directive += f"\n  {key}: {str(value)}"
-        
+            meta["description"] = request.description
+        if request.metadata:
+            meta.update(request.metadata)
+
+        # Construct a proper Beancount Open entry and serialise it with the
+        # library's printer so metadata formatting is handled correctly.
+        from beancount.core import data as beancount_data
+        from beancount.parser import printer as beancount_printer
+        open_entry = beancount_data.Open(meta, open_date_obj, request.name, request.currencies or [], None)
+        open_directive = beancount_printer.format_entry(open_entry).rstrip('\n')
+
         # Use atomic write to add the open directive (SIMPLE APPEND)
         try:
             with self.atomic_ledger_write() as f:
                 current_content = f.read()
-                
+
                 # Simple append with proper formatting
                 if current_content and not current_content.endswith('\n'):
                     current_content += '\n'
                 if current_content and not current_content.endswith('\n\n'):
                     current_content += '\n'
-                    
+
                 new_content = current_content + open_directive + '\n'
                 
                 f.seek(0)

@@ -361,17 +361,15 @@ async def update_account(
             # Merge metadata (new metadata overwrites existing)
             merged_metadata = {**current_metadata, **new_metadata}
 
-            # Build the new open directive with proper Beancount metadata attributes
-            # (survives parse→print roundtrips, unlike inline comments)
-            new_open_directive = f"{new_date} open {new_name}"
-            if new_currencies:
-                new_open_directive += " " + " ".join(new_currencies)
-            if merged_metadata:
-                for key, value in merged_metadata.items():
-                    if isinstance(value, str):
-                        new_open_directive += f"\n  {key}: \"{value}\""
-                    else:
-                        new_open_directive += f"\n  {key}: {str(value)}"
+            # Construct a proper Beancount Open entry and serialise it with the
+            # library's printer so metadata formatting is handled correctly.
+            from beancount.core import data as beancount_data
+            from beancount.parser import printer as beancount_printer
+            import datetime as _dt
+            new_date_obj = _dt.datetime.strptime(new_date, "%Y-%m-%d").date()
+            entry_meta = {'filename': '<ledger>', 'lineno': 0, **merged_metadata}
+            open_entry = beancount_data.Open(entry_meta, new_date_obj, new_name, new_currencies or [], None)
+            new_open_directive = beancount_printer.format_entry(open_entry).rstrip('\n')
 
             # Replace the old open directive block (directive + any existing metadata lines)
             # with the new directive lines
