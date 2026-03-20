@@ -131,13 +131,13 @@ def _run_fetch_thread(
                 continue
 
             # Match against THIS profile's rules only (not all profiles)
-            txn_type = parser.find_matching_type(raw.from_address, raw.subject)
+            txn_type = parser.find_matching_type(raw.from_address, raw.subject, raw.body_text)
             if txn_type is None:
                 unmatched_emails.append(UnmatchedEmail(
                     from_address=raw.from_address,
                     subject=raw.subject,
                     date=raw.date,
-                    reason="No matching rule found for this sender/subject combination",
+                    reason="No matching rule found for this sender/subject/body combination",
                 ))
                 put(_make_event('parsing', f'Parsing email {i}/{total_to_parse}…',
                     current=i, total=total_to_parse))

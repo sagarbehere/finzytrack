@@ -27,6 +27,7 @@ class ErrorHandlingDef(BaseModel):
 
 class EmailFilterDef(BaseModel):
     subject_regex: Optional[str] = None
+    body_regex: Optional[str] = None          # optional body filter; must match to accept email
 
 
 class IMAPServerDef(BaseModel):

@@ -51,6 +51,7 @@ class EmailRuleParser:
 
         self.rule = RuleFile.model_validate(raw)
         self._compiled_subject_patterns: Dict[str, Optional[re.Pattern]] = {}
+        self._compiled_body_patterns: Dict[str, Optional[re.Pattern]] = {}
         self._precompile_patterns()
 
     def _precompile_patterns(self):
@@ -69,6 +70,21 @@ class EmailRuleParser:
                     self._compiled_subject_patterns[txn_type.name] = None
             else:
                 self._compiled_subject_patterns[txn_type.name] = None
+
+            body_pattern = txn_type.email_filter.body_regex
+            if body_pattern:
+                try:
+                    self._compiled_body_patterns[txn_type.name] = re.compile(
+                        body_pattern, re.IGNORECASE
+                    )
+                except re.error as e:
+                    logger.error(
+                        f"[{self.profile_id}] Invalid body_regex for "
+                        f"'{txn_type.name}': {e}. Body filter will be skipped."
+                    )
+                    self._compiled_body_patterns[txn_type.name] = None
+            else:
+                self._compiled_body_patterns[txn_type.name] = None
 
     @property
     def display_name(self) -> str:
@@ -99,11 +115,12 @@ class EmailRuleParser:
         return self.rule.parsing_mode
 
     def find_matching_type(
-        self, from_address: str, subject: str
+        self, from_address: str, subject: str, body_text: str = ""
     ) -> Optional[TransactionTypeDef]:
         """
-        Return the first transaction type that matches from+subject.
-        Returns None if the sender doesn't match any bank_email.
+        Return the first transaction type that matches from+subject+body.
+        Returns None if the sender doesn't match any bank_email, or no
+        transaction type passes all filters (subject_regex, body_regex).
         First match wins within the transaction_types list.
         """
         from_lower = from_address.lower()
@@ -111,12 +128,15 @@ class EmailRuleParser:
             return None
 
         for txn_type in self.rule.transaction_types:
-            compiled = self._compiled_subject_patterns.get(txn_type.name)
-            if compiled is None:
-                # No subject filter means match all for this sender
-                return txn_type
-            if compiled.search(subject):
-                return txn_type
+            subject_compiled = self._compiled_subject_patterns.get(txn_type.name)
+            if subject_compiled is not None and not subject_compiled.search(subject):
+                continue
+
+            body_compiled = self._compiled_body_patterns.get(txn_type.name)
+            if body_compiled is not None and not body_compiled.search(body_text):
+                continue
+
+            return txn_type
 
         return None
 
