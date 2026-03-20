@@ -23,7 +23,7 @@ export type CommitTransaction = {
      */
     payee: string;
     /**
-     * Convenience field (backend converts to ofx_memo metadata)
+     * Optional memo/reference field (stored as memo: metadata in the ledger)
      */
     memo?: (string | null);
     /**

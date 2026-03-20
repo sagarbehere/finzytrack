@@ -305,9 +305,10 @@ async def commit_transactions(
             # Prepare additional metadata from request
             additional_meta = dict(commit_txn.meta)
 
-            # Add memo as ofx_memo if present (convenience field)
-            if commit_txn.memo:
-                additional_meta['ofx_memo'] = commit_txn.memo
+            # Add memo metadata if present and non-trivial (skip placeholders like "-")
+            memo = (commit_txn.memo or '').strip()
+            if memo and memo != '-':
+                additional_meta['memo'] = memo
 
             # Extract external ID fields from metadata
             external_id = additional_meta.pop('external_id', None)

@@ -118,7 +118,7 @@ class CommitTransaction(BaseModel):
     date: DateType = Field(..., description="Transaction date")
     flag: str = Field(..., min_length=1, max_length=1, description="Transaction flag (* or !)")
     payee: str = Field(..., description="Transaction payee")
-    memo: Optional[str] = Field(default=None, description="Convenience field (backend converts to ofx_memo metadata)")
+    memo: Optional[str] = Field(default=None, description="Optional memo/reference field (stored as memo: metadata in the ledger)")
     narration: str = Field(..., description="Transaction narration")
     tags: List[str] = Field(default_factory=list, description="Transaction tags")
     links: List[str] = Field(default_factory=list, description="Transaction links")

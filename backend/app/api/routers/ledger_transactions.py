@@ -166,9 +166,10 @@ def _convert_to_beancount_transaction(update_txn: UpdateTransaction) -> Transact
     if 'id' not in meta:
         meta['id'] = update_txn.id
 
-    # Add memo to metadata if present
-    if update_txn.memo:
-        meta['ofx_memo'] = update_txn.memo
+    # Add memo to metadata if present and non-trivial (skip placeholders like "-")
+    memo = (update_txn.memo or '').strip()
+    if memo and memo != '-':
+        meta['memo'] = memo
 
     # Build transaction
     txn = Transaction(

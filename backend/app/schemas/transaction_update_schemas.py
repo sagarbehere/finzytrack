@@ -34,7 +34,7 @@ class UpdateTransaction(BaseModel):
     flag: str = Field(..., description="Transaction flag (* or !)")
     payee: str = Field(..., description="Transaction payee")
     narration: str = Field(..., description="Transaction narration/description")
-    memo: Optional[str] = Field(None, description="Transaction memo (stored as ofx_memo metadata)")
+    memo: Optional[str] = Field(None, description="Transaction memo (stored as memo: metadata in the ledger)")
     tags: List[str] = Field(default_factory=list, description="Transaction tags")
     links: List[str] = Field(default_factory=list, description="Transaction links")
     postings: List[UpdatePosting] = Field(..., description="Transaction postings")

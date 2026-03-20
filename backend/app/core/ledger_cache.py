@@ -199,13 +199,13 @@ class LedgerCache:
 
                 # Extract training data for ML (if transaction has payee)
                 if entry.payee:
-                    ofx_memo = ""
+                    memo = ""
                     if hasattr(entry, 'meta') and entry.meta:
-                        ofx_memo = entry.meta.get('ofx_memo', '')
-                    
+                        memo = entry.meta.get('memo', '') or entry.meta.get('ofx_memo', '')
+
                     description_parts = [entry.payee]
-                    if ofx_memo:
-                        description_parts.append(ofx_memo)
+                    if memo:
+                        description_parts.append(memo)
                     if entry.narration:
                         description_parts.append(entry.narration)
                     

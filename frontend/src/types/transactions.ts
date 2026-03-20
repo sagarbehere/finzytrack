@@ -38,7 +38,7 @@ export interface TransactionViewModel {
   date: string;
   flag: string;
   payee: string;
-  memo?: string; // Convenience field, backend converts to ofx_memo metadata
+  memo?: string; // Optional memo/reference, stored as memo: metadata in the ledger
   narration: string;
   tags: string[];
   links: string[];
@@ -46,7 +46,7 @@ export interface TransactionViewModel {
 
   // Beancount metadata (arbitrary key-value pairs)
   // Backend-managed keys: id (UUIDv7), content_hash (SHA256), source_account
-  // Import keys: external_id, external_id_type, ofx_memo, source_rule, etc.
+  // Import keys: external_id, external_id_type, source_rule, etc.
   meta: Record<string, string>;
 
   // Frontend-only state (NOT sent to backend/ledger)

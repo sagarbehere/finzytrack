@@ -227,8 +227,8 @@ export function useTransactionQuery() {
         },
       }
 
-      if (metadata.ofx_memo) {
-        transaction.memo = metadata.ofx_memo
+      if (metadata.memo || metadata.ofx_memo) {
+        transaction.memo = metadata.memo || metadata.ofx_memo
       }
 
       return transaction

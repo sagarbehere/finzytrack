@@ -28,7 +28,7 @@ export type UpdateTransaction = {
      */
     narration: string;
     /**
-     * Transaction memo (stored as ofx_memo metadata)
+     * Transaction memo (stored as memo: metadata in the ledger)
      */
     memo?: (string | null);
     /**
