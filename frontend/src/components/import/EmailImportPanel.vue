@@ -316,6 +316,7 @@
         selectedBeancountAccount.value = ''
         selectedCurrency.value = ''
       }
+      toast.success('Rules reloaded', `${profiles.value.length} profile${profiles.value.length === 1 ? '' : 's'} loaded.`)
     } catch {
       toast.error('Reload failed', 'Could not reload email rules — is the service running?')
       // Re-probe: if loadProfiles also fails, profilesError is set and the panel
