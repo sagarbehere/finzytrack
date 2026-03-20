@@ -334,34 +334,48 @@ async def update_account(
                 )
             
             original_date = parts[0]
-            original_currencies = parts[3:] if len(parts) > 3 else []
-            
+            # Only take currencies — stop before any inline comment (handles old-style ledgers)
+            original_currencies = []
+            for part in parts[3:]:
+                if part.startswith(';'):
+                    break
+                original_currencies.append(part)
+
+            # Find the end of the existing open directive block (open line + any metadata lines)
+            open_directive_end = open_directive_index + 1
+            while open_directive_end < len(lines):
+                next_line = lines[open_directive_end]
+                if next_line and (next_line.startswith('  ') or next_line.startswith('\t')):
+                    open_directive_end += 1
+                else:
+                    break
+
             # Build new open directive
             new_date = request.open_date or original_date
             new_currencies = request.currencies or original_currencies
-            
+
             # Get current metadata from existing metadata in file
             current_metadata = beancount_manager.get_account_metadata(account_name)
             new_metadata = request.metadata or {}
-            
+
             # Merge metadata (new metadata overwrites existing)
             merged_metadata = {**current_metadata, **new_metadata}
-            
-            # Build the new open directive
+
+            # Build the new open directive with proper Beancount metadata attributes
+            # (survives parse→print roundtrips, unlike inline comments)
             new_open_directive = f"{new_date} open {new_name}"
             if new_currencies:
                 new_open_directive += " " + " ".join(new_currencies)
-            
-            # Add metadata as inline comments
             if merged_metadata:
                 for key, value in merged_metadata.items():
                     if isinstance(value, str):
-                        new_open_directive += f"  ; {key}: {value}"
+                        new_open_directive += f"\n  {key}: \"{value}\""
                     else:
-                        new_open_directive += f"  ; {key}: {str(value)}"
-            
-            # Replace the open directive
-            lines[open_directive_index] = new_open_directive
+                        new_open_directive += f"\n  {key}: {str(value)}"
+
+            # Replace the old open directive block (directive + any existing metadata lines)
+            # with the new directive lines
+            lines[open_directive_index:open_directive_end] = new_open_directive.split('\n')
             
             # Find and replace/close any existing close directive if closing/reopening
             if request.close_date is not None:  # Either closing or reopening

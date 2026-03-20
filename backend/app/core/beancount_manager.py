@@ -331,13 +331,14 @@ class BeancountManager:
         if request.description:
             metadata["description"] = request.description
         
-        # Add metadata as inline comments if any
+        # Add metadata as proper Beancount attributes (survives parse→print roundtrips,
+        # unlike inline comments which are discarded by Beancount's parser)
         if metadata:
             for key, value in metadata.items():
                 if isinstance(value, str):
-                    open_directive += f"  ; {key}: {value}"
+                    open_directive += f"\n  {key}: \"{value}\""
                 else:
-                    open_directive += f"  ; {key}: {str(value)}"
+                    open_directive += f"\n  {key}: {str(value)}"
         
         # Use atomic write to add the open directive (SIMPLE APPEND)
         try:
