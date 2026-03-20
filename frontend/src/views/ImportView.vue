@@ -636,6 +636,7 @@
       transactionViewModels.value = []
       importContext.value.clear()
       showTransactionTable.value = false
+      if (importSource.value === 'email') importerKey.value++
     } else {
       const bundle = importSource.value === 'csv'
         ? convertCsvTransactionsToViewModels(rawCsvTransactions.value, sourceAccount.value, sourceCurrency.value)
