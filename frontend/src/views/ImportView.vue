@@ -45,17 +45,6 @@
             XLS Import
           </button>
           <button
-            @click="activeTab = 'manual'"
-            :class="[
-              activeTab === 'manual'
-                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300',
-              'whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium',
-            ]"
-          >
-            Manual Entry
-          </button>
-          <button
             @click="activeTab = 'email'"
             :class="[
               activeTab === 'email'
@@ -65,6 +54,17 @@
             ]"
           >
             Email Import
+          </button>
+          <button
+            @click="activeTab = 'manual'"
+            :class="[
+              activeTab === 'manual'
+                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300',
+              'whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium',
+            ]"
+          >
+            Manual Entry
           </button>
         </nav>
       </div>
