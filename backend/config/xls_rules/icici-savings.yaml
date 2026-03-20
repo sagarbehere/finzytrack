@@ -5,7 +5,7 @@ skip_lines_end: 28    # rows 24-51: legends section
 date_format: "%d/%m/%Y"
 columns:
   date: 3        # Transaction Date
-  narration: 5   # Transaction Remarks
+  payee: 5       # Transaction Remarks
   amount_debit: 6   # Withdrawal Amount(INR)
   amount_credit: 7  # Deposit Amount(INR)
 default_account: "Assets:ICICI:Savings"

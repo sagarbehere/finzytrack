@@ -659,18 +659,15 @@
       showTransactionTable.value = false
       if (importSource.value === 'email') importerKey.value++
     } else {
-      const bundle = (importSource.value === 'csv' || importSource.value === 'xls')
-        ? convertCsvTransactionsToViewModels(rawCsvTransactions.value, sourceAccount.value, sourceCurrency.value)
-        : convertRawTransactionsToViewModels(rawTransactions.value, sourceAccount.value, sourceCurrency.value)
-      transactionViewModels.value = bundle.transactions
-      importContext.value = bundle.importContext
+      // Use the table's built-in reset which emits original data through the normal update cycle
+      transactionTableRef.value?.resetToOriginal()
 
-      // Reinitialize child table's baselines since we just regenerated all transaction IDs
-      nextTick(() => {
-        if (transactionTableRef.value) {
-          transactionTableRef.value.reinitializeBaselines()
-        }
+      // Reset import context to match the restored original transactions
+      const newContext = new Map<string, ImportContext>()
+      transactionViewModels.value.forEach(tx => {
+        newContext.set(tx.id, { is_duplicate: false })
       })
+      importContext.value = newContext
     }
 
     // Remove focus from the button to hide the focus ring
