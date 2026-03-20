@@ -15,17 +15,26 @@
       <div v-else-if="availableRules.length === 0" class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 text-sm text-yellow-800 dark:text-yellow-200">
         No XLS rules found. Add YAML rule files to the xls-rules directory.
       </div>
-      <select
-        v-else
-        v-model="selectedRuleFilename"
-        @change="handleRuleChange"
-        class="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-      >
-        <option value="">Select a rule...</option>
-        <option v-for="rule in availableRules" :key="rule.filename" :value="rule.filename">
-          {{ rule.name }} ({{ rule.default_account }})
-        </option>
-      </select>
+      <div v-else class="flex gap-2">
+        <select
+          v-model="selectedRuleFilename"
+          @change="handleRuleChange"
+          class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        >
+          <option value="">Select a rule...</option>
+          <option v-for="rule in availableRules" :key="rule.filename" :value="rule.filename">
+            {{ rule.name }} ({{ rule.default_account }})
+          </option>
+        </select>
+        <button
+          @click="handleReloadRules"
+          :disabled="isReloadingRules"
+          class="px-3 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 shrink-0"
+          title="Reload rules from disk"
+        >
+          {{ isReloadingRules ? 'Reloading…' : 'Reload' }}
+        </button>
+      </div>
     </div>
 
     <!-- File Upload Widget (only shown when a rule is selected) -->
@@ -228,6 +237,7 @@
 
 <script setup lang="ts">
   import { ref, computed, onMounted } from 'vue'
+  import { useToast } from '@/composables/useNotifications'
   import {
     DocumentArrowUpIcon,
     DocumentCheckIcon,
@@ -266,7 +276,9 @@
   const selectedRuleFilename = ref<string>('')
   const selectedRule = ref<XlsRule | null>(null)
   const isLoadingRules = ref<boolean>(false)
+  const isReloadingRules = ref<boolean>(false)
   const rulesLoadError = ref<string | null>(null)
+  const toast = useToast()
 
   // Account/currency state
   const selectedAccount = ref<string>('')
@@ -318,6 +330,41 @@
     } catch (err: any) {
       console.error('Failed to load XLS rule:', err)
       parseError.value = 'Failed to load the selected rule.'
+    }
+  }
+
+  const handleReloadRules = async () => {
+    isReloadingRules.value = true
+    try {
+      const response = await ImportService.listXlsRules()
+      if (response.success && response.data) {
+        availableRules.value = response.data.rules || []
+
+        // Re-fetch the selected rule if it still exists, then re-parse if file is loaded
+        if (selectedRuleFilename.value) {
+          const stillExists = availableRules.value.some(r => r.filename === selectedRuleFilename.value)
+          if (stillExists) {
+            const ruleResponse = await ImportService.getXlsRule(selectedRuleFilename.value)
+            if (ruleResponse.success && ruleResponse.data) {
+              selectedRule.value = ruleResponse.data
+              selectedAccount.value = ruleResponse.data.default_account
+              selectedCurrency.value = ruleResponse.data.default_currency || 'USD'
+              if (selectedFile.value) {
+                processFile(selectedFile.value, ruleResponse.data)
+              }
+            }
+          } else {
+            selectedRuleFilename.value = ''
+            selectedRule.value = null
+          }
+        }
+
+        toast.success('Rules reloaded', `${availableRules.value.length} rule${availableRules.value.length === 1 ? '' : 's'} loaded.`)
+      }
+    } catch {
+      toast.error('Reload failed', 'Could not reload XLS rules.')
+    } finally {
+      isReloadingRules.value = false
     }
   }
 
