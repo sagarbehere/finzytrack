@@ -318,6 +318,9 @@
       }
     } catch {
       toast.error('Reload failed', 'Could not reload email rules — is the service running?')
+      // Re-probe: if loadProfiles also fails, profilesError is set and the panel
+      // transitions back to State B (showing the Retry button).
+      await loadProfiles()
     }
   }
 
