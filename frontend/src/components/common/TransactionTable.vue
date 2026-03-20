@@ -258,9 +258,9 @@ const toast = useToast()
 
 // State
 // Two independent baselines for different purposes:
-// 1. ofxOriginalTransactions: For Reset button (always returns to raw OFX data)
+// 1. importedTransactions: For Reset button (always returns to originally imported data)
 // 2. editBaselineTransactions: For ✏️ icon (updates after major operations like autocategorization)
-const ofxOriginalTransactions = ref<TransactionViewModel[]>([])
+const importedTransactions = ref<TransactionViewModel[]>([])
 const editBaselineTransactions = ref<TransactionViewModel[]>([])
 const globalFilter = ref('')
 
@@ -945,7 +945,7 @@ const onGlobalFilterChange = (e: Event) => {
 
 onMounted(() => {
   // Initialize both baselines with the initial props data
-  ofxOriginalTransactions.value = JSON.parse(JSON.stringify(props.transactions))
+  importedTransactions.value = JSON.parse(JSON.stringify(props.transactions))
   editBaselineTransactions.value = JSON.parse(JSON.stringify(props.transactions))
 
   // Add global keyboard listener for table navigation initialization
@@ -982,7 +982,7 @@ onMounted(() => {
 
 watch(() => props.transactions, () => {
   // DO NOT update baselines here - they should only be updated:
-  // - ofxOriginalTransactions: On mount (when OFX is first loaded)
+  // - importedTransactions: On mount (when data is first loaded)
   // - editBaselineTransactions: On mount, after Reset, or when parent calls setNewEditBaseline()
 }, { deep: true })
 
@@ -1109,7 +1109,7 @@ const isMetaEmpty = (meta: any): boolean => {
 
 // Check if a transaction has been modified compared to its edit baseline
 // Note: This compares against editBaselineTransactions (which updates after autocategorization),
-// not ofxOriginalTransactions (which is only used for the Reset button)
+// not importedTransactions (which is only used for the Reset button)
 const checkIfModified = (transaction: TransactionViewModel): boolean => {
   const baseline = editBaselineTransactions.value.find(t => t.id === transaction.id)
   if (!baseline) {
@@ -1467,13 +1467,13 @@ This action will immediately update the ledger and cannot be undone.`
 }
 
 const resetToOriginal = () => {
-  // Reset to OFX original data (not to autocategorized data)
-  const ofxCopy = JSON.parse(JSON.stringify(ofxOriginalTransactions.value))
-  emitUpdate(ofxCopy)
+  // Reset to originally imported data (not to autocategorized data)
+  const copy = JSON.parse(JSON.stringify(importedTransactions.value))
+  emitUpdate(copy)
 
-  // After reset, the edit baseline also goes back to OFX original
-  // (so any subsequent edits will be compared against OFX data)
-  editBaselineTransactions.value = JSON.parse(JSON.stringify(ofxOriginalTransactions.value))
+  // After reset, the edit baseline also goes back to the originally imported data
+  // (so any subsequent edits will be compared against the imported data)
+  editBaselineTransactions.value = JSON.parse(JSON.stringify(importedTransactions.value))
 }
 
 const scrollToTable = () => {
@@ -1511,12 +1511,12 @@ defineExpose({
   // Called by parent when it regenerates transactions (e.g., parent's resetTable)
   // This reinitializes BOTH baselines with the new transaction objects/IDs
   reinitializeBaselines: () => {
-    ofxOriginalTransactions.value = JSON.parse(JSON.stringify(props.transactions))
+    importedTransactions.value = JSON.parse(JSON.stringify(props.transactions))
     editBaselineTransactions.value = JSON.parse(JSON.stringify(props.transactions))
   },
 
   clearState: () => {
-    ofxOriginalTransactions.value = []
+    importedTransactions.value = []
     editBaselineTransactions.value = []
     emitUpdate([])
   }
