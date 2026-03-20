@@ -1,98 +1,88 @@
 <template>
-  <div class="w-full space-y-6">
+  <div class="w-full space-y-4">
 
-    <!-- Account profile selector & options -->
-    <div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
-      <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-3">Email Account</h3>
-
+    <!-- Compact control row -->
+    <div class="space-y-2">
       <div v-if="profiles.length === 0 && !isLoadingProfiles" class="text-sm text-gray-500 dark:text-gray-400">
         No account profiles configured. Add YAML files to
         <code class="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">email_service/config/email_rules/</code>.
       </div>
 
-      <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Account</label>
-          <select
-            v-model="selectedProfileId"
-            @change="onProfileChange"
-            class="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm"
-          >
-            <option value="">Select an account…</option>
-            <option v-for="p in profiles" :key="p.profile_id" :value="p.profile_id">
-              {{ p.name }}
-            </option>
-          </select>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">From date</label>
+      <div v-else class="flex flex-wrap items-center gap-2">
+        <!-- Account dropdown -->
+        <select
+          v-model="selectedProfileId"
+          @change="onProfileChange"
+          class="flex-1 min-w-40 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm"
+        >
+          <option value="">Select an account…</option>
+          <option v-for="p in profiles" :key="p.profile_id" :value="p.profile_id">
+            {{ p.name }}
+          </option>
+        </select>
+
+        <!-- Date range -->
+        <div class="flex items-center gap-2 border border-gray-200 dark:border-gray-600 rounded-md px-2 py-1.5 shrink-0">
+          <span class="text-sm text-gray-500 dark:text-gray-400">From:</span>
           <input
             v-model="sinceDate"
             type="date"
-            class="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm"
+            class="px-1.5 py-1 text-sm bg-transparent border-none focus:outline-none focus:ring-0 text-gray-900 dark:text-white"
           />
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Until date</label>
+          <span class="text-sm text-gray-500 dark:text-gray-400">To:</span>
           <input
             v-model="untilDate"
             type="date"
-            class="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm"
+            class="px-1.5 py-1 text-sm bg-transparent border-none focus:outline-none focus:ring-0 text-gray-900 dark:text-white"
           />
         </div>
-      </div>
 
-      <div class="mt-3 flex gap-3 flex-wrap items-center">
+        <!-- Currency -->
+        <div class="w-32 shrink-0">
+          <CommodityDropdown
+            v-model="selectedCurrency"
+            :allow-custom="true"
+            placeholder="Currency…"
+          />
+        </div>
+
+        <!-- Action buttons -->
         <button
           @click="handleTestConnection"
           :disabled="!selectedProfileId || isTestingConnection"
-          class="px-3 py-2 text-sm bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-100 rounded-md hover:bg-gray-300 dark:hover:bg-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          class="px-3 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
         >
           {{ isTestingConnection ? 'Testing…' : 'Test Connection' }}
         </button>
         <button
           @click="handleReload"
-          class="px-3 py-2 text-sm bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-100 rounded-md hover:bg-gray-300 dark:hover:bg-gray-500"
+          class="px-3 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 shrink-0"
         >
-          Reload Rules
+          Reload
         </button>
+        <button
+          @click="handleFetch"
+          :disabled="!selectedProfileId || !selectedCurrency || isFetching"
+          class="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shrink-0"
+        >
+          <svg v-if="isFetching" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.824 3 7.938l3-2.647z"/>
+          </svg>
+          {{ isFetching ? 'Fetching…' : 'Fetch' }}
+        </button>
+      </div>
+
+      <!-- Status line: connection test result + target account -->
+      <div v-if="connectionStatus || selectedBeancountAccount" class="flex flex-wrap gap-4 text-xs text-gray-500 dark:text-gray-400 pl-1">
         <span v-if="connectionStatus"
-          :class="connectionStatus.ok ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'"
-          class="text-sm self-center">
+          :class="connectionStatus.ok ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'">
           {{ connectionStatus.message }}
         </span>
+        <span v-if="selectedBeancountAccount">
+          Target: <span class="font-mono">{{ selectedBeancountAccount }}</span>
+        </span>
       </div>
-    </div>
-
-    <!-- Currency selector (pre-filled from profile) -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg p-4 border dark:border-gray-700">
-      <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-3">Currency</h3>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <CommodityDropdown
-          v-model="selectedCurrency"
-          label="Currency"
-          :allow-custom="true"
-          placeholder="Select or type currency…"
-        />
-      </div>
-      <p v-if="selectedBeancountAccount" class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-        Target account: <span class="font-mono">{{ selectedBeancountAccount }}</span>
-      </p>
-    </div>
-
-    <!-- Fetch button -->
-    <div class="flex justify-end">
-      <button
-        @click="handleFetch"
-        :disabled="!selectedProfileId || !selectedCurrency || isFetching"
-        class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-      >
-        <svg v-if="isFetching" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.824 3 7.938l3-2.647z"/>
-        </svg>
-        {{ isFetching ? 'Fetching…' : 'Fetch Transactions' }}
-      </button>
     </div>
 
     <!-- Compact progress display (shown while fetching or just after) -->
