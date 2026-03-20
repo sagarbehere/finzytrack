@@ -81,6 +81,7 @@ export function configureEmailService(baseUrl: string) {
 export function useEmailImporter() {
   const emailServiceUrl = readonly(ref(_emailServiceUrl))
   const profiles = ref<EmailProfileInfo[]>([])
+  const profilesError = ref<string | null>(null)
   const isLoadingProfiles = ref(false)
   const isFetching = ref(false)
   const fetchResult = ref<EmailFetchResult | null>(null)
@@ -92,12 +93,14 @@ export function useEmailImporter() {
   async function loadProfiles(): Promise<void> {
     if (!_emailServiceUrl) return
     isLoadingProfiles.value = true
+    profilesError.value = null
     try {
       const resp = await fetch(`${_emailServiceUrl}/profiles`)
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const data = await resp.json()
       profiles.value = data.profiles || []
     } catch (e) {
+      profilesError.value = e instanceof Error ? e.message : String(e)
       console.error('Failed to load email profiles:', e)
     } finally {
       isLoadingProfiles.value = false
@@ -118,13 +121,9 @@ export function useEmailImporter() {
 
   async function reloadProfiles(): Promise<void> {
     if (!_emailServiceUrl) return
-    try {
-      const resp = await fetch(`${_emailServiceUrl}/reload`, { method: 'POST' })
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-      await loadProfiles()  // refresh the list
-    } catch (e) {
-      console.error('Failed to reload profiles:', e)
-    }
+    const resp = await fetch(`${_emailServiceUrl}/reload`, { method: 'POST' })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    await loadProfiles()
   }
 
   async function fetchTransactions(
@@ -238,6 +237,7 @@ export function useEmailImporter() {
   return {
     emailServiceUrl,
     profiles,
+    profilesError,
     isLoadingProfiles,
     isFetching,
     fetchResult,

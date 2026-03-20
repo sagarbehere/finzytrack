@@ -45,7 +45,6 @@
             Manual Entry
           </button>
           <button
-            v-if="emailServiceUrl"
             @click="activeTab = 'email'"
             :class="[
               activeTab === 'email'

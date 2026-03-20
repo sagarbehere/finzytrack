@@ -1,8 +1,40 @@
 <template>
   <div class="w-full space-y-4">
 
+    <!-- State A: email service not configured in backend config -->
+    <div v-if="!emailServiceUrl" class="rounded-lg border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-4 space-y-2">
+      <p class="text-sm font-medium text-amber-800 dark:text-amber-300">Email import is not configured.</p>
+      <p class="text-sm text-amber-700 dark:text-amber-400">
+        Add the following to <code class="font-mono bg-amber-100 dark:bg-amber-800/50 px-1 rounded">backend/config/config.yaml</code> and restart the backend:
+      </p>
+      <pre class="text-xs font-mono bg-amber-100 dark:bg-amber-800/40 rounded p-2 text-amber-900 dark:text-amber-200">email_service:
+  base_url: "http://localhost:8100"</pre>
+      <p class="text-sm text-amber-700 dark:text-amber-400">
+        Then start the email microservice (<code class="font-mono bg-amber-100 dark:bg-amber-800/50 px-1 rounded">email_service/</code>) and reload this page.
+        See <code class="font-mono bg-amber-100 dark:bg-amber-800/50 px-1 rounded">dev-docs/email-import.md</code> for setup instructions.
+      </p>
+    </div>
+
+    <!-- State B: service configured but unreachable -->
+    <div v-else-if="profilesError && !isLoadingProfiles" class="rounded-lg border border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20 p-4 space-y-2">
+      <p class="text-sm font-medium text-red-800 dark:text-red-300">Email service is not reachable.</p>
+      <p class="text-sm text-red-700 dark:text-red-400">
+        Could not connect to <code class="font-mono bg-red-100 dark:bg-red-800/50 px-1 rounded">{{ emailServiceUrl }}</code>
+        — make sure the email microservice is running.
+      </p>
+      <p class="text-xs text-red-600 dark:text-red-500 font-mono">{{ profilesError }}</p>
+      <button
+        @click="retryLoad"
+        :disabled="isLoadingProfiles"
+        class="mt-1 px-3 py-1.5 text-sm bg-red-100 dark:bg-red-800/50 text-red-700 dark:text-red-300 rounded hover:bg-red-200 dark:hover:bg-red-700/50 disabled:opacity-50"
+      >
+        {{ isLoadingProfiles ? 'Retrying…' : 'Retry' }}
+      </button>
+    </div>
+
+    <!-- State C: normal operation -->
     <!-- Compact control row -->
-    <div class="space-y-2">
+    <div v-else class="space-y-2">
       <div v-if="profiles.length === 0 && !isLoadingProfiles" class="text-sm text-gray-500 dark:text-gray-400">
         No account profiles configured. Add YAML files to
         <code class="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">email_service/config/email_rules/</code>.
@@ -192,6 +224,7 @@
   import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
   import { useEmailImporter } from '@/composables/useEmailImporter'
   import type { EmailParsedTransaction, EmailProfileInfo } from '@/composables/useEmailImporter'
+  import { useToast, useNotifications } from '@/composables/useNotifications'
 
   defineProps<{
     emailServiceUrl: string
@@ -205,8 +238,12 @@
     }): void
   }>()
 
+  const toast = useToast()
+  const { addNotification } = useNotifications()
+
   const {
-    profiles, isLoadingProfiles, isFetching,
+    emailServiceUrl,
+    profiles, profilesError, isLoadingProfiles, isFetching,
     fetchResult, fetchError, progressState,
     loadProfiles, reloadProfiles, testConnection, fetchTransactions,
   } = useEmailImporter()
@@ -224,7 +261,22 @@
   const showUnmatched = ref(false)
   const showErrors = ref(false)
 
-  onMounted(() => loadProfiles())
+  onMounted(async () => {
+    await loadProfiles()
+    if (profilesError.value) {
+      toast.warning(
+        'Email service unreachable',
+        `Could not connect to ${emailServiceUrl.value} — make sure the email microservice is running.`,
+      )
+    }
+  })
+
+  const retryLoad = async () => {
+    await loadProfiles()
+    if (profilesError.value) {
+      toast.warning('Still unreachable', 'Email service did not respond. Check that it is running.')
+    }
+  }
 
   const onProfileChange = () => {
     const profile = profiles.value.find((p: EmailProfileInfo) => p.profile_id === selectedProfileId.value)
@@ -257,12 +309,15 @@
   }
 
   const handleReload = async () => {
-    await reloadProfiles()
-    // If selected profile no longer exists after reload, clear selection
-    if (selectedProfileId.value && !profiles.value.find(p => p.profile_id === selectedProfileId.value)) {
-      selectedProfileId.value = ''
-      selectedBeancountAccount.value = ''
-      selectedCurrency.value = ''
+    try {
+      await reloadProfiles()
+      if (selectedProfileId.value && !profiles.value.find(p => p.profile_id === selectedProfileId.value)) {
+        selectedProfileId.value = ''
+        selectedBeancountAccount.value = ''
+        selectedCurrency.value = ''
+      }
+    } catch {
+      toast.error('Reload failed', 'Could not reload email rules — is the service running?')
     }
   }
 
@@ -277,14 +332,21 @@
         untilDate.value,
       )
       if (result.transactions.length > 0) {
+        toast.success(
+          'Email fetch complete',
+          `${result.stats.transactions_parsed} transaction${result.stats.transactions_parsed !== 1 ? 's' : ''} parsed from ${result.stats.emails_fetched} emails.`,
+        )
         emit('proceedWithImport', {
           transactions: result.transactions,
           account: selectedBeancountAccount.value,
           currency: selectedCurrency.value,
         })
+      } else {
+        toast.info('Email fetch complete', 'No transactions found in the selected date range.')
       }
-    } catch {
-      // fetchError is already set by the composable
+    } catch (e) {
+      const msg = fetchError.value || (e instanceof Error ? e.message : String(e))
+      addNotification({ type: 'error', title: 'Fetch failed', message: msg, isPersistent: true })
     }
   }
 
