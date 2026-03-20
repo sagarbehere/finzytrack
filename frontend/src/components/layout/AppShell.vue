@@ -229,7 +229,7 @@
           <!-- Right side actions -->
           <div class="flex items-center gap-x-4 lg:gap-x-6">
             <!-- Notifications -->
-            <div class="relative">
+            <div class="relative" ref="notificationRef">
               <button
                 type="button"
                 class="-m-2.5 p-2.5 text-gray-400 hover:text-gray-500 dark:hover:text-white relative"
@@ -321,9 +321,22 @@
   // Add notification system
   const { unreadCount } = useNotifications()
   const showNotificationPanel = ref(false)
+  const notificationRef = ref(null)
 
   const toggleNotificationPanel = () => {
     showNotificationPanel.value = !showNotificationPanel.value
+  }
+
+  const handleClickOutside = (e) => {
+    if (showNotificationPanel.value && notificationRef.value && !notificationRef.value.contains(e.target)) {
+      showNotificationPanel.value = false
+    }
+  }
+
+  const handleEscape = (e) => {
+    if (e.key === 'Escape' && showNotificationPanel.value) {
+      showNotificationPanel.value = false
+    }
   }
 
   // Sidebar resizing
@@ -362,6 +375,8 @@
 
   onMounted(() => {
     window.addEventListener('resize', handleWindowResize)
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleEscape)
   })
 
   // Cleanup on component unmount
@@ -370,6 +385,8 @@
       stopResize()
     }
     window.removeEventListener('resize', handleWindowResize)
+    document.removeEventListener('mousedown', handleClickOutside)
+    document.removeEventListener('keydown', handleEscape)
   })
 
   // Navigation configuration based on Finzytrack spec

@@ -5,12 +5,13 @@
   >
     <TransitionGroup name="toast" tag="div" class="space-y-2">
       <div
-        v-for="notification in visibleNotifications"
+        v-for="notification in toastNotifications"
         :key="notification.id"
         :class="[
-          'bg-white dark:bg-gray-800 shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 overflow-hidden',
+          'bg-white dark:bg-gray-800 shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 overflow-hidden cursor-pointer',
           getNotificationClasses(notification.type),
         ]"
+        @click="handleToastDismiss(notification.id)"
       >
         <div class="p-4">
           <div class="flex items-start">
@@ -33,7 +34,7 @@
             </div>
             <div class="ml-4 flex-shrink-0 flex">
               <button
-                @click="dismissNotification(notification.id)"
+                @click.stop="clearNotification(notification.id)"
                 class="bg-white dark:bg-gray-800 rounded-md inline-flex text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
               >
                 <span class="sr-only">Close</span>
@@ -48,6 +49,7 @@
 </template>
 
 <script setup>
+  import { ref, computed, watch } from 'vue'
   import {
     CheckCircleIcon,
     ExclamationCircleIcon,
@@ -57,7 +59,38 @@
   } from '@heroicons/vue/24/outline'
   import { useNotifications } from '@/composables/useNotifications'
 
-  const { visibleNotifications, dismissNotification } = useNotifications()
+  const { allNotifications, markAsRead, clearNotification } = useNotifications()
+
+  // Local list of notification IDs currently visible as toasts
+  const visibleToastIds = ref([])
+
+  // Watch for new notifications and show them as toasts
+  watch(
+    () => allNotifications.value.length,
+    (newLen, oldLen) => {
+      if (newLen > oldLen) {
+        const addedCount = newLen - oldLen
+        for (let i = 0; i < addedCount; i++) {
+          const n = allNotifications.value[i]
+          visibleToastIds.value = [...visibleToastIds.value, n.id]
+          if (!n.isPersistent) {
+            setTimeout(() => {
+              visibleToastIds.value = visibleToastIds.value.filter((id) => id !== n.id)
+            }, 5000)
+          }
+        }
+      }
+    },
+  )
+
+  const toastNotifications = computed(() =>
+    allNotifications.value.filter((n) => visibleToastIds.value.includes(n.id)),
+  )
+
+  const handleToastDismiss = (id) => {
+    markAsRead(id)
+    visibleToastIds.value = visibleToastIds.value.filter((tid) => tid !== id)
+  }
 
   const getNotificationIcon = (type) => {
     const icons = {

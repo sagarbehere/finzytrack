@@ -8,7 +8,6 @@ export interface Notification {
   message: string
   timestamp: Date
   read: boolean
-  dismissed: boolean
   // Enhanced error details for debugging
   errorCode?: string | null
   errorDetails?: unknown | null
@@ -38,7 +37,6 @@ export function useNotifications() {
       message: notification.message,
       timestamp: new Date(),
       read: false,
-      dismissed: false,
       // Enhanced error details for debugging
       errorCode: notification.errorCode || null,
       errorDetails: notification.errorDetails || null,
@@ -47,20 +45,13 @@ export function useNotifications() {
 
     notifications.value.unshift(newNotification) // Add to beginning
 
-    // Auto-dismiss after 5 seconds only if not persistent
-    if (!newNotification.isPersistent) {
-      setTimeout(() => {
-        dismissNotification(id)
-      }, 5000)
-    }
-
     return id
   }
 
-  const dismissNotification = (id: number): void => {
-    const notification = notifications.value.find((n) => n.id === id)
-    if (notification) {
-      notification.dismissed = true
+  const clearNotification = (id: number): void => {
+    const index = notifications.value.findIndex((n) => n.id === id)
+    if (index !== -1) {
+      notifications.value.splice(index, 1)
     }
   }
 
@@ -85,22 +76,20 @@ export function useNotifications() {
   }
 
   // Computed properties
-  const visibleNotifications = computed(() => notifications.value.filter((n) => !n.dismissed))
-  const unreadCount = computed(() => notifications.value.filter((n) => !n.read).length)
   const allNotifications = computed(() => notifications.value)
+  const unreadCount = computed(() => notifications.value.filter((n) => !n.read).length)
 
   // Auto-cleanup every hour
   setInterval(clearOldNotifications, 60 * 60 * 1000)
 
   return {
     // State
-    visibleNotifications,
     allNotifications,
     unreadCount,
 
     // Actions
     addNotification,
-    dismissNotification,
+    clearNotification,
     markAsRead,
     markAllAsRead,
     clearAllNotifications,
@@ -112,25 +101,25 @@ export function useToast() {
   const { addNotification } = useNotifications()
 
   return {
-    success: (title: string, message: string) => addNotification({ 
-      type: 'success', 
-      title, 
-      message, 
+    success: (title: string, message: string) => addNotification({
+      type: 'success',
+      title,
+      message,
     }),
-    error: (title: string, message: string) => addNotification({ 
-      type: 'error', 
-      title, 
-      message, 
+    error: (title: string, message: string) => addNotification({
+      type: 'error',
+      title,
+      message,
     }),
-    warning: (title: string, message: string) => addNotification({ 
-      type: 'warning', 
-      title, 
-      message, 
+    warning: (title: string, message: string) => addNotification({
+      type: 'warning',
+      title,
+      message,
     }),
-    info: (title: string, message: string) => addNotification({ 
-      type: 'info', 
-      title, 
-      message, 
+    info: (title: string, message: string) => addNotification({
+      type: 'info',
+      title,
+      message,
     }),
   }
 }

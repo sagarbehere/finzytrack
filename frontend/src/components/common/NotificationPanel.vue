@@ -32,8 +32,9 @@
         <div
           v-for="notification in allNotifications"
           :key="notification.id"
+          @click="markAsRead(notification.id)"
           :class="[
-            'p-4 hover:bg-gray-50 dark:hover:bg-gray-700 relative',
+            'p-4 hover:bg-gray-50 dark:hover:bg-gray-700 relative cursor-pointer',
             !notification.read ? 'bg-blue-50 dark:bg-blue-900/20' : '',
           ]"
         >
@@ -84,7 +85,7 @@
             </div>
             <div class="flex-shrink-0">
               <button
-                @click="dismissNotification(notification.id)"
+                @click.stop="clearNotification(notification.id)"
                 class="text-gray-400 hover:text-gray-500"
               >
                 <XMarkIcon class="h-4 w-4" />
@@ -119,7 +120,7 @@
 
   defineEmits(['close'])
 
-  const { allNotifications, dismissNotification, markAllAsRead, clearAllNotifications } =
+  const { allNotifications, clearNotification, markAsRead, markAllAsRead, clearAllNotifications } =
     useNotifications()
 
   // Track expanded error details
