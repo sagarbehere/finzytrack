@@ -52,6 +52,8 @@ export type { ApiResponse_LedgerValidationResponse_ } from './models/ApiResponse
 export type { ApiResponse_OFXDetectionData_ } from './models/ApiResponse_OFXDetectionData_';
 export type { ApiResponse_QueryData_ } from './models/ApiResponse_QueryData_';
 export type { ApiResponse_UpdateTransactionResponse_ } from './models/ApiResponse_UpdateTransactionResponse_';
+export type { ApiResponse_XlsRule_ } from './models/ApiResponse_XlsRule_';
+export type { ApiResponse_XlsRuleListData_ } from './models/ApiResponse_XlsRuleListData_';
 export type { BackupConfig } from './models/BackupConfig';
 export type { BalanceDirectiveCreateData } from './models/BalanceDirectiveCreateData';
 export type { BalanceDirectiveCreateRequest } from './models/BalanceDirectiveCreateRequest';
@@ -120,6 +122,9 @@ export type { UpdateTransaction } from './models/UpdateTransaction';
 export type { UpdateTransactionRequest } from './models/UpdateTransactionRequest';
 export type { UpdateTransactionResponse } from './models/UpdateTransactionResponse';
 export type { ValidationError } from './models/ValidationError';
+export type { XlsRule } from './models/XlsRule';
+export type { XlsRuleListData } from './models/XlsRuleListData';
+export type { XlsRuleSummary } from './models/XlsRuleSummary';
 
 export { AccountsService } from './services/AccountsService';
 export { CommoditiesService } from './services/CommoditiesService';

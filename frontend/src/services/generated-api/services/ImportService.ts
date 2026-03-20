@@ -8,6 +8,8 @@ import type { ApiResponse_CsvRule_ } from '../models/ApiResponse_CsvRule_';
 import type { ApiResponse_CsvRuleListData_ } from '../models/ApiResponse_CsvRuleListData_';
 import type { ApiResponse_LearnOFXAccountData_ } from '../models/ApiResponse_LearnOFXAccountData_';
 import type { ApiResponse_OFXDetectionData_ } from '../models/ApiResponse_OFXDetectionData_';
+import type { ApiResponse_XlsRule_ } from '../models/ApiResponse_XlsRule_';
+import type { ApiResponse_XlsRuleListData_ } from '../models/ApiResponse_XlsRuleListData_';
 import type { CategorizeRequest } from '../models/CategorizeRequest';
 import type { CommitRequest } from '../models/CommitRequest';
 import type { LearnOFXAccountRequest } from '../models/LearnOFXAccountRequest';
@@ -148,6 +150,37 @@ export class ImportService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/import/csv-rules/{filename}',
+            path: {
+                'filename': filename,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * List Xls Rules
+     * @returns ApiResponse_XlsRuleListData_ Successful Response
+     * @throws ApiError
+     */
+    public static listXlsRules(): CancelablePromise<ApiResponse_XlsRuleListData_> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/import/xls-rules',
+        });
+    }
+    /**
+     * Get Xls Rule
+     * @param filename
+     * @returns ApiResponse_XlsRule_ Successful Response
+     * @throws ApiError
+     */
+    public static getXlsRule(
+        filename: string,
+    ): CancelablePromise<ApiResponse_XlsRule_> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/import/xls-rules/{filename}',
             path: {
                 'filename': filename,
             },

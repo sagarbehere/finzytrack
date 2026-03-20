@@ -16,13 +16,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import Config, ConfigurationError
-from .api.routers.importer import ofx_accounts, transaction, csv_rules
+from .api.routers.importer import ofx_accounts, transaction, csv_rules, xls_rules
 from .api.routers import accounts, commodities, ledger_export, ledger_transactions, query, config as config_router, files, ledger
 from .core.beancount_manager import BeancountManager
 from .error_handler import setup_error_handlers
 from .core.backup_manager import BackupManager
 from .core.config_manager import ConfigManager
 from .core.csv_rules_manager import CsvRulesManager
+from .core.xls_rules_manager import XlsRulesManager
 from .core.ledger_initializer import LedgerInitializer
 from .services.sqlite_exporter import SQLiteExporter
 from .services.db_sync_manager import DBSyncManager
@@ -83,8 +84,9 @@ def create_app(config: Config) -> FastAPI:
         backup_manager=backup_manager
     )
 
-    # 2b. Create CsvRulesManager
+    # 2b. Create CsvRulesManager and XlsRulesManager
     csv_rules_manager = CsvRulesManager(rules_dir=config.csv_rules_dir)
+    xls_rules_manager = XlsRulesManager(rules_dir=config.xls_rules_dir)
 
     # 3. Create LedgerInitializer
     ledger_initializer = LedgerInitializer(
@@ -193,11 +195,13 @@ def create_app(config: Config) -> FastAPI:
     app.state.sqlite_exporter = sqlite_exporter
     app.state.sqlite_sync_manager = sqlite_sync_manager
     app.state.csv_rules_manager = csv_rules_manager
+    app.state.xls_rules_manager = xls_rules_manager
 
     # Include API routers
     app.include_router(ofx_accounts.router, prefix="/api/import", tags=["import"])
     app.include_router(transaction.router, prefix="/api/import", tags=["import"])
     app.include_router(csv_rules.router, prefix="/api/import", tags=["import"])
+    app.include_router(xls_rules.router, prefix="/api/import", tags=["import"])
     app.include_router(accounts.router, prefix="/api", tags=["accounts"])
     app.include_router(commodities.router, prefix="/api", tags=["commodities"])
     app.include_router(ledger_export.router, prefix="/api/ledger", tags=["ledger"])

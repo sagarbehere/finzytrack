@@ -155,6 +155,9 @@ class Config(BaseModel):
     # CSV import rules directory
     csv_rules_dir: Optional[str] = Field(default=None, description="Directory containing CSV import rule YAML files")
 
+    # XLS import rules directory
+    xls_rules_dir: Optional[str] = Field(default=None, description="Directory containing XLS import rule YAML files")
+
     # Analytics configuration
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig, description="Analytics and reporting settings")
 

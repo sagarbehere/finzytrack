@@ -34,6 +34,17 @@
             CSV Import
           </button>
           <button
+            @click="activeTab = 'xls'"
+            :class="[
+              activeTab === 'xls'
+                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300',
+              'whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium',
+            ]"
+          >
+            XLS Import
+          </button>
+          <button
             @click="activeTab = 'manual'"
             :class="[
               activeTab === 'manual'
@@ -71,6 +82,15 @@
         <!-- CSV Import Tab -->
         <div v-else-if="activeTab === 'csv'">
           <CSVFilePicker
+            :key="importerKey"
+            @fileCleared="handleFileCleared"
+            @proceedWithImport="handleCsvProceedWithImport"
+          />
+        </div>
+
+        <!-- XLS Import Tab -->
+        <div v-else-if="activeTab === 'xls'">
+          <XLSFilePicker
             :key="importerKey"
             @fileCleared="handleFileCleared"
             @proceedWithImport="handleCsvProceedWithImport"
@@ -189,6 +209,7 @@
   import { ref, computed, nextTick } from 'vue'
   import OFXFilePicker from '@/components/import/OFXFilePicker.vue'
   import CSVFilePicker from '@/components/import/CSVFilePicker.vue'
+  import XLSFilePicker from '@/components/import/XLSFilePicker.vue'
   import ManualEntryPanel from '@/components/import/ManualEntryPanel.vue'
   import EmailImportPanel from '@/components/import/EmailImportPanel.vue'
   import { useEmailImporter } from '@/composables/useEmailImporter'
@@ -222,7 +243,7 @@
   const showTransactionTable = ref<boolean>(false)
   const rawTransactions = ref<OFXTransaction[]>([])
   const rawCsvTransactions = ref<CsvParsedTransaction[]>([])
-  const importSource = ref<'ofx' | 'csv' | 'manual' | 'email'>('ofx')
+  const importSource = ref<'ofx' | 'csv' | 'xls' | 'manual' | 'email'>('ofx')
   const transactionViewModels = ref<TransactionViewModel[]>([])
   const importContext = ref<Map<string, ImportContext>>(new Map())
   const sourceAccount = ref<string>('')
@@ -378,11 +399,11 @@
     return { transactions, importContext }
   }
 
-  // Handle the Proceed button click from CSVFilePicker
+  // Handle the Proceed button click from CSVFilePicker or XLSFilePicker
   const handleCsvProceedWithImport = (payload: { file: File, details: CsvFileDetails, account: string, currency: string }) => {
     sourceAccount.value = payload.account
     sourceCurrency.value = payload.currency
-    importSource.value = 'csv'
+    importSource.value = activeTab.value === 'xls' ? 'xls' : 'csv'
 
     rawCsvTransactions.value = payload.details.rawTransactions
     const bundle = convertCsvTransactionsToViewModels(payload.details.rawTransactions, payload.account, payload.currency)
@@ -638,7 +659,7 @@
       showTransactionTable.value = false
       if (importSource.value === 'email') importerKey.value++
     } else {
-      const bundle = importSource.value === 'csv'
+      const bundle = (importSource.value === 'csv' || importSource.value === 'xls')
         ? convertCsvTransactionsToViewModels(rawCsvTransactions.value, sourceAccount.value, sourceCurrency.value)
         : convertRawTransactionsToViewModels(rawTransactions.value, sourceAccount.value, sourceCurrency.value)
       transactionViewModels.value = bundle.transactions

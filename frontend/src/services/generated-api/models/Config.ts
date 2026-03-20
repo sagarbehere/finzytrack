@@ -38,6 +38,10 @@ export type Config = {
      */
     csv_rules_dir?: (string | null);
     /**
+     * Directory containing XLS import rule YAML files
+     */
+    xls_rules_dir?: (string | null);
+    /**
      * Analytics and reporting settings
      */
     analytics?: AnalyticsConfig;
