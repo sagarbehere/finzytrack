@@ -18,13 +18,22 @@ logger = logging.getLogger(__name__)
 
 
 def _expand_env_vars(value: str) -> str:
-    """Expand ${VAR_NAME} references to environment variable values."""
+    """Expand ${VAR_NAME} references to environment variable values.
+
+    Missing variables are left as-is (with a warning) rather than raising at
+    load time — credentials are only needed when actually connecting to IMAP,
+    so offline use (e.g. debug_fetch.py rule) works without them set.
+    """
     import re as _re
     def replace(m):
         var_name = m.group(1)
         val = os.environ.get(var_name)
         if val is None:
-            raise ValueError(f"Environment variable '{var_name}' is not set")
+            logger.warning(
+                f"Environment variable '{var_name}' is not set — "
+                f"IMAP connection will fail if attempted."
+            )
+            return m.group(0)   # keep original ${VAR_NAME}
         return val
     return _re.sub(r'\$\{([^}]+)\}', replace, value)
 

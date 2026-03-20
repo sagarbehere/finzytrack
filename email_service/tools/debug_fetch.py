@@ -129,7 +129,7 @@ def cmd_rule_email(args):
 
     print(f"\n--- STRIPPED BODY TEXT ---\n{body_text[:2000]}\n{'---'}")
 
-    txn_type = parser.find_matching_type(from_address, subject)
+    txn_type = parser.find_matching_type(from_address, subject, body_text)
     if txn_type is None:
         print("No matching transaction type found for this email.")
         return
