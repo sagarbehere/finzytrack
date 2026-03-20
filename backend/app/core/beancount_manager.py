@@ -292,105 +292,194 @@ class BeancountManager:
 
         return result
 
+    # =====================================
+    # Shared ledger-write helper
+    # =====================================
+
+    def _write_entries(self, entries) -> None:
+        """
+        Write all entries to the ledger using the Beancount printer.
+
+        This is the single authorised path for mutating the ledger file.
+        All account and transaction write operations must go through here
+        so that serialisation is always delegated to the Beancount library.
+
+        Auto-generated padding transactions (flag 'P' with no stable ID) are
+        silently dropped because Beancount recreates them at parse time from
+        the surrounding pad+balance directives.
+        """
+        from beancount.parser import printer
+        with self.atomic_ledger_write() as f:
+            f.seek(0)
+            f.truncate()
+            for entry in entries:
+                if isinstance(entry, Transaction) and entry.flag == 'P':
+                    has_id = entry.meta and ('id' in entry.meta or 'transaction_id' in entry.meta)
+                    if not has_id:
+                        continue
+                f.write(printer.format_entry(entry))
+                f.write('\n\n')
+
+    # =====================================
+    # Account Management Methods
+    # =====================================
+
+    def _rename_account_in_entry(self, entry, old_name: str, new_name: str):
+        """Return a copy of entry with all references to old_name replaced by new_name."""
+        from beancount.core import data as bd
+
+        def r(name: str) -> str:
+            if name == old_name:
+                return new_name
+            if name.startswith(old_name + ':'):
+                return new_name + name[len(old_name):]
+            return name
+
+        if isinstance(entry, (bd.Open, bd.Close, bd.Balance, bd.Note, bd.Document)):
+            return entry._replace(account=r(entry.account))
+        if isinstance(entry, bd.Pad):
+            return entry._replace(account=r(entry.account), source_account=r(entry.source_account))
+        if isinstance(entry, bd.Transaction):
+            new_postings = [p._replace(account=r(p.account)) for p in entry.postings]
+            return entry._replace(postings=new_postings)
+        return entry
+
     def create_account_directive(self, request: AccountCreateRequest) -> AccountCreateData:
         """
-        Create a new account by adding an open directive to the ledger.
-        
-        Args:
-            request: Account creation request with name, open_date, currencies, etc.
-            
-        Returns:
-            AccountCreateData with creation result and created account details
-            
+        Create a new account by appending an Open directive to the ledger.
+
         Raises:
             ValueError: Invalid account format, account already exists, invalid date format
             FileNotFoundError: If ledger file doesn't exist
             PermissionError: If ledger file cannot be accessed
-            Exception: For other ledger operation errors
         """
-        # Validate account name format
         if not self.validate_account_format(request.name):
             raise ValueError(f"Invalid account format: {request.name}")
-        
-        # Check if account already exists
         if self.is_existing_account(request.name):
             raise ValueError(f"Account already exists: {request.name}")
-        
-        # Parse and validate open_date
+
         try:
             open_date_obj = datetime.strptime(request.open_date, "%Y-%m-%d").date()
         except ValueError:
             raise ValueError(f"Invalid open_date format: {request.open_date}")
-        
-        # Build metadata dict for the Open entry
+
+        from beancount.core import data as bd
         meta: Dict[str, Any] = {'filename': str(self.ledger_file), 'lineno': 0}
         if request.description:
-            meta["description"] = request.description
+            meta['description'] = request.description
         if request.metadata:
             meta.update(request.metadata)
 
-        # Construct a proper Beancount Open entry and serialise it with the
-        # library's printer so metadata formatting is handled correctly.
-        from beancount.core import data as beancount_data
-        from beancount.parser import printer as beancount_printer
-        open_entry = beancount_data.Open(meta, open_date_obj, request.name, request.currencies or [], None)
-        open_directive = beancount_printer.format_entry(open_entry).rstrip('\n')
+        open_entry = bd.Open(meta, open_date_obj, request.name, request.currencies or [], None)
+        self._write_entries(list(self.cache.get_entries()) + [open_entry])
 
-        # Use atomic write to add the open directive (SIMPLE APPEND)
-        try:
-            with self.atomic_ledger_write() as f:
-                current_content = f.read()
-
-                # Simple append with proper formatting
-                if current_content and not current_content.endswith('\n'):
-                    current_content += '\n'
-                if current_content and not current_content.endswith('\n\n'):
-                    current_content += '\n'
-
-                new_content = current_content + open_directive + '\n'
-                
-                f.seek(0)
-                f.write(new_content)
-                f.truncate()
-                
-            # Get the created account details with proper currency detection
-            try:
-                detailed_accounts = self.get_detailed_accounts()
-                account_details = None
-                for account in detailed_accounts:
-                    if account.name == request.name:
-                        account_details = account
-                        break
-                
-                if account_details is None:
-                    # This indicates a serious program error
-                    logger.error(f"Account creation succeeded but account not found: {request.name}")
-                    raise ValueError(
-                        f"Account creation succeeded but account not found: {request.name}"
-                    )
-                
+        # Return the newly created account details from the refreshed cache
+        for account in self.get_detailed_accounts():
+            if account.name == request.name:
                 return AccountCreateData(
                     account_created=True,
-                    account_details=account_details,
-                    message=f"Account '{request.name}' created successfully"
+                    account_details=account,
+                    message=f"Account '{request.name}' created successfully",
                 )
-                
-            except Exception as e:
-                logger.error(f"Error getting created account details: {e}")
-                # Account was created but we can't retrieve details
-                return AccountCreateData(
-                    account_created=True,
-                    account_details=None,
-                    message=f"Account '{request.name}' created successfully (details unavailable)"
-                )
-                
-        except FileNotFoundError:
-            raise FileNotFoundError(f"Ledger file not found: {self.ledger_file}")
-        except PermissionError:
-            raise PermissionError(f"Permission denied accessing ledger file: {self.ledger_file}")
-        except Exception as e:
-            logger.error(f"Error creating account directive: {e}")
-            raise Exception(f"Error creating account: {str(e)}")
+        raise ValueError(f"Account creation succeeded but account not found: {request.name}")
+
+    def update_account_directive(
+        self,
+        account_name: str,
+        *,
+        new_name: Optional[str] = None,
+        open_date: Optional[str] = None,
+        currencies: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        close_date: Optional[str] = None,  # YYYY-MM-DD = set/update, "" = reopen, None = no change
+    ) -> None:
+        """
+        Update an existing account's Open (and optionally Close) directive.
+
+        Performs a full parse→modify→print cycle so the Beancount printer owns
+        serialisation. When the account is renamed every other entry that
+        references the old name (transactions, balance assertions, etc.) is
+        updated in the same write.
+        """
+        from beancount.core import data as bd
+        import datetime as _dt
+
+        final_name = new_name or account_name
+        entries = self.cache.get_entries()
+        new_entries = []
+        found_open = False
+        found_close = False
+
+        for entry in entries:
+            if isinstance(entry, bd.Open) and entry.account == account_name:
+                found_open = True
+                final_date = _dt.datetime.strptime(open_date, "%Y-%m-%d").date() if open_date else entry.date
+                final_currencies = currencies or list(entry.currencies or [])
+                # Carry forward existing metadata and merge in new values
+                carried = {k: v for k, v in (entry.meta or {}).items() if k not in ('filename', 'lineno')}
+                if metadata:
+                    carried.update(metadata)
+                new_meta = {'filename': entry.meta.get('filename', str(self.ledger_file)), 'lineno': entry.meta.get('lineno', 0)}
+                new_meta.update(carried)
+                new_entries.append(bd.Open(new_meta, final_date, final_name, final_currencies, entry.booking))
+
+            elif isinstance(entry, bd.Close) and entry.account == account_name:
+                found_close = True
+                if close_date is None:
+                    # No change requested — keep directive, but rename if necessary
+                    new_entries.append(entry._replace(account=final_name))
+                elif close_date == '':
+                    pass  # Reopen: drop the Close directive entirely
+                else:
+                    final_close = _dt.datetime.strptime(close_date, "%Y-%m-%d").date()
+                    new_entries.append(bd.Close(entry.meta, final_close, final_name))
+
+            elif final_name != account_name:
+                new_entries.append(self._rename_account_in_entry(entry, account_name, final_name))
+
+            else:
+                new_entries.append(entry)
+
+        if not found_open:
+            raise ValueError(f"Account open directive not found: {account_name}")
+
+        # If caller wants a close date and there was no existing Close, append one
+        if close_date and close_date != '' and not found_close:
+            import datetime as _dt2
+            close_meta = {'filename': str(self.ledger_file), 'lineno': 0}
+            final_close = _dt2.datetime.strptime(close_date, "%Y-%m-%d").date()
+            new_entries.append(bd.Close(close_meta, final_close, final_name))
+
+        self._write_entries(new_entries)
+
+    def close_account_directive(self, account_name: str, close_date, reason: Optional[str] = None) -> None:
+        """Append a Close directive for the given account."""
+        from beancount.core import data as bd
+        close_meta: Dict[str, Any] = {'filename': str(self.ledger_file), 'lineno': 0}
+        if reason:
+            close_meta['reason'] = reason
+        close_entry = bd.Close(close_meta, close_date, account_name)
+        self._write_entries(list(self.cache.get_entries()) + [close_entry])
+
+    def reopen_account_directive(self, account_name: str) -> None:
+        """Remove the Close directive for the given account (reopen it)."""
+        from beancount.core import data as bd
+        entries = self.cache.get_entries()
+        new_entries = [e for e in entries if not (isinstance(e, bd.Close) and e.account == account_name)]
+        self._write_entries(new_entries)
+
+    def delete_account_directive(self, account_name: str) -> None:
+        """Remove the Open and Close directives for the given account."""
+        from beancount.core import data as bd
+        entries = self.cache.get_entries()
+        new_entries = [
+            e for e in entries
+            if not (
+                (isinstance(e, bd.Open) and e.account == account_name) or
+                (isinstance(e, bd.Close) and e.account == account_name)
+            )
+        ]
+        self._write_entries(new_entries)
 
     # =====================================
     # Commodity Management Methods

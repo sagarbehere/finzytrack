@@ -298,223 +298,36 @@ async def update_account(
                     }
                 )
         
-        # Perform the update using atomic write with cache invalidation
-        with beancount_manager.atomic_ledger_write() as f:
-            current_content = f.read()
-            lines = current_content.split('\n')
-            
-            # Find the open directive for this account
-            open_directive_index = -1
-            open_directive_line = ""
-            old_name = account_name
-            new_name = request.new_name or account_name
-            
-            for i, line in enumerate(lines):
-                stripped = line.strip()
-                if stripped.startswith(f'open {account_name}') and not stripped.startswith(';'):
-                    open_directive_index = i
-                    open_directive_line = line
-                    break
-            
-            if open_directive_index == -1:
-                raise APIError(
-                    message=f"Account open directive not found: {account_name}",
-                    code="ACCOUNT_DIRECTIVE_NOT_FOUND",
-                    status_code=404,
-                    details={"account_name": account_name}
-                )
-            
-            # Parse the original open directive
-            parts = open_directive_line.split()
-            if len(parts) < 3:
-                raise APIError(
-                    message=f"Malformed open directive: {open_directive_line}",
-                    code="MALFORMED_DIRECTIVE",
-                    status_code=500
-                )
-            
-            original_date = parts[0]
-            # Only take currencies — stop before any inline comment (handles old-style ledgers)
-            original_currencies = []
-            for part in parts[3:]:
-                if part.startswith(';'):
-                    break
-                original_currencies.append(part)
+        new_name = request.new_name or account_name
 
-            # Find the end of the existing open directive block (open line + any metadata lines)
-            open_directive_end = open_directive_index + 1
-            while open_directive_end < len(lines):
-                next_line = lines[open_directive_end]
-                if next_line and (next_line.startswith('  ') or next_line.startswith('\t')):
-                    open_directive_end += 1
-                else:
-                    break
-
-            # Build new open directive
-            new_date = request.open_date or original_date
-            new_currencies = request.currencies or original_currencies
-
-            # Get current metadata from existing metadata in file
-            current_metadata = beancount_manager.get_account_metadata(account_name)
-            new_metadata = request.metadata or {}
-
-            # Merge metadata (new metadata overwrites existing)
-            merged_metadata = {**current_metadata, **new_metadata}
-
-            # Construct a proper Beancount Open entry and serialise it with the
-            # library's printer so metadata formatting is handled correctly.
-            from beancount.core import data as beancount_data
-            from beancount.parser import printer as beancount_printer
-            import datetime as _dt
-            new_date_obj = _dt.datetime.strptime(new_date, "%Y-%m-%d").date()
-            entry_meta = {'filename': '<ledger>', 'lineno': 0, **merged_metadata}
-            open_entry = beancount_data.Open(entry_meta, new_date_obj, new_name, new_currencies or [], None)
-            new_open_directive = beancount_printer.format_entry(open_entry).rstrip('\n')
-
-            # Replace the old open directive block (directive + any existing metadata lines)
-            # with the new directive lines
-            lines[open_directive_index:open_directive_end] = new_open_directive.split('\n')
-            
-            # Find and replace/close any existing close directive if closing/reopening
-            if request.close_date is not None:  # Either closing or reopening
-                close_directive_modified = False
-                for i, line in enumerate(lines):
-                    stripped = line.strip()
-                    if stripped.startswith(f'close {old_name}') and not stripped.startswith(';'):
-                        if request.close_date:  # Closing/updating close date
-                            # Update the close directive date
-                            close_parts = line.strip().split()
-                            close_parts[0] = request.close_date
-                            # Update name if it changed
-                            if old_name != new_name:
-                                close_parts[2] = new_name
-                            lines[i] = " " + " ".join(close_parts)
-                        else:  # Reopening (close_date = null)
-                            # Remove the close directive
-                            lines[i] = ""
-                            # Remove any empty lines after
-                            if i + 1 < len(lines) and lines[i + 1].strip() == "":
-                                lines[i + 1] = ""
-                        close_directive_modified = True
-                        break
-                
-                # If closing and no existing close directive, add one
-                if request.close_date and not close_directive_modified:
-                    # Find insertion point for close directive
-                    insert_index = len(lines)
-                    for i, line in enumerate(lines):
-                        if line.strip().startswith(f'open {new_name}'):
-                            insert_index = i + 1  # Insert after open directive
-                            break
-                    
-                    if insert_index < len(lines) and lines[insert_index].strip() != "":
-                        lines.insert(insert_index, "")
-                        insert_index += 1
-                    
-                    close_directive = f"{request.close_date} close {new_name}"
-                    lines.insert(insert_index, close_directive)
-            
-            # Update account name in any other directives if name changed
-            if old_name != new_name:
-                for i, line in enumerate(lines):
-                    if i == open_directive_index:  # Skip the open directive we already updated
-                        continue
-                    
-                    stripped = line.strip()
-                    if not stripped.startswith(';'):
-                        # Check for account references in transactions
-                        if f'{old_name}' in line and not stripped.startswith('open') and not stripped.startswith('close'):
-                            lines[i] = line.replace(old_name, new_name)
-            
-            # Clean up any empty lines and write back
-            new_lines = [line for line in lines if line.strip() != ""]
-            while new_lines and new_lines[-1].strip() == "":
-                new_lines.pop()
-            
-            new_content = '\n'.join(new_lines)
-            if new_content:
-                new_content += '\n'
-            
-            f.seek(0)
-            f.write(new_content)
-            f.truncate()
-        
-
-        
-        # Get the updated account details for response
+        # Delegate the write to BeancountManager (parse → modify entries → print)
         try:
-            updated_detailed_accounts = beancount_manager.get_detailed_accounts()
-            updated_account_info = None
-            for account_info in updated_detailed_accounts:
-                if account_info.name == new_name:
-                    updated_account_info = account_info
-                    break
-            
-            if not updated_account_info:
-                # Fallback: construct manually - use epoch date if open_date missing (indicates error)
-                fallback_open_date = new_date if new_date else original_date
-                # Validate fallback_open_date is valid
-                if not fallback_open_date or fallback_open_date == "1970-01-01":
-                    # Use epoch date to indicate error/missing open directive
-                    fallback_open_date = "1970-01-01"
-                
-                # Create proper AccountDetails instance
-                updated_account_info = AccountDetails(
-                    name=new_name,
-                    open_date=fallback_open_date,  # Already a string
-                    close_date=request.close_date,  # Already a string
-                    currencies=[],  # Empty for fallback
-                    metadata=merged_metadata
-                )
-            
-            # Get transaction summary
-            try:
-                transaction_summary = beancount_manager.get_account_transactions_summary(new_name)
-            except Exception:
-                transaction_summary = {}
-            
-            # Convert transaction summary to AccountCurrencyData objects
-            currencies_list = []
-            for currency, summary in transaction_summary.items():
-                currency_data = AccountCurrencyData(
-                    currency=summary.currency,
-                    transaction_count=summary.transaction_count,
-                    last_transaction_date=summary.last_transaction_date,  # Already a string from AccountCurrencyData
-                    balance=float(summary.balance)
-                )
-                currencies_list.append(currency_data)
-            
-            account_details = AccountDetails(
-                name=updated_account_info.name,
-                open_date=updated_account_info.open_date,  # Already a string from AccountDetails
-                close_date=updated_account_info.close_date,  # Already a string from AccountDetails
-                currencies=currencies_list,
-                metadata=updated_account_info.metadata
+            beancount_manager.update_account_directive(
+                account_name,
+                new_name=request.new_name or None,
+                open_date=request.open_date or None,
+                currencies=request.currencies or None,
+                metadata=request.metadata or None,
+                close_date=request.close_date,  # None = no change, "" = reopen, "YYYY-MM-DD" = set
             )
-            
-            updated = (old_name != new_name or 
-                      request.open_date is not None or 
-                      request.currencies is not None or 
-                      request.close_date is not None or
-                      request.metadata is not None)
-            
-            update_data = AccountUpdateData(
-                account_updated=updated,
-                account_details=account_details if updated else None,
-                message=f"Account '{new_name}' updated successfully" if updated else f"Account '{new_name}' unchanged"
-            )
-            
-            return success_json_response(update_data)
-            
-        except Exception as e:
-            logger.error(f"Error getting updated account details: {e}")
-            # Fallback response
-            update_data = AccountUpdateData(
-                account_updated=True,
-                account_details=None,
-                message=f"Account '{new_name}' updated successfully (details unavailable)"
-            )
-            return success_json_response(update_data)
+        except ValueError as e:
+            raise APIError(message=str(e), code="ACCOUNT_UPDATE_ERROR", status_code=400)
+
+        # Build response from refreshed cache
+        updated_detailed_accounts = beancount_manager.get_detailed_accounts()
+        updated_account_info = next((a for a in updated_detailed_accounts if a.name == new_name), None)
+
+        updated = bool(
+            request.new_name or request.open_date or request.currencies
+            or request.close_date is not None or request.metadata
+        )
+
+        update_data = AccountUpdateData(
+            account_updated=updated,
+            account_details=updated_account_info if updated else None,
+            message=f"Account '{new_name}' updated successfully" if updated else f"Account '{new_name}' unchanged",
+        )
+        return success_json_response(update_data)
             
     except APIError:
         # Re-raise API errors as-is
@@ -601,28 +414,8 @@ async def close_account(
                 }
             )
         
-        # Create the closing directive
-        close_directive = f"{close_date_obj} close {account_name}"
-        
-        # Add reason as Beancount metadata (survives parse→print roundtrips, unlike inline comments)
-        if request.reason:
-            close_directive += f"\n  reason: \"{request.reason}\""
-        
-        # Use atomic write to add the closing directive (SIMPLE APPEND) with cache invalidation
-        with beancount_manager.atomic_ledger_write() as func:
-            current_content = func.read()
-
-            # Simple append with proper formatting
-            if current_content and not current_content.endswith('\n'):
-                current_content += '\n'
-            if current_content and not current_content.endswith('\n\n'):
-                current_content += '\n'
-
-            new_content = current_content + close_directive + '\n'
-            
-            func.seek(0)
-            func.write(new_content)
-            func.truncate()
+        # Delegate the write to BeancountManager (parse → modify entries → print)
+        beancount_manager.close_account_directive(account_name, close_date_obj, reason=request.reason or None)
         
 
         
@@ -686,40 +479,8 @@ async def reopen_account(
                 details={"account_name": account_name}
             )
 
-        # Remove the close directive using atomic write
-        with beancount_manager.atomic_ledger_write() as f:
-            current_content = f.read()
-            lines = current_content.split('\n')
-
-            close_directive_removed = False
-            for i, line in enumerate(lines):
-                stripped = line.strip()
-                # Match close directive: "YYYY-MM-DD close AccountName"
-                if ' close ' in stripped and account_name in stripped and not stripped.startswith(';'):
-                    # Verify this is actually a close directive for this account
-                    parts = stripped.split()
-                    if len(parts) >= 3 and parts[1] == 'close' and parts[2] == account_name:
-                        lines[i] = ""  # Remove the close directive
-                        close_directive_removed = True
-                        break
-
-            if not close_directive_removed:
-                raise APIError(
-                    message=f"Close directive not found for account: {account_name}",
-                    code="CLOSE_DIRECTIVE_NOT_FOUND",
-                    status_code=404,
-                    details={"account_name": account_name}
-                )
-
-            # Clean up empty lines and write back
-            new_lines = [line for line in lines if line.strip() != ""]
-            new_content = '\n'.join(new_lines)
-            if new_content:
-                new_content += '\n'
-
-            f.seek(0)
-            f.write(new_content)
-            f.truncate()
+        # Delegate the write to BeancountManager (parse → modify entries → print)
+        beancount_manager.reopen_account_directive(account_name)
 
         reopen_data = AccountReopenData(
             account_reopened=True,
@@ -805,59 +566,8 @@ async def delete_account(
         if delete_transactions and total_transactions > 0:
             transactions_deleted = beancount_manager.delete_transactions_for_account(account_name)
 
-        # Perform the deletion of open/close directives using atomic write
-        with beancount_manager.atomic_ledger_write() as f:
-            current_content = f.read()
-            lines = current_content.split('\n')
-
-            # Find and remove the open directive
-            open_directive_removed = False
-            references_found = 0
-
-            for i, line in enumerate(lines):
-                stripped = line.strip()
-
-                # Match open directive: "YYYY-MM-DD open AccountName ..."
-                if ' open ' in stripped and account_name in stripped and not stripped.startswith(';'):
-                    parts = stripped.split()
-                    if len(parts) >= 3 and parts[1] == 'open' and parts[2] == account_name:
-                        lines[i] = ""  # Remove the open directive
-                        open_directive_removed = True
-
-                # Match close directive: "YYYY-MM-DD close AccountName"
-                elif ' close ' in stripped and account_name in stripped and not stripped.startswith(';'):
-                    parts = stripped.split()
-                    if len(parts) >= 3 and parts[1] == 'close' and parts[2] == account_name:
-                        lines[i] = ""  # Remove the close directive
-
-                # Count remaining references in transactions (for warning purposes)
-                elif (not stripped.startswith(';') and
-                      ' open ' not in stripped and
-                      ' close ' not in stripped and
-                      account_name in line):
-                    references_found += 1
-
-            if not open_directive_removed:
-                raise APIError(
-                    message=f"Account open directive not found: {account_name}",
-                    code="ACCOUNT_DIRECTIVE_NOT_FOUND",
-                    status_code=404,
-                    details={"account_name": account_name}
-                )
-
-            # Add warning about transaction references if any found and not deleted
-            if references_found > 0 and not delete_transactions:
-                warnings.append(f"Account is referenced in {references_found} transaction lines (not deleted)")
-
-            # Clean up empty lines and write back
-            new_lines = [line for line in lines if line.strip() != ""]
-            new_content = '\n'.join(new_lines)
-            if new_content:
-                new_content += '\n'
-
-            f.seek(0)
-            f.write(new_content)
-            f.truncate()
+        # Delegate the write to BeancountManager (parse → modify entries → print)
+        beancount_manager.delete_account_directive(account_name)
 
         # Prepare success message
         if transactions_deleted > 0:
