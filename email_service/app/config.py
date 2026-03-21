@@ -11,7 +11,7 @@ import os
 import re
 import yaml
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 # Base directory of the email_service package
@@ -30,7 +30,8 @@ def _expand_env_vars(value: str) -> str:
 
 
 class LLMConfig(BaseModel):
-    api_url: str = ""
+    provider: Literal["openai", "anthropic"] = "openai"
+    api_url: str = ""   # Only used when provider=openai
     api_key: str = ""
     model: str = ""
     temperature: float = 0.1

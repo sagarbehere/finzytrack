@@ -7,7 +7,7 @@ Supports CLI argument overrides using flattened argument names.
 import os
 import yaml
 from enum import Enum
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Literal, Optional
 from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -89,9 +89,13 @@ class SecurityConfig(BaseModel):
 
 class LLMConfig(BaseModel):
     """LLM API configuration for natural language features."""
-    api_url: str = Field(default="", description="OpenAI-compatible API base URL (e.g. http://127.0.0.1:1234 or https://api.openai.com)")
-    api_key: str = Field(default="", description="API key (required for cloud providers, leave empty for local)")
-    model: str = Field(default="", description="Model name (e.g. gpt-4o, llama-3.1-8b)")
+    provider: Literal["openai", "anthropic"] = Field(
+        default="openai",
+        description="LLM provider: 'openai' (any OpenAI-compatible endpoint incl. LM Studio, Ollama, OpenAI, Groq) or 'anthropic' (Anthropic API directly)"
+    )
+    api_url: str = Field(default="", description="OpenAI-compatible API base URL — only used when provider=openai (e.g. http://127.0.0.1:1234 or https://api.openai.com)")
+    api_key: str = Field(default="", description="API key (required for cloud providers, leave empty for local LLMs)")
+    model: str = Field(default="", description="Model name (e.g. gpt-4o, claude-sonnet-4-6, llama-3.1-8b-instruct)")
     temperature: float = Field(default=0.1, ge=0.0, le=2.0, description="Sampling temperature (0=deterministic, 2=very random)")
     max_tokens: int = Field(default=2048, ge=1, description="Maximum tokens in LLM response")
 

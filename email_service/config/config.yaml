@@ -13,8 +13,9 @@ parsing_mode: "regex"   # "regex" or "llm"
 
 # LLM settings (only needed when parsing_mode: "llm")
 llm:
-  api_url: ""       # OpenAI-compatible endpoint
-  api_key: ""       # Required for cloud providers, leave empty for local LLMs
-  model: ""         # e.g. gpt-4o, llama-3.1-8b
+  provider: "openai"  # "openai" (any OpenAI-compatible endpoint: LM Studio, Ollama, OpenAI, Groq, etc.) or "anthropic" (Anthropic API directly)
+  api_url: ""         # Only used when provider=openai — e.g. http://127.0.0.1:1234 or https://api.openai.com
+  api_key: ""         # Required for cloud providers (OpenAI, Anthropic, Groq, etc.), leave empty for local LLMs
+  model: ""           # e.g. gpt-4o, claude-sonnet-4-6, llama-3.1-8b
   temperature: 0.1
   max_tokens: 1024

@@ -1,20 +1,22 @@
-fastapi>=0.116.1
-uvicorn>=0.35.0
-pyyaml>=6.0
-click>=8.2.1
-pydantic>=2.11.7
-beancount>=3.1.0
-ruamel.yaml>=0.17.0
-scikit-learn>=1.5.0
+fastapi>=0.118.0
+uvicorn>=0.37.0
+pyyaml>=6.0.3
+click>=8.3.0
+pydantic>=2.11.9
+beancount>=3.2.0
+ruamel.yaml>=0.18.15
+scikit-learn>=1.7.2
 rapidfuzz>=3.0.0
-pandas>=2.2.0
-numpy>=1.26.0
-scipy>=1.13.0
+pandas>=2.3.3
+numpy>=2.3.3
+scipy>=1.16.2
 duckdb>=1.4.1
-httpx>=0.27.0
-cryptography>=43.0.0
-keyring>=25.5.0
+httpx>=0.28.1
+cryptography>=46.0.2
+keyring>=25.6.0
 uuid-utils>=0.11.1
+openai>=2.29.0
+anthropic>=0.86.0
 
 
 beanquery>=0.2.0
