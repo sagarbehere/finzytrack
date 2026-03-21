@@ -18,6 +18,8 @@ import { CanvasRenderer } from 'echarts/renderers'
 import type { EChartsOption } from 'echarts'
 import type { ECharts as EChartsInstance } from 'echarts/core'
 import { formatAmount } from '@/utils/currencyFormat'
+import { predefinedFormats } from '@/composables/useRecipeExecutor'
+import type { ValueFormat } from '@/types/recipes'
 
 // Register ECharts components
 echarts.use([
@@ -40,6 +42,12 @@ interface Props {
   data: unknown[]
   clickable?: boolean
   currency?: string
+  /** Predefined format applied to all series data labels (e.g. 'compact', 'currency'). */
+  seriesLabelFormat?: ValueFormat
+  /** Predefined format applied to y-axis tick labels. */
+  yAxisLabelFormat?: ValueFormat
+  /** Predefined format applied to x-axis tick labels. */
+  xAxisLabelFormat?: ValueFormat
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -114,6 +122,68 @@ function isPieChart(): boolean {
   return series.every((s) => typeof s === 'object' && s !== null && (s as { type?: string }).type === 'pie')
 }
 
+// Build a formatter function from a ValueFormat string
+function buildFormatter(format: ValueFormat): (value: unknown) => string {
+  return (value: unknown) => predefinedFormats[format](value)
+}
+
+// Inject label formatters into series that have labels enabled
+function applySeriesLabelFormat(
+  series: EChartsOption['series'],
+  format: ValueFormat,
+): EChartsOption['series'] {
+  if (!Array.isArray(series)) return series
+  const formatter = buildFormatter(format)
+  return series.map((s) => {
+    if (typeof s !== 'object' || s === null) return s
+    const existing = ('label' in s && s.label ? s.label : {}) as Record<string, unknown>
+    // Only inject if label is shown; if show is not set, default ECharts hides labels, so skip
+    if (!existing.show) return s
+    // Don't overwrite an existing formatter (TypeScript recipes set their own)
+    if (existing.formatter) return s
+    return {
+      ...s,
+      label: {
+        ...existing,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        formatter: (params: any) => {
+          // ECharts passes the full dataset row as params.value for dataset-driven series
+          const raw = params.value
+          const encodeY = (s as Record<string, unknown>).encode as Record<string, unknown> | undefined
+          const yField = Array.isArray(encodeY?.y)
+            ? String(encodeY!.y[0])
+            : typeof encodeY?.y === 'string'
+              ? encodeY!.y
+              : null
+          const numVal = typeof raw === 'object' && raw !== null && yField
+            ? Number((raw as Record<string, unknown>)[yField])
+            : typeof raw === 'number'
+              ? raw
+              : Number(raw)
+          return formatter(isNaN(numVal) ? 0 : numVal)
+        },
+      },
+    } as typeof s
+  })
+}
+
+// Inject a formatter into an axis label config
+function applyAxisLabelFormat(
+  axis: Record<string, unknown>,
+  format: ValueFormat,
+): Record<string, unknown> {
+  const existing = (axis.axisLabel ?? {}) as Record<string, unknown>
+  if (existing.formatter) return axis // Don't overwrite explicit formatters
+  const formatter = buildFormatter(format)
+  return {
+    ...axis,
+    axisLabel: {
+      ...existing,
+      formatter: (value: unknown) => formatter(value),
+    },
+  }
+}
+
 // Inject data into treemap series
 function injectTreemapData(series: EChartsOption['series']): EChartsOption['series'] {
   if (!Array.isArray(series)) return series
@@ -133,7 +203,10 @@ const finalOptions = computed<EChartsOption>(() => {
   const pie = isPieChart()
   const needsAxes = !treemap && !pie
 
-  const styledSeries = applySeriesLabelStyles(props.chartOptions.series, dark, textColor)
+  let styledSeries = applySeriesLabelStyles(props.chartOptions.series, dark, textColor)
+  if (props.seriesLabelFormat) {
+    styledSeries = applySeriesLabelFormat(styledSeries, props.seriesLabelFormat)
+  }
   const finalSeries = treemap ? injectTreemapData(styledSeries) : styledSeries
 
   const result: EChartsOption = {
@@ -189,32 +262,39 @@ const finalOptions = computed<EChartsOption>(() => {
       bottom: 16,
       ...((props.chartOptions.grid as object) || {}),
     }
-    result.xAxis = Array.isArray(props.chartOptions.xAxis)
-      ? props.chartOptions.xAxis.map((axis) => ({
-          axisLine: { lineStyle: { color: axisLineColor } },
-          axisLabel: { color: textColor },
-          splitLine: { lineStyle: { color: axisLineColor, opacity: 0.3 } },
-          ...axis,
-        }))
-      : {
-          axisLine: { lineStyle: { color: axisLineColor } },
-          axisLabel: { color: textColor },
-          splitLine: { lineStyle: { color: axisLineColor, opacity: 0.3 } },
-          ...((props.chartOptions.xAxis as object) || {}),
-        }
-    result.yAxis = Array.isArray(props.chartOptions.yAxis)
-      ? props.chartOptions.yAxis.map((axis) => ({
-          axisLine: { lineStyle: { color: axisLineColor } },
-          axisLabel: { color: textColor },
-          splitLine: { lineStyle: { color: axisLineColor, opacity: 0.3 } },
-          ...axis,
-        }))
-      : {
-          axisLine: { lineStyle: { color: axisLineColor } },
-          axisLabel: { color: textColor },
-          splitLine: { lineStyle: { color: axisLineColor, opacity: 0.3 } },
-          ...((props.chartOptions.yAxis as object) || {}),
-        }
+
+    const baseXAxis = {
+      axisLine: { lineStyle: { color: axisLineColor } },
+      axisLabel: { color: textColor },
+      splitLine: { lineStyle: { color: axisLineColor, opacity: 0.3 } },
+    }
+    const baseYAxis = {
+      axisLine: { lineStyle: { color: axisLineColor } },
+      axisLabel: { color: textColor },
+      splitLine: { lineStyle: { color: axisLineColor, opacity: 0.3 } },
+    }
+
+    const mergeAxis = (base: Record<string, unknown>, override: object) =>
+      ({ ...base, ...override }) as Record<string, unknown>
+
+    const rawXAxis = Array.isArray(props.chartOptions.xAxis)
+      ? props.chartOptions.xAxis.map((axis) => mergeAxis(baseXAxis, axis))
+      : mergeAxis(baseXAxis, (props.chartOptions.xAxis as object) || {})
+    const rawYAxis = Array.isArray(props.chartOptions.yAxis)
+      ? props.chartOptions.yAxis.map((axis) => mergeAxis(baseYAxis, axis))
+      : mergeAxis(baseYAxis, (props.chartOptions.yAxis as object) || {})
+
+    result.xAxis = props.xAxisLabelFormat
+      ? Array.isArray(rawXAxis)
+        ? rawXAxis.map((ax) => applyAxisLabelFormat(ax, props.xAxisLabelFormat!))
+        : applyAxisLabelFormat(rawXAxis, props.xAxisLabelFormat)
+      : rawXAxis
+    result.yAxis = props.yAxisLabelFormat
+      ? Array.isArray(rawYAxis)
+        ? rawYAxis.map((ax) => applyAxisLabelFormat(ax, props.yAxisLabelFormat!))
+        : applyAxisLabelFormat(rawYAxis, props.yAxisLabelFormat)
+      : rawYAxis
+
     result.dataset = {
       source: props.data as Record<string, unknown>[],
     }

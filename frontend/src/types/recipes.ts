@@ -58,10 +58,36 @@ export interface ChartVisualization {
    */
   getSeriesClickLink?: (context: ChartClickContext) => ValueLinkConfig | null | undefined
   /**
-   * Template-based click link for JSON recipes (alternative to getSeriesClickLink).
+   * Template-based click link applied to all series (JSON recipes).
    * Uses {{data.fieldName}}, {{seriesName}}, {{parameters.paramName}} interpolation.
+   * Overridden per-series by seriesClickLinks.
    */
   clickLink?: JsonValueLinkConfig
+  /**
+   * Per-series click links (JSON recipes). Keys are series names.
+   * Set a key to null to explicitly disable click-through for that series.
+   * Takes precedence over clickLink for matched series names.
+   *
+   * Example:
+   *   { "Income": { "name": "transactions", "query": { "accountContains": "Income" } },
+   *     "Expenses": { "name": "transactions", "query": { "accountContains": "Expenses" } },
+   *     "Savings": null }
+   */
+  seriesClickLinks?: Record<string, JsonValueLinkConfig | null>
+  /**
+   * Predefined format applied to all series data labels at render time.
+   * Injects a formatter function — no JS needed in JSON recipes.
+   * Common values: 'compact' (14.2k), 'currency' ($14,200), 'number' (14,200).
+   */
+  seriesLabelFormat?: ValueFormat
+  /**
+   * Predefined format applied to the y-axis tick labels at render time.
+   */
+  yAxisLabelFormat?: ValueFormat
+  /**
+   * Predefined format applied to the x-axis tick labels at render time.
+   */
+  xAxisLabelFormat?: ValueFormat
 }
 
 export interface KPIVisualization {
@@ -273,10 +299,28 @@ export type SimpleTransformType = 'none' | 'firstRow' | 'firstValue'
  * Transform configuration object for transforms that need parameters
  */
 export interface TransformConfig {
-  type: 'sortBy' | 'limit' | 'pluck'
+  type: 'sortBy' | 'limit' | 'pluck' | 'pivot'
   field?: string // For sortBy, pluck
   order?: 'asc' | 'desc' // For sortBy
   count?: number // For limit
+  // Pivot-specific fields:
+  rowField?: string // Column used as row labels (default: first non-column/value column)
+  columnField?: string // Column whose values become column headers
+  valueField?: string // Column containing cell values
+  /**
+   * Format column header strings derived from columnField values.
+   * - 'monthYear': "2025-01" → "January 2025"
+   * - 'yearMonth': keep as-is (YYYY-MM), useful for compact display
+   */
+  formatColumn?: 'monthYear' | 'yearMonth'
+  /**
+   * How to sort pivot rows.
+   * - 'total_desc' (default): highest row total first
+   * - 'total_asc': lowest row total first
+   * - 'label_asc': alphabetical by row label
+   * - 'label_desc': reverse alphabetical
+   */
+  sortRowsBy?: 'total_desc' | 'total_asc' | 'label_asc' | 'label_desc'
 }
 
 /**

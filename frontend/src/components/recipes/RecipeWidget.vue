@@ -94,6 +94,9 @@
           :data="Array.isArray(data) ? data : []"
           :clickable="hasChartClickHandler()"
           :currency="currencyParam"
+          :seriesLabelFormat="getChartSeriesLabelFormat()"
+          :yAxisLabelFormat="getChartYAxisLabelFormat()"
+          :xAxisLabelFormat="getChartXAxisLabelFormat()"
           class="h-full"
           @series-click="handleChartSeriesClick"
         />
@@ -444,8 +447,12 @@ function getPivotGetValueLink(): ((context: PivotLinkContext) => ValueLinkConfig
   const jsonViz = viz as unknown as JsonPivotVisualization
   if (jsonViz.valueLink) {
     const linkTemplate = jsonViz.valueLink
-    return (context: PivotLinkContext) =>
-      resolveTemplateLink(linkTemplate, {
+    return (context: PivotLinkContext) => {
+      // Expose columnMeta for the clicked column so templates can use
+      // {{columnMeta.startDate}}, {{columnMeta.endDate}}, {{columnMeta.rawValue}}, etc.
+      const pivotData = data.value as PivotData | null
+      const colMeta = pivotData?.columnMeta?.[context.columnIndex] ?? {}
+      return resolveTemplateLink(linkTemplate, {
         row: {
           label: context.rowLabel,
           ...context.rowData.meta,
@@ -453,7 +460,9 @@ function getPivotGetValueLink(): ((context: PivotLinkContext) => ValueLinkConfig
         column: context.column,
         columnIndex: context.columnIndex,
         value: context.value,
+        columnMeta: colMeta,
       })
+    }
   }
 
   return undefined
@@ -464,7 +473,30 @@ function hasChartClickHandler(): boolean {
   const viz = props.recipe.visualization
   if (viz.type !== 'chart') return false
   const chartViz = viz as ChartVisualization
-  return typeof chartViz.getSeriesClickLink === 'function' || !!chartViz.clickLink
+  return (
+    typeof chartViz.getSeriesClickLink === 'function' ||
+    !!chartViz.clickLink ||
+    !!chartViz.seriesClickLinks
+  )
+}
+
+// Helpers to pass label/axis format props to RecipeChart
+function getChartSeriesLabelFormat(): ValueFormat | undefined {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'chart') return undefined
+  return (viz as ChartVisualization).seriesLabelFormat
+}
+
+function getChartYAxisLabelFormat(): ValueFormat | undefined {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'chart') return undefined
+  return (viz as ChartVisualization).yAxisLabelFormat
+}
+
+function getChartXAxisLabelFormat(): ValueFormat | undefined {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'chart') return undefined
+  return (viz as ChartVisualization).xAxisLabelFormat
 }
 
 // Handle chart series click events
@@ -487,15 +519,28 @@ function handleChartSeriesClick(clickData: { seriesName: string; seriesIndex: nu
     return
   }
 
-  // JSON recipe with template-based click link
-  if (chartViz.clickLink) {
-    const link = resolveTemplateLink(chartViz.clickLink, {
-      data: clickData.data,
-      seriesName: clickData.seriesName,
-      parameters: mergedParameters.value,
-    })
-    if (link) {
-      router.push({ name: link.name, query: link.query })
+  // JSON recipe with template-based click link (global or per-series)
+  if (chartViz.clickLink || chartViz.seriesClickLinks) {
+    // Per-series config takes precedence; null means explicitly no link for this series
+    if (chartViz.seriesClickLinks && clickData.seriesName in chartViz.seriesClickLinks) {
+      const seriesLink = chartViz.seriesClickLinks[clickData.seriesName]
+      if (seriesLink === null) return // Explicitly disabled for this series
+      const link = resolveTemplateLink(seriesLink, {
+        data: clickData.data,
+        seriesName: clickData.seriesName,
+        parameters: mergedParameters.value,
+      })
+      if (link) router.push({ name: link.name, query: link.query })
+      return
+    }
+    // Fall back to global clickLink
+    if (chartViz.clickLink) {
+      const link = resolveTemplateLink(chartViz.clickLink, {
+        data: clickData.data,
+        seriesName: clickData.seriesName,
+        parameters: mergedParameters.value,
+      })
+      if (link) router.push({ name: link.name, query: link.query })
     }
   }
 }
@@ -515,13 +560,21 @@ function handleKPIClick() {
   const clickLink = (viz as KPIVisualization | JsonKPIVisualization).clickLink
   if (!clickLink) return
 
-  // Compute date convenience vars from year+month parameters
+  // Compute date convenience vars from year+month parameters.
+  // When only year is present (no month), span the full calendar year.
   const params = mergedParameters.value
   const year = String(params.year || new Date().getFullYear())
-  const month = String(params.month || new Date().getMonth() + 1).padStart(2, '0')
-  const lastDay = new Date(Number(year), Number(month), 0).getDate()
-  const dateFrom = `${year}-${month}-01`
-  const dateTo = `${year}-${month}-${String(lastDay).padStart(2, '0')}`
+  let dateFrom: string
+  let dateTo: string
+  if (params.month) {
+    const month = String(params.month).padStart(2, '0')
+    const lastDay = new Date(Number(year), Number(params.month), 0).getDate()
+    dateFrom = `${year}-${month}-01`
+    dateTo = `${year}-${month}-${String(lastDay).padStart(2, '0')}`
+  } else {
+    dateFrom = `${year}-01-01`
+    dateTo = `${year}-12-31`
+  }
 
   const link = resolveTemplateLink(clickLink, {
     parameters: params,

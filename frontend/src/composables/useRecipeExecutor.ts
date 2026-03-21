@@ -6,6 +6,8 @@ import type {
   TransformConfig,
   ValueFormat,
   QueryEngineType,
+  PivotData,
+  PivotRow,
 } from '@/types/recipes'
 import { LedgerService } from '@/services/generated-api'
 import type { QueryRequest } from '@/services/generated-api'
@@ -48,6 +50,32 @@ const simpleTransforms: Record<SimpleTransformType, (rows: Record<string, unknow
     const values = Object.values(firstRow)
     return values.length > 0 ? values[0] : null
   },
+}
+
+// ============================================================================
+// Pivot Transform Helpers
+// ============================================================================
+
+/**
+ * Format a YYYY-MM string as "Month YYYY" (e.g. "2025-01" → "January 2025").
+ */
+function formatMonthYear(yearMonth: string): string {
+  const [year, month] = yearMonth.split('-')
+  const monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ]
+  const idx = parseInt(month, 10) - 1
+  return `${monthNames[idx] ?? month} ${year}`
+}
+
+/**
+ * Compute the last day of the month for a YYYY-MM string.
+ */
+function monthEndDate(yearMonth: string): string {
+  const [year, month] = yearMonth.split('-').map(Number)
+  const lastDay = new Date(year, month, 0).getDate()
+  return `${yearMonth}-${String(lastDay).padStart(2, '0')}`
 }
 
 /**
@@ -100,6 +128,92 @@ const configurableTransforms: Record<
     const field = config.field
     if (!field) return rows
     return rows.map((row) => row[field])
+  },
+
+  /**
+   * Pivot rows into a PivotData structure suitable for RecipePivotTable.
+   *
+   * Config: {
+   *   type: "pivot",
+   *   rowField: "account",       // column used as row labels
+   *   columnField: "year_month", // column whose distinct values become column headers
+   *   valueField: "amount",      // column containing cell values
+   *   formatColumn: "monthYear", // optional: format "2025-01" → "January 2025"
+   *   sortRowsBy: "total_desc",  // optional: row sort order (default: total_desc)
+   * }
+   *
+   * columnMeta entries expose { rawValue, startDate, endDate } for YYYY-MM column fields,
+   * making them available in JSON valueLink templates as {{columnMeta.startDate}}, etc.
+   */
+  pivot: (rows, config): PivotData => {
+    const rowField = config.rowField ?? 'account'
+    const columnField = config.columnField ?? 'year_month'
+    const valueField = config.valueField ?? 'amount'
+
+    // Collect unique column keys and per-row data
+    const columnsSet = new Set<string>()
+    const rowsMap = new Map<string, Map<string, number>>()
+
+    for (const row of rows) {
+      const rowLabel = String(row[rowField] ?? '')
+      const colKey = String(row[columnField] ?? '')
+      const value = Number(row[valueField]) || 0
+
+      columnsSet.add(colKey)
+      if (!rowsMap.has(rowLabel)) rowsMap.set(rowLabel, new Map())
+      rowsMap.get(rowLabel)!.set(colKey, value)
+    }
+
+    // Sort column keys (YYYY-MM and similar strings sort correctly as strings)
+    const rawColumns = Array.from(columnsSet).sort()
+
+    // Build display headers
+    const columns = rawColumns.map((col) => {
+      if (config.formatColumn === 'monthYear') return formatMonthYear(col)
+      return col
+    })
+
+    // Build columnMeta — always include rawValue; add date range for YYYY-MM columns
+    const columnMeta: Record<string, unknown>[] = rawColumns.map((col) => {
+      const isYearMonth = /^\d{4}-\d{2}$/.test(col)
+      return {
+        rawValue: col,
+        startDate: isYearMonth ? `${col}-01` : col,
+        endDate: isYearMonth ? monthEndDate(col) : col,
+      }
+    })
+
+    // Build pivot rows
+    const columnTotals: Record<string, number> = {}
+    for (const col of columns) columnTotals[col] = 0
+    let grandTotal = 0
+
+    const pivotRows: PivotRow[] = []
+    for (const [label, colMap] of rowsMap) {
+      const values: Record<string, number> = {}
+      let rowTotal = 0
+
+      for (let i = 0; i < rawColumns.length; i++) {
+        const amount = colMap.get(rawColumns[i]) || 0
+        if (amount !== 0) {
+          values[columns[i]] = amount
+          rowTotal += amount
+          columnTotals[columns[i]] += amount
+        }
+      }
+
+      grandTotal += rowTotal
+      pivotRows.push({ label, values, total: rowTotal })
+    }
+
+    // Sort rows
+    const sortBy = config.sortRowsBy ?? 'total_desc'
+    if (sortBy === 'total_desc') pivotRows.sort((a, b) => (b.total ?? 0) - (a.total ?? 0))
+    else if (sortBy === 'total_asc') pivotRows.sort((a, b) => (a.total ?? 0) - (b.total ?? 0))
+    else if (sortBy === 'label_asc') pivotRows.sort((a, b) => a.label.localeCompare(b.label))
+    else if (sortBy === 'label_desc') pivotRows.sort((a, b) => b.label.localeCompare(a.label))
+
+    return { columns, rows: pivotRows, columnTotals, grandTotal, columnMeta }
   },
 }
 
