@@ -69,7 +69,7 @@
         <select
           v-model="selectedProfileId"
           @change="onProfileChange"
-          class="flex-1 min-w-40 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm"
+          class="flex-1 min-w-40 h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-1.5 text-sm"
         >
           <option value="">Select an account…</option>
           <option v-for="p in profiles" :key="p.profile_id" :value="p.profile_id">
@@ -78,7 +78,7 @@
         </select>
 
         <!-- Date range -->
-        <div class="flex items-center gap-2 border border-gray-200 dark:border-gray-600 rounded-md px-2 py-1.5 shrink-0">
+        <div class="flex items-center gap-2 border border-gray-200 dark:border-gray-600 rounded-md px-2 h-9 shrink-0">
           <span class="text-sm text-gray-500 dark:text-gray-400">From:</span>
           <input
             v-model="sinceDate"
@@ -99,6 +99,7 @@
             v-model="selectedCurrency"
             :allow-custom="true"
             placeholder="Currency…"
+            custom-class="h-9 py-1.5"
           />
         </div>
 
@@ -106,20 +107,20 @@
         <button
           @click="handleTestConnection"
           :disabled="!selectedProfileId || isTestingConnection"
-          class="px-3 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+          class="h-9 px-3 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
         >
           {{ isTestingConnection ? 'Testing…' : 'Test Connection' }}
         </button>
         <button
           @click="handleReload"
-          class="px-3 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 shrink-0"
+          class="h-9 px-3 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 shrink-0"
         >
           Reload
         </button>
         <button
           @click="handleFetch"
           :disabled="!selectedProfileId || !selectedCurrency || isFetching"
-          class="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shrink-0"
+          class="h-9 px-4 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shrink-0"
         >
           <svg v-if="isFetching" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
