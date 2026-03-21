@@ -120,6 +120,17 @@
 
       <!-- Configuration File Tab -->
       <div v-if="activeTab === 'config'">
+        <!-- Restart required banner — sticky once shown -->
+        <div
+          v-if="restartRequired"
+          class="mb-4 flex items-start gap-3 rounded-lg border border-amber-300 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/30 px-4 py-3 text-sm text-amber-800 dark:text-amber-300"
+        >
+          <svg class="mt-0.5 h-4 w-4 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+          </svg>
+          <span>Some changes require an app restart to take effect. Please restart the application.</span>
+        </div>
+
         <div class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 p-6">
           <div class="mb-4">
             <h3 class="text-lg font-medium text-gray-900 dark:text-white">Configuration File</h3>
@@ -159,22 +170,17 @@ import { ref } from 'vue'
 import FileEditor from '@/components/common/FileEditor.vue'
 import type { Config } from '@/services/generated-api'
 import { useConfig } from '@/composables/useConfig'
-import { useToast } from '@/composables/useNotifications'
 
 const activeTab = ref('config')
 const { updateConfig } = useConfig()
-const toast = useToast()
+const restartRequired = ref(false)
 
 function handleConfigSaved(updatedConfig: Config) {
-  // Update global config cache (used throughout the app)
   updateConfig(updatedConfig)
-
-  // Toast already shown by FileEditor, but we could add additional logic here if needed
 }
 
-function handleRestartRequired(reason: string) {
-  // Show warning about restart
-  toast.warning('Restart Required', `Config saved. ${reason}. Please restart the backend.`)
+function handleRestartRequired(_reason: string) {
+  restartRequired.value = true
 }
 
 function handleError(errorMsg: string) {
