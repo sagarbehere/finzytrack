@@ -262,19 +262,20 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
         except Exception:
             checks["backup_dir_writable"] = False
 
-        # Conditionally check ML training data file
-        if config.ai.categorization.enabled:
-            checks["ml_training_data_readable"] = False
-            if config.ai.categorization.training_data_file:
-                try:
-                    training_file_path = Path(config.ai.categorization.training_data_file)
-                    if training_file_path.exists() and os.access(training_file_path, os.R_OK):
-                        checks["ml_training_data_readable"] = True
-                except Exception:
-                    checks["ml_training_data_readable"] = False
+        # Training data sample count — informational only, does not affect health status.
+        # Insufficient training data is handled gracefully at categorization time.
+        training_samples = 0
+        try:
+            from app.core.beancount_manager import BeancountManager
+            bm: BeancountManager = app.state.beancount_manager
+            training_samples = len(bm.cache.get_training_data())
+        except Exception:
+            pass
+        checks["training_samples"] = training_samples
 
-        # Determine overall status
-        is_healthy = all(checks.values())
+        # Determine overall status (training_samples is informational, not a hard check)
+        critical_checks = {k: v for k, v in checks.items() if k != "training_samples"}
+        is_healthy = all(critical_checks.values())
 
         if not is_healthy:
             return JSONResponse(

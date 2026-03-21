@@ -198,21 +198,10 @@ class Config(BaseModel):
             except (PermissionError, OSError) as e:
                 raise ValueError(f"Cannot create backup directory {backup_path}: {e}")
         
-        # Validate training data file exists and is readable (if local categorization is enabled)
-        cat = self.ai.categorization
-        if cat.enabled and cat.engine == CategorizationEngine.CLASSIFIER and cat.training_data_file is None:
-            raise ValueError("Categorization is enabled with engine=local but no training_data_file is specified.")
-        if cat.enabled and cat.engine == CategorizationEngine.CLASSIFIER and cat.training_data_file:
-            training_file = Path(cat.training_data_file)
-            if not training_file.exists():
-                raise ValueError(f"ML training data file does not exist: {training_file}")
-            if not training_file.is_file():
-                raise ValueError(f"ML training data path is not a file: {training_file}")
-            try:
-                with open(training_file, 'r') as f:
-                    f.read(1)  # Test readability by reading first byte
-            except (PermissionError, OSError) as e:
-                raise ValueError(f"ML training data file is not readable: {training_file} ({e})")
+        # Note: training data for the classifier comes from the ledger cache (the main
+        # ledger file), not from training_data_file directly. The field is kept for
+        # reference/future use. No hard validation here — insufficient training data
+        # is handled gracefully at runtime by initialize_classifier().
         
         return self
     
