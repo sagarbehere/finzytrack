@@ -276,16 +276,19 @@ export interface RecipeExecutionResult {
  * - 'accountName': Extract last segment of account path (Expenses:Food:Groceries → Groceries)
  * - 'accountName2': Extract last 2 segments (Expenses:Food:Groceries → Food:Groceries)
  */
-export type ValueFormat =
-  | 'currency'
-  | 'percent'
-  | 'number'
-  | 'compact'
-  | 'signedCurrency'
-  | 'date'
-  | 'dateShort'
-  | 'accountName'
-  | 'accountName2'
+export const VALID_VALUE_FORMATS = [
+  'currency',
+  'percent',
+  'number',
+  'compact',
+  'signedCurrency',
+  'date',
+  'dateShort',
+  'accountName',
+  'accountName2',
+] as const
+
+export type ValueFormat = (typeof VALID_VALUE_FORMATS)[number]
 
 /**
  * Simple transform types (no configuration needed)

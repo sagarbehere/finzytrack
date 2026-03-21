@@ -30,13 +30,30 @@
         gridAutoRows: dashboard.layout.rowHeight || '200px',
       }"
     >
-      <RecipeWidget
-        v-for="widgetLayout in dashboard.layout.widgets"
-        :key="widgetLayout.widgetId"
-        :recipe="getWidgetById(widgetLayout.widgetId)"
-        :dashboardParameters="dashboardParameters"
-        :style="{ gridArea: widgetLayout.gridArea }"
-      />
+      <template v-for="widgetLayout in dashboard.layout.widgets" :key="widgetLayout.widgetId">
+        <RecipeWidget
+          v-if="getWidgetById(widgetLayout.widgetId)"
+          :recipe="getWidgetById(widgetLayout.widgetId)!"
+          :dashboardParameters="dashboardParameters"
+          :style="{ gridArea: widgetLayout.gridArea }"
+        />
+        <!-- Shown when a widgetId in the layout has no matching widget definition -->
+        <div
+          v-else
+          :style="{ gridArea: widgetLayout.gridArea }"
+          class="bg-white dark:bg-gray-800 shadow rounded-lg border border-red-200 dark:border-red-800 flex flex-col h-full"
+        >
+          <div class="px-4 py-3 border-b border-red-200 dark:border-red-800">
+            <h3 class="text-sm font-medium text-red-600 dark:text-red-400">Widget not found</h3>
+          </div>
+          <div class="flex-1 p-4 flex items-center justify-center">
+            <p class="text-sm text-red-500 dark:text-red-400 text-center">
+              No widget with id <code class="font-mono bg-red-50 dark:bg-red-900/30 px-1 rounded">{{ widgetLayout.widgetId }}</code> found.<br/>
+              <span class="text-xs text-gray-500 dark:text-gray-400 mt-1 block">Check that it is defined in the dashboard's widgets array or in the recipe manifest.</span>
+            </p>
+          </div>
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -77,22 +94,8 @@ const dashboardParameters = ref<Record<string, string | number>>({})
  *
  * This allows JSON dashboards to reference TypeScript widgets by ID.
  */
-function getWidgetById(widgetId: string): WidgetRecipe | JsonWidgetRecipe {
-  // First, check dashboard's embedded widgets
-  const embeddedWidget = props.dashboard.widgets?.find((w) => w.id === widgetId)
-  if (embeddedWidget) {
-    return embeddedWidget
-  }
-
-  // Fall back to global registry (built-in + user recipes)
-  const registryWidget = getWidget(widgetId)
-  if (registryWidget) {
-    return registryWidget
-  }
-
-  throw new Error(
-    `Widget not found: "${widgetId}". Check that it exists in the dashboard's widgets array or in the recipe registry.`
-  )
+function getWidgetById(widgetId: string): WidgetRecipe | JsonWidgetRecipe | undefined {
+  return props.dashboard.widgets?.find((w) => w.id === widgetId) ?? getWidget(widgetId)
 }
 
 // Initialize dashboard parameters with defaults, then overlay any initial values from URL

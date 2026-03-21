@@ -9,6 +9,8 @@ import type {
 } from '@/types/recipes'
 import { recipeRegistry as builtInRegistry } from '@/recipes'
 import { resolveGenerators } from '@/recipes/functions'
+import { validateJsonWidgetRecipe, validateJsonDashboardRecipe } from '@/composables/useRecipeValidator'
+import { useNotifications } from '@/composables/useNotifications'
 
 /**
  * Composable for loading user recipes from public/recipes/ at runtime
@@ -60,34 +62,60 @@ async function loadUserRecipes(): Promise<void> {
       return
     }
 
+    const { addNotification } = useNotifications()
+
+    const reportFileError = (file: string, kind: 'parse' | 'schema', messages: string[]) => {
+      const bullet = messages.map((m) => `• ${m}`).join('\n')
+      addNotification({
+        type: 'error',
+        title: `Recipe error: ${file}`,
+        message: kind === 'parse'
+          ? `File could not be parsed as JSON.\n${bullet}`
+          : `Schema validation failed:\n${bullet}`,
+        errorDetails: { file, kind, messages },
+        isPersistent: true,
+      })
+      console.error(`[RecipeLoader] ${kind} error in ${file}:`, messages)
+    }
+
     // Load widgets
     const widgetPromises = (manifest.widgets || []).map(async (path) => {
+      const fullPath = path.startsWith('/') ? path : `${RECIPES_BASE_PATH}/${path}`
+      let raw: unknown
       try {
-        const fullPath = path.startsWith('/') ? path : `${RECIPES_BASE_PATH}/${path}`
-        const rawWidget = await fetchJson<JsonWidgetRecipe>(fullPath)
-        // Resolve any generator references in the widget
-        const widget = resolveGenerators(rawWidget)
-        console.log(`[RecipeLoader] Loaded widget: ${widget.id}`)
-        return widget
+        raw = await fetchJson<unknown>(fullPath)
       } catch (err) {
-        console.warn(`[RecipeLoader] Failed to load widget ${path}:`, err)
+        reportFileError(path, 'parse', [err instanceof Error ? err.message : 'Failed to fetch or parse file'])
         return null
       }
+      const validationErrors = validateJsonWidgetRecipe(raw)
+      if (validationErrors.length > 0) {
+        reportFileError(path, 'schema', validationErrors.map((e) => `${e.field}: ${e.message}`))
+        return null
+      }
+      const widget = resolveGenerators(raw as JsonWidgetRecipe)
+      console.log(`[RecipeLoader] Loaded widget: ${widget.id}`)
+      return widget
     })
 
     // Load dashboards
     const dashboardPromises = (manifest.dashboards || []).map(async (path) => {
+      const fullPath = path.startsWith('/') ? path : `${RECIPES_BASE_PATH}/${path}`
+      let raw: unknown
       try {
-        const fullPath = path.startsWith('/') ? path : `${RECIPES_BASE_PATH}/${path}`
-        const rawDashboard = await fetchJson<JsonDashboardRecipe>(fullPath)
-        // Resolve any generator references in the dashboard
-        const dashboard = resolveGenerators(rawDashboard)
-        console.log(`[RecipeLoader] Loaded dashboard: ${dashboard.id}`)
-        return dashboard
+        raw = await fetchJson<unknown>(fullPath)
       } catch (err) {
-        console.warn(`[RecipeLoader] Failed to load dashboard ${path}:`, err)
+        reportFileError(path, 'parse', [err instanceof Error ? err.message : 'Failed to fetch or parse file'])
         return null
       }
+      const validationErrors = validateJsonDashboardRecipe(raw)
+      if (validationErrors.length > 0) {
+        reportFileError(path, 'schema', validationErrors.map((e) => `${e.field}: ${e.message}`))
+        return null
+      }
+      const dashboard = resolveGenerators(raw as JsonDashboardRecipe)
+      console.log(`[RecipeLoader] Loaded dashboard: ${dashboard.id}`)
+      return dashboard
     })
 
     // Wait for all to load
