@@ -42,5 +42,193 @@
       }
     ]
   },
-  "widgets": []
+  "widgets": [
+    {
+      "id": "total-income",
+      "title": "Total Income",
+      "query": "SELECT currency, SUM(amount) * -1 AS amount FROM postings WHERE account_type = 'Income' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency",
+      "visualization": {
+        "type": "kpi",
+        "icon": "\u2191",
+        "iconColor": "green",
+        "multiCurrency": true,
+        "clickLink": {
+          "name": "transactions",
+          "query": {
+            "accountContains": "Income",
+            "dateFrom": "{{dateFrom}}",
+            "dateTo": "{{dateTo}}"
+          }
+        }
+      }
+    },
+    {
+      "id": "total-expenses",
+      "title": "Total Expenses",
+      "query": "SELECT currency, SUM(amount) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency",
+      "visualization": {
+        "type": "kpi",
+        "icon": "\u2193",
+        "iconColor": "red",
+        "multiCurrency": true,
+        "clickLink": {
+          "name": "transactions",
+          "query": {
+            "accountContains": "Expenses",
+            "dateFrom": "{{dateFrom}}",
+            "dateTo": "{{dateTo}}"
+          }
+        }
+      }
+    },
+    {
+      "id": "estimated-taxes",
+      "title": "Estimated Taxes",
+      "helpText": "Estimated as 50% of Income:Gross",
+      "query": "SELECT currency, (SUM(amount) / 2.0) * -1 AS amount FROM postings WHERE account_type = 'Income' AND LOWER(account) LIKE 'income:gross%' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency",
+      "visualization": {
+        "type": "kpi",
+        "icon": "%",
+        "multiCurrency": true
+      }
+    },
+    {
+      "id": "savings",
+      "title": "Estimated Savings",
+      "query": "SELECT currency, (-1 * SUM(CASE WHEN account_type = 'Income' THEN amount ELSE 0 END)) - ((SUM(CASE WHEN LOWER(account) LIKE 'income:gross%' THEN amount ELSE 0 END) / 2.0) * -1) - (SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END)) AS amount FROM postings WHERE year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency",
+      "visualization": {
+        "type": "kpi",
+        "icon": "$",
+        "iconColor": "blue",
+        "multiCurrency": true
+      }
+    },
+    {
+      "id": "monthly-income-expenses",
+      "title": "Monthly Income & Expenses",
+      "description": "Monthly comparison of income, expenses, and estimated savings",
+      "parameters": [
+        {
+          "name": "currency",
+          "label": "Currency",
+          "type": "select",
+          "default": "USD",
+          "optionsFrom": "currencies"
+        }
+      ],
+      "query": "SELECT year_month, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) AS income, SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END) AS expenses, SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) - SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END) AS savings FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses') GROUP BY year_month ORDER BY year_month",
+      "visualization": {
+        "type": "chart",
+        "chartType": "bar",
+        "seriesLabelFormat": "compact",
+        "yAxisLabelFormat": "compact",
+        "seriesClickLinks": {
+          "Income": {
+            "name": "transactions",
+            "query": {
+              "accountContains": "Income",
+              "dateFrom": "{{data.dateFrom}}",
+              "dateTo": "{{data.dateTo}}"
+            }
+          },
+          "Expenses": {
+            "name": "transactions",
+            "query": {
+              "accountContains": "Expenses",
+              "dateFrom": "{{data.dateFrom}}",
+              "dateTo": "{{data.dateTo}}"
+            }
+          },
+          "Savings": null
+        },
+        "options": {
+          "legend": {
+            "data": ["Expenses", "Income", "Savings"],
+            "top": 0,
+            "left": "left",
+            "itemGap": 20
+          },
+          "grid": {
+            "top": 40,
+            "bottom": 40,
+            "left": 50,
+            "right": 20
+          },
+          "xAxis": {
+            "type": "category"
+          },
+          "yAxis": {
+            "type": "value",
+            "splitLine": {
+              "lineStyle": {
+                "type": "dashed",
+                "opacity": 0.6
+              }
+            }
+          },
+          "series": [
+            {
+              "name": "Expenses",
+              "type": "bar",
+              "encode": { "x": "month_label", "y": "expenses" },
+              "itemStyle": { "color": "#E8A951" },
+              "barGap": "10%",
+              "label": { "show": true, "position": "top", "fontSize": 10 }
+            },
+            {
+              "name": "Income",
+              "type": "bar",
+              "encode": { "x": "month_label", "y": "income" },
+              "itemStyle": { "color": "#7DD3C0" },
+              "label": { "show": true, "position": "top", "fontSize": 10 }
+            },
+            {
+              "name": "Savings",
+              "type": "bar",
+              "encode": { "x": "month_label", "y": "savings" },
+              "itemStyle": { "color": "#7B83AD" },
+              "label": { "show": true, "position": "top", "fontSize": 10 }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "expenses-pivot-table",
+      "title": "Expenses Pivot Table",
+      "description": "Monthly breakdown of expenses by account",
+      "parameters": [
+        {
+          "name": "currency",
+          "label": "Currency",
+          "type": "select",
+          "default": "USD",
+          "optionsFrom": "currencies"
+        }
+      ],
+      "query": "SELECT account, year_month, SUM(amount) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account, year_month ORDER BY account, year_month",
+      "transform": {
+        "type": "pivot",
+        "rowField": "account",
+        "columnField": "year_month",
+        "valueField": "amount",
+        "formatColumn": "monthYear",
+        "sortRowsBy": "total_desc"
+      },
+      "visualization": {
+        "type": "pivot",
+        "rowHeader": "Account",
+        "showRowTotals": true,
+        "showColumnTotals": true,
+        "valueLink": {
+          "name": "transactions",
+          "query": {
+            "accountContains": "{{row.label}}",
+            "dateFrom": "{{columnMeta.startDate}}",
+            "dateTo": "{{columnMeta.endDate}}"
+          }
+        }
+      }
+    }
+  ]
 }
