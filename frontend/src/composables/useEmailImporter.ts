@@ -17,6 +17,11 @@ export interface EmailProfileInfo {
   file: string
 }
 
+export interface InvalidEmailProfileInfo {
+  filename: string
+  error: string
+}
+
 export interface EmailParsedTransaction {
   date: string
   amount: string        // string Decimal — convert to Number for postings
@@ -81,6 +86,7 @@ export function configureEmailService(baseUrl: string) {
 export function useEmailImporter() {
   const emailServiceUrl = readonly(ref(_emailServiceUrl))
   const profiles = ref<EmailProfileInfo[]>([])
+  const invalidProfiles = ref<InvalidEmailProfileInfo[]>([])
   const profilesError = ref<string | null>(null)
   const isLoadingProfiles = ref(false)
   const isFetching = ref(false)
@@ -99,6 +105,7 @@ export function useEmailImporter() {
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
       const data = await resp.json()
       profiles.value = data.profiles || []
+      invalidProfiles.value = data.invalid_profiles || []
     } catch (e) {
       profilesError.value = e instanceof Error ? e.message : String(e)
       console.error('Failed to load email profiles:', e)
@@ -237,6 +244,7 @@ export function useEmailImporter() {
   return {
     emailServiceUrl,
     profiles,
+    invalidProfiles,
     profilesError,
     isLoadingProfiles,
     isFetching,

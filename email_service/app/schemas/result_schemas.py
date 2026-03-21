@@ -14,6 +14,12 @@ class ProfileInfo(BaseModel):
     file: str                              # filename including .yaml
 
 
+class InvalidProfileInfo(BaseModel):
+    """One entry for a profile file that failed to load."""
+    filename: str                          # filename including .yaml
+    error: str                             # human-readable reason for failure
+
+
 class TransactionTypeInfo(BaseModel):
     name: str
     description: str

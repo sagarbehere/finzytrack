@@ -35,6 +35,30 @@
     <!-- State C: normal operation -->
     <!-- Compact control row -->
     <div v-else class="space-y-2">
+
+      <!-- Invalid profiles banner -->
+      <div
+        v-if="invalidProfiles.length > 0"
+        class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4"
+      >
+        <div class="flex items-start gap-2">
+          <svg class="h-5 w-5 text-yellow-600 dark:text-yellow-400 shrink-0 mt-0.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+          </svg>
+          <div class="text-sm text-yellow-800 dark:text-yellow-200">
+            <p class="font-medium mb-1">
+              {{ invalidProfiles.length === 1 ? '1 profile file could not be loaded:' : `${invalidProfiles.length} profile files could not be loaded:` }}
+            </p>
+            <ul class="space-y-1">
+              <li v-for="profile in invalidProfiles" :key="profile.filename">
+                <span class="font-mono font-medium">{{ profile.filename }}</span>
+                <span class="text-yellow-700 dark:text-yellow-300"> — {{ profile.error }}</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
       <div v-if="profiles.length === 0 && !isLoadingProfiles" class="text-sm text-gray-500 dark:text-gray-400">
         No account profiles configured. Add YAML files to
         <code class="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">email_service/config/email_rules/</code>.
@@ -243,7 +267,7 @@
 
   const {
     emailServiceUrl,
-    profiles, profilesError, isLoadingProfiles, isFetching,
+    profiles, invalidProfiles, profilesError, isLoadingProfiles, isFetching,
     fetchResult, fetchError, progressState,
     loadProfiles, reloadProfiles, testConnection, fetchTransactions,
   } = useEmailImporter()

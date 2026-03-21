@@ -13,4 +13,8 @@ async def list_profiles():
     """
     registry = get_registry()
     profiles = registry.list_profiles()
-    return {"profiles": [p.model_dump() for p in profiles]}
+    invalid_profiles = registry.list_invalid_profiles()
+    return {
+        "profiles": [p.model_dump() for p in profiles],
+        "invalid_profiles": [p.model_dump() for p in invalid_profiles],
+    }
