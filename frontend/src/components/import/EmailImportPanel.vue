@@ -250,10 +250,6 @@
   import type { EmailParsedTransaction, EmailProfileInfo } from '@/composables/useEmailImporter'
   import { useToast, useNotifications } from '@/composables/useNotifications'
 
-  defineProps<{
-    emailServiceUrl: string
-  }>()
-
   const emit = defineEmits<{
     (e: 'proceedWithImport', payload: {
       transactions: EmailParsedTransaction[]

@@ -3,7 +3,6 @@ Transaction update schemas for PUT /api/ledger/transactions endpoint.
 """
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
-from datetime import date as DateType
 from decimal import Decimal
 
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from app.config import OFXAccountMapping
 from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager

@@ -1,7 +1,7 @@
 """
 Pydantic schemas for query operations.
 """
-from typing import Optional, List, Any, Dict
+from typing import List, Any, Dict
 from pydantic import BaseModel, Field
 
 

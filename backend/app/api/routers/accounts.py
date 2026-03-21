@@ -8,8 +8,7 @@ from app.schemas.account_schemas import (
     AccountCreateRequest, AccountCreateData, AccountListData,
     AccountUpdateRequest, AccountUpdateData,
     AccountCloseRequest, AccountCloseData, AccountDeleteData,
-    AccountReopenData, AccountDetails, AccountCurrencyData,
-    BalanceDirectiveListData, BalanceDirectiveCreateRequest,
+    AccountReopenData, BalanceDirectiveListData, BalanceDirectiveCreateRequest,
     BalanceDirectiveCreateData, BalanceDirectiveUpdateRequest,
     BalanceDirectiveUpdateData, BalanceDirectiveDeleteData,
 )

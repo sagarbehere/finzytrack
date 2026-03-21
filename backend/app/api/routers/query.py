@@ -60,7 +60,7 @@ async def execute_query(
     errors = beancount_manager.cache.get_errors()
     fatal_errors = [
         error for error in errors
-        if not error.__class__.__name__ in ['PadError', 'UnusedPadError']
+        if error.__class__.__name__ not in ['PadError', 'UnusedPadError']
     ]
 
     if fatal_errors:

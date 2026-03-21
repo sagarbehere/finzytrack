@@ -243,7 +243,7 @@ class Config(BaseModel):
                 error_messages.append(f"{loc}: {error['msg']}")
             
             raise ConfigurationError(
-                f"Configuration validation failed:\n" + 
+                "Configuration validation failed:\n" + 
                 "\n".join(f"  - {msg}" for msg in error_messages)
             )
     

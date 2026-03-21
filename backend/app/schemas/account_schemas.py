@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Annotated
-from datetime import date
 
 # Reuse existing types from ofx_schemas.py
 from app.schemas.ofx_schemas import CurrencyStr

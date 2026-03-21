@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Annotated
-from datetime import date
 
 # Reuse existing types from account_schemas.py
 from app.schemas.account_schemas import DateStr

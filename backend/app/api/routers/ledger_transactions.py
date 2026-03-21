@@ -2,7 +2,6 @@
 Ledger Transaction Update Router
 """
 import logging
-from typing import List
 from fastapi import APIRouter, Depends, Body
 from datetime import datetime
 
@@ -23,7 +22,6 @@ from app.helpers.response_helpers import success_json_response
 from beancount.core.data import Transaction, Posting
 from beancount.core.amount import Amount
 from beancount.core.position import Cost
-from beancount.parser import printer
 from decimal import Decimal
 
 logger = logging.getLogger(__name__)

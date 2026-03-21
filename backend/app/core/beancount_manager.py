@@ -1,13 +1,11 @@
 import os
 import re
 import logging
-from typing import Set, Optional, List, Dict, Any, Callable, Tuple
+from typing import Optional, List, Dict, Any, Callable, Tuple
 from datetime import datetime, date
 from contextlib import contextmanager
-from beancount import loader
 from beancount.core import data
 from beancount.core.data import Transaction, Posting
-from beancount.core.amount import Amount
 from decimal import Decimal
 import uuid_utils as uuid
 
@@ -19,7 +17,7 @@ from app.schemas.account_schemas import (
     BalanceDirectiveData, BalanceDirectiveCreateRequest, BalanceDirectiveUpdateRequest
 )
 from app.schemas.commodity_schemas import (
-    CommodityDetails, CommodityUsageData, CommodityCreateRequest, CommodityCreateData
+    CommodityDetails, CommodityCreateRequest, CommodityCreateData
 )
 from app.libs.content_hash import compute_content_hash
 
@@ -406,7 +404,7 @@ class BeancountManager:
 
         final_name = new_name or account_name
         entries = self.cache.get_entries()
-        new_entries = []
+        new_entries: list = []
         found_open = False
         found_close = False
 
@@ -1053,7 +1051,7 @@ class BeancountManager:
                 result.append(BalanceDirectiveData(
                     date=entry.date.isoformat(),
                     currency=entry.amount.currency,
-                    expected_balance=float(entry.amount.number),
+                    expected_balance=float(entry.amount.number) if entry.amount.number is not None else 0.0,
                     has_pad=pad_source is not None,
                     pad_source_account=pad_source,
                     has_error=has_error,
@@ -1340,7 +1338,7 @@ class BeancountManager:
             return [str(e) for e in errors]
 
         # Check if transaction balances
-        balance = defaultdict(Decimal)
+        balance: defaultdict[str, Decimal] = defaultdict(Decimal)
         for posting in transaction.postings:
             if posting.units and posting.units.number is not None:
                 balance[posting.units.currency] += posting.units.number

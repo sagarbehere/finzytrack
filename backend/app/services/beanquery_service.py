@@ -7,10 +7,9 @@ against the cached Beancount entries.
 import time
 import asyncio
 import logging
-from typing import List, Dict, Any, Tuple, Optional
-from decimal import Decimal, InvalidOperation
+from typing import List, Dict, Any, Tuple
+from decimal import Decimal
 
-from beancount.core.data import Transaction
 from beancount.core.inventory import Inventory
 from beancount.core.amount import Amount
 from beancount.core.position import Position
@@ -143,7 +142,7 @@ class BeanqueryService:
             if value.is_empty():
                 return 0
             # Sum all positions in the inventory (handles multiple currencies)
-            total = 0
+            total = 0.0
             for pos in value:
                 if hasattr(pos, 'units') and pos.units and pos.units.number is not None:
                     total += float(pos.units.number)

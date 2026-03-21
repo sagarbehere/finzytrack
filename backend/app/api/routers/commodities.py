@@ -1,12 +1,11 @@
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Path
 from app.schemas.response_schemas import ApiResponse
 from app.schemas.commodity_schemas import (
     CommodityCreateRequest, CommodityCreateData, CommodityListData,
     CommodityUpdateRequest, CommodityUpdateData, 
-    CommodityDeleteData, CommodityDetails
+    CommodityDeleteData
 )
 from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager

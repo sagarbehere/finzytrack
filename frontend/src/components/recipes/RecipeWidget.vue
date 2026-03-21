@@ -93,7 +93,7 @@
           :chartOptions="recipe.visualization.options"
           :data="Array.isArray(data) ? data : []"
           :clickable="hasChartClickHandler()"
-          :currency="mergedParameters.currency as string | undefined"
+          :currency="currencyParam"
           class="h-full"
           @series-click="handleChartSeriesClick"
         />
@@ -185,6 +185,11 @@ const mergedParameters = computed(() => ({
   ...localParameters.value,
   ...(props.dashboardParameters || {}),
 }))
+
+const currencyParam = computed<string | undefined>(() => {
+  const v = mergedParameters.value.currency
+  return typeof v === 'string' ? v : undefined
+})
 
 // Data from query execution
 const data = ref<unknown>(null)

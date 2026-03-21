@@ -8,7 +8,7 @@ It delegates the actual export work to the provided exporter.
 import os
 import asyncio
 import logging
-from typing import List, Any, Optional, Union
+from typing import List, Any, Optional
 
 logger = logging.getLogger(__name__)
 

@@ -106,7 +106,6 @@
         <div v-else-if="activeTab === 'email'">
           <EmailImportPanel
             :key="importerKey"
-            :email-service-url="emailServiceUrl"
             @proceedWithImport="handleEmailProceedWithImport"
           />
         </div>
@@ -212,7 +211,6 @@
   import XLSFilePicker from '@/components/import/XLSFilePicker.vue'
   import ManualEntryPanel from '@/components/import/ManualEntryPanel.vue'
   import EmailImportPanel from '@/components/import/EmailImportPanel.vue'
-  import { useEmailImporter } from '@/composables/useEmailImporter'
   import type { EmailParsedTransaction } from '@/composables/useEmailImporter'
   import TransactionTable from '@/components/common/TransactionTable.vue'
   import DuplicateComparisonModal from '@/components/import/DuplicateComparisonModal.vue'
@@ -229,9 +227,6 @@
 
   const { performCategorization, performCommit, isLoading, categorizeError, commitError } = useTransactionImporter()
   const { success: showSuccessToast, error: showErrorToast } = useToast()
-
-  // Email service URL (empty string = Email tab hidden)
-  const { emailServiceUrl } = useEmailImporter()
 
   // Tab state
   const activeTab = ref<string>('ofx')

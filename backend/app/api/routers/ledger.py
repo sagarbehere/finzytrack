@@ -15,7 +15,6 @@ from pydantic import BaseModel
 import beancount.loader
 from beancount.parser import printer
 
-from app.config import Config
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
 from app.schemas.response_schemas import ApiResponse

@@ -7,11 +7,12 @@ import os
 import sys
 import logging
 from pathlib import Path
+from typing import Any
 from contextlib import asynccontextmanager
 
 import click
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -320,7 +321,7 @@ def main(config: str, server_host: str, server_port: int,
     
     try:
         # Prepare CLI overrides dictionary
-        cli_overrides = {}
+        cli_overrides: dict[str, Any] = {}
         
         # Server settings
         if server_host:

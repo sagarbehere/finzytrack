@@ -94,7 +94,7 @@ class BackupManager:
             logger.info(f"Successfully wrote to {file_path}")
             temp_file_handle = None
 
-        except Exception as e:
+        except Exception:
             logger.error(f"Atomic write to {file_path} failed. Original file is safe.", exc_info=True)
             raise
         finally:

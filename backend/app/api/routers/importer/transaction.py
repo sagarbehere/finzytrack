@@ -191,7 +191,7 @@ async def commit_transactions(
             if cost_amount_is_nonzero:
                 if posting.cost_currency is None:
                     raise APIError(
-                        message=f"Cost amount specified but cost currency missing",
+                        message="Cost amount specified but cost currency missing",
                         code="INVALID_COST",
                         status_code=422,
                         details={
@@ -202,7 +202,7 @@ async def commit_transactions(
                     )
             elif posting.cost_currency is not None:
                 raise APIError(
-                    message=f"Cost currency specified but cost amount missing or zero",
+                    message="Cost currency specified but cost amount missing or zero",
                     code="INVALID_COST",
                     status_code=422,
                     details={"account": posting.account, "date": str(commit_txn.date)}
@@ -213,7 +213,7 @@ async def commit_transactions(
             if price_amount_is_nonzero:
                 if posting.price_currency is None or posting.price_type is None:
                     raise APIError(
-                        message=f"Price amount specified but price currency or type missing",
+                        message="Price amount specified but price currency or type missing",
                         code="INVALID_PRICE",
                         status_code=422,
                         details={
@@ -226,7 +226,7 @@ async def commit_transactions(
                     )
             elif posting.price_currency is not None or posting.price_type is not None:
                 raise APIError(
-                    message=f"Price currency or type specified but price amount missing or zero",
+                    message="Price currency or type specified but price amount missing or zero",
                     code="INVALID_PRICE",
                     status_code=422,
                     details={"account": posting.account, "date": str(commit_txn.date)}

@@ -4,7 +4,6 @@ SQLite Exporter Service - Converts Beancount entries to SQLite format.
 This service is responsible for the actual data conversion (the worker).
 It accepts parsed Beancount entries and exports them to a SQLite database with WAL mode.
 """
-import os
 import json
 import time
 import asyncio
