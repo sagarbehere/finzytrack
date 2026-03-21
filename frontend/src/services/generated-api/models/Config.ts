@@ -49,5 +49,9 @@ export type Config = {
      * Email import microservice settings
      */
     email_service?: EmailServiceConfig;
+    /**
+     * Path to the config file this configuration was loaded from
+     */
+    config_file_path?: (string | null);
 };
 

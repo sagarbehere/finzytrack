@@ -5,7 +5,7 @@
     <div v-if="!emailServiceUrl" class="rounded-lg border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-4 space-y-2">
       <p class="text-sm font-medium text-amber-800 dark:text-amber-300">Email import is not configured.</p>
       <p class="text-sm text-amber-700 dark:text-amber-400">
-        Add the following to your <code class="font-mono bg-amber-100 dark:bg-amber-800/50 px-1 rounded">config.yaml</code> and restart the app:
+        Add the following to your <code class="font-mono bg-amber-100 dark:bg-amber-800/50 px-1 rounded">{{ config?.config_file_path ?? 'config.yaml' }}</code> and restart the app:
       </p>
       <pre class="text-xs font-mono bg-amber-100 dark:bg-amber-800/40 rounded p-2 text-amber-900 dark:text-amber-200">email_service:
   base_url: "http://localhost:8100"</pre>
@@ -250,6 +250,7 @@
   import { useEmailImporter } from '@/composables/useEmailImporter'
   import type { EmailParsedTransaction, EmailProfileInfo } from '@/composables/useEmailImporter'
   import { useToast, useNotifications } from '@/composables/useNotifications'
+  import { useConfig } from '@/composables/useConfig'
 
   const emit = defineEmits<{
     (e: 'proceedWithImport', payload: {
@@ -261,6 +262,7 @@
 
   const toast = useToast()
   const { addNotification } = useNotifications()
+  const { config } = useConfig()
 
   const {
     emailServiceUrl,

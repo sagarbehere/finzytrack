@@ -173,7 +173,6 @@ class Config(BaseModel):
 
     config_file_path: Optional[Path] = Field(
         default=None,
-        exclude=True,
         description="Path to the config file this configuration was loaded from"
     )
     

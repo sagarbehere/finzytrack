@@ -13,7 +13,7 @@
         Use $ or ₹ to hint the currency, or select one below for the default.
       </p>
       <p v-if="!config?.ai?.llm?.api_url" class="text-xs text-amber-600 dark:text-amber-400 mb-1">
-        LLM not configured — basic parsing only. Set <code class="font-mono">ai.llm.api_url</code> in <code class="font-mono">config.yaml</code> to enable full natural language parsing.
+        LLM not configured — basic parsing only. Set <code class="font-mono">ai.llm.api_url</code> in <code class="font-mono">{{ config?.config_file_path ?? 'config.yaml' }}</code> to enable full natural language parsing.
       </p>
       <textarea
         v-model="nlText"
