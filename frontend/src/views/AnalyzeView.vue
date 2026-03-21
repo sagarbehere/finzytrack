@@ -43,7 +43,7 @@
         Ask a question in plain English
       </label>
       <p v-if="!config?.ai?.llm?.api_url" class="text-xs text-amber-600 dark:text-amber-400 mb-2">
-        LLM not configured. Set <code class="font-mono">ai.llm.api_url</code> in <code class="font-mono">backend/config/config.yaml</code> to enable query generation.
+        LLM not configured. Set <code class="font-mono">ai.llm.api_url</code> in <code class="font-mono">config.yaml</code> to enable query generation.
       </p>
       <textarea
         v-model="nlQuery"
