@@ -9,45 +9,56 @@
     <div class="border-b border-gray-200 dark:border-gray-700 mb-6">
       <nav class="-mb-px flex space-x-8">
         <button
-          @click="activeTab = 'appearance'"
+          v-for="tab in tabs"
+          :key="tab.id"
+          @click="activeTab = tab.id"
           :class="[
-            activeTab === 'appearance'
+            activeTab === tab.id
               ? 'border-blue-500 text-blue-600'
               : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
             'whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors',
           ]"
         >
-          Appearance
-        </button>
-
-        <button
-          @click="activeTab = 'config'"
-          :class="[
-            activeTab === 'config'
-              ? 'border-blue-500 text-blue-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
-            'whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors',
-          ]"
-        >
-          Configuration File
-        </button>
-
-        <button
-          @click="activeTab = 'advanced'"
-          :class="[
-            activeTab === 'advanced'
-              ? 'border-blue-500 text-blue-600'
-              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300',
-            'whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors',
-          ]"
-        >
-          Advanced
+          {{ tab.label }}
         </button>
       </nav>
     </div>
 
     <!-- Tab Content -->
     <div class="tab-content">
+
+      <!-- General Tab -->
+      <div v-if="activeTab === 'general'" class="space-y-6">
+
+        <!-- Data section -->
+        <SettingsSection
+          title="Data"
+          description="Configure where your financial data is stored."
+          :is-dirty="ledgerIsDirty"
+          :is-saving="ledgerIsSaving"
+          :error="ledgerError"
+          @save="saveLedgerSection"
+          @reset="resetLedgerSection"
+        >
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Ledger File
+            </label>
+            <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
+              Path to your Beancount ledger file. Can be absolute or relative to the directory
+              the backend was started from.
+            </p>
+            <input
+              v-model="ledgerFile"
+              type="text"
+              placeholder="e.g. data/ledger.beancount"
+              class="w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm font-mono"
+            />
+          </div>
+        </SettingsSection>
+
+      </div>
+
       <!-- Appearance Tab -->
       <div v-if="activeTab === 'appearance'" class="space-y-6">
         <div class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700">
@@ -150,30 +161,64 @@
         </div>
       </div>
 
-      <!-- Advanced Tab -->
-      <div v-if="activeTab === 'advanced'">
-        <div class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 p-6">
-          <div class="text-center py-12">
-            <div class="text-gray-400 dark:text-gray-500 text-4xl mb-4">⚙️</div>
-            <p class="text-gray-500 dark:text-gray-400">
-              Advanced settings coming soon
-            </p>
-          </div>
-        </div>
-      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed, watch } from 'vue'
 import FileEditor from '@/components/common/FileEditor.vue'
+import SettingsSection from '@/components/settings/SettingsSection.vue'
 import type { Config } from '@/services/generated-api'
 import { useConfig } from '@/composables/useConfig'
+import { useToast } from '@/composables/useNotifications'
+import { patchConfig } from '@/composables/useConfigPatch'
 
-const activeTab = ref('config')
-const { updateConfig } = useConfig()
+const tabs = [
+  { id: 'general', label: 'General' },
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'config', label: 'Configuration File' },
+]
+
+const activeTab = ref('general')
+const { config, updateConfig } = useConfig()
+const toast = useToast()
 const restartRequired = ref(false)
+
+// ─── Data section (ledger file) ───────────────────────────────────────────────
+
+const ledgerFile = ref(config.value?.ledger_file ?? '')
+const ledgerIsSaving = ref(false)
+const ledgerError = ref('')
+
+const ledgerIsDirty = computed(() => ledgerFile.value !== (config.value?.ledger_file ?? ''))
+
+// Keep the field in sync if config changes externally (e.g. via YAML editor save)
+watch(() => config.value?.ledger_file, (newVal) => {
+  if (!ledgerIsDirty.value) ledgerFile.value = newVal ?? ''
+})
+
+async function saveLedgerSection() {
+  ledgerIsSaving.value = true
+  ledgerError.value = ''
+  try {
+    const result = await patchConfig({ ledger_file: ledgerFile.value })
+    updateConfig(result.config)
+    if (result.restart_required) restartRequired.value = true
+    toast.success('Saved', 'Settings saved successfully')
+  } catch (e: any) {
+    ledgerError.value = e.message ?? 'Failed to save'
+  } finally {
+    ledgerIsSaving.value = false
+  }
+}
+
+function resetLedgerSection() {
+  ledgerFile.value = config.value?.ledger_file ?? ''
+  ledgerError.value = ''
+}
+
+// ─── Config file editor handlers ──────────────────────────────────────────────
 
 function handleConfigSaved(updatedConfig: Config) {
   updateConfig(updatedConfig)
@@ -184,7 +229,6 @@ function handleRestartRequired(_reason: string) {
 }
 
 function handleError(errorMsg: string) {
-  // Error toast already shown by FileEditor
   console.error('Config editor error:', errorMsg)
 }
 </script>
