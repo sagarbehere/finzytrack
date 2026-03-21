@@ -42,7 +42,7 @@
       <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
         Ask a question in plain English
       </label>
-      <p v-if="!llmConfigured" class="text-xs text-amber-600 dark:text-amber-400 mb-2">
+      <p v-if="!config?.ai?.llm?.api_url" class="text-xs text-amber-600 dark:text-amber-400 mb-2">
         LLM not configured. Set <code class="font-mono">ai.llm.api_url</code> in <code class="font-mono">backend/config/config.yaml</code> to enable query generation.
       </p>
       <textarea
@@ -56,7 +56,7 @@
       <div class="mt-2 flex items-center gap-2">
         <button
           @click="handleGenerate"
-          :disabled="!nlQuery.trim() || isGenerating || !llmConfigured"
+          :disabled="!nlQuery.trim() || isGenerating || !config?.ai?.llm?.api_url"
           class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-2"
         >
           <svg v-if="isGenerating" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -280,15 +280,17 @@
 
 <script setup lang="ts">
   import { ref, computed, watch } from 'vue'
-  import { generateQuery, isSQLAssistantConfigured, type QueryLanguage } from '@/services/sqlAssistant'
+  import { generateQuery, type QueryLanguage } from '@/services/sqlAssistant'
   import { LedgerService, ApiError } from '@/services/generated-api'
   import type { QueryRequest } from '@/services/generated-api'
   import { useToast } from '@/composables/useNotifications'
+  import { useConfig } from '@/composables/useConfig'
   import RecipeChart from '@/components/recipes/RecipeChart.vue'
   import { SUPPORTED_CHART_TYPES, type ChartType } from '@/types/recipes'
   import type { EChartsOption } from 'echarts'
 
   const toast = useToast()
+  const { config } = useConfig()
 
   // --- Language mode ---
   const queryLanguage = ref<QueryLanguage>('sqlite')
@@ -312,7 +314,6 @@
   const resultColumns = ref<string[]>([])
   const resultRows = ref<Record<string, unknown>[]>([])
   const executionTime = ref<number | null>(null)
-  const llmConfigured = isSQLAssistantConfigured()
 
   // --- Results tab state ---
   const activeTab = ref<'table' | 'chart'>('table')
@@ -408,7 +409,9 @@
     isGenerating.value = true
     errorMessage.value = ''
     try {
-      const query = await generateQuery(nlQuery.value.trim(), queryLanguage.value)
+      const llm = config.value?.ai?.llm
+      const llmConfig = llm?.api_url ? { apiUrl: llm.api_url, apiKey: llm.api_key || undefined, model: llm.model || undefined, temperature: llm.temperature, maxTokens: llm.max_tokens } : undefined
+      const query = await generateQuery(nlQuery.value.trim(), queryLanguage.value, llmConfig)
       queryText.value = query
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Failed to generate query'

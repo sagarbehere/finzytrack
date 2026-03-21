@@ -2,13 +2,6 @@ import type { NLParserConfig } from './nlParser'
 
 export type QueryLanguage = 'sqlite' | 'beanquery'
 
-// Re-use the same LLM config that nlParser uses
-let _config: NLParserConfig = {}
-
-export function configureSQLAssistant(config: NLParserConfig) {
-  _config = { ..._config, ...config }
-}
-
 /**
  * Build a system prompt that teaches the LLM about the postings table schema
  * and instructs it to produce SQLite-compatible SQL.
@@ -129,9 +122,10 @@ OUTPUT: Respond with ONLY the BQL query. No explanation, no markdown fences, no 
  */
 export async function generateQuery(
   naturalLanguageQuery: string,
-  language: QueryLanguage = 'sqlite'
+  language: QueryLanguage = 'sqlite',
+  llmConfig?: NLParserConfig,
 ): Promise<string> {
-  if (!_config.apiUrl) {
+  if (!llmConfig?.apiUrl) {
     throw new Error('LLM API not configured. Set api_url under the llm section in config.yaml.')
   }
 
@@ -144,17 +138,17 @@ export async function generateQuery(
 
   let response: Response
   try {
-    response = await fetch(`${_config.apiUrl}/v1/chat/completions`, {
+    response = await fetch(`${llmConfig.apiUrl}/v1/chat/completions`, {
       method: 'POST',
       signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
-        ...(_config.apiKey ? { Authorization: `Bearer ${_config.apiKey}` } : {}),
+        ...(llmConfig.apiKey ? { Authorization: `Bearer ${llmConfig.apiKey}` } : {}),
       },
       body: JSON.stringify({
-        model: _config.model || 'gpt-oss-20b',
-        temperature: _config.temperature ?? 0.1,
-        max_tokens: _config.maxTokens ?? 2048,
+        model: llmConfig.model || 'gpt-oss-20b',
+        temperature: llmConfig.temperature ?? 0.1,
+        max_tokens: llmConfig.maxTokens ?? 2048,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: naturalLanguageQuery },
@@ -192,11 +186,4 @@ export async function generateQuery(
     : /^```(?:sql)?\s*/i
   const query = content.replace(fencePattern, '').replace(/\s*```$/i, '').trim()
   return query
-}
-
-/**
- * Check if the SQL assistant has an LLM configured.
- */
-export function isSQLAssistantConfigured(): boolean {
-  return !!_config.apiUrl
 }

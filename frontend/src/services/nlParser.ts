@@ -27,13 +27,6 @@ export interface NLParserContext {
   defaultCurrency?: string // selected in the dropdown
 }
 
-// Stored config — set once, used on every call
-let _config: NLParserConfig = {}
-
-export function configureNLParser(config: NLParserConfig) {
-  _config = { ..._config, ...config }
-}
-
 /**
  * Build the system prompt dynamically from the user's actual beancount accounts.
  *
@@ -109,27 +102,26 @@ Respond with ONLY the JSON object.`
 /**
  * Parse natural language text into a structured transaction.
  *
- * When an API URL is configured, sends the text to an OpenAI-compatible
- * /v1/chat/completions endpoint. Otherwise falls back to a regex stub.
+ * When an API URL is configured via llmConfig, sends the text to an
+ * OpenAI-compatible /v1/chat/completions endpoint. Otherwise falls back
+ * to a regex stub.
  */
-export function isNLParserConfigured(): boolean {
-  return !!_config.apiUrl
-}
-
 export async function parseNaturalLanguageTransaction(
   text: string,
-  context?: NLParserContext
+  context?: NLParserContext,
+  llmConfig?: NLParserConfig,
 ): Promise<ParsedTransaction> {
-  // If API is configured, use the LLM
-  if (_config.apiUrl) {
-    return parseLLM(text, context)
+  if (llmConfig?.apiUrl) {
+    return parseLLM(text, context, llmConfig)
   }
-
-  // Fallback: regex stub
   return parseStub(text)
 }
 
-async function parseLLM(text: string, context?: NLParserContext): Promise<ParsedTransaction> {
+async function parseLLM(
+  text: string,
+  context: NLParserContext | undefined,
+  llmConfig: NLParserConfig,
+): Promise<ParsedTransaction> {
   const ctx: NLParserContext = context ?? { accountNames: [], currencies: [] }
   const systemPrompt = buildSystemPrompt(ctx)
 
@@ -138,17 +130,17 @@ async function parseLLM(text: string, context?: NLParserContext): Promise<Parsed
 
   let response: Response
   try {
-    response = await fetch(`${_config.apiUrl}/v1/chat/completions`, {
+    response = await fetch(`${llmConfig.apiUrl}/v1/chat/completions`, {
       method: 'POST',
       signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
-        ...(_config.apiKey ? { Authorization: `Bearer ${_config.apiKey}` } : {}),
+        ...(llmConfig.apiKey ? { Authorization: `Bearer ${llmConfig.apiKey}` } : {}),
       },
       body: JSON.stringify({
-        model: _config.model || 'gpt-oss-20b',
-        temperature: _config.temperature ?? 0.1,
-        max_tokens: _config.maxTokens ?? 2048,
+        model: llmConfig.model || 'gpt-oss-20b',
+        temperature: llmConfig.temperature ?? 0.1,
+        max_tokens: llmConfig.maxTokens ?? 2048,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: text },

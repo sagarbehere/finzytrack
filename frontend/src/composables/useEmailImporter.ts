@@ -6,9 +6,10 @@
  * generated client and NOT EventSource — because it is an SSE endpoint that
  * requires a POST with a JSON body.
  */
-import { ref, readonly } from 'vue'
+import { ref, readonly, watchEffect, computed } from 'vue'
 import { DefaultService, OpenAPI as EmailOpenAPI } from '@/services/generated-email-api'
 import type { ProfileInfo, InvalidProfileInfo, TestConnectionResponse } from '@/services/generated-email-api'
+import { useConfig } from '@/composables/useConfig'
 
 export type EmailProfileInfo = ProfileInfo
 export type InvalidEmailProfileInfo = InvalidProfileInfo
@@ -69,7 +70,15 @@ export interface ProgressState {
 // ─── Composable ───────────────────────────────────────────────────────────────
 
 export function useEmailImporter() {
-  const emailServiceUrl = readonly(ref(EmailOpenAPI.BASE))
+  const { config } = useConfig()
+
+  // Keep EmailOpenAPI.BASE in sync with config so the generated client
+  // always uses the current value without requiring a page reload.
+  watchEffect(() => {
+    EmailOpenAPI.BASE = config.value?.email_service?.base_url || ''
+  })
+
+  const emailServiceUrl = computed(() => config.value?.email_service?.base_url || '')
   const profiles = ref<ProfileInfo[]>([])
   const invalidProfiles = ref<InvalidProfileInfo[]>([])
   const profilesError = ref<string | null>(null)
@@ -82,7 +91,7 @@ export function useEmailImporter() {
   })
 
   async function loadProfiles(): Promise<void> {
-    if (!EmailOpenAPI.BASE) return
+    if (!config.value?.email_service?.base_url) return
     isLoadingProfiles.value = true
     profilesError.value = null
     try {
@@ -100,12 +109,12 @@ export function useEmailImporter() {
   async function testConnection(
     profileId: string,
   ): Promise<TestConnectionResponse> {
-    if (!EmailOpenAPI.BASE) return { success: false, error: 'Email service not configured' }
+    if (!config.value?.email_service?.base_url) return { success: false, error: 'Email service not configured' }
     return DefaultService.testConnectionTestConnectionPost({ profile_id: profileId })
   }
 
   async function reloadProfiles(): Promise<void> {
-    if (!EmailOpenAPI.BASE) return
+    if (!config.value?.email_service?.base_url) return
     await DefaultService.reloadProfilesReloadPost()
     await loadProfiles()
   }
@@ -115,7 +124,7 @@ export function useEmailImporter() {
     sinceDate?: string,
     untilDate?: string,
   ): Promise<EmailFetchResult> {
-    if (!EmailOpenAPI.BASE) throw new Error('Email service not configured')
+    if (!config.value?.email_service?.base_url) throw new Error('Email service not configured')
 
     isFetching.value = true
     fetchError.value = null

@@ -12,7 +12,7 @@
       <p class="text-xs text-gray-400 dark:text-gray-500 mb-1">
         Use $ or ₹ to hint the currency, or select one below for the default.
       </p>
-      <p v-if="!nlParserConfigured" class="text-xs text-amber-600 dark:text-amber-400 mb-1">
+      <p v-if="!config?.ai?.llm?.api_url" class="text-xs text-amber-600 dark:text-amber-400 mb-1">
         LLM not configured — basic parsing only. Set <code class="font-mono">ai.llm.api_url</code> in <code class="font-mono">backend/config/config.yaml</code> to enable full natural language parsing.
       </p>
       <textarea
@@ -69,13 +69,14 @@
   import { ref } from 'vue'
   import AccountDropdown from '@/components/common/AccountDropdown.vue'
   import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
-  import { parseNaturalLanguageTransaction, isNLParserConfigured, type ParsedTransaction } from '@/services/nlParser'
+  import { parseNaturalLanguageTransaction, type ParsedTransaction } from '@/services/nlParser'
   import { useAccounts } from '@/composables/useAccounts'
   import { useCommodities } from '@/composables/useCommodities'
   import { useToast } from '@/composables/useNotifications'
+  import { useConfig } from '@/composables/useConfig'
 
   const { error: showErrorToast } = useToast()
-  const nlParserConfigured = isNLParserConfigured()
+  const { config } = useConfig()
   const { accountNames } = useAccounts()
   const { commodityCodes } = useCommodities()
 
@@ -93,12 +94,17 @@
 
     isParsing.value = true
     try {
-      const parsed = await parseNaturalLanguageTransaction(nlText.value.trim(), {
-        accountNames: accountNames.value,
-        currencies: commodityCodes.value,
-        defaultAccount: account.value || undefined,
-        defaultCurrency: currency.value || undefined,
-      })
+      const llm = config.value?.ai?.llm
+      const parsed = await parseNaturalLanguageTransaction(
+        nlText.value.trim(),
+        {
+          accountNames: accountNames.value,
+          currencies: commodityCodes.value,
+          defaultAccount: account.value || undefined,
+          defaultCurrency: currency.value || undefined,
+        },
+        llm?.api_url ? { apiUrl: llm.api_url, apiKey: llm.api_key || undefined, model: llm.model || undefined, temperature: llm.temperature, maxTokens: llm.max_tokens } : undefined,
+      )
       emit('addTransaction', {
         account: account.value,
         currency: currency.value,
