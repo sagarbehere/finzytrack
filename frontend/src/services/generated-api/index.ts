@@ -38,6 +38,7 @@ export type { ApiResponse_CommodityDeleteData_ } from './models/ApiResponse_Comm
 export type { ApiResponse_CommodityListData_ } from './models/ApiResponse_CommodityListData_';
 export type { ApiResponse_CommodityUpdateData_ } from './models/ApiResponse_CommodityUpdateData_';
 export type { ApiResponse_Config_ } from './models/ApiResponse_Config_';
+export type { ApiResponse_ConfigPatchResponse_ } from './models/ApiResponse_ConfigPatchResponse_';
 export type { ApiResponse_ConfigUpdateResponse_ } from './models/ApiResponse_ConfigUpdateResponse_';
 export type { ApiResponse_CsvRule_ } from './models/ApiResponse_CsvRule_';
 export type { ApiResponse_CsvRuleListData_ } from './models/ApiResponse_CsvRuleListData_';
@@ -82,6 +83,7 @@ export type { CommodityUpdateData } from './models/CommodityUpdateData';
 export type { CommodityUpdateRequest } from './models/CommodityUpdateRequest';
 export type { CommodityUsageData } from './models/CommodityUsageData';
 export type { Config } from './models/Config';
+export type { ConfigPatchResponse } from './models/ConfigPatchResponse';
 export type { ConfigUpdateResponse } from './models/ConfigUpdateResponse';
 export type { CsvColumnMapping } from './models/CsvColumnMapping';
 export type { CsvRule } from './models/CsvRule';
