@@ -4,6 +4,7 @@ from typing import List, Optional
 
 from ruamel.yaml import YAML
 
+from app.schemas.csv_schemas import InvalidRuleSummary
 from app.schemas.xls_schemas import XlsRule, XlsRuleSummary
 
 logger = logging.getLogger(__name__)
@@ -20,11 +21,12 @@ class XlsRulesManager:
     def rules_dir(self) -> Optional[str]:
         return str(self._rules_dir) if self._rules_dir else None
 
-    def list_rules(self) -> List[XlsRuleSummary]:
+    def list_rules(self) -> tuple[List[XlsRuleSummary], List[InvalidRuleSummary]]:
         if not self._rules_dir or not self._rules_dir.is_dir():
-            return []
+            return [], []
 
         summaries: List[XlsRuleSummary] = []
+        invalid: List[InvalidRuleSummary] = []
         for path in sorted(self._rules_dir.glob("*.yaml")) + sorted(self._rules_dir.glob("*.yml")):
             try:
                 rule = self._load_rule_file(path)
@@ -36,7 +38,8 @@ class XlsRulesManager:
                 ))
             except Exception as e:
                 logger.warning(f"Skipping invalid XLS rule file {path.name}: {e}")
-        return summaries
+                invalid.append(InvalidRuleSummary(filename=path.name, error=str(e)))
+        return summaries, invalid
 
     def get_rule(self, filename: str) -> XlsRule:
         if not self._rules_dir:

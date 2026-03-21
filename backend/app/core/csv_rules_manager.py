@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from ruamel.yaml import YAML
 
-from app.schemas.csv_schemas import CsvRule, CsvRuleSummary
+from app.schemas.csv_schemas import CsvRule, CsvRuleSummary, InvalidRuleSummary
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +20,12 @@ class CsvRulesManager:
     def rules_dir(self) -> Optional[str]:
         return str(self._rules_dir) if self._rules_dir else None
 
-    def list_rules(self) -> List[CsvRuleSummary]:
+    def list_rules(self) -> tuple[List[CsvRuleSummary], List[InvalidRuleSummary]]:
         if not self._rules_dir or not self._rules_dir.is_dir():
-            return []
+            return [], []
 
         summaries: List[CsvRuleSummary] = []
+        invalid: List[InvalidRuleSummary] = []
         for path in sorted(self._rules_dir.glob("*.yaml")) + sorted(self._rules_dir.glob("*.yml")):
             try:
                 rule = self._load_rule_file(path)
@@ -36,7 +37,8 @@ class CsvRulesManager:
                 ))
             except Exception as e:
                 logger.warning(f"Skipping invalid CSV rule file {path.name}: {e}")
-        return summaries
+                invalid.append(InvalidRuleSummary(filename=path.name, error=str(e)))
+        return summaries, invalid
 
     def get_rule(self, filename: str) -> CsvRule:
         if not self._rules_dir:

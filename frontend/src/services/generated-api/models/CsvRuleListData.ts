@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { CsvRuleSummary } from './CsvRuleSummary';
+import type { InvalidRuleSummary } from './InvalidRuleSummary';
 /**
  * Response wrapper for CSV rules listing.
  */
@@ -11,6 +12,10 @@ export type CsvRuleListData = {
      * Available CSV rules
      */
     rules?: Array<CsvRuleSummary>;
+    /**
+     * Rule files that failed to load
+     */
+    invalid_rules?: Array<InvalidRuleSummary>;
     /**
      * Path to the rules directory
      */

@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
-from app.schemas.csv_schemas import CsvColumnMapping
+from app.schemas.csv_schemas import CsvColumnMapping, InvalidRuleSummary
 
 
 class XlsRule(BaseModel):
@@ -30,4 +30,5 @@ class XlsRuleSummary(BaseModel):
 class XlsRuleListData(BaseModel):
     """Response wrapper for XLS rules listing."""
     rules: List[XlsRuleSummary] = Field(default_factory=list, description="Available XLS rules")
+    invalid_rules: List[InvalidRuleSummary] = Field(default_factory=list, description="Rule files that failed to load")
     rules_dir: Optional[str] = Field(default=None, description="Path to the rules directory")

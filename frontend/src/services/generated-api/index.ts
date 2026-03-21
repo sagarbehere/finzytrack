@@ -99,6 +99,7 @@ export type { FileContent } from './models/FileContent';
 export type { FileUpdateMetadata } from './models/FileUpdateMetadata';
 export type { FileUpdateRequest } from './models/FileUpdateRequest';
 export type { HTTPValidationError } from './models/HTTPValidationError';
+export type { InvalidRuleSummary } from './models/InvalidRuleSummary';
 export type { LearnOFXAccountData } from './models/LearnOFXAccountData';
 export type { LearnOFXAccountRequest } from './models/LearnOFXAccountRequest';
 export type { LedgerOperationRequest } from './models/LedgerOperationRequest';

@@ -37,6 +37,27 @@
       </div>
     </div>
 
+    <!-- Invalid rules banner -->
+    <div
+      v-if="invalidRules.length > 0"
+      class="mb-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4"
+    >
+      <div class="flex items-start gap-2">
+        <ExclamationTriangleIcon class="h-5 w-5 text-yellow-600 dark:text-yellow-400 shrink-0 mt-0.5" />
+        <div class="text-sm text-yellow-800 dark:text-yellow-200">
+          <p class="font-medium mb-1">
+            {{ invalidRules.length === 1 ? '1 rule file could not be loaded:' : `${invalidRules.length} rule files could not be loaded:` }}
+          </p>
+          <ul class="space-y-1">
+            <li v-for="rule in invalidRules" :key="rule.filename">
+              <span class="font-mono font-medium">{{ rule.filename }}</span>
+              <span class="text-yellow-700 dark:text-yellow-300"> — {{ rule.error }}</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
     <!-- File Upload Widget (only shown when a rule is selected) -->
     <div
       v-if="selectedRule"
@@ -249,7 +270,7 @@
   import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
   import { useCsvParser } from '@/composables/useCsvParser'
   import { ImportService } from '@/services/generated-api'
-  import type { CsvRule, CsvRuleSummary } from '@/services/generated-api'
+  import type { CsvRule, CsvRuleSummary, InvalidRuleSummary } from '@/services/generated-api'
   import type { CsvFileDetails } from '@/types/csv'
 
   const emit = defineEmits<{
@@ -273,6 +294,7 @@
 
   // Rule state
   const availableRules = ref<CsvRuleSummary[]>([])
+  const invalidRules = ref<InvalidRuleSummary[]>([])
   const selectedRuleFilename = ref<string>('')
   const selectedRule = ref<CsvRule | null>(null)
   const isLoadingRules = ref<boolean>(false)
@@ -300,6 +322,7 @@
       const response = await ImportService.listCsvRules()
       if (response.success && response.data) {
         availableRules.value = response.data.rules || []
+        invalidRules.value = response.data.invalid_rules || []
       }
     } catch (err: any) {
       rulesLoadError.value = 'Failed to load CSV rules.'
@@ -339,6 +362,7 @@
       const response = await ImportService.listCsvRules()
       if (response.success && response.data) {
         availableRules.value = response.data.rules || []
+        invalidRules.value = response.data.invalid_rules || []
 
         // Re-fetch the selected rule if it still exists, then re-parse if file is loaded
         if (selectedRuleFilename.value) {

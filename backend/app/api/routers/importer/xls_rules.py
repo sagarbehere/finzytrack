@@ -14,9 +14,10 @@ router = APIRouter()
 async def list_xls_rules(
     xls_rules_manager: XlsRulesManager = Depends(get_xls_rules_manager),
 ):
-    rules = xls_rules_manager.list_rules()
+    rules, invalid_rules = xls_rules_manager.list_rules()
     data = XlsRuleListData(
         rules=rules,
+        invalid_rules=invalid_rules,
         rules_dir=xls_rules_manager.rules_dir,
     )
     return success_json_response(data)

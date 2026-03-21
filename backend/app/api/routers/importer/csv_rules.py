@@ -14,9 +14,10 @@ router = APIRouter()
 async def list_csv_rules(
     csv_rules_manager: CsvRulesManager = Depends(get_csv_rules_manager),
 ):
-    rules = csv_rules_manager.list_rules()
+    rules, invalid_rules = csv_rules_manager.list_rules()
     data = CsvRuleListData(
         rules=rules,
+        invalid_rules=invalid_rules,
         rules_dir=csv_rules_manager.rules_dir,
     )
     return success_json_response(data)
