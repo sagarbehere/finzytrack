@@ -44,9 +44,11 @@
     <DashboardTabs
       :tabs="tabs"
       :activeTabId="activeTabId"
+      :reloading="isLoading"
       @select="handleTabSelect"
       @remove="removeTab"
       @add="showPicker = true"
+      @reload="handleReloadRecipes"
     />
 
     <!-- Dashboard content -->
@@ -91,7 +93,7 @@ import { useDashboardTabs } from '@/composables/useDashboardTabs'
 
 const route = useRoute()
 const router = useRouter()
-const { loadUserRecipes, getAllDashboardIds, getDashboard, recipeLoadErrors } = useRecipeLoader()
+const { loadUserRecipes, reloadUserRecipes, getAllDashboardIds, getDashboard, recipeLoadErrors, isLoading } = useRecipeLoader()
 
 const bannerDismissed = ref(false)
 const { tabs, activeTabId, addTab, removeTab, setActiveTab, loadTabs, activeDashboard } = useDashboardTabs()
@@ -161,6 +163,14 @@ function handleTabSelect(tabId: string) {
   // Clear old params; RecipeDashboard will emit new defaults on mount
   currentDashboardParams.value = {}
   syncStateToUrl()
+}
+
+// Reload all recipes without a full page refresh
+async function handleReloadRecipes() {
+  bannerDismissed.value = false
+  await reloadUserRecipes()
+  // Refresh the active tab's dashboard object in case it changed
+  await loadTabs()
 }
 
 // Add dashboard handler

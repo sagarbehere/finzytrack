@@ -34,23 +34,38 @@
     >
       <PlusIcon class="h-5 w-5" />
     </button>
+
+    <!-- Spacer -->
+    <div class="flex-1" />
+
+    <!-- Reload recipes button -->
+    <button
+      @click="emit('reload')"
+      :disabled="reloading"
+      class="flex items-center justify-center p-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+      title="Reload recipes"
+    >
+      <ArrowPathIcon class="h-4 w-4" :class="{ 'animate-spin': reloading }" />
+    </button>
   </div>
 </template>
 
 <script setup lang="ts">
-import { PlusIcon, XMarkIcon } from '@heroicons/vue/20/solid'
+import { PlusIcon, XMarkIcon, ArrowPathIcon } from '@heroicons/vue/20/solid'
 import type { DashboardTab } from '@/composables/useDashboardTabs'
 
 interface Props {
   tabs: readonly DashboardTab[]
   activeTabId: string | null
+  reloading?: boolean
 }
 
-defineProps<Props>()
+withDefaults(defineProps<Props>(), { reloading: false })
 
 const emit = defineEmits<{
   (e: 'select', dashboardId: string): void
   (e: 'remove', dashboardId: string): void
   (e: 'add'): void
+  (e: 'reload'): void
 }>()
 </script>
