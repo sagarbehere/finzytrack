@@ -22,12 +22,19 @@ import { useNotifications } from '@/composables/useNotifications'
 
 const RECIPES_BASE_PATH = '/recipes'
 
+export interface RecipeFileError {
+  file: string
+  kind: 'parse' | 'schema'
+  errors: string[]
+}
+
 // Shared state across all component instances
 const userWidgets = ref<Record<string, JsonWidgetRecipe>>({})
 const userDashboards = ref<Record<string, JsonDashboardRecipe>>({})
 const isLoaded = ref(false)
 const isLoading = ref(false)
 const loadError = ref<string | null>(null)
+const recipeLoadErrors = ref<RecipeFileError[]>([])
 
 /**
  * Fetch and parse a JSON file
@@ -48,6 +55,7 @@ async function loadUserRecipes(): Promise<void> {
 
   isLoading.value = true
   loadError.value = null
+  recipeLoadErrors.value = []
 
   try {
     // Try to fetch manifest
@@ -65,6 +73,7 @@ async function loadUserRecipes(): Promise<void> {
     const { addNotification } = useNotifications()
 
     const reportFileError = (file: string, kind: 'parse' | 'schema', messages: string[]) => {
+      recipeLoadErrors.value.push({ file, kind, errors: messages })
       const summary = kind === 'parse'
         ? 'File could not be parsed as JSON. See notification panel for details.'
         : `${messages.length} validation ${messages.length === 1 ? 'error' : 'errors'} — see notification panel for details.`
@@ -209,6 +218,7 @@ export function useRecipeLoader() {
     isLoaded: readonly(isLoaded),
     isLoading: readonly(isLoading),
     loadError: readonly(loadError),
+    recipeLoadErrors: readonly(recipeLoadErrors),
     userWidgets: readonly(userWidgets),
     userDashboards: readonly(userDashboards),
 

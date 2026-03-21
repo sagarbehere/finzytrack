@@ -1,5 +1,45 @@
 <template>
   <div class="h-full flex flex-col">
+    <!-- Recipe load error banner -->
+    <div
+      v-if="recipeLoadErrors.length > 0 && !bannerDismissed"
+      class="flex-shrink-0 bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800 px-4 py-3"
+    >
+      <div class="flex items-start justify-between gap-4">
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-medium text-red-800 dark:text-red-300">
+            {{ recipeLoadErrors.length }} recipe {{ recipeLoadErrors.length === 1 ? 'file' : 'files' }} failed to load
+          </p>
+          <ul class="mt-1 space-y-1">
+            <li
+              v-for="err in recipeLoadErrors"
+              :key="err.file"
+              class="text-xs text-red-700 dark:text-red-400"
+            >
+              <span class="font-mono">{{ err.file }}</span>
+              <span class="text-red-500 dark:text-red-500"> — </span>
+              <span v-if="err.kind === 'parse'">invalid JSON</span>
+              <span v-else>{{ err.errors.length }} validation {{ err.errors.length === 1 ? 'error' : 'errors' }}</span>
+              <ul class="ml-4 mt-0.5 space-y-0.5">
+                <li v-for="msg in err.errors" :key="msg" class="text-red-600 dark:text-red-400 font-mono">
+                  {{ msg }}
+                </li>
+              </ul>
+            </li>
+          </ul>
+        </div>
+        <button
+          @click="bannerDismissed = true"
+          class="flex-shrink-0 text-red-400 hover:text-red-600 dark:hover:text-red-300"
+          aria-label="Dismiss"
+        >
+          <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
     <!-- Tab bar -->
     <DashboardTabs
       :tabs="tabs"
@@ -51,7 +91,9 @@ import { useDashboardTabs } from '@/composables/useDashboardTabs'
 
 const route = useRoute()
 const router = useRouter()
-const { loadUserRecipes, getAllDashboardIds, getDashboard } = useRecipeLoader()
+const { loadUserRecipes, getAllDashboardIds, getDashboard, recipeLoadErrors } = useRecipeLoader()
+
+const bannerDismissed = ref(false)
 const { tabs, activeTabId, addTab, removeTab, setActiveTab, loadTabs, activeDashboard } = useDashboardTabs()
 
 const showPicker = ref(false)
@@ -152,6 +194,7 @@ watch(() => route.query, (newQuery, oldQuery) => {
 
 // Initialize on mount
 onMounted(async () => {
+  bannerDismissed.value = false
   await loadUserRecipes()
   await loadTabs()
 
