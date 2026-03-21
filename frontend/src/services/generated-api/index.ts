@@ -107,7 +107,7 @@ export type { LedgerOperationResponse } from './models/LedgerOperationResponse';
 export type { LedgerUpdateResponse } from './models/LedgerUpdateResponse';
 export type { LedgerValidationError } from './models/LedgerValidationError';
 export type { LedgerValidationResponse } from './models/LedgerValidationResponse';
-export type { LLMConfig } from './models/LLMConfig';
+export { LLMConfig } from './models/LLMConfig';
 export type { LoggingConfig } from './models/LoggingConfig';
 export type { OFXDetectionData } from './models/OFXDetectionData';
 export type { OFXDetectionRequest } from './models/OFXDetectionRequest';
