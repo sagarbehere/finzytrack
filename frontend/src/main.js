@@ -10,7 +10,9 @@ import { configureNLParser } from './services/nlParser'
 import { configureSQLAssistant } from './services/sqlAssistant'
 
 async function initApp() {
-  OpenAPI.BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001'
+  // Empty string = relative URLs, works when frontend is served by the backend (packaged app).
+  // In development, VITE_API_BASE_URL can be set, or the Vite dev proxy routes /api to the backend.
+  OpenAPI.BASE = import.meta.env.VITE_API_BASE_URL || ''
 
   try {
     const response = await ConfigService.getConfigEndpointApiConfigGet()

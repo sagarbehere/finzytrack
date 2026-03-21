@@ -7,14 +7,15 @@ import os
 import sys
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from contextlib import asynccontextmanager
 
 import click
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .config import Config, ConfigurationError
 from .api.routers.importer import ofx_accounts, transaction, csv_rules, xls_rules
@@ -66,7 +67,7 @@ def setup_logging(level: str, log_file: str, log_format: str) -> None:
 
 
 
-def create_app(config: Config) -> FastAPI:
+def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
     """Create FastAPI application with configuration."""
     # Get logger for this module
     logger = logging.getLogger(__name__)
@@ -214,9 +215,27 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(ledger.router, prefix="/api", tags=["ledger"])
 
     
-    @app.get("/")
-    async def root():
-        return {"message": "Finzytrack Backend", "version": "1.0.0"}
+    # Serve bundled Vue frontend (used in packaged/desktop mode)
+    static_path = Path(static_dir) if static_dir else None
+    if static_path and static_path.exists():
+        app.mount("/assets", StaticFiles(directory=str(static_path / "assets")), name="assets")
+        # Serve other top-level static files (favicon, recipes JSON, etc.)
+        for item in static_path.iterdir():
+            if item.is_dir() and item.name != "assets":
+                app.mount(f"/{item.name}", StaticFiles(directory=str(item)), name=item.name)
+
+        @app.get("/")
+        async def serve_index():
+            return FileResponse(str(static_path / "index.html"))
+
+        @app.get("/{full_path:path}")
+        async def spa_fallback(full_path: str):
+            # Let API routes through (they're registered before this catch-all)
+            return FileResponse(str(static_path / "index.html"))
+    else:
+        @app.get("/")
+        async def root():
+            return {"message": "Finzytrack Backend", "version": "1.0.0"}
     
     @app.get("/health")
     async def health():
