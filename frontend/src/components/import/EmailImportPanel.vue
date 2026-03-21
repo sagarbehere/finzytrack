@@ -10,8 +10,7 @@
       <pre class="text-xs font-mono bg-amber-100 dark:bg-amber-800/40 rounded p-2 text-amber-900 dark:text-amber-200">email_service:
   base_url: "http://localhost:8100"</pre>
       <p class="text-sm text-amber-700 dark:text-amber-400">
-        Then start the email microservice (<code class="font-mono bg-amber-100 dark:bg-amber-800/50 px-1 rounded">email_service/</code>) and reload this page.
-        See <code class="font-mono bg-amber-100 dark:bg-amber-800/50 px-1 rounded">dev-docs/email-import.md</code> for setup instructions.
+        Then start the email microservice and reload this page.
       </p>
     </div>
 
