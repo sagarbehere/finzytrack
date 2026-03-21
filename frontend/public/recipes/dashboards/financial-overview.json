@@ -16,6 +16,16 @@
   },
   "widgets": [
     {
+      "id": "net-worth",
+      "title": "Net Worth",
+      "query": "SELECT currency, SUM(CASE WHEN account_type IN ('Assets', 'Liabilities') THEN amount ELSE 0 END) AS amount FROM postings GROUP BY currency HAVING amount != 0 ORDER BY currency",
+      "visualization": {
+        "type": "kpi",
+        "icon": "$",
+        "multiCurrency": true
+      }
+    },
+    {
       "id": "total-assets",
       "title": "Total Assets",
       "query": "SELECT currency, SUM(amount) AS amount FROM postings WHERE account_type = 'Assets' GROUP BY currency HAVING amount != 0 ORDER BY currency",

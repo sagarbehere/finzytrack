@@ -1,7 +1,8 @@
 {
   "widgets": [
     "widgets/transaction-count.json",
-    "widgets/expense-treemap.json"
+    "widgets/expense-treemap.json",
+    "widgets/top-spending-categories.json"
   ],
   "dashboards": [
     "dashboards/year-summary.json",

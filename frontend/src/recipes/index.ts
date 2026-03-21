@@ -1,27 +1,14 @@
 /**
  * Recipe Registry
  *
- * Central export point for all recipes (widgets and dashboards).
- * Import from here to access any recipe by ID.
+ * All built-in recipes have been migrated to JSON files in public/recipes/.
+ * This registry is kept for future TypeScript recipes that require functions
+ * (custom transforms, click handlers, etc.) that cannot be expressed in JSON.
  */
 
 import type { RecipeRegistry } from '@/types/recipes'
 
-// Widgets
-import { netWorthWidget } from './widgets/netWorth'
-import { topSpendingCategoriesWidget } from './widgets/topSpendingCategories'
-
-/**
- * Recipe registry for lookup by ID
- */
 export const recipeRegistry: RecipeRegistry = {
-  widgets: {
-    [netWorthWidget.id]: netWorthWidget,
-    [topSpendingCategoriesWidget.id]: topSpendingCategoriesWidget,
-  },
+  widgets: {},
   dashboards: {},
 }
-
-// Re-export individual recipes for direct imports
-export { netWorthWidget } from './widgets/netWorth'
-export { topSpendingCategoriesWidget } from './widgets/topSpendingCategories'

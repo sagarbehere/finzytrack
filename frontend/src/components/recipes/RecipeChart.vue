@@ -147,20 +147,23 @@ function applySeriesLabelFormat(
         ...existing,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         formatter: (params: any) => {
-          // ECharts passes the full dataset row as params.value for dataset-driven series
+          // ECharts passes the full dataset row as params.value for dataset-driven series.
+          // Try all encode fields in order (x, y, value) and use the first that
+          // resolves to a valid finite number — handles both vertical and horizontal bars.
           const raw = params.value
-          const encodeY = (s as Record<string, unknown>).encode as Record<string, unknown> | undefined
-          const yField = Array.isArray(encodeY?.y)
-            ? String(encodeY!.y[0])
-            : typeof encodeY?.y === 'string'
-              ? encodeY!.y
-              : null
-          const numVal = typeof raw === 'object' && raw !== null && yField
-            ? Number((raw as Record<string, unknown>)[yField])
-            : typeof raw === 'number'
-              ? raw
-              : Number(raw)
-          return formatter(isNaN(numVal) ? 0 : numVal)
+          if (typeof raw === 'number') return formatter(raw)
+          let numVal: number | null = null
+          if (typeof raw === 'object' && raw !== null) {
+            const encodeConfig = (s as Record<string, unknown>).encode as Record<string, unknown> | undefined
+            if (encodeConfig) {
+              const fields = Object.values(encodeConfig).flat()
+              for (const field of fields) {
+                const v = Number((raw as Record<string, unknown>)[String(field)])
+                if (isFinite(v)) { numVal = v; break }
+              }
+            }
+          }
+          return formatter(numVal ?? Number(raw) ?? 0)
         },
       },
     } as typeof s
