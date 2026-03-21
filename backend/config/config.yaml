@@ -16,6 +16,9 @@ server:
 # CSV import rules directory
 csv_rules_dir: "./config/csv-rules"
 
+# XLS import rules directory
+xls_rules_dir: "./config/xls_rules"
+
 # OFX account mappings file (populated via "Learn Account" feature)
 ofx_mappings_file: "./config/ofx_mappings.yaml"
 
