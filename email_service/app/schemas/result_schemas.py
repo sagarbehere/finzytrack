@@ -20,6 +20,23 @@ class InvalidProfileInfo(BaseModel):
     error: str                             # human-readable reason for failure
 
 
+class ProfilesListResponse(BaseModel):
+    profiles: List[ProfileInfo]
+    invalid_profiles: List[InvalidProfileInfo]
+
+
+class TestConnectionResponse(BaseModel):
+    success: bool
+    email_count: Optional[int] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+
+class ReloadResponse(BaseModel):
+    profiles_loaded: int
+    message: str
+
+
 class TransactionTypeInfo(BaseModel):
     name: str
     description: str

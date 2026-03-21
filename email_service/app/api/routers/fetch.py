@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.config import get_config
+from app.schemas.result_schemas import ReloadResponse, TestConnectionResponse
 from app.services.fetch_service import stream_fetch
 from app.state import get_registry
 
@@ -22,7 +23,7 @@ class FetchRequest(BaseModel):
     until_date: Optional[str] = None   # ISO format: "2026-03-15"
 
 
-@router.post("/test-connection")
+@router.post("/test-connection", response_model=TestConnectionResponse)
 async def test_connection(req: TestConnectionRequest):
     """
     Connectivity test — connect, login, select folder, count matching emails.
@@ -62,22 +63,22 @@ async def test_connection(req: TestConnectionRequest):
                 status, data = imap.search(None, f'SINCE {since_str}')
                 if status == 'OK' and data[0]:
                     total = len(data[0].split())
-        return {
-            "success": True,
-            "email_count": total,
-            "message": f"Connected. Found {total} matching emails in the last {lookback_days} days."
-        }
+        return TestConnectionResponse(
+            success=True,
+            email_count=total,
+            message=f"Connected. Found {total} matching emails in the last {lookback_days} days.",
+        )
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return TestConnectionResponse(success=False, error=str(e))
 
 
-@router.post("/reload")
+@router.post("/reload", response_model=ReloadResponse)
 async def reload_profiles():
     """Re-scan rules directory and reload all account profiles."""
     registry = get_registry()
     registry.reload()
     profiles = registry.list_profiles()
-    return {"profiles_loaded": len(profiles), "message": f"Reloaded {len(profiles)} account profiles."}
+    return ReloadResponse(profiles_loaded=len(profiles), message=f"Reloaded {len(profiles)} account profiles.")
 
 
 @router.post("/fetch")

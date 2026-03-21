@@ -1,26 +1,19 @@
 /**
  * Composable for the email import microservice.
  *
- * Uses fetch() + ReadableStream for SSE — NOT EventSource — because POST /fetch
- * requires a JSON body. EventSource only supports GET with no body.
+ * Uses the generated DefaultService for regular endpoints (profiles, reload,
+ * test-connection). Uses fetch() + ReadableStream for POST /fetch — NOT the
+ * generated client and NOT EventSource — because it is an SSE endpoint that
+ * requires a POST with a JSON body.
  */
 import { ref, readonly } from 'vue'
+import { DefaultService, OpenAPI as EmailOpenAPI } from '@/services/generated-email-api'
+import type { ProfileInfo, InvalidProfileInfo, TestConnectionResponse } from '@/services/generated-email-api'
 
-// ─── Types matching the email service API response ────────────────────────────
+export type EmailProfileInfo = ProfileInfo
+export type InvalidEmailProfileInfo = InvalidProfileInfo
 
-export interface EmailProfileInfo {
-  name: string
-  profile_id: string
-  beancount_account: string
-  default_currency: string
-  lookback_days: number | null    // from account YAML; null = use global default
-  file: string
-}
-
-export interface InvalidEmailProfileInfo {
-  filename: string
-  error: string
-}
+// ─── SSE-related types (not covered by generated client) ─────────────────────
 
 export interface EmailParsedTransaction {
   date: string
@@ -73,20 +66,12 @@ export interface ProgressState {
   current: number | null
 }
 
-// ─── Module-level email service URL (set from main.js at startup) ─────────────
-
-let _emailServiceUrl = ''
-
-export function configureEmailService(baseUrl: string) {
-  _emailServiceUrl = baseUrl
-}
-
 // ─── Composable ───────────────────────────────────────────────────────────────
 
 export function useEmailImporter() {
-  const emailServiceUrl = readonly(ref(_emailServiceUrl))
-  const profiles = ref<EmailProfileInfo[]>([])
-  const invalidProfiles = ref<InvalidEmailProfileInfo[]>([])
+  const emailServiceUrl = readonly(ref(EmailOpenAPI.BASE))
+  const profiles = ref<ProfileInfo[]>([])
+  const invalidProfiles = ref<InvalidProfileInfo[]>([])
   const profilesError = ref<string | null>(null)
   const isLoadingProfiles = ref(false)
   const isFetching = ref(false)
@@ -97,13 +82,11 @@ export function useEmailImporter() {
   })
 
   async function loadProfiles(): Promise<void> {
-    if (!_emailServiceUrl) return
+    if (!EmailOpenAPI.BASE) return
     isLoadingProfiles.value = true
     profilesError.value = null
     try {
-      const resp = await fetch(`${_emailServiceUrl}/profiles`)
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
-      const data = await resp.json()
+      const data = await DefaultService.listProfilesProfilesGet()
       profiles.value = data.profiles || []
       invalidProfiles.value = data.invalid_profiles || []
     } catch (e) {
@@ -116,20 +99,14 @@ export function useEmailImporter() {
 
   async function testConnection(
     profileId: string,
-  ): Promise<{ success: boolean; message?: string; error?: string }> {
-    if (!_emailServiceUrl) return { success: false, error: 'Email service not configured' }
-    const resp = await fetch(`${_emailServiceUrl}/test-connection`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profile_id: profileId }),
-    })
-    return resp.json()
+  ): Promise<TestConnectionResponse> {
+    if (!EmailOpenAPI.BASE) return { success: false, error: 'Email service not configured' }
+    return DefaultService.testConnectionTestConnectionPost({ profile_id: profileId })
   }
 
   async function reloadProfiles(): Promise<void> {
-    if (!_emailServiceUrl) return
-    const resp = await fetch(`${_emailServiceUrl}/reload`, { method: 'POST' })
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    if (!EmailOpenAPI.BASE) return
+    await DefaultService.reloadProfilesReloadPost()
     await loadProfiles()
   }
 
@@ -138,7 +115,7 @@ export function useEmailImporter() {
     sinceDate?: string,
     untilDate?: string,
   ): Promise<EmailFetchResult> {
-    if (!_emailServiceUrl) throw new Error('Email service not configured')
+    if (!EmailOpenAPI.BASE) throw new Error('Email service not configured')
 
     isFetching.value = true
     fetchError.value = null
@@ -149,7 +126,7 @@ export function useEmailImporter() {
     }
 
     return new Promise((resolve, reject) => {
-      fetch(`${_emailServiceUrl}/fetch`, {
+      fetch(`${EmailOpenAPI.BASE}/fetch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
