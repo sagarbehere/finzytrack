@@ -12,6 +12,9 @@
       <p class="text-xs text-gray-400 dark:text-gray-500 mb-1">
         Use $ or ₹ to hint the currency, or select one below for the default.
       </p>
+      <p v-if="!nlParserConfigured" class="text-xs text-amber-600 dark:text-amber-400 mb-1">
+        LLM not configured — basic parsing only. Set <code class="font-mono">ai.llm.api_url</code> in <code class="font-mono">backend/config/config.yaml</code> to enable full natural language parsing.
+      </p>
       <textarea
         v-model="nlText"
         placeholder="e.g. Paid $45 for dinner at Olive Garden on chase"
@@ -66,12 +69,13 @@
   import { ref } from 'vue'
   import AccountDropdown from '@/components/common/AccountDropdown.vue'
   import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
-  import { parseNaturalLanguageTransaction, type ParsedTransaction } from '@/services/nlParser'
+  import { parseNaturalLanguageTransaction, isNLParserConfigured, type ParsedTransaction } from '@/services/nlParser'
   import { useAccounts } from '@/composables/useAccounts'
   import { useCommodities } from '@/composables/useCommodities'
   import { useToast } from '@/composables/useNotifications'
 
   const { error: showErrorToast } = useToast()
+  const nlParserConfigured = isNLParserConfigured()
   const { accountNames } = useAccounts()
   const { commodityCodes } = useCommodities()
 

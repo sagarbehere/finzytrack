@@ -43,11 +43,10 @@
         Ask a question in plain English
       </label>
       <p v-if="!llmConfigured" class="text-xs text-amber-600 dark:text-amber-400 mb-2">
-        LLM not configured. Set VITE_LLM_API_URL to enable natural language queries.
+        LLM not configured. Set <code class="font-mono">ai.llm.api_url</code> in <code class="font-mono">backend/config/config.yaml</code> to enable query generation.
       </p>
       <textarea
         v-model="nlQuery"
-        :disabled="!llmConfigured"
         placeholder="e.g. Show me my top 10 expense categories this year"
         rows="2"
         class="w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"

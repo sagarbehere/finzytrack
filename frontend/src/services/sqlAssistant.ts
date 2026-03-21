@@ -139,22 +139,36 @@ export async function generateQuery(
     ? buildBQLSystemPrompt()
     : buildSQLSystemPrompt()
 
-  const response = await fetch(`${_config.apiUrl}/v1/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(_config.apiKey ? { Authorization: `Bearer ${_config.apiKey}` } : {}),
-    },
-    body: JSON.stringify({
-      model: _config.model || 'gpt-oss-20b',
-      temperature: _config.temperature ?? 0.1,
-      max_tokens: _config.maxTokens ?? 2048,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: naturalLanguageQuery },
-      ],
-    }),
-  })
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 30_000)
+
+  let response: Response
+  try {
+    response = await fetch(`${_config.apiUrl}/v1/chat/completions`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(_config.apiKey ? { Authorization: `Bearer ${_config.apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model: _config.model || 'gpt-oss-20b',
+        temperature: _config.temperature ?? 0.1,
+        max_tokens: _config.maxTokens ?? 2048,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: naturalLanguageQuery },
+        ],
+      }),
+    })
+  } catch (e: any) {
+    if (e.name === 'AbortError') {
+      throw new Error('LLM request timed out after 30 seconds. Check that your LLM server is running and responsive.')
+    }
+    throw e
+  } finally {
+    clearTimeout(timeoutId)
+  }
 
   if (!response.ok) {
     const body = await response.text().catch(() => '')

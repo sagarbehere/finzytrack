@@ -112,6 +112,10 @@ Respond with ONLY the JSON object.`
  * When an API URL is configured, sends the text to an OpenAI-compatible
  * /v1/chat/completions endpoint. Otherwise falls back to a regex stub.
  */
+export function isNLParserConfigured(): boolean {
+  return !!_config.apiUrl
+}
+
 export async function parseNaturalLanguageTransaction(
   text: string,
   context?: NLParserContext
@@ -129,22 +133,36 @@ async function parseLLM(text: string, context?: NLParserContext): Promise<Parsed
   const ctx: NLParserContext = context ?? { accountNames: [], currencies: [] }
   const systemPrompt = buildSystemPrompt(ctx)
 
-  const response = await fetch(`${_config.apiUrl}/v1/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(_config.apiKey ? { Authorization: `Bearer ${_config.apiKey}` } : {}),
-    },
-    body: JSON.stringify({
-      model: _config.model || 'gpt-oss-20b',
-      temperature: _config.temperature ?? 0.1,
-      max_tokens: _config.maxTokens ?? 2048,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: text },
-      ],
-    }),
-  })
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 30_000)
+
+  let response: Response
+  try {
+    response = await fetch(`${_config.apiUrl}/v1/chat/completions`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(_config.apiKey ? { Authorization: `Bearer ${_config.apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model: _config.model || 'gpt-oss-20b',
+        temperature: _config.temperature ?? 0.1,
+        max_tokens: _config.maxTokens ?? 2048,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: text },
+        ],
+      }),
+    })
+  } catch (e: any) {
+    if (e.name === 'AbortError') {
+      throw new Error('LLM request timed out after 30 seconds. Check that your LLM server is running and responsive.')
+    }
+    throw e
+  } finally {
+    clearTimeout(timeoutId)
+  }
 
   if (!response.ok) {
     const body = await response.text().catch(() => '')
