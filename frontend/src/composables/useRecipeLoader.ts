@@ -65,14 +65,14 @@ async function loadUserRecipes(): Promise<void> {
     const { addNotification } = useNotifications()
 
     const reportFileError = (file: string, kind: 'parse' | 'schema', messages: string[]) => {
-      const bullet = messages.map((m) => `• ${m}`).join('\n')
+      const summary = kind === 'parse'
+        ? 'File could not be parsed as JSON. See notification panel for details.'
+        : `${messages.length} validation ${messages.length === 1 ? 'error' : 'errors'} — see notification panel for details.`
       addNotification({
         type: 'error',
         title: `Recipe error: ${file}`,
-        message: kind === 'parse'
-          ? `File could not be parsed as JSON.\n${bullet}`
-          : `Schema validation failed:\n${bullet}`,
-        errorDetails: { file, kind, messages },
+        message: summary,
+        errorDetails: { file, kind, errors: messages },
         isPersistent: true,
       })
       console.error(`[RecipeLoader] ${kind} error in ${file}:`, messages)

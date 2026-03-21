@@ -60,17 +60,16 @@
       <!-- Error state -->
       <div
         v-else-if="error"
-        class="h-full flex items-center justify-center text-red-500 dark:text-red-400"
+        class="h-full flex flex-col items-center justify-center gap-2 px-4"
       >
-        <div class="text-center">
-          <p class="text-sm">{{ error }}</p>
-          <button
-            @click="executeQuery"
-            class="mt-2 text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400"
-          >
-            Retry
-          </button>
-        </div>
+        <p class="text-sm font-medium text-red-600 dark:text-red-400">Query failed</p>
+        <pre class="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 rounded px-3 py-2 max-w-full overflow-auto whitespace-pre-wrap break-all text-left">{{ error }}</pre>
+        <button
+          @click="executeQuery"
+          class="text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400"
+        >
+          Retry
+        </button>
       </div>
 
       <!-- Visualization -->
