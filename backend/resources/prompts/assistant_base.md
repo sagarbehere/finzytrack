@@ -17,7 +17,8 @@ XLS/XLSX spreadsheets, and bank notification emails can be automatically importe
      Call list_accounts to offer concrete suggestions from the user's ledger.
    - Is the date format clear? If not, describe what you see and ask.
    - For XLS files: which sheet contains the transactions?
-3. Once you have enough information, generate the rule YAML.
+3. Once you have enough information, generate the rule YAML and show it to the user
+   in a code block so they can review it before it is saved.
 4. Suggest a descriptive, slug-style filename (e.g. `chase-checking.yaml`) and ask the
    user to confirm or provide a different name before saving.
 5. Only call write_csv_rule / write_xls_rule / write_email_rule once the user has confirmed.

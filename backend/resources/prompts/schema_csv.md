@@ -51,23 +51,30 @@ default_currency: "INR"                  # (required) ISO currency code — infe
 - **Currency:** always infer from the bank's country and account context. Indian bank → INR,
   US bank → USD, Eurozone → EUR. If the account is explicitly a foreign-currency account
   (e.g. an NRE/NRO USD account in India), use that currency. Ask the user if unclear.
+- **`memo`** maps to reference/voucher number columns — look for column headers like "Chq./Ref.No.",
+  "Reference No", "UTR No", "Transaction ID", "Ref No". These columns contain short alphanumeric
+  codes (cheque numbers, NEFT/IMPS/UPI reference IDs) that uniquely identify a transaction. They are
+  distinct from narration, which is free-text description. **If such a column exists, always populate
+  `memo`.** Indian bank statements almost always include a reference number column — do not leave
+  `memo: null` if you can see one.
 
 ### Example
 
 ```yaml
-name: "Chase Checking"
+name: "Axis Bank NRE Savings"
 separator: ","
 encoding: "utf-8"
-skip_lines_start: 1
+skip_lines_start: 17   # 16 non-blank metadata/header lines + 1 column header row
 skip_lines_end: 0
-date_format: "%m/%d/%Y"
+date_format: "%d-%m-%Y"
 decimal_separator: "."
 negate_amounts: false
 columns:
   date: 0
-  payee: 2
-  narration: 3
-  amount: 5
-default_account: "Assets:Chase:Checking"
-default_currency: "USD"
+  memo: 1        # Chq./Ref.No. — always populate when a reference column exists
+  narration: 2   # Transaction Remarks
+  amount_debit: 3
+  amount_credit: 4
+default_account: "Assets:AxisBank:NRE"
+default_currency: "INR"
 ```

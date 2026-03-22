@@ -206,17 +206,19 @@ def _xls_parse_hint(rows: list[str]) -> str:
     skip_start = len(header_lines) + 1  # +1 for column header row (data_lines[0])
 
     n_transactions = len(data_lines) - 1
-    footer_note = (
-        f" {len(footer_lines)} trailing rows detected"
-        " (non-date content is auto-filtered by the parser)."
-        if footer_lines else ""
-    )
+    if footer_lines:
+        footer_note = (
+            f" Recommended skip_lines_end: {len(footer_lines)}"
+            f" ({len(footer_lines)} trailing rows detected — XLS footer rows may contain"
+            f" numeric data that would be imported as fake transactions; set skip_lines_end explicitly)."
+        )
+    else:
+        footer_note = " Recommended skip_lines_end: 0 (no trailing footer rows detected; verify by checking the last rows of the file)."
 
     return (
         f"[Parse hint: recommended skip_lines_start: {skip_start}"
         f" ({len(header_lines)} header rows including blanks + 1 column header row)."
-        f" Apparent transaction rows: {n_transactions}."
-        f" Recommended skip_lines_end: 0 (rows without a parseable date are auto-skipped).{footer_note}]"
+        f" Apparent transaction rows: {n_transactions}.{footer_note}]"
     )
 
 
