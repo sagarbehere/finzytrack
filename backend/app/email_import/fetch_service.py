@@ -72,6 +72,11 @@ def _run_fetch_thread(
             put(_make_event('error', f"Unknown profile: '{profile_id}'"))
             return
 
+        cred_error = parser.check_credentials()
+        if cred_error:
+            put(_make_event('error', cred_error))
+            return
+
         profile = parser.rule
 
         # Resolve date range

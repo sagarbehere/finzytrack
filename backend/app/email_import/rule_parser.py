@@ -123,6 +123,25 @@ class EmailRuleParser:
     def account_parsing_mode(self) -> Optional[str]:
         return self.rule.parsing_mode
 
+    def check_credentials(self) -> Optional[str]:
+        """Check if IMAP credentials contain unexpanded ${...} env var references.
+
+        Returns an error message string if credentials are incomplete, or None if OK.
+        """
+        srv = self.rule.imap_server
+        unset = []
+        for field_name, value in [('username', srv.username), ('password', srv.password)]:
+            for m in re.finditer(r'\$\{([^}]+)\}', value):
+                unset.append(m.group(1))
+        if unset:
+            vars_list = ', '.join(unset)
+            return (
+                f"IMAP credentials for profile '{self.profile_id}' contain unset "
+                f"environment variables: {vars_list}. "
+                f"Set these variables and restart the backend."
+            )
+        return None
+
     def find_matching_type(
         self, from_address: str, subject: str, body_text: str = ""
     ) -> Optional[TransactionTypeDef]:

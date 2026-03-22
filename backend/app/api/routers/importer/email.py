@@ -71,6 +71,10 @@ async def test_email_connection(
     if parser is None:
         return TestConnectionResponse(success=False, error=f"Unknown profile: {req.profile_id}")
 
+    cred_error = parser.check_credentials()
+    if cred_error:
+        return TestConnectionResponse(success=False, error=cred_error)
+
     srv = parser.rule.imap_server
     profile = parser.rule
     lookback_days = profile.lookback_days or config.email_import.default_lookback_days
