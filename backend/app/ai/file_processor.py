@@ -15,7 +15,6 @@ This ensures the LLM can determine skip_lines_start and skip_lines_end correctly
 import email
 import io
 import logging
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +111,7 @@ def _split_csv_lines(lines: list[str]) -> tuple[list[str], list[str], list[str]]
         except Exception:
             return 0
 
-    counts = [field_count(l) for l in lines]
+    counts = [field_count(line) for line in lines]
 
     # Modal count among non-zero counts
     non_zero = [c for c in counts if c > 0]

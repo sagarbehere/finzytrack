@@ -19,7 +19,7 @@ import logging
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -44,17 +44,19 @@ from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
 from app.core.csv_rules_manager import CsvRulesManager
 from app.core.xls_rules_manager import XlsRulesManager
+from app.email_import.rule_registry import AccountProfileRegistry
 from app.dependencies import (
     get_beancount_manager,
     get_config_manager,
     get_csv_rules_manager,
+    get_email_registry,
     get_xls_rules_manager,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-MAX_AGENT_ITERATIONS = 10
+MAX_AGENT_ITERATIONS = 5
 
 _CSV_EXTENSIONS  = {".csv", ".tsv", ".txt"}
 _XLS_EXTENSIONS  = {".xls", ".xlsx", ".xlsm", ".xlsb"}
@@ -103,16 +105,14 @@ class AssistantChatRequest(BaseModel):
 # ── Helper: build tool registry ───────────────────────────────────────────────
 
 def _build_registry(
-    config_manager: ConfigManager,
     csv_rules_manager: CsvRulesManager,
     xls_rules_manager: XlsRulesManager,
+    email_registry: AccountProfileRegistry,
     beancount_manager: BeancountManager,
 ) -> ToolRegistry:
-    config = config_manager.get_config()
-
     csv_dir = Path(csv_rules_manager.rules_dir) if csv_rules_manager.rules_dir else None
     xls_dir = Path(xls_rules_manager.rules_dir) if xls_rules_manager.rules_dir else None
-    email_dir = Path(config.email_import.rules_directory) if config.email_import.enabled else None
+    email_dir = email_registry.rules_directory
 
     allowed_read_dirs = [d for d in [csv_dir, xls_dir, email_dir] if d is not None]
 
@@ -216,6 +216,7 @@ async def assistant_chat(
     beancount_manager: BeancountManager = Depends(get_beancount_manager),
     csv_rules_manager: CsvRulesManager = Depends(get_csv_rules_manager),
     xls_rules_manager: XlsRulesManager = Depends(get_xls_rules_manager),
+    email_registry: AccountProfileRegistry = Depends(get_email_registry),
 ):
     config = config_manager.get_config()
     llm_config = config.ai.llm
@@ -246,7 +247,7 @@ async def assistant_chat(
     if file_type:
         context["file_type"] = file_type
 
-    registry = _build_registry(config_manager, csv_rules_manager, xls_rules_manager, beancount_manager)
+    registry = _build_registry(csv_rules_manager, xls_rules_manager, email_registry, beancount_manager)
 
     async def generate():
         # Load prompt inside the generator so any missing-file error surfaces

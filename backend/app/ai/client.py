@@ -8,7 +8,7 @@ All providers yield a common stream of events:
 """
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import AsyncIterator
 
 from app.config import LLMConfig

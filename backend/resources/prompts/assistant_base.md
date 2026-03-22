@@ -47,5 +47,8 @@ When the user wants to add to or change an existing rule:
 - If the file was truncated (you will see a "rows omitted" comment), pay special attention
   to the last visible rows to count footer lines for skip_lines_end.
 - If validation of a generated rule fails, read the error, fix the issue, and retry once.
+- Never call a tool whose results are already present in the conversation. If you have already
+  called list_accounts or list_rule_files and the results are in the message history, use those
+  results directly — do not call the tool again.
 - Keep your responses concise and friendly. After saving a file, remind the user that the
   transactions in the file have not yet been imported — they should use the Import panel.

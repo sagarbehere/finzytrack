@@ -206,7 +206,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { streamAssistantChat, readFileAsBase64 } from '@/api/assistant'
 import type { AttachedFile, ChatMessage } from '@/api/assistant'
