@@ -22,10 +22,11 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if not tool:
             return {"success": False, "error": f"Unknown tool: {name}"}
+        # Strip any keys the tool didn't declare — LLMs occasionally hallucinate extras
+        declared = set(tool.parameters_schema.get("properties", {}).keys())
+        filtered = {k: v for k, v in arguments.items() if k in declared}
         try:
-            return await tool.execute(**arguments)
-        except TypeError as e:
-            return {"success": False, "error": f"Invalid arguments for tool '{name}': {e}"}
+            return await tool.execute(**filtered)
         except Exception as e:
             logger.error(f"Tool '{name}' raised an exception: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
