@@ -249,12 +249,43 @@
             type="button"
             class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
             title="Remove file"
-            @click="attachedFile = null"
+            @click="attachedFile = null; ruleFilename = ''; ruleAccount = ''; ruleCurrency = ''"
           >
             <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
+        </div>
+
+        <!-- Rule quick-fill fields (CSV / XLS only) -->
+        <div v-if="showRuleFields" class="mb-2 flex gap-2">
+          <div class="flex-1 min-w-0">
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-0.5">Save as</label>
+            <input
+              v-model="ruleFilename"
+              type="text"
+              placeholder="rule-name.yaml"
+              class="w-full text-xs px-2 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:focus:ring-indigo-400"
+            />
+          </div>
+          <div class="flex-1 min-w-0">
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-0.5">Account</label>
+            <input
+              v-model="ruleAccount"
+              type="text"
+              placeholder="Assets:Bank:Name"
+              class="w-full text-xs px-2 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:focus:ring-indigo-400"
+            />
+          </div>
+          <div class="w-24">
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-0.5">Currency</label>
+            <input
+              v-model="ruleCurrency"
+              type="text"
+              placeholder="INR"
+              class="w-full text-xs px-2 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:focus:ring-indigo-400"
+            />
+          </div>
         </div>
 
         <div class="flex gap-2 items-end">
@@ -371,6 +402,20 @@ const textareaEl = ref<HTMLTextAreaElement | null>(null)
 const fileInputEl = ref<HTMLInputElement | null>(null)
 const messageListEl = ref<HTMLDivElement | null>(null)
 
+// Rule quick-fill fields — shown when a CSV/XLS file is attached
+const ruleFilename = ref('')
+const ruleAccount = ref('')
+const ruleCurrency = ref('')
+
+const showRuleFields = computed(() => {
+  const name = attachedFile.value?.name.toLowerCase() ?? ''
+  return name.endsWith('.csv') || name.endsWith('.xls') || name.endsWith('.xlsx') || name.endsWith('.xlsm')
+})
+
+function suggestRuleFilename(uploadedName: string): string {
+  return uploadedName.replace(/\.[^.]+$/, '.yaml')
+}
+
 const canSend = computed(() =>
   !streaming.value && (inputText.value.trim().length > 0 || attachedFile.value !== null)
 )
@@ -400,6 +445,13 @@ async function handleFileSelected(event: Event) {
   if (!file) return
   try {
     attachedFile.value = await readFileAsBase64(file)
+    // Pre-populate rule fields for CSV/XLS files
+    const lower = file.name.toLowerCase()
+    if (lower.endsWith('.csv') || lower.endsWith('.xls') || lower.endsWith('.xlsx') || lower.endsWith('.xlsm')) {
+      ruleFilename.value = suggestRuleFilename(file.name)
+      ruleAccount.value = ''
+      ruleCurrency.value = ''
+    }
   } catch (err) {
     console.error('Failed to read file', err)
   }
@@ -412,7 +464,18 @@ async function handleFileSelected(event: Event) {
 async function sendMessage() {
   if (!canSend.value) return
 
-  const text = inputText.value.trim()
+  // Build the final prompt, prepending rule quick-fill fields if set
+  const parts: string[] = []
+  if (showRuleFields.value && (ruleFilename.value.trim() || ruleAccount.value.trim() || ruleCurrency.value.trim())) {
+    let intro = 'Create a rule file to parse this file'
+    if (ruleFilename.value.trim()) intro += ` and save it as ${ruleFilename.value.trim()}`
+    if (ruleAccount.value.trim())  intro += `. Beancount account is ${ruleAccount.value.trim()}`
+    if (ruleCurrency.value.trim()) intro += `. Currency is ${ruleCurrency.value.trim()}`
+    parts.push(intro + '.')
+  }
+  if (inputText.value.trim()) parts.push(inputText.value.trim())
+
+  const text = parts.join(' ')
   const file = attachedFile.value
 
   if (!text && !file) return
@@ -434,6 +497,9 @@ async function sendMessage() {
   }
 
   inputText.value = ''
+  ruleFilename.value = ''
+  ruleAccount.value = ''
+  ruleCurrency.value = ''
   if (file) sentFile.value = file  // keep for post-stream validation; persist across turns
   attachedFile.value = null
   resetTextareaHeight()
