@@ -125,8 +125,9 @@ class ConfigManager:
             restart_required = True
             restart_reasons.append("log file path changed")
 
-        # Update in-memory config
+        # Update in-memory config, preserving the config file path
         old_config = self.config
+        new_config.config_file_path = old_config.config_file_path
         self.config = new_config
 
         # Apply hot-reloadable settings that need runtime updates
