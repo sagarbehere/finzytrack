@@ -190,7 +190,7 @@
 
     <!-- Main content area -->
     <div
-      class="bg-white dark:bg-gray-900"
+      class="bg-white dark:bg-gray-900 flex flex-col h-screen"
       :style="{ paddingLeft: isLargeScreen ? `${sidebarWidth}px` : '0px' }"
     >
       <!-- Top bar -->
@@ -266,8 +266,8 @@
       </div>
 
       <!-- Main content -->
-      <main class="py-8 min-w-0">
-        <div class="px-4 sm:px-6 lg:px-8 min-w-0">
+      <main class="flex-1 min-h-0 overflow-auto py-8 min-w-0">
+        <div class="px-4 sm:px-6 lg:px-8 min-w-0 h-full">
           <slot />
         </div>
       </main>

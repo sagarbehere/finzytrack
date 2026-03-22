@@ -40,7 +40,7 @@
       class="flex flex-col flex-1 min-h-0 bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 overflow-hidden"
     >
       <!-- Content row: chat pane + file preview sidebar -->
-      <div class="flex flex-1 min-h-0">
+      <div class="flex flex-1 min-h-0 overflow-hidden">
 
         <!-- Chat pane (45% when sidebar open, full width otherwise) -->
         <div
