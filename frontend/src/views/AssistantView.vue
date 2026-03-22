@@ -39,6 +39,15 @@
       v-else
       class="flex flex-col flex-1 min-h-0 bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 overflow-hidden"
     >
+      <!-- Content row: chat pane + file preview sidebar -->
+      <div class="flex flex-1 min-h-0">
+
+        <!-- Chat pane (45% when sidebar open, full width otherwise) -->
+        <div
+          class="flex flex-col min-h-0 transition-all duration-200"
+          :class="previewSheets ? 'w-[45%]' : 'flex-1'"
+        >
+
       <!-- Message list -->
       <div ref="messageListEl" class="flex-1 overflow-y-auto p-4 space-y-4">
         <!-- Empty state -->
@@ -71,12 +80,6 @@
                   {{ msg.fileName }}
                 </span>
               </div>
-              <!-- File preview table (CSV / XLS) -->
-              <FilePreviewTable
-                v-if="msg.fileSheets?.length"
-                :sheets="msg.fileSheets"
-                class="mt-2"
-              />
             </div>
           </div>
 
@@ -206,7 +209,33 @@
         </template>
       </div>
 
-      <!-- Input area -->
+        </div><!-- end chat pane -->
+
+        <!-- File preview sidebar (55%) -->
+        <div
+          v-if="previewSheets"
+          class="w-[55%] border-l border-gray-200 dark:border-gray-700 flex flex-col min-h-0"
+        >
+          <!-- Sidebar header -->
+          <div class="flex-none flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50">
+            <span class="text-xs font-medium text-gray-600 dark:text-gray-400 truncate">{{ previewFileName }}</span>
+            <button
+              class="ml-2 flex-none text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+              title="Close file preview"
+              @click="previewSheets = null"
+            >
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <!-- Table fills remaining height -->
+          <FilePreviewTable :sheets="previewSheets" :fill="true" />
+        </div>
+
+      </div><!-- end content row -->
+
+      <!-- Input area (full width) -->
       <div class="flex-none border-t border-gray-200 dark:border-gray-700 p-4">
         <!-- File attachment preview -->
         <div v-if="attachedFile" class="mb-2 flex items-center gap-2">
@@ -318,7 +347,6 @@ interface DisplayMessage {
   role: 'user' | 'assistant'
   content: string
   fileName?: string           // for user messages with an attachment
-  fileSheets?: FileSheet[]    // parsed file shown as a preview table in the user message
   toolEvents?: ToolEvent[]    // for assistant messages
   streaming?: boolean
   validationNote?: string              // status line shown after a rule is saved and validated
@@ -335,6 +363,9 @@ const attachedFile = ref<AttachedFile | null>(null)
 const streaming = ref(false)
 // Kept across the send/clear cycle so the validator can use it after streaming ends
 const sentFile = ref<AttachedFile | null>(null)
+// File preview sidebar — set when a CSV/XLS file is sent, cleared by the user
+const previewSheets = ref<FileSheet[] | null>(null)
+const previewFileName = ref<string | null>(null)
 
 const textareaEl = ref<HTMLTextAreaElement | null>(null)
 const fileInputEl = ref<HTMLInputElement | null>(null)
@@ -386,14 +417,21 @@ async function sendMessage() {
 
   if (!text && !file) return
 
-  // Add user message to display (parse file into preview table if present)
-  const userMsg: DisplayMessage = {
+  // Add user message to display
+  messages.value.push({
     role: 'user',
     content: text || `(attached: ${file!.name})`,
     fileName: file?.name,
-    fileSheets: file ? parseFileForPreview(file) : undefined,
+  })
+
+  // Open the file preview sidebar for CSV/XLS files
+  if (file) {
+    const sheets = parseFileForPreview(file)
+    if (sheets.length > 0) {
+      previewSheets.value = sheets
+      previewFileName.value = file.name
+    }
   }
-  messages.value.push(userMsg)
 
   inputText.value = ''
   if (file) sentFile.value = file  // keep for post-stream validation; persist across turns
