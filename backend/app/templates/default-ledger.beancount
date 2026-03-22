@@ -5,10 +5,55 @@
 1970-01-01 open Assets:Cash                {default_currency}
 1970-01-01 open Assets:Bank:Checking       {default_currency}
 1970-01-01 open Assets:Bank:Savings        {default_currency}
-1970-01-01 open Liabilities:CreditCard     {default_currency}
+1970-01-01 open Liabilities:Bank:CreditCard {default_currency}
 1970-01-01 open Income:Salary              {default_currency}
-1970-01-01 open Expenses:Food              {default_currency}
-1970-01-01 open Expenses:Unknown           {default_currency}
 1970-01-01 open Equity:Opening-Balances    {default_currency}
+
+;; Housing
+1970-01-01 open Expenses:HouseRent         {default_currency}
+1970-01-01 open Expenses:HouseCleaning     {default_currency}
+1970-01-01 open Expenses:HouseholdItems    {default_currency}
+1970-01-01 open Expenses:Utilities         {default_currency}
+
+;; Food
+1970-01-01 open Expenses:Groceries         {default_currency}
+1970-01-01 open Expenses:EatingOut         {default_currency}
+
+;; Transportation
+1970-01-01 open Expenses:Car               {default_currency}
+1970-01-01 open Expenses:AutoInsurance     {default_currency}
+1970-01-01 open Expenses:Gas               {default_currency}
+1970-01-01 open Expenses:Parking           {default_currency}
+
+;; Health
+1970-01-01 open Expenses:Healthcare        {default_currency}
+;; Lifestyle
+1970-01-01 open Expenses:Entertainment     {default_currency}
+1970-01-01 open Expenses:Hobbies           {default_currency}
+1970-01-01 open Expenses:Travel            {default_currency}
+1970-01-01 open Expenses:Grooming          {default_currency}
+1970-01-01 open Expenses:PersonalItems     {default_currency}
+1970-01-01 open Expenses:Gadgets           {default_currency}
+
+;; Communication & Tech
+1970-01-01 open Expenses:Internet          {default_currency}
+1970-01-01 open Expenses:Phone             {default_currency}
+1970-01-01 open Expenses:CloudServices     {default_currency}
+
+;; Education
+1970-01-01 open Expenses:School            {default_currency}
+
+;; Giving
+1970-01-01 open Expenses:Donations         {default_currency}
+1970-01-01 open Expenses:Gifts             {default_currency}
+
+;; Fees
+1970-01-01 open Expenses:Fees:Banking      {default_currency}
+1970-01-01 open Expenses:Fees:CreditCard   {default_currency}
+
+;; Cash & Misc
+1970-01-01 open Expenses:Cash              {default_currency}
+1970-01-01 open Expenses:Miscellaneous     {default_currency}
+1970-01-01 open Expenses:Unknown           {default_currency}
 
 ;; Your transactions will appear below this line
