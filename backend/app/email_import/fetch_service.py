@@ -108,6 +108,7 @@ def _run_fetch_thread(
                 since_date=since_date,
                 until_date=until_date,
                 bank_emails=profile.bank_emails,
+                body_keyword=profile.body_keyword,
                 max_emails=email_config.max_emails,
                 timeout_secs=email_config.imap_timeout_secs,
                 progress_callback=fetch_progress,

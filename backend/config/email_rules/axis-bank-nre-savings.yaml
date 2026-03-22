@@ -18,6 +18,8 @@ lookback_days: 7
 bank_emails:
   - "alerts@axis.bank.in"
 
+body_keyword: "XX7317"  # server-side IMAP pre-filter; only fetch emails mentioning this account
+
 transaction_types:
 
   - name: "UPI_Debit"

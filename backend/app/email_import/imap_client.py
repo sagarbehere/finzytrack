@@ -111,6 +111,7 @@ def fetch_emails(
     since_date: date,
     until_date: Optional[date] = None,
     bank_emails: Optional[List[str]] = None,
+    body_keyword: Optional[str] = None,
     max_emails: int = 500,
     timeout_secs: int = 30,
     progress_callback: Optional[Callable[[int, int], None]] = None,
@@ -146,17 +147,20 @@ def fetch_emails(
             before_str = (until_date + timedelta(days=1)).strftime('%d-%b-%Y')
             date_criteria = f'SINCE {since_str} BEFORE {before_str}'
 
+        # Optional server-side body pre-filter (e.g. masked account number)
+        body_criteria = f' BODY "{body_keyword}"' if body_keyword else ''
+
         # Run one IMAP SEARCH per unique domain, merge UIDs
         all_uids: List[bytes] = []
         if from_domains:
             for domain in from_domains:
-                criteria = f'FROM "{domain}" {date_criteria}'
+                criteria = f'FROM "{domain}"{body_criteria} {date_criteria}'
                 status, data = imap.search(None, criteria)
                 if status == 'OK' and data[0]:
                     all_uids.extend(data[0].split())
         else:
             # No bank_emails configured — search without FROM filter
-            status, data = imap.search(None, date_criteria)
+            status, data = imap.search(None, f'{date_criteria}{body_criteria}')
             if status == 'OK' and data[0]:
                 all_uids = data[0].split()
 

@@ -67,5 +67,6 @@ class RuleFile(BaseModel):
     imap_server: IMAPServerDef             # IMAP credentials for this account
     lookback_days: Optional[int] = None    # optional; overrides global default
     bank_emails: List[str] = Field(default_factory=list)
+    body_keyword: Optional[str] = None     # plain-string added to IMAP SEARCH as BODY "..." for server-side pre-filtering
     parsing_mode: Optional[str] = None
     transaction_types: List[TransactionTypeDef] = Field(default_factory=list)
