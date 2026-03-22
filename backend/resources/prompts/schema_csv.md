@@ -51,6 +51,9 @@ default_currency: "INR"                  # (required) ISO currency code — infe
 - **Currency:** always infer from the bank's country and account context. Indian bank → INR,
   US bank → USD, Eurozone → EUR. If the account is explicitly a foreign-currency account
   (e.g. an NRE/NRO USD account in India), use that currency. Ask the user if unclear.
+- **`payee` vs `narration`:** a column named "Transaction Remarks", "Remarks", "Description",
+  "Particulars", or similar free-text description should be mapped to `payee`, not `narration`.
+  Use `narration` only when there is a second, distinct description column alongside a payee column.
 - **`memo`** maps to reference/voucher number columns — look for column headers like "Chq./Ref.No.",
   "Reference No", "UTR No", "Transaction ID", "Ref No". These columns contain short alphanumeric
   codes (cheque numbers, NEFT/IMPS/UPI reference IDs) that uniquely identify a transaction. They are

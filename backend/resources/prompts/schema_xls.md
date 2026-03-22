@@ -40,6 +40,9 @@ default_currency: "USD"                 # (required) — infer from bank's count
 - **`skip_lines_start` counting for XLS:** unlike CSV, the XLS parser does NOT strip blank rows
   before applying `skip_lines_start` — every row counts, including blank ones. Use the parse hint's
   recommended value directly; do not subtract blank lines.
+- **`payee` vs `narration`:** a column named "Transaction Remarks", "Remarks", "Description",
+  "Particulars", or similar free-text description should be mapped to `payee`, not `narration`.
+  Use `narration` only when there is a second, distinct description column alongside a payee column.
 - **`memo`** maps to reference/voucher number columns — look for "Chq./Ref.No.", "Reference No",
   "UTR No", "Transaction ID". These short alphanumeric reference codes are distinct from narration.
   **If such a column exists, always populate `memo`.** Many bank statements include one —
