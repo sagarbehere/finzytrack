@@ -44,8 +44,8 @@
 
         <!-- Chat pane (45% when sidebar open, full width otherwise) -->
         <div
-          class="flex flex-col min-h-0 transition-all duration-200"
-          :class="previewSheets ? 'w-[45%]' : 'flex-1'"
+          class="flex flex-col min-h-0 overflow-hidden transition-all duration-200"
+          :class="previewSheets ? 'w-[45%]' : 'w-full'"
         >
 
       <!-- Message list -->
@@ -73,7 +73,18 @@
                 class="rounded-2xl rounded-tr-sm px-4 py-2.5 bg-indigo-600 text-white text-sm whitespace-pre-wrap"
               >{{ msg.content }}</div>
               <div v-if="msg.fileName" class="mt-1 flex justify-end">
-                <span class="inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+                <button
+                  v-if="msg.fileSheets"
+                  class="inline-flex items-center gap-1 text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2 cursor-pointer"
+                  title="Click to reopen file preview"
+                  @click="previewSheets = msg.fileSheets!; previewFileName = msg.fileName!"
+                >
+                  <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
+                  </svg>
+                  {{ msg.fileName }}
+                </button>
+                <span v-else class="inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
                   <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
                   </svg>
@@ -378,6 +389,7 @@ interface DisplayMessage {
   role: 'user' | 'assistant'
   content: string
   fileName?: string           // for user messages with an attachment
+  fileSheets?: FileSheet[]    // parsed preview sheets — lets user re-open preview by clicking the badge
   toolEvents?: ToolEvent[]    // for assistant messages
   streaming?: boolean
   validationNote?: string              // status line shown after a rule is saved and validated
@@ -397,6 +409,9 @@ const sentFile = ref<AttachedFile | null>(null)
 // File preview sidebar — set when a CSV/XLS file is sent, cleared by the user
 const previewSheets = ref<FileSheet[] | null>(null)
 const previewFileName = ref<string | null>(null)
+// Persistent tracking of the last successfully written rule (survives across turns)
+const lastSavedRuleTool = ref<'write_csv_rule' | 'write_xls_rule' | null>(null)
+const lastSavedRuleFilename = ref<string | null>(null)
 
 const textareaEl = ref<HTMLTextAreaElement | null>(null)
 const fileInputEl = ref<HTMLInputElement | null>(null)
@@ -480,21 +495,24 @@ async function sendMessage() {
 
   if (!text && !file) return
 
-  // Add user message to display
-  messages.value.push({
-    role: 'user',
-    content: text || `(attached: ${file!.name})`,
-    fileName: file?.name,
-  })
-
-  // Open the file preview sidebar for CSV/XLS files
+  // Open the file preview sidebar for CSV/XLS files (parse before adding message)
+  let fileSheets: FileSheet[] | undefined
   if (file) {
     const sheets = parseFileForPreview(file)
     if (sheets.length > 0) {
+      fileSheets = sheets
       previewSheets.value = sheets
       previewFileName.value = file.name
     }
   }
+
+  // Add user message to display (store sheets so the badge can re-open the preview)
+  messages.value.push({
+    role: 'user',
+    content: text || `(attached: ${file!.name})`,
+    fileName: file?.name,
+    fileSheets,
+  })
 
   inputText.value = ''
   ruleFilename.value = ''
@@ -521,8 +539,10 @@ async function sendMessage() {
   streaming.value = true
 
   // Track whether a rule was saved this turn so we can validate after streaming
+  // These local vars capture what happened this turn; persistent refs are the fallback
   let savedRuleTool: 'write_csv_rule' | 'write_xls_rule' | null = null
   let savedRuleFilename: string | null = null
+  let ruleWrittenThisTurn = false
 
   try {
     for await (const event of streamAssistantChat(apiMessages, file, { page: 'assistant' })) {
@@ -544,12 +564,21 @@ async function sendMessage() {
           te.success = event.success
           te.message = event.message
         }
-        // Capture successful rule saves for post-stream validation
-        if (event.success && (event.tool === 'write_csv_rule' || event.tool === 'write_xls_rule')) {
+        // Track write tool calls for post-stream validation.
+        // Always set ruleWrittenThisTurn regardless of success, so we validate
+        // even after a failed write (shows current on-disk rule state to the user).
+        if (event.tool === 'write_csv_rule' || event.tool === 'write_xls_rule') {
+          ruleWrittenThisTurn = true
+          savedRuleTool = event.tool
           const match = event.message.match(/`([^`]+)`/)
           if (match) {
-            savedRuleTool = event.tool
             savedRuleFilename = match[1].split('/').pop() ?? null
+          }
+          // Only update persistent refs on success so subsequent turns still have
+          // a valid fallback even if a later write attempt fails.
+          if (event.success && savedRuleFilename) {
+            lastSavedRuleTool.value = savedRuleTool
+            lastSavedRuleFilename.value = savedRuleFilename
           }
         }
         scrollToBottom()
@@ -570,11 +599,16 @@ async function sendMessage() {
     textareaEl.value?.focus()
   }
 
-  // Validate the saved rule against the file that was uploaded this turn.
+  // Validate the saved rule against the uploaded file.
+  // If filename regex failed this turn but we know a rule was written, fall back to persistent refs.
   // Must set through messages.value[idx] (the reactive Proxy), not via the
   // local assistantMsg reference, so Vue detects the property change.
-  if (savedRuleTool && savedRuleFilename && sentFile.value) {
-    const { note, transactions, rawContent } = await validateSavedRule(savedRuleTool, savedRuleFilename, sentFile.value)
+  // savedRuleTool is set whenever a write tool result was received this turn.
+  // Fall back to the last known filename if the regex didn't match the message.
+  const effectiveTool = savedRuleTool
+  const effectiveFilename = savedRuleFilename ?? lastSavedRuleFilename.value
+  if (effectiveTool && effectiveFilename && sentFile.value) {
+    const { note, transactions, rawContent } = await validateSavedRule(effectiveTool, effectiveFilename, sentFile.value)
     const lastMsg = messages.value[messages.value.length - 1]
     if (lastMsg) {
       lastMsg.validationNote = note
