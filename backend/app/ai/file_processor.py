@@ -189,6 +189,11 @@ def _split_csv_lines(lines: list[str], delimiter: str = ",") -> tuple[list[str],
 
     def field_count(line: str) -> int:
         try:
+            if delimiter == "\t":
+                # For XLS, pandas fills every cell so all rows have the same
+                # total column count regardless of content. Count non-empty
+                # cells instead so metadata/blank rows score lower than data rows.
+                return sum(1 for f in line.split("\t") if f.strip())
             return len(next(csv.reader([line], delimiter=delimiter)))
         except Exception:
             return 0
