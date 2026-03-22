@@ -21,7 +21,7 @@ columns:              # 0-based column indices
   narration: null
   memo: null
 default_account: "Assets:Bank:Savings"  # (required)
-default_currency: "INR"                 # (required) — infer from bank's country; never assume USD
+default_currency: "USD"                 # (required) — infer from bank's country (INR, USD, EUR, GBP…)
 ```
 
 ### Key rules
@@ -33,8 +33,8 @@ default_currency: "INR"                 # (required) — infer from bank's count
   `sheet_index` (or `sheet_name`) accordingly.
 - **`skip_lines_end` is NOT usually 0 for XLS.** Unlike CSV, XLS footer rows are not auto-filtered:
   they often contain numeric data (opening/closing balances, page totals) that the parser cannot
-  distinguish from real transactions and will import as garbage entries. Indian bank XLS exports
-  typically have **20–40 footer rows**. You must count them explicitly. Use the parse hint's
+  distinguish from real transactions and will import as garbage entries. Many bank XLS exports
+  have **20+ footer rows**. You must count them explicitly. Use the parse hint's
   "trailing rows detected" count as a starting point, then verify against the last rows visible in
   the file. When in doubt, err on the side of skipping more footer rows.
 - **`skip_lines_start` counting for XLS:** unlike CSV, the XLS parser does NOT strip blank rows
@@ -42,8 +42,8 @@ default_currency: "INR"                 # (required) — infer from bank's count
   recommended value directly; do not subtract blank lines.
 - **`memo`** maps to reference/voucher number columns — look for "Chq./Ref.No.", "Reference No",
   "UTR No", "Transaction ID". These short alphanumeric reference codes are distinct from narration.
-  **If such a column exists, always populate `memo`.** Indian bank statements almost always include
-  one — do not leave `memo: null` if you can see it.
+  **If such a column exists, always populate `memo`.** Many bank statements include one —
+  do not leave `memo: null` if you can see it.
 
 ### Example (ICICI Bank — separate debit/credit columns, many header/footer rows)
 

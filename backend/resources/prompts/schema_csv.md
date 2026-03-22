@@ -55,8 +55,8 @@ default_currency: "INR"                  # (required) ISO currency code — infe
   "Reference No", "UTR No", "Transaction ID", "Ref No". These columns contain short alphanumeric
   codes (cheque numbers, NEFT/IMPS/UPI reference IDs) that uniquely identify a transaction. They are
   distinct from narration, which is free-text description. **If such a column exists, always populate
-  `memo`.** Indian bank statements almost always include a reference number column — do not leave
-  `memo: null` if you can see one.
+  `memo`.** Many bank statements include a reference number column — do not leave `memo: null`
+  if you can see one.
 
 ### Example
 
