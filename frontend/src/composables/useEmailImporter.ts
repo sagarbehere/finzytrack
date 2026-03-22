@@ -9,7 +9,7 @@
  * After the email service was merged into the main backend, all endpoints
  * live under /api/import/email/ on the same origin.
  */
-import { ref, readonly, computed } from 'vue'
+import { ref, computed } from 'vue'
 import { OpenAPI } from '@/services/generated-api'
 import { useConfig } from '@/composables/useConfig'
 
@@ -94,7 +94,7 @@ function emailUrl(path: string): string {
   return `${OpenAPI.BASE}/api/import/email${path}`
 }
 
-async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+async function apiFetch<T>(path: string, options?: globalThis.RequestInit): Promise<T> {
   const resp = await fetch(emailUrl(path), {
     headers: { 'Content-Type': 'application/json' },
     ...options,
