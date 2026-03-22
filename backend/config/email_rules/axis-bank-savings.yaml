@@ -137,5 +137,42 @@ transaction_types:
     error_handling:
       required_fields: ["amount", "timestamp"]
       partial_match_allowed: true
-    # NOTE: Axis Bank NEFT alerts do not include the recipient name in the email body.
+    # NOTE: Axis Bank NEFT debit alerts do not include the recipient name in the email body.
     # Payee will be blank — fill it in manually in the import review table.
+
+  - name: "NEFT_Credit"
+    description: "NEFT/self-transfer credit transactions (subject: 'Credit transaction alert')"
+    email_filter:
+      subject_regex: "Credit transaction alert"
+      body_regex: 'XX8968'
+    extraction:
+      amount:
+        pattern: 'credited with INR ([\d,]+\.\d+)'
+        type: "float"
+        cleanup: "remove_commas"
+      timestamp:
+        # Format: "on 21-03-2026 at 18:02:18 IST"
+        pattern: 'on (\d{2}-\d{2}-\d{4} at \d{2}:\d{2}:\d{2}) IST'
+        type: "datetime"
+        format: "%d-%m-%Y at %H:%M:%S"
+        timezone: "+05:30"
+      payee_raw:
+        # Format: "by MOB/SELFFT/SAGAR MORESHWAR" or "by NEFT/IR/SENDER NAME"
+        pattern: 'by \w+/\w+/([^\n.]+)'
+        type: "string"
+        cleanup: "strip_whitespace"
+        optional: true
+      masked_account:
+        pattern: 'A/c no\.\s+(XX\w+)'
+        type: "string"
+        optional: true
+    mapping:
+      payee_raw: "payee"
+      timestamp: "date"
+      amount: "amount"
+    amount_sign:
+      field: "fixed"
+      value: "positive"
+    error_handling:
+      required_fields: ["amount", "timestamp"]
+      partial_match_allowed: true
