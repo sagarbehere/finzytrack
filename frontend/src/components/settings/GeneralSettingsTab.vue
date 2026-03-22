@@ -185,7 +185,58 @@
       </div>
     </SettingsSection>
 
-    <!-- Email import settings are configured in config.yaml (email_import section) -->
+    <!-- ── Email Import ────────────────────────────────────────────────── -->
+    <SettingsSection
+      title="Email Import"
+      description="IMAP email fetching and rule-based transaction parsing."
+      :is-dirty="emailIsDirty"
+      :is-saving="emailSaving"
+      :error="emailError"
+      @save="saveEmail"
+      @reset="resetEmail"
+    >
+      <div class="flex items-center gap-3">
+        <input id="email-enabled" v-model="emailFields.enabled" type="checkbox" :class="checkboxClass" />
+        <label for="email-enabled" class="text-sm font-medium text-gray-700 dark:text-gray-300">Enable email import</label>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Rules Directory</label>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Directory containing per-account YAML rule files.</p>
+        <input v-model="emailFields.rules_directory" type="text" placeholder="./config/email_rules/" :class="inputClass" />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Default Lookback Days</label>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Number of days to look back for emails when no date range is specified.</p>
+        <input v-model.number="emailFields.default_lookback_days" type="number" min="1" :class="inputClass" />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Max Emails</label>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Maximum emails to fetch per request. Truncates with a warning if exceeded.</p>
+        <input v-model.number="emailFields.max_emails" type="number" min="1" :class="inputClass" />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">IMAP Timeout (seconds)</label>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Socket timeout for IMAP operations. Set to 0 for no timeout.</p>
+        <input v-model.number="emailFields.imap_timeout_secs" type="number" min="0" :class="inputClass" />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Parsing Mode</label>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
+          <strong>Regex</strong> uses patterns defined in rule files.
+          <strong>LLM</strong> uses your configured language model (requires AI / LLM to be set up).
+          Can be overridden per account or per rule.
+        </p>
+        <select v-model="emailFields.parsing_mode" :class="inputClass">
+          <option value="regex">Regex</option>
+          <option value="llm">LLM</option>
+        </select>
+      </div>
+    </SettingsSection>
 
     <!-- ── Analytics ─────────────────────────────────────────────────────── -->
     <SettingsSection
@@ -524,6 +575,52 @@ async function saveCategorization() {
 
 function resetCategorization() { initCategorizationFields(); categorizationError.value = '' }
 
+// ─── Email import section ─────────────────────────────────────────────────────
+
+const emailFields = reactive({
+  enabled: config.value?.email_import?.enabled ?? false,
+  rules_directory: config.value?.email_import?.rules_directory ?? './config/email_rules/',
+  default_lookback_days: config.value?.email_import?.default_lookback_days ?? 7,
+  max_emails: config.value?.email_import?.max_emails ?? 500,
+  imap_timeout_secs: config.value?.email_import?.imap_timeout_secs ?? 30,
+  parsing_mode: config.value?.email_import?.parsing_mode ?? 'regex',
+})
+const emailSaving = ref(false)
+const emailError = ref('')
+
+const emailIsDirty = computed(() =>
+  emailFields.enabled !== (config.value?.email_import?.enabled ?? false) ||
+  emailFields.rules_directory !== (config.value?.email_import?.rules_directory ?? './config/email_rules/') ||
+  emailFields.default_lookback_days !== (config.value?.email_import?.default_lookback_days ?? 7) ||
+  emailFields.max_emails !== (config.value?.email_import?.max_emails ?? 500) ||
+  emailFields.imap_timeout_secs !== (config.value?.email_import?.imap_timeout_secs ?? 30) ||
+  emailFields.parsing_mode !== (config.value?.email_import?.parsing_mode ?? 'regex')
+)
+
+function initEmailFields() {
+  emailFields.enabled = config.value?.email_import?.enabled ?? false
+  emailFields.rules_directory = config.value?.email_import?.rules_directory ?? './config/email_rules/'
+  emailFields.default_lookback_days = config.value?.email_import?.default_lookback_days ?? 7
+  emailFields.max_emails = config.value?.email_import?.max_emails ?? 500
+  emailFields.imap_timeout_secs = config.value?.email_import?.imap_timeout_secs ?? 30
+  emailFields.parsing_mode = config.value?.email_import?.parsing_mode ?? 'regex'
+}
+
+async function saveEmail() {
+  await saveSection({
+    email_import: {
+      enabled: emailFields.enabled,
+      rules_directory: emailFields.rules_directory,
+      default_lookback_days: emailFields.default_lookback_days,
+      max_emails: emailFields.max_emails,
+      imap_timeout_secs: emailFields.imap_timeout_secs,
+      parsing_mode: emailFields.parsing_mode,
+    },
+  }, emailSaving, emailError)
+}
+
+function resetEmail() { initEmailFields(); emailError.value = '' }
+
 // ─── Analytics section ────────────────────────────────────────────────────────
 
 const analyticsFields = reactive({
@@ -669,6 +766,7 @@ watch(config, () => {
   if (!accountsIsDirty.value) initAccountsFields()
   if (!llmIsDirty.value) initLlmFields()
   if (!categorizationIsDirty.value) initCategorizationFields()
+  if (!emailIsDirty.value) initEmailFields()
   if (!analyticsIsDirty.value) initAnalyticsFields()
   if (!backupIsDirty.value) initBackupFields()
   if (!loggingIsDirty.value) initLoggingFields()
