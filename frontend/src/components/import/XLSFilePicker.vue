@@ -230,6 +230,9 @@
                 :allow-custom="true"
                 placeholder="Select or type account name..."
               />
+              <p v-if="accountNotInLedger" class="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                Account not found in ledger. Create it first or select a different account.
+              </p>
             </div>
             <div>
               <CommodityDropdown
@@ -259,6 +262,7 @@
 <script setup lang="ts">
   import { ref, computed, onMounted } from 'vue'
   import { useToast } from '@/composables/useNotifications'
+  import { useAccounts } from '@/composables/useAccounts'
   import {
     DocumentArrowUpIcon,
     DocumentCheckIcon,
@@ -301,10 +305,17 @@
   const isReloadingRules = ref<boolean>(false)
   const rulesLoadError = ref<string | null>(null)
   const toast = useToast()
+  const { accountDetails, hasBeenFetched } = useAccounts()
 
   // Account/currency state
   const selectedAccount = ref<string>('')
   const selectedCurrency = ref<string>('')
+
+  const accountNotInLedger = computed(() => {
+    if (!selectedAccount.value || !hasBeenFetched.value) return false
+    const openAccounts = accountDetails.value.filter(a => !a.close_date).map(a => a.name)
+    return !openAccounts.includes(selectedAccount.value)
+  })
 
   // UI state
   const fileInput = ref<HTMLInputElement | null>(null)
