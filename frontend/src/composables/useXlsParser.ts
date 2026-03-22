@@ -182,6 +182,11 @@ function parseAmountStr(amountStr: string, decimalSep: string): number | null {
   return isParensNegative ? -Math.abs(value) : value
 }
 
+const MONTH_ABBREVS: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+}
+
 function parseDateWithFormat(dateStr: string, format: string): string | null {
   const formatSeparators = format.replace(/%[a-zA-Z]/g, '').replace(/[a-zA-Z]/g, '')
   const sep = formatSeparators.length > 0 ? formatSeparators[0] : null
@@ -195,7 +200,15 @@ function parseDateWithFormat(dateStr: string, format: string): string | null {
 
   for (let i = 0; i < formatTokens.length; i++) {
     const token = formatTokens[i]
-    const value = parseInt(dateParts[i], 10)
+    const part = dateParts[i]
+
+    if (token === '%b') {
+      month = MONTH_ABBREVS[part.toLowerCase().slice(0, 3)] ?? 0
+      if (month === 0) return null
+      continue
+    }
+
+    const value = parseInt(part, 10)
     if (isNaN(value)) return null
 
     switch (token) {
