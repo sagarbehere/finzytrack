@@ -5,6 +5,7 @@ import AnalyzeView from '../views/AnalyzeView.vue'
 import TransactionsView from '../views/TransactionsView.vue'
 import RawDataView from '../views/RawDataView.vue'
 import SettingsView from '../views/SettingsView.vue'
+import AssistantView from '../views/AssistantView.vue'
 
 const routes = [
   {
@@ -65,6 +66,14 @@ const routes = [
     component: SettingsView,
     meta: {
       title: 'Settings',
+    },
+  },
+  {
+    path: '/assistant',
+    name: 'assistant',
+    component: AssistantView,
+    meta: {
+      title: 'AI Assistant',
     },
   },
 ]

@@ -297,6 +297,7 @@
     SunIcon,
     MoonIcon,
     WalletIcon,
+    SparklesIcon,
   } from '@heroicons/vue/24/outline'
 
   // Props
@@ -415,6 +416,12 @@
       href: '/raw-data',
       icon: DocumentIcon,
       id: 'raw-data',
+    },
+    {
+      name: 'AI Assistant',
+      href: '/assistant',
+      icon: SparklesIcon,
+      id: 'assistant',
     },
   ]
 

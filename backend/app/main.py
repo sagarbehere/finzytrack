@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import Config, ConfigurationError
 from .api.routers.importer import ofx_accounts, transaction, csv_rules, xls_rules
-from .api.routers import accounts, commodities, ledger_export, ledger_transactions, query, config as config_router, files, ledger
+from .api.routers import accounts, commodities, ledger_export, ledger_transactions, query, config as config_router, files, ledger, assistant
 from .core.beancount_manager import BeancountManager
 from .error_handler import setup_error_handlers
 from .core.backup_manager import BackupManager
@@ -213,6 +213,7 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
     app.include_router(config_router.router, prefix="/api", tags=["config"])
     app.include_router(files.router, prefix="/api", tags=["files"])
     app.include_router(ledger.router, prefix="/api", tags=["ledger"])
+    app.include_router(assistant.router, prefix="/api", tags=["assistant"])
 
     
     # Serve bundled Vue frontend (used in packaged/desktop mode)

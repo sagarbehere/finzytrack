@@ -162,6 +162,9 @@ class Config(BaseModel):
     # XLS import rules directory
     xls_rules_dir: Optional[str] = Field(default=None, description="Directory containing XLS import rule YAML files")
 
+    # Email import rules directory (should point to the same directory as the email service's rules_directory)
+    email_rules_dir: Optional[str] = Field(default=None, description="Directory containing email import rule YAML files")
+
     # Analytics configuration
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig, description="Analytics and reporting settings")
 
