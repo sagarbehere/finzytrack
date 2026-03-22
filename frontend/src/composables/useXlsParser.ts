@@ -76,6 +76,19 @@ function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
   })
 }
 
+export function extractXlsSheets(buffer: ArrayBuffer): { name: string; rows: string[][] }[] {
+  const workbook = XLSX.read(buffer, { type: 'array', cellDates: false })
+  return workbook.SheetNames.map(sheetName => {
+    const sheet = workbook.Sheets[sheetName]
+    const rows = XLSX.utils.sheet_to_json<string[]>(sheet, {
+      header: 1,
+      raw: false,
+      defval: '',
+    }) as string[][]
+    return { name: sheetName, rows }
+  })
+}
+
 export function extractXlsText(buffer: ArrayBuffer, rule: XlsRule): string {
   const workbook = XLSX.read(buffer, { type: 'array', cellDates: false })
   let sheetName: string

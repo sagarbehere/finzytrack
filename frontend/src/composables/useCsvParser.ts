@@ -75,6 +75,14 @@ function readFileAsText(file: File, encoding: string): Promise<string> {
   })
 }
 
+export function extractCsvRows(text: string): string[][] {
+  const result = Papa.parse<string[]>(text, {
+    header: false,
+    skipEmptyLines: false,  // preserve all rows so line numbers match the actual file
+  })
+  return result.data as string[][]
+}
+
 export function parseCsvContent(content: string, rule: CsvRule): CsvParsedTransaction[] {
   const separator = rule.separator || ','
   const skipStart = rule.skip_lines_start ?? 0

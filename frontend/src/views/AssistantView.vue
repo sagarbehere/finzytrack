@@ -71,6 +71,12 @@
                   {{ msg.fileName }}
                 </span>
               </div>
+              <!-- File preview table (CSV / XLS) -->
+              <FilePreviewTable
+                v-if="msg.fileSheets?.length"
+                :sheets="msg.fileSheets"
+                class="mt-2"
+              />
             </div>
           </div>
 
@@ -289,9 +295,10 @@ import { RouterLink } from 'vue-router'
 import { streamAssistantChat, readFileAsBase64 } from '@/api/assistant'
 import type { AttachedFile, ChatMessage } from '@/api/assistant'
 import { ImportService } from '@/services/generated-api'
-import { parseCsvContent } from '@/composables/useCsvParser'
-import { parseXlsContent, extractXlsText } from '@/composables/useXlsParser'
+import { parseCsvContent, extractCsvRows } from '@/composables/useCsvParser'
+import { parseXlsContent, extractXlsText, extractXlsSheets } from '@/composables/useXlsParser'
 import type { CsvParsedTransaction } from '@/types/csv'
+import FilePreviewTable from '@/components/FilePreviewTable.vue'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -302,10 +309,16 @@ interface ToolEvent {
   success: boolean
 }
 
+interface FileSheet {
+  name: string
+  rows: string[][]
+}
+
 interface DisplayMessage {
   role: 'user' | 'assistant'
   content: string
   fileName?: string           // for user messages with an attachment
+  fileSheets?: FileSheet[]    // parsed file shown as a preview table in the user message
   toolEvents?: ToolEvent[]    // for assistant messages
   streaming?: boolean
   validationNote?: string              // status line shown after a rule is saved and validated
@@ -373,12 +386,14 @@ async function sendMessage() {
 
   if (!text && !file) return
 
-  // Add user message to display
-  messages.value.push({
+  // Add user message to display (parse file into preview table if present)
+  const userMsg: DisplayMessage = {
     role: 'user',
     content: text || `(attached: ${file!.name})`,
     fileName: file?.name,
-  })
+    fileSheets: file ? parseFileForPreview(file) : undefined,
+  }
+  messages.value.push(userMsg)
 
   inputText.value = ''
   if (file) sentFile.value = file  // keep for post-stream validation; persist across turns
@@ -546,6 +561,23 @@ function rawContentLines(content: string): string[] {
 
 function rawContentOverflow(content: string): number {
   return Math.max(0, content.split('\n').length - MAX_RAW_LINES)
+}
+
+function parseFileForPreview(file: AttachedFile): FileSheet[] {
+  const lower = file.name.toLowerCase()
+  try {
+    if (lower.endsWith('.xls') || lower.endsWith('.xlsx') || lower.endsWith('.xlsm') || lower.endsWith('.xlsb')) {
+      const buffer = base64ToArrayBuffer(file.content_base64)
+      return extractXlsSheets(buffer)
+    }
+    if (lower.endsWith('.csv') || lower.endsWith('.tsv') || lower.endsWith('.txt')) {
+      const text = base64ToText(file.content_base64)
+      return [{ name: file.name, rows: extractCsvRows(text) }]
+    }
+  } catch (err) {
+    console.error('[preview] failed to parse file for preview:', err)
+  }
+  return []
 }
 
 function base64ToText(b64: string): string {
