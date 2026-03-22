@@ -76,7 +76,21 @@ function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
   })
 }
 
-function parseXlsContent(buffer: ArrayBuffer, rule: XlsRule): CsvParsedTransaction[] {
+export function extractXlsText(buffer: ArrayBuffer, rule: XlsRule): string {
+  const workbook = XLSX.read(buffer, { type: 'array', cellDates: false })
+  let sheetName: string
+  if (rule.sheet_name) {
+    sheetName = rule.sheet_name
+  } else {
+    const idx = rule.sheet_index ?? 0
+    sheetName = workbook.SheetNames[idx]
+  }
+  if (!sheetName || !workbook.Sheets[sheetName]) return ''
+  const sheet = workbook.Sheets[sheetName]
+  return XLSX.utils.sheet_to_csv(sheet, { FS: '\t' })
+}
+
+export function parseXlsContent(buffer: ArrayBuffer, rule: XlsRule): CsvParsedTransaction[] {
   const workbook = XLSX.read(buffer, { type: 'array', cellDates: false })
 
   // Select sheet by name or index

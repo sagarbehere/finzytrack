@@ -110,6 +110,84 @@
                 v-html="renderMarkdown(msg.content)"
               />
 
+              <!-- Validation result (shown after rule is saved) -->
+              <div v-if="msg.validationNote" class="space-y-2">
+
+                <!-- Status line -->
+                <div
+                  class="rounded-lg px-3 py-2 text-xs font-medium"
+                  :class="msg.validationNote.startsWith('✓')
+                    ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400'
+                    : 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400'"
+                >{{ msg.validationNote }}</div>
+
+                <!-- Parsed transactions table -->
+                <div
+                  v-if="msg.validationTransactions?.length"
+                  class="rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden"
+                >
+                  <div class="px-3 py-1.5 bg-gray-50 dark:bg-gray-700/50 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                    Parsed transactions
+                  </div>
+                  <table class="w-full text-xs">
+                    <thead>
+                      <tr class="border-t border-gray-200 dark:border-gray-600 text-gray-400 dark:text-gray-500">
+                        <th class="text-left px-3 py-1.5 font-medium">Date</th>
+                        <th v-if="hasDescription(msg.validationTransactions)" class="text-left px-3 py-1.5 font-medium">Description</th>
+                        <th class="text-right px-3 py-1.5 font-medium">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        v-for="(tx, i) in validationRows(msg.validationTransactions)"
+                        :key="i"
+                        class="border-t border-gray-100 dark:border-gray-700/50"
+                      >
+                        <td class="px-3 py-1.5 font-mono text-gray-700 dark:text-gray-300">{{ tx.date }}</td>
+                        <td
+                          v-if="hasDescription(msg.validationTransactions)"
+                          class="px-3 py-1.5 text-gray-600 dark:text-gray-400 max-w-[16rem] truncate"
+                        >{{ txDescription(tx) }}</td>
+                        <td
+                          class="px-3 py-1.5 text-right font-mono"
+                          :class="tx.amount >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'"
+                        >{{ formatAmount(tx.amount) }}</td>
+                      </tr>
+                      <tr v-if="msg.validationTransactions.length > MAX_VALIDATION_ROWS" class="border-t border-gray-100 dark:border-gray-700/50">
+                        <td colspan="3" class="px-3 py-1.5 text-gray-400 dark:text-gray-500 italic">
+                          … {{ msg.validationTransactions.length - MAX_VALIDATION_ROWS }} more rows not shown
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- Raw file content -->
+                <div
+                  v-if="msg.validationRawContent"
+                  class="rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden"
+                >
+                  <div class="px-3 py-1.5 bg-gray-50 dark:bg-gray-700/50 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                    Raw file
+                  </div>
+                  <div class="overflow-auto max-h-48 bg-white dark:bg-gray-800/40">
+                    <table class="min-w-full">
+                      <tbody>
+                        <tr v-for="(line, i) in rawContentLines(msg.validationRawContent)" :key="i">
+                          <td class="select-none text-right pr-2 pl-2 py-px font-mono text-xs text-gray-300 dark:text-gray-600 w-8 align-top shrink-0">{{ i + 1 }}</td>
+                          <td class="pr-3 py-px font-mono text-xs text-gray-600 dark:text-gray-300 whitespace-pre">{{ line }}</td>
+                        </tr>
+                        <tr v-if="rawContentOverflow(msg.validationRawContent) > 0">
+                          <td></td>
+                          <td class="pr-3 py-1 text-xs text-gray-400 dark:text-gray-500 italic">… {{ rawContentOverflow(msg.validationRawContent) }} more lines not shown</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+              </div>
+
               <!-- Streaming cursor -->
               <div
                 v-if="msg.streaming && !msg.content"
@@ -210,6 +288,10 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { streamAssistantChat, readFileAsBase64 } from '@/api/assistant'
 import type { AttachedFile, ChatMessage } from '@/api/assistant'
+import { ImportService } from '@/services/generated-api'
+import { parseCsvContent } from '@/composables/useCsvParser'
+import { parseXlsContent, extractXlsText } from '@/composables/useXlsParser'
+import type { CsvParsedTransaction } from '@/types/csv'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -226,6 +308,9 @@ interface DisplayMessage {
   fileName?: string           // for user messages with an attachment
   toolEvents?: ToolEvent[]    // for assistant messages
   streaming?: boolean
+  validationNote?: string              // status line shown after a rule is saved and validated
+  validationTransactions?: CsvParsedTransaction[]  // parsed rows for the table
+  validationRawContent?: string        // decoded source file text for the raw view
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -235,6 +320,8 @@ const messages = ref<DisplayMessage[]>([])
 const inputText = ref('')
 const attachedFile = ref<AttachedFile | null>(null)
 const streaming = ref(false)
+// Kept across the send/clear cycle so the validator can use it after streaming ends
+const sentFile = ref<AttachedFile | null>(null)
 
 const textareaEl = ref<HTMLTextAreaElement | null>(null)
 const fileInputEl = ref<HTMLInputElement | null>(null)
@@ -294,6 +381,7 @@ async function sendMessage() {
   })
 
   inputText.value = ''
+  if (file) sentFile.value = file  // keep for post-stream validation; persist across turns
   attachedFile.value = null
   resetTextareaHeight()
   scrollToBottom()
@@ -312,6 +400,10 @@ async function sendMessage() {
   }
   messages.value.push(assistantMsg)
   streaming.value = true
+
+  // Track whether a rule was saved this turn so we can validate after streaming
+  let savedRuleTool: 'write_csv_rule' | 'write_xls_rule' | null = null
+  let savedRuleFilename: string | null = null
 
   try {
     for await (const event of streamAssistantChat(apiMessages, file, { page: 'assistant' })) {
@@ -333,6 +425,14 @@ async function sendMessage() {
           te.success = event.success
           te.message = event.message
         }
+        // Capture successful rule saves for post-stream validation
+        if (event.success && (event.tool === 'write_csv_rule' || event.tool === 'write_xls_rule')) {
+          const match = event.message.match(/`([^`]+)`/)
+          if (match) {
+            savedRuleTool = event.tool
+            savedRuleFilename = match[1].split('/').pop() ?? null
+          }
+        }
         scrollToBottom()
       } else if (event.type === 'error') {
         assistantMsg.content += `\n\n**Error:** ${event.message}`
@@ -350,6 +450,112 @@ async function sendMessage() {
     await nextTick()
     textareaEl.value?.focus()
   }
+
+  // Validate the saved rule against the file that was uploaded this turn.
+  // Must set through messages.value[idx] (the reactive Proxy), not via the
+  // local assistantMsg reference, so Vue detects the property change.
+  if (savedRuleTool && savedRuleFilename && sentFile.value) {
+    const { note, transactions, rawContent } = await validateSavedRule(savedRuleTool, savedRuleFilename, sentFile.value)
+    const lastMsg = messages.value[messages.value.length - 1]
+    if (lastMsg) {
+      lastMsg.validationNote = note
+      lastMsg.validationTransactions = transactions
+      lastMsg.validationRawContent = rawContent
+    }
+    scrollToBottom()
+  }
+}
+
+// ── Rule validation ───────────────────────────────────────────────────────────
+
+interface ValidationResult {
+  note: string
+  transactions: CsvParsedTransaction[]
+  rawContent: string
+}
+
+async function validateSavedRule(
+  tool: 'write_csv_rule' | 'write_xls_rule',
+  filename: string,
+  file: AttachedFile,
+): Promise<ValidationResult> {
+  const empty: ValidationResult = { note: '', transactions: [], rawContent: '' }
+  try {
+    if (tool === 'write_csv_rule') {
+      const res = await ImportService.getCsvRule(filename)
+      const rule = res.data
+      if (!rule) return empty
+      const text = base64ToText(file.content_base64)
+      const transactions = parseCsvContent(text, rule)
+      return {
+        note: formatValidationNote(transactions.length, file.name, transactions[0]?.date, transactions.at(-1)?.date),
+        transactions,
+        rawContent: text,
+      }
+    } else {
+      const res = await ImportService.getXlsRule(filename)
+      const rule = res.data
+      if (!rule) return empty
+      const buffer = base64ToArrayBuffer(file.content_base64)
+      const transactions = parseXlsContent(buffer, rule)
+      return {
+        note: formatValidationNote(transactions.length, file.name, transactions[0]?.date, transactions.at(-1)?.date),
+        transactions,
+        rawContent: extractXlsText(buffer, rule),
+      }
+    }
+  } catch (err) {
+    console.error('[validation] error:', err)
+    return empty
+  }
+}
+
+function formatValidationNote(count: number, filename: string, first?: string, last?: string): string {
+  if (count === 0) {
+    return `⚠ Rule validated against ${filename}: found 0 transactions. The skip counts or date format may need adjustment — let me know the expected number and I'll fix it.`
+  }
+  const range = first && last && first !== last ? ` (${first} → ${last})` : first ? ` (${first})` : ''
+  return `✓ Rule validated against ${filename}: found ${count} transaction${count !== 1 ? 's' : ''}${range}.`
+}
+
+// ── Validation display helpers ─────────────────────────────────────────────────
+
+const MAX_VALIDATION_ROWS = 15
+const MAX_RAW_LINES = 60
+
+function validationRows(txs: CsvParsedTransaction[]): CsvParsedTransaction[] {
+  return txs.slice(0, MAX_VALIDATION_ROWS)
+}
+
+function hasDescription(txs: CsvParsedTransaction[]): boolean {
+  return txs.some(tx => tx.payee || tx.narration || tx.memo)
+}
+
+function txDescription(tx: CsvParsedTransaction): string {
+  return tx.payee || tx.narration || tx.memo || ''
+}
+
+function formatAmount(amount: number): string {
+  const sign = amount >= 0 ? '+' : ''
+  return sign + amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function rawContentLines(content: string): string[] {
+  return content.split('\n').slice(0, MAX_RAW_LINES)
+}
+
+function rawContentOverflow(content: string): number {
+  return Math.max(0, content.split('\n').length - MAX_RAW_LINES)
+}
+
+function base64ToText(b64: string): string {
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+  return new TextDecoder().decode(bytes)
+}
+
+function base64ToArrayBuffer(b64: string): ArrayBuffer {
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+  return bytes.buffer
 }
 
 // ── UI helpers ────────────────────────────────────────────────────────────────

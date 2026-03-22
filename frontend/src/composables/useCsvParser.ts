@@ -75,7 +75,7 @@ function readFileAsText(file: File, encoding: string): Promise<string> {
   })
 }
 
-function parseCsvContent(content: string, rule: CsvRule): CsvParsedTransaction[] {
+export function parseCsvContent(content: string, rule: CsvRule): CsvParsedTransaction[] {
   const separator = rule.separator || ','
   const skipStart = rule.skip_lines_start ?? 0
   const skipEnd = rule.skip_lines_end ?? 0
