@@ -141,18 +141,16 @@ def _csv_parse_hint(lines: list[str]) -> str:
     Tells the AI the recommended skip_lines_start and skip_lines_end values
     based on the detected file structure, so it doesn't need to count manually.
 
-    For CSV: PapaParse strips blank lines before applying skip_lines_start, so
-    the count is non-blank lines only (header section + column header row).
+    For CSV: the parser counts ALL lines (including blank ones) when applying
+    skip_lines_start, so the count includes every line in the header section.
     """
     footer_lines, data_lines, header_lines = _split_csv_lines(lines)
     if not data_lines:
         return ""
 
-    # PapaParse (frontend CSV parser) removes blank lines before applying
-    # skip_lines_start, so count only non-blank lines in the header section.
-    non_blank_header = sum(1 for l in header_lines if l.strip())
+    # The parser counts all lines (blank and non-blank) for skip_lines_start.
     # +1 for the column header row (data_lines[0]), which must also be skipped.
-    skip_start = non_blank_header + 1
+    skip_start = len(header_lines) + 1
 
     n_transactions = len(data_lines) - 1  # subtract the column header row
     footer_note = (
@@ -164,7 +162,7 @@ def _csv_parse_hint(lines: list[str]) -> str:
 
     return (
         f"[Parse hint: recommended skip_lines_start: {skip_start}"
-        f" ({non_blank_header} non-blank metadata lines + 1 column header row)."
+        f" ({len(header_lines)} metadata lines + 1 column header row)."
         f" Apparent transaction rows: {n_transactions}."
         f" Recommended skip_lines_end: 0 (rows without a parseable date are auto-skipped).{footer_note}"
         f"{col_hint}]"
