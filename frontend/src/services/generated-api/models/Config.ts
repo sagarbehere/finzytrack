@@ -6,7 +6,7 @@ import type { AccountsConfig } from './AccountsConfig';
 import type { AIConfig } from './AIConfig';
 import type { AnalyticsConfig } from './AnalyticsConfig';
 import type { BackupConfig } from './BackupConfig';
-import type { EmailServiceConfig } from './EmailServiceConfig';
+import type { EmailImportConfig } from './EmailImportConfig';
 import type { FeaturesConfig } from './FeaturesConfig';
 import type { LoggingConfig } from './LoggingConfig';
 import type { SecurityConfig } from './SecurityConfig';
@@ -46,9 +46,9 @@ export type Config = {
      */
     analytics?: AnalyticsConfig;
     /**
-     * Email import microservice settings
+     * Email import settings (IMAP fetch, rule parsing)
      */
-    email_service?: EmailServiceConfig;
+    email_import?: EmailImportConfig;
     /**
      * Path to the config file this configuration was loaded from
      */

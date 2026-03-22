@@ -1,0 +1,157 @@
+metadata:
+  name: "ICICI Bank Savings"
+  beancount_account: "Assets:ICICI:Savings"
+  default_currency: "INR"
+  institution: "ICICI Bank"
+  description: "ICICI Bank savings account transaction alerts (iMobile)"
+  version: "1.0"
+
+imap_server:
+  server: "imap.fastmail.com"   # EDIT: your IMAP server
+  port: 993
+  username: "${FASTMAIL_EMAIL_USERNAME}"    # EDIT: set env var, e.g. export FASTMAIL_EMAIL_USERNAME=you@gmail.com
+  password: "${FASTMAIL_EMAIL_PASSWORD}"    # EDIT: set env var, e.g. export FASTMAIL_EMAIL_PASSWORD=your-app-password
+  folder: "Finalerts"
+
+lookback_days: 7
+
+bank_emails:
+  - "customercare@icicibank.com"
+  - "sagar@sagar.se"    # self-forwarded Finalert SMS alerts
+
+transaction_types:
+
+  - name: "UPI_iMobile"
+    description: "UPI payments initiated via iMobile"
+    email_filter:
+      subject_regex: "Alert for transaction through ICICI Bank iMobile"
+      body_regex: 'XXXXXXXX8815'
+    extraction:
+      amount:
+        # Matches: "UPI payment of ₹ 100.0"
+        pattern: 'UPI payment of ₹\s*([\d.]+)'
+        type: "float"
+      payee_raw:
+        # Matches: "iMobile app to SMITA GURUDATTA KASTURE . The payment"
+        pattern: 'iMobile app to ([A-Z][A-Z ]+?) \. The payment'
+        type: "string"
+        cleanup: "strip_whitespace"
+        optional: true
+      reference:
+        # Matches: "transaction ID 109348018106"
+        pattern: 'transaction ID (\d+)'
+        type: "string"
+        optional: true
+      timestamp:
+        # Matches: "on Mar 09, 2026 at 08:18 PM"
+        pattern: 'on ((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{2}, \d{4} at \d{2}:\d{2} (?:AM|PM))'
+        type: "datetime"
+        format: "%b %d, %Y at %I:%M %p"
+        timezone: "+05:30"
+      masked_account:
+        # Matches: "ICICI bank account XXXXXXXX8815"
+        pattern: 'ICICI bank account (X+\d{4})'
+        type: "string"
+        optional: true
+    mapping:
+      reference: "external_id"
+      external_id_type: "UPI"
+      payee_raw: "payee"
+      timestamp: "date"
+      amount: "amount"
+    amount_sign:
+      field: "fixed"
+      value: "negative"    # iMobile alert = payment made = debit
+    error_handling:
+      required_fields: ["amount", "timestamp"]
+      partial_match_allowed: true
+
+  - name: "Finalert_UPI"
+    description: "UPI debit transactions reported via SMS-forwarded Finalert emails"
+    email_filter:
+      subject_regex: "Finalert"
+      body_regex: 'UPI:\d+'
+    extraction:
+      amount:
+        # Matches: "Rs 500.00"
+        pattern: 'Rs\s*([\d.]+)'
+        type: "float"
+      payee_raw:
+        # Matches: "Mahesh Bhalchan credited"
+        pattern: '([A-Za-z][A-Za-z ]+?) credited'
+        type: "string"
+        cleanup: "strip_whitespace"
+        optional: true
+      reference:
+        # Matches: "UPI:182727073202"
+        pattern: 'UPI:(\d+)'
+        type: "string"
+        optional: true
+      timestamp:
+        # Matches: "on 20-Mar-26"
+        pattern: 'on (\d{2}-[A-Za-z]{3}-\d{2})'
+        type: "datetime"
+        format: "%d-%b-%y"
+        timezone: "+05:30"
+      masked_account:
+        # Matches: "Acct XX815"
+        pattern: 'Acct\s+(XX\d+)'
+        type: "string"
+        optional: true
+    mapping:
+      reference: "external_id"
+      external_id_type: "UPI"
+      payee_raw: "payee"
+      timestamp: "date"
+      amount: "amount"
+    amount_sign:
+      field: "fixed"
+      value: "negative"    # Finalert debited = payment made
+    error_handling:
+      required_fields: ["amount", "timestamp"]
+      partial_match_allowed: true
+
+  - name: "Finalert_UPICircle"
+    description: "UPI Circle / AutoPay mandate debits reported via SMS-forwarded Finalert emails"
+    email_filter:
+      subject_regex: "Finalert"
+      body_regex: 'Ref No\.'
+    extraction:
+      amount:
+        # Matches: "Rs 279.00"
+        pattern: 'Rs\s*([\d.]+)'
+        type: "float"
+      payee_raw:
+        # Matches: "towards RICHA NARESH PA for"
+        pattern: 'towards ([A-Z][A-Z ]+?) for'
+        type: "string"
+        cleanup: "strip_whitespace"
+        optional: true
+      reference:
+        # Matches: "Ref No.180932490741"
+        pattern: 'Ref No\.(\d+)'
+        type: "string"
+        optional: true
+      timestamp:
+        # Matches: "on 20-Mar-26"
+        pattern: 'on (\d{2}-[A-Za-z]{3}-\d{2})'
+        type: "datetime"
+        format: "%d-%b-%y"
+        timezone: "+05:30"
+      masked_account:
+        # Matches: "Account XX815"
+        pattern: 'Account\s+(XX\d+)'
+        type: "string"
+        optional: true
+    mapping:
+      reference: "external_id"
+      external_id_type: "UPI"
+      payee_raw: "payee"
+      timestamp: "date"
+      amount: "amount"
+    amount_sign:
+      field: "fixed"
+      value: "negative"    # Finalert debited = payment made
+    error_handling:
+      required_fields: ["amount", "timestamp"]
+      partial_match_allowed: true

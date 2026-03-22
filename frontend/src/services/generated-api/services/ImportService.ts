@@ -12,8 +12,13 @@ import type { ApiResponse_XlsRule_ } from '../models/ApiResponse_XlsRule_';
 import type { ApiResponse_XlsRuleListData_ } from '../models/ApiResponse_XlsRuleListData_';
 import type { CategorizeRequest } from '../models/CategorizeRequest';
 import type { CommitRequest } from '../models/CommitRequest';
+import type { FetchRequest } from '../models/FetchRequest';
 import type { LearnOFXAccountRequest } from '../models/LearnOFXAccountRequest';
 import type { OFXDetectionRequest } from '../models/OFXDetectionRequest';
+import type { ProfilesListResponse } from '../models/ProfilesListResponse';
+import type { ReloadResponse } from '../models/ReloadResponse';
+import type { TestConnectionRequest } from '../models/TestConnectionRequest';
+import type { TestConnectionResponse } from '../models/TestConnectionResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -184,6 +189,83 @@ export class ImportService {
             path: {
                 'filename': filename,
             },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * List Email Profiles
+     * Return list of configured account profiles.
+     * Each profile_id is the filename without .yaml extension.
+     * Credentials are never included in the response.
+     * @returns ProfilesListResponse Successful Response
+     * @throws ApiError
+     */
+    public static listEmailProfilesApiImportEmailProfilesGet(): CancelablePromise<ProfilesListResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/import/email/profiles',
+        });
+    }
+    /**
+     * Reload Email Profiles
+     * Re-scan rules directory and reload all account profiles.
+     * @returns ReloadResponse Successful Response
+     * @throws ApiError
+     */
+    public static reloadEmailProfilesApiImportEmailReloadPost(): CancelablePromise<ReloadResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/import/email/reload',
+        });
+    }
+    /**
+     * Test Email Connection
+     * Connectivity test — connect, login, select folder, count matching emails.
+     * Loads IMAP credentials from the account profile YAML identified by profile_id.
+     * @param requestBody
+     * @returns TestConnectionResponse Successful Response
+     * @throws ApiError
+     */
+    public static testEmailConnectionApiImportEmailTestConnectionPost(
+        requestBody: TestConnectionRequest,
+    ): CancelablePromise<TestConnectionResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/import/email/test-connection',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Fetch Email Transactions
+     * Stream fetch progress as Server-Sent Events (text/event-stream).
+     *
+     * Loads the account profile by profile_id, reads IMAP credentials from the
+     * profile's imap_server block, and applies date range/lookback precedence.
+     *
+     * Each event is a JSON ProgressEvent (see result_schemas.py).
+     * Phases emitted: connecting -> fetching -> parsing -> complete.
+     * Errors are reported as phase='error' events.
+     *
+     * Frontend must use fetch() + ReadableStream (not EventSource) because
+     * this is a POST endpoint with a JSON body.
+     * @param requestBody
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static fetchEmailTransactionsApiImportEmailFetchPost(
+        requestBody: FetchRequest,
+    ): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/import/email/fetch',
+            body: requestBody,
+            mediaType: 'application/json',
             errors: {
                 422: `Validation Error`,
             },

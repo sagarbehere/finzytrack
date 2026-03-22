@@ -1,25 +1,22 @@
 <template>
   <div class="w-full space-y-4">
 
-    <!-- State A: email service not configured in backend config -->
-    <div v-if="!emailServiceUrl" class="rounded-lg border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-4 space-y-2">
-      <p class="text-sm font-medium text-amber-800 dark:text-amber-300">Email import is not configured.</p>
+    <!-- State A: email import not enabled in backend config -->
+    <div v-if="!emailImportEnabled" class="rounded-lg border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-4 space-y-2">
+      <p class="text-sm font-medium text-amber-800 dark:text-amber-300">Email import is not enabled.</p>
       <p class="text-sm text-amber-700 dark:text-amber-400">
         Add the following to your <code class="font-mono bg-amber-100 dark:bg-amber-800/50 px-1 rounded">{{ config?.config_file_path ?? 'config.yaml' }}</code> and restart the app:
       </p>
-      <pre class="text-xs font-mono bg-amber-100 dark:bg-amber-800/40 rounded p-2 text-amber-900 dark:text-amber-200">email_service:
-  base_url: "http://localhost:8100"</pre>
-      <p class="text-sm text-amber-700 dark:text-amber-400">
-        Then start the email microservice and reload this page.
-      </p>
+      <pre class="text-xs font-mono bg-amber-100 dark:bg-amber-800/40 rounded p-2 text-amber-900 dark:text-amber-200">email_import:
+  enabled: true
+  rules_directory: "./config/email_rules/"</pre>
     </div>
 
-    <!-- State B: service configured but unreachable -->
+    <!-- State B: enabled but failed to load profiles -->
     <div v-else-if="profilesError && !isLoadingProfiles" class="rounded-lg border border-red-200 dark:border-red-700 bg-red-50 dark:bg-red-900/20 p-4 space-y-2">
-      <p class="text-sm font-medium text-red-800 dark:text-red-300">Email service is not reachable.</p>
+      <p class="text-sm font-medium text-red-800 dark:text-red-300">Failed to load email profiles.</p>
       <p class="text-sm text-red-700 dark:text-red-400">
-        Could not connect to <code class="font-mono bg-red-100 dark:bg-red-800/50 px-1 rounded">{{ emailServiceUrl }}</code>
-        — make sure the email microservice is running.
+        Could not load email import profiles from the backend.
       </p>
       <p class="text-xs text-red-600 dark:text-red-500 font-mono">{{ profilesError }}</p>
       <button
@@ -60,7 +57,7 @@
 
       <div v-if="profiles.length === 0 && !isLoadingProfiles" class="text-sm text-gray-500 dark:text-gray-400">
         No account profiles configured. Add YAML files to
-        <code class="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">email_service/config/email_rules/</code>.
+        the <code class="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">email_import.rules_directory</code> path in your config.
       </div>
 
       <div v-else class="flex flex-wrap items-center gap-2">
@@ -264,7 +261,7 @@
   const { config } = useConfig()
 
   const {
-    emailServiceUrl,
+    emailImportEnabled,
     profiles, invalidProfiles, profilesError, isLoadingProfiles, isFetching,
     fetchResult, fetchError, progressState,
     loadProfiles, reloadProfiles, testConnection, fetchTransactions,
@@ -287,8 +284,8 @@
     await loadProfiles()
     if (profilesError.value) {
       toast.warning(
-        'Email service unreachable',
-        `Could not connect to ${emailServiceUrl.value} — make sure the email microservice is running.`,
+        'Email profiles failed to load',
+        'Could not load email import profiles from the backend.',
       )
     }
   })
@@ -296,7 +293,7 @@
   const retryLoad = async () => {
     await loadProfiles()
     if (profilesError.value) {
-      toast.warning('Still unreachable', 'Email service did not respond. Check that it is running.')
+      toast.warning('Still failing', 'Could not load email profiles. Check the backend logs.')
     }
   }
 
@@ -340,7 +337,7 @@
       }
       toast.success('Rules reloaded', `${profiles.value.length} profile${profiles.value.length === 1 ? '' : 's'} loaded.`)
     } catch {
-      toast.error('Reload failed', 'Could not reload email rules — is the service running?')
+      toast.error('Reload failed', 'Could not reload email rules.')
       // Re-probe: if loadProfiles also fails, profilesError is set and the panel
       // transitions back to State B (showing the Retry button).
       await loadProfiles()

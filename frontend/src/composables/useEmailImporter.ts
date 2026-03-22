@@ -1,20 +1,40 @@
 /**
- * Composable for the email import microservice.
+ * Composable for email import.
  *
- * Uses the generated DefaultService for regular endpoints (profiles, reload,
+ * Uses the generated API client for regular endpoints (profiles, reload,
  * test-connection). Uses fetch() + ReadableStream for POST /fetch — NOT the
  * generated client and NOT EventSource — because it is an SSE endpoint that
  * requires a POST with a JSON body.
+ *
+ * After the email service was merged into the main backend, all endpoints
+ * live under /api/import/email/ on the same origin.
  */
-import { ref, readonly, watchEffect, computed } from 'vue'
-import { DefaultService, OpenAPI as EmailOpenAPI } from '@/services/generated-email-api'
-import type { ProfileInfo, InvalidProfileInfo, TestConnectionResponse } from '@/services/generated-email-api'
+import { ref, readonly, computed } from 'vue'
+import { OpenAPI } from '@/services/generated-api'
 import { useConfig } from '@/composables/useConfig'
 
-export type EmailProfileInfo = ProfileInfo
-export type InvalidEmailProfileInfo = InvalidProfileInfo
+// ─── Types ───────────────────────────────────────────────────────────────────
 
-// ─── SSE-related types (not covered by generated client) ─────────────────────
+export interface EmailProfileInfo {
+  name: string
+  profile_id: string
+  beancount_account: string
+  default_currency: string
+  lookback_days: number | null
+  file: string
+}
+
+export interface InvalidEmailProfileInfo {
+  filename: string
+  error: string
+}
+
+export interface TestConnectionResponse {
+  success: boolean
+  email_count?: number | null
+  message?: string | null
+  error?: string | null
+}
 
 export interface EmailParsedTransaction {
   date: string
@@ -67,20 +87,33 @@ export interface ProgressState {
   current: number | null
 }
 
-// ─── Composable ───────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Build the full URL for an email import endpoint. */
+function emailUrl(path: string): string {
+  return `${OpenAPI.BASE}/api/import/email${path}`
+}
+
+async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const resp = await fetch(emailUrl(path), {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  })
+  if (!resp.ok) {
+    const body = await resp.text()
+    throw new Error(`Email import error ${resp.status}: ${body}`)
+  }
+  return resp.json()
+}
+
+// ─── Composable ──────────────────────────────────────────────────────────────
 
 export function useEmailImporter() {
   const { config } = useConfig()
 
-  // Keep EmailOpenAPI.BASE in sync with config so the generated client
-  // always uses the current value without requiring a page reload.
-  watchEffect(() => {
-    EmailOpenAPI.BASE = config.value?.email_service?.base_url || ''
-  })
-
-  const emailServiceUrl = computed(() => config.value?.email_service?.base_url || '')
-  const profiles = ref<ProfileInfo[]>([])
-  const invalidProfiles = ref<InvalidProfileInfo[]>([])
+  const emailImportEnabled = computed(() => config.value?.email_import?.enabled ?? false)
+  const profiles = ref<EmailProfileInfo[]>([])
+  const invalidProfiles = ref<InvalidEmailProfileInfo[]>([])
   const profilesError = ref<string | null>(null)
   const isLoadingProfiles = ref(false)
   const isFetching = ref(false)
@@ -91,11 +124,11 @@ export function useEmailImporter() {
   })
 
   async function loadProfiles(): Promise<void> {
-    if (!config.value?.email_service?.base_url) return
+    if (!emailImportEnabled.value) return
     isLoadingProfiles.value = true
     profilesError.value = null
     try {
-      const data = await DefaultService.listProfilesProfilesGet()
+      const data = await apiFetch<{ profiles: EmailProfileInfo[]; invalid_profiles: InvalidEmailProfileInfo[] }>('/profiles')
       profiles.value = data.profiles || []
       invalidProfiles.value = data.invalid_profiles || []
     } catch (e) {
@@ -109,13 +142,16 @@ export function useEmailImporter() {
   async function testConnection(
     profileId: string,
   ): Promise<TestConnectionResponse> {
-    if (!config.value?.email_service?.base_url) return { success: false, error: 'Email service not configured' }
-    return DefaultService.testConnectionTestConnectionPost({ profile_id: profileId })
+    if (!emailImportEnabled.value) return { success: false, error: 'Email import not enabled' }
+    return apiFetch<TestConnectionResponse>('/test-connection', {
+      method: 'POST',
+      body: JSON.stringify({ profile_id: profileId }),
+    })
   }
 
   async function reloadProfiles(): Promise<void> {
-    if (!config.value?.email_service?.base_url) return
-    await DefaultService.reloadProfilesReloadPost()
+    if (!emailImportEnabled.value) return
+    await apiFetch('/reload', { method: 'POST' })
     await loadProfiles()
   }
 
@@ -124,7 +160,7 @@ export function useEmailImporter() {
     sinceDate?: string,
     untilDate?: string,
   ): Promise<EmailFetchResult> {
-    if (!config.value?.email_service?.base_url) throw new Error('Email service not configured')
+    if (!emailImportEnabled.value) throw new Error('Email import not enabled')
 
     isFetching.value = true
     fetchError.value = null
@@ -135,7 +171,7 @@ export function useEmailImporter() {
     }
 
     return new Promise((resolve, reject) => {
-      fetch(`${EmailOpenAPI.BASE}/fetch`, {
+      fetch(emailUrl('/fetch'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -147,7 +183,7 @@ export function useEmailImporter() {
         .then(async (resp) => {
           if (!resp.ok) {
             const body = await resp.text()
-            const msg = `Email service error ${resp.status}: ${body}`
+            const msg = `Email import error ${resp.status}: ${body}`
             fetchError.value = msg
             isFetching.value = false
             reject(new Error(msg))
@@ -229,7 +265,7 @@ export function useEmailImporter() {
   }
 
   return {
-    emailServiceUrl,
+    emailImportEnabled,
     profiles,
     invalidProfiles,
     profilesError,

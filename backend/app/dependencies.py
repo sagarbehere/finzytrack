@@ -11,6 +11,7 @@ from app.core.beancount_manager import BeancountManager
 from app.core.backup_manager import BackupManager
 from app.core.csv_rules_manager import CsvRulesManager
 from app.core.xls_rules_manager import XlsRulesManager
+from app.email_import.rule_registry import AccountProfileRegistry
 
 
 def get_config_manager(request: Request) -> ConfigManager:
@@ -37,3 +38,8 @@ def get_csv_rules_manager(request: Request) -> CsvRulesManager:
 def get_xls_rules_manager(request: Request) -> XlsRulesManager:
     """Dependency to get XLS rules manager from app state."""
     return request.app.state.xls_rules_manager
+
+
+def get_email_registry(request: Request) -> AccountProfileRegistry:
+    """Dependency to get email import account profile registry from app state."""
+    return request.app.state.email_registry

@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import Config, ConfigurationError
-from .api.routers.importer import ofx_accounts, transaction, csv_rules, xls_rules
+from .api.routers.importer import ofx_accounts, transaction, csv_rules, xls_rules, email as email_import_router
 from .api.routers import accounts, commodities, ledger_export, ledger_transactions, query, config as config_router, files, ledger, assistant
 from .core.beancount_manager import BeancountManager
 from .error_handler import setup_error_handlers
@@ -29,6 +29,7 @@ from .core.xls_rules_manager import XlsRulesManager
 from .core.ledger_initializer import LedgerInitializer
 from .services.sqlite_exporter import SQLiteExporter
 from .services.db_sync_manager import DBSyncManager
+from .email_import.rule_registry import AccountProfileRegistry
 
 
 def setup_logging(level: str, log_file: str, log_format: str) -> None:
@@ -89,6 +90,18 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
     # 2b. Create CsvRulesManager and XlsRulesManager
     csv_rules_manager = CsvRulesManager(rules_dir=config.csv_rules_dir)
     xls_rules_manager = XlsRulesManager(rules_dir=config.xls_rules_dir)
+
+    # 2c. Create email import AccountProfileRegistry
+    email_registry = None
+    if config.email_import.enabled:
+        email_rules_path = Path(config.email_import.rules_directory)
+        email_registry = AccountProfileRegistry(email_rules_path)
+        logger.info(f"Email import enabled: {email_registry.profile_count} profiles loaded from {email_rules_path}")
+    else:
+        # Create an empty registry so endpoints return empty lists rather than errors
+        email_rules_path = Path(config.email_import.rules_directory)
+        email_registry = AccountProfileRegistry(email_rules_path)
+        logger.info("Email import disabled (email_import.enabled=false)")
 
     # 3. Create LedgerInitializer
     ledger_initializer = LedgerInitializer(
@@ -198,12 +211,14 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
     app.state.sqlite_sync_manager = sqlite_sync_manager
     app.state.csv_rules_manager = csv_rules_manager
     app.state.xls_rules_manager = xls_rules_manager
+    app.state.email_registry = email_registry
 
     # Include API routers
     app.include_router(ofx_accounts.router, prefix="/api/import", tags=["import"])
     app.include_router(transaction.router, prefix="/api/import", tags=["import"])
     app.include_router(csv_rules.router, prefix="/api/import", tags=["import"])
     app.include_router(xls_rules.router, prefix="/api/import", tags=["import"])
+    app.include_router(email_import_router.router, prefix="/api/import", tags=["import"])
     app.include_router(accounts.router, prefix="/api", tags=["accounts"])
     app.include_router(commodities.router, prefix="/api", tags=["commodities"])
     app.include_router(ledger_export.router, prefix="/api/ledger", tags=["ledger"])
@@ -273,6 +288,17 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
         except Exception:
             pass
         checks["training_samples"] = training_samples
+
+        # Email import registry status — informational only
+        try:
+            registry = app.state.email_registry
+            checks["email_import"] = {
+                "enabled": config.email_import.enabled,
+                "profiles_loaded": registry.profile_count,
+                "invalid_profiles": len(registry.list_invalid_profiles()),
+            }
+        except Exception:
+            checks["email_import"] = {"enabled": False}
 
         # Determine overall status (training_samples is informational, not a hard check)
         critical_checks = {k: v for k, v in checks.items() if k != "training_samples"}

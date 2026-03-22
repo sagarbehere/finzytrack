@@ -129,13 +129,14 @@ class AnalyticsConfig(BaseModel):
     sqlite: SQLiteConfig = Field(default_factory=SQLiteConfig, description="SQLite export settings")
 
 
-class EmailServiceConfig(BaseModel):
-    """Email import microservice configuration."""
-    base_url: str = Field(
-        default="",
-        description="Base URL of the email import service (e.g. http://localhost:8100). "
-                    "Empty string disables the email import tab in the frontend."
-    )
+class EmailImportConfig(BaseModel):
+    """Email import configuration (formerly the email_service microservice)."""
+    enabled: bool = Field(default=False, description="Enable email import functionality")
+    rules_directory: str = Field(default="./config/email_rules/", description="Directory containing email import rule YAML files")
+    default_lookback_days: int = Field(default=7, ge=1, description="Default number of days to look back for emails")
+    max_emails: int = Field(default=500, ge=1, description="Max emails to fetch per request; truncates with warning")
+    imap_timeout_secs: int = Field(default=30, ge=0, description="Socket timeout for IMAP operations; 0 = no timeout")
+    parsing_mode: str = Field(default="regex", description="Default parsing mode: 'regex' or 'llm'; overridden per account or per rule")
 
 
 class Config(BaseModel):
@@ -162,16 +163,13 @@ class Config(BaseModel):
     # XLS import rules directory
     xls_rules_dir: Optional[str] = Field(default=None, description="Directory containing XLS import rule YAML files")
 
-    # Email import rules directory (should point to the same directory as the email service's rules_directory)
-    email_rules_dir: Optional[str] = Field(default=None, description="Directory containing email import rule YAML files")
-
     # Analytics configuration
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig, description="Analytics and reporting settings")
 
-    # Email import microservice
-    email_service: EmailServiceConfig = Field(
-        default_factory=EmailServiceConfig,
-        description="Email import microservice settings"
+    # Email import (merged from email_service microservice)
+    email_import: EmailImportConfig = Field(
+        default_factory=EmailImportConfig,
+        description="Email import settings (IMAP fetch, rule parsing)"
     )
 
     config_file_path: Optional[Path] = Field(

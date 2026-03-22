@@ -185,24 +185,7 @@
       </div>
     </SettingsSection>
 
-    <!-- ── Email Service ──────────────────────────────────────────────────── -->
-    <SettingsSection
-      title="Email Service"
-      description="Connection settings for the email import microservice."
-      :is-dirty="emailIsDirty"
-      :is-saving="emailSaving"
-      :error="emailError"
-      @save="saveEmail"
-      @reset="resetEmail"
-    >
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Service URL</label>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
-          Base URL of the running email microservice, e.g. <code class="font-mono">http://localhost:8100</code>. Leave empty to disable the Email Import tab.
-        </p>
-        <input v-model="emailFields.base_url" type="text" placeholder="http://localhost:8100" :class="inputClass" />
-      </div>
-    </SettingsSection>
+    <!-- Email import settings are configured in config.yaml (email_import section) -->
 
     <!-- ── Analytics ─────────────────────────────────────────────────────── -->
     <SettingsSection
@@ -541,26 +524,6 @@ async function saveCategorization() {
 
 function resetCategorization() { initCategorizationFields(); categorizationError.value = '' }
 
-// ─── Email service section ────────────────────────────────────────────────────
-
-const emailFields = reactive({ base_url: config.value?.email_service?.base_url ?? '' })
-const emailSaving = ref(false)
-const emailError = ref('')
-
-const emailIsDirty = computed(() =>
-  emailFields.base_url !== (config.value?.email_service?.base_url ?? '')
-)
-
-function initEmailFields() {
-  emailFields.base_url = config.value?.email_service?.base_url ?? ''
-}
-
-async function saveEmail() {
-  await saveSection({ email_service: { base_url: emailFields.base_url } }, emailSaving, emailError)
-}
-
-function resetEmail() { initEmailFields(); emailError.value = '' }
-
 // ─── Analytics section ────────────────────────────────────────────────────────
 
 const analyticsFields = reactive({
@@ -706,7 +669,6 @@ watch(config, () => {
   if (!accountsIsDirty.value) initAccountsFields()
   if (!llmIsDirty.value) initLlmFields()
   if (!categorizationIsDirty.value) initCategorizationFields()
-  if (!emailIsDirty.value) initEmailFields()
   if (!analyticsIsDirty.value) initAnalyticsFields()
   if (!backupIsDirty.value) initBackupFields()
   if (!loggingIsDirty.value) initLoggingFields()

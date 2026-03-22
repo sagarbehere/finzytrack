@@ -112,7 +112,7 @@ def _build_registry(
 
     csv_dir = Path(csv_rules_manager.rules_dir) if csv_rules_manager.rules_dir else None
     xls_dir = Path(xls_rules_manager.rules_dir) if xls_rules_manager.rules_dir else None
-    email_dir = Path(config.email_rules_dir) if config.email_rules_dir else None
+    email_dir = Path(config.email_import.rules_directory) if config.email_import.enabled else None
 
     allowed_read_dirs = [d for d in [csv_dir, xls_dir, email_dir] if d is not None]
 

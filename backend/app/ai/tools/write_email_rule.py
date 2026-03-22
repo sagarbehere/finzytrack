@@ -8,14 +8,9 @@ from app.ai.tools.base import BaseTool
 
 logger = logging.getLogger(__name__)
 
-# Import from email service schemas if available, else skip validation
+# Import email rule schema for validation
 try:
-    import sys
-    from pathlib import Path as _Path
-    _email_service = _Path(__file__).parents[5] / "email_service"
-    if str(_email_service) not in sys.path:
-        sys.path.insert(0, str(_email_service))
-    from app.schemas.rule_schemas import RuleFile as EmailRuleFile
+    from app.email_import.rule_schemas import RuleFile as EmailRuleFile
     _HAVE_EMAIL_SCHEMA = True
 except Exception:
     _HAVE_EMAIL_SCHEMA = False
@@ -56,7 +51,7 @@ class WriteEmailRuleTool(BaseTool):
 
     async def execute(self, filename: str, content: str) -> dict:
         if not self._rules_dir:
-            return {"success": False, "error": "email_rules_dir is not configured in config.yaml"}
+            return {"success": False, "error": "email_import is not enabled in config.yaml"}
 
         # Validate against schema if available
         if _HAVE_EMAIL_SCHEMA:

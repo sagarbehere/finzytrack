@@ -5,7 +5,6 @@ import './style.css'
 import { vFormError } from './directives/formError.js'
 import { OpenAPI } from './services/generated-api'
 import { ConfigService } from './services/generated-api'
-import { OpenAPI as EmailOpenAPI } from './services/generated-email-api'
 import { useConfig } from './composables/useConfig'
 async function initApp() {
   // Empty string = relative URLs, works when frontend is served by the backend (packaged app).
@@ -20,10 +19,6 @@ async function initApp() {
       // see the correct config immediately on first mount, without a second fetch.
       useConfig().updateConfig(response.data)
     }
-
-    // Also set EmailOpenAPI.BASE directly as a fallback for the initial render,
-    // before Vue's reactivity has had a chance to run watchEffect in useEmailImporter.
-    EmailOpenAPI.BASE = response.data?.email_service?.base_url || ''
   } catch (e) {
     console.warn('Could not load initial config from backend.', e)
   }
