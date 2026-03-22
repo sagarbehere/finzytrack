@@ -104,6 +104,36 @@ def _process_csv(content: bytes, filename: str) -> tuple[str, str | None]:
     return result, warning
 
 
+def _col_header_hint(header_row: str, delimiter: str = ",") -> str:
+    """
+    Return a compact column-index map from the column header row.
+
+    Example output:
+      Column headers: 0='Date', 1='Ref No', 2='Description', 3='Debit', 4='Credit'
+
+    This lets the AI look up column names → indices directly without counting
+    delimiters in the raw file content.
+    """
+    import csv
+    try:
+        if delimiter == "\t":
+            cols = header_row.split("\t")
+        else:
+            cols = next(csv.reader([header_row], delimiter=delimiter))
+    except Exception:
+        return ""
+
+    # Drop trailing empty columns (common in XLS exports)
+    while cols and not cols[-1].strip():
+        cols.pop()
+
+    if not cols:
+        return ""
+
+    col_map = ", ".join(f"{i}={c.strip()!r}" for i, c in enumerate(cols))
+    return f" Column headers: {col_map}."
+
+
 def _csv_parse_hint(lines: list[str]) -> str:
     """
     Compute a parse hint to prepend to the file content sent to the AI.
@@ -130,16 +160,18 @@ def _csv_parse_hint(lines: list[str]) -> str:
         " (non-date content is auto-filtered by the parser)."
         if footer_lines else ""
     )
+    col_hint = _col_header_hint(data_lines[0])
 
     return (
         f"[Parse hint: recommended skip_lines_start: {skip_start}"
         f" ({non_blank_header} non-blank metadata lines + 1 column header row)."
         f" Apparent transaction rows: {n_transactions}."
-        f" Recommended skip_lines_end: 0 (rows without a parseable date are auto-skipped).{footer_note}]"
+        f" Recommended skip_lines_end: 0 (rows without a parseable date are auto-skipped).{footer_note}"
+        f"{col_hint}]"
     )
 
 
-def _split_csv_lines(lines: list[str]) -> tuple[list[str], list[str], list[str]]:
+def _split_csv_lines(lines: list[str], delimiter: str = ",") -> tuple[list[str], list[str], list[str]]:
     """
     Split lines into (footer_lines, data_lines, header_lines).
 
@@ -157,7 +189,7 @@ def _split_csv_lines(lines: list[str]) -> tuple[list[str], list[str], list[str]]
 
     def field_count(line: str) -> int:
         try:
-            return len(next(csv.reader([line])))
+            return len(next(csv.reader([line], delimiter=delimiter)))
         except Exception:
             return 0
 
@@ -197,7 +229,7 @@ def _xls_parse_hint(rows: list[str]) -> str:
     For XLS: the XLSX library does NOT strip blank rows before applying
     skip_lines_start, so the count includes ALL rows (blank or not).
     """
-    footer_lines, data_lines, header_lines = _split_csv_lines(rows)
+    footer_lines, data_lines, header_lines = _split_csv_lines(rows, delimiter="\t")
     if not data_lines:
         return ""
 
@@ -214,11 +246,13 @@ def _xls_parse_hint(rows: list[str]) -> str:
         )
     else:
         footer_note = " Recommended skip_lines_end: 0 (no trailing footer rows detected; verify by checking the last rows of the file)."
+    col_hint = _col_header_hint(data_lines[0], delimiter="\t")
 
     return (
         f"[Parse hint: recommended skip_lines_start: {skip_start}"
         f" ({len(header_lines)} header rows including blanks + 1 column header row)."
-        f" Apparent transaction rows: {n_transactions}.{footer_note}]"
+        f" Apparent transaction rows: {n_transactions}.{footer_note}"
+        f"{col_hint}]"
     )
 
 
@@ -258,7 +292,7 @@ def _process_xls(content: bytes, filename: str) -> tuple[str, str | None]:
             # Small sheet: send everything as-is.
             kept_rows = rows
         else:
-            footer_lines, data_lines, header_lines = _split_csv_lines(rows)
+            footer_lines, data_lines, header_lines = _split_csv_lines(rows, delimiter="\t")
 
             if len(data_lines) > KEEP_DATA_ROWS * 2:
                 omitted = len(data_lines) - KEEP_DATA_ROWS * 2
