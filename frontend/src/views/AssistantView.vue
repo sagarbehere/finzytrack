@@ -260,7 +260,7 @@
             type="button"
             class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
             title="Remove file"
-            @click="attachedFile = null; ruleFilename = ''; ruleAccount = ''; ruleCurrency = ''"
+            @click="attachedFile = null; ruleFilename = ''; ruleAccount = ''; ruleCurrency = ''; expectedTxCount = ''"
           >
             <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -294,6 +294,16 @@
               v-model="ruleCurrency"
               type="text"
               placeholder="INR"
+              class="w-full text-xs px-2 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:focus:ring-indigo-400"
+            />
+          </div>
+          <div class="w-24">
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-0.5">Expected txns</label>
+            <input
+              v-model="expectedTxCount"
+              type="number"
+              min="1"
+              placeholder="# in statement"
               class="w-full text-xs px-2 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:focus:ring-indigo-400"
             />
           </div>
@@ -404,8 +414,9 @@ const messages = ref<DisplayMessage[]>([])
 const inputText = ref('')
 const attachedFile = ref<AttachedFile | null>(null)
 const streaming = ref(false)
-// Kept across the send/clear cycle so the validator can use it after streaming ends
+// Kept across the send/clear cycle so the validator can use them after streaming ends
 const sentFile = ref<AttachedFile | null>(null)
+const sentExpectedCount = ref<number | null>(null)  // user-supplied expected transaction count
 // File preview sidebar — set when a CSV/XLS file is sent, cleared by the user
 const previewSheets = ref<FileSheet[] | null>(null)
 const previewFileName = ref<string | null>(null)
@@ -421,6 +432,7 @@ const messageListEl = ref<HTMLDivElement | null>(null)
 const ruleFilename = ref('')
 const ruleAccount = ref('')
 const ruleCurrency = ref('')
+const expectedTxCount = ref<string>('')  // optional; used to validate parsed count
 
 const showRuleFields = computed(() => {
   const name = attachedFile.value?.name.toLowerCase() ?? ''
@@ -518,7 +530,10 @@ async function sendMessage() {
   ruleFilename.value = ''
   ruleAccount.value = ''
   ruleCurrency.value = ''
+  const expectedCount = expectedTxCount.value ? parseInt(expectedTxCount.value, 10) : null
   if (file) sentFile.value = file  // keep for post-stream validation; persist across turns
+  if (expectedCount !== null) sentExpectedCount.value = expectedCount
+  expectedTxCount.value = ''
   attachedFile.value = null
   resetTextareaHeight()
   scrollToBottom()
@@ -608,7 +623,7 @@ async function sendMessage() {
   const effectiveTool = savedRuleTool
   const effectiveFilename = savedRuleFilename ?? lastSavedRuleFilename.value
   if (effectiveTool && effectiveFilename && sentFile.value) {
-    const { note, transactions, rawContent } = await validateSavedRule(effectiveTool, effectiveFilename, sentFile.value)
+    const { note, transactions, rawContent } = await validateSavedRule(effectiveTool, effectiveFilename, sentFile.value, sentExpectedCount.value)
     const lastMsg = messages.value[messages.value.length - 1]
     if (lastMsg) {
       lastMsg.validationNote = note
@@ -631,6 +646,7 @@ async function validateSavedRule(
   tool: 'write_csv_rule' | 'write_xls_rule',
   filename: string,
   file: AttachedFile,
+  expectedCount: number | null = null,
 ): Promise<ValidationResult> {
   const empty: ValidationResult = { note: '', transactions: [], rawContent: '' }
   try {
@@ -641,7 +657,7 @@ async function validateSavedRule(
       const text = base64ToText(file.content_base64)
       const transactions = parseCsvContent(text, rule)
       return {
-        note: formatValidationNote(transactions.length, file.name, transactions[0]?.date, transactions.at(-1)?.date),
+        note: formatValidationNote(transactions.length, file.name, transactions[0]?.date, transactions.at(-1)?.date, expectedCount),
         transactions,
         rawContent: text,
       }
@@ -652,7 +668,7 @@ async function validateSavedRule(
       const buffer = base64ToArrayBuffer(file.content_base64)
       const transactions = parseXlsContent(buffer, rule)
       return {
-        note: formatValidationNote(transactions.length, file.name, transactions[0]?.date, transactions.at(-1)?.date),
+        note: formatValidationNote(transactions.length, file.name, transactions[0]?.date, transactions.at(-1)?.date, expectedCount),
         transactions,
         rawContent: extractXlsText(buffer, rule),
       }
@@ -663,12 +679,16 @@ async function validateSavedRule(
   }
 }
 
-function formatValidationNote(count: number, filename: string, first?: string, last?: string): string {
+function formatValidationNote(count: number, filename: string, first?: string, last?: string, expected: number | null = null): string {
+  const range = first && last && first !== last ? ` (${first} → ${last})` : first ? ` (${first})` : ''
   if (count === 0) {
     return `⚠ Rule validated against ${filename}: found 0 transactions. The skip counts or date format may need adjustment — let me know the expected number and I'll fix it.`
   }
-  const range = first && last && first !== last ? ` (${first} → ${last})` : first ? ` (${first})` : ''
-  return `✓ Rule validated against ${filename}: found ${count} transaction${count !== 1 ? 's' : ''}${range}.`
+  if (expected !== null && count !== expected) {
+    return `⚠ Rule validated against ${filename}: found ${count} transaction${count !== 1 ? 's' : ''}${range}, but expected ${expected}. Some transactions may be missing — the skip counts or date format may need adjustment.`
+  }
+  const countStr = expected !== null ? `${count}/${expected}` : `${count}`
+  return `✓ Rule validated against ${filename}: found ${countStr} transaction${count !== 1 ? 's' : ''}${range}.`
 }
 
 // ── Validation display helpers ─────────────────────────────────────────────────
