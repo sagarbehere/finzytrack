@@ -11,12 +11,11 @@ skip_lines_start: 0   # Lines to skip at the START of the file (including blank 
                       # header row — the number you see in the file preview's left gutter
                       # next to the column header row is exactly this value.
 skip_lines_end: 0     # Lines to skip at the END of the file.
-                      # IMPORTANT: rows where the date column contains text that
-                      # cannot be parsed as a date (e.g. footer disclaimers, legend
-                      # entries, totals rows with labels) are automatically skipped
-                      # by the parser. Set skip_lines_end only for numeric/amount
-                      # footer rows that could accidentally parse as valid dates.
-                      # For most bank statement footers, skip_lines_end: 0 is correct.
+                      # Set this to the actual number of footer rows visible in the
+                      # file preview (disclaimers, legends, totals, blank trailing
+                      # lines — everything after the last transaction row).
+                      # The right gutter in the file preview counts rows from the
+                      # bottom, making it easy to determine this value.
 date_format: "%Y-%m-%d"  # strftime format string, e.g. "%m/%d/%Y", "%d-%b-%Y"
 decimal_separator: "."   # "." or "," depending on locale
 negate_amounts: false    # Set true if the bank shows debits as positive and credits as negative
@@ -44,9 +43,9 @@ default_currency: "INR"                  # (required) ISO currency code — infe
 - **Counting `skip_lines_start`:** count every line from the top of the file through and including
   the column header row. Blank lines count. The file preview's left gutter shows the line number
   of each row — use that number for the column header row as the value of `skip_lines_start`.
-- **`skip_lines_end` is usually 0** for bank statements. Footer text (disclaimers, legend, footnotes)
-  contains no valid dates and is filtered out automatically. Only set `skip_lines_end > 0` if the
-  footer contains rows that look like transactions (e.g. a "Total" row with numeric amounts).
+- **`skip_lines_end`** should be set to the actual number of footer rows at the end of the file —
+  count everything after the last transaction row (disclaimers, legends, blank lines, totals).
+  Use the right gutter of the file preview, which counts rows from the bottom, to determine this.
 - **Currency:** always infer from the bank's country and account context. Indian bank → INR,
   US bank → USD, Eurozone → EUR. If the account is explicitly a foreign-currency account
   (e.g. an NRE/NRO USD account in India), use that currency. Ask the user if unclear.

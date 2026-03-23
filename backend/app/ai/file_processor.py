@@ -155,8 +155,7 @@ def _csv_parse_hint(lines: list[str]) -> str:
 
     n_transactions = len(data_lines) - 1  # subtract the column header row
     footer_note = (
-        f" {len(footer_lines)} trailing rows detected"
-        " (non-date content is auto-filtered by the parser)."
+        f" {len(footer_lines)} trailing footer rows detected — set skip_lines_end: {len(footer_lines)}."
         if footer_lines else ""
     )
     col_hint = _col_header_hint(data_lines[0])
@@ -165,7 +164,7 @@ def _csv_parse_hint(lines: list[str]) -> str:
         f"[Parse hint: recommended skip_lines_start: {skip_start}"
         f" ({len(header_lines)} metadata lines + 1 column header row)."
         f" Apparent transaction rows: {n_transactions}."
-        f" Recommended skip_lines_end: 0 (rows without a parseable date are auto-skipped).{footer_note}"
+        f" Recommended skip_lines_end: {len(footer_lines)}.{footer_note}"
         f"{col_hint}]"
     )
 
