@@ -649,8 +649,18 @@ async function validateSavedRule(
   expectedCount: number | null = null,
 ): Promise<ValidationResult> {
   const empty: ValidationResult = { note: '', transactions: [], rawContent: '' }
+  const isXlsFile = /\.(xls|xlsx|xlsm|xlsb)$/i.test(file.name)
+
   try {
     if (tool === 'write_csv_rule') {
+      // Safety net: if the file is XLS but the CSV tool was used, skip binary-as-text decoding
+      if (isXlsFile) {
+        return {
+          note: `⚠ Rule was saved as a CSV rule but the file is XLS/XLSX. Please ask the assistant to recreate the rule using the correct tool.`,
+          transactions: [],
+          rawContent: '',
+        }
+      }
       const res = await ImportService.getCsvRule(filename)
       const rule = res.data
       if (!rule) return empty

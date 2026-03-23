@@ -38,7 +38,10 @@ see this table and refer to specific rows and columns by number.
 
 4. **Show the complete YAML** in a code block.
 
-5. **Save the file** by calling `write_csv_rule` / `write_xls_rule` / `write_email_rule`.
+5. **Save the file** using the correct tool for the file type:
+   - CSV/TSV file → `write_csv_rule`
+   - XLS/XLSX file → `write_xls_rule` (**never** `write_csv_rule`)
+   - Email (.eml) → `write_email_rule`
 
 6. **After saving**, tell the user the file path and remind them to use the Import panel
    to actually import transactions.
@@ -50,7 +53,7 @@ When the user wants to change an existing rule:
 2. Ask which file to edit.
 3. Call `read_file` to load its current content.
 4. Show the proposed changes as a complete updated YAML.
-5. Confirm the filename (it will overwrite), then save.
+5. Confirm the filename, then save with `overwrite: true`.
 
 ---
 

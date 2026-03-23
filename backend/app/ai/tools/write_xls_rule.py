@@ -9,6 +9,9 @@ from app.schemas.xls_schemas import XlsRule
 
 logger = logging.getLogger(__name__)
 
+# Keys that belong only to CSV rules — if present in an XLS write call, reject immediately
+_CSV_ONLY_KEYS = {"separator", "encoding"}
+
 
 class WriteXlsRuleTool(BaseTool):
     @property
@@ -20,7 +23,9 @@ class WriteXlsRuleTool(BaseTool):
         return (
             "Validate an XLS/XLSX import rule against the schema and save it to the configured "
             "XLS rules directory. Use this after the user has confirmed the filename. "
-            "Returns the full path where the file was saved."
+            "Returns the full path where the file was saved. "
+            "ONLY for XLS/XLSX files — never use this for CSV or TSV files (use write_csv_rule instead). "
+            "Pass overwrite: true to overwrite an existing file."
         )
 
     @property
@@ -36,6 +41,10 @@ class WriteXlsRuleTool(BaseTool):
                     "type": "string",
                     "description": "Full YAML content of the XLS rule",
                 },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "Set to true to overwrite an existing file. Default: false.",
+                },
             },
             "required": ["filename", "content"],
         }
@@ -43,14 +52,31 @@ class WriteXlsRuleTool(BaseTool):
     def __init__(self, rules_dir: Path | None):
         self._rules_dir = rules_dir
 
-    async def execute(self, filename: str, content: str) -> dict:
+    async def execute(self, filename: str, content: str, overwrite: bool = False) -> dict:
         if not self._rules_dir:
             return {"success": False, "error": "xls_rules_dir is not configured in config.yaml"}
 
-        # Validate against schema
+        # Parse YAML first so we can inspect the keys
         try:
             yaml = YAML(typ="safe")
             data = yaml.load(io.StringIO(content))
+        except Exception as e:
+            return {"success": False, "error": f"YAML parse error: {e}"}
+
+        # Reject CSV-specific content saved to the XLS directory
+        if isinstance(data, dict):
+            csv_keys_found = _CSV_ONLY_KEYS & data.keys()
+            if csv_keys_found:
+                return {
+                    "success": False,
+                    "error": (
+                        f"This rule contains CSV-specific fields ({', '.join(sorted(csv_keys_found))}) "
+                        "and must be saved with write_csv_rule, not write_xls_rule."
+                    ),
+                }
+
+        # Validate against XLS schema
+        try:
             XlsRule.model_validate(data)
         except Exception as e:
             return {"success": False, "error": f"Validation failed: {e}"}
@@ -61,6 +87,16 @@ class WriteXlsRuleTool(BaseTool):
         save_path = (self._rules_dir / filename).resolve()
         if not save_path.is_relative_to(self._rules_dir.resolve()):
             return {"success": False, "error": "Invalid filename — path traversal not allowed"}
+
+        # Overwrite protection
+        if save_path.exists() and not overwrite:
+            return {
+                "success": False,
+                "error": (
+                    f"File '{filename}' already exists. Pass overwrite: true to overwrite it, "
+                    "or choose a different filename."
+                ),
+            }
 
         self._rules_dir.mkdir(parents=True, exist_ok=True)
         save_path.write_text(content, encoding="utf-8")

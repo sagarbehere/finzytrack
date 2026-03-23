@@ -1,5 +1,7 @@
 ## XLS Rule Schema
 
+> **Important:** For XLS/XLSX files, always use `write_xls_rule` to save the rule — never `write_csv_rule`.
+
 An XLS rule is identical to a CSV rule except for two additional fields that identify which
 sheet to read. All other fields (columns, skip_lines_start, skip_lines_end, etc.) work the same way.
 
