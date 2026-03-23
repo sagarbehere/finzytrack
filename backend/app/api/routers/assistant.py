@@ -156,6 +156,9 @@ async def _run_agent_loop(
 
         if not tool_calls_this_turn:
             # No tools requested — we're done
+            if not accumulated_text.strip():
+                # Model returned nothing — surface it rather than silently showing a blank response
+                yield {"type": "error", "message": "The model returned an empty response. Please try again."}
             yield {"type": "done"}
             return
 

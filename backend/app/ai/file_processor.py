@@ -154,9 +154,13 @@ def _csv_parse_hint(lines: list[str]) -> str:
     skip_start = len(header_lines) + 1
 
     n_transactions = len(data_lines) - 1  # subtract the column header row
+    # Count only non-blank footer rows for the skip_lines_end hint.
+    # Blank rows at the end are harmless — the date filter skips them — so they
+    # should not inflate the recommended count.
+    non_blank_footer = [l for l in footer_lines if l.strip()]
     footer_note = (
-        f" {len(footer_lines)} trailing footer rows detected — set skip_lines_end: {len(footer_lines)}."
-        if footer_lines else ""
+        f" {len(non_blank_footer)} trailing footer rows detected — set skip_lines_end: {len(non_blank_footer)}."
+        if non_blank_footer else ""
     )
     col_hint = _col_header_hint(data_lines[0])
 
@@ -164,7 +168,7 @@ def _csv_parse_hint(lines: list[str]) -> str:
         f"[Parse hint: recommended skip_lines_start: {skip_start}"
         f" ({len(header_lines)} metadata lines + 1 column header row)."
         f" Apparent transaction rows: {n_transactions}."
-        f" Recommended skip_lines_end: {len(footer_lines)}.{footer_note}"
+        f" Recommended skip_lines_end: {len(non_blank_footer)}.{footer_note}"
         f"{col_hint}]"
     )
 
@@ -241,10 +245,11 @@ def _xls_parse_hint(rows: list[str]) -> str:
     skip_start = len(header_lines) + 1  # +1 for column header row (data_lines[0])
 
     n_transactions = len(data_lines) - 1
-    if footer_lines:
+    non_blank_footer = [l for l in footer_lines if l.strip()]
+    if non_blank_footer:
         footer_note = (
-            f" Recommended skip_lines_end: {len(footer_lines)}"
-            f" ({len(footer_lines)} trailing rows detected — XLS footer rows may contain"
+            f" Recommended skip_lines_end: {len(non_blank_footer)}"
+            f" ({len(non_blank_footer)} trailing rows detected — XLS footer rows may contain"
             f" numeric data that would be imported as fake transactions; set skip_lines_end explicitly)."
         )
     else:
