@@ -36,7 +36,9 @@ from app.ai.system_prompt import build_system_prompt
 from app.ai.tool_registry import ToolRegistry
 from app.ai.tools.list_accounts import ListAccountsTool
 from app.ai.tools.list_rule_files import ListRuleFilesTool
+from app.ai.tools.match_email_against_rules import MatchEmailAgainstRulesTool
 from app.ai.tools.read_file import ReadFileTool
+from app.ai.tools.test_email_extraction import TestEmailExtractionTool
 from app.ai.tools.write_csv_rule import WriteCsvRuleTool
 from app.ai.tools.write_email_rule import WriteEmailRuleTool
 from app.ai.tools.write_xls_rule import WriteXlsRuleTool
@@ -81,6 +83,8 @@ _TOOL_MESSAGES = {
     "read_file": "Reading file...",
     "list_accounts": "Looking up accounts...",
     "list_rule_files": "Listing rule files...",
+    "match_email_against_rules": "Checking existing email rules...",
+    "test_email_extraction": "Testing extraction patterns...",
 }
 
 
@@ -123,6 +127,8 @@ def _build_registry(
     registry.register(ReadFileTool(allowed_read_dirs))
     registry.register(ListAccountsTool(beancount_manager))
     registry.register(ListRuleFilesTool(csv_dir, xls_dir, email_dir))
+    registry.register(MatchEmailAgainstRulesTool(email_registry))
+    registry.register(TestEmailExtractionTool())
     return registry
 
 

@@ -72,6 +72,20 @@ transaction_types:          # One entry per distinct email format from this bank
 - `amount_sign.field: "fixed"` with `value: "negative"` marks all transactions of this type as debits.
   Use `value: "positive"` for credit/deposit alert emails.
 
+### Confirmation checklist — show values, not regex
+
+Always call `test_email_extraction` before presenting the checklist. Show users the values
+extracted from their email, not the underlying patterns:
+
+**Do this:**
+> 3. Amount: ₹1,234.56 — correct?
+
+**Not this:**
+> 3. Amount pattern: `Amount Debited:\s+INR ([\d,]+\.\d+)` — correct?
+
+If the user says a value is wrong, locate the correct value in the email, update the pattern,
+retest with `test_email_extraction`, and show the corrected value before asking again.
+
 ### Example (Chase debit alert)
 
 ```yaml
