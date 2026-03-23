@@ -297,7 +297,7 @@
               class="w-full text-xs px-2 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:focus:ring-indigo-400"
             />
           </div>
-          <div class="w-24">
+          <div v-if="previewSheets" class="w-24">
             <label class="block text-xs text-gray-400 dark:text-gray-500 mb-0.5">Expected txns</label>
             <input
               v-model="expectedTxCount"
@@ -472,12 +472,17 @@ async function handleFileSelected(event: Event) {
   if (!file) return
   try {
     attachedFile.value = await readFileAsBase64(file)
-    // Pre-populate rule fields for CSV/XLS files
+    // Pre-populate rule fields and open preview for CSV/XLS files
     const lower = file.name.toLowerCase()
     if (lower.endsWith('.csv') || lower.endsWith('.xls') || lower.endsWith('.xlsx') || lower.endsWith('.xlsm')) {
       ruleFilename.value = suggestRuleFilename(file.name)
       ruleAccount.value = ''
       ruleCurrency.value = ''
+      const sheets = parseFileForPreview(attachedFile.value)
+      if (sheets.length > 0) {
+        previewSheets.value = sheets
+        previewFileName.value = file.name
+      }
     }
   } catch (err) {
     console.error('Failed to read file', err)
@@ -507,15 +512,10 @@ async function sendMessage() {
 
   if (!text && !file) return
 
-  // Open the file preview sidebar for CSV/XLS files (parse before adding message)
+  // Grab the already-parsed preview sheets for the message badge (parsed on file select)
   let fileSheets: FileSheet[] | undefined
-  if (file) {
-    const sheets = parseFileForPreview(file)
-    if (sheets.length > 0) {
-      fileSheets = sheets
-      previewSheets.value = sheets
-      previewFileName.value = file.name
-    }
+  if (file && previewSheets.value && previewFileName.value === file.name) {
+    fileSheets = previewSheets.value
   }
 
   // Add user message to display (store sheets so the badge can re-open the preview)
