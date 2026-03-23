@@ -10,5 +10,5 @@ columns:
   date: 1
   payee: 2
   amount: 3
-default_account: "Assets:BofA:Checking"
+default_account: "Assets:BofA:Savings"
 default_currency: "USD"
