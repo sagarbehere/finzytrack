@@ -1480,20 +1480,7 @@ const scrollToTable = () => {
   nextTick(() => {
     const container = document.querySelector('.transaction-table-container')
     if (container) {
-      // Get the position relative to the top of the page
-      const rect = container.getBoundingClientRect()
-      const scrollTop = window.pageYOffset || document.documentElement.scrollTop
-      const offsetTop = rect.top + scrollTop
-      
-      // Calculate offset to account for any fixed header (e.g., 80px for top navigation)
-      // This can be adjusted based on the actual height of your app's navigation bar
-      // Increased the offset to ensure buttons are fully visible below the top bar
-      const offset = 130; // Adjust this value based on your app's header height + button height
-      
-      window.scrollTo({
-        top: offsetTop - offset,
-        behavior: 'smooth'
-      })
+      container.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   })
 }
@@ -1618,6 +1605,7 @@ defineExpose({
 /* Table styling */
 .transaction-table-container {
   position: relative;
+  scroll-margin-top: 130px; /* offset for fixed nav + buttons above table */
 }
 
 table {
