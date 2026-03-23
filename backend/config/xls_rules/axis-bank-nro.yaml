@@ -4,9 +4,9 @@ skip_lines_start: 18  # rows 0-14: metadata (incl. Nominee Name row), row 15: ac
 skip_lines_end: 29    # rows 50-78: disclaimer text, legends, system note
 date_format: "%d-%m-%Y"
 columns:
-  date: 1        # Tran Date
-  payee: 3       # PARTICULARS
-  amount_debit: 4   # DR
-  amount_credit: 5  # CR
+  date: 2        # Tran Date
+  payee: 4       # PARTICULARS
+  amount_debit: 5   # DR
+  amount_credit: 6  # CR
 default_account: "Assets:AxisBank:NRO"
 default_currency: "INR"

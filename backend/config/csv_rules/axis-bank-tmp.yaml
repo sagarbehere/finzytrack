@@ -11,23 +11,23 @@
 # a single amount column.
 #
 # Columns: Tran Date, CHQNO, PARTICULARS, DR, CR, BAL, SOL
-#          0          1      2             3   4   5    6
+#          1          2      3             4   5   6    7
 
 name: "Axis Bank Tmp"
 separator: ","
 encoding: "utf-8"
-skip_lines_start: 1   # 15 info lines + 1 statement period line + 1 column header (blank lines auto-dropped)
+skip_lines_start: 1   # column header only
 skip_lines_end: 0
 date_format: "%m/%d/%Y"
 decimal_separator: "."
 negate_amounts: false
 
 columns:
-  date: 0
-  payee: 2
-  amount_debit: 3
-  amount_credit: 4
-  memo: 1
+  date: 1
+  payee: 3
+  amount_debit: 4
+  amount_credit: 5
+  memo: 2
 
 default_account: "Assets:AxisBank:NRO"
 default_currency: "INR"

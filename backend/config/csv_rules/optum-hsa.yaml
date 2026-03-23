@@ -4,7 +4,7 @@
 # (e.g., -$35.00, $0.15) which the parser strips automatically.
 #
 # Columns: Date, Type, Description, Status, Amount
-#          0     1     2            3       4
+#          1     2     3            4       5
 
 name: "Optum Health HSA"
 separator: ","
@@ -16,9 +16,9 @@ decimal_separator: "."
 negate_amounts: false
 
 columns:
-  date: 0
-  amount: 4
-  payee: 2
+  date: 1
+  amount: 5
+  payee: 3
 
 default_account: "Assets:Optum:HSA"
 default_currency: "USD"

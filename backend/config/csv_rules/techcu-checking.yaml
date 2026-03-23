@@ -8,9 +8,9 @@
 # Columns: Transaction ID, Posting Date, Effective Date, Transaction Type,
 #          Amount, Check Number, Reference Number, Description,
 #          Transaction Category, Type, Balance, Memo, Extended Description
-#          0               1             2               3
-#          4       5              6                 7
-#          8                      9     10       11    12
+#          1               2             3               4
+#          5       6              7                 8
+#          9                      10    11       12    13
 
 name: "Technology Credit Union"
 separator: ","
@@ -22,11 +22,11 @@ decimal_separator: "."
 negate_amounts: false
 
 columns:
-  date: 1
-  amount: 4
-  payee: 7
-  narration: 12
-  memo: 5
+  date: 2
+  amount: 5
+  payee: 8
+  narration: 13
+  memo: 6
 
 default_account: "Assets:TechCU:Checking"
 default_currency: "USD"

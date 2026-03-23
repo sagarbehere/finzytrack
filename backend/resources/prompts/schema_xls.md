@@ -12,8 +12,8 @@ skip_lines_end: 0     # Rows to skip at the END
 date_format: "%Y-%m-%d"
 decimal_separator: "."
 negate_amounts: false
-columns:              # 0-based column indices
-  date: 0             # (required)
+columns:              # 1-based column indices (column 1 = leftmost column in the sheet)
+  date: 1             # (required)
   amount: null        # Use either 'amount' OR 'amount_debit' + 'amount_credit'
   amount_debit: null
   amount_credit: null
@@ -37,9 +37,9 @@ default_currency: "USD"                 # (required) — infer from bank's count
   have **20+ footer rows**. You must count them explicitly. Use the parse hint's
   "trailing rows detected" count as a starting point, then verify against the last rows visible in
   the file. When in doubt, err on the side of skipping more footer rows.
-- **`skip_lines_start` counting for XLS:** unlike CSV, the XLS parser does NOT strip blank rows
-  before applying `skip_lines_start` — every row counts, including blank ones. Use the parse hint's
-  recommended value directly; do not subtract blank lines.
+- **`skip_lines_start` counting:** count every row from the top of the sheet through and including
+  the column header row. Blank rows count. Use the file preview's left gutter row number for the
+  column header row as the value of `skip_lines_start`.
 - **`payee` vs `narration`:** a column named "Transaction Remarks", "Remarks", "Description",
   "Particulars", or similar free-text description should be mapped to `payee`, not `narration`.
   Use `narration` only when there is a second, distinct description column alongside a payee column.
@@ -57,10 +57,10 @@ skip_lines_start: 13
 skip_lines_end: 28
 date_format: "%d/%m/%Y"
 columns:
-  date: 3
-  payee: 5
-  amount_debit: 6
-  amount_credit: 7
+  date: 4
+  payee: 6
+  amount_debit: 7
+  amount_credit: 8
 default_account: "Assets:ICICI:Savings"
 default_currency: "INR"
 ```

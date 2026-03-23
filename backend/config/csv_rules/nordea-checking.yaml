@@ -5,7 +5,7 @@
 # empty column — this is harmless.
 #
 # Columns: Booking date, Amount, Sender, Recipient, Name, Title, Balance, Currency
-#          0             1       2       3          4     5      6        7
+#          1             2       3       4          5     6      7        8
 
 name: "Nordea Bank"
 separator: ";"
@@ -17,9 +17,9 @@ decimal_separator: ","
 negate_amounts: false
 
 columns:
-  date: 0
-  amount: 1
-  payee: 5
+  date: 1
+  amount: 2
+  payee: 6
 
 default_account: "Assets:Nordea:Checking"
 default_currency: "SEK"

@@ -4,9 +4,9 @@ skip_lines_start: 13  # rows 0-11: metadata block, row 12: column headers
 skip_lines_end: 28    # rows 24-51: legends section
 date_format: "%d/%m/%Y"
 columns:
-  date: 3        # Transaction Date
-  payee: 5       # Transaction Remarks
-  amount_debit: 6   # Withdrawal Amount(INR)
-  amount_credit: 7  # Deposit Amount(INR)
+  date: 4        # Transaction Date
+  payee: 6       # Transaction Remarks
+  amount_debit: 7   # Withdrawal Amount(INR)
+  amount_credit: 8  # Deposit Amount(INR)
 default_account: "Assets:ICICI:Savings"
 default_currency: "INR"

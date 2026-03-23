@@ -6,12 +6,11 @@ A CSV rule is a YAML file with the following fields:
 name: string          # Human-readable rule name (required)
 separator: ","        # Column separator; use "\t" for TSV (default: ",")
 encoding: "utf-8"     # File encoding (default: "utf-8")
-skip_lines_start: 0   # Non-blank lines to skip at the START of the file.
-                      # The parser removes truly blank lines before counting,
-                      # so only count non-blank lines (metadata, statement period,
-                      # column header row). Include the column header row in this
-                      # count — column names are not used, only indices.
-skip_lines_end: 0     # Non-blank lines to skip at the END of the file.
+skip_lines_start: 0   # Lines to skip at the START of the file (including blank lines).
+                      # Count every line from the top of the file through the column
+                      # header row — the number you see in the file preview's left gutter
+                      # next to the column header row is exactly this value.
+skip_lines_end: 0     # Lines to skip at the END of the file.
                       # IMPORTANT: rows where the date column contains text that
                       # cannot be parsed as a date (e.g. footer disclaimers, legend
                       # entries, totals rows with labels) are automatically skipped
@@ -22,8 +21,8 @@ date_format: "%Y-%m-%d"  # strftime format string, e.g. "%m/%d/%Y", "%d-%b-%Y"
 decimal_separator: "."   # "." or "," depending on locale
 negate_amounts: false    # Set true if the bank shows debits as positive and credits as negative
 
-columns:              # 0-based column indices (required)
-  date: 0             # (required) column index for the transaction date
+columns:              # 1-based column indices (column 1 = leftmost column in the file)
+  date: 1             # (required) column index for the transaction date
   amount: 2           # Use either 'amount' OR 'amount_debit' + 'amount_credit', not both
   amount_debit: null  # Column index for money-out amounts (mutually exclusive with 'amount')
   amount_credit: null # Column index for money-in amounts  (mutually exclusive with 'amount')
@@ -42,9 +41,9 @@ default_currency: "INR"                  # (required) ISO currency code — infe
 - Use `amount` when there is a single signed amount column (negative = debit, positive = credit,
   or set `negate_amounts: true` if the signs are inverted).
 - Use `amount_debit` + `amount_credit` when the file has separate columns for debit and credit.
-- **Counting `skip_lines_start`:** blank lines are stripped before counting. Count only non-blank
-  lines before (and including) the column header row. Example: 15 metadata lines + 1 statement
-  period line + 1 column header = `skip_lines_start: 17`, even if there are blank lines interspersed.
+- **Counting `skip_lines_start`:** count every line from the top of the file through and including
+  the column header row. Blank lines count. The file preview's left gutter shows the line number
+  of each row — use that number for the column header row as the value of `skip_lines_start`.
 - **`skip_lines_end` is usually 0** for bank statements. Footer text (disclaimers, legend, footnotes)
   contains no valid dates and is filtered out automatically. Only set `skip_lines_end > 0` if the
   footer contains rows that look like transactions (e.g. a "Total" row with numeric amounts).
@@ -67,17 +66,17 @@ default_currency: "INR"                  # (required) ISO currency code — infe
 name: "Axis Bank NRE Savings"
 separator: ","
 encoding: "utf-8"
-skip_lines_start: 17   # 16 non-blank metadata/header lines + 1 column header row
+skip_lines_start: 17   # 16 metadata/header lines + 1 column header row
 skip_lines_end: 0
 date_format: "%d-%m-%Y"
 decimal_separator: "."
 negate_amounts: false
 columns:
-  date: 0
-  memo: 1        # Chq./Ref.No. — always populate when a reference column exists
-  narration: 2   # Transaction Remarks
-  amount_debit: 3
-  amount_credit: 4
+  date: 1
+  memo: 2        # Chq./Ref.No. — always populate when a reference column exists
+  narration: 3   # Transaction Remarks
+  amount_debit: 4
+  amount_credit: 5
 default_account: "Assets:AxisBank:NRE"
 default_currency: "INR"
 ```

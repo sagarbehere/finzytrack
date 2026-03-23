@@ -4,9 +4,9 @@ skip_lines_start: 17  # rows 0-15: metadata block, row 16: column headers
 skip_lines_end: 38    # rows 22-59: page totals, opening/closing balance, legends
 date_format: "%d/%b/%Y"  # e.g. 09/Mar/2026
 columns:
-  date: 3        # Transaction Date
-  payee: 6       # Transaction Remarks
-  amount_debit: 7   # Withdrawal Amt (INR)
-  amount_credit: 8  # Deposit Amt (INR)
+  date: 4        # Transaction Date
+  payee: 7       # Transaction Remarks
+  amount_debit: 8   # Withdrawal Amt (INR)
+  amount_credit: 9  # Deposit Amt (INR)
 default_account: "Assets:ICICI:Current"
 default_currency: "INR"

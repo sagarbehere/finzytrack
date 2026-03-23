@@ -109,8 +109,9 @@ def _col_header_hint(header_row: str, delimiter: str = ",") -> str:
     Return a compact column-index map from the column header row.
 
     Example output:
-      Column headers: 0='Date', 1='Ref No', 2='Description', 3='Debit', 4='Credit'
+      Column headers: 1='Date', 2='Ref No', 3='Description', 4='Debit', 5='Credit'
 
+    Uses 1-based indices matching the file preview column headers and the rule schema.
     This lets the AI look up column names → indices directly without counting
     delimiters in the raw file content.
     """
@@ -130,7 +131,7 @@ def _col_header_hint(header_row: str, delimiter: str = ",") -> str:
     if not cols:
         return ""
 
-    col_map = ", ".join(f"{i}={c.strip()!r}" for i, c in enumerate(cols))
+    col_map = ", ".join(f"{i + 1}={c.strip()!r}" for i, c in enumerate(cols))
     return f" Column headers: {col_map}."
 
 

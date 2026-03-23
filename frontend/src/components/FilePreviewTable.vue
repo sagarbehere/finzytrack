@@ -34,7 +34,7 @@
               v-for="ci in colIndices"
               :key="ci"
               class="sticky top-0 z-10 bg-gray-50 dark:bg-gray-700 border-b border-r border-gray-200 dark:border-gray-600 px-2 py-1 font-semibold text-center text-gray-500 dark:text-gray-400 whitespace-nowrap"
-            >{{ ci }}</th>
+            >{{ ci + 1 }}</th>
             <!-- Right gutter header (row number, reverse) -->
             <th class="sticky top-0 right-0 z-20 bg-gray-50 dark:bg-gray-700 border-b border-l border-gray-200 dark:border-gray-600 px-2 py-1 min-w-[2.5rem] text-center text-orange-300 dark:text-orange-700 font-normal select-none">
               ↑
@@ -103,6 +103,7 @@ const colCount = computed(() => {
   return max
 })
 
+// 0-based for array access; displayed as 1-based in the header (matching user expectations)
 const colIndices = computed(() => Array.from({ length: colCount.value }, (_, i) => i))
 
 const totalRows = computed(() => currentRows.value.length)

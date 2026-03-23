@@ -140,13 +140,24 @@ export function parseXlsContent(buffer: ArrayBuffer, rule: XlsRule): CsvParsedTr
   if (skipStart > 0) dataRows = dataRows.slice(skipStart)
   if (skipEnd > 0) dataRows = dataRows.slice(0, -skipEnd)
 
+  // Rule files use 1-based column indices (column 1 = leftmost); convert to 0-based for array access
+  const col = {
+    date:          columns.date - 1,
+    amount:        columns.amount        != null ? columns.amount        - 1 : null,
+    amount_debit:  columns.amount_debit  != null ? columns.amount_debit  - 1 : null,
+    amount_credit: columns.amount_credit != null ? columns.amount_credit - 1 : null,
+    payee:         columns.payee         != null ? columns.payee         - 1 : null,
+    narration:     columns.narration     != null ? columns.narration     - 1 : null,
+    memo:          columns.memo          != null ? columns.memo          - 1 : null,
+  }
+
   const transactions: CsvParsedTransaction[] = []
-  const hasSplitAmounts = columns.amount_debit != null && columns.amount_credit != null
+  const hasSplitAmounts = col.amount_debit != null && col.amount_credit != null
 
   for (const row of dataRows) {
-    if (row.length <= columns.date) continue
+    if (row.length <= col.date) continue
 
-    const dateStr = String(row[columns.date] ?? '').trim()
+    const dateStr = String(row[col.date] ?? '').trim()
     if (!dateStr) continue
 
     const date = parseDateWithFormat(dateStr, dateFormat)
@@ -155,8 +166,8 @@ export function parseXlsContent(buffer: ArrayBuffer, rule: XlsRule): CsvParsedTr
     let amount: number
 
     if (hasSplitAmounts) {
-      const drStr = String(row[columns.amount_debit!] ?? '').trim()
-      const crStr = String(row[columns.amount_credit!] ?? '').trim()
+      const drStr = String(row[col.amount_debit!] ?? '').trim()
+      const crStr = String(row[col.amount_credit!] ?? '').trim()
       if (!drStr && !crStr) continue
 
       if (crStr && parseAmountStr(crStr, decimalSep) !== null && Math.abs(parseAmountStr(crStr, decimalSep)!) > 0) {
@@ -171,8 +182,8 @@ export function parseXlsContent(buffer: ArrayBuffer, rule: XlsRule): CsvParsedTr
         continue
       }
     } else {
-      if (columns.amount == null || row.length <= columns.amount) continue
-      const amountStr = String(row[columns.amount] ?? '').trim()
+      if (col.amount == null || row.length <= col.amount) continue
+      const amountStr = String(row[col.amount] ?? '').trim()
       if (!amountStr) continue
       const parsed = parseAmountStr(amountStr, decimalSep)
       if (parsed === null) continue
@@ -181,14 +192,14 @@ export function parseXlsContent(buffer: ArrayBuffer, rule: XlsRule): CsvParsedTr
 
     if (negateAmounts) amount = -amount
 
-    const payee = columns.payee != null && row[columns.payee] != null
-      ? String(row[columns.payee]).trim()
+    const payee = col.payee != null && row[col.payee] != null
+      ? String(row[col.payee]).trim()
       : ''
-    const narration = columns.narration != null && row[columns.narration] != null
-      ? String(row[columns.narration]).trim()
+    const narration = col.narration != null && row[col.narration] != null
+      ? String(row[col.narration]).trim()
       : ''
-    const memo = columns.memo != null && row[columns.memo] != null
-      ? String(row[columns.memo]).trim()
+    const memo = col.memo != null && row[col.memo] != null
+      ? String(row[col.memo]).trim()
       : ''
 
     transactions.push({ date, payee, narration, amount, memo })
