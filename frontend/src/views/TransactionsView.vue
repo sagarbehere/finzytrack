@@ -23,7 +23,7 @@
     </div>
 
     <!-- Transaction Table -->
-    <div ref="transactionTableContainer" v-if="showTable && transactions.length > 0">
+    <div ref="transactionTableContainer" v-if="showTable && transactions.length > 0" class="scroll-mt-32">
       <!-- Warning if limit is reached -->
       <div
         v-if="totalCount !== null && transactions.length < totalCount"
@@ -182,17 +182,7 @@ async function handleFilterChanged(filters: TransactionFilters, limit: number) {
 
       nextTick(() => {
         if (transactionTableContainer.value) {
-          const rect = transactionTableContainer.value.getBoundingClientRect()
-          const scrollTop = window.pageYOffset || document.documentElement.scrollTop
-          const offsetTop = rect.top + scrollTop
-
-          // Offset to account for fixed header
-          const offset = 130
-
-          window.scrollTo({
-            top: offsetTop - offset,
-            behavior: 'smooth'
-          })
+          transactionTableContainer.value.scrollIntoView({ behavior: 'smooth', block: 'start' })
         }
       })
     }

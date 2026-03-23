@@ -231,7 +231,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import DatePresetSelector from '@/components/common/DatePresetSelector.vue'
 import type { TransactionFilters } from '@/types/filters'
 
@@ -316,18 +316,29 @@ function handleClear() {
   activePreset.value = null
 }
 
+function applyInitialFilters(newFilters: TransactionFilters) {
+  const defaults = getDefaultFilters()
+  filters.value = {
+    ...defaults,
+    ...newFilters,
+    dateFrom: newFilters.dateFrom || '',
+    dateTo: newFilters.dateTo || defaults.dateTo,
+  }
+  activePreset.value = null
+  handleApply()
+}
+
 // Apply initial filters on mount if provided
 onMounted(() => {
   if (props.initialFilters && Object.keys(props.initialFilters).length > 0) {
-    const defaults = getDefaultFilters()
-    filters.value = {
-      ...defaults,
-      ...props.initialFilters,
-      dateFrom: props.initialFilters.dateFrom || '',
-      dateTo: props.initialFilters.dateTo || defaults.dateTo,
-    }
+    applyInitialFilters(props.initialFilters)
+  }
+})
 
-    handleApply()
+// Re-apply when initialFilters changes (same-route navigation, e.g. global search while on Transactions)
+watch(() => props.initialFilters, (newFilters) => {
+  if (newFilters && Object.keys(newFilters).length > 0) {
+    applyInitialFilters(newFilters)
   }
 })
 
