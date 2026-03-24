@@ -172,10 +172,12 @@ export async function generateQuery(
     throw new Error(reason)
   }
 
-  // Strip markdown fences if the model wraps them
-  const fencePattern = language === 'beanquery'
-    ? /^```(?:sql|bql|beanquery)?\s*/i
-    : /^```(?:sql)?\s*/i
-  const query = content.replace(fencePattern, '').replace(/\s*```$/i, '').trim()
+  // Strip markdown fences if the model wraps them.
+  // Try to extract content between fences first (handles preamble text before the fence).
+  const trimmed = content.trim()
+  const fenceMatch = trimmed.match(/```(?:sql|bql|beanquery)?\s*\n([\s\S]*?)\n?\s*```/i)
+  const query = fenceMatch
+    ? fenceMatch[1].trim()
+    : trimmed.replace(/^```(?:sql|bql|beanquery)?\s*/i, '').replace(/\s*```$/i, '').trim()
   return query
 }
