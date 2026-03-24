@@ -1,0 +1,29 @@
+{
+  "id": "transaction-count",
+  "title": "Transaction Count",
+  "description": "Total number of transactions for the selected year",
+  "dbType": "sqlite",
+  "parameters": [
+    {
+      "name": "year",
+      "label": "Year",
+      "type": "select",
+      "default": 2025,
+      "options": [
+        { "value": 2025, "label": "2025" },
+        { "value": 2024, "label": "2024" },
+        { "value": 2023, "label": "2023" },
+        { "value": 2022, "label": "2022" }
+      ]
+    }
+  ],
+  "query": "SELECT COUNT(DISTINCT transaction_id) AS value FROM postings WHERE year = :year",
+  "transform": "firstRow",
+  "visualization": {
+    "type": "kpi",
+    "icon": "#",
+    "iconColor": "purple",
+    "valueField": "value",
+    "format": "number"
+  }
+}
