@@ -144,16 +144,8 @@ def _build_registry(
             registry.register(MatchEmailAgainstRulesTool(email_registry))
             registry.register(TestEmailExtractionTool())
     else:
-        # No file attached — analyst/recipe mode (or no context yet)
-        # Include all setup tools as fallback, plus query tools
-        registry.register(WriteCsvRuleTool(csv_dir, backup_manager))
-        registry.register(WriteXlsRuleTool(xls_dir, backup_manager))
-        registry.register(WriteEmailRuleTool(email_dir, backup_manager))
-        registry.register(ReadFileTool(allowed_read_dirs))
+        # No file attached — analyst/recipe mode
         registry.register(ListAccountsTool(beancount_manager))
-        registry.register(ListRuleFilesTool(csv_dir, xls_dir, email_dir))
-        registry.register(MatchEmailAgainstRulesTool(email_registry))
-        registry.register(TestEmailExtractionTool())
         if sqlite_path:
             registry.register(ExecuteQueryTool(sqlite_path))
 
