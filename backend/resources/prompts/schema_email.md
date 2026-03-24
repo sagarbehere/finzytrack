@@ -62,6 +62,10 @@ transaction_types:          # One entry per distinct email format from this bank
 ```
 
 ### Key rules
+- **One rule file per bank account.** If a user has two accounts at the same bank, create two
+  separate rule files. Use `body_keyword` (IMAP server-side pre-filter) and `body_regex` on each
+  transaction type to pin the rule to a specific account's masked number (e.g. "XX8968"). This
+  prevents emails for one account from matching the rule for another.
 - `imap_server` credentials must be left blank in the generated file — tell the user to fill them in.
 - Create one `transaction_types` entry per distinct email format. Banks often send different
   formats for debits vs credits; each needs its own entry with its own extraction patterns.

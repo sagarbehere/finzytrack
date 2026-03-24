@@ -60,9 +60,14 @@ Act on the result:
 
 - **`full_match`**: This email is already handled. Tell the user which rule and transaction
   type covers it. No further action needed.
-- **`sender_match_no_type`**: The bank is known (sender matches an existing rule) but this
-  email format is new. Read the existing rule file with `read_file`, then draft only the new
-  `transaction_types` entry to add to it. Save with `overwrite: true`.
+- **`sender_match_no_type`**: The bank is known but no transaction type matched. This could
+  mean two different things — disambiguate before acting:
+  1. Call `read_file` on the matched rule file and check its `body_keyword`.
+  2. If the `body_keyword` appears in the new email's body → same account, new email format.
+     Draft only the new `transaction_types` entry and add it to the existing file (`overwrite: true`).
+  3. If the `body_keyword` does **not** appear in the new email's body → different account at
+     the same bank. Create a new rule file with its own `beancount_account` and a new
+     `body_keyword` derived from the account identifier in this email.
 - **`no_match`**: Unknown sender. Draft a full new rule file.
 
 ### Step 2 — Draft extraction rules and test them
