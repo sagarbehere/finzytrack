@@ -5,6 +5,7 @@ from pathlib import Path
 from ruamel.yaml import YAML
 
 from app.ai.tools.base import BaseTool
+from app.core.backup_manager import BackupManager
 from app.schemas.xls_schemas import XlsRule
 
 logger = logging.getLogger(__name__)
@@ -49,8 +50,9 @@ class WriteXlsRuleTool(BaseTool):
             "required": ["filename", "content"],
         }
 
-    def __init__(self, rules_dir: Path | None):
+    def __init__(self, rules_dir: Path | None, backup_manager: BackupManager | None = None):
         self._rules_dir = rules_dir
+        self._backup_manager = backup_manager
 
     async def execute(self, filename: str, content: str, overwrite: bool = False) -> dict:
         if not self._rules_dir:
@@ -99,7 +101,14 @@ class WriteXlsRuleTool(BaseTool):
             }
 
         self._rules_dir.mkdir(parents=True, exist_ok=True)
-        save_path.write_text(content, encoding="utf-8")
+        file_existed = save_path.exists()
+        if self._backup_manager:
+            with self._backup_manager.atomic_write(str(save_path)) as f:
+                f.seek(0)
+                f.truncate()
+                f.write(content)
+        else:
+            save_path.write_text(content, encoding="utf-8")
         logger.info(f"Saved XLS rule to {save_path}")
 
-        return {"success": True, "path": str(save_path)}
+        return {"success": True, "path": str(save_path), "backup_created": file_existed}

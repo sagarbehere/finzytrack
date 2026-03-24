@@ -42,12 +42,14 @@ from app.ai.tools.test_email_extraction import TestEmailExtractionTool
 from app.ai.tools.write_csv_rule import WriteCsvRuleTool
 from app.ai.tools.write_email_rule import WriteEmailRuleTool
 from app.ai.tools.write_xls_rule import WriteXlsRuleTool
+from app.core.backup_manager import BackupManager
 from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
 from app.core.csv_rules_manager import CsvRulesManager
 from app.core.xls_rules_manager import XlsRulesManager
 from app.email_import.rule_registry import AccountProfileRegistry
 from app.dependencies import (
+    get_backup_manager,
     get_beancount_manager,
     get_config_manager,
     get_csv_rules_manager,
@@ -113,6 +115,7 @@ def _build_registry(
     xls_rules_manager: XlsRulesManager,
     email_registry: AccountProfileRegistry,
     beancount_manager: BeancountManager,
+    backup_manager: BackupManager,
 ) -> ToolRegistry:
     csv_dir = Path(csv_rules_manager.rules_dir) if csv_rules_manager.rules_dir else None
     xls_dir = Path(xls_rules_manager.rules_dir) if xls_rules_manager.rules_dir else None
@@ -121,9 +124,9 @@ def _build_registry(
     allowed_read_dirs = [d for d in [csv_dir, xls_dir, email_dir] if d is not None]
 
     registry = ToolRegistry()
-    registry.register(WriteCsvRuleTool(csv_dir))
-    registry.register(WriteXlsRuleTool(xls_dir))
-    registry.register(WriteEmailRuleTool(email_dir))
+    registry.register(WriteCsvRuleTool(csv_dir, backup_manager))
+    registry.register(WriteXlsRuleTool(xls_dir, backup_manager))
+    registry.register(WriteEmailRuleTool(email_dir, backup_manager))
     registry.register(ReadFileTool(allowed_read_dirs))
     registry.register(ListAccountsTool(beancount_manager))
     registry.register(ListRuleFilesTool(csv_dir, xls_dir, email_dir))
@@ -223,6 +226,7 @@ async def assistant_chat(
     body: AssistantChatRequest,
     config_manager: ConfigManager = Depends(get_config_manager),
     beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    backup_manager: BackupManager = Depends(get_backup_manager),
     csv_rules_manager: CsvRulesManager = Depends(get_csv_rules_manager),
     xls_rules_manager: XlsRulesManager = Depends(get_xls_rules_manager),
     email_registry: AccountProfileRegistry = Depends(get_email_registry),
@@ -256,7 +260,7 @@ async def assistant_chat(
     if file_type:
         context["file_type"] = file_type
 
-    registry = _build_registry(csv_rules_manager, xls_rules_manager, email_registry, beancount_manager)
+    registry = _build_registry(csv_rules_manager, xls_rules_manager, email_registry, beancount_manager, backup_manager)
 
     async def generate():
         # Load prompt inside the generator so any missing-file error surfaces

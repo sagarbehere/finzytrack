@@ -428,16 +428,18 @@ const textareaEl = ref<HTMLTextAreaElement | null>(null)
 const fileInputEl = ref<HTMLInputElement | null>(null)
 const messageListEl = ref<HTMLDivElement | null>(null)
 
-// Rule quick-fill fields — shown when a CSV/XLS file is attached
+// Rule quick-fill fields — shown when a CSV/XLS/EML file is attached
 const ruleFilename = ref('')
 const ruleAccount = ref('')
 const ruleCurrency = ref('')
-const expectedTxCount = ref<string>('')  // optional; used to validate parsed count
+const expectedTxCount = ref<string>('')  // optional; used to validate parsed count (CSV/XLS only)
 
 const showRuleFields = computed(() => {
   const name = attachedFile.value?.name.toLowerCase() ?? ''
-  return name.endsWith('.csv') || name.endsWith('.xls') || name.endsWith('.xlsx') || name.endsWith('.xlsm')
+  return name.endsWith('.csv') || name.endsWith('.xls') || name.endsWith('.xlsx') || name.endsWith('.xlsm') || name.endsWith('.eml')
 })
+
+const isEmailFile = computed(() => attachedFile.value?.name.toLowerCase().endsWith('.eml') ?? false)
 
 function suggestRuleFilename(uploadedName: string): string {
   return uploadedName.replace(/\.[^.]+$/, '.yaml')
@@ -472,12 +474,14 @@ async function handleFileSelected(event: Event) {
   if (!file) return
   try {
     attachedFile.value = await readFileAsBase64(file)
-    // Pre-populate rule fields and open preview for CSV/XLS files
+    // Pre-populate rule fields and open preview for CSV/XLS/EML files
     const lower = file.name.toLowerCase()
-    if (lower.endsWith('.csv') || lower.endsWith('.xls') || lower.endsWith('.xlsx') || lower.endsWith('.xlsm')) {
+    if (lower.endsWith('.csv') || lower.endsWith('.xls') || lower.endsWith('.xlsx') || lower.endsWith('.xlsm') || lower.endsWith('.eml')) {
       ruleFilename.value = suggestRuleFilename(file.name)
       ruleAccount.value = ''
       ruleCurrency.value = ''
+    }
+    if (lower.endsWith('.csv') || lower.endsWith('.xls') || lower.endsWith('.xlsx') || lower.endsWith('.xlsm')) {
       const sheets = parseFileForPreview(attachedFile.value)
       if (sheets.length > 0) {
         previewSheets.value = sheets
@@ -499,7 +503,9 @@ async function sendMessage() {
   // Build the final prompt, prepending rule quick-fill fields if set
   const parts: string[] = []
   if (showRuleFields.value && (ruleFilename.value.trim() || ruleAccount.value.trim() || ruleCurrency.value.trim())) {
-    let intro = 'Create a rule file to parse this file'
+    let intro = isEmailFile.value
+      ? 'Create an email import rule for this email'
+      : 'Create a rule file to parse this file'
     if (ruleFilename.value.trim()) intro += ` and save it as ${ruleFilename.value.trim()}`
     if (ruleAccount.value.trim())  intro += `. Beancount account is ${ruleAccount.value.trim()}`
     if (ruleCurrency.value.trim()) intro += `. Currency is ${ruleCurrency.value.trim()}`
