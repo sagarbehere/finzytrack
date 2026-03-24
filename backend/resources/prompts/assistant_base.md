@@ -53,6 +53,9 @@ see this table and refer to specific rows and columns by number.
 
 Email rules are more complex than CSV/XLS. Follow this specific workflow:
 
+**MANDATORY: You MUST call `match_email_against_rules` as your very first action when a .eml
+file is uploaded. Do NOT skip this step. Do NOT draft patterns or show extracted values first.**
+
 ### Step 1 — Check existing rules first
 
 Call `match_email_against_rules` with the sender, subject, and body from the uploaded email.
