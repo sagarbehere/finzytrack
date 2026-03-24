@@ -4,7 +4,7 @@
     <div class="mb-4 flex-none">
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">AI Assistant</h1>
       <p class="mt-1 text-gray-600 dark:text-gray-400">
-        Create and manage import rules by uploading a sample file and describing what you need
+        Ask questions about your finances, or upload a file to create import rules
       </p>
     </div>
 
@@ -59,8 +59,8 @@
           </div>
           <h3 class="text-base font-semibold text-gray-900 dark:text-white">Ready to help</h3>
           <p class="mt-1 text-sm text-gray-500 dark:text-gray-400 max-w-sm">
-            Upload a CSV, XLS, or .eml file and ask me to create an import rule for it.
-            You can also ask me to adjust an existing rule.
+            Ask me anything about your finances — spending, trends, comparisons.
+            Or upload a CSV, XLS, or .eml file to create an import rule.
           </p>
         </div>
 
@@ -363,7 +363,7 @@
         </div>
 
         <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">
-          Accepts CSV, XLS/XLSX, and .eml files &middot; Press Enter to send, Shift+Enter for new line
+          Ask about your finances or attach a file (CSV, XLS/XLSX, .eml) &middot; Enter to send, Shift+Enter for new line
         </p>
       </div>
     </div>
@@ -566,7 +566,8 @@ async function sendMessage() {
   let ruleWrittenThisTurn = false
 
   try {
-    for await (const event of streamAssistantChat(apiMessages, file, { page: 'assistant' })) {
+    const mode = file ? 'setup' : 'analyst'
+    for await (const event of streamAssistantChat(apiMessages, file, { page: 'assistant', mode })) {
       if (event.type === 'token') {
         assistantMsg.content += event.content
         scrollToBottom()

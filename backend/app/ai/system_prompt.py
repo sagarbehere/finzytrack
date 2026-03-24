@@ -2,15 +2,16 @@
 System prompt builder for the FinzyTrack AI assistant.
 
 Prompt content lives in backend/resources/prompts/ as plain Markdown files:
-  assistant_base.md   — role, workflow, instructions (always included)
-  schema_csv.md       — CSV rule schema + example
-  schema_xls.md       — XLS rule schema + example
-  schema_email.md     — email rule schema + example
+  assistant_base.md      — role, workflow, instructions (setup mode)
+  assistant_analyst.md   — role, workflow, instructions (analyst mode)
+  schema_csv.md          — CSV rule schema + example
+  schema_xls.md          — XLS rule schema + example
+  schema_email.md        — email rule schema + example
+  schema_postings.md     — postings table schema + sign conventions
 
-When the request context includes a known file_type, only the relevant schema
-is appended to the base prompt. This keeps the prompt compact for small models.
-When file_type is unknown or absent, all three schemas are included so the
-assistant can handle any type.
+Mode routing:
+  - file_type is set   → setup mode (assistant_base.md + relevant schema)
+  - no file_type        → analyst mode (assistant_analyst.md + schema_postings.md)
 """
 
 from functools import lru_cache
@@ -40,25 +41,28 @@ def build_system_prompt(context: dict) -> str:
     """
     Assemble the system prompt for the assistant.
 
-    Always includes assistant_base.md. Appends schema files based on
-    context["file_type"]:
-      - "csv"   → schema_csv.md only
-      - "xls"   → schema_xls.md only
-      - "email" → schema_email.md only
-      - absent / unknown → all three schemas (safe fallback, larger prompt)
+    When a file is attached (file_type is set), uses setup mode:
+      assistant_base.md + the relevant schema file(s).
+
+    When no file is attached, uses analyst mode:
+      assistant_analyst.md + schema_postings.md.
 
     Other recognised context keys:
       page: str  — current frontend page, appended as a brief note
     """
-    parts = [_load("assistant_base.md")]
-
     file_type = context.get("file_type")
-    if file_type in _SCHEMA_FILES:
-        parts.append(_load(_SCHEMA_FILES[file_type]))
+
+    if file_type:
+        # Setup mode — rule creation
+        parts = [_load("assistant_base.md")]
+        if file_type in _SCHEMA_FILES:
+            parts.append(_load(_SCHEMA_FILES[file_type]))
+        else:
+            for filename in _SCHEMA_FILES.values():
+                parts.append(_load(filename))
     else:
-        # No file attached yet, or unrecognised type — include everything
-        for filename in _SCHEMA_FILES.values():
-            parts.append(_load(filename))
+        # Analyst mode — financial questions
+        parts = [_load("assistant_analyst.md"), _load("schema_postings.md")]
 
     if context.get("page"):
         parts.append(f"## Current context\nThe user is on the '{context['page']}' page.")

@@ -42,6 +42,7 @@ from app.ai.tools.test_email_extraction import TestEmailExtractionTool
 from app.ai.tools.write_csv_rule import WriteCsvRuleTool
 from app.ai.tools.write_email_rule import WriteEmailRuleTool
 from app.ai.tools.execute_query import ExecuteQueryTool
+from app.ai.tools.get_ledger_context import GetLedgerContextTool
 from app.ai.tools.write_xls_rule import WriteXlsRuleTool
 from app.core.backup_manager import BackupManager
 from app.core.beancount_manager import BeancountManager
@@ -61,7 +62,7 @@ from app.dependencies import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-MAX_AGENT_ITERATIONS = 5
+MAX_AGENT_ITERATIONS = 8
 
 _CSV_EXTENSIONS  = {".csv", ".tsv", ".txt"}
 _XLS_EXTENSIONS  = {".xls", ".xlsx", ".xlsm", ".xlsb"}
@@ -89,6 +90,7 @@ _TOOL_MESSAGES = {
     "match_email_against_rules": "Checking existing email rules...",
     "test_email_extraction": "Testing extraction patterns...",
     "execute_query": "Running query...",
+    "get_ledger_context": "Loading ledger context...",
 }
 
 
@@ -148,6 +150,7 @@ def _build_registry(
         registry.register(ListAccountsTool(beancount_manager))
         if sqlite_path:
             registry.register(ExecuteQueryTool(sqlite_path))
+            registry.register(GetLedgerContextTool(beancount_manager, sqlite_path))
 
     return registry
 
@@ -217,6 +220,9 @@ async def _run_agent_loop(
                     ui_message = f"Found {len(result['files'])} files"
                 elif "content" in result:
                     ui_message = "File read successfully"
+                elif "date_range" in result:
+                    dr = result["date_range"]
+                    ui_message = f"Ledger context loaded ({dr.get('min_date', '?')} to {dr.get('max_date', '?')})"
                 elif "row_count" in result:
                     truncated = " (truncated)" if result.get("truncated") else ""
                     ui_message = f"Query returned {result['row_count']} rows{truncated}"
