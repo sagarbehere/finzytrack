@@ -28,6 +28,11 @@ Sign conventions (double-entry):
 - Use SUM(amount) for net figures — handles refunds automatically.
 - Net worth = SUM(amount) WHERE account_type IN ('Assets', 'Liabilities').
 
+Multi-currency:
+- The ledger may contain multiple currencies (e.g. USD and INR). NEVER sum amounts across currencies.
+- When aggregating amounts, always include "currency" in GROUP BY or filter to a single currency.
+- Example: GROUP BY account, currency — or — WHERE currency = 'USD'.
+
 Query rules:
 - SQLite-compatible SQL only. Only SELECT statements.
 - Use strftime() for dates, not DATE_TRUNC or EXTRACT.
@@ -35,3 +40,4 @@ Query rules:
 - Include ORDER BY when results have a natural ordering.
 - Use LIMIT to avoid returning too many rows.
 - Each transaction has 2+ postings summing to zero — be mindful of double-counting.
+- For "last year", "this month", etc. — derive the date from the data: e.g. (SELECT MAX(year) FROM postings) for current year, MAX(year)-1 for last year.

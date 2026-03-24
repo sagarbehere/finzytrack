@@ -33,7 +33,12 @@ async function fetchPostingsSchema(): Promise<string> {
  */
 async function buildSQLSystemPrompt(): Promise<string> {
   const schema = await fetchPostingsSchema()
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
   return `You are an SQL assistant for a personal finance application. You translate natural language questions about financial data into SQLite queries.
+
+Today is ${year}-${month}. Current year = ${year}, last year = ${year - 1}.
 
 DATABASE SCHEMA:
 ${schema}
