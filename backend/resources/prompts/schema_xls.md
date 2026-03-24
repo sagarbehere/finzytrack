@@ -54,13 +54,14 @@ default_currency: "USD"                 # (required) — infer from bank's count
 
 ```yaml
 name: "ICICI Bank Savings"
-sheet_index: 0
+sheet_name: "Statement"     # prefer sheet_name over sheet_index when the name is known
 skip_lines_start: 13
 skip_lines_end: 28
 date_format: "%d/%m/%Y"
 columns:
   date: 4
   payee: 6
+  memo: 3                   # Chq./Ref.No. — always populate when a reference column exists
   amount_debit: 7
   amount_credit: 8
 default_account: "Assets:ICICI:Savings"

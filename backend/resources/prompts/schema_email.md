@@ -23,12 +23,16 @@ lookback_days: 30           # How many days back to fetch emails (optional)
 bank_emails:                # Sender addresses to accept; others are ignored
   - "alerts@chase.com"
 
+body_keyword: "XX1234"      # Plain string added to IMAP SEARCH for server-side pre-filtering.
+                            # Use the masked account number from the email (e.g. "XX8968").
+                            # Required when the same bank sends alerts for multiple accounts
+                            # from the same sender address — pins this rule to one account.
+
 parsing_mode: "regex"       # "regex" is the standard mode
 
 transaction_types:          # One entry per distinct email format from this bank
-  - name: string            # e.g. "debit", "credit", "transfer"
+  - name: string            # e.g. "UPI_Debit", "NEFT_Credit", "debit_purchase"
     description: string
-    version: "1.0"
     email_filter:
       subject_regex: null   # Regex matched against subject (optional pre-filter)
       body_regex: null      # Regex matched against body (optional pre-filter)
@@ -46,10 +50,18 @@ transaction_types:          # One entry per distinct email format from this bank
         source: "email_header_date"
         format: null        # strptime format string, only needed if source=body/subject
         timezone: null      # e.g. "+05:30" — use when emails lack timezone info
-    mapping:                # Map extraction field names to rule field names
+    mapping:                # Map extraction field names → output field names
       amount: "amount"
       timestamp: "date"
-      # Other available targets: payee, narration, memo
+      # Available output targets:
+      #   amount    — transaction amount (required)
+      #   date      — transaction date (required)
+      #   payee     — merchant/counterparty name
+      #   narration — transaction description
+      #   memo      — additional note
+      #   external_id      — unique transaction reference (e.g. NEFT ref number, UPI ID)
+      #   external_id_type — literal string label for the ID type (e.g. "NEFT", "UPI")
+      #                      Unlike other mappings, this is a literal value, not an extracted field.
     amount_sign:
       field: "fixed"        # "fixed" or the name of an extracted field
       value: "negative"     # "negative" | "positive" (only when field=="fixed")
@@ -66,6 +78,8 @@ transaction_types:          # One entry per distinct email format from this bank
   separate rule files. Use `body_keyword` (IMAP server-side pre-filter) and `body_regex` on each
   transaction type to pin the rule to a specific account's masked number (e.g. "XX8968"). This
   prevents emails for one account from matching the rule for another.
+- **Always include `body_keyword`** — set it to the masked account number found in the email
+  body (e.g. "XX7317"). This is critical for users with multiple accounts at the same bank.
 - `imap_server` credentials must be left blank in the generated file — tell the user to fill them in.
 - Create one `transaction_types` entry per distinct email format. Banks often send different
   formats for debits vs credits; each needs its own entry with its own extraction patterns.
@@ -75,6 +89,8 @@ transaction_types:          # One entry per distinct email format from this bank
   on date strings and handles timezone correctly via the email headers.
 - `amount_sign.field: "fixed"` with `value: "negative"` marks all transactions of this type as debits.
   Use `value: "positive"` for credit/deposit alert emails.
+- When the email contains a unique reference number (NEFT ref, UPI ID, etc.), extract it and map
+  it to `external_id`. Set `external_id_type` to a literal string like `"NEFT"` or `"UPI"`.
 
 ### Confirmation checklist — show values, not regex
 
@@ -90,7 +106,10 @@ extracted from their email, not the underlying patterns:
 If the user says a value is wrong, locate the correct value in the email, update the pattern,
 retest with `test_email_extraction`, and show the corrected value before asking again.
 
-### Example (Chase debit alert)
+### Example 1 — Separate debit and credit transaction types (most common)
+
+Banks typically send different email formats for debits vs credits. Create one `transaction_types`
+entry for each:
 
 ```yaml
 metadata:
@@ -98,7 +117,7 @@ metadata:
   beancount_account: "Assets:Chase:Checking"
   default_currency: "USD"
   institution: "Chase"
-  description: "Chase debit card transaction alerts"
+  description: "Chase checking account transaction alerts"
   version: "1.0"
 
 imap_server:
@@ -112,6 +131,8 @@ lookback_days: 30
 bank_emails:
   - "no.reply.alerts@chase.com"
 
+body_keyword: "XX4829"       # masked account number from the email
+
 parsing_mode: "regex"
 
 transaction_types:
@@ -119,27 +140,99 @@ transaction_types:
     description: "Debit card purchase notification"
     email_filter:
       subject_regex: "Your .* transaction"
+      body_regex: "XX4829"
     extraction:
       amount:
-        pattern: "\$([\d,]+\.\d{2})"
+        pattern: '\$([\d,]+\.\d{2})'
         type: "float"
         source: "body"
         cleanup: "remove_commas"
       merchant:
-        pattern: "at (.+?) on"
+        pattern: 'at (.+?) on'
         type: "string"
         source: "body"
+      reference:
+        pattern: 'Ref #([A-Z0-9]+)'
+        type: "string"
+        source: "body"
+        optional: true
       timestamp:
         type: "datetime"
         source: "email_header_date"
     mapping:
       amount: "amount"
       merchant: "payee"
+      reference: "external_id"
+      external_id_type: "CARD"    # literal value, not an extracted field
       timestamp: "date"
     amount_sign:
       field: "fixed"
-      value: "negative"
+      value: "negative"           # debit = money out
     error_handling:
       required_fields: ["amount", "timestamp"]
+      partial_match_allowed: true
+
+  - name: "deposit"
+    description: "Deposit/credit notification"
+    email_filter:
+      subject_regex: "Deposit received"
+      body_regex: "XX4829"
+    extraction:
+      amount:
+        pattern: '\$([\d,]+\.\d{2})'
+        type: "float"
+        source: "body"
+        cleanup: "remove_commas"
+      timestamp:
+        type: "datetime"
+        source: "email_header_date"
+    mapping:
+      amount: "amount"
+      timestamp: "date"
+    amount_sign:
+      field: "fixed"
+      value: "positive"           # credit = money in
+    error_handling:
+      required_fields: ["amount", "timestamp"]
+      partial_match_allowed: true
+```
+
+### Example 2 — Field-based amount sign (single email format for both debits and credits)
+
+Some banks send one email format with a "Debit"/"Credit" label. Use field-based `amount_sign`
+to determine the sign from an extracted field:
+
+```yaml
+transaction_types:
+  - name: "transaction_alert"
+    description: "Combined debit/credit alert"
+    email_filter:
+      subject_regex: "Transaction alert"
+    extraction:
+      amount:
+        pattern: 'Amount: \$([\d,]+\.\d{2})'
+        type: "float"
+        source: "body"
+        cleanup: "remove_commas"
+      txn_type:
+        pattern: 'Type: (Debit|Credit)'
+        type: "string"
+        source: "body"
+      timestamp:
+        pattern: 'Date: (\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2})'
+        type: "datetime"
+        source: "body"
+        format: "%m/%d/%Y %H:%M:%S"
+        timezone: "+05:30"
+    mapping:
+      amount: "amount"
+      txn_type: "narration"
+      timestamp: "date"
+    amount_sign:
+      field: "txn_type"            # use the extracted field value to determine sign
+      negative_values: ["Debit"]
+      positive_values: ["Credit"]
+    error_handling:
+      required_fields: ["amount", "timestamp", "txn_type"]
       partial_match_allowed: true
 ```
