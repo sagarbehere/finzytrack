@@ -118,6 +118,7 @@ def _build_registry(
     email_registry: AccountProfileRegistry,
     beancount_manager: BeancountManager,
     backup_manager: BackupManager,
+    file_type: str | None = None,
     sqlite_path: str | None = None,
 ) -> ToolRegistry:
     csv_dir = Path(csv_rules_manager.rules_dir) if csv_rules_manager.rules_dir else None
@@ -127,16 +128,35 @@ def _build_registry(
     allowed_read_dirs = [d for d in [csv_dir, xls_dir, email_dir] if d is not None]
 
     registry = ToolRegistry()
-    registry.register(WriteCsvRuleTool(csv_dir, backup_manager))
-    registry.register(WriteXlsRuleTool(xls_dir, backup_manager))
-    registry.register(WriteEmailRuleTool(email_dir, backup_manager))
-    registry.register(ReadFileTool(allowed_read_dirs))
-    registry.register(ListAccountsTool(beancount_manager))
-    registry.register(ListRuleFilesTool(csv_dir, xls_dir, email_dir))
-    registry.register(MatchEmailAgainstRulesTool(email_registry))
-    registry.register(TestEmailExtractionTool())
-    if sqlite_path:
-        registry.register(ExecuteQueryTool(sqlite_path))
+
+    if file_type:
+        # Setup mode — register only tools relevant to the attached file type
+        registry.register(ReadFileTool(allowed_read_dirs))
+        registry.register(ListAccountsTool(beancount_manager))
+        registry.register(ListRuleFilesTool(csv_dir, xls_dir, email_dir))
+
+        if file_type == "csv":
+            registry.register(WriteCsvRuleTool(csv_dir, backup_manager))
+        elif file_type == "xls":
+            registry.register(WriteXlsRuleTool(xls_dir, backup_manager))
+        elif file_type == "email":
+            registry.register(WriteEmailRuleTool(email_dir, backup_manager))
+            registry.register(MatchEmailAgainstRulesTool(email_registry))
+            registry.register(TestEmailExtractionTool())
+    else:
+        # No file attached — analyst/recipe mode (or no context yet)
+        # Include all setup tools as fallback, plus query tools
+        registry.register(WriteCsvRuleTool(csv_dir, backup_manager))
+        registry.register(WriteXlsRuleTool(xls_dir, backup_manager))
+        registry.register(WriteEmailRuleTool(email_dir, backup_manager))
+        registry.register(ReadFileTool(allowed_read_dirs))
+        registry.register(ListAccountsTool(beancount_manager))
+        registry.register(ListRuleFilesTool(csv_dir, xls_dir, email_dir))
+        registry.register(MatchEmailAgainstRulesTool(email_registry))
+        registry.register(TestEmailExtractionTool())
+        if sqlite_path:
+            registry.register(ExecuteQueryTool(sqlite_path))
+
     return registry
 
 
@@ -268,11 +288,12 @@ async def assistant_chat(
     if file_type:
         context["file_type"] = file_type
 
-    # Only provide execute_query when no file is attached (analyst/recipe mode).
-    # In setup mode (file attached), the tool is irrelevant and inflates the
-    # tool schema payload sent to the LLM — which can cause issues with some models.
-    sqlite_path = config.analytics.sqlite.export_path if not body.file else None
-    registry = _build_registry(csv_rules_manager, xls_rules_manager, email_registry, beancount_manager, backup_manager, sqlite_path)
+    sqlite_path = config.analytics.sqlite.export_path
+    registry = _build_registry(
+        csv_rules_manager, xls_rules_manager, email_registry,
+        beancount_manager, backup_manager,
+        file_type=file_type, sqlite_path=sqlite_path,
+    )
 
     async def generate():
         # Load prompt inside the generator so any missing-file error surfaces
