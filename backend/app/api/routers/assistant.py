@@ -268,7 +268,10 @@ async def assistant_chat(
     if file_type:
         context["file_type"] = file_type
 
-    sqlite_path = config.analytics.sqlite.export_path
+    # Only provide execute_query when no file is attached (analyst/recipe mode).
+    # In setup mode (file attached), the tool is irrelevant and inflates the
+    # tool schema payload sent to the LLM — which can cause issues with some models.
+    sqlite_path = config.analytics.sqlite.export_path if not body.file else None
     registry = _build_registry(csv_rules_manager, xls_rules_manager, email_registry, beancount_manager, backup_manager, sqlite_path)
 
     async def generate():
