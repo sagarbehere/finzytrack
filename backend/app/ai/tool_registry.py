@@ -23,8 +23,20 @@ class ToolRegistry:
         if not tool:
             return {"success": False, "error": f"Unknown tool: {name}"}
         # Strip any keys the tool didn't declare — LLMs occasionally hallucinate extras
-        declared = set(tool.parameters_schema.get("properties", {}).keys())
+        schema = tool.parameters_schema
+        declared = set(schema.get("properties", {}).keys())
         filtered = {k: v for k, v in arguments.items() if k in declared}
+
+        # Check required args before calling — gives the LLM an actionable error
+        required = set(schema.get("required", []))
+        missing = required - set(filtered.keys())
+        if missing:
+            return {
+                "success": False,
+                "error": f"Missing required arguments: {', '.join(sorted(missing))}. "
+                         f"Please call {name} again with all required arguments.",
+            }
+
         try:
             return await tool.execute(**filtered)
         except Exception as e:
