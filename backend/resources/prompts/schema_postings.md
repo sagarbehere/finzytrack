@@ -10,8 +10,10 @@ transaction_tags        TEXT    -- JSON array of tag strings
 transaction_links       TEXT    -- JSON array of link strings
 
 -- Posting-level (each transaction has 2+ postings that sum to zero):
-account                 TEXT    -- Full path, e.g. "Expenses:Food:Groceries"
+account                 TEXT    -- Full colon-separated path, e.g. "Expenses:Food:Groceries"
 account_type            TEXT    -- First segment: Assets, Liabilities, Equity, Income, Expenses
+-- When asked for "categories", GROUP BY account directly. Account paths ARE the categories.
+-- Do NOT try to parse or split the account string. "Expenses:Food" is the category name.
 amount                  REAL    -- Positive = debit, negative = credit
 currency                TEXT    -- e.g. "USD", "INR"
 
