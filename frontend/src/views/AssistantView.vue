@@ -423,6 +423,10 @@ const previewFileName = ref<string | null>(null)
 // Persistent tracking of the last successfully written rule (survives across turns)
 const lastSavedRuleTool = ref<'write_csv_rule' | 'write_xls_rule' | null>(null)
 const lastSavedRuleFilename = ref<string | null>(null)
+// Mode set by the first file attachment in the conversation — persists across follow-up turns
+// so the backend keeps receiving setup tools even after the file is cleared from the input.
+const sessionMode = ref<'setup' | 'analyst'>('analyst')
+const sessionFileType = ref<string | null>(null)  // 'csv' | 'xls' | 'email' | null
 
 const textareaEl = ref<HTMLTextAreaElement | null>(null)
 const fileInputEl = ref<HTMLInputElement | null>(null)
@@ -537,7 +541,15 @@ async function sendMessage() {
   ruleAccount.value = ''
   ruleCurrency.value = ''
   const expectedCount = expectedTxCount.value ? parseInt(expectedTxCount.value, 10) : null
-  if (file) sentFile.value = file  // keep for post-stream validation; persist across turns
+  if (file) {
+    sentFile.value = file  // keep for post-stream validation; persist across turns
+    sessionMode.value = 'setup'  // lock mode for the rest of the conversation
+    // Detect file type for follow-up turns when the file isn't re-sent
+    const lower = file.name.toLowerCase()
+    if (lower.endsWith('.eml')) sessionFileType.value = 'email'
+    else if (lower.endsWith('.csv') || lower.endsWith('.tsv') || lower.endsWith('.txt')) sessionFileType.value = 'csv'
+    else if (/\.(xls|xlsx|xlsm|xlsb)$/i.test(file.name)) sessionFileType.value = 'xls'
+  }
   if (expectedCount !== null) sentExpectedCount.value = expectedCount
   expectedTxCount.value = ''
   attachedFile.value = null
@@ -566,8 +578,9 @@ async function sendMessage() {
   let ruleWrittenThisTurn = false
 
   try {
-    const mode = file ? 'setup' : 'analyst'
-    for await (const event of streamAssistantChat(apiMessages, file, { page: 'assistant', mode })) {
+    const ctx: Record<string, string> = { page: 'assistant', mode: sessionMode.value }
+    if (sessionFileType.value) ctx.file_type = sessionFileType.value
+    for await (const event of streamAssistantChat(apiMessages, file, ctx)) {
       if (event.type === 'token') {
         assistantMsg.content += event.content
         scrollToBottom()

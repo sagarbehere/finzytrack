@@ -83,6 +83,17 @@ async def _stream_openai(
         call_kwargs["tools"] = tools
         call_kwargs["tool_choice"] = "auto"
 
+    # Debug: log the request payload (tools + message count, not full content)
+    logger.debug(
+        "OpenAI request: model=%s, messages=%d, tools=%s, max_tokens=%d",
+        config.model,
+        len(messages),
+        [t["function"]["name"] for t in tools] if tools else [],
+        config.max_tokens,
+    )
+    if tools:
+        logger.debug("Tool schemas: %s", json.dumps(tools, indent=2))
+
     # Accumulate streamed tool-call deltas keyed by index
     tool_call_accum: dict[int, dict] = {}
 
@@ -109,6 +120,10 @@ async def _stream_openai(
                     acc["arguments"] += tc.function.arguments
 
     # Emit completed tool calls
+    if tool_call_accum:
+        logger.debug("Tool calls received: %s", [acc["name"] for acc in tool_call_accum.values()])
+    else:
+        logger.debug("No tool calls in this response (text-only)")
     for acc in tool_call_accum.values():
         yield ToolCallEvent(id=acc["id"], name=acc["name"], arguments=acc["arguments"])
 

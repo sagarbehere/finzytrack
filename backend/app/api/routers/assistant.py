@@ -227,6 +227,23 @@ async def _run_agent_loop(
                 elif "row_count" in result:
                     truncated = " (truncated)" if result.get("truncated") else ""
                     ui_message = f"Query returned {result['row_count']} rows{truncated}"
+                elif "outcome" in result:
+                    # match_email_against_rules
+                    outcome = result["outcome"]
+                    if outcome == "full_match":
+                        ui_message = f"Email already handled by {result.get('matched_type', 'existing rule')}"
+                    elif outcome == "sender_match_no_type":
+                        ui_message = "Sender recognised, new email format"
+                    else:
+                        ui_message = "No existing rule matches"
+                elif "summary" in result and "all_fields_matched" in result.get("summary", {}):
+                    # test_email_extraction
+                    summary = result["summary"]
+                    if summary["all_fields_matched"]:
+                        ui_message = "All extraction patterns matched"
+                    else:
+                        failed = summary.get("failed_fields", [])
+                        ui_message = f"Extraction failed for: {', '.join(failed)}"
                 else:
                     ui_message = "Done"
             else:
@@ -282,10 +299,15 @@ async def assistant_chat(
             file_annotation = f"\n\n[File attachment failed to process: {e}]"
 
     # Build context, injecting detected file type so the prompt loader can
-    # include only the relevant schema (keeps the prompt small for local models)
+    # include only the relevant schema (keeps the prompt small for local models).
+    # On follow-up turns the file may not be re-sent, but the frontend persists
+    # the session mode and file_type so we can still route to the correct tools.
     context = {**(body.context or {})}
     if file_type:
         context["file_type"] = file_type
+    elif context.get("file_type"):
+        # Follow-up turn — frontend sent the file_type from the original attachment
+        file_type = context["file_type"]
 
     sqlite_path = config.analytics.sqlite.export_path
     registry = _build_registry(
