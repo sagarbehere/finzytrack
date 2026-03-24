@@ -3,48 +3,40 @@ import type { NLParserConfig } from './nlParser'
 export type QueryLanguage = 'sqlite' | 'beanquery'
 
 /**
+ * Cached schema text fetched from the backend.
+ * Populated lazily on first call to generateQuery with language='sqlite'.
+ */
+let _cachedPostingsSchema: string | null = null
+
+/**
+ * Fetch the postings table schema from the backend (single source of truth).
+ * Falls back to a minimal inline schema if the fetch fails.
+ */
+async function fetchPostingsSchema(): Promise<string> {
+  if (_cachedPostingsSchema) return _cachedPostingsSchema
+  try {
+    const res = await fetch('/api/ledger/schema/postings')
+    if (res.ok) {
+      _cachedPostingsSchema = await res.text()
+      return _cachedPostingsSchema
+    }
+  } catch {
+    // Fall through to fallback
+  }
+  // Minimal fallback so the feature still works if the backend endpoint is unreachable
+  return 'Table "postings": transaction_id, transaction_date, transaction_payee, transaction_narration, transaction_flag, transaction_tags, transaction_links, account, account_type, amount, currency, year, year_month, quarter. Amounts: positive=debit, negative=credit. SQLite only. SELECT only.'
+}
+
+/**
  * Build a system prompt that teaches the LLM about the postings table schema
  * and instructs it to produce SQLite-compatible SQL.
  */
-function buildSQLSystemPrompt(): string {
+async function buildSQLSystemPrompt(): Promise<string> {
+  const schema = await fetchPostingsSchema()
   return `You are an SQL assistant for a personal finance application. You translate natural language questions about financial data into SQLite queries.
 
 DATABASE SCHEMA:
-There is one main table called "postings" with these columns:
-
--- Transaction-level (same for all postings in a transaction):
-transaction_id          -- UUID of the transaction
-transaction_date        -- Date as TEXT in YYYY-MM-DD format
-transaction_payee       -- Payee/merchant name (TEXT)
-transaction_narration   -- Description/narration (TEXT)
-transaction_flag        -- '*' (cleared) or '!' (pending)
-transaction_tags        -- JSON array of tag strings
-transaction_links       -- JSON array of link strings
-
--- Posting-level (each transaction has multiple postings that sum to zero):
-account                 -- Full account path, e.g. "Expenses:Food:Groceries" (TEXT)
-account_type            -- First segment: "Assets", "Liabilities", "Equity", "Income", "Expenses"
-amount                  -- Decimal amount (REAL). Positive for debits, negative for credits.
-currency                -- Currency code, e.g. "USD", "INR" (TEXT)
-
--- Derived columns:
-year                    -- Year extracted from transaction_date (INTEGER)
-year_month              -- YYYY-MM format (TEXT)
-quarter                 -- Quarter 1-4 (INTEGER)
-
-IMPORTANT RULES:
-- Generate SQLite-compatible SQL only
-- Income amounts are NEGATIVE in the database (money flowing in). Use -amount or ABS(amount) when displaying income.
-- Expense amounts are POSITIVE in the database.
-- Asset amounts are POSITIVE (what you own).
-- Liability amounts are NEGATIVE (what you owe).
-- Net worth = SUM of Assets + Liabilities (liabilities are already negative).
-- Each transaction has at least 2 postings that sum to zero.
-- Use strftime() for date functions (SQLite), not DATE_TRUNC or EXTRACT.
-- When grouping by month, use year_month or strftime('%Y-%m', transaction_date).
-- Always include an ORDER BY clause when results have a natural ordering.
-- Use LIMIT when appropriate to avoid returning too many rows.
-- Only produce SELECT statements. Never produce INSERT, UPDATE, DELETE, DROP, ALTER, or CREATE statements.
+${schema}
 
 OUTPUT: Respond with ONLY the SQL query. No explanation, no markdown fences, no comments.`
 }
@@ -131,7 +123,7 @@ export async function generateQuery(
 
   const systemPrompt = language === 'beanquery'
     ? buildBQLSystemPrompt()
-    : buildSQLSystemPrompt()
+    : await buildSQLSystemPrompt()
 
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), 30_000)

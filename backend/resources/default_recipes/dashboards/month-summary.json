@@ -1,0 +1,110 @@
+{
+  "id": "month-summary",
+  "title": "Month Summary",
+  "description": "Monthly financial summary with income, expenses, and expense treemap breakdown",
+  "parameters": [
+    {
+      "name": "year",
+      "label": "Year",
+      "type": "select",
+      "default": { "$gen": "currentYear" },
+      "options": { "$gen": "yearRange", "count": 5 }
+    },
+    {
+      "name": "month",
+      "label": "Month",
+      "type": "select",
+      "default": { "$gen": "currentMonth" },
+      "options": { "$gen": "monthOptions" }
+    }
+  ],
+  "layout": {
+    "columns": 12,
+    "gap": "1.5rem",
+    "rowHeight": "140px",
+    "widgets": [
+      {
+        "widgetId": "monthly-income",
+        "gridArea": "1 / 1 / 2 / 4"
+      },
+      {
+        "widgetId": "monthly-expenses",
+        "gridArea": "1 / 4 / 2 / 7"
+      },
+      {
+        "widgetId": "monthly-estimated-taxes",
+        "gridArea": "1 / 7 / 2 / 10"
+      },
+      {
+        "widgetId": "monthly-savings",
+        "gridArea": "1 / 10 / 2 / 13"
+      },
+      {
+        "widgetId": "expense-treemap",
+        "gridArea": "2 / 1 / 6 / 13"
+      }
+    ]
+  },
+  "widgets": [
+    {
+      "id": "monthly-income",
+      "title": "Total Income",
+      "query": "SELECT currency, SUM(amount) * -1 AS amount FROM postings WHERE account_type = 'Income' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY currency",
+      "visualization": {
+        "type": "kpi",
+        "icon": "\u2191",
+        "iconColor": "green",
+        "multiCurrency": true,
+        "clickLink": {
+          "name": "transactions",
+          "query": {
+            "accountContains": "Income",
+            "dateFrom": "{{dateFrom}}",
+            "dateTo": "{{dateTo}}"
+          }
+        }
+      }
+    },
+    {
+      "id": "monthly-expenses",
+      "title": "Total Expenses",
+      "query": "SELECT currency, SUM(amount) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY currency",
+      "visualization": {
+        "type": "kpi",
+        "icon": "\u2193",
+        "iconColor": "red",
+        "multiCurrency": true,
+        "clickLink": {
+          "name": "transactions",
+          "query": {
+            "accountContains": "Expenses",
+            "dateFrom": "{{dateFrom}}",
+            "dateTo": "{{dateTo}}"
+          }
+        }
+      }
+    },
+    {
+      "id": "monthly-estimated-taxes",
+      "title": "Estimated Taxes",
+      "helpText": "Estimated as 50% of Income:Gross",
+      "query": "SELECT currency, (SUM(amount) / 2.0) * -1 AS amount FROM postings WHERE account_type = 'Income' AND LOWER(account) LIKE 'income:gross%' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY currency",
+      "visualization": {
+        "type": "kpi",
+        "icon": "%",
+        "multiCurrency": true
+      }
+    },
+    {
+      "id": "monthly-savings",
+      "title": "Estimated Savings",
+      "query": "SELECT currency, (-1 * SUM(CASE WHEN account_type = 'Income' THEN amount ELSE 0 END)) - ((SUM(CASE WHEN LOWER(account) LIKE 'income:gross%' THEN amount ELSE 0 END) / 2.0) * -1) - (SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END)) AS amount FROM postings WHERE year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY currency",
+      "visualization": {
+        "type": "kpi",
+        "icon": "$",
+        "iconColor": "blue",
+        "multiCurrency": true
+      }
+    }
+  ]
+}

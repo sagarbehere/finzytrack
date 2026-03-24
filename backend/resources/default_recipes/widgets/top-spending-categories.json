@@ -1,0 +1,50 @@
+{
+  "id": "top-spending-categories",
+  "title": "Top Spending Categories",
+  "description": "Highest expense accounts by total amount",
+  "parameters": [
+    {
+      "name": "limit",
+      "label": "Show Top",
+      "type": "number",
+      "default": 10,
+      "min": 5,
+      "max": 20
+    }
+  ],
+  "query": "SELECT account, SUM(amount) AS total FROM postings WHERE account_type = 'Expenses' AND currency = 'USD' GROUP BY account ORDER BY total ASC LIMIT :limit",
+  "visualization": {
+    "type": "chart",
+    "chartType": "bar",
+    "seriesLabelFormat": "currency",
+    "xAxisLabelFormat": "compact",
+    "yAxisLabelFormat": "accountName",
+    "options": {
+      "grid": {
+        "left": 120,
+        "right": 24,
+        "top": 16,
+        "bottom": 16
+      },
+      "xAxis": {
+        "type": "value"
+      },
+      "yAxis": {
+        "type": "category",
+        "axisLabel": {
+          "width": 100,
+          "overflow": "truncate"
+        }
+      },
+      "series": [
+        {
+          "name": "Amount",
+          "type": "bar",
+          "encode": { "x": "total", "y": "account" },
+          "itemStyle": { "color": "#6366f1" },
+          "label": { "show": true, "position": "right" }
+        }
+      ]
+    }
+  }
+}

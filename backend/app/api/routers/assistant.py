@@ -41,6 +41,7 @@ from app.ai.tools.read_file import ReadFileTool
 from app.ai.tools.test_email_extraction import TestEmailExtractionTool
 from app.ai.tools.write_csv_rule import WriteCsvRuleTool
 from app.ai.tools.write_email_rule import WriteEmailRuleTool
+from app.ai.tools.execute_query import ExecuteQueryTool
 from app.ai.tools.write_xls_rule import WriteXlsRuleTool
 from app.core.backup_manager import BackupManager
 from app.core.beancount_manager import BeancountManager
@@ -87,6 +88,7 @@ _TOOL_MESSAGES = {
     "list_rule_files": "Listing rule files...",
     "match_email_against_rules": "Checking existing email rules...",
     "test_email_extraction": "Testing extraction patterns...",
+    "execute_query": "Running query...",
 }
 
 
@@ -116,6 +118,7 @@ def _build_registry(
     email_registry: AccountProfileRegistry,
     beancount_manager: BeancountManager,
     backup_manager: BackupManager,
+    sqlite_path: str | None = None,
 ) -> ToolRegistry:
     csv_dir = Path(csv_rules_manager.rules_dir) if csv_rules_manager.rules_dir else None
     xls_dir = Path(xls_rules_manager.rules_dir) if xls_rules_manager.rules_dir else None
@@ -132,6 +135,8 @@ def _build_registry(
     registry.register(ListRuleFilesTool(csv_dir, xls_dir, email_dir))
     registry.register(MatchEmailAgainstRulesTool(email_registry))
     registry.register(TestEmailExtractionTool())
+    if sqlite_path:
+        registry.register(ExecuteQueryTool(sqlite_path))
     return registry
 
 
@@ -200,6 +205,9 @@ async def _run_agent_loop(
                     ui_message = f"Found {len(result['files'])} files"
                 elif "content" in result:
                     ui_message = "File read successfully"
+                elif "row_count" in result:
+                    truncated = " (truncated)" if result.get("truncated") else ""
+                    ui_message = f"Query returned {result['row_count']} rows{truncated}"
                 else:
                     ui_message = "Done"
             else:
@@ -260,7 +268,8 @@ async def assistant_chat(
     if file_type:
         context["file_type"] = file_type
 
-    registry = _build_registry(csv_rules_manager, xls_rules_manager, email_registry, beancount_manager, backup_manager)
+    sqlite_path = config.analytics.sqlite.export_path
+    registry = _build_registry(csv_rules_manager, xls_rules_manager, email_registry, beancount_manager, backup_manager, sqlite_path)
 
     async def generate():
         # Load prompt inside the generator so any missing-file error surfaces

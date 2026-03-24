@@ -13,14 +13,14 @@ import { validateJsonWidgetRecipe, validateJsonDashboardRecipe } from '@/composa
 import { useNotifications } from '@/composables/useNotifications'
 
 /**
- * Composable for loading user recipes from public/recipes/ at runtime
+ * Composable for loading JSON recipes from the backend API at runtime
  * and merging them with built-in TypeScript recipes.
  *
  * Generator references ({ "$gen": "name", ...args }) in JSON recipes
  * are automatically resolved at load time.
  */
 
-const RECIPES_BASE_PATH = '/recipes'
+const RECIPES_BASE_PATH = '/api/recipes'
 
 export interface RecipeFileError {
   file: string

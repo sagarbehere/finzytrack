@@ -163,6 +163,9 @@ class Config(BaseModel):
     # XLS import rules directory
     xls_rules_dir: Optional[str] = Field(default=None, description="Directory containing XLS import rule YAML files")
 
+    # Dashboard recipes directory
+    recipes_dir: str = Field(default="./config/recipes/", description="Directory containing dashboard recipe JSON files")
+
     # Analytics configuration
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig, description="Analytics and reporting settings")
 

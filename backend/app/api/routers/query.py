@@ -5,9 +5,11 @@ import asyncio
 import logging
 import sqlite3
 import time
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Body
+from fastapi.responses import PlainTextResponse
 
 from app.schemas.response_schemas import ApiResponse
 from app.schemas.query_schemas import QueryRequest, QueryData
@@ -165,6 +167,28 @@ async def execute_query(
     )
 
     return success_json_response(query_data)
+
+
+_SCHEMA_POSTINGS_PATH = Path(__file__).parents[3] / "resources" / "prompts" / "schema_postings.md"
+
+
+@router.get(
+    "/schema/postings",
+    response_class=PlainTextResponse,
+    operation_id="getPostingsSchema",
+)
+async def get_postings_schema():
+    """Return the postings table schema as Markdown (used by the frontend SQL assistant)."""
+    if not _SCHEMA_POSTINGS_PATH.is_file():
+        raise APIError(
+            message="Schema file not found",
+            code="SCHEMA_NOT_FOUND",
+            status_code=500,
+        )
+    return PlainTextResponse(
+        content=_SCHEMA_POSTINGS_PATH.read_text(encoding="utf-8"),
+        media_type="text/markdown",
+    )
 
 
 def _execute_sqlite_query(db_path: str, query_str: str) -> dict:

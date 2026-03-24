@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Optional
 from contextlib import asynccontextmanager
 
+import shutil
+
 import click
 import uvicorn
 from fastapi import FastAPI
@@ -19,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import Config, ConfigurationError
 from .api.routers.importer import ofx_accounts, transaction, csv_rules, xls_rules, email as email_import_router
-from .api.routers import accounts, commodities, ledger_export, ledger_transactions, query, config as config_router, files, ledger, assistant
+from .api.routers import accounts, commodities, ledger_export, ledger_transactions, query, config as config_router, files, ledger, assistant, recipes
 from .core.beancount_manager import BeancountManager
 from .error_handler import setup_error_handlers
 from .core.backup_manager import BackupManager
@@ -68,6 +70,19 @@ def setup_logging(level: str, log_file: str, log_format: str) -> None:
 
 
 
+_DEFAULT_RECIPES_DIR = Path(__file__).parents[1] / "resources" / "default_recipes"
+
+
+def _seed_recipes(recipes_dir: Path) -> None:
+    """Copy bundled default recipes to config/recipes/ if the directory is empty or absent."""
+    if recipes_dir.exists() and any(recipes_dir.iterdir()):
+        return  # User already has recipes — don't overwrite
+    if not _DEFAULT_RECIPES_DIR.is_dir():
+        return  # No bundled defaults to copy
+    shutil.copytree(_DEFAULT_RECIPES_DIR, recipes_dir, dirs_exist_ok=True)
+    logging.getLogger(__name__).info(f"Seeded default recipes → {recipes_dir}")
+
+
 def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
     """Create FastAPI application with configuration."""
     # Get logger for this module
@@ -102,6 +117,9 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
         email_rules_path = Path(config.email_import.rules_directory)
         email_registry = AccountProfileRegistry(email_rules_path)
         logger.info("Email import disabled (email_import.enabled=false)")
+
+    # 2d. Seed default recipes if config/recipes/ is absent
+    _seed_recipes(Path(config.recipes_dir))
 
     # 3. Create LedgerInitializer
     ledger_initializer = LedgerInitializer(
@@ -229,6 +247,7 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
     app.include_router(files.router, prefix="/api", tags=["files"])
     app.include_router(ledger.router, prefix="/api", tags=["ledger"])
     app.include_router(assistant.router, prefix="/api", tags=["assistant"])
+    app.include_router(recipes.router, prefix="/api", tags=["recipes"])
 
     
     # Serve bundled Vue frontend (used in packaged/desktop mode)
