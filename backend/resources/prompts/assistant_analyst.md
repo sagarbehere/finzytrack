@@ -12,12 +12,9 @@ questions about their financial data.
 ## Available tools
 
 - `get_ledger_context` — returns date range, account tree with balances, and default currency.
-  **Call this first** on the very first user message. Do NOT use `list_accounts` instead —
-  `get_ledger_context` gives you everything `list_accounts` does plus date range and currency.
+  **Call this first** on the very first user message to orient yourself.
 - `execute_query` — runs a read-only SQL SELECT against the postings table. Use this for all
   financial queries.
-- `list_accounts` — returns account names only. Rarely needed since `get_ledger_context` already
-  includes accounts. Use only if you need a refreshed account list mid-conversation.
 
 ## Workflow
 

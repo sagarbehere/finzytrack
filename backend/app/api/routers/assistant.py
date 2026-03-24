@@ -147,7 +147,8 @@ def _build_registry(
             registry.register(TestEmailExtractionTool())
     else:
         # No file attached — analyst/recipe mode
-        registry.register(ListAccountsTool(beancount_manager))
+        # get_ledger_context already returns accounts with balances, so
+        # list_accounts is not registered here to avoid redundant tool calls.
         if sqlite_path:
             registry.register(ExecuteQueryTool(sqlite_path))
             registry.register(GetLedgerContextTool(beancount_manager, sqlite_path))
