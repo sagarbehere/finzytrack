@@ -111,7 +111,9 @@ async def patch_config_endpoint(
 
     # Write back atomically (with backup)
     with backup_manager.atomic_write(str(config_path)) as f:
+        f.seek(0)
         yaml.dump(data, f)
+        f.truncate()
 
     # Reload the in-memory config
     restart_required, restart_reason = config_manager.reload_config(_to_plain_dict(data))
