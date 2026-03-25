@@ -47,6 +47,7 @@ from app.ai.tools.get_ledger_context import GetLedgerContextTool
 from app.ai.tools.write_xls_rule import WriteXlsRuleTool
 from app.ai.tools.list_recipes import ListRecipesTool
 from app.ai.tools.read_recipe import ReadRecipeTool
+from app.ai.tools.preview_recipe import PreviewRecipeTool
 from app.ai.tools.write_recipe import WriteRecipeTool
 from app.core.backup_manager import BackupManager
 from app.core.beancount_manager import BeancountManager
@@ -98,6 +99,7 @@ _TOOL_MESSAGES = {
     "list_recipes": "Listing recipes...",
     "read_recipe": "Reading recipe...",
     "write_recipe": "Saving dashboard recipe...",
+    "preview_recipe": "Preparing dashboard preview...",
 }
 
 
@@ -163,6 +165,7 @@ def _build_registry(
         if recipes_dir:
             registry.register(ListRecipesTool(recipes_dir))
             registry.register(ReadRecipeTool(recipes_dir))
+            registry.register(PreviewRecipeTool(sqlite_path))
             registry.register(WriteRecipeTool(recipes_dir, sqlite_path, backup_manager))
 
     return registry
@@ -287,6 +290,15 @@ async def _run_agent_loop(
                         ui_message = "Sender recognised, new email format"
                     else:
                         ui_message = "No existing rule matches"
+                elif "recipe" in result and tc.name == "preview_recipe":
+                    ui_message = f"Preview ready: {result['recipe'].get('title', 'Dashboard')}"
+                elif "manifest" in result:
+                    manifest = result["manifest"]
+                    n_d = len(manifest.get("dashboards", []))
+                    n_w = len(manifest.get("widgets", []))
+                    ui_message = f"Found {n_d} dashboards, {n_w} widgets"
+                elif "manifest_entry" in result:
+                    ui_message = f"Saved dashboard `{result['manifest_entry']}`"
                 elif "summary" in result and "all_fields_matched" in result.get("summary", {}):
                     # test_email_extraction
                     summary = result["summary"]
@@ -300,12 +312,17 @@ async def _run_agent_loop(
             else:
                 ui_message = result.get("error", "Unknown error")
 
-            yield {
+            tool_result_event: dict = {
                 "type": "tool_result",
                 "tool": tc.name,
                 "success": success,
                 "message": ui_message,
             }
+            # Attach recipe JSON for preview_recipe so the frontend can render it
+            if tc.name == "preview_recipe" and success and "recipe" in result:
+                tool_result_event["recipe"] = result["recipe"]
+
+            yield tool_result_event
 
             messages.append(build_tool_result_message(tc.id, result))
 

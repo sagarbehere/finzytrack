@@ -4,8 +4,9 @@
     <div class="mb-4 flex-none flex items-start justify-between gap-4">
       <div>
         <h1 class="text-2xl font-bold text-gray-900 dark:text-white">AI Assistant</h1>
-        <p class="mt-1 text-gray-600 dark:text-gray-400">
-          Ask questions about your finances, or upload a file to create import rules
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          AI is experimental and can make mistakes. Review all outputs carefully.
+          <a href="#" class="ml-1 text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">What data is shared with the AI model?</a>
         </p>
       </div>
       <button
@@ -52,13 +53,13 @@
       v-else
       class="flex flex-col flex-1 min-h-0 bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 overflow-hidden"
     >
-      <!-- Content row: chat pane + file preview sidebar -->
+      <!-- Content row: chat pane + sidebar -->
       <div class="flex flex-1 min-h-0 overflow-hidden">
 
-        <!-- Chat pane (45% when sidebar open, full width otherwise) -->
+        <!-- Chat pane -->
         <div
-          class="flex flex-col min-h-0 overflow-hidden transition-all duration-200"
-          :class="previewSheets ? 'w-[45%]' : 'w-full'"
+          class="flex flex-col min-h-0 overflow-hidden"
+          :style="{ width: sidebarOpen ? `${100 - sidebarWidthPct}%` : '100%' }"
         >
 
       <!-- Message list -->
@@ -71,9 +72,8 @@
             </svg>
           </div>
           <h3 class="text-base font-semibold text-gray-900 dark:text-white">Ready to help</h3>
-          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400 max-w-sm">
-            Ask me anything about your finances — spending, trends, comparisons.
-            Or upload a CSV, XLS, or .eml file to create an import rule.
+          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400 max-w-md">
+            Ask about your finances, build a dashboard, or attach a file to create import rules.
           </p>
         </div>
 
@@ -90,7 +90,7 @@
                   v-if="msg.fileSheets"
                   class="inline-flex items-center gap-1 text-xs text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2 cursor-pointer"
                   title="Click to reopen file preview"
-                  @click="previewSheets = msg.fileSheets!; previewFileName = msg.fileName!"
+                  @click="previewSheets = msg.fileSheets!; previewFileName = msg.fileName!; sidebarMode = 'filePreview'"
                 >
                   <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
@@ -304,26 +304,42 @@
 
         </div><!-- end chat pane -->
 
-        <!-- File preview sidebar (55%) -->
+        <!-- Resize drag handle -->
         <div
-          v-if="previewSheets"
-          class="w-[55%] border-l border-gray-200 dark:border-gray-700 flex flex-col min-h-0"
+          v-if="sidebarOpen"
+          class="flex-none w-1.5 cursor-col-resize bg-gray-200 dark:bg-gray-700 hover:bg-indigo-400 dark:hover:bg-indigo-500 active:bg-indigo-500 dark:active:bg-indigo-400 transition-colors"
+          @mousedown="startResize"
+        />
+
+        <!-- Sidebar -->
+        <div
+          v-if="sidebarOpen"
+          class="flex flex-col min-h-0 overflow-hidden"
+          :style="{ width: `${sidebarWidthPct}%` }"
         >
           <!-- Sidebar header -->
           <div class="flex-none flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50">
-            <span class="text-xs font-medium text-gray-600 dark:text-gray-400 truncate">{{ previewFileName }}</span>
+            <span class="text-xs font-medium text-gray-600 dark:text-gray-400 truncate">
+              {{ sidebarMode === 'filePreview' ? previewFileName : previewRecipe?.title ?? 'Dashboard Preview' }}
+            </span>
             <button
               class="ml-2 flex-none text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
-              title="Close file preview"
-              @click="previewSheets = null"
+              title="Close sidebar"
+              @click="closeSidebar"
             >
               <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
           </div>
-          <!-- Table fills remaining height -->
-          <FilePreviewTable :sheets="previewSheets" :fill="true" />
+
+          <!-- File preview content -->
+          <FilePreviewTable v-if="sidebarMode === 'filePreview' && previewSheets" :sheets="previewSheets" :fill="true" />
+
+          <!-- Recipe preview content -->
+          <div v-else-if="sidebarMode === 'recipePreview' && previewRecipe" class="flex-1 overflow-y-auto p-4">
+            <RecipeDashboard :dashboard="previewRecipe" />
+          </div>
         </div>
 
       </div><!-- end content row -->
@@ -417,7 +433,7 @@
             ref="textareaEl"
             v-model="inputText"
             class="flex-1 resize-none rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400 placeholder-gray-400 dark:placeholder-gray-500 min-h-[40px] max-h-[160px]"
-            placeholder="Ask about your finances, or describe a dashboard to build..."
+            placeholder="Ask a question or describe a dashboard..."
             rows="1"
             :disabled="streaming"
             @input="autoResize"
@@ -445,7 +461,7 @@
         </div>
 
         <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">
-          Ask about your finances, build a dashboard, or attach a file (CSV, XLS/XLSX, .eml) &middot; Enter to send, Shift+Enter for new line
+          Attach CSV, XLS, or .eml for import rules &middot; Enter to send, Shift+Enter for new line
         </p>
       </div>
     </div>
@@ -464,6 +480,9 @@ import { parseCsvContent, extractCsvRows } from '@/composables/useCsvParser'
 import { parseXlsContent, extractXlsText, extractXlsSheets } from '@/composables/useXlsParser'
 import type { CsvParsedTransaction } from '@/types/csv'
 import FilePreviewTable from '@/components/FilePreviewTable.vue'
+import RecipeDashboard from '@/components/recipes/RecipeDashboard.vue'
+import type { JsonDashboardRecipe } from '@/types/recipes'
+import { resolveGenerators } from '@/recipes/functions'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -512,9 +531,50 @@ const streamAbortController = ref<AbortController | null>(null)
 // Kept across the send/clear cycle so the validator can use them after streaming ends
 const sentFile = ref<AttachedFile | null>(null)
 const sentExpectedCount = ref<number | null>(null)  // user-supplied expected transaction count
-// File preview sidebar — set when a CSV/XLS file is sent, cleared by the user
+// Sidebar — supports file preview and recipe preview modes
+const sidebarMode = ref<'none' | 'filePreview' | 'recipePreview'>('none')
+const sidebarWidthPct = ref(55) // percentage of total width
 const previewSheets = ref<FileSheet[] | null>(null)
 const previewFileName = ref<string | null>(null)
+const previewRecipe = ref<JsonDashboardRecipe | null>(null)
+
+const sidebarOpen = computed(() => sidebarMode.value !== 'none')
+
+function closeSidebar() {
+  sidebarMode.value = 'none'
+  // Keep data in refs so re-opening is possible
+}
+
+// ── Resizable sidebar ────────────────────────────────────────────────────────
+
+function startResize(e: MouseEvent) {
+  e.preventDefault()
+  const containerEl = (e.target as HTMLElement).parentElement
+  if (!containerEl) return
+
+  const containerRect = containerEl.getBoundingClientRect()
+  const containerWidth = containerRect.width
+
+  function onMouseMove(moveEvent: MouseEvent) {
+    const relativeX = moveEvent.clientX - containerRect.left
+    const chatPct = (relativeX / containerWidth) * 100
+    // Clamp: chat pane min 25%, sidebar min 25%
+    const clampedChatPct = Math.max(25, Math.min(75, chatPct))
+    sidebarWidthPct.value = 100 - clampedChatPct
+  }
+
+  function onMouseUp() {
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
 // Persistent tracking of the last successfully written rule (survives across turns)
 const lastSavedRuleTool = ref<'write_csv_rule' | 'write_xls_rule' | null>(null)
 const lastSavedRuleFilename = ref<string | null>(null)
@@ -585,6 +645,7 @@ async function handleFileSelected(event: Event) {
       if (sheets.length > 0) {
         previewSheets.value = sheets
         previewFileName.value = file.name
+        sidebarMode.value = 'filePreview'
       }
     }
   } catch (err) {
@@ -697,6 +758,16 @@ async function sendMessage() {
           te.success = event.success
           te.message = event.message
         }
+        // Handle recipe preview — show live dashboard in sidebar
+        if (event.tool === 'preview_recipe' && event.success && event.recipe) {
+          try {
+            const resolved = resolveGenerators(event.recipe as unknown as JsonDashboardRecipe)
+            previewRecipe.value = resolved
+            sidebarMode.value = 'recipePreview'
+          } catch (err) {
+            console.error('[preview] failed to resolve recipe generators:', err)
+          }
+        }
         // Track write tool calls for post-stream validation.
         // Always set ruleWrittenThisTurn regardless of success, so we validate
         // even after a failed write (shows current on-disk rule state to the user).
@@ -775,8 +846,10 @@ function resetChat() {
   streaming.value = false
   sentFile.value = null
   sentExpectedCount.value = null
+  sidebarMode.value = 'none'
   previewSheets.value = null
   previewFileName.value = null
+  previewRecipe.value = null
   lastSavedRuleTool.value = null
   lastSavedRuleFilename.value = null
   sessionMode.value = 'analyst'

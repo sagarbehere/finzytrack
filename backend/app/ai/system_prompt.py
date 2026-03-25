@@ -7,11 +7,12 @@ Prompt content lives in backend/resources/prompts/ as plain Markdown files:
   schema_csv.md          — CSV rule schema + example
   schema_xls.md          — XLS rule schema + example
   schema_email.md        — email rule schema + example
-  schema_postings.md     — postings table schema + sign conventions
+  schema_postings.md             — postings table schema + sign conventions
+  schema_recipe_dashboard.md    — dashboard recipe JSON schema + examples
 
 Mode routing:
   - file_type is set   → setup mode (assistant_base.md + relevant schema)
-  - no file_type        → analyst mode (assistant_analyst.md + schema_postings.md)
+  - no file_type        → analyst mode (analyst + postings schema + recipe schema)
 """
 
 from functools import lru_cache
@@ -45,7 +46,7 @@ def build_system_prompt(context: dict) -> str:
       assistant_base.md + the relevant schema file(s).
 
     When no file is attached, uses analyst mode:
-      assistant_analyst.md + schema_postings.md.
+      assistant_analyst.md + schema_postings.md + schema_recipe_dashboard.md.
 
     Other recognised context keys:
       page: str  — current frontend page, appended as a brief note

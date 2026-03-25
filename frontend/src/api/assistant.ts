@@ -28,6 +28,7 @@ export interface SseToolResultEvent {
   tool: string
   success: boolean
   message: string
+  recipe?: Record<string, unknown>  // Attached by preview_recipe tool
 }
 
 export interface SseErrorEvent {
