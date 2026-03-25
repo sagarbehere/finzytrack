@@ -68,7 +68,7 @@ from app.dependencies import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-MAX_AGENT_ITERATIONS = 8
+MAX_AGENT_ITERATIONS_DEFAULT = 12  # fallback if not in config
 
 
 def _log_context_size(messages: list[dict], tool_schemas: list[dict], iteration: int) -> None:
@@ -212,6 +212,7 @@ async def _run_agent_loop(
     registry: ToolRegistry,
     *,
     analyst_mode: bool = False,
+    max_iterations: int = MAX_AGENT_ITERATIONS_DEFAULT,
 ) -> AsyncIterator[dict]:
     """
     Run the agentic tool-use loop and yield SSE-ready event dicts.
@@ -227,7 +228,7 @@ async def _run_agent_loop(
     ground_truth = GroundTruth()
     validator = ResponseValidator()
 
-    for iteration in range(MAX_AGENT_ITERATIONS):
+    for iteration in range(max_iterations):
         # ── Debug: log context size before each LLM call ──────────────
         _log_context_size(messages, tool_schemas, iteration)
 
@@ -467,6 +468,7 @@ async def assistant_chat(
             async for event in _run_agent_loop(
                 llm_config, messages, registry,
                 analyst_mode=bool(analyst_mode),
+                max_iterations=llm_config.max_agent_iterations,
             ):
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as e:

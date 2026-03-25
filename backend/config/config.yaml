@@ -36,6 +36,7 @@ ai:
     model: ""           # e.g. gpt-4o, claude-sonnet-4-6, llama-3.1-8b-instruct
     temperature: 0.1    # Low = more deterministic (recommended for parsing/SQL)
     max_tokens: 0       # 0 = use model default. Anthropic requires a value > 0 (falls back to 8192 with a warning).
+    max_agent_iterations: 12  # Max tool-call round-trips per user message in the assistant
 
 # Feature flags
 features:
