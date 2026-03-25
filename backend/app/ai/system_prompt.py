@@ -8,11 +8,11 @@ Prompt content lives in backend/resources/prompts/ as plain Markdown files:
   schema_xls.md          — XLS rule schema + example
   schema_email.md        — email rule schema + example
   schema_postings.md             — postings table schema + sign conventions
-  schema_recipe_dashboard.md    — dashboard recipe JSON schema + examples
+  schema_recipe_dashboard.md    — dashboard recipe JSON schema (loaded on demand via tool)
 
 Mode routing:
   - file_type is set   → setup mode (assistant_base.md + relevant schema)
-  - no file_type        → analyst mode (analyst + postings schema + recipe schema)
+  - no file_type        → analyst mode (analyst + postings schema)
 """
 
 from functools import lru_cache
@@ -46,7 +46,7 @@ def build_system_prompt(context: dict) -> str:
       assistant_base.md + the relevant schema file(s).
 
     When no file is attached, uses analyst mode:
-      assistant_analyst.md + schema_postings.md + schema_recipe_dashboard.md.
+      assistant_analyst.md + schema_postings.md.
 
     Other recognised context keys:
       page: str  — current frontend page, appended as a brief note
@@ -63,11 +63,9 @@ def build_system_prompt(context: dict) -> str:
                 parts.append(_load(filename))
     else:
         # Analyst mode — financial questions + recipe generation
-        parts = [
-            _load("assistant_analyst.md"),
-            _load("schema_postings.md"),
-            _load("schema_recipe_dashboard.md"),
-        ]
+        # Recipe schema is loaded on demand via get_recipe_schema tool,
+        # not injected here, to keep the system prompt small.
+        parts = [_load("assistant_analyst.md"), _load("schema_postings.md")]
 
     if context.get("page"):
         parts.append(f"## Current context\nThe user is on the '{context['page']}' page.")

@@ -47,6 +47,7 @@ from app.ai.tools.get_ledger_context import GetLedgerContextTool
 from app.ai.tools.write_xls_rule import WriteXlsRuleTool
 from app.ai.tools.list_recipes import ListRecipesTool
 from app.ai.tools.read_recipe import ReadRecipeTool
+from app.ai.tools.get_recipe_schema import GetRecipeSchemaTool
 from app.ai.tools.preview_recipe import PreviewRecipeTool
 from app.ai.tools.write_recipe import WriteRecipeTool
 from app.core.backup_manager import BackupManager
@@ -100,6 +101,7 @@ _TOOL_MESSAGES = {
     "read_recipe": "Reading recipe...",
     "write_recipe": "Saving dashboard recipe...",
     "preview_recipe": "Preparing dashboard preview...",
+    "get_recipe_schema": "Loading recipe schema...",
 }
 
 
@@ -163,6 +165,7 @@ def _build_registry(
             registry.register(ExecuteQueryTool(sqlite_path))
             registry.register(GetLedgerContextTool(beancount_manager, sqlite_path))
         if recipes_dir:
+            registry.register(GetRecipeSchemaTool())
             registry.register(ListRecipesTool(recipes_dir))
             registry.register(ReadRecipeTool(recipes_dir))
             registry.register(PreviewRecipeTool(sqlite_path))
@@ -290,6 +293,8 @@ async def _run_agent_loop(
                         ui_message = "Sender recognised, new email format"
                     else:
                         ui_message = "No existing rule matches"
+                elif "schema" in result and tc.name == "get_recipe_schema":
+                    ui_message = "Recipe schema loaded"
                 elif "recipe" in result and tc.name == "preview_recipe":
                     ui_message = f"Preview ready: {result['recipe'].get('title', 'Dashboard')}"
                 elif "manifest" in result:
