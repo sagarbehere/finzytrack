@@ -70,6 +70,28 @@ router = APIRouter()
 
 MAX_AGENT_ITERATIONS = 8
 
+
+def _try_repair_json(raw: str | None) -> dict | None:
+    """Attempt to repair common JSON errors from LLM tool calls.
+
+    Returns the parsed dict on success, or None if repair fails.
+    """
+    if not raw:
+        return None
+    s = raw.strip()
+    # Remove trailing commas before } or ]
+    import re
+    s = re.sub(r',\s*([}\]])', r'\1', s)
+    # Try to close unclosed brackets/braces
+    open_braces = s.count('{') - s.count('}')
+    open_brackets = s.count('[') - s.count(']')
+    if open_braces > 0 or open_brackets > 0:
+        s = s + (']' * open_brackets) + ('}' * open_braces)
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        return None
+
 _CSV_EXTENSIONS  = {".csv", ".tsv", ".txt"}
 _XLS_EXTENSIONS  = {".xls", ".xlsx", ".xlsm", ".xlsb"}
 _EML_EXTENSIONS  = {".eml"}
@@ -247,8 +269,27 @@ async def _run_agent_loop(
 
             try:
                 args = json.loads(tc.arguments) if tc.arguments else {}
-            except json.JSONDecodeError:
-                args = {}
+            except json.JSONDecodeError as e:
+                # Try basic JSON repair before giving up
+                args = _try_repair_json(tc.arguments)
+                if args is None:
+                    result = {
+                        "success": False,
+                        "error": (
+                            f"Your tool call had invalid JSON arguments (parse error: {e}). "
+                            "Please try again with simpler, valid JSON. For dashboard recipes, "
+                            "start with a single widget — do not build complex multi-widget "
+                            "dashboards in one step."
+                        ),
+                    }
+                    yield {
+                        "type": "tool_result",
+                        "tool": tc.name,
+                        "success": False,
+                        "message": f"Invalid JSON in tool arguments: {e}",
+                    }
+                    messages.append(build_tool_result_message(tc.id, result))
+                    continue
 
             result = await registry.execute(tc.name, args)
 

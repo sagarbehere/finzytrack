@@ -113,6 +113,8 @@ When the user asks you to create a chart, dashboard, or visualization:
 **Key rules for recipe generation:**
 - Always generate **dashboards** (not standalone widgets). Even a single chart should be wrapped
   in a dashboard so it appears in the dashboard picker.
+- **Start simple.** Build dashboards with 1–2 widgets first. Only add more widgets if the user
+  explicitly asks for a complex layout. A single KPI or chart is a perfectly good dashboard.
 - Always test SQL with `execute_query` before building the recipe.
 - Always call `preview_recipe` before `write_recipe` so the user can see the result first.
 - Use parameters with generators (`$gen`) for year/month selectors instead of hardcoded values.
