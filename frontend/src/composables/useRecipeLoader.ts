@@ -31,6 +31,8 @@ export interface RecipeFileError {
 // Shared state across all component instances
 const userWidgets = ref<Record<string, JsonWidgetRecipe>>({})
 const userDashboards = ref<Record<string, JsonDashboardRecipe>>({})
+// Maps recipe ID → manifest path (e.g. "net-worth" → "dashboards/net-worth.json")
+const recipeManifestPaths = ref<Record<string, string>>({})
 const isLoaded = ref(false)
 const isLoading = ref(false)
 const loadError = ref<string | null>(null)
@@ -87,8 +89,8 @@ async function loadUserRecipes(): Promise<void> {
       console.error(`[RecipeLoader] ${kind} error in ${file}:`, messages)
     }
 
-    // Load widgets
-    const widgetPromises = (manifest.widgets || []).map(async (path) => {
+    // Load widgets — returns [recipe, manifestPath] tuples
+    const widgetPromises = (manifest.widgets || []).map(async (path: string): Promise<[JsonWidgetRecipe, string] | null> => {
       const fullPath = path.startsWith('/') ? path : `${RECIPES_BASE_PATH}/${path}`
       let raw: unknown
       try {
@@ -104,11 +106,11 @@ async function loadUserRecipes(): Promise<void> {
       }
       const widget = resolveGenerators(raw as JsonWidgetRecipe)
       console.log(`[RecipeLoader] Loaded widget: ${widget.id}`)
-      return widget
+      return [widget, path]
     })
 
-    // Load dashboards
-    const dashboardPromises = (manifest.dashboards || []).map(async (path) => {
+    // Load dashboards — returns [recipe, manifestPath] tuples
+    const dashboardPromises = (manifest.dashboards || []).map(async (path: string): Promise<[JsonDashboardRecipe, string] | null> => {
       const fullPath = path.startsWith('/') ? path : `${RECIPES_BASE_PATH}/${path}`
       let raw: unknown
       try {
@@ -124,19 +126,25 @@ async function loadUserRecipes(): Promise<void> {
       }
       const dashboard = resolveGenerators(raw as JsonDashboardRecipe)
       console.log(`[RecipeLoader] Loaded dashboard: ${dashboard.id}`)
-      return dashboard
+      return [dashboard, path]
     })
 
     // Wait for all to load
-    const widgets = (await Promise.all(widgetPromises)).filter(Boolean) as JsonWidgetRecipe[]
-    const dashboards = (await Promise.all(dashboardPromises)).filter(Boolean) as JsonDashboardRecipe[]
+    const widgetResults = (await Promise.all(widgetPromises)).filter(Boolean) as [JsonWidgetRecipe, string][]
+    const dashboardResults = (await Promise.all(dashboardPromises)).filter(Boolean) as [JsonDashboardRecipe, string][]
 
     // Store in state
-    userWidgets.value = Object.fromEntries(widgets.map((w) => [w.id, w]))
-    userDashboards.value = Object.fromEntries(dashboards.map((d) => [d.id, d]))
+    userWidgets.value = Object.fromEntries(widgetResults.map(([w]) => [w.id, w]))
+    userDashboards.value = Object.fromEntries(dashboardResults.map(([d]) => [d.id, d]))
+
+    // Build ID → manifest path mapping
+    const paths: Record<string, string> = {}
+    for (const [w, path] of widgetResults) paths[w.id] = path
+    for (const [d, path] of dashboardResults) paths[d.id] = path
+    recipeManifestPaths.value = paths
 
     console.log(
-      `[RecipeLoader] Loaded ${widgets.length} user widgets, ${dashboards.length} user dashboards`
+      `[RecipeLoader] Loaded ${widgetResults.length} user widgets, ${dashboardResults.length} user dashboards`
     )
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to load user recipes'
@@ -205,10 +213,18 @@ function isUserRecipe(id: string): boolean {
 /**
  * Reload user recipes (useful if files changed)
  */
+/**
+ * Get the manifest path for a recipe ID (e.g. "dashboards/year-summary.json")
+ */
+function getManifestPath(id: string): string | undefined {
+  return recipeManifestPaths.value[id]
+}
+
 async function reloadUserRecipes(): Promise<void> {
   isLoaded.value = false
   userWidgets.value = {}
   userDashboards.value = {}
+  recipeManifestPaths.value = {}
   await loadUserRecipes()
 }
 
@@ -231,5 +247,6 @@ export function useRecipeLoader() {
     getAllWidgetIds,
     getAllDashboardIds,
     isUserRecipe,
+    getManifestPath,
   }
 }

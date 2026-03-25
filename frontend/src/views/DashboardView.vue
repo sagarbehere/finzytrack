@@ -78,6 +78,7 @@
       :selectedIds="selectedDashboardIds"
       @close="showPicker = false"
       @select="handleAddDashboard"
+      @delete="handleDeleteDashboard"
     />
   </div>
 </template>
@@ -93,7 +94,7 @@ import { useDashboardTabs } from '@/composables/useDashboardTabs'
 
 const route = useRoute()
 const router = useRouter()
-const { loadUserRecipes, reloadUserRecipes, getAllDashboardIds, getDashboard, recipeLoadErrors, isLoading } = useRecipeLoader()
+const { loadUserRecipes, reloadUserRecipes, getAllDashboardIds, getDashboard, isUserRecipe, getManifestPath, recipeLoadErrors, isLoading } = useRecipeLoader()
 
 const bannerDismissed = ref(false)
 const { tabs, activeTabId, addTab, removeTab, setActiveTab, loadTabs, activeDashboard } = useDashboardTabs()
@@ -119,6 +120,8 @@ const allDashboards = computed(() => {
       id,
       title: d?.title || id,
       description: d?.description,
+      canDelete: isUserRecipe(id),
+      manifestPath: getManifestPath(id),
     }
   })
 })
@@ -181,6 +184,27 @@ function handleAddDashboard(id: string) {
     handleTabSelect(id)
   }
   showPicker.value = false
+}
+
+// Delete dashboard handler
+import type { AvailableDashboard } from '@/components/dashboard/DashboardPicker.vue'
+
+async function handleDeleteDashboard(dashboard: AvailableDashboard) {
+  if (!dashboard.manifestPath) return
+  try {
+    const res = await fetch(`/api/recipes/${dashboard.manifestPath}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const text = await res.text()
+      console.error('[DashboardView] delete failed:', text)
+      return
+    }
+    // Remove the tab if it's open
+    removeTab(dashboard.id)
+    // Reload recipes to refresh the picker list
+    await reloadUserRecipes()
+  } catch (err) {
+    console.error('[DashboardView] delete error:', err)
+  }
 }
 
 // Watch route query for back-button navigation

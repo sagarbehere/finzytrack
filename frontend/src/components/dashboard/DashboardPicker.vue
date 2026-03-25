@@ -42,36 +42,51 @@
 
                 <!-- Dashboard list -->
                 <div v-if="availableDashboards.length > 0" class="space-y-2">
-                  <button
+                  <div
                     v-for="dashboard in availableDashboards"
                     :key="dashboard.id"
-                    @click="handleSelect(dashboard.id)"
-                    :disabled="selectedIds.includes(dashboard.id)"
-                    class="w-full text-left px-4 py-3 rounded-lg border transition-colors"
+                    class="flex items-stretch rounded-lg border transition-colors"
                     :class="[
                       selectedIds.includes(dashboard.id)
-                        ? 'bg-gray-50 dark:bg-gray-700/50 border-gray-200 dark:border-gray-600 cursor-not-allowed opacity-60'
-                        : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-600 hover:border-blue-500 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 cursor-pointer'
+                        ? 'bg-gray-50 dark:bg-gray-700/50 border-gray-200 dark:border-gray-600 opacity-60'
+                        : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-600 hover:border-blue-500 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20'
                     ]"
                   >
-                    <div class="flex items-center justify-between">
-                      <div class="font-medium text-gray-900 dark:text-white">
-                        {{ dashboard.title }}
-                      </div>
-                      <span
-                        v-if="selectedIds.includes(dashboard.id)"
-                        class="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300"
-                      >
-                        Added
-                      </span>
-                    </div>
-                    <p
-                      v-if="dashboard.description"
-                      class="mt-1 text-sm text-gray-500 dark:text-gray-400"
+                    <!-- Clickable area for selection -->
+                    <button
+                      class="flex-1 text-left px-4 py-3 min-w-0"
+                      :disabled="selectedIds.includes(dashboard.id)"
+                      :class="selectedIds.includes(dashboard.id) ? 'cursor-not-allowed' : 'cursor-pointer'"
+                      @click="handleSelect(dashboard.id)"
                     >
-                      {{ dashboard.description }}
-                    </p>
-                  </button>
+                      <div class="flex items-center justify-between">
+                        <div class="font-medium text-gray-900 dark:text-white truncate">
+                          {{ dashboard.title }}
+                        </div>
+                        <span
+                          v-if="selectedIds.includes(dashboard.id)"
+                          class="flex-none text-xs font-medium px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300"
+                        >
+                          Added
+                        </span>
+                      </div>
+                      <p
+                        v-if="dashboard.description"
+                        class="mt-1 text-sm text-gray-500 dark:text-gray-400"
+                      >
+                        {{ dashboard.description }}
+                      </p>
+                    </button>
+                    <!-- Delete button (only for user recipes) -->
+                    <button
+                      v-if="dashboard.canDelete"
+                      class="flex-none flex items-center px-2 text-gray-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                      title="Delete this dashboard"
+                      @click.stop="handleDelete(dashboard)"
+                    >
+                      <TrashIcon class="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
 
                 <!-- Empty state -->
@@ -100,11 +115,14 @@
 <script setup lang="ts">
 import { Dialog, DialogPanel, DialogTitle, TransitionRoot, TransitionChild } from '@headlessui/vue'
 import { XMarkIcon } from '@heroicons/vue/20/solid'
+import { TrashIcon } from '@heroicons/vue/24/outline'
 
 export interface AvailableDashboard {
   id: string
   title: string
   description?: string
+  canDelete?: boolean
+  manifestPath?: string
 }
 
 interface Props {
@@ -118,9 +136,16 @@ defineProps<Props>()
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'select', dashboardId: string): void
+  (e: 'delete', dashboard: AvailableDashboard): void
 }>()
 
 function handleSelect(dashboardId: string) {
   emit('select', dashboardId)
+}
+
+function handleDelete(dashboard: AvailableDashboard) {
+  if (confirm(`Delete "${dashboard.title}"? This cannot be undone.`)) {
+    emit('delete', dashboard)
+  }
 }
 </script>

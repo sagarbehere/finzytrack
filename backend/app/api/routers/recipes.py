@@ -2,10 +2,11 @@
 Recipes router — serves dashboard recipe JSON files from config/recipes/.
 
 Endpoints:
-  GET  /api/recipes/manifest.json         — recipe manifest
-  GET  /api/recipes/{path:path}           — individual recipe file
-  PUT  /api/recipes/{path:path}           — write/update a recipe file
-  PUT  /api/recipes/manifest.json         — update manifest
+  GET    /api/recipes/manifest.json         — recipe manifest
+  GET    /api/recipes/{path:path}           — individual recipe file
+  PUT    /api/recipes/{path:path}           — write/update a recipe file
+  PUT    /api/recipes/manifest.json         — update manifest
+  DELETE /api/recipes/{path:path}           — delete a recipe file + remove from manifest
 """
 
 import json
@@ -81,5 +82,47 @@ async def write_recipe_file(
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(body.content, indent=2) + "\n", encoding="utf-8")
     logger.info(f"Wrote recipe file: {target}")
+
+    return {"success": True, "path": str(target)}
+
+
+@router.delete("/recipes/{file_path:path}")
+async def delete_recipe_file(
+    file_path: str,
+    config_manager: ConfigManager = Depends(get_config_manager),
+):
+    """Delete a recipe file and remove it from the manifest."""
+    recipes_path = _recipes_dir(config_manager)
+    target = (recipes_path / file_path).resolve()
+
+    # Prevent path traversal
+    if not str(target).startswith(str(recipes_path.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail=f"Recipe file not found: {file_path}")
+
+    # Delete the file
+    target.unlink()
+    logger.info(f"Deleted recipe file: {target}")
+
+    # Remove from manifest
+    manifest_path = recipes_path / "manifest.json"
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            changed = False
+            for key in ("widgets", "dashboards"):
+                if file_path in manifest.get(key, []):
+                    manifest[key].remove(file_path)
+                    changed = True
+            if changed:
+                manifest_path.write_text(
+                    json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+                )
+                logger.info(f"Removed '{file_path}' from manifest")
+        except Exception as e:
+            logger.error(f"Failed to update manifest after delete: {e}")
+            return {"success": True, "path": str(target), "warning": f"File deleted but manifest update failed: {e}"}
 
     return {"success": True, "path": str(target)}

@@ -270,11 +270,11 @@ class WriteRecipeTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Save a dashboard recipe to config/recipes/dashboards/. "
-            "If you already called preview_recipe, just pass the filename — the "
-            "previewed recipe will be saved automatically (do NOT re-pass content). "
-            "If no preview exists, pass content with the full recipe JSON. "
-            "Pass overwrite: true to replace an existing dashboard with the same filename."
+            "Save a recipe to disk. Saves widgets to widgets/ and dashboards to dashboards/. "
+            "If you already called preview_recipe, just pass the filename — the previewed "
+            "recipe is saved automatically (do NOT re-pass content). The recipe_type is also "
+            "remembered from the preview. "
+            "Pass overwrite: true to replace an existing file with the same name."
         )
 
     @property
@@ -285,15 +285,23 @@ class WriteRecipeTool(BaseTool):
                 "filename": {
                     "type": "string",
                     "description": (
-                        "JSON filename for the dashboard, e.g. 'spending-overview.json'. "
-                        "Will be saved to dashboards/ subfolder."
+                        "JSON filename, e.g. 'net-worth-kpi.json'. Saved to widgets/ "
+                        "or dashboards/ based on recipe_type."
                     ),
                 },
                 "content": {
                     "type": "object",
                     "description": (
-                        "The full dashboard recipe JSON object. OPTIONAL if you already "
-                        "called preview_recipe — the previewed recipe is used automatically."
+                        "The recipe JSON object. OPTIONAL if you already called "
+                        "preview_recipe — the previewed recipe is used automatically."
+                    ),
+                },
+                "recipe_type": {
+                    "type": "string",
+                    "enum": ["widget", "dashboard"],
+                    "description": (
+                        "Type of recipe. OPTIONAL if preview_recipe was called — "
+                        "remembered automatically. Otherwise required."
                     ),
                 },
                 "overwrite": {
@@ -315,29 +323,42 @@ class WriteRecipeTool(BaseTool):
         self._backup_manager = backup_manager
 
     async def execute(
-        self, filename: str, content: dict | None = None, overwrite: bool = False
+        self,
+        filename: str,
+        content: dict | None = None,
+        recipe_type: str | None = None,
+        overwrite: bool = False,
     ) -> dict:
-        # Resolve content: use cached preview if content not provided
-        if content is None:
+        # Resolve content and type from preview cache if not provided
+        if content is None or recipe_type is None:
             from app.ai.tools.preview_recipe import get_last_previewed_recipe
-            content = get_last_previewed_recipe()
+            cached_content, cached_type = get_last_previewed_recipe()
             if content is None:
-                return {
-                    "success": False,
-                    "error": (
-                        "No content provided and no previewed recipe available. "
-                        "Either pass the recipe JSON as content, or call preview_recipe first."
-                    ),
-                }
+                content = cached_content
+            if recipe_type is None:
+                recipe_type = cached_type
+
+        if content is None:
+            return {
+                "success": False,
+                "error": (
+                    "No content provided and no previewed recipe available. "
+                    "Either pass the recipe JSON as content, or call preview_recipe first."
+                ),
+            }
+        if recipe_type is None:
+            recipe_type = "dashboard"  # default
 
         # Ensure .json extension
         if not filename.endswith(".json"):
             filename += ".json"
 
-        # ── 1. Structural validation ────────────────────────────────────
-        errors = _validate_dashboard(content)
+        # ── 1. Validation ───────────────────────────────────────────────
+        if recipe_type == "widget":
+            errors = _validate_widget(content, "(root)")
+        else:
+            errors = _validate_dashboard(content)
 
-        # Validate ID format
         recipe_id = content.get("id")
         if isinstance(recipe_id, str):
             errors.extend(_validate_id(recipe_id))
@@ -345,12 +366,15 @@ class WriteRecipeTool(BaseTool):
         if errors:
             return {
                 "success": False,
-                "error": "Dashboard validation failed",
+                "error": f"{'Widget' if recipe_type == 'widget' else 'Dashboard'} validation failed",
                 "validation_errors": errors,
             }
 
-        # ── 2. SQL dry-run validation ───────────────────────────────────
-        sql_errors = _dry_run_queries(content, self._sqlite_path)
+        # ── 2. SQL dry-run ──────────────────────────────────────────────
+        if recipe_type == "widget":
+            sql_errors = _dry_run_queries({"widgets": [content]}, self._sqlite_path)
+        else:
+            sql_errors = _dry_run_queries(content, self._sqlite_path)
         if sql_errors:
             return {
                 "success": False,
@@ -359,18 +383,19 @@ class WriteRecipeTool(BaseTool):
             }
 
         # ── 3. Path safety + overwrite check ────────────────────────────
-        dashboards_dir = self._recipes_dir / "dashboards"
-        dashboards_dir.mkdir(parents=True, exist_ok=True)
+        subfolder = "widgets" if recipe_type == "widget" else "dashboards"
+        target_dir = self._recipes_dir / subfolder
+        target_dir.mkdir(parents=True, exist_ok=True)
 
-        save_path = (dashboards_dir / filename).resolve()
-        if not save_path.is_relative_to(dashboards_dir.resolve()):
+        save_path = (target_dir / filename).resolve()
+        if not save_path.is_relative_to(target_dir.resolve()):
             return {"success": False, "error": "Invalid filename — path traversal not allowed"}
 
         if save_path.exists() and not overwrite:
             return {
                 "success": False,
                 "error": (
-                    f"File 'dashboards/{filename}' already exists. "
+                    f"File '{subfolder}/{filename}' already exists. "
                     "Pass overwrite: true to overwrite it, or choose a different filename."
                 ),
             }
@@ -387,11 +412,12 @@ class WriteRecipeTool(BaseTool):
         else:
             save_path.write_text(json_content, encoding="utf-8")
 
-        logger.info(f"Saved dashboard recipe to {save_path}")
+        logger.info(f"Saved {recipe_type} recipe to {save_path}")
 
         # ── 5. Update manifest ──────────────────────────────────────────
         manifest_path = self._recipes_dir / "manifest.json"
-        manifest_entry = f"dashboards/{filename}"
+        manifest_entry = f"{subfolder}/{filename}"
+        manifest_key = "widgets" if recipe_type == "widget" else "dashboards"
 
         try:
             if manifest_path.is_file():
@@ -399,14 +425,13 @@ class WriteRecipeTool(BaseTool):
             else:
                 manifest = {"widgets": [], "dashboards": []}
 
-            if manifest_entry not in manifest.get("dashboards", []):
-                manifest.setdefault("dashboards", []).append(manifest_entry)
+            if manifest_entry not in manifest.get(manifest_key, []):
+                manifest.setdefault(manifest_key, []).append(manifest_entry)
                 manifest_path.write_text(
                     json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
                 )
                 logger.info(f"Added '{manifest_entry}' to manifest")
         except Exception as e:
-            # Recipe was written successfully; manifest update failed — warn but don't fail
             logger.error(f"Failed to update manifest: {e}")
             return {
                 "success": True,
