@@ -145,7 +145,7 @@ export async function generateQuery(
       body: JSON.stringify({
         model: llmConfig.model || 'gpt-oss-20b',
         temperature: llmConfig.temperature ?? 0.1,
-        ...(llmConfig.maxTokens ? { max_tokens: llmConfig.maxTokens } : {}),
+        ...(llmConfig.maxTokens && llmConfig.maxTokens > 0 ? { max_tokens: llmConfig.maxTokens } : {}),
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: naturalLanguageQuery },

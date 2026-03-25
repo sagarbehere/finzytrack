@@ -15,6 +15,24 @@ from app.config import LLMConfig
 
 logger = logging.getLogger(__name__)
 
+_ANTHROPIC_MAX_TOKENS_DEFAULT = 8192
+_anthropic_max_tokens_warned = False
+
+
+def _resolve_anthropic_max_tokens(configured: int) -> int:
+    """Anthropic requires max_tokens. Warn once and fall back if not set."""
+    global _anthropic_max_tokens_warned
+    if configured > 0:
+        return configured
+    if not _anthropic_max_tokens_warned:
+        logger.warning(
+            "Anthropic requires max_tokens but it is set to 0 (model default). "
+            "Using fallback of %d. Set max_tokens in Settings → AI & LLM to silence this warning.",
+            _ANTHROPIC_MAX_TOKENS_DEFAULT,
+        )
+        _anthropic_max_tokens_warned = True
+    return _ANTHROPIC_MAX_TOKENS_DEFAULT
+
 
 # ── Event types ──────────────────────────────────────────────────────────────
 
@@ -78,7 +96,7 @@ async def _stream_openai(
         temperature=config.temperature,
         stream=True,
     )
-    if config.max_tokens is not None:
+    if config.max_tokens > 0:
         call_kwargs["max_tokens"] = config.max_tokens
     if tools:
         call_kwargs["tools"] = tools
@@ -153,7 +171,7 @@ async def _stream_anthropic(
 
     call_kwargs = dict(
         model=config.model,
-        max_tokens=config.max_tokens if config.max_tokens is not None else 8192,  # Anthropic requires max_tokens
+        max_tokens=_resolve_anthropic_max_tokens(config.max_tokens),
         messages=anthropic_messages,
         temperature=config.temperature,
         stream=True,
