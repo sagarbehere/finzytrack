@@ -142,3 +142,7 @@ Example dashboard referencing saved widgets:
 - Use parameters with generators (`$gen`) for year/month selectors instead of hardcoded values.
 - Use `optionsFrom: "currencies"` for currency selectors.
 - Use meaningful IDs (e.g. `"monthly-food-spending"`, not `"chart-1"`).
+- **Add click-through links where possible.** Charts, KPIs, and tables should have `clickLink`
+  or `seriesClickLinks` that navigate to the transactions view with appropriate filters (account,
+  date range, etc.). Include extra columns in the SQL query (like `account`, `dateFrom`, `dateTo`)
+  to use as template variables in the link, even if they aren't displayed in the chart.
