@@ -61,8 +61,12 @@ def build_system_prompt(context: dict) -> str:
             for filename in _SCHEMA_FILES.values():
                 parts.append(_load(filename))
     else:
-        # Analyst mode — financial questions
-        parts = [_load("assistant_analyst.md"), _load("schema_postings.md")]
+        # Analyst mode — financial questions + recipe generation
+        parts = [
+            _load("assistant_analyst.md"),
+            _load("schema_postings.md"),
+            _load("schema_recipe_dashboard.md"),
+        ]
 
     if context.get("page"):
         parts.append(f"## Current context\nThe user is on the '{context['page']}' page.")

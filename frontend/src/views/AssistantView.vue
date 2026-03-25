@@ -417,7 +417,7 @@
             ref="textareaEl"
             v-model="inputText"
             class="flex-1 resize-none rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400 placeholder-gray-400 dark:placeholder-gray-500 min-h-[40px] max-h-[160px]"
-            placeholder="Ask me to create or modify an import rule..."
+            placeholder="Ask about your finances, or describe a dashboard to build..."
             rows="1"
             :disabled="streaming"
             @input="autoResize"
@@ -445,7 +445,7 @@
         </div>
 
         <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">
-          Ask about your finances or attach a file (CSV, XLS/XLSX, .eml) &middot; Enter to send, Shift+Enter for new line
+          Ask about your finances, build a dashboard, or attach a file (CSV, XLS/XLSX, .eml) &middot; Enter to send, Shift+Enter for new line
         </p>
       </div>
     </div>

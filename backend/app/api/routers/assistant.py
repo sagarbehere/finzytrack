@@ -45,6 +45,9 @@ from app.ai.tools.write_email_rule import WriteEmailRuleTool
 from app.ai.tools.execute_query import ExecuteQueryTool
 from app.ai.tools.get_ledger_context import GetLedgerContextTool
 from app.ai.tools.write_xls_rule import WriteXlsRuleTool
+from app.ai.tools.list_recipes import ListRecipesTool
+from app.ai.tools.read_recipe import ReadRecipeTool
+from app.ai.tools.write_recipe import WriteRecipeTool
 from app.core.backup_manager import BackupManager
 from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
@@ -92,6 +95,9 @@ _TOOL_MESSAGES = {
     "test_email_extraction": "Testing extraction patterns...",
     "execute_query": "Running query...",
     "get_ledger_context": "Loading ledger context...",
+    "list_recipes": "Listing recipes...",
+    "read_recipe": "Reading recipe...",
+    "write_recipe": "Saving dashboard recipe...",
 }
 
 
@@ -123,6 +129,7 @@ def _build_registry(
     backup_manager: BackupManager,
     file_type: str | None = None,
     sqlite_path: str | None = None,
+    recipes_dir: Path | None = None,
 ) -> ToolRegistry:
     csv_dir = Path(csv_rules_manager.rules_dir) if csv_rules_manager.rules_dir else None
     xls_dir = Path(xls_rules_manager.rules_dir) if xls_rules_manager.rules_dir else None
@@ -153,6 +160,10 @@ def _build_registry(
         if sqlite_path:
             registry.register(ExecuteQueryTool(sqlite_path))
             registry.register(GetLedgerContextTool(beancount_manager, sqlite_path))
+        if recipes_dir:
+            registry.register(ListRecipesTool(recipes_dir))
+            registry.register(ReadRecipeTool(recipes_dir))
+            registry.register(WriteRecipeTool(recipes_dir, sqlite_path, backup_manager))
 
     return registry
 
@@ -350,10 +361,12 @@ async def assistant_chat(
         file_type = context["file_type"]
 
     sqlite_path = config.analytics.sqlite.export_path
+    recipes_dir = Path(config.recipes_dir) if config.recipes_dir else None
     registry = _build_registry(
         csv_rules_manager, xls_rules_manager, email_registry,
         beancount_manager, backup_manager,
         file_type=file_type, sqlite_path=sqlite_path,
+        recipes_dir=recipes_dir,
     )
 
     async def generate():
