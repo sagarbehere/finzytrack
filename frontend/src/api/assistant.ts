@@ -39,12 +39,21 @@ export interface SseDoneEvent {
   type: 'done'
 }
 
+export interface SseValidationWarningEvent {
+  type: 'validation_warning'
+  rule: string
+  severity: 'warn' | 'info'
+  message: string
+  details?: Record<string, unknown>
+}
+
 export type SseEvent =
   | SseTokenEvent
   | SseToolStartEvent
   | SseToolResultEvent
   | SseErrorEvent
   | SseDoneEvent
+  | SseValidationWarningEvent
 
 export async function* streamAssistantChat(
   messages: ChatMessage[],

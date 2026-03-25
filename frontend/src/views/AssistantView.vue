@@ -130,6 +130,75 @@
                 v-html="renderMarkdown(msg.content)"
               />
 
+              <!-- Analyst mode: validation warnings -->
+              <template v-if="msg.validationWarnings && msg.validationWarnings.length">
+                <div
+                  v-for="(warning, wi) in msg.validationWarnings"
+                  :key="wi"
+                  class="rounded-lg text-xs bg-amber-50 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300 border border-amber-200 dark:border-amber-700/50"
+                >
+                  <!-- Warning header row -->
+                  <div class="flex items-start gap-2 px-3 py-2">
+                    <svg class="h-3.5 w-3.5 mt-0.5 flex-none text-amber-500 dark:text-amber-400" viewBox="0 0 20 20" fill="currentColor">
+                      <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+                    </svg>
+                    <span class="flex-1">{{ warning.message }}</span>
+                    <div class="flex items-center gap-1.5 flex-none">
+                      <button
+                        v-if="warningHasExpandableDetails(warning)"
+                        class="text-amber-500 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-200 underline underline-offset-2"
+                        @click="warning.expanded = !warning.expanded"
+                      >{{ warning.expanded ? 'less' : 'more' }}</button>
+                      <button
+                        class="text-amber-400 hover:text-amber-600 dark:text-amber-500 dark:hover:text-amber-300"
+                        title="Dismiss"
+                        @click="msg.validationWarnings!.splice(wi, 1)"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Expandable details panel -->
+                  <div
+                    v-if="warning.expanded && warning.details"
+                    class="border-t border-amber-200 dark:border-amber-700/50 px-3 py-2 space-y-1"
+                  >
+                    <!-- unknown_account: full account list -->
+                    <template v-if="warning.rule === 'unknown_account'">
+                      <p class="font-medium text-amber-700 dark:text-amber-400 mb-1">All unrecognised accounts:</p>
+                      <p
+                        v-for="acct in (warning.details.unknown_accounts as string[])"
+                        :key="acct"
+                        class="font-mono text-amber-800 dark:text-amber-300"
+                      >{{ acct }}</p>
+                    </template>
+
+                    <!-- date_out_of_range: full date reference list -->
+                    <template v-else-if="warning.rule === 'date_out_of_range'">
+                      <p class="font-medium text-amber-700 dark:text-amber-400 mb-1">All references outside ledger range:</p>
+                      <p
+                        v-for="d in (warning.details.out_of_range as string[])"
+                        :key="d"
+                        class="font-mono text-amber-800 dark:text-amber-300"
+                      >{{ d }}</p>
+                    </template>
+
+                    <!-- amount_mismatch: max query value for context -->
+                    <template v-else-if="warning.rule === 'amount_mismatch'">
+                      <p class="text-amber-700 dark:text-amber-400">
+                        Largest value in query results:
+                        <span class="font-mono font-medium">
+                          {{ (warning.details.max_query_value as number).toLocaleString() }}
+                        </span>
+                      </p>
+                    </template>
+                  </div>
+                </div>
+              </template>
+
               <!-- Validation result (shown after rule is saved) -->
               <div v-if="msg.validationNote" class="space-y-2">
 
@@ -395,6 +464,14 @@ interface FileSheet {
   rows: string[][]
 }
 
+interface ValidationWarning {
+  rule: string
+  severity: 'warn' | 'info'
+  message: string
+  details?: Record<string, unknown>
+  expanded?: boolean
+}
+
 interface DisplayMessage {
   role: 'user' | 'assistant'
   content: string
@@ -402,6 +479,7 @@ interface DisplayMessage {
   fileSheets?: FileSheet[]    // parsed preview sheets — lets user re-open preview by clicking the badge
   toolEvents?: ToolEvent[]    // for assistant messages
   streaming?: boolean
+  validationWarnings?: ValidationWarning[]  // analyst mode: hallucination warnings
   validationNote?: string              // status line shown after a rule is saved and validated
   validationTransactions?: CsvParsedTransaction[]  // parsed rows for the table
   validationRawContent?: string        // decoded source file text for the raw view
@@ -617,6 +695,16 @@ async function sendMessage() {
           }
         }
         scrollToBottom()
+      } else if (event.type === 'validation_warning') {
+        if (!assistantMsg.validationWarnings) assistantMsg.validationWarnings = []
+        assistantMsg.validationWarnings.push({
+          rule: event.rule,
+          severity: event.severity,
+          message: event.message,
+          details: event.details,
+          expanded: false,
+        })
+        scrollToBottom()
       } else if (event.type === 'error') {
         assistantMsg.content += `\n\n**Error:** ${event.message}`
         scrollToBottom()
@@ -797,6 +885,28 @@ function autoResize() {
 
 function resetTextareaHeight() {
   if (textareaEl.value) textareaEl.value.style.height = 'auto'
+}
+
+// ── Validation warning helpers ────────────────────────────────────────────────
+
+/**
+ * Returns true if this warning has detail data worth showing beyond the message.
+ *   unknown_account  → full account list when the message was truncated (>5)
+ *   date_out_of_range → full date list when the message was truncated (>3)
+ *   amount_mismatch  → always shows the max query value for context
+ */
+function warningHasExpandableDetails(warning: ValidationWarning): boolean {
+  if (!warning.details) return false
+  if (warning.rule === 'unknown_account') {
+    return ((warning.details.unknown_accounts as string[]) ?? []).length > 5
+  }
+  if (warning.rule === 'date_out_of_range') {
+    return ((warning.details.out_of_range as string[]) ?? []).length > 3
+  }
+  if (warning.rule === 'amount_mismatch') {
+    return 'max_query_value' in warning.details
+  }
+  return false
 }
 
 // Very simple markdown renderer: bold, code blocks, inline code, paragraphs

@@ -34,6 +34,7 @@ from app.ai.client import (
 from app.ai.file_processor import process_file
 from app.ai.system_prompt import build_system_prompt
 from app.ai.tool_registry import ToolRegistry
+from app.ai.validation import GroundTruth, ResponseValidator
 from app.ai.tools.list_accounts import ListAccountsTool
 from app.ai.tools.list_rule_files import ListRuleFilesTool
 from app.ai.tools.match_email_against_rules import MatchEmailAgainstRulesTool
@@ -162,14 +163,22 @@ async def _run_agent_loop(
     llm_config,
     messages: list[dict],
     registry: ToolRegistry,
+    *,
+    analyst_mode: bool = False,
 ) -> AsyncIterator[dict]:
     """
     Run the agentic tool-use loop and yield SSE-ready event dicts.
 
     `messages` should already include the system message as the first element.
+
+    When *analyst_mode* is True, ground truth is collected from tool results and
+    the final response is validated against it. Validation warnings are emitted
+    as `validation_warning` SSE events before the `done` event.
     """
     provider = llm_config.provider
     tool_schemas = registry.get_schemas(provider)
+    ground_truth = GroundTruth()
+    validator = ResponseValidator()
 
     for iteration in range(MAX_AGENT_ITERATIONS):
         accumulated_text = ""
@@ -185,10 +194,26 @@ async def _run_agent_loop(
                 break
 
         if not tool_calls_this_turn:
-            # No tools requested — we're done
+            # Normal exit — model finished with text, no more tool calls
             if not accumulated_text.strip():
-                # Model returned nothing — surface it rather than silently showing a blank response
                 yield {"type": "error", "message": "The model returned an empty response. Please try again."}
+                yield {"type": "done"}
+                return
+
+            # ── Response validation (analyst mode only) ───────────────────
+            if analyst_mode:
+                results = validator.validate(accumulated_text, ground_truth)
+                for r in results:
+                    event: dict = {
+                        "type": "validation_warning",
+                        "rule": r.rule_name,
+                        "severity": r.status,
+                        "message": r.message,
+                    }
+                    if r.details:
+                        event["details"] = r.details
+                    yield event
+
             yield {"type": "done"}
             return
 
@@ -209,6 +234,21 @@ async def _run_agent_loop(
                 args = {}
 
             result = await registry.execute(tc.name, args)
+
+            # ── Collect ground truth from tool results ────────────────────
+            if analyst_mode:
+                ground_truth.tools_called.append(tc.name)
+                if tc.name == "get_ledger_context" and result.get("success"):
+                    for acct in result.get("accounts", []):
+                        ground_truth.known_accounts.add(acct["account"])
+                        if acct.get("currency"):
+                            ground_truth.known_currencies.add(acct["currency"])
+                    dr = result.get("date_range", {})
+                    ground_truth.date_range = (dr.get("min_date"), dr.get("max_date"))
+                    ground_truth.default_currency = result.get("default_currency")
+                elif tc.name == "execute_query" and result.get("success"):
+                    ground_truth.last_query_columns = result.get("columns", [])
+                    ground_truth.last_query_rows = result.get("rows", [])
 
             success = result.get("success", True)
             # Build a friendly message for the UI
@@ -338,8 +378,13 @@ async def assistant_chat(
         if file_warning:
             yield f"data: {json.dumps({'type': 'token', 'content': f'*Note: {file_warning}*' + chr(10) + chr(10)})}\n\n"
 
+        # In analyst mode the model must call tools — never answer from memory.
+        analyst_mode = not file_type and sqlite_path
         try:
-            async for event in _run_agent_loop(llm_config, messages, registry):
+            async for event in _run_agent_loop(
+                llm_config, messages, registry,
+                analyst_mode=bool(analyst_mode),
+            ):
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as e:
             logger.error(f"Agent loop error: {e}", exc_info=True)
