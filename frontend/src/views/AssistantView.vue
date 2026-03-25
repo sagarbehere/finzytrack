@@ -441,6 +441,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
+
+defineOptions({ name: 'AssistantView' })
 import { RouterLink } from 'vue-router'
 import { streamAssistantChat, readFileAsBase64 } from '@/api/assistant'
 import type { AttachedFile, ChatMessage } from '@/api/assistant'
@@ -909,23 +911,109 @@ function warningHasExpandableDetails(warning: ValidationWarning): boolean {
   return false
 }
 
-// Very simple markdown renderer: bold, code blocks, inline code, paragraphs
-function renderMarkdown(text: string): string {
+// ── Markdown renderer ─────────────────────────────────────────────────────────
+
+function _isPipeRow(line: string): boolean {
+  const t = line.trim()
+  return t.startsWith('|') && t.endsWith('|') && t.length > 1
+}
+
+function _isSepRow(line: string): boolean {
+  // |---|---| or |:---|:---:| etc.
+  return /^\s*\|[\s\-:|]+\|\s*$/.test(line)
+}
+
+function _renderTableBlock(lines: string[]): string {
+  const parseRow = (line: string) =>
+    line.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim())
+
+  const sepIdx = lines.findIndex((l) => _isSepRow(l))
+  if (sepIdx < 1) return _renderInlineText(lines.join('\n'))
+
+  const headers = parseRow(lines[0])
+  const rows = lines.slice(sepIdx + 1).filter((l) => l.trim()).map(parseRow)
+
+  const th = headers
+    .map(
+      (h) =>
+        `<th class="px-3 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide border-b border-gray-200 dark:border-gray-600 whitespace-nowrap">${h}</th>`,
+    )
+    .join('')
+
+  const trs = rows
+    .map((cells, idx) => {
+      const tds = cells
+        .map(
+          (c) =>
+            `<td class="px-3 py-1.5 text-gray-800 dark:text-gray-200 border-b border-gray-100 dark:border-gray-700/50">${c}</td>`,
+        )
+        .join('')
+      const bg = idx % 2 === 1 ? ' class="bg-gray-50/50 dark:bg-gray-700/10"' : ''
+      return `<tr${bg}>${tds}</tr>`
+    })
+    .join('')
+
+  return (
+    `<div class="overflow-x-auto my-2 rounded-lg border border-gray-200 dark:border-gray-600 text-sm">` +
+    `<table class="min-w-full border-collapse">` +
+    `<thead><tr class="bg-gray-50 dark:bg-gray-700/30">${th}</tr></thead>` +
+    `<tbody>${trs}</tbody>` +
+    `</table></div>`
+  )
+}
+
+function _renderInlineText(text: string): string {
+  if (!text.trim()) return ''
   return text
-    // Fenced code blocks
-    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="overflow-x-auto rounded p-2 text-xs"><code>$2</code></pre>')
-    // Inline code
-    .replace(/`([^`]+)`/g, '<code class="rounded bg-gray-200 dark:bg-gray-700 px-1 py-0.5 text-xs font-mono">$1</code>')
-    // Bold
+    .replace(
+      /```(\w*)\n([\s\S]*?)```/g,
+      '<pre class="overflow-x-auto rounded p-2 text-xs"><code>$2</code></pre>',
+    )
+    .replace(
+      /`([^`]+)`/g,
+      '<code class="rounded bg-gray-200 dark:bg-gray-700 px-1 py-0.5 text-xs font-mono">$1</code>',
+    )
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    // Italic
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    // Paragraphs (double newline)
     .replace(/\n\n/g, '</p><p class="mt-2">')
-    // Single newline
     .replace(/\n/g, '<br/>')
-    // Wrap in paragraph
     .replace(/^/, '<p>')
     .replace(/$/, '</p>')
+}
+
+/**
+ * Renders markdown to HTML.  Processes table blocks before applying inline
+ * transforms so that pipe characters aren't mangled by the paragraph/newline
+ * replacements.
+ */
+function renderMarkdown(text: string): string {
+  const lines = text.split('\n')
+  const segments: string[] = []
+  const textBuf: string[] = []
+  let i = 0
+
+  function flushText() {
+    if (textBuf.length > 0) {
+      segments.push(_renderInlineText(textBuf.join('\n')))
+      textBuf.length = 0
+    }
+  }
+
+  while (i < lines.length) {
+    // A table block begins when a pipe row is followed by a separator row
+    if (_isPipeRow(lines[i]) && i + 1 < lines.length && _isSepRow(lines[i + 1])) {
+      flushText()
+      const tableLines: string[] = []
+      while (i < lines.length && _isPipeRow(lines[i])) {
+        tableLines.push(lines[i++])
+      }
+      segments.push(_renderTableBlock(tableLines))
+    } else {
+      textBuf.push(lines[i++])
+    }
+  }
+  flushText()
+
+  return segments.join('')
 }
 </script>

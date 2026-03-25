@@ -2,7 +2,11 @@
   <div id="app" class="h-full bg-white dark:bg-gray-900">
     <AppShell>
       <!-- Dynamic content based on current page -->
-      <router-view v-if="$router" />
+      <router-view v-if="$router" v-slot="{ Component }">
+        <KeepAlive include="AssistantView">
+          <component :is="Component" />
+        </KeepAlive>
+      </router-view>
       <div v-else>
         <!-- Fallback content when router is not available -->
         <div class="text-center py-12">
