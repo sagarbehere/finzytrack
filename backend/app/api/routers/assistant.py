@@ -70,6 +70,36 @@ router = APIRouter()
 
 MAX_AGENT_ITERATIONS = 8
 
+
+def _log_context_size(messages: list[dict], tool_schemas: list[dict], iteration: int) -> None:
+    """Log the approximate token count of the context being sent to the LLM."""
+    # Rough estimate: serialize to JSON and count chars / 4
+    tools_json = json.dumps(tool_schemas)
+    tools_chars = len(tools_json)
+
+    total_chars = tools_chars
+    per_message = []
+    for i, msg in enumerate(messages):
+        msg_json = json.dumps(msg)
+        msg_chars = len(msg_json)
+        total_chars += msg_chars
+        role = msg.get("role", "?")
+        # For tool results, show the tool name; for others just role
+        if role == "tool":
+            label = f"tool({msg.get('tool_call_id', '?')[:8]})"
+        else:
+            label = role
+        per_message.append(f"  msg[{i}] {label}: ~{msg_chars // 4} tokens ({msg_chars} chars)")
+
+    est_tokens = total_chars // 4
+    logger.debug(
+        "Context for iteration %d: ~%d tokens total (%d chars). "
+        "Tools: ~%d tokens. Messages: %d",
+        iteration, est_tokens, total_chars, tools_chars // 4, len(messages),
+    )
+    for line in per_message:
+        logger.debug(line)
+
 _CSV_EXTENSIONS  = {".csv", ".tsv", ".txt"}
 _XLS_EXTENSIONS  = {".xls", ".xlsx", ".xlsm", ".xlsb"}
 _EML_EXTENSIONS  = {".eml"}
@@ -198,6 +228,9 @@ async def _run_agent_loop(
     validator = ResponseValidator()
 
     for iteration in range(MAX_AGENT_ITERATIONS):
+        # ── Debug: log context size before each LLM call ──────────────
+        _log_context_size(messages, tool_schemas, iteration)
+
         accumulated_text = ""
         tool_calls_this_turn: list[ToolCallEvent] = []
 

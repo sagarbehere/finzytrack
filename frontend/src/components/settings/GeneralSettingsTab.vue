@@ -145,8 +145,16 @@
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Max Tokens</label>
-          <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Maximum tokens in the LLM response.</p>
-          <input v-model.number="llmFields.max_tokens" type="number" min="1" step="256" :class="inputClass" />
+          <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Maximum tokens in the LLM response. Leave empty to use the model's default.</p>
+          <input
+            :value="llmFields.max_tokens ?? ''"
+            type="number"
+            min="1"
+            step="256"
+            placeholder="Model default"
+            :class="inputClass"
+            @input="llmFields.max_tokens = ($event.target as HTMLInputElement).value ? Number(($event.target as HTMLInputElement).value) : null"
+          />
         </div>
       </div>
     </SettingsSection>
@@ -510,7 +518,7 @@ const llmFields = reactive({
   api_key: config.value?.ai?.llm?.api_key ?? '',
   model: config.value?.ai?.llm?.model ?? '',
   temperature: config.value?.ai?.llm?.temperature ?? 0.1,
-  max_tokens: config.value?.ai?.llm?.max_tokens ?? 2048,
+  max_tokens: config.value?.ai?.llm?.max_tokens ?? null,
 })
 const llmSaving = ref(false)
 const llmError = ref('')
@@ -521,7 +529,7 @@ const llmIsDirty = computed(() =>
   llmFields.api_key !== (config.value?.ai?.llm?.api_key ?? '') ||
   llmFields.model !== (config.value?.ai?.llm?.model ?? '') ||
   llmFields.temperature !== (config.value?.ai?.llm?.temperature ?? 0.1) ||
-  llmFields.max_tokens !== (config.value?.ai?.llm?.max_tokens ?? 2048)
+  llmFields.max_tokens !== (config.value?.ai?.llm?.max_tokens ?? null)
 )
 
 function initLlmFields() {
@@ -530,7 +538,7 @@ function initLlmFields() {
   llmFields.api_key = config.value?.ai?.llm?.api_key ?? ''
   llmFields.model = config.value?.ai?.llm?.model ?? ''
   llmFields.temperature = config.value?.ai?.llm?.temperature ?? 0.1
-  llmFields.max_tokens = config.value?.ai?.llm?.max_tokens ?? 2048
+  llmFields.max_tokens = config.value?.ai?.llm?.max_tokens ?? null
 }
 
 async function saveLlm() {

@@ -76,23 +76,24 @@ async def _stream_openai(
         model=config.model,
         messages=messages,
         temperature=config.temperature,
-        max_tokens=config.max_tokens,
         stream=True,
     )
+    if config.max_tokens is not None:
+        call_kwargs["max_tokens"] = config.max_tokens
     if tools:
         call_kwargs["tools"] = tools
         call_kwargs["tool_choice"] = "auto"
 
     # Debug: log the request payload (tools + message count, not full content)
     logger.debug(
-        "OpenAI request: model=%s, messages=%d, tools=%s, max_tokens=%d",
+        "OpenAI request: model=%s, messages=%d, tools=%s, max_tokens=%s",
         config.model,
         len(messages),
         [t["function"]["name"] for t in tools] if tools else [],
-        config.max_tokens,
+        call_kwargs.get("max_tokens", "(not sent)"),
     )
     if tools:
-        logger.debug("Tool schemas: %s", json.dumps(tools, indent=2))
+        logger.debug("Tool schemas: %d tools, %d chars", len(tools), len(json.dumps(tools)))
 
     # Accumulate streamed tool-call deltas keyed by index
     tool_call_accum: dict[int, dict] = {}
@@ -152,7 +153,7 @@ async def _stream_anthropic(
 
     call_kwargs = dict(
         model=config.model,
-        max_tokens=config.max_tokens,
+        max_tokens=config.max_tokens if config.max_tokens is not None else 8192,  # Anthropic requires max_tokens
         messages=anthropic_messages,
         temperature=config.temperature,
         stream=True,
@@ -255,7 +256,12 @@ def build_assistant_message(text: str, tool_calls: list[ToolCallEvent]) -> dict:
             {
                 "id": tc.id,
                 "type": "function",
-                "function": {"name": tc.name, "arguments": tc.arguments},
+                "function": {
+                    "name": tc.name,
+                    # Normalize empty arguments to valid JSON object —
+                    # some providers reject "" and require "{}"
+                    "arguments": tc.arguments if tc.arguments else "{}",
+                },
             }
             for tc in tool_calls
         ]

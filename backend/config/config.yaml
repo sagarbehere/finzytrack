@@ -35,7 +35,7 @@ ai:
     api_key: ""         # Required for cloud providers (OpenAI, Anthropic, Groq, etc.), leave empty for local LLMs
     model: ""           # e.g. gpt-4o, claude-sonnet-4-6, llama-3.1-8b-instruct
     temperature: 0.1    # Low = more deterministic (recommended for parsing/SQL)
-    max_tokens: 2048
+    # max_tokens:       # Leave unset to use the model's default. Only set if you need to limit output length.
 
 # Feature flags
 features:
