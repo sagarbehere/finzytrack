@@ -42,6 +42,10 @@ export type Config = {
      */
     xls_rules_dir?: (string | null);
     /**
+     * Directory containing dashboard recipe JSON files
+     */
+    recipes_dir?: string;
+    /**
      * Analytics and reporting settings
      */
     analytics?: AnalyticsConfig;

@@ -137,7 +137,7 @@
         <input v-model="llmFields.model" type="text" placeholder="gpt-4o" :class="inputClass" />
       </div>
 
-      <div class="grid grid-cols-2 gap-4">
+      <div class="grid grid-cols-3 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Temperature</label>
           <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">0 = deterministic, 2 = very random.</p>
@@ -145,14 +145,19 @@
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Max Tokens</label>
-          <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Maximum tokens in the LLM response. 0 = use model default.</p>
+          <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Max output tokens. 0 = model default.</p>
           <input v-model.number="llmFields.max_tokens" type="number" min="0" step="256" :class="inputClass" />
           <p
             v-if="llmFields.provider === 'anthropic' && !llmFields.max_tokens"
             class="mt-1 text-xs text-amber-600 dark:text-amber-400"
           >
-            Anthropic requires a value. Will default to 8192 if left at 0.
+            Anthropic requires a value. Defaults to 8192.
           </p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Max Tool Rounds</label>
+          <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Tool-call round-trips per message.</p>
+          <input v-model.number="llmFields.max_agent_iterations" type="number" min="1" max="50" step="1" :class="inputClass" />
         </div>
       </div>
     </SettingsSection>
@@ -517,6 +522,7 @@ const llmFields = reactive({
   model: config.value?.ai?.llm?.model ?? '',
   temperature: config.value?.ai?.llm?.temperature ?? 0.1,
   max_tokens: config.value?.ai?.llm?.max_tokens ?? 0,
+  max_agent_iterations: config.value?.ai?.llm?.max_agent_iterations ?? 12,
 })
 const llmSaving = ref(false)
 const llmError = ref('')
@@ -527,7 +533,8 @@ const llmIsDirty = computed(() =>
   llmFields.api_key !== (config.value?.ai?.llm?.api_key ?? '') ||
   llmFields.model !== (config.value?.ai?.llm?.model ?? '') ||
   llmFields.temperature !== (config.value?.ai?.llm?.temperature ?? 0.1) ||
-  llmFields.max_tokens !== (config.value?.ai?.llm?.max_tokens ?? 0)
+  llmFields.max_tokens !== (config.value?.ai?.llm?.max_tokens ?? 0) ||
+  llmFields.max_agent_iterations !== (config.value?.ai?.llm?.max_agent_iterations ?? 12)
 )
 
 function initLlmFields() {
@@ -537,6 +544,7 @@ function initLlmFields() {
   llmFields.model = config.value?.ai?.llm?.model ?? ''
   llmFields.temperature = config.value?.ai?.llm?.temperature ?? 0.1
   llmFields.max_tokens = config.value?.ai?.llm?.max_tokens ?? 0
+  llmFields.max_agent_iterations = config.value?.ai?.llm?.max_agent_iterations ?? 12
 }
 
 async function saveLlm() {

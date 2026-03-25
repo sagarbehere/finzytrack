@@ -27,9 +27,13 @@ export type LLMConfig = {
      */
     temperature?: number;
     /**
-     * Maximum tokens in LLM response
+     * Maximum tokens in LLM response. 0 = use model default (Anthropic requires a value > 0).
      */
     max_tokens?: number;
+    /**
+     * Maximum tool-call round-trips per user message in the AI assistant.
+     */
+    max_agent_iterations?: number;
 };
 export namespace LLMConfig {
     /**

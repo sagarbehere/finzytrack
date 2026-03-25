@@ -143,6 +143,18 @@ export class LedgerService {
         });
     }
     /**
+     * Get Postings Schema
+     * Return the postings table schema as Markdown (used by the frontend SQL assistant).
+     * @returns string Successful Response
+     * @throws ApiError
+     */
+    public static getPostingsSchema(): CancelablePromise<string> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/ledger/schema/postings',
+        });
+    }
+    /**
      * Sort Ledger
      * Sort ledger directives chronologically.
      *
