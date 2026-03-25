@@ -804,7 +804,10 @@ async function sendMessage() {
       }
     }
   } catch (err: unknown) {
-    assistantMsg.content += `\n\n**Error:** ${err instanceof Error ? err.message : 'Unknown error'}`
+    // Don't append errors if chat was reset (messages cleared)
+    if (messages.value.includes(assistantMsg)) {
+      assistantMsg.content += `\n\n**Error:** ${err instanceof Error ? err.message : 'Unknown error'}`
+    }
   } finally {
     assistantMsg.streaming = false
     streaming.value = false

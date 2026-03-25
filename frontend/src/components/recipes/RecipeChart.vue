@@ -124,7 +124,12 @@ function isPieChart(): boolean {
 
 // Build a formatter function from a ValueFormat string
 function buildFormatter(format: ValueFormat): (value: unknown) => string {
-  return (value: unknown) => predefinedFormats[format](value)
+  const fn = predefinedFormats[format]
+  if (typeof fn !== 'function') {
+    console.warn(`[RecipeChart] Unknown format "${format}", falling back to String()`)
+    return (value: unknown) => String(value ?? '')
+  }
+  return (value: unknown) => fn(value)
 }
 
 // Inject label formatters into series that have labels enabled
