@@ -106,9 +106,9 @@ When the user asks you to create a chart, dashboard, or visualization:
 7. **Refine if needed.** If the user asks for changes (colors, chart type, layout, filters),
    update the recipe and call `preview_recipe` again. Each call replaces the previous preview.
 
-8. **Save it.** Once the user approves, call `write_recipe` with the filename and content. Tell
-   the user to reload dashboards (click the refresh button on the dashboard tabs) to see their
-   new dashboard in the picker.
+8. **Save it.** Once the user approves, call `write_recipe` with just the filename — do NOT
+   re-pass the content, as the previewed recipe is saved automatically. Tell the user to reload
+   dashboards (click the refresh button on the dashboard tabs) to see their new dashboard.
 
 **Key rules for recipe generation:**
 - Always generate **dashboards** (not standalone widgets). Even a single chart should be wrapped

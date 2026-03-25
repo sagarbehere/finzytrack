@@ -270,10 +270,10 @@ class WriteRecipeTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Validate and save a dashboard recipe JSON to config/recipes/dashboards/. "
-            "The recipe is structurally validated (required fields, valid types, layout "
-            "consistency) and each widget's SQL query is dry-run tested against the "
-            "database. The manifest is updated automatically. "
+            "Save a dashboard recipe to config/recipes/dashboards/. "
+            "If you already called preview_recipe, just pass the filename — the "
+            "previewed recipe will be saved automatically (do NOT re-pass content). "
+            "If no preview exists, pass content with the full recipe JSON. "
             "Pass overwrite: true to replace an existing dashboard with the same filename."
         )
 
@@ -291,14 +291,17 @@ class WriteRecipeTool(BaseTool):
                 },
                 "content": {
                     "type": "object",
-                    "description": "The full dashboard recipe JSON object.",
+                    "description": (
+                        "The full dashboard recipe JSON object. OPTIONAL if you already "
+                        "called preview_recipe — the previewed recipe is used automatically."
+                    ),
                 },
                 "overwrite": {
                     "type": "boolean",
                     "description": "Set to true to overwrite an existing file. Default: false.",
                 },
             },
-            "required": ["filename", "content"],
+            "required": ["filename"],
         }
 
     def __init__(
@@ -312,8 +315,21 @@ class WriteRecipeTool(BaseTool):
         self._backup_manager = backup_manager
 
     async def execute(
-        self, filename: str, content: dict, overwrite: bool = False
+        self, filename: str, content: dict | None = None, overwrite: bool = False
     ) -> dict:
+        # Resolve content: use cached preview if content not provided
+        if content is None:
+            from app.ai.tools.preview_recipe import get_last_previewed_recipe
+            content = get_last_previewed_recipe()
+            if content is None:
+                return {
+                    "success": False,
+                    "error": (
+                        "No content provided and no previewed recipe available. "
+                        "Either pass the recipe JSON as content, or call preview_recipe first."
+                    ),
+                }
+
         # Ensure .json extension
         if not filename.endswith(".json"):
             filename += ".json"

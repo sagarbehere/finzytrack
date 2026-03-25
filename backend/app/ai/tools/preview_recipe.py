@@ -4,6 +4,9 @@ preview_recipe tool — validates a dashboard recipe and returns it for live pre
 Unlike write_recipe, this does NOT save to disk. It performs the same structural
 and SQL validation, then returns the validated recipe JSON so the frontend can
 render it as a live dashboard in the preview sidebar.
+
+The last successfully previewed recipe is cached so that write_recipe can save
+it without the LLM needing to re-output the entire JSON.
 """
 
 import logging
@@ -16,6 +19,20 @@ from app.ai.tools.write_recipe import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Module-level cache for the last successfully previewed recipe.
+# Shared between PreviewRecipeTool and WriteRecipeTool within a single
+# agent loop (same process, same request).
+_last_previewed_recipe: dict | None = None
+
+
+def get_last_previewed_recipe() -> dict | None:
+    return _last_previewed_recipe
+
+
+def clear_last_previewed_recipe() -> None:
+    global _last_previewed_recipe
+    _last_previewed_recipe = None
 
 
 class PreviewRecipeTool(BaseTool):
@@ -50,6 +67,8 @@ class PreviewRecipeTool(BaseTool):
         self._sqlite_path = sqlite_path
 
     async def execute(self, content: dict) -> dict:
+        global _last_previewed_recipe
+
         # Structural validation
         errors = _validate_dashboard(content)
         recipe_id = content.get("id")
@@ -71,6 +90,9 @@ class PreviewRecipeTool(BaseTool):
                 "error": "SQL query validation failed",
                 "validation_errors": sql_errors,
             }
+
+        # Cache for write_recipe
+        _last_previewed_recipe = content
 
         return {
             "success": True,
