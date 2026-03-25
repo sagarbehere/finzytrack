@@ -102,17 +102,21 @@ When the user asks you to create a chart, dashboard, or visualization:
 
 7. **Save it.** Once the user approves, call `write_recipe` with just the filename — do NOT
    re-pass the content. The previewed recipe and its type are saved automatically.
+   Tell the user: the widget has been saved. To see it in the Dashboard panel, it needs to be
+   added to a dashboard. Ask if they'd like you to create a dashboard for it now.
 
 ### Multi-widget dashboards
 
-When the user wants multiple widgets together:
+When the user wants multiple widgets together, or when the user wants a saved widget to appear
+in the Dashboard panel:
 
 1. **Create each widget individually** using steps 4–7 above. Each widget is saved to `widgets/`.
 2. **Compose the dashboard.** Build a dashboard recipe that references the saved widgets by
    `widgetId`. The dashboard JSON only needs `id`, `title`, `parameters`, and `layout` — the
    `widgets` array should be empty (`[]`) since the widgets are loaded from the registry by ID.
 3. **Preview and save** the dashboard using `preview_recipe` with `recipe_type: "dashboard"`,
-   then `write_recipe`.
+   then `write_recipe`. Dashboards appear in the Dashboard panel's picker immediately after
+   reload.
 
 Example dashboard referencing saved widgets:
 ```json
