@@ -1,11 +1,24 @@
 <template>
   <div class="flex flex-col h-full">
     <!-- Page header -->
-    <div class="mb-4 flex-none">
-      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">AI Assistant</h1>
-      <p class="mt-1 text-gray-600 dark:text-gray-400">
-        Ask questions about your finances, or upload a file to create import rules
-      </p>
+    <div class="mb-4 flex-none flex items-start justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">AI Assistant</h1>
+        <p class="mt-1 text-gray-600 dark:text-gray-400">
+          Ask questions about your finances, or upload a file to create import rules
+        </p>
+      </div>
+      <button
+        type="button"
+        class="flex-none inline-flex items-center gap-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+        title="Discard this conversation and start a new one"
+        @click="resetChat"
+      >
+        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+        </svg>
+        New chat
+      </button>
     </div>
 
     <!-- LLM not configured banner -->
@@ -494,6 +507,8 @@ const messages = ref<DisplayMessage[]>([])
 const inputText = ref('')
 const attachedFile = ref<AttachedFile | null>(null)
 const streaming = ref(false)
+// AbortController for the active stream — replaced on each send, aborted on reset
+const streamAbortController = ref<AbortController | null>(null)
 // Kept across the send/clear cycle so the validator can use them after streaming ends
 const sentFile = ref<AttachedFile | null>(null)
 const sentExpectedCount = ref<number | null>(null)  // user-supplied expected transaction count
@@ -651,6 +666,9 @@ async function sendMessage() {
   messages.value.push(assistantMsg)
   streaming.value = true
 
+  const abortController = new AbortController()
+  streamAbortController.value = abortController
+
   // Track whether a rule was saved this turn so we can validate after streaming
   // These local vars capture what happened this turn; persistent refs are the fallback
   let savedRuleTool: 'write_csv_rule' | 'write_xls_rule' | null = null
@@ -660,7 +678,7 @@ async function sendMessage() {
   try {
     const ctx: Record<string, string> = { page: 'assistant', mode: sessionMode.value }
     if (sessionFileType.value) ctx.file_type = sessionFileType.value
-    for await (const event of streamAssistantChat(apiMessages, file, ctx)) {
+    for await (const event of streamAssistantChat(apiMessages, file, ctx, abortController.signal)) {
       if (event.type === 'token') {
         assistantMsg.content += event.content
         scrollToBottom()
@@ -742,6 +760,33 @@ async function sendMessage() {
     }
     scrollToBottom()
   }
+}
+
+// ── New chat ──────────────────────────────────────────────────────────────────
+
+function resetChat() {
+  // Abort any in-flight stream so the fetch is cancelled cleanly
+  streamAbortController.value?.abort()
+  streamAbortController.value = null
+
+  messages.value = []
+  inputText.value = ''
+  attachedFile.value = null
+  streaming.value = false
+  sentFile.value = null
+  sentExpectedCount.value = null
+  previewSheets.value = null
+  previewFileName.value = null
+  lastSavedRuleTool.value = null
+  lastSavedRuleFilename.value = null
+  sessionMode.value = 'analyst'
+  sessionFileType.value = null
+  ruleFilename.value = ''
+  ruleAccount.value = ''
+  ruleCurrency.value = ''
+  expectedTxCount.value = ''
+  resetTextareaHeight()
+  nextTick(() => textareaEl.value?.focus())
 }
 
 // ── Rule validation ───────────────────────────────────────────────────────────
