@@ -260,6 +260,7 @@
   import type { EmailParsedTransaction, EmailProfileInfo } from '@/composables/useEmailImporter'
   import { useToast, useNotifications } from '@/composables/useNotifications'
   import { useConfig } from '@/composables/useConfig'
+  import { errorHandler } from '@/utils/ErrorHandler'
 
   const emit = defineEmits<{
     (e: 'proceedWithImport', payload: {
@@ -342,9 +343,10 @@
     connectionStatus.value = null
     try {
       const result = await testConnection(selectedProfileId.value)
-      connectionStatus.value = result.success
-        ? { ok: true, message: result.message || 'Connected successfully' }
-        : { ok: false, message: result.error || 'Connection failed' }
+      connectionStatus.value = { ok: true, message: result.message || 'Connected successfully' }
+    } catch (e) {
+      errorHandler.display(e)
+      connectionStatus.value = { ok: false, message: 'Connection test failed — see notifications' }
     } finally {
       isTestingConnection.value = false
     }
