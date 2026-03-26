@@ -109,6 +109,8 @@ import FileEditor from '@/components/common/FileEditor.vue'
 import GeneralSettingsTab from '@/components/settings/GeneralSettingsTab.vue'
 import type { Config } from '@/services/generated-api'
 import { useConfig } from '@/composables/useConfig'
+import { useAccounts } from '@/composables/useAccounts'
+import { useCommodities } from '@/composables/useCommodities'
 
 const tabs = [
   { id: 'general', label: 'General' },
@@ -123,10 +125,17 @@ const themeOptions = [
   { id: 'theme-light', label: 'Light' },
   { id: 'theme-dark', label: 'Dark' },
 ]
-const { updateConfig } = useConfig()
+const { config, updateConfig } = useConfig()
+const { invalidateCache: invalidateAccounts } = useAccounts()
+const { invalidateCache: invalidateCommodities } = useCommodities()
 const restartRequired = ref(false)
 
 function handleConfigSaved(updatedConfig: Config) {
+  // If ledger file changed via raw YAML editor, invalidate cached ledger data
+  if (updatedConfig.ledger_file !== config.value?.ledger_file) {
+    invalidateAccounts()
+    invalidateCommodities()
+  }
   updateConfig(updatedConfig)
 }
 

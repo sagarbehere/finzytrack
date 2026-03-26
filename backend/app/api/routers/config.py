@@ -30,6 +30,7 @@ class ConfigPatchResponse(BaseModel):
     config: Config
     restart_required: bool
     restart_reason: Optional[str] = None
+    notice: Optional[str] = None
 
 
 def _deep_merge(base: Any, patch: dict) -> None:
@@ -116,11 +117,12 @@ async def patch_config_endpoint(
         f.truncate()
 
     # Reload the in-memory config
-    restart_required, restart_reason = config_manager.reload_config(_to_plain_dict(data))
+    restart_required, restart_reason, notice = config_manager.reload_config(_to_plain_dict(data))
 
     updated_config = config_manager.get_config()
     return success_json_response(ConfigPatchResponse(
         config=updated_config,
         restart_required=restart_required,
         restart_reason=restart_reason,
+        notice=notice,
     ))

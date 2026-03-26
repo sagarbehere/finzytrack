@@ -10,5 +10,6 @@ export type ConfigPatchResponse = {
     config: Config;
     restart_required: boolean;
     restart_reason?: (string | null);
+    notice?: (string | null);
 };
 

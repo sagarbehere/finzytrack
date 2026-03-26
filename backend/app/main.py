@@ -148,6 +148,9 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
         db_type="sqlite"
     )
 
+    # 5b. Give ConfigManager references for hot ledger switching
+    config_manager.set_ledger_services(beancount_manager, sqlite_sync_manager)
+
     # 6. Ensure ledger exists - fail fast if it can't be created
     try:
         if not ledger_initializer.ensure_ledger_exists():

@@ -488,12 +488,16 @@ import { ChevronUpDownIcon } from '@heroicons/vue/16/solid'
 import { CheckIcon } from '@heroicons/vue/20/solid'
 import SettingsSection from './SettingsSection.vue'
 import { useConfig } from '@/composables/useConfig'
+import { useAccounts } from '@/composables/useAccounts'
+import { useCommodities } from '@/composables/useCommodities'
 import { useToast } from '@/composables/useNotifications'
 import { patchConfig } from '@/composables/useConfigPatch'
 
 const emit = defineEmits<{ 'restart-required': [] }>()
 
 const { config, updateConfig } = useConfig()
+const { invalidateCache: invalidateAccounts } = useAccounts()
+const { invalidateCache: invalidateCommodities } = useCommodities()
 const toast = useToast()
 
 // ─── Shared UI classes ────────────────────────────────────────────────────────
@@ -540,10 +544,24 @@ async function saveSection(
   saving.value = true
   error.value = ''
   try {
+    const previousLedger = config.value?.ledger_file
     const result = await patchConfig(patch)
     updateConfig(result.config)
+
+    // If the ledger file changed (hot-switched), invalidate cached ledger data
+    if (result.config.ledger_file !== previousLedger) {
+      invalidateAccounts()
+      invalidateCommodities()
+      if (result.notice) {
+        toast.info('New ledger created', result.notice)
+      } else {
+        toast.success('Ledger switched', 'Now using ' + result.config.ledger_file)
+      }
+    } else {
+      toast.success('Saved', 'Settings saved successfully')
+    }
+
     if (result.restart_required) emit('restart-required')
-    toast.success('Saved', 'Settings saved successfully')
   } catch (e: any) {
     error.value = e.message ?? 'Failed to save'
   } finally {

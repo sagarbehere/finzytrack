@@ -13,6 +13,7 @@ export interface ConfigPatchResult {
   config: Config
   restart_required: boolean
   restart_reason: string | null
+  notice: string | null
 }
 
 export async function patchConfig(patch: Record<string, unknown>): Promise<ConfigPatchResult> {
@@ -27,6 +28,7 @@ export async function patchConfig(patch: Record<string, unknown>): Promise<Confi
       config: response.data.config,
       restart_required: response.data.restart_required,
       restart_reason: response.data.restart_reason ?? null,
+      notice: response.data.notice ?? null,
     }
   } catch (e: any) {
     const detail = e.body?.error?.details?.errors?.join('\n')

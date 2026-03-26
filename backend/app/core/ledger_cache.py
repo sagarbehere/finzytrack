@@ -450,6 +450,20 @@ class LedgerCache:
         self._cache = None
         self._last_modified = None
 
+    def switch_ledger(self, new_ledger_file: str) -> None:
+        """
+        Switch to a different ledger file and invalidate the cache.
+
+        The caller is responsible for validating that the file exists and is
+        readable before calling this method.
+
+        Args:
+            new_ledger_file: Path to the new Beancount ledger file
+        """
+        logger.info(f"Switching ledger: {self.ledger_file} → {new_ledger_file}")
+        self.ledger_file = new_ledger_file
+        self.invalidate()
+
     # Convenience methods for accessing specific data structures
 
     def get_entries(self) -> List:

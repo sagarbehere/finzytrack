@@ -75,6 +75,22 @@ class BeancountManager:
             except Exception as e:
                 logger.error(f"Error in cache invalidation callback: {e}", exc_info=True)
 
+    def switch_ledger(self, new_ledger_file: str) -> None:
+        """
+        Switch to a different ledger file at runtime.
+
+        Updates the ledger file path on this manager, its cache, and the
+        ledger initializer. The caller is responsible for validating the
+        file exists and is readable before calling this method.
+
+        Args:
+            new_ledger_file: Path to the new Beancount ledger file
+        """
+        logger.info(f"Switching ledger file: {self.ledger_file} → {new_ledger_file}")
+        self.ledger_file = new_ledger_file
+        self.ledger_initializer.ledger_file = new_ledger_file
+        self.cache.switch_ledger(new_ledger_file)
+
     def is_existing_account(self, account_name: str) -> bool:
         """Check if account name exists in ledger (O(1) lookup)."""
         return account_name in self.cache.get_account_names()

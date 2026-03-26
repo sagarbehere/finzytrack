@@ -56,6 +56,7 @@ class ConfigUpdateResponse(BaseModel):
     config: Config  # Full Config object for cache update
     restart_required: bool
     restart_reason: Optional[str] = None
+    notice: Optional[str] = None
 
 
 class LedgerUpdateResponse(BaseModel):
@@ -184,7 +185,7 @@ async def update_config_file(
         )
 
     # Step 4: Hot-reload config (see reload_config implementation in ConfigManager)
-    restart_required, restart_reason = config_manager.reload_config(data)
+    restart_required, restart_reason, notice = config_manager.reload_config(data)
 
     # Step 5: Return metadata + parsed config (no content echo)
     return success_json_response(ConfigUpdateResponse(
@@ -194,7 +195,8 @@ async def update_config_file(
         ),
         config=config_manager.get_config(),  # Return the full Config object
         restart_required=restart_required,
-        restart_reason=restart_reason
+        restart_reason=restart_reason,
+        notice=notice,
     ))
 
 
