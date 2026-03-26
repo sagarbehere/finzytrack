@@ -32,7 +32,7 @@ def cmd_server(args):
     import json
 
     config = Config.from_yaml_file(args.config)
-    rules_path = Path(config.email_import.rules_directory)
+    rules_path = Path(config.email_rules_dir)
     registry = AccountProfileRegistry(rules_path)
 
     result = None

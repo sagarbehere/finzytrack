@@ -27,24 +27,6 @@
         </p>
         <input v-model="dataFields.ledger_file" type="text" placeholder="e.g. data/ledger.beancount" :class="inputClass" />
       </div>
-
-      <div>
-        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">OFX Mappings File</label>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Path to the YAML file containing OFX account mappings. Leave empty to disable.</p>
-        <input v-model="dataFields.ofx_mappings_file" type="text" placeholder="e.g. config/ofx_mappings.yaml" :class="inputClass" />
-      </div>
-
-      <div>
-        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">CSV Rules Directory</label>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Directory containing CSV import rule YAML files. Leave empty to disable.</p>
-        <input v-model="dataFields.csv_rules_dir" type="text" placeholder="e.g. config/csv_rules/" :class="inputClass" />
-      </div>
-
-      <div>
-        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">XLS Rules Directory</label>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Directory containing XLS import rule YAML files. Leave empty to disable.</p>
-        <input v-model="dataFields.xls_rules_dir" type="text" placeholder="e.g. config/xls_rules/" :class="inputClass" />
-      </div>
     </SettingsSection>
 
     <!-- ── Accounts ───────────────────────────────────────────────────────── -->
@@ -243,12 +225,6 @@
           <span class="size-5 rounded-full bg-white shadow-xs ring-1 ring-gray-900/5 transition-transform duration-200 ease-in-out group-has-checked:translate-x-5"></span>
           <input type="checkbox" v-model="emailFields.enabled" class="absolute inset-0 size-full appearance-none focus:outline-hidden" aria-label="Enable email import" />
         </div>
-      </div>
-
-      <div>
-        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Rules Directory</label>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Directory containing per-account YAML rule files.</p>
-        <input v-model="emailFields.rules_directory" type="text" placeholder="./config/email_rules/" :class="inputClass" />
       </div>
 
       <div>
@@ -573,33 +549,21 @@ async function saveSection(
 
 const dataFields = reactive({
   ledger_file: config.value?.ledger_file ?? '',
-  ofx_mappings_file: config.value?.ofx_mappings_file ?? '',
-  csv_rules_dir: config.value?.csv_rules_dir ?? '',
-  xls_rules_dir: config.value?.xls_rules_dir ?? '',
 })
 const dataSaving = ref(false)
 const dataError = ref('')
 
 const dataIsDirty = computed(() =>
-  dataFields.ledger_file !== (config.value?.ledger_file ?? '') ||
-  dataFields.ofx_mappings_file !== (config.value?.ofx_mappings_file ?? '') ||
-  dataFields.csv_rules_dir !== (config.value?.csv_rules_dir ?? '') ||
-  dataFields.xls_rules_dir !== (config.value?.xls_rules_dir ?? '')
+  dataFields.ledger_file !== (config.value?.ledger_file ?? '')
 )
 
 function initDataFields() {
   dataFields.ledger_file = config.value?.ledger_file ?? ''
-  dataFields.ofx_mappings_file = config.value?.ofx_mappings_file ?? ''
-  dataFields.csv_rules_dir = config.value?.csv_rules_dir ?? ''
-  dataFields.xls_rules_dir = config.value?.xls_rules_dir ?? ''
 }
 
 async function saveData() {
   await saveSection({
     ledger_file: dataFields.ledger_file,
-    ofx_mappings_file: dataFields.ofx_mappings_file || null,
-    csv_rules_dir: dataFields.csv_rules_dir || null,
-    xls_rules_dir: dataFields.xls_rules_dir || null,
   }, dataSaving, dataError)
 }
 
@@ -710,7 +674,6 @@ function resetCategorization() { initCategorizationFields(); categorizationError
 
 const emailFields = reactive({
   enabled: config.value?.email_import?.enabled ?? false,
-  rules_directory: config.value?.email_import?.rules_directory ?? './config/email_rules/',
   default_lookback_days: config.value?.email_import?.default_lookback_days ?? 7,
   max_emails: config.value?.email_import?.max_emails ?? 500,
   imap_timeout_secs: config.value?.email_import?.imap_timeout_secs ?? 30,
@@ -721,7 +684,6 @@ const emailError = ref('')
 
 const emailIsDirty = computed(() =>
   emailFields.enabled !== (config.value?.email_import?.enabled ?? false) ||
-  emailFields.rules_directory !== (config.value?.email_import?.rules_directory ?? './config/email_rules/') ||
   emailFields.default_lookback_days !== (config.value?.email_import?.default_lookback_days ?? 7) ||
   emailFields.max_emails !== (config.value?.email_import?.max_emails ?? 500) ||
   emailFields.imap_timeout_secs !== (config.value?.email_import?.imap_timeout_secs ?? 30) ||
@@ -730,7 +692,6 @@ const emailIsDirty = computed(() =>
 
 function initEmailFields() {
   emailFields.enabled = config.value?.email_import?.enabled ?? false
-  emailFields.rules_directory = config.value?.email_import?.rules_directory ?? './config/email_rules/'
   emailFields.default_lookback_days = config.value?.email_import?.default_lookback_days ?? 7
   emailFields.max_emails = config.value?.email_import?.max_emails ?? 500
   emailFields.imap_timeout_secs = config.value?.email_import?.imap_timeout_secs ?? 30
@@ -741,7 +702,6 @@ async function saveEmail() {
   await saveSection({
     email_import: {
       enabled: emailFields.enabled,
-      rules_directory: emailFields.rules_directory,
       default_lookback_days: emailFields.default_lookback_days,
       max_emails: emailFields.max_emails,
       imap_timeout_secs: emailFields.imap_timeout_secs,

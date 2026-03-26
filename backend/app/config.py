@@ -133,7 +133,6 @@ class AnalyticsConfig(BaseModel):
 class EmailImportConfig(BaseModel):
     """Email import configuration (formerly the email_service microservice)."""
     enabled: bool = Field(default=False, description="Enable email import functionality")
-    rules_directory: str = Field(default="./config/email_rules/", description="Directory containing email import rule YAML files")
     default_lookback_days: int = Field(default=7, ge=1, description="Default number of days to look back for emails")
     max_emails: int = Field(default=500, ge=1, description="Max emails to fetch per request; truncates with warning")
     imap_timeout_secs: int = Field(default=30, ge=0, description="Socket timeout for IMAP operations; 0 = no timeout")
@@ -155,18 +154,6 @@ class Config(BaseModel):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     ai: AIConfig = Field(default_factory=AIConfig, description="AI and machine learning settings")
 
-    # OFX account mappings file
-    ofx_mappings_file: Optional[str] = Field(default=None, description="Path to OFX account mappings YAML file")
-
-    # CSV import rules directory
-    csv_rules_dir: Optional[str] = Field(default=None, description="Directory containing CSV import rule YAML files")
-
-    # XLS import rules directory
-    xls_rules_dir: Optional[str] = Field(default=None, description="Directory containing XLS import rule YAML files")
-
-    # Dashboard recipes directory
-    recipes_dir: str = Field(default="./config/recipes/", description="Directory containing dashboard recipe JSON files")
-
     # Analytics configuration
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig, description="Analytics and reporting settings")
 
@@ -180,7 +167,38 @@ class Config(BaseModel):
         default=None,
         description="Path to the config file this configuration was loaded from"
     )
-    
+
+    @property
+    def config_dir(self) -> Path:
+        """The config/ directory — conventional subdirectories live here.
+
+        This is always ``./config/`` relative to CWD (which the launcher sets
+        to the backend dir in dev or the app dir when packaged). The config
+        *file* itself may live elsewhere (e.g. ``data/config.yaml`` for dev
+        overrides), but the conventional directories are always under config/.
+        """
+        return Path('./config')
+
+    @property
+    def csv_rules_dir(self) -> str:
+        return str(self.config_dir / 'csv_rules')
+
+    @property
+    def xls_rules_dir(self) -> str:
+        return str(self.config_dir / 'xls_rules')
+
+    @property
+    def ofx_mappings_file(self) -> str:
+        return str(self.config_dir / 'ofx_mappings.yaml')
+
+    @property
+    def recipes_dir(self) -> str:
+        return str(self.config_dir / 'recipes')
+
+    @property
+    def email_rules_dir(self) -> str:
+        return str(self.config_dir / 'email_rules')
+
     @model_validator(mode='after')
     def validate_directory_paths(self) -> 'Config':
         """Validate that required directories exist for file operations."""

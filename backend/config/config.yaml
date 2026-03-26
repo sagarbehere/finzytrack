@@ -13,15 +13,6 @@ server:
   host: "127.0.0.1"
   port: 8001
 
-# CSV import rules directory
-csv_rules_dir: "./config/csv_rules"
-
-# XLS import rules directory
-xls_rules_dir: "./config/xls_rules"
-
-# OFX account mappings file (populated via "Learn Account" feature)
-ofx_mappings_file: "./config/ofx_mappings.yaml"
-
 
 # AI settings (categorization and LLM)
 ai:
@@ -66,7 +57,6 @@ security:
 # Email import (IMAP fetch + rule-based parsing)
 email_import:
   enabled: true                           # Set to false to disable email import endpoints
-  rules_directory: "./config/email_rules/" # Directory containing per-account YAML rule files
   default_lookback_days: 7                 # Default days to look back for emails
   max_emails: 500                          # Max emails per fetch; truncates with warning
   imap_timeout_secs: 30                    # Socket timeout for IMAP operations; 0 = no timeout

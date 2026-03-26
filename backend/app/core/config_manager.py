@@ -45,11 +45,7 @@ class ConfigManager:
 
     def _get_ofx_mappings_path(self) -> Path:
         """Get the path to the OFX mappings file."""
-        if self.config.ofx_mappings_file:
-            return Path(self.config.ofx_mappings_file)
-        # Default: same directory as config file
-        config_dir = (self.config.config_file_path or Path('./config/config.yaml')).parent
-        return config_dir / 'ofx_mappings.yaml'
+        return Path(self.config.ofx_mappings_file)
 
     def get_ofx_mappings(self) -> List[OFXAccountMapping]:
         """Load OFX account mappings from the dedicated mappings file."""

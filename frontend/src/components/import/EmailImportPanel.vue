@@ -8,8 +8,7 @@
         Add the following to your <code class="font-mono bg-amber-100 dark:bg-amber-800/50 px-1 rounded">{{ config?.config_file_path ?? 'config.yaml' }}</code> and restart the app:
       </p>
       <pre class="text-xs font-mono bg-amber-100 dark:bg-amber-800/40 rounded p-2 text-amber-900 dark:text-amber-200">email_import:
-  enabled: true
-  rules_directory: "./config/email_rules/"</pre>
+  enabled: true</pre>
     </div>
 
     <!-- State B: enabled but failed to load profiles -->
@@ -56,8 +55,8 @@
       </div>
 
       <div v-if="profiles.length === 0 && !isLoadingProfiles" class="text-sm text-gray-500 dark:text-gray-400">
-        No account profiles configured. Add YAML files to
-        the <code class="font-mono bg-gray-100 dark:bg-gray-400/10 px-1 rounded">email_import.rules_directory</code> path in your config.
+        No account profiles configured. Add YAML rule files to
+        the <code class="font-mono bg-gray-100 dark:bg-gray-400/10 px-1 rounded">config/email_rules/</code> directory.
       </div>
 
       <div v-else class="flex flex-wrap items-center gap-2">

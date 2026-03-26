@@ -11,10 +11,6 @@ export type EmailImportConfig = {
      */
     enabled?: boolean;
     /**
-     * Directory containing email import rule YAML files
-     */
-    rules_directory?: string;
-    /**
      * Default number of days to look back for emails
      */
     default_lookback_days?: number;

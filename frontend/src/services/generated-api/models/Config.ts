@@ -30,22 +30,6 @@ export type Config = {
      */
     ai?: AIConfig;
     /**
-     * Path to OFX account mappings YAML file
-     */
-    ofx_mappings_file?: (string | null);
-    /**
-     * Directory containing CSV import rule YAML files
-     */
-    csv_rules_dir?: (string | null);
-    /**
-     * Directory containing XLS import rule YAML files
-     */
-    xls_rules_dir?: (string | null);
-    /**
-     * Directory containing dashboard recipe JSON files
-     */
-    recipes_dir?: string;
-    /**
      * Analytics and reporting settings
      */
     analytics?: AnalyticsConfig;

@@ -107,15 +107,11 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
     xls_rules_manager = XlsRulesManager(rules_dir=config.xls_rules_dir)
 
     # 2c. Create email import AccountProfileRegistry
-    email_registry = None
+    email_rules_path = Path(config.email_rules_dir)
+    email_registry = AccountProfileRegistry(email_rules_path)
     if config.email_import.enabled:
-        email_rules_path = Path(config.email_import.rules_directory)
-        email_registry = AccountProfileRegistry(email_rules_path)
         logger.info(f"Email import enabled: {email_registry.profile_count} profiles loaded from {email_rules_path}")
     else:
-        # Create an empty registry so endpoints return empty lists rather than errors
-        email_rules_path = Path(config.email_import.rules_directory)
-        email_registry = AccountProfileRegistry(email_rules_path)
         logger.info("Email import disabled (email_import.enabled=false)")
 
     # 2d. Seed default recipes if config/recipes/ is absent
