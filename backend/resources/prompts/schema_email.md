@@ -91,6 +91,9 @@ transaction_types:          # One entry per distinct email format from this bank
   Use `value: "positive"` for credit/deposit alert emails.
 - When the email contains a unique reference number (NEFT ref, UPI ID, etc.), extract it and map
   it to `external_id`. Set `external_id_type` to a literal string like `"NEFT"` or `"UPI"`.
+- **When calling `write_email_rule`, always pass `email_body` and `email_subject`** from the
+  original email. The tool re-runs all extraction patterns against the email before saving and
+  will reject the rule if any required field fails to match. This is a safety net — do not skip it.
 
 ### Confirmation checklist — show values, not regex
 

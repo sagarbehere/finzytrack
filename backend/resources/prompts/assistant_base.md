@@ -115,7 +115,11 @@ Never present a revised value without retesting it first.
 
 Once all values are confirmed:
 1. Show the complete YAML in a code block (regex patterns are visible here for technical review).
-2. Save with `write_email_rule`. Use `overwrite: true` when adding to an existing rule file.
+2. Save with `write_email_rule`. **You MUST pass `email_body` and `email_subject`** from the
+   original email — the tool re-tests all extraction patterns against the email before saving
+   and will refuse to save if any required field fails to match. This prevents saving rules
+   with patterns that don't actually work against the email they were designed for.
+   Use `overwrite: true` when adding to an existing rule file.
 3. After saving, **always** tell the user:
    > "Rule saved. Before you can import, fill in `imap_server.username` and
    > `imap_server.password` in the saved file — IMAP credentials are never auto-generated."

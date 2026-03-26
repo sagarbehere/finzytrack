@@ -356,11 +356,18 @@ async def _run_agent_loop(
                 elif "summary" in result and "all_fields_matched" in result.get("summary", {}):
                     # test_email_extraction
                     summary = result["summary"]
-                    if summary["all_fields_matched"]:
+                    filter_warnings = summary.get("filter_warnings", [])
+                    required_failures = summary.get("required_failures", summary.get("failed_fields", []))
+                    all_failed = summary.get("failed_fields", [])
+                    if filter_warnings:
+                        ui_message = f"Email filter did not match: {', '.join(filter_warnings)}"
+                    elif summary["all_fields_matched"] and not filter_warnings:
                         ui_message = "All extraction patterns matched"
+                    elif required_failures:
+                        ui_message = f"Extraction failed for required fields: {', '.join(required_failures)}"
                     else:
-                        failed = summary.get("failed_fields", [])
-                        ui_message = f"Extraction failed for: {', '.join(failed)}"
+                        # Only optional fields failed
+                        ui_message = f"Required fields OK; optional fields missed: {', '.join(all_failed)}"
                 else:
                     ui_message = "Done"
             else:

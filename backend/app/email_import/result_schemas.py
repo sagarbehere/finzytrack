@@ -48,6 +48,31 @@ class FetchRequest(BaseModel):
     until_date: Optional[str] = None   # ISO format: "2026-03-15"
 
 
+class TrialExtractRequest(BaseModel):
+    """Request for POST /email/trial-extract."""
+    filename: str              # rule filename (e.g. "icici-bank-current.yaml")
+    eml_content: str           # raw .eml file content (text)
+
+
+class TrialExtractedField(BaseModel):
+    """One extracted field from trial extraction."""
+    field: str
+    label: str                 # human-friendly label (from mapping target or field name)
+    value: Optional[str] = None
+    matched: bool
+    error: Optional[str] = None
+    optional: bool = False
+
+
+class TrialExtractResult(BaseModel):
+    """Response for POST /email/trial-extract."""
+    success: bool
+    transaction_type: Optional[str] = None      # name of the matched transaction type
+    fields: List[TrialExtractedField] = []
+    note: str = ""                              # human-readable summary line
+    error: Optional[str] = None
+
+
 class ParsedTransaction(BaseModel):
     date: date
     amount: Decimal                        # signed: negative=debit, positive=credit

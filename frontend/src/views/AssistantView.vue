@@ -264,6 +264,41 @@
                   </table>
                 </div>
 
+                <!-- Email extracted fields table -->
+                <div
+                  v-if="msg.validationEmailFields?.length"
+                  class="rounded-lg border border-gray-200 dark:border-white/10 overflow-hidden"
+                >
+                  <div class="px-3 py-1.5 bg-gray-50 dark:bg-gray-800/50 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                    Extracted fields
+                  </div>
+                  <table class="w-full text-xs">
+                    <thead>
+                      <tr class="border-t border-gray-200 dark:border-white/10 text-gray-400 dark:text-gray-500">
+                        <th class="text-left px-3 py-1.5 font-medium">Field</th>
+                        <th class="text-left px-3 py-1.5 font-medium">Value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        v-for="(ef, i) in msg.validationEmailFields"
+                        :key="i"
+                        class="border-t border-gray-100 dark:border-white/10/50"
+                      >
+                        <td class="px-3 py-1.5 text-gray-600 dark:text-gray-400">
+                          {{ ef.label }}<span v-if="ef.optional" class="ml-1 text-gray-400 dark:text-gray-500 italic">(optional)</span>
+                        </td>
+                        <td
+                          class="px-3 py-1.5 font-mono"
+                          :class="ef.matched
+                            ? 'text-gray-700 dark:text-gray-300'
+                            : 'text-red-500 dark:text-red-400'"
+                        >{{ ef.matched ? ef.value : (ef.error ?? 'no match') }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
                 <!-- Raw file content -->
                 <div
                   v-if="msg.validationRawContent"
@@ -476,6 +511,7 @@ import { RouterLink } from 'vue-router'
 import { streamAssistantChat, readFileAsBase64 } from '@/api/assistant'
 import type { AttachedFile, ChatMessage } from '@/api/assistant'
 import { ImportService } from '@/services/generated-api'
+import type { TrialExtractedField } from '@/services/generated-api'
 import { useConfig } from '@/composables/useConfig'
 import { parseCsvContent, extractCsvRows } from '@/composables/useCsvParser'
 import { parseXlsContent, extractXlsText, extractXlsSheets } from '@/composables/useXlsParser'
@@ -516,8 +552,9 @@ interface DisplayMessage {
   streaming?: boolean
   validationWarnings?: ValidationWarning[]  // analyst mode: hallucination warnings
   validationNote?: string              // status line shown after a rule is saved and validated
-  validationTransactions?: CsvParsedTransaction[]  // parsed rows for the table
+  validationTransactions?: CsvParsedTransaction[]  // CSV/XLS: parsed rows for the table
   validationRawContent?: string        // decoded source file text for the raw view
+  validationEmailFields?: TrialExtractedField[]    // email: extracted field values
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -577,7 +614,7 @@ function startResize(e: MouseEvent) {
   document.body.style.userSelect = 'none'
 }
 // Persistent tracking of the last successfully written rule (survives across turns)
-const lastSavedRuleTool = ref<'write_csv_rule' | 'write_xls_rule' | null>(null)
+const lastSavedRuleTool = ref<'write_csv_rule' | 'write_xls_rule' | 'write_email_rule' | null>(null)
 const lastSavedRuleFilename = ref<string | null>(null)
 // Mode set by the first file attachment in the conversation — persists across follow-up turns
 // so the backend keeps receiving setup tools even after the file is cleared from the input.
@@ -732,7 +769,7 @@ async function sendMessage() {
 
   // Track whether a rule was saved this turn so we can validate after streaming
   // These local vars capture what happened this turn; persistent refs are the fallback
-  let savedRuleTool: 'write_csv_rule' | 'write_xls_rule' | null = null
+  let savedRuleTool: 'write_csv_rule' | 'write_xls_rule' | 'write_email_rule' | null = null
   let savedRuleFilename: string | null = null
   let ruleWrittenThisTurn = false
 
@@ -771,7 +808,7 @@ async function sendMessage() {
         // Track write tool calls for post-stream validation.
         // Always set ruleWrittenThisTurn regardless of success, so we validate
         // even after a failed write (shows current on-disk rule state to the user).
-        if (event.tool === 'write_csv_rule' || event.tool === 'write_xls_rule') {
+        if (event.tool === 'write_csv_rule' || event.tool === 'write_xls_rule' || event.tool === 'write_email_rule') {
           ruleWrittenThisTurn = true
           savedRuleTool = event.tool
           const match = event.message.match(/`([^`]+)`/)
@@ -825,12 +862,13 @@ async function sendMessage() {
   const effectiveTool = savedRuleTool
   const effectiveFilename = savedRuleFilename ?? lastSavedRuleFilename.value
   if (effectiveTool && effectiveFilename && sentFile.value) {
-    const { note, transactions, rawContent } = await validateSavedRule(effectiveTool, effectiveFilename, sentFile.value, sentExpectedCount.value)
+    const { note, transactions, rawContent, emailFields } = await validateSavedRule(effectiveTool, effectiveFilename, sentFile.value, sentExpectedCount.value)
     const lastMsg = messages.value[messages.value.length - 1]
     if (lastMsg) {
       lastMsg.validationNote = note
       lastMsg.validationTransactions = transactions
       lastMsg.validationRawContent = rawContent
+      lastMsg.validationEmailFields = emailFields
     }
     scrollToBottom()
   }
@@ -871,10 +909,11 @@ interface ValidationResult {
   note: string
   transactions: CsvParsedTransaction[]
   rawContent: string
+  emailFields?: TrialExtractedField[]
 }
 
 async function validateSavedRule(
-  tool: 'write_csv_rule' | 'write_xls_rule',
+  tool: 'write_csv_rule' | 'write_xls_rule' | 'write_email_rule',
   filename: string,
   file: AttachedFile,
   expectedCount: number | null = null,
@@ -883,7 +922,18 @@ async function validateSavedRule(
   const isXlsFile = /\.(xls|xlsx|xlsm|xlsb)$/i.test(file.name)
 
   try {
-    if (tool === 'write_csv_rule') {
+    if (tool === 'write_email_rule') {
+      const emlContent = base64ToText(file.content_base64)
+      const res = await ImportService.trialExtractEmail({ filename, eml_content: emlContent })
+      const result = res.data
+      if (!result) return empty
+      return {
+        note: result.note ?? '',
+        transactions: [],
+        rawContent: '',
+        emailFields: result.fields ?? [],
+      }
+    } else if (tool === 'write_csv_rule') {
       // Safety net: if the file is XLS but the CSV tool was used, skip binary-as-text decoding
       if (isXlsFile) {
         return {

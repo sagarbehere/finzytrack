@@ -11,6 +11,7 @@ import type { ApiResponse_OFXDetectionData_ } from '../models/ApiResponse_OFXDet
 import type { ApiResponse_ProfilesListResponse_ } from '../models/ApiResponse_ProfilesListResponse_';
 import type { ApiResponse_ReloadResponse_ } from '../models/ApiResponse_ReloadResponse_';
 import type { ApiResponse_TestConnectionResponse_ } from '../models/ApiResponse_TestConnectionResponse_';
+import type { ApiResponse_TrialExtractResult_ } from '../models/ApiResponse_TrialExtractResult_';
 import type { ApiResponse_XlsRule_ } from '../models/ApiResponse_XlsRule_';
 import type { ApiResponse_XlsRuleListData_ } from '../models/ApiResponse_XlsRuleListData_';
 import type { CategorizeRequest } from '../models/CategorizeRequest';
@@ -19,6 +20,7 @@ import type { FetchRequest } from '../models/FetchRequest';
 import type { LearnOFXAccountRequest } from '../models/LearnOFXAccountRequest';
 import type { OFXDetectionRequest } from '../models/OFXDetectionRequest';
 import type { TestConnectionRequest } from '../models/TestConnectionRequest';
+import type { TrialExtractRequest } from '../models/TrialExtractRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -257,6 +259,30 @@ export class ImportService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/import/email/fetch',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Trial Extract Email
+     * Run a saved email rule against raw .eml content and return extracted fields.
+     *
+     * Pure validation — no IMAP, no imports. Parses the .eml, finds the first
+     * matching transaction type in the rule, runs all extraction patterns, and
+     * returns the results so the frontend can display them to the user.
+     * @param requestBody
+     * @returns ApiResponse_TrialExtractResult_ Successful Response
+     * @throws ApiError
+     */
+    public static trialExtractEmail(
+        requestBody: TrialExtractRequest,
+    ): CancelablePromise<ApiResponse_TrialExtractResult_> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/import/email/trial-extract',
             body: requestBody,
             mediaType: 'application/json',
             errors: {

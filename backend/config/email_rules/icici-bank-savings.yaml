@@ -3,7 +3,7 @@ metadata:
   beancount_account: "Assets:ICICI:Savings"
   default_currency: "INR"
   institution: "ICICI Bank"
-  description: "ICICI Bank savings account transaction alerts (iMobile)"
+  description: "ICICI Bank savings account transaction alerts"
   version: "1.0"
 
 imap_server:
@@ -18,6 +18,8 @@ lookback_days: 7
 bank_emails:
   - "customercare@icicibank.com"
   - "sagar@sagar.se"    # self-forwarded Finalert SMS alerts
+
+body_keyword: "XX815"
 
 transaction_types:
 

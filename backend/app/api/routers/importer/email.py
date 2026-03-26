@@ -1,19 +1,24 @@
 """Email import API endpoints.
 
 Provides:
-  GET  /api/import/email/profiles       - list configured account profiles
-  POST /api/import/email/reload         - re-scan rules directory
+  GET  /api/import/email/profiles        - list configured account profiles
+  POST /api/import/email/reload          - re-scan rules directory
   POST /api/import/email/test-connection - validate IMAP credentials
-  POST /api/import/email/fetch          - stream fetch progress as SSE
+  POST /api/import/email/fetch           - stream fetch progress as SSE
+  POST /api/import/email/trial-extract   - run rule against .eml for validation
 """
+import email as email_stdlib
 import imaplib
+import re
 from datetime import date as date_type, timedelta
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
+from app.ai.tools.test_email_extraction import _test_one_field
 from app.email_import.imap_client import _derive_domains
 from app.email_import.rule_registry import AccountProfileRegistry
+from app.email_import.rule_schemas import RuleFile
 from app.email_import.fetch_service import stream_fetch
 from app.email_import.result_schemas import (
     FetchRequest,
@@ -21,6 +26,9 @@ from app.email_import.result_schemas import (
     ReloadResponse,
     TestConnectionRequest,
     TestConnectionResponse,
+    TrialExtractRequest,
+    TrialExtractResult,
+    TrialExtractedField,
 )
 from app.dependencies import get_config_manager, get_email_registry
 from app.core.config_manager import ConfigManager
@@ -150,3 +158,136 @@ async def fetch_email_transactions(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+def _parse_eml(raw: str) -> tuple[str, str, str]:
+    """Extract (from, subject, body) from raw .eml text. Body prefers plain text over HTML."""
+    msg = email_stdlib.message_from_string(raw)
+    sender = msg.get("from", "")
+    subject = msg.get("subject", "")
+
+    body = ""
+    is_html = False
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() == "text/plain" and not part.get("Content-Disposition"):
+                payload = part.get_payload(decode=True)
+                if payload:
+                    body = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+                    break
+        if not body:
+            for part in msg.walk():
+                if part.get_content_type() == "text/html":
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        body = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+                        is_html = True
+                        break
+    else:
+        payload = msg.get_payload(decode=True)
+        if payload:
+            body = payload.decode(msg.get_content_charset() or "utf-8", errors="replace")
+            is_html = msg.get_content_type() == "text/html"
+
+    if is_html:
+        body = re.sub(r"<[^>]+>", " ", body)
+        body = re.sub(r"[ \t]+", " ", body)
+        body = re.sub(r"\n{3,}", "\n\n", body).strip()
+
+    return sender, subject, body
+
+
+@router.post(
+    "/email/trial-extract",
+    response_model=ApiResponse[TrialExtractResult],
+    operation_id="trialExtractEmail",
+)
+async def trial_extract_email(
+    req: TrialExtractRequest,
+    registry: AccountProfileRegistry = Depends(get_email_registry),
+):
+    """
+    Run a saved email rule against raw .eml content and return extracted fields.
+
+    Pure validation — no IMAP, no imports. Parses the .eml, finds the first
+    matching transaction type in the rule, runs all extraction patterns, and
+    returns the results so the frontend can display them to the user.
+    """
+    # Load the rule file via registry (reload first to pick up just-saved files)
+    registry.reload()
+    profile_id = req.filename.removesuffix(".yaml").removesuffix(".yml")
+    parser = registry.get_parser_by_profile_id(profile_id)
+    if parser is None:
+        return success_json_response(TrialExtractResult(
+            success=False,
+            error=f"Rule file not found or invalid: {req.filename}",
+            note=f"⚠ Could not load rule {req.filename} for validation.",
+        ))
+
+    rule: RuleFile = parser.rule
+
+    # Parse the .eml
+    try:
+        _sender, eml_subject, eml_body = _parse_eml(req.eml_content)
+    except Exception as e:
+        return success_json_response(TrialExtractResult(
+            success=False,
+            error=f"Failed to parse .eml: {e}",
+            note="⚠ Could not parse the email file.",
+        ))
+
+    # Find the first transaction type whose filters match
+    matched_type = None
+    for txn_type in rule.transaction_types:
+        ef = txn_type.email_filter
+        if ef.subject_regex and not re.search(ef.subject_regex, eml_subject, re.IGNORECASE):
+            continue
+        if ef.body_regex and not re.search(ef.body_regex, eml_body, re.IGNORECASE):
+            continue
+        matched_type = txn_type
+        break
+
+    if matched_type is None:
+        return success_json_response(TrialExtractResult(
+            success=False,
+            note=f"⚠ No transaction type in {req.filename} matched this email's subject/body filters.",
+        ))
+
+    # Run extraction for each field
+    fields: list[TrialExtractedField] = []
+    mapping = matched_type.mapping
+    has_required_failure = False
+
+    for field_name, field_def in matched_type.extraction.items():
+        result = _test_one_field(field_name, field_def, eml_body, eml_subject, None)
+        matched = result.get("matched", False)
+        # Derive a human label from the mapping (e.g. "amount" → "Amount")
+        mapped_to = mapping.get(field_name, field_name)
+        label = mapped_to.replace("_", " ").title()
+
+        fields.append(TrialExtractedField(
+            field=field_name,
+            label=label,
+            value=result.get("value"),
+            matched=matched,
+            error=result.get("error"),
+            optional=field_def.optional,
+        ))
+
+        if not matched and not field_def.optional:
+            has_required_failure = True
+
+    n_ok = sum(1 for f in fields if f.matched)
+    n_total = len(fields)
+
+    if has_required_failure:
+        note = f"⚠ Rule validated against email: {n_ok}/{n_total} fields extracted. Required fields failed — rule needs fixing."
+    else:
+        note = f"✓ Rule validated against email: {n_ok}/{n_total} fields extracted successfully."
+
+    return success_json_response(TrialExtractResult(
+        success=not has_required_failure,
+        transaction_type=matched_type.name,
+        fields=fields,
+        note=note,
+    ))

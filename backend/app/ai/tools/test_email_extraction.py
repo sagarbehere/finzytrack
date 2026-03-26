@@ -224,16 +224,29 @@ class TestEmailExtractionTool(BaseTool):
                 field_name, field_def, email_body, email_subject, header_date
             )
 
+        # Separate required vs optional failures so the UI badge reflects real problems
         failed = [name for name, r in fields.items() if not r.get("matched", False)]
         filter_failures = [k for k, v in filters.items() if not v.get("matched", True)]
 
+        optional_fields: set[str] = set()
+        for field_name, field_raw in extraction_rules.items():
+            if isinstance(field_raw, dict) and field_raw.get("optional"):
+                optional_fields.add(field_name)
+
+        required_failures = [f for f in failed if f not in optional_fields]
+
+        # success=False when any required field or filter fails — this turns the UI badge red
+        all_ok = len(failed) == 0 and len(filter_failures) == 0
+        has_required_failure = len(required_failures) > 0 or len(filter_failures) > 0
+
         return {
-            "success": True,
+            "success": not has_required_failure,
             "filters": filters,
             "fields": fields,
             "summary": {
-                "all_fields_matched": len(failed) == 0,
+                "all_fields_matched": all_ok,
                 "failed_fields": failed,
+                "required_failures": required_failures,
                 "filter_warnings": filter_failures,
             },
         }

@@ -6,8 +6,9 @@ from pathlib import Path
 from ruamel.yaml import YAML
 
 from app.ai.tools.base import BaseTool
+from app.ai.tools.test_email_extraction import _test_one_field
 from app.core.backup_manager import BackupManager
-from app.email_import.rule_schemas import RuleFile as EmailRuleFile
+from app.email_import.rule_schemas import ExtractionFieldDef, RuleFile as EmailRuleFile
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,57 @@ def _validate_regex_patterns(data: dict) -> list[str]:
     return errors
 
 
+def _validate_against_email(
+    data: dict, email_body: str, email_subject: str,
+) -> list[str]:
+    """
+    Run every extraction pattern in the rule against the provided email text.
+    Returns a list of error strings (empty = all patterns match).
+    Only checks the first transaction type whose email_filter matches.
+    """
+    errors: list[str] = []
+
+    for txn_type in data.get("transaction_types", []):
+        type_name = txn_type.get("name", "<unnamed>")
+        email_filter = txn_type.get("email_filter") or {}
+
+        # Check if this transaction type's filters match the email
+        subj_pat = email_filter.get("subject_regex")
+        if subj_pat and not re.search(subj_pat, email_subject, re.IGNORECASE):
+            errors.append(
+                f"transaction_type '{type_name}': subject_regex '{subj_pat}' "
+                f"does not match subject '{email_subject}'"
+            )
+            continue
+
+        body_pat = email_filter.get("body_regex")
+        if body_pat and not re.search(body_pat, email_body, re.IGNORECASE):
+            errors.append(
+                f"transaction_type '{type_name}': body_regex '{body_pat}' "
+                f"does not match email body"
+            )
+            continue
+
+        # Filters matched — now test every extraction field
+        extraction = txn_type.get("extraction") or {}
+        for field_name, field_raw in extraction.items():
+            if not isinstance(field_raw, dict):
+                continue
+            is_optional = field_raw.get("optional", False)
+            try:
+                field_def = ExtractionFieldDef.model_validate(field_raw)
+            except Exception as e:
+                errors.append(f"'{type_name}'.{field_name}: invalid field definition — {e}")
+                continue
+
+            result = _test_one_field(field_name, field_def, email_body, email_subject, None)
+            if not result.get("matched", False) and not is_optional:
+                err_detail = result.get("error", "pattern did not match")
+                errors.append(f"'{type_name}'.{field_name}: {err_detail}")
+
+    return errors
+
+
 class WriteEmailRuleTool(BaseTool):
     @property
     def name(self) -> str:
@@ -64,6 +116,9 @@ class WriteEmailRuleTool(BaseTool):
         return (
             "Validate an email import rule and save it to the configured email rules directory. "
             "Use this after the user has confirmed the extracted values. "
+            "IMPORTANT: Always pass email_body and email_subject from the original email — "
+            "the tool re-tests all extraction patterns against the email before saving and "
+            "will refuse to save if any required field fails to extract. "
             "Pass overwrite: true to update an existing file. "
             "Returns the full path where the file was saved."
         )
@@ -81,6 +136,18 @@ class WriteEmailRuleTool(BaseTool):
                     "type": "string",
                     "description": "Full YAML content of the email rule",
                 },
+                "email_body": {
+                    "type": "string",
+                    "description": (
+                        "Plain-text body of the original email. When provided, the tool "
+                        "re-runs all extraction patterns against this text and refuses to "
+                        "save if any required field fails to match."
+                    ),
+                },
+                "email_subject": {
+                    "type": "string",
+                    "description": "Subject line of the original email (used for cross-validation with email_body).",
+                },
                 "overwrite": {
                     "type": "boolean",
                     "description": "Set to true to overwrite an existing file. Default: false.",
@@ -93,7 +160,14 @@ class WriteEmailRuleTool(BaseTool):
         self._rules_dir = rules_dir
         self._backup_manager = backup_manager
 
-    async def execute(self, filename: str, content: str, overwrite: bool = False) -> dict:
+    async def execute(
+        self,
+        filename: str,
+        content: str,
+        overwrite: bool = False,
+        email_body: str | None = None,
+        email_subject: str | None = None,
+    ) -> dict:
         if not self._rules_dir:
             return {"success": False, "error": "email_import is not enabled in config.yaml"}
 
@@ -111,6 +185,20 @@ class WriteEmailRuleTool(BaseTool):
                 return {
                     "success": False,
                     "error": "Regex validation failed:\n" + "\n".join(f"  - {e}" for e in regex_errors),
+                }
+
+        # Cross-validate patterns against the original email
+        if isinstance(data, dict) and email_body:
+            email_errors = _validate_against_email(
+                data, email_body, email_subject or "",
+            )
+            if email_errors:
+                return {
+                    "success": False,
+                    "error": (
+                        "Patterns do not match the original email — fix before saving:\n"
+                        + "\n".join(f"  - {e}" for e in email_errors)
+                    ),
                 }
 
         # Validate against Pydantic schema
