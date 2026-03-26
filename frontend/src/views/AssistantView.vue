@@ -551,6 +551,7 @@ interface DisplayMessage {
   toolEvents?: ToolEvent[]    // for assistant messages
   streaming?: boolean
   validationWarnings?: ValidationWarning[]  // analyst mode: hallucination warnings
+  fileAnnotation?: string              // file content injected into conversation history for follow-up turns
   validationNote?: string              // status line shown after a rule is saved and validated
   validationTransactions?: CsvParsedTransaction[]  // CSV/XLS: parsed rows for the table
   validationRawContent?: string        // decoded source file text for the raw view
@@ -721,12 +722,25 @@ async function sendMessage() {
     fileSheets = previewSheets.value
   }
 
+  // Build a file annotation so the file content survives in conversation history
+  // across follow-up turns. The server injects this on the first turn only; on
+  // subsequent turns the file is not re-sent, so we preserve it client-side.
+  let fileAnnotation: string | undefined
+  if (file) {
+    const lower = file.name.toLowerCase()
+    const isTextFile = lower.endsWith('.eml') || lower.endsWith('.csv') || lower.endsWith('.tsv') || lower.endsWith('.txt')
+    if (isTextFile) {
+      fileAnnotation = `\n\n--- Attached file: ${file.name} ---\n${base64ToText(file.content_base64)}`
+    }
+  }
+
   // Add user message to display (store sheets so the badge can re-open the preview)
   messages.value.push({
     role: 'user',
     content: text || `(attached: ${file!.name})`,
     fileName: file?.name,
     fileSheets,
+    fileAnnotation,
   })
 
   inputText.value = ''
@@ -749,10 +763,18 @@ async function sendMessage() {
   resetTextareaHeight()
   scrollToBottom()
 
-  // Build conversation history for the API (text-only, no file content)
+  // Build conversation history for the API.
+  // For the CURRENT turn's user message (the last one we just pushed), do NOT
+  // append the file annotation — the server will inject it from the attached file.
+  // For PREVIOUS turns, re-inject the stored annotation so the LLM retains
+  // file content across follow-up turns.
+  const currentUserMsg = messages.value[messages.value.length - 1]
   const apiMessages: ChatMessage[] = messages.value
     .filter((m) => m.role === 'user' || (m.role === 'assistant' && m.content))
-    .map((m) => ({ role: m.role, content: m.content }))
+    .map((m) => ({
+      role: m.role,
+      content: m !== currentUserMsg && m.fileAnnotation ? m.content + m.fileAnnotation : m.content,
+    }))
 
   // Add a placeholder assistant message
   const assistantMsg: DisplayMessage = {
