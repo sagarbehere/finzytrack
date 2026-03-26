@@ -52,7 +52,7 @@
                     v-model="searchText"
                     type="text"
                     placeholder="Search payee or narration..."
-                    class="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    class="w-full rounded-md bg-white py-1.5 pr-3 pl-8 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
                   />
                 </div>
 
@@ -67,7 +67,7 @@
                       'px-2 py-0.5 text-xs font-medium rounded-full border transition-colors',
                       visibleCurrencies.has(ccy)
                         ? 'bg-teal-100 text-teal-800 border-teal-300 dark:bg-teal-900/40 dark:text-teal-300 dark:border-teal-700'
-                        : 'bg-gray-100 text-gray-500 border-gray-300 dark:bg-gray-700 dark:text-gray-400 dark:border-gray-600'
+                        : 'bg-gray-100 text-gray-500 border-gray-300 dark:bg-white/5 dark:text-gray-400 dark:border-white/10'
                     ]"
                   >
                     {{ ccy }}
@@ -83,7 +83,7 @@
                 <button
                   @click="loadTransactions"
                   :disabled="isLoading"
-                  class="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 disabled:opacity-50"
+                  class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 disabled:opacity-50"
                   title="Refresh"
                 >
                   <ArrowPathIcon class="h-3.5 w-3.5" :class="{ 'animate-spin': isLoading }" />
@@ -92,7 +92,7 @@
 
               <!-- Loading state (initial load only, not refresh) -->
               <div v-if="isLoading && !hasLoaded" class="flex justify-center py-12">
-                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
               </div>
 
               <!-- Empty state -->
@@ -101,9 +101,9 @@
               </div>
 
               <!-- Statement table -->
-              <div v-else class="overflow-x-auto max-h-[60vh] overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-md">
+              <div v-else class="overflow-x-auto max-h-[60vh] overflow-y-auto border border-gray-200 dark:border-white/10 rounded-md">
                 <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                  <thead class="bg-gray-50 dark:bg-gray-700 sticky top-0 z-10">
+                  <thead class="bg-gray-50 dark:bg-gray-800/75 sticky top-0 z-10">
                     <tr>
                       <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase dark:text-gray-400 w-[50px]">#</th>
                       <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase dark:text-gray-400 w-[100px]">
@@ -164,7 +164,7 @@
                 <button
                   type="button"
                   @click="handleClose"
-                  class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600"
+                  class="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
                 >
                   Close
                 </button>

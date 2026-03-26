@@ -61,9 +61,12 @@ const emit = defineEmits<{
 const chartContainer = ref<HTMLElement | null>(null)
 let chartInstance: EChartsInstance | null = null
 
-// Detect dark mode
+// Reactive dark mode state — updated by MutationObserver so computed properties recompute
+const darkMode = ref(document.documentElement.classList.contains('dark'))
+
+// Detect dark mode (reads reactive ref)
 function isDarkMode(): boolean {
-  return document.documentElement.classList.contains('dark')
+  return darkMode.value
 }
 
 // Apply dark mode label styling to series
@@ -374,9 +377,7 @@ let darkModeObserver: MutationObserver | null = null
 
 function setupDarkModeObserver() {
   darkModeObserver = new MutationObserver(() => {
-    if (chartInstance) {
-      chartInstance.setOption(finalOptions.value, true)
-    }
+    darkMode.value = document.documentElement.classList.contains('dark')
   })
   darkModeObserver.observe(document.documentElement, {
     attributes: true,

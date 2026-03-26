@@ -9,7 +9,7 @@
     </div>
 
     <!-- Filter Panel -->
-    <div class="bg-white dark:bg-gray-800 shadow rounded-lg border border-gray-200 dark:border-gray-700 p-4 mb-6">
+    <div class="rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 p-4 mb-6">
       <AccountsFilterPanel
         :filters="filters"
         :date-filter="dateFilter"
@@ -23,7 +23,7 @@
 
     <!-- Loading State (initial load only) -->
     <div v-if="isLoading && !hasLoaded" class="flex justify-center items-center py-12">
-      <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
     </div>
 
     <template v-else-if="hasLoaded">
@@ -32,7 +32,7 @@
         <button
           @click="loadAccounts"
           :disabled="isLoading"
-          class="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 disabled:opacity-50"
+          class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 disabled:opacity-50"
           title="Refresh"
         >
           <ArrowPathIcon class="h-4 w-4" :class="{ 'animate-spin': isLoading }" />
@@ -54,7 +54,7 @@
       </div>
 
       <!-- Table -->
-      <div class="bg-white dark:bg-gray-800 shadow rounded-lg border border-gray-200 dark:border-gray-700">
+      <div class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10">
         <AccountsTable
           :display-nodes="displayNodes"
           :expanded-ids="expandedIds"
@@ -76,7 +76,7 @@
         <button
           @click="loadAccounts"
           :disabled="isLoading"
-          class="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 disabled:opacity-50"
+          class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 disabled:opacity-50"
           title="Refresh"
         >
           <ArrowPathIcon class="h-4 w-4" :class="{ 'animate-spin': isLoading }" />

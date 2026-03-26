@@ -63,8 +63,8 @@
                             :to="item.href"
                             :class="[
                               $route.name === item.id
-                                ? 'bg-gray-50 text-blue-600 dark:bg-white/5 dark:text-white'
-                                : 'text-gray-700 hover:bg-gray-50 hover:text-blue-600 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-white',
+                                ? 'bg-gray-50 text-indigo-600 dark:bg-white/5 dark:text-white'
+                                : 'text-gray-700 hover:bg-gray-50 hover:text-indigo-600 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-white',
                               'group flex gap-x-3 rounded-md p-2 text-sm font-semibold',
                             ]"
                           >
@@ -72,8 +72,8 @@
                               :is="item.icon"
                               :class="[
                                 $route.name === item.id
-                                  ? 'text-blue-600 dark:text-white'
-                                  : 'text-gray-400 group-hover:text-blue-600 dark:group-hover:text-white',
+                                  ? 'text-indigo-600 dark:text-white'
+                                  : 'text-gray-400 group-hover:text-indigo-600 dark:group-hover:text-white',
                                 'size-6 shrink-0',
                               ]"
                               aria-hidden="true"
@@ -88,16 +88,16 @@
                         to="/settings"
                         :class="[
                           $route.name === 'settings'
-                            ? 'bg-gray-50 text-blue-600 dark:bg-white/5 dark:text-white'
-                            : 'text-gray-700 hover:bg-gray-50 hover:text-blue-600 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-white',
+                            ? 'bg-gray-50 text-indigo-600 dark:bg-white/5 dark:text-white'
+                            : 'text-gray-700 hover:bg-gray-50 hover:text-indigo-600 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-white',
                           'group -mx-2 flex gap-x-3 rounded-md p-2 text-sm font-semibold',
                         ]"
                       >
                         <Cog6ToothIcon
                           :class="[
                             $route.name === 'settings'
-                              ? 'text-blue-600 dark:text-white'
-                              : 'text-gray-400 group-hover:text-blue-600 dark:group-hover:text-white',
+                              ? 'text-indigo-600 dark:text-white'
+                              : 'text-gray-400 group-hover:text-indigo-600 dark:group-hover:text-white',
                             'size-6 shrink-0',
                           ]"
                           aria-hidden="true"
@@ -124,7 +124,7 @@
       >
         <!-- Resize handle -->
         <div
-          class="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-blue-500 hover:w-1 transition-all duration-150 z-10 group-hover:bg-gray-300 dark:group-hover:bg-gray-600"
+          class="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-indigo-500 hover:w-1 transition-all duration-150 z-10 group-hover:bg-gray-300 dark:group-hover:bg-gray-600"
           @mousedown="startResize"
           title="Drag to resize sidebar"
         ></div>
@@ -140,8 +140,8 @@
                     :to="item.href"
                     :class="[
                       $route.name === item.id
-                        ? 'bg-gray-50 text-blue-600 dark:bg-white/5 dark:text-white'
-                        : 'text-gray-700 hover:bg-gray-50 hover:text-blue-600 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-white',
+                        ? 'bg-gray-50 text-indigo-600 dark:bg-white/5 dark:text-white'
+                        : 'text-gray-700 hover:bg-gray-50 hover:text-indigo-600 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-white',
                       'group flex gap-x-3 rounded-md p-2 text-sm font-semibold',
                     ]"
                   >
@@ -149,8 +149,8 @@
                       :is="item.icon"
                       :class="[
                         $route.name === item.id
-                          ? 'text-blue-600 dark:text-white'
-                          : 'text-gray-400 group-hover:text-blue-600 dark:group-hover:text-white',
+                          ? 'text-indigo-600 dark:text-white'
+                          : 'text-gray-400 group-hover:text-indigo-600 dark:group-hover:text-white',
                         'size-6 shrink-0',
                       ]"
                       aria-hidden="true"
@@ -166,16 +166,16 @@
                 to="/settings"
                 :class="[
                   $route.name === 'settings'
-                    ? 'bg-gray-50 text-blue-600 dark:bg-white/5 dark:text-white'
-                    : 'text-gray-700 hover:bg-gray-50 hover:text-blue-600 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-white',
+                    ? 'bg-gray-50 text-indigo-600 dark:bg-white/5 dark:text-white'
+                    : 'text-gray-700 hover:bg-gray-50 hover:text-indigo-600 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-white',
                   'group -mx-2 flex gap-x-3 rounded-md p-2 text-sm font-semibold',
                 ]"
               >
                 <Cog6ToothIcon
                   :class="[
                     $route.name === 'settings'
-                      ? 'text-blue-600 dark:text-white'
-                      : 'text-gray-400 group-hover:text-blue-600 dark:group-hover:text-white',
+                      ? 'text-indigo-600 dark:text-white'
+                      : 'text-gray-400 group-hover:text-indigo-600 dark:group-hover:text-white',
                     'size-6 shrink-0',
                   ]"
                   aria-hidden="true"

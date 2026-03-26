@@ -11,7 +11,7 @@
       </div>
       <button
         type="button"
-        class="flex-none inline-flex items-center gap-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+        class="flex-none inline-flex items-center gap-1.5 rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
         title="Discard this conversation and start a new one"
         @click="resetChat"
       >
@@ -51,7 +51,7 @@
     <!-- Chat UI -->
     <div
       v-else
-      class="flex flex-col flex-1 min-h-0 bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 overflow-hidden"
+      class="flex flex-col flex-1 min-h-0 overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 overflow-hidden"
     >
       <!-- Content row: chat pane + sidebar -->
       <div class="flex flex-1 min-h-0 overflow-hidden">
@@ -120,7 +120,7 @@
                     ? te.success
                       ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
                       : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                    : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300 animate-pulse'"
+                    : 'bg-gray-100 text-gray-600 dark:bg-white/5 dark:text-gray-300 animate-pulse'"
                 >
                   <svg v-if="!te.done" class="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
@@ -139,7 +139,7 @@
               <!-- Text content (rendered as markdown-ish) -->
               <div
                 v-if="msg.content"
-                class="rounded-2xl rounded-tl-sm px-4 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm prose prose-sm dark:prose-invert max-w-none prose-pre:bg-gray-200 dark:prose-pre:bg-gray-800"
+                class="rounded-2xl rounded-tl-sm px-4 py-2.5 bg-gray-100 dark:bg-white/5 text-gray-900 dark:text-gray-100 text-sm prose prose-sm dark:prose-invert max-w-none prose-pre:bg-gray-200 dark:prose-pre:bg-gray-800"
                 v-html="renderMarkdown(msg.content)"
               />
 
@@ -226,14 +226,14 @@
                 <!-- Parsed transactions table -->
                 <div
                   v-if="msg.validationTransactions?.length"
-                  class="rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden"
+                  class="rounded-lg border border-gray-200 dark:border-white/10 overflow-hidden"
                 >
-                  <div class="px-3 py-1.5 bg-gray-50 dark:bg-gray-700/50 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                  <div class="px-3 py-1.5 bg-gray-50 dark:bg-gray-800/50 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
                     Parsed transactions
                   </div>
                   <table class="w-full text-xs">
                     <thead>
-                      <tr class="border-t border-gray-200 dark:border-gray-600 text-gray-400 dark:text-gray-500">
+                      <tr class="border-t border-gray-200 dark:border-white/10 text-gray-400 dark:text-gray-500">
                         <th class="text-left px-3 py-1.5 font-medium">Date</th>
                         <th v-if="hasDescription(msg.validationTransactions)" class="text-left px-3 py-1.5 font-medium">Description</th>
                         <th class="text-right px-3 py-1.5 font-medium">Amount</th>
@@ -243,7 +243,7 @@
                       <tr
                         v-for="(tx, i) in validationRows(msg.validationTransactions)"
                         :key="i"
-                        class="border-t border-gray-100 dark:border-gray-700/50"
+                        class="border-t border-gray-100 dark:border-white/10/50"
                       >
                         <td class="px-3 py-1.5 font-mono text-gray-700 dark:text-gray-300">{{ tx.date }}</td>
                         <td
@@ -255,7 +255,7 @@
                           :class="tx.amount >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'"
                         >{{ formatAmount(tx.amount) }}</td>
                       </tr>
-                      <tr v-if="msg.validationTransactions.length > MAX_VALIDATION_ROWS" class="border-t border-gray-100 dark:border-gray-700/50">
+                      <tr v-if="msg.validationTransactions.length > MAX_VALIDATION_ROWS" class="border-t border-gray-100 dark:border-white/10/50">
                         <td colspan="3" class="px-3 py-1.5 text-gray-400 dark:text-gray-500 italic">
                           … {{ msg.validationTransactions.length - MAX_VALIDATION_ROWS }} more rows not shown
                         </td>
@@ -267,9 +267,9 @@
                 <!-- Raw file content -->
                 <div
                   v-if="msg.validationRawContent"
-                  class="rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden"
+                  class="rounded-lg border border-gray-200 dark:border-white/10 overflow-hidden"
                 >
-                  <div class="px-3 py-1.5 bg-gray-50 dark:bg-gray-700/50 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                  <div class="px-3 py-1.5 bg-gray-50 dark:bg-gray-800/50 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
                     Raw file
                   </div>
                   <div class="overflow-auto max-h-48 bg-white dark:bg-gray-800/40">
@@ -293,7 +293,7 @@
               <!-- Streaming cursor -->
               <div
                 v-if="msg.streaming && !msg.content"
-                class="rounded-2xl rounded-tl-sm px-4 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-400 text-sm"
+                class="rounded-2xl rounded-tl-sm px-4 py-2.5 bg-gray-100 dark:bg-white/5 text-gray-400 text-sm"
               >
                 <span class="inline-block w-2 h-4 bg-gray-400 animate-pulse rounded-sm" />
               </div>
@@ -307,7 +307,7 @@
         <!-- Resize drag handle -->
         <div
           v-if="sidebarOpen"
-          class="flex-none w-1.5 cursor-col-resize bg-gray-200 dark:bg-gray-700 hover:bg-indigo-400 dark:hover:bg-indigo-500 active:bg-indigo-500 dark:active:bg-indigo-400 transition-colors"
+          class="flex-none w-1.5 cursor-col-resize bg-gray-200 dark:bg-gray-600 hover:bg-indigo-400 dark:hover:bg-indigo-500 active:bg-indigo-500 dark:active:bg-indigo-400 transition-colors"
           @mousedown="startResize"
         />
 
@@ -318,7 +318,7 @@
           :style="{ width: `${sidebarWidthPct}%` }"
         >
           <!-- Sidebar header -->
-          <div class="flex-none flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50">
+          <div class="flex-none flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-gray-800/50">
             <span class="text-xs font-medium text-gray-600 dark:text-gray-400 truncate">
               {{ sidebarMode === 'filePreview' ? previewFileName : previewRecipe?.title ?? 'Dashboard Preview' }}
             </span>
@@ -345,7 +345,7 @@
       </div><!-- end content row -->
 
       <!-- Input area (full width) -->
-      <div class="flex-none border-t border-gray-200 dark:border-gray-700 p-4">
+      <div class="flex-none border-t border-gray-200 dark:border-white/10 p-4">
         <!-- File attachment preview -->
         <div v-if="attachedFile" class="mb-2 flex items-center gap-2">
           <span class="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-700 px-3 py-1 text-xs text-indigo-700 dark:text-indigo-300">
@@ -374,7 +374,7 @@
               v-model="ruleFilename"
               type="text"
               placeholder="rule-name.yaml"
-              class="w-full text-xs px-2 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:focus:ring-indigo-400"
+              class="w-full rounded-md bg-white px-2 py-1.5 text-xs text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
             />
           </div>
           <div class="flex-1 min-w-0">
@@ -383,7 +383,7 @@
               v-model="ruleAccount"
               type="text"
               placeholder="Assets:Bank:Name"
-              class="w-full text-xs px-2 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:focus:ring-indigo-400"
+              class="w-full rounded-md bg-white px-2 py-1.5 text-xs text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
             />
           </div>
           <div class="w-24">
@@ -392,7 +392,7 @@
               v-model="ruleCurrency"
               type="text"
               placeholder="INR"
-              class="w-full text-xs px-2 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:focus:ring-indigo-400"
+              class="w-full rounded-md bg-white px-2 py-1.5 text-xs text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
             />
           </div>
           <div v-if="previewSheets" class="w-24">
@@ -402,7 +402,7 @@
               type="number"
               min="1"
               placeholder="# in statement"
-              class="w-full text-xs px-2 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:focus:ring-indigo-400"
+              class="w-full rounded-md bg-white px-2 py-1.5 text-xs text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
             />
           </div>
         </div>
@@ -432,7 +432,7 @@
           <textarea
             ref="textareaEl"
             v-model="inputText"
-            class="flex-1 resize-none rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400 placeholder-gray-400 dark:placeholder-gray-500 min-h-[40px] max-h-[160px]"
+            class="flex-1 resize-none rounded-md bg-white px-3 py-1.5 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500 min-h-[40px] max-h-[160px]"
             placeholder="Ask a question or describe a dashboard..."
             rows="1"
             :disabled="streaming"
@@ -445,8 +445,8 @@
             type="button"
             class="flex-none p-2 rounded-lg transition-colors"
             :class="canSend
-              ? 'bg-indigo-600 text-white hover:bg-indigo-700'
-              : 'bg-gray-100 dark:bg-gray-700 text-gray-400 cursor-not-allowed'"
+              ? 'bg-indigo-600 text-white hover:bg-indigo-500'
+              : 'bg-gray-100 dark:bg-white/5 text-gray-400 cursor-not-allowed'"
             :disabled="!canSend"
             @click="sendMessage"
           >
@@ -1057,7 +1057,7 @@ function _renderTableBlock(lines: string[]): string {
   const th = headers
     .map(
       (h) =>
-        `<th class="px-3 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide border-b border-gray-200 dark:border-gray-600 whitespace-nowrap">${h}</th>`,
+        `<th class="px-3 py-2 text-left text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide border-b border-gray-200 dark:border-white/10 whitespace-nowrap">${h}</th>`,
     )
     .join('')
 
@@ -1066,18 +1066,18 @@ function _renderTableBlock(lines: string[]): string {
       const tds = cells
         .map(
           (c) =>
-            `<td class="px-3 py-1.5 text-gray-800 dark:text-gray-200 border-b border-gray-100 dark:border-gray-700/50">${c}</td>`,
+            `<td class="px-3 py-1.5 text-gray-800 dark:text-gray-200 border-b border-gray-100 dark:border-white/10/50">${c}</td>`,
         )
         .join('')
-      const bg = idx % 2 === 1 ? ' class="bg-gray-50/50 dark:bg-gray-700/10"' : ''
+      const bg = idx % 2 === 1 ? ' class="bg-gray-50/50 dark:bg-white/5"' : ''
       return `<tr${bg}>${tds}</tr>`
     })
     .join('')
 
   return (
-    `<div class="overflow-x-auto my-2 rounded-lg border border-gray-200 dark:border-gray-600 text-sm">` +
+    `<div class="overflow-x-auto my-2 rounded-lg border border-gray-200 dark:border-white/10 text-sm">` +
     `<table class="min-w-full border-collapse">` +
-    `<thead><tr class="bg-gray-50 dark:bg-gray-700/30">${th}</tr></thead>` +
+    `<thead><tr class="bg-gray-50 dark:bg-gray-800/75">${th}</tr></thead>` +
     `<tbody>${trs}</tbody>` +
     `</table></div>`
   )
@@ -1092,7 +1092,7 @@ function _renderInlineText(text: string): string {
     )
     .replace(
       /`([^`]+)`/g,
-      '<code class="rounded bg-gray-200 dark:bg-gray-700 px-1 py-0.5 text-xs font-mono">$1</code>',
+      '<code class="rounded bg-gray-100 dark:bg-gray-400/10 px-1 py-0.5 text-xs font-mono">$1</code>',
     )
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')

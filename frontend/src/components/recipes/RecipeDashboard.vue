@@ -41,7 +41,7 @@
         <div
           v-else
           :style="{ gridArea: widgetLayout.gridArea }"
-          class="bg-white dark:bg-gray-800 shadow rounded-lg border border-red-200 dark:border-red-800 flex flex-col h-full"
+          class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-red-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-red-500/30 flex flex-col h-full"
         >
           <div class="px-4 py-3 border-b border-red-200 dark:border-red-800">
             <h3 class="text-sm font-medium text-red-600 dark:text-red-400">Widget not found</h3>

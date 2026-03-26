@@ -64,7 +64,7 @@
         <div class="text-lg mb-2">No dashboard selected</div>
         <button
           @click="showPicker = true"
-          class="text-blue-600 dark:text-blue-400 hover:underline"
+          class="text-indigo-600 dark:text-indigo-400 hover:underline"
         >
           Click here to add one
         </button>

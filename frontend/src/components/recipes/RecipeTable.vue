@@ -38,7 +38,7 @@
             <router-link
               v-if="getCellLink(row, rowIndex, column)"
               :to="getCellLink(row, rowIndex, column)!"
-              class="text-blue-600 hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+              class="text-indigo-600 hover:text-indigo-800 hover:underline dark:text-indigo-400 dark:hover:text-indigo-300"
             >
               {{ formatCell(row, column) }}
             </router-link>

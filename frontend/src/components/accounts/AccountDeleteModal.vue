@@ -57,7 +57,7 @@
                   <input
                     v-model="deleteTransactions"
                     type="checkbox"
-                    class="mt-1 h-4 w-4 rounded border-gray-300 text-red-600 focus:ring-red-500 dark:border-gray-600 dark:bg-gray-700"
+                    class="mt-1 h-4 w-4 rounded border-gray-300 text-red-600 focus:outline-red-600 dark:border-white/10 dark:bg-white/5"
                   />
                   <span class="text-sm text-gray-700 dark:text-gray-300">
                     Also delete {{ transactionCount }} associated transaction{{ transactionCount > 1 ? 's' : '' }}
@@ -80,7 +80,7 @@
                 <button
                   type="button"
                   @click="handleClose"
-                  class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600"
+                  class="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
                 >
                   Cancel
                 </button>

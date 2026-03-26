@@ -2,11 +2,11 @@
   <div class="w-full">
     <!-- Rule selector -->
     <div class="mb-4">
-      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+      <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">
         XLS Rule
       </label>
       <div v-if="isLoadingRules" class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-        <div class="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>
+        <div class="animate-spin h-4 w-4 border-2 border-indigo-500 border-t-transparent rounded-full"></div>
         Loading rules...
       </div>
       <div v-else-if="rulesLoadError" class="text-sm text-red-600 dark:text-red-400">
@@ -16,20 +16,31 @@
         No XLS rules found. Add YAML rule files to the xls-rules directory.
       </div>
       <div v-else class="flex gap-2">
-        <select
-          v-model="selectedRuleFilename"
-          @change="handleRuleChange"
-          class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-        >
-          <option value="">Select a rule...</option>
-          <option v-for="rule in availableRules" :key="rule.filename" :value="rule.filename">
-            {{ rule.name }} ({{ rule.default_account }})
-          </option>
-        </select>
+        <Listbox as="div" v-model="selectedRuleFilename" class="flex-1">
+          <ListboxLabel class="sr-only">XLS Rule</ListboxLabel>
+          <div class="relative">
+            <ListboxButton class="grid w-full cursor-default grid-cols-1 rounded-md bg-white py-1.5 pr-2 pl-3 text-left text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus-visible:outline-indigo-500">
+              <span class="col-start-1 row-start-1 truncate pr-6">{{ xlsRuleOptions.find(o => o.value === selectedRuleFilename)?.label || 'Select a rule...' }}</span>
+              <ChevronUpDownIcon class="col-start-1 row-start-1 size-5 self-center justify-self-end text-gray-500 sm:size-4 dark:text-gray-400" aria-hidden="true" />
+            </ListboxButton>
+            <transition leave-active-class="transition ease-in duration-100" leave-to-class="opacity-0">
+              <ListboxOptions class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline-1 outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10">
+                <ListboxOption v-for="opt in xlsRuleOptions" :key="opt.value" :value="opt.value" as="template" v-slot="{ active, selected }">
+                  <li :class="[active ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'text-gray-900 dark:text-white', 'relative cursor-default py-2 pr-9 pl-3 select-none']">
+                    <span :class="[selected ? 'font-semibold' : 'font-normal', 'block truncate']">{{ opt.label }}</span>
+                    <span v-if="selected" :class="[active ? 'text-white' : 'text-indigo-600 dark:text-indigo-400', 'absolute inset-y-0 right-0 flex items-center pr-4']">
+                      <CheckIcon class="size-5" aria-hidden="true" />
+                    </span>
+                  </li>
+                </ListboxOption>
+              </ListboxOptions>
+            </transition>
+          </div>
+        </Listbox>
         <button
           @click="handleReloadRules"
           :disabled="isReloadingRules"
-          class="px-3 py-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 shrink-0"
+          class="rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 disabled:opacity-50 shrink-0 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
           title="Reload rules from disk"
         >
           {{ isReloadingRules ? 'Reloading…' : 'Reload' }}
@@ -64,11 +75,11 @@
       class="relative border-2 border-dashed rounded-lg p-8 text-center transition-all duration-200"
       :class="[
         isDragOver
-          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-          : 'border-gray-300 dark:border-gray-600',
+          ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
+          : 'border-gray-300 dark:border-white/10',
         isParsing
           ? 'pointer-events-none opacity-75'
-          : 'hover:border-blue-400 hover:bg-blue-50/50 dark:hover:bg-blue-900/10',
+          : 'hover:border-indigo-400 hover:bg-indigo-50/50 dark:hover:bg-indigo-900/10',
       ]"
       @drop.prevent="handleDrop"
       @dragover.prevent="handleDragOver"
@@ -94,7 +105,7 @@
             <button
               @click="openFilePicker"
               :disabled="isParsing"
-              class="text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300 font-medium underline"
+              class="text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300 font-medium underline"
             >
               browse files
             </button>
@@ -152,7 +163,7 @@
         class="absolute inset-0 flex items-center justify-center bg-white/75 dark:bg-gray-900/75 rounded-lg"
       >
         <div class="flex items-center space-x-2">
-          <div class="animate-spin h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full"></div>
+          <div class="animate-spin h-5 w-5 border-2 border-indigo-500 border-t-transparent rounded-full"></div>
           <span class="text-sm font-medium text-gray-900 dark:text-white">Parsing XLS file...</span>
         </div>
       </div>
@@ -191,7 +202,7 @@
         </div>
 
         <!-- Preview table -->
-        <div class="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 mb-4 overflow-x-auto">
+        <div class="bg-white dark:bg-gray-800 rounded-lg border dark:border-white/10 mb-4 overflow-x-auto">
           <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-sm">
             <thead class="bg-gray-50 dark:bg-gray-900">
               <tr>
@@ -214,13 +225,13 @@
               </tr>
             </tbody>
           </table>
-          <div v-if="fileDetails.transactionCount > 5" class="px-4 py-2 text-xs text-gray-500 dark:text-gray-400 border-t dark:border-gray-700">
+          <div v-if="fileDetails.transactionCount > 5" class="px-4 py-2 text-xs text-gray-500 dark:text-gray-400 border-t dark:border-white/10">
             Showing first 5 of {{ fileDetails.transactionCount }} transactions
           </div>
         </div>
 
         <!-- Account and Currency -->
-        <div class="bg-white dark:bg-gray-800 rounded-lg p-4 border dark:border-gray-700">
+        <div class="bg-white dark:bg-gray-800 rounded-lg p-4 border dark:border-white/10">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
             <div>
               <AccountDropdown
@@ -248,7 +259,7 @@
             <button
               @click="proceedWithImport"
               :disabled="!selectedAccount || !selectedCurrency"
-              class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+              class="rounded-md bg-green-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-green-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-600 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-green-500 dark:shadow-none dark:hover:bg-green-400"
             >
               Proceed
             </button>
@@ -260,7 +271,10 @@
 </template>
 
 <script setup lang="ts">
-  import { ref, computed, onMounted } from 'vue'
+  import { ref, computed, watch, onMounted } from 'vue'
+  import { Listbox, ListboxButton, ListboxLabel, ListboxOption, ListboxOptions } from '@headlessui/vue'
+  import { ChevronUpDownIcon } from '@heroicons/vue/16/solid'
+  import { CheckIcon } from '@heroicons/vue/20/solid'
   import { useToast } from '@/composables/useNotifications'
   import { useAccounts } from '@/composables/useAccounts'
   import {
@@ -300,6 +314,14 @@
   const availableRules = ref<XlsRuleSummary[]>([])
   const invalidRules = ref<InvalidRuleSummary[]>([])
   const selectedRuleFilename = ref<string>('')
+
+  const xlsRuleOptions = computed(() => [
+    { value: '', label: 'Select a rule...' },
+    ...availableRules.value.map(rule => ({
+      value: rule.filename,
+      label: `${rule.name} (${rule.default_account})`,
+    })),
+  ])
   const selectedRule = ref<XlsRule | null>(null)
   const isLoadingRules = ref<boolean>(false)
   const isReloadingRules = ref<boolean>(false)
@@ -342,6 +364,8 @@
       isLoadingRules.value = false
     }
   })
+
+  watch(selectedRuleFilename, () => handleRuleChange())
 
   const handleRuleChange = async () => {
     if (!selectedRuleFilename.value) {

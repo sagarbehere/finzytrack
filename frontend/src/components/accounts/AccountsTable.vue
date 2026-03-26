@@ -26,7 +26,7 @@
               Balance
               <div class="relative group">
                 <InformationCircleIcon class="h-4 w-4 cursor-help text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" />
-                <div class="absolute left-0 top-6 z-50 hidden group-hover:block w-64 p-2 text-xs font-normal normal-case tracking-normal bg-gray-900 text-white rounded shadow-lg dark:bg-gray-700">
+                <div class="absolute left-0 top-6 z-50 hidden group-hover:block w-64 p-2 text-xs font-normal normal-case tracking-normal bg-gray-900 text-white rounded shadow-lg dark:bg-gray-800">
                   <p class="mb-1"><strong>Balance sheet</strong> (Assets, Liabilities, Equity): cumulative balance up to end date.</p>
                   <p><strong>Income statement</strong> (Income, Expenses): balance within the date range.</p>
                 </div>
@@ -57,7 +57,7 @@
               <button
                 v-if="node.children.length > 0"
                 @click="emit('toggle', node.id)"
-                class="mr-2 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 focus:outline-none"
+                class="mr-2 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
               >
                 <ChevronRightIcon
                   class="h-4 w-4 text-gray-500 dark:text-gray-400 transition-transform"
@@ -70,7 +70,7 @@
               <button
                 v-if="!node.isVirtual"
                 @click="emit('show-detail', node)"
-                class="text-sm font-medium text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 text-left"
+                class="text-sm font-medium text-gray-900 dark:text-white hover:text-indigo-600 dark:hover:text-indigo-400 text-left"
               >
                 {{ node.name }}
               </button>
@@ -119,7 +119,7 @@
               <span
                 v-for="currency in node.currencyBadges.slice(0, 3)"
                 :key="currency"
-                class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+                class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-400/10 dark:text-gray-400"
               >
                 {{ currency }}
               </span>
@@ -138,7 +138,7 @@
               <button
                 v-if="formatBalanceDisplay(node).display"
                 @click="emit('view-transactions', node)"
-                class="text-blue-600 hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+                class="text-indigo-600 hover:text-indigo-800 hover:underline dark:text-indigo-400 dark:hover:text-indigo-300"
                 title="View transactions for this account"
               >
                 {{ formatBalanceDisplay(node).display }}
@@ -147,7 +147,7 @@
               <button
                 v-if="formatBalanceDisplay(node).overflow > 0"
                 @click="emit('show-balances', node)"
-                class="ml-1 text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 text-xs"
+                class="ml-1 text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 text-xs"
               >
                 +{{ formatBalanceDisplay(node).overflow }} more
               </button>
@@ -165,7 +165,7 @@
               <!-- Edit -->
               <button
                 @click="emit('edit', node)"
-                class="text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400"
+                class="text-gray-500 hover:text-indigo-600 dark:text-gray-400 dark:hover:text-indigo-400"
                 title="Edit account"
               >
                 <PencilIcon class="h-4 w-4" />

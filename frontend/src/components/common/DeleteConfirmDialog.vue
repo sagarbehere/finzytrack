@@ -11,7 +11,7 @@
         leave-from="opacity-100"
         leave-to="opacity-0"
       >
-        <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" />
+        <div class="fixed inset-0 bg-gray-500/75 transition-opacity dark:bg-gray-900/50" />
       </TransitionChild>
 
       <div class="fixed inset-0 z-10 overflow-y-auto">
@@ -25,8 +25,8 @@
             leave-from="opacity-100 translate-y-0 sm:scale-100"
             leave-to="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
           >
-            <DialogPanel class="relative transform overflow-hidden rounded-lg bg-white dark:bg-gray-800 text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg">
-              <div class="bg-white dark:bg-gray-800 px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
+            <DialogPanel class="relative transform overflow-hidden rounded-lg bg-white text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg dark:bg-gray-800 dark:outline dark:-outline-offset-1 dark:outline-white/10">
+              <div class="px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
                 <div class="sm:flex sm:items-start">
                   <!-- Icon -->
                   <div
@@ -65,7 +65,7 @@
                 </button>
                 <button
                   @click="handleCancel"
-                  class="mt-3 inline-flex w-full justify-center rounded-md bg-white dark:bg-gray-700 px-3 py-2 text-sm font-semibold text-gray-900 dark:text-white shadow-sm ring-1 ring-inset ring-gray-300 dark:ring-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600 sm:mt-0 sm:w-auto"
+                  class="mt-3 inline-flex w-full justify-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 sm:mt-0 sm:w-auto dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
                 >
                   {{ cancelText }}
                 </button>
@@ -127,7 +127,7 @@ const iconBgClass = computed(() => {
       return 'bg-green-100 dark:bg-green-900/20'
     case 'info':
     default:
-      return 'bg-blue-100 dark:bg-blue-900/20'
+      return 'bg-indigo-100 dark:bg-indigo-900/20'
   }
 })
 
@@ -141,7 +141,7 @@ const iconClass = computed(() => {
       return 'text-green-600 dark:text-green-400'
     case 'info':
     default:
-      return 'text-blue-600 dark:text-blue-400'
+      return 'text-indigo-600 dark:text-indigo-400'
   }
 })
 
@@ -155,7 +155,7 @@ const confirmButtonClass = computed(() => {
       return 'bg-green-600 hover:bg-green-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-600'
     case 'info':
     default:
-      return 'bg-blue-600 hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600'
+      return 'bg-indigo-600 hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600'
   }
 })
 

@@ -1,12 +1,12 @@
 <template>
   <div class="space-y-4">
     <!-- Toolbar -->
-    <div class="flex items-center justify-between bg-gray-50 dark:bg-gray-800 px-4 py-3 rounded-lg border border-gray-200 dark:border-gray-700">
+    <div class="flex items-center justify-between bg-gray-50 dark:bg-gray-800 px-4 py-3 rounded-lg border border-gray-200 dark:border-white/10">
       <div class="flex items-center gap-3">
         <span class="text-sm font-mono text-gray-700 dark:text-gray-300">{{ filePath }}</span>
         <span
           v-if="readonly"
-          class="px-2 py-1 text-xs font-medium rounded bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300"
+          class="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-400/10 dark:text-gray-400"
         >
           Read Only
         </span>
@@ -22,7 +22,7 @@
         <button
           v-if="readonly && allowEdit"
           @click="enableEditing"
-          class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600"
+          class="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
         >
           Enable Editing
         </button>
@@ -31,14 +31,14 @@
           <button
             @click="save"
             :disabled="!isDirty || isSaving"
-            class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {{ isSaving ? 'Saving...' : 'Save' }}
           </button>
           <button
             @click="revert"
             :disabled="!isDirty"
-            class="px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            class="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
           >
             Revert
           </button>

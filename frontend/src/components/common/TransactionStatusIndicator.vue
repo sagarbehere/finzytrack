@@ -109,7 +109,7 @@ const statusIcons = computed(() => {
         key: 'medium-confidence',
         heroIcon: MinusCircleIcon,
         tooltip: `Medium confidence auto-categorization (${Math.round(confidence * 100)}%)`,
-        class: 'text-blue-600 dark:text-blue-400',
+        class: 'text-indigo-600 dark:text-indigo-400',
         priority: 3
       })
     }
@@ -132,7 +132,7 @@ const statusIcons = computed(() => {
       key: 'pending-edits',
       symbol: '⏳',
       tooltip: 'Has pending edits',
-      class: 'text-blue-600 dark:text-blue-400',
+      class: 'text-indigo-600 dark:text-indigo-400',
       priority: 5
     })
   }
@@ -143,7 +143,7 @@ const statusIcons = computed(() => {
       key: 'modified',
       symbol: '✏️',
       tooltip: 'Transaction has been modified',
-      class: 'text-blue-600 dark:text-blue-400',
+      class: 'text-indigo-600 dark:text-indigo-400',
       priority: 6
     })
   }

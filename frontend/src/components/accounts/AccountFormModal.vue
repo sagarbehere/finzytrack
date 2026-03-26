@@ -32,7 +32,7 @@
               <form @submit.prevent="handleSubmit" class="space-y-4">
                 <!-- Account Name -->
                 <div>
-                  <label for="name" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label for="name" class="block text-sm/6 font-medium text-gray-900 dark:text-white">
                     Account Name
                   </label>
                   <input
@@ -41,7 +41,7 @@
                     type="text"
                     :disabled="mode === 'edit'"
                     placeholder="e.g., Assets:Bank:Checking"
-                    class="block w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white disabled:bg-gray-100 disabled:dark:bg-gray-800 disabled:cursor-not-allowed"
+                    class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500 disabled:bg-gray-100 disabled:dark:bg-gray-800 disabled:cursor-not-allowed"
                     :class="{ 'border-red-500': errors.name }"
                   />
                   <p v-if="errors.name" class="mt-1 text-sm text-red-600 dark:text-red-400">
@@ -54,14 +54,14 @@
 
                 <!-- Open Date -->
                 <div>
-                  <label for="openDate" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label for="openDate" class="block text-sm/6 font-medium text-gray-900 dark:text-white">
                     Open Date
                   </label>
                   <input
                     id="openDate"
                     v-model="formData.openDate"
                     type="date"
-                    class="block w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                    class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
                     :class="{ 'border-red-500': errors.openDate }"
                   />
                   <p v-if="errors.openDate" class="mt-1 text-sm text-red-600 dark:text-red-400">
@@ -71,20 +71,20 @@
 
                 <!-- Currencies -->
                 <div>
-                  <label for="currencies" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label for="currencies" class="block text-sm/6 font-medium text-gray-900 dark:text-white">
                     Currencies
                   </label>
                   <div class="flex flex-wrap gap-2 mb-2">
                     <span
                       v-for="currency in formData.currencies"
                       :key="currency"
-                      class="inline-flex items-center gap-1 px-2 py-1 rounded bg-blue-100 text-blue-800 text-sm dark:bg-blue-900/30 dark:text-blue-400"
+                      class="inline-flex items-center gap-1 px-2 py-1 rounded bg-indigo-100 text-indigo-800 text-sm dark:bg-indigo-900/30 dark:text-indigo-400"
                     >
                       {{ currency }}
                       <button
                         type="button"
                         @click="removeCurrency(currency)"
-                        class="hover:text-blue-600 dark:hover:text-blue-300"
+                        class="hover:text-indigo-600 dark:hover:text-indigo-300"
                       >
                         <XMarkIcon class="h-4 w-4" />
                       </button>
@@ -101,7 +101,7 @@
                     <button
                       type="button"
                       @click="addCurrency"
-                      class="px-3 py-2 bg-gray-100 text-gray-700 rounded-md text-sm hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+                      class="rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
                     >
                       Add
                     </button>
@@ -113,7 +113,7 @@
 
                 <!-- Description -->
                 <div>
-                  <label for="description" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label for="description" class="block text-sm/6 font-medium text-gray-900 dark:text-white">
                     Description (optional)
                   </label>
                   <textarea
@@ -121,12 +121,12 @@
                     v-model="formData.description"
                     rows="2"
                     placeholder="Account description or notes"
-                    class="block w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                    class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
                   ></textarea>
                 </div>
 
                 <!-- Banking Details -->
-                <div class="border-t border-gray-200 dark:border-gray-700 pt-4">
+                <div class="border-t border-gray-200 dark:border-white/10 pt-4">
                   <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Banking Details (optional)</h4>
                   <div class="space-y-3">
                     <div>
@@ -136,7 +136,7 @@
                         v-model="formData.accountNumber"
                         type="text"
                         placeholder="e.g., 1234567890"
-                        class="block w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                        class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
                       />
                     </div>
                     <div class="grid grid-cols-2 gap-3">
@@ -147,7 +147,7 @@
                           v-model="formData.ifscCode"
                           type="text"
                           placeholder="e.g., HDFC0001234"
-                          class="block w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                          class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
                         />
                       </div>
                       <div>
@@ -157,7 +157,7 @@
                           v-model="formData.swiftBic"
                           type="text"
                           placeholder="e.g., HDFCINBB"
-                          class="block w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                          class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
                         />
                       </div>
                     </div>
@@ -165,13 +165,13 @@
                 </div>
 
                 <!-- Custom Fields -->
-                <div class="border-t border-gray-200 dark:border-gray-700 pt-4">
+                <div class="border-t border-gray-200 dark:border-white/10 pt-4">
                   <div class="flex items-center justify-between mb-3">
                     <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">Custom Fields (optional)</h4>
                     <button
                       type="button"
                       @click="addCustomField"
-                      class="text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 flex items-center gap-1"
+                      class="text-xs text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 flex items-center gap-1"
                     >
                       <PlusIcon class="h-3.5 w-3.5" />
                       Add field
@@ -187,14 +187,14 @@
                         v-model="field.key"
                         type="text"
                         placeholder="key"
-                        class="w-2/5 px-2.5 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white font-mono"
+                        class="w-2/5 rounded-md bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 font-mono placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
                         :class="{ 'border-red-400': field.key && !isValidKey(field.key) }"
                       />
                       <input
                         v-model="field.value"
                         type="text"
                         placeholder="value"
-                        class="flex-1 px-2.5 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                        class="flex-1 rounded-md bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
                       />
                       <button
                         type="button"
@@ -212,18 +212,18 @@
                 </div>
 
                 <!-- Buttons -->
-                <div class="flex justify-end gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+                <div class="flex justify-end gap-3 pt-4 border-t border-gray-200 dark:border-white/10">
                   <button
                     type="button"
                     @click="handleClose"
-                    class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600"
+                    class="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     :disabled="isSubmitting"
-                    class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {{ isSubmitting ? 'Saving...' : (mode === 'create' ? 'Create' : 'Save') }}
                   </button>

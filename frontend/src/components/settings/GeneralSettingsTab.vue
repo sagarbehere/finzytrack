@@ -13,15 +13,15 @@
     >
       <!-- Config file path (read-only) -->
       <div v-if="config?.config_file_path">
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Config File</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Config File</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">The configuration file currently in use.</p>
-        <p class="text-sm font-mono text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 px-3 py-2 rounded-md border border-gray-200 dark:border-gray-700">
+        <p class="text-sm font-mono text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 px-3 py-2 rounded-md border border-gray-200 dark:border-white/10">
           {{ config.config_file_path }}
         </p>
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Ledger File</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Ledger File</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
           Path to your Beancount ledger file. Can be absolute or relative to the directory the backend was started from.
         </p>
@@ -29,19 +29,19 @@
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">OFX Mappings File</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">OFX Mappings File</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Path to the YAML file containing OFX account mappings. Leave empty to disable.</p>
         <input v-model="dataFields.ofx_mappings_file" type="text" placeholder="e.g. config/ofx_mappings.yaml" :class="inputClass" />
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">CSV Rules Directory</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">CSV Rules Directory</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Directory containing CSV import rule YAML files. Leave empty to disable.</p>
         <input v-model="dataFields.csv_rules_dir" type="text" placeholder="e.g. config/csv_rules/" :class="inputClass" />
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">XLS Rules Directory</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">XLS Rules Directory</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Directory containing XLS import rule YAML files. Leave empty to disable.</p>
         <input v-model="dataFields.xls_rules_dir" type="text" placeholder="e.g. config/xls_rules/" :class="inputClass" />
       </div>
@@ -58,13 +58,13 @@
       @reset="resetAccounts"
     >
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Default Currency</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Default Currency</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Currency code used when no currency is specified.</p>
         <input v-model="accountsFields.default_currency" type="text" placeholder="USD" :class="inputClass" />
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Default Unknown Account</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Default Unknown Account</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Beancount account used when a transaction cannot be categorized.</p>
         <input v-model="accountsFields.default_unknown_account" type="text" placeholder="Expenses:Unknown" :class="inputClass" />
       </div>
@@ -80,20 +80,34 @@
       @save="saveLlm"
       @reset="resetLlm"
     >
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Provider</label>
+      <Listbox as="div" v-model="llmFields.provider">
+        <ListboxLabel class="block text-sm/6 font-medium text-gray-900 dark:text-white">Provider</ListboxLabel>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
           Use <strong>OpenAI-compatible</strong> for local models (LM Studio, Ollama), OpenAI, or Groq.
           Use <strong>Anthropic</strong> for the Anthropic API directly.
         </p>
-        <select v-model="llmFields.provider" :class="inputClass">
-          <option value="openai">OpenAI-compatible</option>
-          <option value="anthropic">Anthropic</option>
-        </select>
-      </div>
+        <div class="relative">
+          <ListboxButton class="grid w-full cursor-default grid-cols-1 rounded-md bg-white py-1.5 pr-2 pl-3 text-left text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus-visible:outline-indigo-500">
+            <span class="col-start-1 row-start-1 truncate pr-6">{{ providerOptions.find(o => o.value === llmFields.provider)?.label ?? llmFields.provider }}</span>
+            <ChevronUpDownIcon class="col-start-1 row-start-1 size-5 self-center justify-self-end text-gray-500 sm:size-4 dark:text-gray-400" aria-hidden="true" />
+          </ListboxButton>
+          <transition leave-active-class="transition ease-in duration-100" leave-to-class="opacity-0">
+            <ListboxOptions class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline-1 outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10">
+              <ListboxOption v-for="opt in providerOptions" :key="opt.value" :value="opt.value" as="template" v-slot="{ active, selected }">
+                <li :class="[active ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'text-gray-900 dark:text-white', 'relative cursor-default py-2 pr-9 pl-3 select-none']">
+                  <span :class="[selected ? 'font-semibold' : 'font-normal', 'block truncate']">{{ opt.label }}</span>
+                  <span v-if="selected" :class="[active ? 'text-white' : 'text-indigo-600 dark:text-indigo-400', 'absolute inset-y-0 right-0 flex items-center pr-4']">
+                    <CheckIcon class="size-5" aria-hidden="true" />
+                  </span>
+                </li>
+              </ListboxOption>
+            </ListboxOptions>
+          </transition>
+        </div>
+      </Listbox>
 
       <div v-if="llmFields.provider === 'openai'">
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API URL</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">API URL</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
           Base URL of the OpenAI-compatible endpoint, e.g. <code class="font-mono">http://127.0.0.1:1234</code> or <code class="font-mono">https://api.openai.com</code>.
         </p>
@@ -101,7 +115,7 @@
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API Key</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">API Key</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Required for cloud providers. Leave empty for local models.</p>
         <div class="relative">
           <input
@@ -130,7 +144,7 @@
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Model</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Model</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
           Model name, e.g. <code class="font-mono">gpt-4o</code>, <code class="font-mono">claude-sonnet-4-6</code>, <code class="font-mono">llama-3.1-8b-instruct</code>.
         </p>
@@ -139,12 +153,12 @@
 
       <div class="grid grid-cols-3 gap-4">
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Temperature</label>
+          <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Temperature</label>
           <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">0 = deterministic, 2 = very random.</p>
           <input v-model.number="llmFields.temperature" type="number" min="0" max="2" step="0.1" :class="inputClass" />
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Max Tokens</label>
+          <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Max Tokens</label>
           <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Max output tokens. 0 = model default.</p>
           <input v-model.number="llmFields.max_tokens" type="number" min="0" step="256" :class="inputClass" />
           <p
@@ -155,7 +169,7 @@
           </p>
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Max Tool Rounds</label>
+          <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Max Tool Rounds</label>
           <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Tool-call round-trips per message.</p>
           <input v-model.number="llmFields.max_tool_rounds" type="number" min="1" max="50" step="1" :class="inputClass" />
         </div>
@@ -172,25 +186,42 @@
       @save="saveCategorization"
       @reset="resetCategorization"
     >
-      <div class="flex items-center gap-3">
-        <input id="cat-enabled" v-model="categorizationFields.enabled" type="checkbox" :class="checkboxClass" />
-        <label for="cat-enabled" class="text-sm font-medium text-gray-700 dark:text-gray-300">Enable auto-categorization</label>
+      <div class="flex items-center justify-between">
+        <span class="text-sm font-medium text-gray-900 dark:text-white">Enable auto-categorization</span>
+        <div class="group relative inline-flex w-11 shrink-0 rounded-full bg-gray-200 p-0.5 inset-ring inset-ring-gray-900/5 outline-offset-2 outline-indigo-600 transition-colors duration-200 ease-in-out has-checked:bg-indigo-600 has-focus-visible:outline-2 dark:bg-white/5 dark:inset-ring-white/10 dark:outline-indigo-500 dark:has-checked:bg-indigo-500">
+          <span class="size-5 rounded-full bg-white shadow-xs ring-1 ring-gray-900/5 transition-transform duration-200 ease-in-out group-has-checked:translate-x-5"></span>
+          <input type="checkbox" v-model="categorizationFields.enabled" class="absolute inset-0 size-full appearance-none focus:outline-hidden" aria-label="Enable auto-categorization" />
+        </div>
       </div>
 
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Engine</label>
+      <Listbox as="div" v-model="categorizationFields.engine">
+        <ListboxLabel class="block text-sm/6 font-medium text-gray-900 dark:text-white">Engine</ListboxLabel>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
           <strong>Classifier</strong> trains on your existing ledger history.
           <strong>LLM</strong> uses your configured language model (requires AI / LLM to be set up).
         </p>
-        <select v-model="categorizationFields.engine" :class="inputClass">
-          <option value="classifier">Classifier (scikit-learn)</option>
-          <option value="llm">LLM</option>
-        </select>
-      </div>
+        <div class="relative">
+          <ListboxButton class="grid w-full cursor-default grid-cols-1 rounded-md bg-white py-1.5 pr-2 pl-3 text-left text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus-visible:outline-indigo-500">
+            <span class="col-start-1 row-start-1 truncate pr-6">{{ categorizationEngineOptions.find(o => o.value === categorizationFields.engine)?.label ?? categorizationFields.engine }}</span>
+            <ChevronUpDownIcon class="col-start-1 row-start-1 size-5 self-center justify-self-end text-gray-500 sm:size-4 dark:text-gray-400" aria-hidden="true" />
+          </ListboxButton>
+          <transition leave-active-class="transition ease-in duration-100" leave-to-class="opacity-0">
+            <ListboxOptions class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline-1 outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10">
+              <ListboxOption v-for="opt in categorizationEngineOptions" :key="opt.value" :value="opt.value" as="template" v-slot="{ active, selected }">
+                <li :class="[active ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'text-gray-900 dark:text-white', 'relative cursor-default py-2 pr-9 pl-3 select-none']">
+                  <span :class="[selected ? 'font-semibold' : 'font-normal', 'block truncate']">{{ opt.label }}</span>
+                  <span v-if="selected" :class="[active ? 'text-white' : 'text-indigo-600 dark:text-indigo-400', 'absolute inset-y-0 right-0 flex items-center pr-4']">
+                    <CheckIcon class="size-5" aria-hidden="true" />
+                  </span>
+                </li>
+              </ListboxOption>
+            </ListboxOptions>
+          </transition>
+        </div>
+      </Listbox>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Training Data File</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Training Data File</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Path to a Beancount file used as training data for the classifier.</p>
         <input v-model="categorizationFields.training_data_file" type="text" placeholder="data/training.beancount" :class="inputClass" />
       </div>
@@ -206,47 +237,64 @@
       @save="saveEmail"
       @reset="resetEmail"
     >
-      <div class="flex items-center gap-3">
-        <input id="email-enabled" v-model="emailFields.enabled" type="checkbox" :class="checkboxClass" />
-        <label for="email-enabled" class="text-sm font-medium text-gray-700 dark:text-gray-300">Enable email import</label>
+      <div class="flex items-center justify-between">
+        <span class="text-sm font-medium text-gray-900 dark:text-white">Enable email import</span>
+        <div class="group relative inline-flex w-11 shrink-0 rounded-full bg-gray-200 p-0.5 inset-ring inset-ring-gray-900/5 outline-offset-2 outline-indigo-600 transition-colors duration-200 ease-in-out has-checked:bg-indigo-600 has-focus-visible:outline-2 dark:bg-white/5 dark:inset-ring-white/10 dark:outline-indigo-500 dark:has-checked:bg-indigo-500">
+          <span class="size-5 rounded-full bg-white shadow-xs ring-1 ring-gray-900/5 transition-transform duration-200 ease-in-out group-has-checked:translate-x-5"></span>
+          <input type="checkbox" v-model="emailFields.enabled" class="absolute inset-0 size-full appearance-none focus:outline-hidden" aria-label="Enable email import" />
+        </div>
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Rules Directory</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Rules Directory</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Directory containing per-account YAML rule files.</p>
         <input v-model="emailFields.rules_directory" type="text" placeholder="./config/email_rules/" :class="inputClass" />
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Default Lookback Days</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Default Lookback Days</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Number of days to look back for emails when no date range is specified.</p>
         <input v-model.number="emailFields.default_lookback_days" type="number" min="1" :class="inputClass" />
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Max Emails</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Max Emails</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Maximum emails to fetch per request. Truncates with a warning if exceeded.</p>
         <input v-model.number="emailFields.max_emails" type="number" min="1" :class="inputClass" />
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">IMAP Timeout (seconds)</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">IMAP Timeout (seconds)</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Socket timeout for IMAP operations. Set to 0 for no timeout.</p>
         <input v-model.number="emailFields.imap_timeout_secs" type="number" min="0" :class="inputClass" />
       </div>
 
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Parsing Mode</label>
+      <Listbox as="div" v-model="emailFields.parsing_mode">
+        <ListboxLabel class="block text-sm/6 font-medium text-gray-900 dark:text-white">Parsing Mode</ListboxLabel>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
           <strong>Regex</strong> uses patterns defined in rule files.
           <strong>LLM</strong> uses your configured language model (requires AI / LLM to be set up).
           Can be overridden per account or per rule.
         </p>
-        <select v-model="emailFields.parsing_mode" :class="inputClass">
-          <option value="regex">Regex</option>
-          <option value="llm">LLM</option>
-        </select>
-      </div>
+        <div class="relative">
+          <ListboxButton class="grid w-full cursor-default grid-cols-1 rounded-md bg-white py-1.5 pr-2 pl-3 text-left text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus-visible:outline-indigo-500">
+            <span class="col-start-1 row-start-1 truncate pr-6">{{ parsingModeOptions.find(o => o.value === emailFields.parsing_mode)?.label ?? emailFields.parsing_mode }}</span>
+            <ChevronUpDownIcon class="col-start-1 row-start-1 size-5 self-center justify-self-end text-gray-500 sm:size-4 dark:text-gray-400" aria-hidden="true" />
+          </ListboxButton>
+          <transition leave-active-class="transition ease-in duration-100" leave-to-class="opacity-0">
+            <ListboxOptions class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline-1 outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10">
+              <ListboxOption v-for="opt in parsingModeOptions" :key="opt.value" :value="opt.value" as="template" v-slot="{ active, selected }">
+                <li :class="[active ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'text-gray-900 dark:text-white', 'relative cursor-default py-2 pr-9 pl-3 select-none']">
+                  <span :class="[selected ? 'font-semibold' : 'font-normal', 'block truncate']">{{ opt.label }}</span>
+                  <span v-if="selected" :class="[active ? 'text-white' : 'text-indigo-600 dark:text-indigo-400', 'absolute inset-y-0 right-0 flex items-center pr-4']">
+                    <CheckIcon class="size-5" aria-hidden="true" />
+                  </span>
+                </li>
+              </ListboxOption>
+            </ListboxOptions>
+          </transition>
+        </div>
+      </Listbox>
     </SettingsSection>
 
     <!-- ── Analytics ─────────────────────────────────────────────────────── -->
@@ -260,25 +308,31 @@
       @reset="resetAnalytics"
     >
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">SQLite Export Path</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">SQLite Export Path</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Path to the SQLite database file exported from your ledger.</p>
         <input v-model="analyticsFields.export_path" type="text" placeholder="data/ledger.db" :class="inputClass" />
       </div>
 
-      <div class="flex items-center gap-3">
-        <input id="sqlite-autosync" v-model="analyticsFields.auto_sync_enabled" type="checkbox" :class="checkboxClass" />
-        <label for="sqlite-autosync" class="text-sm font-medium text-gray-700 dark:text-gray-300">Auto-sync on ledger changes</label>
+      <div class="flex items-center justify-between">
+        <span class="text-sm font-medium text-gray-900 dark:text-white">Auto-sync on ledger changes</span>
+        <div class="group relative inline-flex w-11 shrink-0 rounded-full bg-gray-200 p-0.5 inset-ring inset-ring-gray-900/5 outline-offset-2 outline-indigo-600 transition-colors duration-200 ease-in-out has-checked:bg-indigo-600 has-focus-visible:outline-2 dark:bg-white/5 dark:inset-ring-white/10 dark:outline-indigo-500 dark:has-checked:bg-indigo-500">
+          <span class="size-5 rounded-full bg-white shadow-xs ring-1 ring-gray-900/5 transition-transform duration-200 ease-in-out group-has-checked:translate-x-5"></span>
+          <input type="checkbox" v-model="analyticsFields.auto_sync_enabled" class="absolute inset-0 size-full appearance-none focus:outline-hidden" aria-label="Auto-sync on ledger changes" />
+        </div>
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Sync Debounce (seconds)</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Sync Debounce (seconds)</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Delay before syncing after a ledger change, to avoid excessive writes.</p>
         <input v-model.number="analyticsFields.sync_debounce_seconds" type="number" min="0" step="0.5" :class="inputClass" />
       </div>
 
-      <div class="flex items-center gap-3">
-        <input id="sqlite-wal" v-model="analyticsFields.enable_wal" type="checkbox" :class="checkboxClass" />
-        <label for="sqlite-wal" class="text-sm font-medium text-gray-700 dark:text-gray-300">Enable WAL mode (recommended for concurrent access)</label>
+      <div class="flex items-center justify-between">
+        <span class="text-sm font-medium text-gray-900 dark:text-white">Enable WAL mode (recommended for concurrent access)</span>
+        <div class="group relative inline-flex w-11 shrink-0 rounded-full bg-gray-200 p-0.5 inset-ring inset-ring-gray-900/5 outline-offset-2 outline-indigo-600 transition-colors duration-200 ease-in-out has-checked:bg-indigo-600 has-focus-visible:outline-2 dark:bg-white/5 dark:inset-ring-white/10 dark:outline-indigo-500 dark:has-checked:bg-indigo-500">
+          <span class="size-5 rounded-full bg-white shadow-xs ring-1 ring-gray-900/5 transition-transform duration-200 ease-in-out group-has-checked:translate-x-5"></span>
+          <input type="checkbox" v-model="analyticsFields.enable_wal" class="absolute inset-0 size-full appearance-none focus:outline-hidden" aria-label="Enable WAL mode (recommended for concurrent access)" />
+        </div>
       </div>
     </SettingsSection>
 
@@ -292,13 +346,16 @@
       @save="saveBackup"
       @reset="resetBackup"
     >
-      <div class="flex items-center gap-3">
-        <input id="backup-enabled" v-model="backupFields.enabled" type="checkbox" :class="checkboxClass" />
-        <label for="backup-enabled" class="text-sm font-medium text-gray-700 dark:text-gray-300">Enable automatic backups</label>
+      <div class="flex items-center justify-between">
+        <span class="text-sm font-medium text-gray-900 dark:text-white">Enable automatic backups</span>
+        <div class="group relative inline-flex w-11 shrink-0 rounded-full bg-gray-200 p-0.5 inset-ring inset-ring-gray-900/5 outline-offset-2 outline-indigo-600 transition-colors duration-200 ease-in-out has-checked:bg-indigo-600 has-focus-visible:outline-2 dark:bg-white/5 dark:inset-ring-white/10 dark:outline-indigo-500 dark:has-checked:bg-indigo-500">
+          <span class="size-5 rounded-full bg-white shadow-xs ring-1 ring-gray-900/5 transition-transform duration-200 ease-in-out group-has-checked:translate-x-5"></span>
+          <input type="checkbox" v-model="backupFields.enabled" class="absolute inset-0 size-full appearance-none focus:outline-hidden" aria-label="Enable automatic backups" />
+        </div>
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">
           Backup Directory
           <span class="ml-1 text-xs font-medium text-amber-600 dark:text-amber-400">⚠ restart required</span>
         </label>
@@ -307,14 +364,17 @@
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Retention Count</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Retention Count</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Number of backup files to keep.</p>
         <input v-model.number="backupFields.retention_count" type="number" min="1" :class="inputClass" />
       </div>
 
-      <div class="flex items-center gap-3">
-        <input id="backup-cleanup" v-model="backupFields.cleanup_on_exceed" type="checkbox" :class="checkboxClass" />
-        <label for="backup-cleanup" class="text-sm font-medium text-gray-700 dark:text-gray-300">Automatically remove oldest backups when limit is exceeded</label>
+      <div class="flex items-center justify-between">
+        <span class="text-sm font-medium text-gray-900 dark:text-white">Automatically remove oldest backups when limit is exceeded</span>
+        <div class="group relative inline-flex w-11 shrink-0 rounded-full bg-gray-200 p-0.5 inset-ring inset-ring-gray-900/5 outline-offset-2 outline-indigo-600 transition-colors duration-200 ease-in-out has-checked:bg-indigo-600 has-focus-visible:outline-2 dark:bg-white/5 dark:inset-ring-white/10 dark:outline-indigo-500 dark:has-checked:bg-indigo-500">
+          <span class="size-5 rounded-full bg-white shadow-xs ring-1 ring-gray-900/5 transition-transform duration-200 ease-in-out group-has-checked:translate-x-5"></span>
+          <input type="checkbox" v-model="backupFields.cleanup_on_exceed" class="absolute inset-0 size-full appearance-none focus:outline-hidden" aria-label="Automatically remove oldest backups when limit is exceeded" />
+        </div>
       </div>
     </SettingsSection>
 
@@ -328,20 +388,31 @@
       @save="saveLogging"
       @reset="resetLogging"
     >
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Log Level</label>
+      <Listbox as="div" v-model="loggingFields.level">
+        <ListboxLabel class="block text-sm/6 font-medium text-gray-900 dark:text-white">Log Level</ListboxLabel>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Verbosity of the backend logs. Takes effect immediately.</p>
-        <select v-model="loggingFields.level" :class="inputClass">
-          <option value="DEBUG">DEBUG</option>
-          <option value="INFO">INFO</option>
-          <option value="WARNING">WARNING</option>
-          <option value="ERROR">ERROR</option>
-          <option value="CRITICAL">CRITICAL</option>
-        </select>
-      </div>
+        <div class="relative">
+          <ListboxButton class="grid w-full cursor-default grid-cols-1 rounded-md bg-white py-1.5 pr-2 pl-3 text-left text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus-visible:outline-indigo-500">
+            <span class="col-start-1 row-start-1 truncate pr-6">{{ logLevelOptions.find(o => o.value === loggingFields.level)?.label ?? loggingFields.level }}</span>
+            <ChevronUpDownIcon class="col-start-1 row-start-1 size-5 self-center justify-self-end text-gray-500 sm:size-4 dark:text-gray-400" aria-hidden="true" />
+          </ListboxButton>
+          <transition leave-active-class="transition ease-in duration-100" leave-to-class="opacity-0">
+            <ListboxOptions class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline-1 outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10">
+              <ListboxOption v-for="opt in logLevelOptions" :key="opt.value" :value="opt.value" as="template" v-slot="{ active, selected }">
+                <li :class="[active ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'text-gray-900 dark:text-white', 'relative cursor-default py-2 pr-9 pl-3 select-none']">
+                  <span :class="[selected ? 'font-semibold' : 'font-normal', 'block truncate']">{{ opt.label }}</span>
+                  <span v-if="selected" :class="[active ? 'text-white' : 'text-indigo-600 dark:text-indigo-400', 'absolute inset-y-0 right-0 flex items-center pr-4']">
+                    <CheckIcon class="size-5" aria-hidden="true" />
+                  </span>
+                </li>
+              </ListboxOption>
+            </ListboxOptions>
+          </transition>
+        </div>
+      </Listbox>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">
           Log File
           <span class="ml-1 text-xs font-medium text-amber-600 dark:text-amber-400">⚠ restart required</span>
         </label>
@@ -350,9 +421,9 @@
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Log Format</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Log Format</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Python log format string (read-only — edit in the config file directly).</p>
-        <p class="text-sm font-mono text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 px-3 py-2 rounded-md border border-gray-200 dark:border-gray-700 break-all">
+        <p class="text-sm font-mono text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 px-3 py-2 rounded-md border border-gray-200 dark:border-white/10 break-all">
           {{ config?.logging?.format ?? '' }}
         </p>
       </div>
@@ -370,7 +441,7 @@
       @reset="resetServer"
     >
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Host</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Host</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
           Address the server listens on. Use <code class="font-mono">127.0.0.1</code> for local-only access.
         </p>
@@ -378,7 +449,7 @@
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Port</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Port</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Port the server listens on.</p>
         <input v-model.number="serverFields.port" type="number" min="1" max="65535" :class="inputClass" />
       </div>
@@ -396,7 +467,7 @@
       @reset="resetSecurity"
     >
       <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Allowed CORS Origins</label>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Allowed CORS Origins</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">One URL per line. The frontend origin must be listed here when running in development.</p>
         <textarea
           v-model="securityFields.cors_origins"
@@ -412,6 +483,9 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch } from 'vue'
+import { Listbox, ListboxButton, ListboxLabel, ListboxOption, ListboxOptions } from '@headlessui/vue'
+import { ChevronUpDownIcon } from '@heroicons/vue/16/solid'
+import { CheckIcon } from '@heroicons/vue/20/solid'
 import SettingsSection from './SettingsSection.vue'
 import { useConfig } from '@/composables/useConfig'
 import { useToast } from '@/composables/useNotifications'
@@ -424,12 +498,37 @@ const toast = useToast()
 
 // ─── Shared UI classes ────────────────────────────────────────────────────────
 
-const inputClass = 'w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm'
-const checkboxClass = 'h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500'
+const inputClass = 'block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500'
+
 
 // ─── Eye toggle for API key ───────────────────────────────────────────────────
 
 const showApiKey = ref(false)
+
+// ─── Select option constants ─────────────────────────────────────────────────
+
+const providerOptions = [
+  { value: 'openai', label: 'OpenAI-compatible' },
+  { value: 'anthropic', label: 'Anthropic' },
+] as const
+
+const categorizationEngineOptions = [
+  { value: 'classifier', label: 'Classifier (scikit-learn)' },
+  { value: 'llm', label: 'LLM' },
+] as const
+
+const parsingModeOptions = [
+  { value: 'regex', label: 'Regex' },
+  { value: 'llm', label: 'LLM' },
+] as const
+
+const logLevelOptions = [
+  { value: 'DEBUG', label: 'DEBUG' },
+  { value: 'INFO', label: 'INFO' },
+  { value: 'WARNING', label: 'WARNING' },
+  { value: 'ERROR', label: 'ERROR' },
+  { value: 'CRITICAL', label: 'CRITICAL' },
+] as const
 
 // ─── Section helpers ──────────────────────────────────────────────────────────
 

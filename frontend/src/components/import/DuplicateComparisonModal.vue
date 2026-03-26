@@ -28,7 +28,7 @@
               <!-- Close X button -->
               <button
                 @click="emit('close')"
-                class="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 focus:outline-none"
+                class="absolute top-4 right-4 text-gray-400 hover:text-gray-500 dark:hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 dark:focus-visible:outline-indigo-500"
               >
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -47,8 +47,8 @@
 
               <div class="grid grid-cols-2 gap-6">
                 <!-- New Transaction -->
-                <div class="border border-blue-300 dark:border-blue-600 rounded-lg p-4 bg-blue-50 dark:bg-blue-900/20">
-                  <h4 class="font-semibold text-blue-900 dark:text-blue-100 mb-3">New Transaction</h4>
+                <div class="border border-indigo-300 dark:border-indigo-600 rounded-lg p-4 bg-indigo-50 dark:bg-indigo-900/20">
+                  <h4 class="font-semibold text-indigo-900 dark:text-indigo-100 mb-3">New Transaction</h4>
                   <div class="space-y-2 text-sm">
                     <div>
                       <span class="text-gray-600 dark:text-gray-400">Date:</span>
@@ -133,7 +133,7 @@
                     'inline-flex items-center justify-center rounded-md p-2 text-gray-700 dark:text-gray-200',
                     currentIndex === 0
                       ? 'opacity-50 cursor-not-allowed'
-                      : 'hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500'
+                      : 'hover:bg-gray-100 dark:hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 dark:focus-visible:outline-indigo-500'
                   ]"
                 >
                   <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -146,14 +146,14 @@
                 <div class="flex space-x-3">
                   <button
                     type="button"
-                    class="inline-flex justify-center rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                    class="inline-flex justify-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
                     @click="handleKeep"
                   >
                     Keep This Transaction
                   </button>
                   <button
                     type="button"
-                    class="inline-flex justify-center rounded-md border border-transparent bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2"
+                    class="inline-flex justify-center rounded-md bg-orange-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-orange-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-600 dark:bg-orange-500 dark:shadow-none dark:hover:bg-orange-400 dark:focus-visible:outline-orange-500"
                     @click="handleRemove"
                   >
                     Remove as Duplicate
@@ -170,7 +170,7 @@
                     'inline-flex items-center justify-center rounded-md p-2 text-gray-700 dark:text-gray-200',
                     currentIndex === totalDuplicates - 1
                       ? 'opacity-50 cursor-not-allowed'
-                      : 'hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500'
+                      : 'hover:bg-gray-100 dark:hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 dark:focus-visible:outline-indigo-500'
                   ]"
                 >
                   <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">

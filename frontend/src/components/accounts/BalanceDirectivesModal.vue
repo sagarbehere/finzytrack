@@ -38,7 +38,7 @@
                   v-if="!showAddForm"
                   type="button"
                   @click="showAddForm = true"
-                  class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-600"
                 >
                   <PlusIcon class="h-4 w-4" />
                   Add Balance Assertion
@@ -46,7 +46,7 @@
               </div>
 
               <!-- Add form -->
-              <div v-if="showAddForm" class="mb-4 p-4 border border-blue-200 dark:border-blue-800 rounded-lg bg-blue-50 dark:bg-blue-900/20">
+              <div v-if="showAddForm" class="mb-4 p-4 border border-indigo-200 dark:border-indigo-800 rounded-lg bg-indigo-50 dark:bg-indigo-900/20">
                 <h4 class="text-sm font-medium text-gray-900 dark:text-white mb-3">New Balance Assertion</h4>
                 <div class="grid grid-cols-3 gap-3">
                   <div>
@@ -54,7 +54,7 @@
                     <input
                       v-model="addForm.date"
                       type="date"
-                      class="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      class="block w-full rounded-md bg-white px-2 py-1.5 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
                     />
                   </div>
                   <div>
@@ -64,7 +64,7 @@
                       type="number"
                       step="0.01"
                       placeholder="0.00"
-                      class="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      class="block w-full rounded-md bg-white px-2 py-1.5 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
                     />
                   </div>
                   <div>
@@ -78,7 +78,7 @@
                 </div>
                 <div class="mt-3">
                   <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-                    <input v-model="addForm.includePad" type="checkbox" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700" />
+                    <input v-model="addForm.includePad" type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:outline-indigo-600 dark:border-white/10 dark:bg-white/5" />
                     Include pad directive
                   </label>
                 </div>
@@ -93,7 +93,7 @@
                   <button
                     type="button"
                     @click="cancelAdd"
-                    class="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600"
+                    class="rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
                   >
                     Cancel
                   </button>
@@ -101,7 +101,7 @@
                     type="button"
                     @click="submitAdd"
                     :disabled="!isAddFormValid || isSaving"
-                    class="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-blue-500 dark:hover:bg-blue-600"
+                    class="px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-indigo-500 dark:hover:bg-indigo-600"
                   >
                     {{ isSaving ? 'Adding...' : 'Add' }}
                   </button>
@@ -110,7 +110,7 @@
 
               <!-- Directives table -->
               <div v-if="isLoadingDirectives" class="flex justify-center py-8">
-                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
               </div>
 
               <div v-else-if="directives.length === 0 && !showAddForm" class="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
@@ -119,7 +119,7 @@
 
               <div v-else-if="directives.length > 0" class="overflow-x-auto max-h-96 overflow-y-auto">
                 <table class="min-w-full table-fixed divide-y divide-gray-200 dark:divide-gray-700">
-                  <thead class="bg-gray-50 dark:bg-gray-700 sticky top-0">
+                  <thead class="bg-gray-50 dark:bg-gray-800/75 sticky top-0">
                     <tr>
                       <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase dark:text-gray-400 w-[100px]">Date</th>
                       <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase dark:text-gray-400 w-[52px]">Ccy</th>
@@ -176,7 +176,7 @@
                         <div class="flex items-center justify-end gap-2">
                           <button
                             @click="startEdit(index)"
-                            class="text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400"
+                            class="text-gray-500 hover:text-indigo-600 dark:text-gray-400 dark:hover:text-indigo-400"
                             title="Edit"
                           >
                             <PencilIcon class="h-4 w-4" />
@@ -215,7 +215,7 @@
                     <input
                       v-model="editForm.newDate"
                       type="date"
-                      class="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      class="block w-full rounded-md bg-white px-2 py-1.5 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
                     />
                   </div>
                   <div>
@@ -224,7 +224,7 @@
                       v-model.number="editForm.newAmount"
                       type="number"
                       step="0.01"
-                      class="block w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      class="block w-full rounded-md bg-white px-2 py-1.5 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
                     />
                   </div>
                   <div>
@@ -237,7 +237,7 @@
                 </div>
                 <div class="mt-3">
                   <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-                    <input v-model="editForm.includePad" type="checkbox" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700" />
+                    <input v-model="editForm.includePad" type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:outline-indigo-600 dark:border-white/10 dark:bg-white/5" />
                     Include pad directive
                   </label>
                 </div>
@@ -252,7 +252,7 @@
                   <button
                     type="button"
                     @click="cancelEdit"
-                    class="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600"
+                    class="rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
                   >
                     Cancel
                   </button>
@@ -260,7 +260,7 @@
                     type="button"
                     @click="submitEdit"
                     :disabled="!isEditFormValid || isSaving"
-                    class="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-blue-500 dark:hover:bg-blue-600"
+                    class="px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-indigo-500 dark:hover:bg-indigo-600"
                   >
                     {{ isSaving ? 'Saving...' : 'Save' }}
                   </button>
@@ -275,7 +275,7 @@
                 </p>
                 <div v-if="directives[deleteConfirmIndex].has_pad" class="mt-2">
                   <label class="inline-flex items-center gap-2 text-sm text-red-700 dark:text-red-400">
-                    <input v-model="deleteAlsoPad" type="checkbox" class="rounded border-red-300 text-red-600 focus:ring-red-500 dark:border-red-700 dark:bg-gray-700" />
+                    <input v-model="deleteAlsoPad" type="checkbox" class="rounded border-red-300 text-red-600 focus:ring-red-500 dark:border-red-700 dark:bg-white/5" />
                     Also delete associated pad directive
                   </label>
                 </div>
@@ -283,7 +283,7 @@
                   <button
                     type="button"
                     @click="deleteConfirmIndex = null"
-                    class="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600"
+                    class="rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
                   >
                     Cancel
                   </button>
@@ -303,7 +303,7 @@
                 <button
                   type="button"
                   @click="handleClose"
-                  class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600"
+                  class="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
                 >
                   Close
                 </button>

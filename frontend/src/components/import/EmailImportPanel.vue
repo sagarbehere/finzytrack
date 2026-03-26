@@ -57,24 +57,35 @@
 
       <div v-if="profiles.length === 0 && !isLoadingProfiles" class="text-sm text-gray-500 dark:text-gray-400">
         No account profiles configured. Add YAML files to
-        the <code class="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">email_import.rules_directory</code> path in your config.
+        the <code class="font-mono bg-gray-100 dark:bg-gray-400/10 px-1 rounded">email_import.rules_directory</code> path in your config.
       </div>
 
       <div v-else class="flex flex-wrap items-center gap-2">
         <!-- Account dropdown -->
-        <select
-          v-model="selectedProfileId"
-          @change="onProfileChange"
-          class="flex-1 min-w-40 h-9 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-1.5 text-sm"
-        >
-          <option value="">Select an account…</option>
-          <option v-for="p in profiles" :key="p.profile_id" :value="p.profile_id">
-            {{ p.name }}
-          </option>
-        </select>
+        <Listbox as="div" v-model="selectedProfileId" class="flex-1 min-w-40">
+          <ListboxLabel class="sr-only">Email profile</ListboxLabel>
+          <div class="relative">
+            <ListboxButton class="grid w-full cursor-default grid-cols-1 rounded-md bg-white py-1.5 pr-2 pl-3 text-left text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus-visible:outline-indigo-500">
+              <span class="col-start-1 row-start-1 truncate pr-6">{{ profileOptions.find(o => o.value === selectedProfileId)?.label || 'Select an account...' }}</span>
+              <ChevronUpDownIcon class="col-start-1 row-start-1 size-5 self-center justify-self-end text-gray-500 sm:size-4 dark:text-gray-400" aria-hidden="true" />
+            </ListboxButton>
+            <transition leave-active-class="transition ease-in duration-100" leave-to-class="opacity-0">
+              <ListboxOptions class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline-1 outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10">
+                <ListboxOption v-for="opt in profileOptions" :key="opt.value" :value="opt.value" as="template" v-slot="{ active, selected }">
+                  <li :class="[active ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'text-gray-900 dark:text-white', 'relative cursor-default py-2 pr-9 pl-3 select-none']">
+                    <span :class="[selected ? 'font-semibold' : 'font-normal', 'block truncate']">{{ opt.label }}</span>
+                    <span v-if="selected" :class="[active ? 'text-white' : 'text-indigo-600 dark:text-indigo-400', 'absolute inset-y-0 right-0 flex items-center pr-4']">
+                      <CheckIcon class="size-5" aria-hidden="true" />
+                    </span>
+                  </li>
+                </ListboxOption>
+              </ListboxOptions>
+            </transition>
+          </div>
+        </Listbox>
 
         <!-- Date range -->
-        <div class="flex items-center gap-2 border border-gray-200 dark:border-gray-600 rounded-md px-2 h-9 shrink-0">
+        <div class="flex items-center gap-2 border border-gray-200 dark:border-white/10 rounded-md px-2 h-9 shrink-0">
           <span class="text-sm text-gray-500 dark:text-gray-400">From:</span>
           <input
             v-model="sinceDate"
@@ -103,20 +114,20 @@
         <button
           @click="handleTestConnection"
           :disabled="!selectedProfileId || isTestingConnection"
-          class="h-9 px-3 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+          class="h-9 rounded-md bg-white px-3 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed shrink-0 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
         >
           {{ isTestingConnection ? 'Testing…' : 'Test Connection' }}
         </button>
         <button
           @click="handleReload"
-          class="h-9 px-3 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 shrink-0"
+          class="h-9 rounded-md bg-white px-3 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 shrink-0 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
         >
           Reload
         </button>
         <button
           @click="handleFetch"
           :disabled="!selectedProfileId || !selectedCurrency || isFetching"
-          class="h-9 px-4 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shrink-0"
+          class="h-9 flex items-center gap-2 shrink-0 rounded-md bg-indigo-600 px-4 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400 dark:focus-visible:outline-indigo-500"
         >
           <svg v-if="isFetching" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
@@ -145,10 +156,10 @@
       <!-- Progress bar: fetching and parsing stages -->
       <div
         v-if="(progressState.phase === 'fetching' || progressState.phase === 'parsing') && progressState.total"
-        class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5"
+        class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-1.5"
       >
         <div
-          class="bg-blue-600 h-1.5 rounded-full transition-all duration-200"
+          class="bg-indigo-600 h-1.5 rounded-full transition-all duration-200"
           :style="{ width: `${Math.round(((progressState.current ?? 0) / progressState.total) * 100)}%` }"
         />
       </div>
@@ -157,7 +168,7 @@
     <!-- Debug summary bar (shown after a successful fetch) -->
     <div
       v-if="fetchResult && progressState.phase === 'complete'"
-      class="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border border-blue-200 dark:border-blue-800"
+      class="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg p-4 border border-indigo-200 dark:border-indigo-800"
     >
       <div class="flex flex-wrap gap-6 text-sm">
         <span>
@@ -192,7 +203,7 @@
         <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Unmatched emails</h4>
         <table class="w-full text-xs">
           <thead>
-            <tr class="text-gray-500 dark:text-gray-400 border-b dark:border-gray-600">
+            <tr class="text-gray-500 dark:text-gray-400 border-b dark:border-white/10">
               <th class="text-left pb-1">From</th>
               <th class="text-left pb-1">Subject</th>
               <th class="text-left pb-1">Date</th>
@@ -200,7 +211,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(item, i) in fetchResult.unmatched_emails" :key="i" class="border-b dark:border-gray-700">
+            <tr v-for="(item, i) in fetchResult.unmatched_emails" :key="i" class="border-b dark:border-white/10">
               <td class="py-1 pr-2 text-gray-700 dark:text-gray-300">{{ item.from_address }}</td>
               <td class="py-1 pr-2 text-gray-700 dark:text-gray-300 max-w-xs truncate">{{ item.subject }}</td>
               <td class="py-1 pr-2 text-gray-500 dark:text-gray-400">{{ formatDate(item.date) }}</td>
@@ -215,14 +226,14 @@
         <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Extraction errors</h4>
         <table class="w-full text-xs">
           <thead>
-            <tr class="text-gray-500 dark:text-gray-400 border-b dark:border-gray-600">
+            <tr class="text-gray-500 dark:text-gray-400 border-b dark:border-white/10">
               <th class="text-left pb-1">Subject</th>
               <th class="text-left pb-1">Rule</th>
               <th class="text-left pb-1">Reason</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(err, i) in fetchResult.extraction_errors" :key="i" class="border-b dark:border-gray-700">
+            <tr v-for="(err, i) in fetchResult.extraction_errors" :key="i" class="border-b dark:border-white/10">
               <td class="py-1 pr-2 text-gray-700 dark:text-gray-300 max-w-xs truncate">{{ err.subject }}</td>
               <td class="py-1 pr-2 text-gray-500 dark:text-gray-400">{{ err.rule_matched }}</td>
               <td class="py-1 text-red-600 dark:text-red-400">{{ err.reason }}</td>
@@ -241,7 +252,10 @@
 </template>
 
 <script setup lang="ts">
-  import { ref, onMounted } from 'vue'
+  import { ref, computed, watch, onMounted } from 'vue'
+  import { Listbox, ListboxButton, ListboxLabel, ListboxOption, ListboxOptions } from '@headlessui/vue'
+  import { ChevronUpDownIcon } from '@heroicons/vue/16/solid'
+  import { CheckIcon } from '@heroicons/vue/20/solid'
   import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
   import { useEmailImporter } from '@/composables/useEmailImporter'
   import type { EmailParsedTransaction, EmailProfileInfo } from '@/composables/useEmailImporter'
@@ -268,6 +282,14 @@
   } = useEmailImporter()
 
   const selectedProfileId = ref('')
+
+  const profileOptions = computed(() => [
+    { value: '', label: 'Select an account...' },
+    ...profiles.value.map((p: EmailProfileInfo) => ({
+      value: p.profile_id,
+      label: p.name,
+    })),
+  ])
   const selectedBeancountAccount = ref('')
   const selectedCurrency = ref('')
   // Default date range: today - 7 days to today
@@ -296,6 +318,8 @@
       toast.warning('Still failing', 'Could not load email profiles. Check the backend logs.')
     }
   }
+
+  watch(selectedProfileId, () => onProfileChange())
 
   const onProfileChange = () => {
     const profile = profiles.value.find((p: EmailProfileInfo) => p.profile_id === selectedProfileId.value)

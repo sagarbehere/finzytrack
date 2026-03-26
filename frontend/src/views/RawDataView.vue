@@ -7,7 +7,7 @@
       </p>
     </div>
 
-    <div class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 p-6">
+    <div class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 p-6">
       <FileEditor
         file-type="ledger"
         :allow-edit="true"

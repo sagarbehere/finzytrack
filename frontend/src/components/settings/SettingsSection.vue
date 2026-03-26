@@ -1,7 +1,7 @@
 <template>
-  <div class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700">
+  <div class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10">
     <!-- Header -->
-    <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-start justify-between">
+    <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10 flex items-start justify-between">
       <div>
         <h3 class="text-lg font-medium text-gray-900 dark:text-white">{{ title }}</h3>
         <p v-if="description" class="mt-1 text-sm text-gray-600 dark:text-gray-400">{{ description }}</p>
@@ -23,18 +23,18 @@
     </div>
 
     <!-- Footer -->
-    <div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex items-center gap-3">
+    <div class="px-6 py-4 border-t border-gray-200 dark:border-white/10 flex items-center gap-3">
       <button
         @click="$emit('save')"
         :disabled="!isDirty || isSaving"
-        class="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        class="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400 dark:focus-visible:outline-indigo-500"
       >
         {{ isSaving ? 'Saving...' : 'Save' }}
       </button>
       <button
         @click="$emit('reset')"
         :disabled="!isDirty || isSaving"
-        class="px-4 py-2 text-sm font-medium rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        class="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
         Reset
       </button>

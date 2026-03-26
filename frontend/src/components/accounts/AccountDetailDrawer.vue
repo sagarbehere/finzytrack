@@ -31,7 +31,7 @@
                 <div class="flex h-full flex-col bg-white dark:bg-gray-800 shadow-xl">
 
                   <!-- Header -->
-                  <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+                  <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10 flex-shrink-0">
                     <div class="flex items-start justify-between gap-4">
                       <div class="flex-1 min-w-0">
                         <DialogTitle class="text-base font-semibold text-gray-900 dark:text-white break-all leading-tight">
@@ -81,7 +81,7 @@
                             <span
                               v-for="c in account.currencyBadges"
                               :key="c"
-                              class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+                              class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-400/10 dark:text-gray-400"
                             >{{ c }}</span>
                           </dd>
                         </div>
@@ -155,10 +155,10 @@
                   </div>
 
                   <!-- Footer -->
-                  <div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex-shrink-0">
+                  <div class="px-6 py-4 border-t border-gray-200 dark:border-white/10 flex-shrink-0">
                     <button
                       @click="account && emit('edit', account)"
-                      class="w-full px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      class="w-full rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400 dark:focus-visible:outline-indigo-500"
                     >
                       Edit Account
                     </button>

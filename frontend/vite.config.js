@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath, URL } from 'node:url'
 import { NodeGlobalsPolyfillPlugin } from '@esbuild-plugins/node-globals-polyfill'
 import { NodeModulesPolyfillPlugin } from '@esbuild-plugins/node-modules-polyfill'
@@ -9,6 +10,7 @@ import monacoEditorPlugin from 'vite-plugin-monaco-editor'
 export default defineConfig({
   plugins: [
     vue(),
+    tailwindcss(),
     monacoEditorPlugin.default({})
   ],
   resolve: {

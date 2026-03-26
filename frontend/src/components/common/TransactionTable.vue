@@ -28,7 +28,7 @@
             @input="onGlobalFilterChange"
             type="search"
             placeholder="Search all transactions..."
-            class="block w-full rounded-md border-0 py-1.5 pl-10 pr-3 text-gray-900 ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm dark:bg-white/5 dark:text-white dark:ring-white/10 dark:placeholder:text-gray-500 dark:focus:ring-blue-500"
+            class="block w-full rounded-md bg-white py-1.5 pl-10 pr-3 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
           />
         </div>
       </div>
@@ -61,7 +61,7 @@
                 :key="header.id"
                 :data-column-id="header.id"
                 :style="{ width: `${header.getSize()}px` }"
-                class="relative px-3 py-3 text-left text-xs font-semibold text-gray-900 dark:text-white border-r border-b border-gray-200 dark:border-gray-700 last:border-r-0"
+                class="relative px-3 py-3 text-left text-xs font-semibold text-gray-900 dark:text-white border-r border-b border-gray-200 dark:border-white/10 last:border-r-0"
               >
                 <FlexRender
                   :render="header.column.columnDef.header"
@@ -153,7 +153,7 @@
           </div>
 
           <!-- Account sums by currency -->
-          <div v-if="Object.keys(accountSumsByCurrency).length > 0" class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+          <div v-if="Object.keys(accountSumsByCurrency).length > 0" class="mt-3 pt-3 border-t border-gray-200 dark:border-white/10">
             <div class="flex flex-wrap justify-center items-center gap-x-6 gap-y-2 text-sm">
               <span class="text-gray-500 dark:text-gray-400 font-medium">Account Totals:</span>
               <div v-for="(currencies, account) in accountSumsByCurrency" :key="account" class="flex items-center gap-2">
@@ -377,7 +377,7 @@ const shouldSkipCell = (cell: Cell<any, any>) => {
 
 // Helper functions for cell styling
 const getEditableInputClasses = (extraClasses = '') => {
-  return `w-full min-w-0 rounded-md border-0 py-1.5 px-3 bg-white text-gray-900 ring-0 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-blue-600 text-sm dark:bg-white/5 dark:text-white dark:placeholder:text-gray-500 dark:focus:ring-blue-500 ${extraClasses}`
+  return `w-full min-w-0 rounded-md bg-white py-1.5 px-3 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500 ${extraClasses}`
 }
 
 const getDisplayClasses = () => {
@@ -794,10 +794,10 @@ const getTransactionRowClasses = (rowData: any) => {
 
   // Transaction grouping borders
   if (rowData.isFirstPosting) {
-    classes.push('border-t-2', 'border-t-blue-200', 'dark:border-t-blue-800')
+    classes.push('border-t-2', 'border-t-indigo-200', 'dark:border-t-indigo-800')
   }
   if (rowData.isLastPosting) {
-    classes.push('border-b-2', 'border-b-blue-200', 'dark:border-b-blue-800')
+    classes.push('border-b-2', 'border-b-indigo-200', 'dark:border-b-indigo-800')
   }
 
   return classes
@@ -806,7 +806,7 @@ const getTransactionRowClasses = (rowData: any) => {
 const getCellClasses = (cell: Cell<any, any>) => {
   const classes = [
     'px-3', 'py-2', 'text-sm',
-    'border-r', 'border-b', 'border-gray-200', 'dark:border-gray-700',
+    'border-r', 'border-b', 'border-gray-200', 'dark:border-white/10',
     'last:border-r-0'
   ]
   
@@ -1598,8 +1598,8 @@ defineExpose({
 
 .resize-handle:hover,
 .resize-handle.resizing {
-  border-right: 2px solid theme('colors.blue.500');
-  background-color: theme('colors.blue.500 / 0.1');
+  border-right: 2px solid var(--color-indigo-500);
+  background-color: color-mix(in srgb, var(--color-indigo-500) 10%, transparent);
 }
 
 /* Table styling */

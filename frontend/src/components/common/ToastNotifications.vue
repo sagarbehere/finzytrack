@@ -8,7 +8,7 @@
         v-for="notification in toastNotifications"
         :key="notification.id"
         :class="[
-          'bg-white dark:bg-gray-800 shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 overflow-hidden cursor-pointer',
+          'pointer-events-auto rounded-lg bg-white shadow-lg outline-1 outline-black/5 overflow-hidden cursor-pointer dark:bg-gray-800 dark:-outline-offset-1 dark:outline-white/10',
           getNotificationClasses(notification.type),
         ]"
         @click="handleToastDismiss(notification.id)"
@@ -35,7 +35,7 @@
             <div class="ml-4 flex-shrink-0 flex">
               <button
                 @click.stop="clearNotification(notification.id)"
-                class="bg-white dark:bg-gray-800 rounded-md inline-flex text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                class="inline-flex rounded-md text-gray-400 hover:text-gray-500 focus:outline-2 focus:outline-offset-2 focus:outline-indigo-600 dark:hover:text-white dark:focus:outline-indigo-500"
               >
                 <span class="sr-only">Close</span>
                 <XMarkIcon class="h-5 w-5" />
@@ -107,7 +107,7 @@
       success: 'bg-green-50 dark:bg-green-900/20 border-l-4 border-green-400',
       error: 'bg-red-50 dark:bg-red-900/20 border-l-4 border-red-400',
       warning: 'bg-yellow-50 dark:bg-yellow-900/20 border-l-4 border-yellow-400',
-      info: 'bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400',
+      info: 'bg-indigo-50 dark:bg-indigo-900/20 border-l-4 border-indigo-400',
     }
     return classes[type] || classes.info
   }
@@ -117,7 +117,7 @@
       success: 'text-green-400',
       error: 'text-red-400',
       warning: 'text-yellow-400',
-      info: 'text-blue-400',
+      info: 'text-indigo-400',
     }
     return classes[type] || classes.info
   }

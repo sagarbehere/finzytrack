@@ -11,7 +11,7 @@
         leave-from="opacity-100"
         leave-to="opacity-0"
       >
-        <div class="fixed inset-0 bg-gray-500/75 dark:bg-gray-900/75 transition-opacity" />
+        <div class="fixed inset-0 bg-gray-500/75 transition-opacity dark:bg-gray-900/50" />
       </TransitionChild>
 
       <div class="fixed inset-0 z-10 overflow-y-auto">
@@ -25,7 +25,7 @@
             leave-from="opacity-100 translate-y-0 sm:scale-100"
             leave-to="opacity-0 translate-y-4 sm:translate-y-0 sm:scale-95"
           >
-            <DialogPanel class="relative transform overflow-hidden rounded-lg bg-white dark:bg-gray-800 text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-md">
+            <DialogPanel class="relative transform overflow-hidden rounded-lg bg-white text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-md dark:bg-gray-800 dark:outline dark:-outline-offset-1 dark:outline-white/10">
               <div class="px-4 pb-4 pt-5 sm:p-6">
                 <!-- Header -->
                 <div class="flex items-center justify-between mb-4">
@@ -34,7 +34,7 @@
                   </DialogTitle>
                   <button
                     @click="emit('close')"
-                    class="p-1 rounded-md text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                    class="rounded-md text-gray-400 hover:text-gray-500 dark:hover:text-white"
                   >
                     <XMarkIcon class="h-5 w-5" />
                   </button>
@@ -48,8 +48,8 @@
                     class="flex items-stretch rounded-lg border transition-colors"
                     :class="[
                       selectedIds.includes(dashboard.id)
-                        ? 'bg-gray-50 dark:bg-gray-700/50 border-gray-200 dark:border-gray-600 opacity-60'
-                        : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-600 hover:border-blue-500 dark:hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20'
+                        ? 'bg-gray-50 dark:bg-white/5 border-gray-200 dark:border-white/10 opacity-60'
+                        : 'bg-white dark:bg-gray-800/50 border-gray-200 dark:border-white/10 hover:border-indigo-500 dark:hover:border-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20'
                     ]"
                   >
                     <!-- Clickable area for selection -->
@@ -65,7 +65,7 @@
                         </div>
                         <span
                           v-if="selectedIds.includes(dashboard.id)"
-                          class="flex-none text-xs font-medium px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300"
+                          class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-400/10 dark:text-gray-400"
                         >
                           Added
                         </span>
@@ -99,7 +99,7 @@
               <div class="bg-gray-50 dark:bg-gray-900/50 px-4 py-3 sm:px-6">
                 <button
                   @click="emit('close')"
-                  class="w-full sm:w-auto inline-flex justify-center rounded-md bg-white dark:bg-gray-700 px-3 py-2 text-sm font-semibold text-gray-900 dark:text-white shadow-sm ring-1 ring-inset ring-gray-300 dark:ring-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600"
+                  class="w-full sm:w-auto inline-flex justify-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
                 >
                   Cancel
                 </button>

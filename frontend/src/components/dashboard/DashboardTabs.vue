@@ -1,5 +1,5 @@
 <template>
-  <div class="flex items-center border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
+  <div class="flex items-center border-b border-gray-200 dark:border-white/10">
     <!-- Tabs -->
     <div
       v-for="tab in tabs"
@@ -8,17 +8,17 @@
       tabindex="0"
       @click="emit('select', tab.id)"
       @keydown.enter="emit('select', tab.id)"
-      class="group relative flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors cursor-pointer"
+      class="group relative flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium cursor-pointer whitespace-nowrap"
       :class="[
         tab.id === activeTabId
-          ? 'text-gray-900 dark:text-white bg-white dark:bg-gray-800 border-b-2 border-blue-500 -mb-px'
-          : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800/50'
+          ? 'border-indigo-500 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400'
+          : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:border-white/20 dark:hover:text-gray-200'
       ]"
     >
       <span class="truncate max-w-[200px]">{{ tab.title }}</span>
       <button
         @click.stop="emit('remove', tab.id)"
-        class="flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-all"
+        class="flex-shrink-0 p-0.5 rounded opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 dark:hover:text-red-400 transition-all"
         :class="{ 'opacity-100': tab.id === activeTabId }"
         title="Close tab"
       >

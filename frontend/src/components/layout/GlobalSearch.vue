@@ -21,11 +21,11 @@
     <!-- Dropdown -->
     <div
       v-if="showDropdown"
-      class="absolute left-0 right-0 top-full mt-1 bg-white dark:bg-gray-800 rounded-md shadow-lg ring-1 ring-black ring-opacity-5 z-50 overflow-hidden"
+      class="absolute left-0 right-0 top-full mt-1 bg-white dark:bg-gray-800 rounded-md shadow-lg ring-1 ring-black/5 z-50 overflow-hidden"
     >
       <!-- Matching accounts -->
       <div v-if="matchingAccounts.length > 0">
-        <div class="px-3 py-1.5 text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide border-b border-gray-100 dark:border-gray-700">
+        <div class="px-3 py-1.5 text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide border-b border-gray-100 dark:border-white/10">
           Accounts
         </div>
         <button
@@ -34,7 +34,7 @@
           @mousedown.prevent="selectAccount(account)"
           :class="[
             'w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-700',
-            activeIndex === i ? 'bg-gray-50 dark:bg-gray-700' : '',
+            activeIndex === i ? 'bg-gray-50 dark:bg-white/5' : '',
           ]"
         >
           <BuildingLibraryIcon class="h-4 w-4 text-gray-400 flex-shrink-0" />
@@ -46,8 +46,8 @@
       <button
         @mousedown.prevent="selectTransactionSearch"
         :class="[
-          'w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-700 border-t border-gray-100 dark:border-gray-700',
-          activeIndex === matchingAccounts.length ? 'bg-gray-50 dark:bg-gray-700' : '',
+          'w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-700 border-t border-gray-100 dark:border-white/10',
+          activeIndex === matchingAccounts.length ? 'bg-gray-50 dark:bg-white/5' : '',
         ]"
       >
         <MagnifyingGlassIcon class="h-4 w-4 text-gray-400 flex-shrink-0" />

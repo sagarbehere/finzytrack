@@ -16,8 +16,8 @@
             'px-4 py-2 text-sm font-medium border focus:outline-none focus:z-10',
             'rounded-l-md',
             queryLanguage === 'sqlite'
-              ? 'bg-blue-600 text-white border-blue-600'
-              : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700',
+              ? 'bg-indigo-600 text-white border-indigo-600'
+              : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5',
           ]"
         >
           SQLite
@@ -28,8 +28,8 @@
             'px-4 py-2 text-sm font-medium border focus:outline-none focus:z-10',
             '-ml-px rounded-r-md',
             queryLanguage === 'beanquery'
-              ? 'bg-blue-600 text-white border-blue-600'
-              : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700',
+              ? 'bg-indigo-600 text-white border-indigo-600'
+              : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5',
           ]"
         >
           BQL
@@ -38,8 +38,8 @@
     </div>
 
     <!-- Natural Language Input -->
-    <div class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 p-4 mb-4">
-      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+    <div class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 p-4 mb-4">
+      <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">
         Ask a question in plain English
       </label>
       <p v-if="!config?.ai?.llm?.api_url" class="text-xs text-amber-600 dark:text-amber-400 mb-2">
@@ -49,7 +49,7 @@
         v-model="nlQuery"
         placeholder="e.g. Show me my top 10 expense categories this year"
         rows="2"
-        class="w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+        class="w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
         @keydown.meta.enter="handleGenerate"
         @keydown.ctrl.enter="handleGenerate"
       />
@@ -57,7 +57,7 @@
         <button
           @click="handleGenerate"
           :disabled="!nlQuery.trim() || isGenerating || !config?.ai?.llm?.api_url"
-          class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-2"
+          class="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400 dark:focus-visible:outline-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-2"
         >
           <svg v-if="isGenerating" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -68,7 +68,7 @@
         <button
           @click="nlQuery = ''"
           :disabled="!nlQuery.trim()"
-          class="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-md hover:bg-gray-300 dark:hover:bg-gray-500 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+          class="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
         >
           Clear
         </button>
@@ -76,8 +76,8 @@
     </div>
 
     <!-- Query Editor -->
-    <div class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 p-4 mb-4">
-      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+    <div class="rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 p-4 mb-4">
+      <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">
         {{ queryLanguage === 'sqlite' ? 'SQL Query' : 'BQL Query' }}
       </label>
       <textarea
@@ -85,7 +85,7 @@
         :placeholder="queryPlaceholder"
         rows="6"
         spellcheck="false"
-        class="w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white shadow-sm focus:border-blue-500 focus:ring-blue-500 font-mono text-sm"
+        class="w-full rounded-md bg-white px-3 py-1.5 font-mono text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
         @keydown.meta.enter="handleExecute"
         @keydown.ctrl.enter="handleExecute"
       />
@@ -93,7 +93,7 @@
         <button
           @click="handleExecute"
           :disabled="!queryText.trim() || isExecuting"
-          class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-2"
+          class="flex items-center gap-2 rounded-md bg-green-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-green-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-600 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-green-500 dark:shadow-none dark:hover:bg-green-400"
         >
           <svg v-if="isExecuting" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -103,7 +103,7 @@
         </button>
         <button
           @click="clearQuery"
-          class="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-md hover:bg-gray-300 dark:hover:bg-gray-500 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 text-sm"
+          class="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20 text-sm"
         >
           Clear
         </button>
@@ -129,16 +129,16 @@
     </div>
 
     <!-- Results Panel with Tabs -->
-    <div v-if="resultColumns.length > 0" class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 overflow-hidden">
+    <div v-if="resultColumns.length > 0" class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 overflow-hidden">
       <!-- Tab Bar -->
-      <div class="border-b border-gray-200 dark:border-gray-700">
+      <div class="border-b border-gray-200 dark:border-white/10">
         <nav class="flex -mb-px">
           <button
             @click="activeTab = 'table'"
             :class="[
               'px-4 py-3 text-sm font-medium border-b-2 focus:outline-none',
               activeTab === 'table'
-                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
                 : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600',
             ]"
           >
@@ -149,7 +149,7 @@
             :class="[
               'px-4 py-3 text-sm font-medium border-b-2 focus:outline-none',
               activeTab === 'chart'
-                ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
                 : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600',
             ]"
           >
@@ -205,8 +205,8 @@
                 :class="[
                   'px-3 py-1.5 text-xs rounded-md font-medium capitalize',
                   chartType === ct
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600',
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-white/20',
                 ]"
               >
                 {{ ct }}
@@ -215,42 +215,85 @@
           </div>
 
           <!-- X / Category Column -->
-          <div class="min-w-[140px]">
-            <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+          <Listbox as="div" v-model="chartXColumn" class="min-w-[140px]">
+            <ListboxLabel class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
               {{ chartType === 'pie' ? 'Name' : 'X Axis' }}
-            </label>
-            <select
-              v-model="chartXColumn"
-              class="w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-sm py-1.5"
-            >
-              <option value="">-- select --</option>
-              <option v-for="col in resultColumns" :key="col" :value="col">{{ col }}</option>
-            </select>
-          </div>
+            </ListboxLabel>
+            <div class="relative">
+              <ListboxButton class="grid w-full cursor-default grid-cols-1 rounded-md bg-white py-1.5 pr-2 pl-3 text-left text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus-visible:outline-indigo-500">
+                <span class="col-start-1 row-start-1 truncate pr-6">{{ chartXColumn || '-- select --' }}</span>
+                <ChevronUpDownIcon class="col-start-1 row-start-1 size-5 self-center justify-self-end text-gray-500 sm:size-4 dark:text-gray-400" aria-hidden="true" />
+              </ListboxButton>
+              <transition leave-active-class="transition ease-in duration-100" leave-to-class="opacity-0">
+                <ListboxOptions class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline-1 outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10">
+                  <ListboxOption :value="''" as="template" v-slot="{ active, selected }">
+                    <li :class="[active ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'text-gray-900 dark:text-white', 'relative cursor-default py-2 pr-9 pl-3 select-none']">
+                      <span :class="[selected ? 'font-semibold' : 'font-normal', 'block truncate']">-- select --</span>
+                      <span v-if="selected" :class="[active ? 'text-white' : 'text-indigo-600 dark:text-indigo-400', 'absolute inset-y-0 right-0 flex items-center pr-4']">
+                        <CheckIcon class="size-5" aria-hidden="true" />
+                      </span>
+                    </li>
+                  </ListboxOption>
+                  <ListboxOption v-for="col in resultColumns" :key="col" :value="col" as="template" v-slot="{ active, selected }">
+                    <li :class="[active ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'text-gray-900 dark:text-white', 'relative cursor-default py-2 pr-9 pl-3 select-none']">
+                      <span :class="[selected ? 'font-semibold' : 'font-normal', 'block truncate']">{{ col }}</span>
+                      <span v-if="selected" :class="[active ? 'text-white' : 'text-indigo-600 dark:text-indigo-400', 'absolute inset-y-0 right-0 flex items-center pr-4']">
+                        <CheckIcon class="size-5" aria-hidden="true" />
+                      </span>
+                    </li>
+                  </ListboxOption>
+                </ListboxOptions>
+              </transition>
+            </div>
+          </Listbox>
 
           <!-- Y / Value Columns -->
           <div class="min-w-[200px]">
-            <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-              {{ chartType === 'pie' ? 'Value' : 'Y Axis' }}
-              <span v-if="chartType !== 'pie'" class="font-normal">(multi-select)</span>
-            </label>
-            <select
-              v-if="chartType === 'pie'"
-              v-model="chartYColumnSingle"
-              class="w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-sm py-1.5"
-            >
-              <option value="">-- select --</option>
-              <option v-for="col in numericColumns" :key="col" :value="col">{{ col }}</option>
-            </select>
-            <select
-              v-else
-              v-model="chartYColumns"
-              multiple
-              :size="Math.min(numericColumns.length, 4)"
-              class="w-full rounded-md border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-sm py-1"
-            >
-              <option v-for="col in numericColumns" :key="col" :value="col">{{ col }}</option>
-            </select>
+            <template v-if="chartType === 'pie'">
+              <Listbox as="div" v-model="chartYColumnSingle">
+                <ListboxLabel class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Value</ListboxLabel>
+                <div class="relative">
+                  <ListboxButton class="grid w-full cursor-default grid-cols-1 rounded-md bg-white py-1.5 pr-2 pl-3 text-left text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus-visible:outline-indigo-500">
+                    <span class="col-start-1 row-start-1 truncate pr-6">{{ chartYColumnSingle || '-- select --' }}</span>
+                    <ChevronUpDownIcon class="col-start-1 row-start-1 size-5 self-center justify-self-end text-gray-500 sm:size-4 dark:text-gray-400" aria-hidden="true" />
+                  </ListboxButton>
+                  <transition leave-active-class="transition ease-in duration-100" leave-to-class="opacity-0">
+                    <ListboxOptions class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline-1 outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10">
+                      <ListboxOption :value="''" as="template" v-slot="{ active, selected }">
+                        <li :class="[active ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'text-gray-900 dark:text-white', 'relative cursor-default py-2 pr-9 pl-3 select-none']">
+                          <span :class="[selected ? 'font-semibold' : 'font-normal', 'block truncate']">-- select --</span>
+                          <span v-if="selected" :class="[active ? 'text-white' : 'text-indigo-600 dark:text-indigo-400', 'absolute inset-y-0 right-0 flex items-center pr-4']">
+                            <CheckIcon class="size-5" aria-hidden="true" />
+                          </span>
+                        </li>
+                      </ListboxOption>
+                      <ListboxOption v-for="col in numericColumns" :key="col" :value="col" as="template" v-slot="{ active, selected }">
+                        <li :class="[active ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'text-gray-900 dark:text-white', 'relative cursor-default py-2 pr-9 pl-3 select-none']">
+                          <span :class="[selected ? 'font-semibold' : 'font-normal', 'block truncate']">{{ col }}</span>
+                          <span v-if="selected" :class="[active ? 'text-white' : 'text-indigo-600 dark:text-indigo-400', 'absolute inset-y-0 right-0 flex items-center pr-4']">
+                            <CheckIcon class="size-5" aria-hidden="true" />
+                          </span>
+                        </li>
+                      </ListboxOption>
+                    </ListboxOptions>
+                  </transition>
+                </div>
+              </Listbox>
+            </template>
+            <template v-else>
+              <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                Y Axis
+                <span class="font-normal">(multi-select)</span>
+              </label>
+              <select
+                v-model="chartYColumns"
+                multiple
+                :size="Math.min(numericColumns.length, 4)"
+                class="w-full rounded-md bg-white px-3 py-1 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
+              >
+                <option v-for="col in numericColumns" :key="col" :value="col">{{ col }}</option>
+              </select>
+            </template>
           </div>
         </div>
 
@@ -265,7 +308,7 @@
     </div>
 
     <!-- Empty State (no results yet) -->
-    <div v-else-if="!errorMessage && !isExecuting" class="bg-white dark:bg-gray-800 shadow rounded-lg border dark:border-gray-700 p-6">
+    <div v-else-if="!errorMessage && !isExecuting" class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 p-6">
       <div class="text-center py-8 text-gray-500 dark:text-gray-400">
         <p class="text-sm">
           Write {{ queryLanguage === 'sqlite' ? 'an SQL' : 'a BQL' }} query or ask a question above, then execute to see results here.
@@ -280,6 +323,9 @@
 
 <script setup lang="ts">
   import { ref, computed, watch } from 'vue'
+  import { Listbox, ListboxButton, ListboxLabel, ListboxOption, ListboxOptions } from '@headlessui/vue'
+  import { ChevronUpDownIcon } from '@heroicons/vue/16/solid'
+  import { CheckIcon } from '@heroicons/vue/20/solid'
   import { generateQuery, type QueryLanguage } from '@/services/sqlAssistant'
   import { LedgerService, ApiError } from '@/services/generated-api'
   import type { QueryRequest } from '@/services/generated-api'

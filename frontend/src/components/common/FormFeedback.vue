@@ -71,10 +71,10 @@ const severityConfig: Record<Severity, any> = {
   },
   info: {
     icon: InformationCircleIcon,
-    containerClasses: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',
-    iconClasses: 'text-blue-500 dark:text-blue-400',
-    messageClasses: 'text-blue-800 dark:text-blue-300',
-    detailsClasses: 'text-blue-700 dark:text-blue-400'
+    containerClasses: 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800',
+    iconClasses: 'text-indigo-500 dark:text-indigo-400',
+    messageClasses: 'text-indigo-800 dark:text-indigo-300',
+    detailsClasses: 'text-indigo-700 dark:text-indigo-400'
   }
 }
 

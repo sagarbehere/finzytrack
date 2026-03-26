@@ -5,11 +5,11 @@
       class="relative border-2 border-dashed rounded-lg p-8 text-center transition-all duration-200"
       :class="[
         isDragOver
-          ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-          : 'border-gray-300 dark:border-gray-600',
+          ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
+          : 'border-gray-300 dark:border-white/10',
         isProcessing
           ? 'pointer-events-none opacity-75'
-          : 'hover:border-blue-400 hover:bg-blue-50/50 dark:hover:bg-blue-900/10',
+          : 'hover:border-indigo-400 hover:bg-indigo-50/50 dark:hover:bg-indigo-900/10',
       ]"
       @drop.prevent="handleDrop"
       @dragover.prevent="handleDragOver"
@@ -36,7 +36,7 @@
             <button
               @click="openFilePicker"
               :disabled="isProcessing"
-              class="text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300 font-medium underline"
+              class="text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300 font-medium underline"
             >
               browse files
             </button>
@@ -95,7 +95,7 @@
       >
         <div class="flex items-center space-x-2">
           <div
-            class="animate-spin h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full"
+            class="animate-spin h-5 w-5 border-2 border-indigo-500 border-t-transparent rounded-full"
           ></div>
           <span class="text-sm font-medium text-gray-900 dark:text-white">
             {{ isParsing ? 'Parsing OFX file...' : isDetecting ? 'Detecting account...' : isLearning ? 'Learning account...' : 'Processing...' }}
@@ -143,7 +143,7 @@
         </div>
 
         <!-- Account Detection Results -->
-        <div class="bg-white dark:bg-gray-800 rounded-lg p-4 border dark:border-gray-700">
+        <div class="bg-white dark:bg-gray-800 rounded-lg p-4 border dark:border-white/10">
           <!-- Detection Status -->
           <FormFeedback 
             v-if="formLevelMessage"
@@ -189,7 +189,7 @@
             <button
               @click="learnAccount"
               :disabled="isLearning || !selectedAccount || !selectedCurrency"
-              class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              class="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400 dark:focus-visible:outline-indigo-500"
             >
               <span v-if="!isLearning">Learn Account</span>
               <span v-else class="flex items-center">
@@ -219,7 +219,7 @@
             <button
               @click="proceedWithImport"
               :disabled="!selectedAccount || !selectedCurrency"
-              class="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+              class="rounded-md bg-green-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-green-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-600 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-green-500 dark:shadow-none dark:hover:bg-green-400"
             >
               Proceed
             </button>

@@ -9,7 +9,7 @@
     </div>
 
     <!-- Transaction Filter UI -->
-    <div class="bg-white dark:bg-gray-800 shadow rounded-lg border border-gray-200 dark:border-gray-700 p-6 mb-6">
+    <div class="rounded-lg bg-white shadow-sm ring-1 ring-gray-200 p-6 mb-6 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10">
       <TransactionFilterPanel
         :loading="isQuerying"
         :initial-filters="initialFilters"
@@ -19,7 +19,7 @@
 
     <!-- Loading State -->
     <div v-if="isQuerying" class="flex justify-center items-center py-12">
-      <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      <div class="animate-spin rounded-full h-8 w-8 border-2 border-gray-300 border-t-indigo-600 dark:border-white/10 dark:border-t-indigo-400"></div>
     </div>
 
     <!-- Transaction Table -->
@@ -27,7 +27,7 @@
       <!-- Warning if limit is reached -->
       <div
         v-if="totalCount !== null && transactions.length < totalCount"
-        class="mb-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg"
+        class="mb-4 rounded-md bg-yellow-50 p-4 dark:bg-yellow-500/10 dark:outline dark:outline-yellow-500/15"
       >
         <div class="flex items-start">
           <svg class="w-5 h-5 text-yellow-600 dark:text-yellow-400 mt-0.5 mr-3" fill="currentColor" viewBox="0 0 20 20">
@@ -61,7 +61,7 @@
         <button
           @click="handleReset"
           :disabled="isSaving || !hasModifications"
-          class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600 dark:hover:bg-gray-600"
+          class="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
         >
           Reset
         </button>
@@ -69,7 +69,7 @@
         <button
           @click="handleSaveChanges"
           :disabled="isSaving || !hasModifications"
-          class="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          class="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400 dark:focus-visible:outline-indigo-500"
         >
           {{ isSaving ? 'Saving...' : `Save Changes (${modifiedCount})` }}
         </button>
@@ -77,7 +77,7 @@
     </div>
 
     <!-- Empty State -->
-    <div v-else class="text-center py-12 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+    <div v-else class="text-center py-12 overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10">
       <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
       </svg>

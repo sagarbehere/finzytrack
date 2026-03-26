@@ -40,7 +40,7 @@
                     v-model="searchQuery"
                     type="text"
                     placeholder="Search currencies..."
-                    class="block w-full pl-9 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                    class="block w-full rounded-md bg-white py-1.5 pr-3 pl-9 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
                   />
                 </div>
               </div>
@@ -48,7 +48,7 @@
               <!-- Balances table -->
               <div class="max-h-80 overflow-y-auto">
                 <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                  <thead class="bg-gray-50 dark:bg-gray-700 sticky top-0">
+                  <thead class="bg-gray-50 dark:bg-gray-800/75 sticky top-0">
                     <tr>
                       <th
                         scope="col"
@@ -114,7 +114,7 @@
                 <button
                   type="button"
                   @click="handleClose"
-                  class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600"
+                  class="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
                 >
                   Close
                 </button>

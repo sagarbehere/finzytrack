@@ -23,7 +23,7 @@
           <th
             v-if="showRowTotals"
             scope="col"
-            class="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider dark:text-gray-300 bg-gray-100 dark:bg-gray-700"
+            class="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider dark:text-gray-300 bg-gray-100 dark:bg-gray-800/75"
           >
             Row totals
           </th>
@@ -53,7 +53,7 @@
               <router-link
                 v-if="getCellLink(row, col, colIndex)"
                 :to="getCellLink(row, col, colIndex)!"
-                class="text-blue-600 hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+                class="text-indigo-600 hover:text-indigo-800 hover:underline dark:text-indigo-400 dark:hover:text-indigo-300"
               >
                 {{ formatValue(row.values[col]) }}
               </router-link>
@@ -75,10 +75,10 @@
         <!-- Column totals row -->
         <tr
           v-if="showColumnTotals && data.columnTotals"
-          class="bg-gray-100 dark:bg-gray-700 font-semibold"
+          class="bg-gray-100 dark:bg-gray-800/75 font-semibold"
         >
           <td
-            class="px-3 py-2 whitespace-nowrap text-gray-900 dark:text-gray-100 sticky left-0 bg-gray-100 dark:bg-gray-700"
+            class="px-3 py-2 whitespace-nowrap text-gray-900 dark:text-gray-100 sticky left-0 bg-gray-100 dark:bg-gray-800/75"
           >
             Grand totals
           </td>

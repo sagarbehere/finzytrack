@@ -1,14 +1,14 @@
 <template>
   <div
-    class="absolute right-0 top-12 w-96 bg-white dark:bg-gray-800 rounded-md shadow-lg ring-1 ring-black ring-opacity-5 z-50"
+    class="absolute right-0 top-12 w-96 rounded-md bg-white shadow-lg outline-1 outline-black/5 z-50 dark:bg-gray-800 dark:-outline-offset-1 dark:outline-white/10"
   >
-    <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+    <div class="p-4 border-b border-gray-200 dark:border-white/10">
       <div class="flex items-center justify-between">
         <h3 class="text-lg font-medium text-gray-900 dark:text-white">Notifications</h3>
         <div class="flex space-x-2">
           <button
             @click="markAllAsRead"
-            class="text-sm text-blue-600 hover:text-blue-500 dark:text-blue-400"
+            class="text-sm text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
           >
             Mark all read
           </button>
@@ -28,14 +28,14 @@
         <p class="mt-4 text-sm text-gray-500 dark:text-gray-400">No notifications</p>
       </div>
 
-      <div v-else class="divide-y divide-gray-200 dark:divide-gray-700">
+      <div v-else class="divide-y divide-gray-200 dark:divide-white/10">
         <div
           v-for="notification in allNotifications"
           :key="notification.id"
           @click="markAsRead(notification.id)"
           :class="[
-            'p-4 hover:bg-gray-50 dark:hover:bg-gray-700 relative cursor-pointer',
-            !notification.read ? 'bg-blue-50 dark:bg-blue-900/20' : '',
+            'p-4 hover:bg-gray-50 dark:hover:bg-white/5 relative cursor-pointer',
+            !notification.read ? 'bg-indigo-50 dark:bg-indigo-900/20' : '',
           ]"
         >
           <div class="flex">
@@ -67,7 +67,7 @@
               <!-- Expandable error details -->
               <div 
                 v-if="notification.type === 'error' && isExpanded(notification.id) && (notification.errorCode || notification.errorDetails)"
-                class="mt-2 p-2 bg-gray-100 dark:bg-gray-700 rounded text-xs"
+                class="mt-2 p-2 bg-gray-100 dark:bg-white/5 rounded text-xs"
               >
                 <div v-if="notification.errorCode" class="mb-1">
                   <span class="font-medium text-gray-700 dark:text-gray-300">Error Code:</span>
@@ -96,7 +96,7 @@
           <!-- Unread indicator -->
           <div
             v-if="!notification.read"
-            class="absolute right-2 top-2 w-2 h-2 bg-blue-500 rounded-full"
+            class="absolute right-2 top-2 w-2 h-2 bg-indigo-500 rounded-full"
           ></div>
         </div>
       </div>
@@ -153,7 +153,7 @@
       success: 'text-green-400',
       error: 'text-red-400',
       warning: 'text-yellow-400',
-      info: 'text-blue-400',
+      info: 'text-indigo-400',
     }
     return classes[type] || classes.info
   }

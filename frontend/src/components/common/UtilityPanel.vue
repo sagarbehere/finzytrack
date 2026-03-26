@@ -1,6 +1,6 @@
 <template>
-  <div class="space-y-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-    <div class="border-b border-gray-200 dark:border-gray-700 pb-2">
+  <div class="space-y-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-white/10 p-4">
+    <div class="border-b border-gray-200 dark:border-white/10 pb-2">
       <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Ledger Utilities</h3>
     </div>
 
@@ -8,7 +8,7 @@
       <button
         @click="sortLedger"
         :disabled="isProcessing"
-        class="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+        class="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -30,7 +30,7 @@
       <button
         @click="validateLedger"
         :disabled="isProcessing"
-        class="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+        class="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -51,8 +51,8 @@
     </div>
 
     <!-- Validation Results Panel -->
-    <div v-if="validationResults" class="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-3">
-      <div class="flex items-center justify-between pb-2 border-b border-gray-200 dark:border-gray-700">
+    <div v-if="validationResults" class="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-white/10 p-4 space-y-3">
+      <div class="flex items-center justify-between pb-2 border-b border-gray-200 dark:border-white/10">
         <span class="font-medium text-gray-900 dark:text-white">Validation Results</span>
         <span
           :class="

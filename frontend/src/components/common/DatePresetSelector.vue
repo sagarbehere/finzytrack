@@ -11,8 +11,8 @@
         :class="[
           'px-3 py-1.5 text-sm font-medium rounded-md transition-colors',
           isPresetActive(preset.label)
-            ? 'bg-blue-600 text-white'
-            : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+            ? 'bg-indigo-600 text-white'
+            : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-white/10 dark:text-gray-300 dark:hover:bg-white/20'
         ]"
       >
         {{ preset.label }}
@@ -24,8 +24,8 @@
           :class="[
             'px-3 py-1.5 text-sm font-medium rounded-md transition-colors inline-flex items-center gap-1',
             isDropdownPresetActive
-              ? 'bg-blue-600 text-white'
-              : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+              ? 'bg-indigo-600 text-white'
+              : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-white/10 dark:text-gray-300 dark:hover:bg-white/20'
           ]"
         >
           {{ activeDropdownLabel || 'More' }}
@@ -40,7 +40,7 @@
           leave-from-class="transform scale-100 opacity-100"
           leave-to-class="transform scale-95 opacity-0"
         >
-          <MenuItems class="absolute left-0 mt-1 w-52 origin-top-left rounded-md bg-white dark:bg-gray-800 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none z-10">
+          <MenuItems class="absolute left-0 mt-1 w-52 origin-top-left rounded-md bg-white dark:bg-gray-800 shadow-lg ring-1 ring-black/5 focus:outline-none z-10">
             <!-- Previous Section -->
             <div class="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
               Previous
@@ -50,8 +50,8 @@
                 @click="applyPreset(preset)"
                 :class="[
                   'block w-full text-left px-3 py-1.5 text-sm',
-                  active ? 'bg-gray-100 dark:bg-gray-700' : '',
-                  isPresetActive(preset.label) ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-gray-300'
+                  active ? 'bg-gray-100 dark:bg-white/5' : '',
+                  isPresetActive(preset.label) ? 'text-indigo-600 dark:text-indigo-400 font-medium' : 'text-gray-700 dark:text-gray-300'
                 ]"
               >
                 {{ preset.label }}
@@ -59,7 +59,7 @@
             </MenuItem>
 
             <!-- Rolling Section -->
-            <div class="border-t border-gray-200 dark:border-gray-700 mt-1 pt-1">
+            <div class="border-t border-gray-200 dark:border-white/10 mt-1 pt-1">
               <div class="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                 Rolling
               </div>
@@ -69,8 +69,8 @@
                 @click="applyPreset(preset)"
                 :class="[
                   'block w-full text-left px-3 py-1.5 text-sm',
-                  active ? 'bg-gray-100 dark:bg-gray-700' : '',
-                  isPresetActive(preset.label) ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-700 dark:text-gray-300'
+                  active ? 'bg-gray-100 dark:bg-white/5' : '',
+                  isPresetActive(preset.label) ? 'text-indigo-600 dark:text-indigo-400 font-medium' : 'text-gray-700 dark:text-gray-300'
                 ]"
               >
                 {{ preset.label }}
@@ -78,7 +78,7 @@
             </MenuItem>
 
             <!-- Custom Rolling Input -->
-            <div class="border-t border-gray-200 dark:border-gray-700 mt-1 pt-2 px-3 pb-2">
+            <div class="border-t border-gray-200 dark:border-white/10 mt-1 pt-2 px-3 pb-2">
               <div class="flex items-center gap-1.5">
                 <span class="text-sm text-gray-700 dark:text-gray-300">Last</span>
                 <input
@@ -86,14 +86,14 @@
                   type="number"
                   min="1"
                   max="9999"
-                  class="w-14 px-1.5 py-1 text-sm border border-gray-300 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white text-center"
+                  class="w-14 rounded-md bg-white px-1.5 py-1 text-sm text-gray-900 text-center outline-1 -outline-offset-1 outline-gray-300 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
                   @click.stop
                   @keydown.enter="applyCustomRolling(); close()"
                 />
                 <span class="text-sm text-gray-700 dark:text-gray-300">days</span>
                 <button
                   @click="applyCustomRolling(); close()"
-                  class="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+                  class="rounded-md bg-indigo-600 px-2 py-1 text-xs font-semibold text-white shadow-xs hover:bg-indigo-500 dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400"
                 >
                   Go
                 </button>
@@ -105,7 +105,7 @@
     </div>
 
     <!-- Custom Date Inputs -->
-    <div class="flex items-center gap-2 ml-2 border border-gray-200 dark:border-gray-600 rounded-md px-2 py-0.5">
+    <div class="flex items-center gap-2 ml-2 rounded-md outline-1 -outline-offset-1 outline-gray-200 dark:outline-white/10 px-2 py-0.5">
       <span class="text-sm text-gray-500 dark:text-gray-400">From:</span>
       <input
         :value="localStartDate"
@@ -124,7 +124,7 @@
       />
       <button
         @click="applyDateInputs"
-        class="px-2 py-1 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
+        class="rounded-md bg-indigo-600 px-2 py-1 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400"
       >
         Go
       </button>

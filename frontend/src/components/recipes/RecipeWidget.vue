@@ -1,14 +1,14 @@
 <template>
   <div
     :class="[
-      'bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg border dark:border-gray-700 flex flex-col h-full',
+      'overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 flex flex-col h-full',
       hasKPIClickLink() ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors' : '',
     ]"
     @click="hasKPIClickLink() && handleKPIClick()"
   >
     <!-- Header -->
     <div
-      class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between"
+      class="px-4 py-3 border-b border-gray-200 dark:border-white/10 flex items-center justify-between"
     >
       <h3 class="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-1.5">
         {{ recipe.title }}
@@ -66,7 +66,7 @@
         <pre class="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 rounded px-3 py-2 max-w-full overflow-auto whitespace-pre-wrap break-all text-left">{{ error }}</pre>
         <button
           @click="executeQuery"
-          class="text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400"
+          class="text-xs text-indigo-600 hover:text-indigo-800 dark:text-indigo-400"
         >
           Retry
         </button>

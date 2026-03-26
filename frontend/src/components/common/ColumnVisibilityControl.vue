@@ -2,7 +2,7 @@
   <Menu as="div" class="relative inline-block text-left">
     <div>
       <MenuButton
-        class="inline-flex w-full justify-center gap-x-1.5 rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 dark:bg-gray-800 dark:text-white dark:ring-gray-600 dark:hover:bg-gray-700"
+        class="inline-flex w-full justify-center gap-x-1.5 rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-gray-800 dark:text-white dark:ring-white/10 dark:hover:bg-gray-700"
         title="Show/hide columns"
       >
         <AdjustmentsHorizontalIcon class="h-5 w-5" aria-hidden="true" />
@@ -21,7 +21,7 @@
     >
       <MenuItems
         :class="[
-          'absolute z-50 mt-2 w-[32rem] divide-y divide-gray-100 rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none dark:bg-gray-800 dark:divide-gray-700 dark:ring-gray-600',
+          'absolute z-50 mt-2 w-[32rem] divide-y divide-gray-100 rounded-md bg-white shadow-lg ring-1 ring-black/5 focus:outline-none dark:bg-gray-800 dark:divide-gray-700 dark:ring-white/10',
           align === 'right' ? 'right-0 origin-top-right' : 'left-0 origin-top-left'
         ]"
       >
@@ -43,7 +43,7 @@
             <button
               @click="toggleColumnVisibility(column.id)"
               :class="[
-                active ? 'bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-white' : 'text-gray-700 dark:text-gray-300',
+                active ? 'bg-gray-100 text-gray-900 dark:bg-white/5 dark:text-white' : 'text-gray-700 dark:text-gray-300',
                 'group flex w-full items-center px-4 py-2 text-sm'
               ]"
               :disabled="column.id === 'status' || column.id === 'actions' || column.disabled"
@@ -83,7 +83,7 @@
             <button
               @click="resetToDefaults"
               :class="[
-                active ? 'bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-white' : 'text-gray-700 dark:text-gray-300',
+                active ? 'bg-gray-100 text-gray-900 dark:bg-white/5 dark:text-white' : 'text-gray-700 dark:text-gray-300',
                 'group flex w-full items-center px-4 py-2 text-sm'
               ]"
             >

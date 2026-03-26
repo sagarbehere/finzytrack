@@ -67,7 +67,7 @@ const props = withDefaults(defineProps<Props>(), {
 
 const iconBgClass = computed(() => {
   const colors = {
-    blue: 'bg-blue-500',
+    blue: 'bg-indigo-500',
     green: 'bg-green-500',
     red: 'bg-red-500',
     purple: 'bg-purple-500',
