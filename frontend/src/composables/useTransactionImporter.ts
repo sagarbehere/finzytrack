@@ -5,7 +5,8 @@
  */
 
 import { ref } from 'vue'
-import { ImportService, ApiError } from '@/services/generated-api'
+import { ImportService } from '@/services/generated-api'
+import { errorHandler } from '@/utils/ErrorHandler'
 import type {
   CategorizedTransactionResult,
   CategorizeRequest,
@@ -17,8 +18,8 @@ import type { TransactionViewModel } from '@/types/transactions'
 export function useTransactionImporter() {
   // State
   const isLoading = ref(false)
-  const categorizeError = ref<{ message: string; details?: string } | null>(null)
-  const commitError = ref<{ message: string; details?: string } | null>(null)
+  const categorizeError = ref<string | null>(null)
+  const commitError = ref<string | null>(null)
 
   /**
    * Perform autocategorization on transactions.
@@ -61,18 +62,8 @@ export function useTransactionImporter() {
       return response.data.results
 
     } catch (error) {
-      if (error instanceof ApiError) {
-        const errorBody = error.body as any
-        categorizeError.value = {
-          message: errorBody?.error?.message || 'Categorization failed',
-          details: errorBody?.error?.details ? JSON.stringify(errorBody.error.details) : undefined
-        }
-      } else {
-        categorizeError.value = {
-          message: 'An unexpected error occurred during categorization',
-          details: error instanceof Error ? error.message : String(error)
-        }
-      }
+      categorizeError.value = error instanceof Error ? error.message : 'Categorization failed'
+      errorHandler.display(error)
       throw error
     } finally {
       isLoading.value = false
@@ -98,11 +89,8 @@ export function useTransactionImporter() {
 
         // Validate source_account is present
         if (!tx.meta['source_account']) {
-          commitError.value = {
-            message: `Validation failed: source_account is required (row ${rowNum})`,
-            details: `Date: ${tx.date}, Payee: ${tx.payee}`
-          }
-          throw new Error('Validation failed')
+          commitError.value = `Validation failed: source_account is required (row ${rowNum})`
+          throw new Error(commitError.value)
         }
 
         for (let j = 0; j < tx.postings.length; j++) {
@@ -114,19 +102,13 @@ export function useTransactionImporter() {
                                       posting.cost?.amount !== 0
           if (costAmountIsNonZero) {
             if (!posting.cost?.currency) {
-              commitError.value = {
-                message: `Validation failed: Cost amount specified but cost currency missing (row ${rowNum}, posting ${j + 1})`,
-                details: `Account: ${posting.account}, Date: ${tx.date}`
-              }
-              throw new Error('Validation failed')
+              commitError.value = `Validation failed: Cost amount specified but cost currency missing (row ${rowNum}, posting ${j + 1})`
+              throw new Error(commitError.value)
             }
           }
           if (posting.cost?.currency && !costAmountIsNonZero) {
-            commitError.value = {
-              message: `Validation failed: Cost currency specified but cost amount missing or zero (row ${rowNum}, posting ${j + 1})`,
-              details: `Account: ${posting.account}, Date: ${tx.date}`
-            }
-            throw new Error('Validation failed')
+            commitError.value = `Validation failed: Cost currency specified but cost amount missing or zero (row ${rowNum}, posting ${j + 1})`
+            throw new Error(commitError.value)
           }
 
           // Validate price completeness (treat 0 as empty)
@@ -135,30 +117,21 @@ export function useTransactionImporter() {
                                        posting.price?.amount !== 0
           if (priceAmountIsNonZero) {
             if (!posting.price?.currency || !posting.price?.type) {
-              commitError.value = {
-                message: `Validation failed: Price amount specified but currency or type missing (row ${rowNum}, posting ${j + 1})`,
-                details: `Account: ${posting.account}, Date: ${tx.date}`
-              }
-              throw new Error('Validation failed')
+              commitError.value = `Validation failed: Price amount specified but currency or type missing (row ${rowNum}, posting ${j + 1})`
+              throw new Error(commitError.value)
             }
           }
           if (posting.price?.currency || posting.price?.type) {
             if (!priceAmountIsNonZero) {
-              commitError.value = {
-                message: `Validation failed: Price currency or type specified but amount missing or zero (row ${rowNum}, posting ${j + 1})`,
-                details: `Account: ${posting.account}, Date: ${tx.date}`
-              }
-              throw new Error('Validation failed')
+              commitError.value = `Validation failed: Price currency or type specified but amount missing or zero (row ${rowNum}, posting ${j + 1})`
+              throw new Error(commitError.value)
             }
           }
 
           // Validate price type
           if (posting.price?.type && !['@', '@@'].includes(posting.price.type)) {
-            commitError.value = {
-              message: `Validation failed: Invalid price type '${posting.price.type}' (must be '@' or '@@') (row ${rowNum}, posting ${j + 1})`,
-              details: `Account: ${posting.account}, Date: ${tx.date}`
-            }
-            throw new Error('Validation failed')
+            commitError.value = `Validation failed: Invalid price type '${posting.price.type}' (must be '@' or '@@') (row ${rowNum}, posting ${j + 1})`
+            throw new Error(commitError.value)
           }
         }
       }
@@ -218,18 +191,11 @@ export function useTransactionImporter() {
       }
 
     } catch (error) {
-      if (error instanceof ApiError) {
-        const errorBody = error.body as any
-        commitError.value = {
-          message: errorBody?.error?.message || 'Commit failed',
-          details: errorBody?.error?.details ? JSON.stringify(errorBody.error.details) : undefined
-        }
-      } else {
-        commitError.value = {
-          message: 'An unexpected error occurred during commit',
-          details: error instanceof Error ? error.message : String(error)
-        }
+      // Set error ref if not already set by validation above
+      if (!commitError.value) {
+        commitError.value = error instanceof Error ? error.message : 'Commit failed'
       }
+      errorHandler.display(error)
       throw error
     } finally {
       isLoading.value = false

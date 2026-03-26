@@ -476,6 +476,7 @@ import { RouterLink } from 'vue-router'
 import { streamAssistantChat, readFileAsBase64 } from '@/api/assistant'
 import type { AttachedFile, ChatMessage } from '@/api/assistant'
 import { ImportService } from '@/services/generated-api'
+import { useConfig } from '@/composables/useConfig'
 import { parseCsvContent, extractCsvRows } from '@/composables/useCsvParser'
 import { parseXlsContent, extractXlsText, extractXlsSheets } from '@/composables/useXlsParser'
 import type { CsvParsedTransaction } from '@/types/csv'
@@ -610,14 +611,13 @@ const canSend = computed(() =>
 
 // ── LLM config check ──────────────────────────────────────────────────────────
 
+const { loadConfig, config: appConfig } = useConfig()
+
 onMounted(async () => {
   try {
-    const res = await fetch('/api/config')
-    if (res.ok) {
-      const data = await res.json()
-      const model = data?.data?.ai?.llm?.model ?? ''
-      llmConfigured.value = model.trim().length > 0
-    }
+    await loadConfig()
+    const model = appConfig.value?.ai?.llm?.model ?? ''
+    llmConfigured.value = model.trim().length > 0
   } catch {
     // If we can't reach the backend, show the chat anyway and let the
     // server return an error when the user sends a message.

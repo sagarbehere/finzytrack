@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ApiResponse_RecipeWriteResponse_ } from '../models/ApiResponse_RecipeWriteResponse_';
 import type { RecipeWriteRequest } from '../models/RecipeWriteRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -45,13 +46,13 @@ export class RecipesService {
      * Write or update a recipe JSON file.
      * @param filePath
      * @param requestBody
-     * @returns any Successful Response
+     * @returns ApiResponse_RecipeWriteResponse_ Successful Response
      * @throws ApiError
      */
     public static writeRecipeFileApiRecipesFilePathPut(
         filePath: string,
         requestBody: RecipeWriteRequest,
-    ): CancelablePromise<any> {
+    ): CancelablePromise<ApiResponse_RecipeWriteResponse_> {
         return __request(OpenAPI, {
             method: 'PUT',
             url: '/api/recipes/{file_path}',
@@ -69,12 +70,12 @@ export class RecipesService {
      * Delete Recipe File
      * Delete a recipe file and remove it from the manifest.
      * @param filePath
-     * @returns any Successful Response
+     * @returns ApiResponse_RecipeWriteResponse_ Successful Response
      * @throws ApiError
      */
     public static deleteRecipeFileApiRecipesFilePathDelete(
         filePath: string,
-    ): CancelablePromise<any> {
+    ): CancelablePromise<ApiResponse_RecipeWriteResponse_> {
         return __request(OpenAPI, {
             method: 'DELETE',
             url: '/api/recipes/{file_path}',

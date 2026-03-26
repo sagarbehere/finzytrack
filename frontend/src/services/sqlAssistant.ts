@@ -1,4 +1,5 @@
 import type { NLParserConfig } from './nlParser'
+import { LedgerService } from '@/services/generated-api'
 
 export type QueryLanguage = 'sqlite' | 'beanquery'
 
@@ -15,11 +16,8 @@ let _cachedPostingsSchema: string | null = null
 async function fetchPostingsSchema(): Promise<string> {
   if (_cachedPostingsSchema) return _cachedPostingsSchema
   try {
-    const res = await fetch('/api/ledger/schema/postings')
-    if (res.ok) {
-      _cachedPostingsSchema = await res.text()
-      return _cachedPostingsSchema
-    }
+    _cachedPostingsSchema = await LedgerService.getPostingsSchema()
+    return _cachedPostingsSchema
   } catch {
     // Fall through to fallback
   }

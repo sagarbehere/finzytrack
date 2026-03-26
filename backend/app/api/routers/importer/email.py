@@ -24,11 +24,14 @@ from app.email_import.result_schemas import (
 )
 from app.dependencies import get_config_manager, get_email_registry
 from app.core.config_manager import ConfigManager
+from app.exceptions import APIError
+from app.schemas.response_schemas import ApiResponse
+from app.helpers.response_helpers import success_json_response
 
 router = APIRouter()
 
 
-@router.get("/email/profiles", response_model=ProfilesListResponse)
+@router.get("/email/profiles", response_model=ApiResponse[ProfilesListResponse])
 async def list_email_profiles(
     registry: AccountProfileRegistry = Depends(get_email_registry),
 ):
@@ -37,26 +40,26 @@ async def list_email_profiles(
     Each profile_id is the filename without .yaml extension.
     Credentials are never included in the response.
     """
-    return ProfilesListResponse(
+    return success_json_response(ProfilesListResponse(
         profiles=registry.list_profiles(),
         invalid_profiles=registry.list_invalid_profiles(),
-    )
+    ))
 
 
-@router.post("/email/reload", response_model=ReloadResponse)
+@router.post("/email/reload", response_model=ApiResponse[ReloadResponse])
 async def reload_email_profiles(
     registry: AccountProfileRegistry = Depends(get_email_registry),
 ):
     """Re-scan rules directory and reload all account profiles."""
     registry.reload()
     profiles = registry.list_profiles()
-    return ReloadResponse(
+    return success_json_response(ReloadResponse(
         profiles_loaded=len(profiles),
         message=f"Reloaded {len(profiles)} account profiles.",
-    )
+    ))
 
 
-@router.post("/email/test-connection", response_model=TestConnectionResponse)
+@router.post("/email/test-connection", response_model=ApiResponse[TestConnectionResponse])
 async def test_email_connection(
     req: TestConnectionRequest,
     registry: AccountProfileRegistry = Depends(get_email_registry),
@@ -69,11 +72,11 @@ async def test_email_connection(
     config = config_manager.get_config()
     parser = registry.get_parser_by_profile_id(req.profile_id)
     if parser is None:
-        return TestConnectionResponse(success=False, error=f"Unknown profile: {req.profile_id}")
+        raise APIError(f"Unknown profile: {req.profile_id}", "EMAIL_PROFILE_NOT_FOUND", 404)
 
     cred_error = parser.check_credentials()
     if cred_error:
-        return TestConnectionResponse(success=False, error=cred_error)
+        raise APIError(cred_error, "EMAIL_CREDENTIALS_ERROR", 400)
 
     srv = parser.rule.imap_server
     profile = parser.rule
@@ -100,13 +103,15 @@ async def test_email_connection(
                 status, data = imap.search(None, f'SINCE {since_str}')
                 if status == 'OK' and data[0]:
                     total = len(data[0].split())
-        return TestConnectionResponse(
+        return success_json_response(TestConnectionResponse(
             success=True,
             email_count=total,
             message=f"Connected. Found {total} matching emails in the last {lookback_days} days.",
-        )
-    except Exception as e:
-        return TestConnectionResponse(success=False, error=str(e))
+        ))
+    except imaplib.IMAP4.error as e:
+        raise APIError(f"IMAP error: {e}", "EMAIL_IMAP_ERROR", 400)
+    except OSError as e:
+        raise APIError(f"Connection failed: {e}", "EMAIL_CONNECTION_ERROR", 400)
 
 
 @router.post("/email/fetch")
@@ -119,36 +124,25 @@ async def fetch_email_transactions(
     """
     Stream fetch progress as Server-Sent Events (text/event-stream).
 
-    Loads the account profile by profile_id, reads IMAP credentials from the
-    profile's imap_server block, and applies date range/lookback precedence.
-
-    Each event is a JSON ProgressEvent (see result_schemas.py).
-    Phases emitted: connecting -> fetching -> parsing -> complete.
-    Errors are reported as phase='error' events.
-
-    Frontend must use fetch() + ReadableStream (not EventSource) because
-    this is a POST endpoint with a JSON body.
+    This endpoint uses SSE for real-time progress reporting.
+    Errors during streaming are sent as SSE error events.
     """
     config = config_manager.get_config()
+    parser = registry.get_parser_by_profile_id(req.profile_id)
+    if parser is None:
+        raise APIError(f"Unknown profile: {req.profile_id}", "EMAIL_PROFILE_NOT_FOUND", 404)
 
-    since_date = date_type.fromisoformat(req.since_date) if req.since_date else None
-    until_date = date_type.fromisoformat(req.until_date) if req.until_date else None
-
-    async def event_generator():
-        async for event in stream_fetch(
-            profile_id=req.profile_id,
-            config=config,
-            registry=registry,
-            since_date=since_date,
-            until_date=until_date,
-        ):
-            yield event
+    lookback_days = parser.rule.lookback_days or config.email_import.default_lookback_days
+    max_emails = config.email_import.max_emails
 
     return StreamingResponse(
-        event_generator(),
+        stream_fetch(
+            parser=parser,
+            request=request,
+            since_date=req.since_date,
+            until_date=req.until_date,
+            lookback_days=lookback_days,
+            max_emails=max_emails,
+        ),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",   # disable nginx buffering
-        },
     )

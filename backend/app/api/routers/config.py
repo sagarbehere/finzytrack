@@ -90,7 +90,7 @@ async def patch_config_endpoint(
     config_path = config.config_file_path or Path('./config/config.yaml')
 
     if not config_path.exists():
-        raise APIError("Config file not found", status_code=404)
+        raise APIError("Config file not found", "FILE_NOT_FOUND", status_code=404)
 
     # Load with round-trip parser to preserve comments and YAML structure
     yaml = YAML()
@@ -108,7 +108,7 @@ async def patch_config_endpoint(
             f"{' -> '.join(str(loc) for loc in err['loc'])}: {err['msg']}"
             for err in e.errors()
         ]
-        raise APIError("Validation failed", details={"errors": errors})
+        raise APIError("Validation failed", "CONFIG_VALIDATION_ERROR", status_code=422, details={"errors": errors})
 
     # Write back atomically (with backup)
     with backup_manager.atomic_write(str(config_path)) as f:

@@ -744,9 +744,7 @@
       })
 
     } catch (_error) {
-      if (categorizeError.value) {
-        showErrorToast('Categorization Failed', categorizeError.value.message)
-      }
+      // Error already displayed via errorHandler.display() in composable
     }
   }
 
@@ -781,9 +779,7 @@
         showSuccessToast('Transactions Committed', `Successfully committed ${result.count} transactions`)
       }
     } catch (_error) {
-      if (commitError.value) {
-        showErrorToast('Commit Failed', commitError.value.message)
-      }
+      // Error already displayed via errorHandler.display() in composable
     }
   }
 

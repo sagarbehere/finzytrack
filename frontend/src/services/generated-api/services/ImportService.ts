@@ -8,6 +8,9 @@ import type { ApiResponse_CsvRule_ } from '../models/ApiResponse_CsvRule_';
 import type { ApiResponse_CsvRuleListData_ } from '../models/ApiResponse_CsvRuleListData_';
 import type { ApiResponse_LearnOFXAccountData_ } from '../models/ApiResponse_LearnOFXAccountData_';
 import type { ApiResponse_OFXDetectionData_ } from '../models/ApiResponse_OFXDetectionData_';
+import type { ApiResponse_ProfilesListResponse_ } from '../models/ApiResponse_ProfilesListResponse_';
+import type { ApiResponse_ReloadResponse_ } from '../models/ApiResponse_ReloadResponse_';
+import type { ApiResponse_TestConnectionResponse_ } from '../models/ApiResponse_TestConnectionResponse_';
 import type { ApiResponse_XlsRule_ } from '../models/ApiResponse_XlsRule_';
 import type { ApiResponse_XlsRuleListData_ } from '../models/ApiResponse_XlsRuleListData_';
 import type { CategorizeRequest } from '../models/CategorizeRequest';
@@ -15,10 +18,7 @@ import type { CommitRequest } from '../models/CommitRequest';
 import type { FetchRequest } from '../models/FetchRequest';
 import type { LearnOFXAccountRequest } from '../models/LearnOFXAccountRequest';
 import type { OFXDetectionRequest } from '../models/OFXDetectionRequest';
-import type { ProfilesListResponse } from '../models/ProfilesListResponse';
-import type { ReloadResponse } from '../models/ReloadResponse';
 import type { TestConnectionRequest } from '../models/TestConnectionRequest';
-import type { TestConnectionResponse } from '../models/TestConnectionResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -199,10 +199,10 @@ export class ImportService {
      * Return list of configured account profiles.
      * Each profile_id is the filename without .yaml extension.
      * Credentials are never included in the response.
-     * @returns ProfilesListResponse Successful Response
+     * @returns ApiResponse_ProfilesListResponse_ Successful Response
      * @throws ApiError
      */
-    public static listEmailProfilesApiImportEmailProfilesGet(): CancelablePromise<ProfilesListResponse> {
+    public static listEmailProfilesApiImportEmailProfilesGet(): CancelablePromise<ApiResponse_ProfilesListResponse_> {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/import/email/profiles',
@@ -211,10 +211,10 @@ export class ImportService {
     /**
      * Reload Email Profiles
      * Re-scan rules directory and reload all account profiles.
-     * @returns ReloadResponse Successful Response
+     * @returns ApiResponse_ReloadResponse_ Successful Response
      * @throws ApiError
      */
-    public static reloadEmailProfilesApiImportEmailReloadPost(): CancelablePromise<ReloadResponse> {
+    public static reloadEmailProfilesApiImportEmailReloadPost(): CancelablePromise<ApiResponse_ReloadResponse_> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/import/email/reload',
@@ -225,12 +225,12 @@ export class ImportService {
      * Connectivity test — connect, login, select folder, count matching emails.
      * Loads IMAP credentials from the account profile YAML identified by profile_id.
      * @param requestBody
-     * @returns TestConnectionResponse Successful Response
+     * @returns ApiResponse_TestConnectionResponse_ Successful Response
      * @throws ApiError
      */
     public static testEmailConnectionApiImportEmailTestConnectionPost(
         requestBody: TestConnectionRequest,
-    ): CancelablePromise<TestConnectionResponse> {
+    ): CancelablePromise<ApiResponse_TestConnectionResponse_> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/import/email/test-connection',
@@ -245,15 +245,8 @@ export class ImportService {
      * Fetch Email Transactions
      * Stream fetch progress as Server-Sent Events (text/event-stream).
      *
-     * Loads the account profile by profile_id, reads IMAP credentials from the
-     * profile's imap_server block, and applies date range/lookback precedence.
-     *
-     * Each event is a JSON ProgressEvent (see result_schemas.py).
-     * Phases emitted: connecting -> fetching -> parsing -> complete.
-     * Errors are reported as phase='error' events.
-     *
-     * Frontend must use fetch() + ReadableStream (not EventSource) because
-     * this is a POST endpoint with a JSON body.
+     * This endpoint uses SSE for real-time progress reporting.
+     * Errors during streaming are sent as SSE error events.
      * @param requestBody
      * @returns any Successful Response
      * @throws ApiError

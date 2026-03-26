@@ -91,6 +91,8 @@ import DashboardTabs from '@/components/dashboard/DashboardTabs.vue'
 import DashboardPicker from '@/components/dashboard/DashboardPicker.vue'
 import { useRecipeLoader } from '@/composables/useRecipeLoader'
 import { useDashboardTabs } from '@/composables/useDashboardTabs'
+import { RecipesService } from '@/services/generated-api'
+import { errorHandler } from '@/utils/ErrorHandler'
 
 const route = useRoute()
 const router = useRouter()
@@ -192,18 +194,13 @@ import type { AvailableDashboard } from '@/components/dashboard/DashboardPicker.
 async function handleDeleteDashboard(dashboard: AvailableDashboard) {
   if (!dashboard.manifestPath) return
   try {
-    const res = await fetch(`/api/recipes/${dashboard.manifestPath}`, { method: 'DELETE' })
-    if (!res.ok) {
-      const text = await res.text()
-      console.error('[DashboardView] delete failed:', text)
-      return
-    }
+    await RecipesService.deleteRecipeFileApiRecipesFilePathDelete(dashboard.manifestPath)
     // Remove the tab if it's open
     removeTab(dashboard.id)
     // Reload recipes to refresh the picker list
     await reloadUserRecipes()
   } catch (err) {
-    console.error('[DashboardView] delete error:', err)
+    errorHandler.display(err)
   }
 }
 

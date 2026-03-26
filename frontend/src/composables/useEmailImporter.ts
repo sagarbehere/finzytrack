@@ -10,31 +10,16 @@
  * live under /api/import/email/ on the same origin.
  */
 import { ref, computed } from 'vue'
-import { OpenAPI } from '@/services/generated-api'
+import { OpenAPI, ImportService } from '@/services/generated-api'
+import type { ProfileInfo, InvalidProfileInfo, TestConnectionResponse } from '@/services/generated-api'
 import { useConfig } from '@/composables/useConfig'
+import { errorHandler } from '@/utils/ErrorHandler'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export interface EmailProfileInfo {
-  name: string
-  profile_id: string
-  beancount_account: string
-  default_currency: string
-  lookback_days: number | null
-  file: string
-}
-
-export interface InvalidEmailProfileInfo {
-  filename: string
-  error: string
-}
-
-export interface TestConnectionResponse {
-  success: boolean
-  email_count?: number | null
-  message?: string | null
-  error?: string | null
-}
+export type EmailProfileInfo = ProfileInfo
+export type InvalidEmailProfileInfo = InvalidProfileInfo
+export type { TestConnectionResponse }
 
 export interface EmailParsedTransaction {
   date: string
@@ -89,21 +74,9 @@ export interface ProgressState {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Build the full URL for an email import endpoint. */
+/** Build the full URL for an email import endpoint (used only for SSE /fetch). */
 function emailUrl(path: string): string {
   return `${OpenAPI.BASE}/api/import/email${path}`
-}
-
-async function apiFetch<T>(path: string, options?: globalThis.RequestInit): Promise<T> {
-  const resp = await fetch(emailUrl(path), {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  })
-  if (!resp.ok) {
-    const body = await resp.text()
-    throw new Error(`Email import error ${resp.status}: ${body}`)
-  }
-  return resp.json()
 }
 
 // ─── Composable ──────────────────────────────────────────────────────────────
@@ -128,12 +101,12 @@ export function useEmailImporter() {
     isLoadingProfiles.value = true
     profilesError.value = null
     try {
-      const data = await apiFetch<{ profiles: EmailProfileInfo[]; invalid_profiles: InvalidEmailProfileInfo[] }>('/profiles')
-      profiles.value = data.profiles || []
-      invalidProfiles.value = data.invalid_profiles || []
+      const response = await ImportService.listEmailProfilesApiImportEmailProfilesGet()
+      profiles.value = response.data?.profiles || []
+      invalidProfiles.value = response.data?.invalid_profiles || []
     } catch (e) {
       profilesError.value = e instanceof Error ? e.message : String(e)
-      console.error('Failed to load email profiles:', e)
+      errorHandler.display(e)
     } finally {
       isLoadingProfiles.value = false
     }
@@ -143,15 +116,14 @@ export function useEmailImporter() {
     profileId: string,
   ): Promise<TestConnectionResponse> {
     if (!emailImportEnabled.value) return { success: false, error: 'Email import not enabled' }
-    return apiFetch<TestConnectionResponse>('/test-connection', {
-      method: 'POST',
-      body: JSON.stringify({ profile_id: profileId }),
-    })
+    const response = await ImportService.testEmailConnectionApiImportEmailTestConnectionPost({ profile_id: profileId })
+    if (!response.data) throw new Error('No data in test-connection response')
+    return response.data
   }
 
   async function reloadProfiles(): Promise<void> {
     if (!emailImportEnabled.value) return
-    await apiFetch('/reload', { method: 'POST' })
+    await ImportService.reloadEmailProfilesApiImportEmailReloadPost()
     await loadProfiles()
   }
 

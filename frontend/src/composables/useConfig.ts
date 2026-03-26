@@ -11,6 +11,7 @@
 import { ref, readonly } from 'vue'
 import { ConfigService } from '@/services/generated-api'
 import type { Config } from '@/services/generated-api'
+import { errorHandler } from '@/utils/ErrorHandler'
 
 // Global config cache (shared across all component instances)
 const cachedConfig = ref<Config | null>(null)
@@ -40,7 +41,7 @@ export function useConfig() {
       }
     } catch (error: any) {
       loadError.value = error?.message || 'Failed to load configuration'
-      console.error('Failed to load config:', error)
+      errorHandler.display(error)
     } finally {
       isLoading.value = false
     }

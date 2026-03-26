@@ -3,6 +3,7 @@ import type { TransactionViewModel, PostingViewModel } from '@/types/transaction
 import type { TransactionFilters } from '@/types/filters'
 import { LedgerService } from '@/services/generated-api'
 import type { QueryRequest } from '@/services/generated-api'
+import { errorHandler } from '@/utils/ErrorHandler'
 
 export function useTransactionQuery() {
   const isLoading = ref(false)
@@ -37,8 +38,7 @@ export function useTransactionQuery() {
 
     } catch (err: any) {
       error.value = err.message || 'Failed to query transactions'
-      console.error('Transaction query error:', err)
-      console.error('Error body:', err.body)
+      errorHandler.display(err)
       throw err
     } finally {
       isLoading.value = false

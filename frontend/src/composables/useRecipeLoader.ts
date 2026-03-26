@@ -149,7 +149,13 @@ async function loadUserRecipes(): Promise<void> {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to load user recipes'
     loadError.value = message
-    console.error('[RecipeLoader] Error:', err)
+    const { addNotification } = useNotifications()
+    addNotification({
+      type: 'error',
+      title: 'Recipe loading failed',
+      message,
+      isPersistent: true,
+    })
   } finally {
     isLoaded.value = true
     isLoading.value = false

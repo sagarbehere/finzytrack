@@ -12,6 +12,7 @@ import type {
 import { LedgerService } from '@/services/generated-api'
 import type { QueryRequest } from '@/services/generated-api'
 import { formatAmount, formatSignedAmount } from '@/utils/currencyFormat'
+import { errorHandler } from '@/utils/ErrorHandler'
 
 /**
  * Union type for any widget recipe (TypeScript or JSON)
@@ -408,7 +409,7 @@ export function useRecipeExecutor() {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to execute recipe'
       error.value = message
-      console.error(`[Recipe: ${recipe.id}] Execution error:`, err)
+      errorHandler.display(err)
       throw err
     } finally {
       isLoading.value = false
