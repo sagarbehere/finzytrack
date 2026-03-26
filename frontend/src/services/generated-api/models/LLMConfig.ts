@@ -33,7 +33,7 @@ export type LLMConfig = {
     /**
      * Maximum tool-call round-trips per user message in the AI assistant.
      */
-    max_agent_iterations?: number;
+    max_tool_rounds?: number;
 };
 export namespace LLMConfig {
     /**
