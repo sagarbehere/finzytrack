@@ -128,21 +128,25 @@ async def fetch_email_transactions(
     Errors during streaming are sent as SSE error events.
     """
     config = config_manager.get_config()
-    parser = registry.get_parser_by_profile_id(req.profile_id)
-    if parser is None:
-        raise APIError(f"Unknown profile: {req.profile_id}", "EMAIL_PROFILE_NOT_FOUND", 404)
 
-    lookback_days = parser.rule.lookback_days or config.email_import.default_lookback_days
-    max_emails = config.email_import.max_emails
+    since_date = date_type.fromisoformat(req.since_date) if req.since_date else None
+    until_date = date_type.fromisoformat(req.until_date) if req.until_date else None
+
+    async def event_generator():
+        async for event in stream_fetch(
+            profile_id=req.profile_id,
+            config=config,
+            registry=registry,
+            since_date=since_date,
+            until_date=until_date,
+        ):
+            yield event
 
     return StreamingResponse(
-        stream_fetch(
-            parser=parser,
-            request=request,
-            since_date=req.since_date,
-            until_date=req.until_date,
-            lookback_days=lookback_days,
-            max_emails=max_emails,
-        ),
+        event_generator(),
         media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
