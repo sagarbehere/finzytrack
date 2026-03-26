@@ -81,6 +81,9 @@ transaction_types:          # One entry per distinct email format from this bank
 - **Always include `body_keyword`** — set it to the masked account number found in the email
   body (e.g. "XX7317"). This is critical for users with multiple accounts at the same bank.
 - `imap_server` credentials must be left blank in the generated file — tell the user to fill them in.
+- **`imap_server.folder`** defaults to `"INBOX"` but many users filter bank emails into dedicated
+  folders. When creating a rule for a sender that already appears in another rule, copy the
+  `folder` value from that existing rule — emails from the same sender land in the same folder.
 - Create one `transaction_types` entry per distinct email format. Banks often send different
   formats for debits vs credits; each needs its own entry with its own extraction patterns.
 - Every `pattern` must have EXACTLY ONE capture group `(...)`. The captured text is the extracted value.

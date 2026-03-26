@@ -71,7 +71,12 @@ Act on the result:
   3. If the `body_keyword` does **not** appear in the new email's body → different account at
      the same bank. Create a new rule file with its own `beancount_account` and a new
      `body_keyword` derived from the account identifier in this email.
-- **`no_match`**: Unknown sender. Draft a full new rule file.
+     **Copy `imap_server` settings** (especially `folder`) from the existing rule — emails
+     from the same sender almost certainly land in the same IMAP folder.
+- **`no_match`**: Unknown sender. Draft a full new rule file. If `match_email_against_rules`
+  returned `sender_matched_rules`, call `read_file` on one of those rules and copy its
+  `imap_server` settings (especially `folder`) — emails from the same sender likely land
+  in the same folder.
 
 ### Step 2 — Draft extraction rules and test them
 
