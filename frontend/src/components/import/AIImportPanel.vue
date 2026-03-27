@@ -20,7 +20,7 @@
       <input
         ref="fileInput"
         type="file"
-        accept=".csv,.tsv,.txt,.xls,.xlsx,.xlsm,.xlsb,.pdf,.jpg,.jpeg,.png,.gif,.webp"
+        accept=".csv,.tsv,.txt,.xls,.xlsx,.xlsm,.xlsb,.pdf,.eml,.jpg,.jpeg,.png,.gif,.webp"
         class="hidden"
         @change="handleFileSelect"
         :disabled="isParsing"
@@ -42,7 +42,7 @@
             </button>
           </p>
           <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Supported formats: CSV, XLS/XLSX, PDF, JPG, PNG
+            Supported formats: CSV, XLS/XLSX, PDF, EML, JPG, PNG
           </p>
           <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
             AI can make mistakes — review output carefully.

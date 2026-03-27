@@ -19,6 +19,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 
 from app.ai.client import DoneEvent, TokenEvent, stream_chat
+from app.ai.file_processor import process_file as process_eml_file
 from app.config import LLMConfig
 from app.core.config_manager import ConfigManager
 from app.dependencies import get_config_manager
@@ -34,6 +35,7 @@ _PROMPTS_DIR = Path(__file__).parents[4] / "resources" / "prompts"
 _CSV_EXTENSIONS = {".csv", ".tsv", ".txt"}
 _XLS_EXTENSIONS = {".xls", ".xlsx", ".xlsm", ".xlsb"}
 _PDF_EXTENSIONS = {".pdf"}
+_EML_EXTENSIONS = {".eml"}
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff"}
 
 _MIME_TYPES = {
@@ -63,13 +65,15 @@ def _detect_file_type(ext: str) -> str:
         return "xls"
     if ext in _PDF_EXTENSIONS:
         return "pdf"
+    if ext in _EML_EXTENSIONS:
+        return "eml"
     if ext in _IMAGE_EXTENSIONS:
         return "image"
     raise APIError(
         f"Unsupported file type: {ext}",
         code="UNSUPPORTED_FILE_TYPE",
         status_code=400,
-        details={"supported": "csv, tsv, txt, xls, xlsx, pdf, jpg, png, gif, webp"},
+        details={"supported": "csv, tsv, txt, xls, xlsx, pdf, eml, jpg, png, gif, webp"},
     )
 
 
@@ -166,6 +170,11 @@ def _build_user_content(
     if file_type == "xls":
         text = _xls_to_text(file_bytes, filename)
         return f"{context_line}\n\n```\n{text}\n```"
+
+    # --- EML (email) — extract text, strip HTML ---
+    if file_type == "eml":
+        text, _ = process_eml_file(file_bytes, filename)
+        return f"{context_line}\n\n{text}"
 
     # --- PDF ---
     if file_type == "pdf":
