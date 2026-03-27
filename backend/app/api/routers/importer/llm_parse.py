@@ -169,8 +169,8 @@ def _build_user_content(
 
     # --- PDF ---
     if file_type == "pdf":
+        b64 = base64.b64encode(file_bytes).decode("ascii")
         if provider == "anthropic":
-            b64 = base64.b64encode(file_bytes).decode("ascii")
             return [
                 {
                     "type": "document",
@@ -183,9 +183,17 @@ def _build_user_content(
                 {"type": "text", "text": context_line},
             ]
         else:
-            # OpenAI-compatible: extract text as fallback
-            text = _pdf_to_text(file_bytes)
-            return f"{context_line}\n\n{text}"
+            # OpenAI-compatible: try native PDF via file content block
+            return [
+                {
+                    "type": "file",
+                    "file": {
+                        "filename": filename,
+                        "file_data": f"data:application/pdf;base64,{b64}",
+                    },
+                },
+                {"type": "text", "text": context_line},
+            ]
 
     # --- Images ---
     if file_type == "image":
@@ -210,6 +218,17 @@ def _build_user_content(
             ]
 
     raise APIError(f"Unsupported file type: {file_type}", code="UNSUPPORTED_FILE_TYPE", status_code=400)
+
+
+def _build_pdf_text_fallback(file_bytes: bytes, account: str, currency: str) -> str:
+    """Build text-extracted PDF content as a fallback when native PDF is not supported."""
+    context_line = (
+        f"Source account: {account}\n"
+        f"Currency: {currency}\n\n"
+        "Extract all transactions from the attached file."
+    )
+    text = _pdf_to_text(file_bytes)
+    return f"{context_line}\n\n{text}"
 
 
 async def _call_llm(llm_config: LLMConfig, system_prompt: str, user_content: str | list) -> str:
@@ -351,11 +370,13 @@ async def llm_parse(
     file: UploadFile = File(...),
     account: str = Form(...),
     currency: str = Form(...),
+    text_extraction: str = Form(default="false"),
     config_manager: ConfigManager = Depends(get_config_manager),
 ):
     """Parse transactions from a file using the configured LLM."""
     config = config_manager.get_config()
     llm_config = config.ai.llm
+    force_text_extraction = text_extraction.lower() == "true"
 
     if not llm_config.model:
         raise APIError(
@@ -385,15 +406,30 @@ async def llm_parse(
     except FileNotFoundError as e:
         raise APIError(str(e), code="CONFIG_ERROR", status_code=500)
 
-    # Build user message content
-    user_content = _build_user_content(
-        file_bytes, filename, file_ext, file_type, account, currency, llm_config.provider,
-    )
+    # For PDFs, allow the frontend to force text extraction mode
+    if file_type == "pdf" and force_text_extraction:
+        user_content = _build_pdf_text_fallback(file_bytes, account, currency)
+    else:
+        user_content = _build_user_content(
+            file_bytes, filename, file_ext, file_type, account, currency, llm_config.provider,
+        )
 
     # Call LLM
     try:
         raw_response = await _call_llm(llm_config, system_prompt, user_content)
     except Exception as e:
+        if file_type == "pdf" and not force_text_extraction:
+            # Native PDF not supported — tell the frontend to retry with text extraction
+            logger.info(
+                "Native PDF failed for provider %s (%s), signalling frontend to retry",
+                llm_config.provider, e,
+            )
+            raise APIError(
+                "Your model provider does not support native PDF input. "
+                "Retrying with local text extraction...",
+                code="PDF_NATIVE_NOT_SUPPORTED",
+                status_code=422,
+            )
         logger.error("LLM call failed: %s", e, exc_info=True)
         raise APIError(
             f"Failed to get a response from the AI model: {e}",

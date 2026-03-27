@@ -73,13 +73,15 @@
         v-if="isParsing"
         class="absolute inset-0 flex items-center justify-center bg-white/75 dark:bg-gray-900/75 rounded-lg"
       >
-        <div class="flex items-center space-x-2">
-          <div
-            class="animate-spin h-5 w-5 border-2 border-indigo-500 border-t-transparent rounded-full"
-          ></div>
-          <span class="text-sm font-medium text-gray-900 dark:text-white">
-            AI is parsing transactions...
-          </span>
+        <div class="flex flex-col items-center space-y-1">
+          <div class="flex items-center space-x-2">
+            <div
+              class="animate-spin h-5 w-5 border-2 border-indigo-500 border-t-transparent rounded-full"
+            ></div>
+            <span class="text-sm font-medium text-gray-900 dark:text-white">
+              {{ parsingStatus || 'AI is parsing transactions...' }}
+            </span>
+          </div>
         </div>
       </div>
     </div>
@@ -169,6 +171,7 @@
   const isParsing = ref(false)
   const parseError = ref<string | null>(null)
   const parseWarning = ref<string | null>(null)
+  const parsingStatus = ref<string | null>(null)
   const fileInput = ref<HTMLInputElement | null>(null)
   const isDragOver = ref(false)
 
@@ -219,6 +222,28 @@
     emit('fileCleared')
   }
 
+  /** Call the LLM parse endpoint via the generated API client. */
+  const callLlmParse = async (forceTextExtraction = false) => {
+    return ImportService.llmParseApiImportLlmParsePost({
+      file: selectedFile.value!,
+      account: selectedAccount.value,
+      currency: selectedCurrency.value,
+      text_extraction: forceTextExtraction ? 'true' : 'false',
+    })
+  }
+
+  /** Extract error code and message from an API error. */
+  const extractError = (error: any): { code: string; message: string } => {
+    const body = error?.body
+    if (body?.error?.code && body?.error?.message) {
+      return { code: body.error.code, message: body.error.message }
+    }
+    if (typeof body === 'string') {
+      return { code: '', message: body }
+    }
+    return { code: '', message: error?.message || 'An unexpected error occurred while parsing the file.' }
+  }
+
   // Parse with AI
   const parseWithAI = async () => {
     if (!selectedFile.value || !selectedAccount.value || !selectedCurrency.value) return
@@ -226,13 +251,24 @@
     isParsing.value = true
     parseError.value = null
     parseWarning.value = null
+    parsingStatus.value = null
 
     try {
-      const response = await ImportService.llmParseApiImportLlmParsePost({
-        file: selectedFile.value,
-        account: selectedAccount.value,
-        currency: selectedCurrency.value,
-      })
+      let response: any
+      try {
+        response = await callLlmParse()
+      } catch (error: any) {
+        const { code, message } = extractError(error)
+        if (code === 'PDF_NATIVE_NOT_SUPPORTED') {
+          // Show warning immediately and retry with text extraction
+          parseWarning.value = 'Your model does not support native PDF input. Retrying with local text extraction...'
+          parsingStatus.value = 'Retrying with text extraction...'
+          response = await callLlmParse(true)
+        } else {
+          parseError.value = message
+          return
+        }
+      }
 
       const data = response.data
       if (!data || !data.transactions || data.transactions.length === 0) {
@@ -240,9 +276,19 @@
         return
       }
 
-      // Set warning if present
+      // Append any backend warnings (e.g., validation)
       if (data.warning) {
-        parseWarning.value = data.warning
+        parseWarning.value = parseWarning.value
+          ? `${parseWarning.value}; ${data.warning}`
+          : data.warning
+      }
+
+      // Update the "retrying" warning to its final form
+      if (parseWarning.value?.includes('Retrying with')) {
+        parseWarning.value = parseWarning.value.replace(
+          'Retrying with local text extraction...',
+          'PDF was processed using local text extraction, which may reduce accuracy for complex layouts.'
+        )
       }
 
       // Convert to CsvParsedTransaction format (same shape)
@@ -275,17 +321,12 @@
         currency: selectedCurrency.value,
       })
     } catch (error: any) {
-      // Extract error message from API response
-      const body = error?.body
-      if (body?.error?.message) {
-        parseError.value = body.error.message
-      } else if (typeof body === 'string') {
-        parseError.value = body
-      } else {
-        parseError.value = error?.message || 'An unexpected error occurred while parsing the file.'
-      }
+      // Retry also failed
+      const { message } = extractError(error)
+      parseError.value = message
     } finally {
       isParsing.value = false
+      parsingStatus.value = null
     }
   }
 

@@ -6,5 +6,6 @@ export type Body_llm_parse_api_import_llm_parse_post = {
     file: Blob;
     account: string;
     currency: string;
+    text_extraction?: string;
 };
 
