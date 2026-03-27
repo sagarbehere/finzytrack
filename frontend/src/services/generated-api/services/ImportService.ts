@@ -14,6 +14,7 @@ import type { ApiResponse_TestConnectionResponse_ } from '../models/ApiResponse_
 import type { ApiResponse_TrialExtractResult_ } from '../models/ApiResponse_TrialExtractResult_';
 import type { ApiResponse_XlsRule_ } from '../models/ApiResponse_XlsRule_';
 import type { ApiResponse_XlsRuleListData_ } from '../models/ApiResponse_XlsRuleListData_';
+import type { Body_llm_parse_api_import_llm_parse_post } from '../models/Body_llm_parse_api_import_llm_parse_post';
 import type { CategorizeRequest } from '../models/CategorizeRequest';
 import type { CommitRequest } from '../models/CommitRequest';
 import type { FetchRequest } from '../models/FetchRequest';
@@ -285,6 +286,26 @@ export class ImportService {
             url: '/api/import/email/trial-extract',
             body: requestBody,
             mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Llm Parse
+     * Parse transactions from a file using the configured LLM.
+     * @param formData
+     * @returns any Successful Response
+     * @throws ApiError
+     */
+    public static llmParseApiImportLlmParsePost(
+        formData: Body_llm_parse_api_import_llm_parse_post,
+    ): CancelablePromise<any> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/import/llm-parse',
+            formData: formData,
+            mediaType: 'multipart/form-data',
             errors: {
                 422: `Validation Error`,
             },

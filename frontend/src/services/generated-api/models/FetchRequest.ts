@@ -6,5 +6,6 @@ export type FetchRequest = {
     profile_id: string;
     since_date?: (string | null);
     until_date?: (string | null);
+    parsing_mode?: (string | null);
 };
 

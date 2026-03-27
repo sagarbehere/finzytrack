@@ -71,6 +71,7 @@ export type { BalanceDirectiveListData } from './models/BalanceDirectiveListData
 export type { BalanceDirectiveUpdateData } from './models/BalanceDirectiveUpdateData';
 export type { BalanceDirectiveUpdateRequest } from './models/BalanceDirectiveUpdateRequest';
 export type { Body_exportLedger } from './models/Body_exportLedger';
+export type { Body_llm_parse_api_import_llm_parse_post } from './models/Body_llm_parse_api_import_llm_parse_post';
 export type { CategorizationConfig } from './models/CategorizationConfig';
 export { CategorizationEngine } from './models/CategorizationEngine';
 export type { CategorizationStats } from './models/CategorizationStats';

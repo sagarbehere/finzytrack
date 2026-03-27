@@ -50,7 +50,7 @@
     </div>
 
     <!-- Main table -->
-    <div class="card">
+    <div class="overflow-hidden rounded-lg ring-1 ring-gray-200 dark:ring-white/10">
       <div class="table-scroll-container">
         <table class="w-full table-auto">
           <!-- Table Header -->

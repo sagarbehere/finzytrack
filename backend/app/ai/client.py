@@ -253,8 +253,37 @@ def _to_anthropic_message(msg: dict) -> dict:
             })
         return {"role": "assistant", "content": content_blocks}
 
-    # user message — pass content through
-    return {"role": role, "content": msg["content"]}
+    # user message — convert multimodal content blocks if present
+    content = msg["content"]
+    if isinstance(content, list):
+        anthropic_blocks = []
+        for block in content:
+            btype = block.get("type", "")
+            if btype == "image_url":
+                # Convert OpenAI image_url → Anthropic image block
+                url = block["image_url"]["url"]
+                if url.startswith("data:"):
+                    # data:image/png;base64,<data>
+                    header, data = url.split(",", 1)
+                    media_type = header.split(":")[1].split(";")[0]
+                    anthropic_blocks.append({
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": media_type, "data": data},
+                    })
+                else:
+                    anthropic_blocks.append({
+                        "type": "image",
+                        "source": {"type": "url", "url": url},
+                    })
+            elif btype in ("image", "document"):
+                # Already in Anthropic format — pass through
+                anthropic_blocks.append(block)
+            else:
+                # text or other — pass through
+                anthropic_blocks.append(block)
+        return {"role": role, "content": anthropic_blocks}
+
+    return {"role": role, "content": content}
 
 
 def build_tool_result_message(tool_call_id: str, result: dict) -> dict:

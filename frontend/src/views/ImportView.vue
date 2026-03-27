@@ -66,6 +66,17 @@
           >
             Manual Entry
           </button>
+          <button
+            @click="activeTab = 'ai'"
+            :class="[
+              activeTab === 'ai'
+                ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
+                : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:border-white/20 dark:hover:text-gray-200',
+              'whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium',
+            ]"
+          >
+            AI Import
+          </button>
         </nav>
       </div>
 
@@ -107,6 +118,15 @@
           <EmailImportPanel
             :key="importerKey"
             @proceedWithImport="handleEmailProceedWithImport"
+          />
+        </div>
+
+        <!-- AI Import Tab -->
+        <div v-else-if="activeTab === 'ai'">
+          <AIImportPanel
+            :key="importerKey"
+            @fileCleared="handleFileCleared"
+            @proceedWithImport="handleCsvProceedWithImport"
           />
         </div>
       </div>
@@ -211,6 +231,7 @@
   import XLSFilePicker from '@/components/import/XLSFilePicker.vue'
   import ManualEntryPanel from '@/components/import/ManualEntryPanel.vue'
   import EmailImportPanel from '@/components/import/EmailImportPanel.vue'
+  import AIImportPanel from '@/components/import/AIImportPanel.vue'
   import type { EmailParsedTransaction } from '@/composables/useEmailImporter'
   import TransactionTable from '@/components/common/TransactionTable.vue'
   import DuplicateComparisonModal from '@/components/import/DuplicateComparisonModal.vue'
@@ -238,7 +259,7 @@
   const showTransactionTable = ref<boolean>(false)
   const rawTransactions = ref<OFXTransaction[]>([])
   const rawCsvTransactions = ref<CsvParsedTransaction[]>([])
-  const importSource = ref<'ofx' | 'csv' | 'xls' | 'manual' | 'email'>('ofx')
+  const importSource = ref<'ofx' | 'csv' | 'xls' | 'manual' | 'email' | 'ai'>('ofx')
   const transactionViewModels = ref<TransactionViewModel[]>([])
   const importContext = ref<Map<string, ImportContext>>(new Map())
   const sourceAccount = ref<string>('')
@@ -398,7 +419,7 @@
   const handleCsvProceedWithImport = (payload: { file: File, details: CsvFileDetails, account: string, currency: string }) => {
     sourceAccount.value = payload.account
     sourceCurrency.value = payload.currency
-    importSource.value = activeTab.value === 'xls' ? 'xls' : 'csv'
+    importSource.value = activeTab.value === 'xls' ? 'xls' : activeTab.value === 'ai' ? 'ai' : 'csv'
 
     rawCsvTransactions.value = payload.details.rawTransactions
     const bundle = convertCsvTransactionsToViewModels(payload.details.rawTransactions, payload.account, payload.currency)

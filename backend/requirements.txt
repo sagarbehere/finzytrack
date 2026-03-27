@@ -20,6 +20,8 @@ keyring>=25.6.0
 uuid-utils>=0.11.1
 openai>=2.29.0
 anthropic>=0.86.0
+pdfplumber>=0.11.0  # PDF text extraction for non-Anthropic LLM providers
+python-multipart>=0.0.18  # required by FastAPI for File/Form uploads
 
 
 beanquery>=0.2.0
