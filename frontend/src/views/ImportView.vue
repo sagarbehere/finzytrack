@@ -246,6 +246,8 @@
   import { useToast } from '@/composables/useNotifications'
   import { isTransactionBalanced } from '@/utils/transactions'
 
+  defineOptions({ name: 'ImportView' })
+
   const { performCategorization, performCommit, isLoading, categorizeError, commitError } = useTransactionImporter()
   const { success: showSuccessToast, error: showErrorToast } = useToast()
 

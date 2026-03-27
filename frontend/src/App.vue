@@ -3,7 +3,7 @@
     <AppShell>
       <!-- Dynamic content based on current page -->
       <router-view v-if="$router" v-slot="{ Component }">
-        <KeepAlive include="AssistantView">
+        <KeepAlive :include="['AssistantView', 'ImportView']">
           <component :is="Component" />
         </KeepAlive>
       </router-view>
