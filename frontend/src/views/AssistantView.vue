@@ -5,8 +5,8 @@
       <div>
         <h1 class="text-2xl font-bold text-gray-900 dark:text-white">AI Assistant</h1>
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          AI is experimental and can make mistakes. Review all outputs carefully.
-          <a href="#" class="ml-1 text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">What data is shared with the AI model?</a>
+          AI can make mistakes — review output carefully.
+          <a href="https://finzytrack.app/docs/ai-data-sharing" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">Data shared with AI</a>
         </p>
       </div>
       <button

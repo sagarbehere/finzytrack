@@ -44,6 +44,10 @@
           <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
             Supported formats: CSV, XLS/XLSX, PDF, JPG, PNG
           </p>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            AI can make mistakes — review output carefully.
+            <a href="https://finzytrack.app/docs/ai-data-sharing" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">Data shared with AI</a>
+          </p>
         </div>
       </div>
 

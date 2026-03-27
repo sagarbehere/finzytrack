@@ -42,6 +42,10 @@
       <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">
         Ask a question in plain English
       </label>
+      <p class="text-xs text-gray-400 dark:text-gray-500 mb-1">
+        AI can make mistakes — review output carefully.
+        <a href="https://finzytrack.app/docs/ai-data-sharing" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">Data shared with AI</a>
+      </p>
       <p v-if="!config?.ai?.llm?.api_url" class="text-xs text-amber-600 dark:text-amber-400 mb-2">
         LLM not configured. Set <code class="font-mono">ai.llm.api_url</code> in <code class="font-mono">{{ config?.config_file_path ?? 'config.yaml' }}</code> to enable query generation.
       </p>

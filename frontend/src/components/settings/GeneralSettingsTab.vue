@@ -55,13 +55,17 @@
     <!-- ── AI / LLM ───────────────────────────────────────────────────────── -->
     <SettingsSection
       title="AI / LLM"
-      description="Language model settings for natural language transaction entry and query generation."
+      description="Configure the AI model used across the app."
       :is-dirty="llmIsDirty"
       :is-saving="llmSaving"
       :error="llmError"
       @save="saveLlm"
       @reset="resetLlm"
     >
+      <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">
+        <a href="https://finzytrack.app/docs/ai-data-sharing" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 underline underline-offset-2">What data is shared with the AI model?</a>
+      </p>
+
       <Listbox as="div" v-model="llmFields.provider">
         <ListboxLabel class="block text-sm/6 font-medium text-gray-900 dark:text-white">Provider</ListboxLabel>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
