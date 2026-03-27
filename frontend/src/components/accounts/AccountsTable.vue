@@ -13,12 +13,6 @@
             Status
           </th>
           <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">
-            Opened
-          </th>
-          <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">
-            Closed
-          </th>
-          <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">
             Currencies
           </th>
           <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">
@@ -32,9 +26,6 @@
                 </div>
               </div>
             </div>
-          </th>
-          <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">
-            Notes
           </th>
           <th scope="col" class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">
             Actions
@@ -103,16 +94,6 @@
             </span>
           </td>
 
-          <!-- Opened date -->
-          <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-            {{ node.openDate || '—' }}
-          </td>
-
-          <!-- Closed date -->
-          <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-            {{ node.closeDate || '—' }}
-          </td>
-
           <!-- Currencies -->
           <td class="px-4 py-3 whitespace-nowrap">
             <div class="flex flex-wrap gap-1">
@@ -152,11 +133,6 @@
                 +{{ formatBalanceDisplay(node).overflow }} more
               </button>
             </div>
-          </td>
-
-          <!-- Notes -->
-          <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 max-w-[200px] truncate">
-            {{ node.notes || '—' }}
           </td>
 
           <!-- Actions -->
