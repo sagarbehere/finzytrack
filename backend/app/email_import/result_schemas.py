@@ -46,6 +46,7 @@ class FetchRequest(BaseModel):
     profile_id: str
     since_date: Optional[str] = None   # ISO format: "2026-03-01"
     until_date: Optional[str] = None   # ISO format: "2026-03-15"
+    parsing_mode: Optional[str] = None # "regex" or "llm"; None = use config default
 
 
 class TrialExtractRequest(BaseModel):

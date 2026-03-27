@@ -131,6 +131,7 @@ export function useEmailImporter() {
     profileId: string,
     sinceDate?: string,
     untilDate?: string,
+    parsingMode?: string,
   ): Promise<EmailFetchResult> {
     if (!emailImportEnabled.value) throw new Error('Email import not enabled')
 
@@ -150,6 +151,7 @@ export function useEmailImporter() {
           profile_id: profileId,
           since_date: sinceDate ?? null,
           until_date: untilDate ?? null,
+          parsing_mode: parsingMode ?? null,
         }),
       })
         .then(async (resp) => {

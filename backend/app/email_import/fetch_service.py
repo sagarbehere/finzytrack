@@ -50,6 +50,7 @@ def _run_fetch_thread(
     registry: AccountProfileRegistry,
     queue: asyncio.Queue,
     loop: asyncio.AbstractEventLoop,
+    parsing_mode_override: Optional[str] = None,
 ) -> None:
     """
     Worker thread: load account profile -> IMAP fetch -> rule matching -> field extraction.
@@ -156,13 +157,21 @@ def _run_fetch_thread(
                 continue
 
             try:
+                # Resolve parsing mode: UI override > txn_type > account > config
+                if parsing_mode_override:
+                    effective_mode = parsing_mode_override
+                else:
+                    effective_mode = parser.resolve_parsing_mode(
+                        txn_type, email_config.parsing_mode
+                    )
+
                 data = parser.parse_email(
                     txn_type=txn_type,
                     body_text=raw.body_text,
                     subject=raw.subject,
                     email_date=raw.date,
                     message_id=raw.message_id,
-                    parsing_mode=email_config.parsing_mode,
+                    parsing_mode=effective_mode,
                     llm_config=llm_config,
                 )
                 parsed_transactions.append(ParsedTransaction(
@@ -221,6 +230,7 @@ async def stream_fetch(
     registry: AccountProfileRegistry,
     since_date: Optional[date] = None,
     until_date: Optional[date] = None,
+    parsing_mode: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Async generator that yields SSE strings for POST /fetch.
@@ -234,7 +244,7 @@ async def stream_fetch(
     thread = threading.Thread(
         target=_run_fetch_thread,
         args=(profile_id, since_date, until_date,
-              config, registry, queue, loop),
+              config, registry, queue, loop, parsing_mode),
         daemon=True,
     )
     thread.start()

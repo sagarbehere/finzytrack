@@ -168,6 +168,10 @@ class EmailRuleParser:
 
         return None
 
+    def resolve_parsing_mode(self, txn_type: TransactionTypeDef, default: str) -> str:
+        """Resolve parsing mode from config: txn_type > account > default."""
+        return txn_type.parsing_mode or self.account_parsing_mode or default
+
     def parse_email(
         self,
         txn_type: TransactionTypeDef,
@@ -181,12 +185,16 @@ class EmailRuleParser:
         """
         Extract structured transaction data from an email.
 
+        parsing_mode is the final resolved mode — caller is responsible for
+        applying any overrides before calling this method.
+
         Returns dict with keys: amount, payee, date, external_id, external_id_type,
         masked_account, source_rule.
 
         Raises ExtractionError or LLMExtractionError on failure.
         """
-        effective_mode = txn_type.parsing_mode or self.account_parsing_mode or parsing_mode
+        effective_mode = parsing_mode
+        logger.info(f"[{self.profile_id}] Parsing with mode={effective_mode}")
 
         if effective_mode == 'llm':
             raw = extract_fields_llm(

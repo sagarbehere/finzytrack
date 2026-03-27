@@ -147,6 +147,7 @@ async def fetch_email_transactions(
             registry=registry,
             since_date=since_date,
             until_date=until_date,
+            parsing_mode=req.parsing_mode,
         ):
             yield event
 
