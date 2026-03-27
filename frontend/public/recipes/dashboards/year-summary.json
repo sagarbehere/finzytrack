@@ -98,7 +98,7 @@
       "query": "SELECT currency, (-1 * SUM(CASE WHEN account_type = 'Income' THEN amount ELSE 0 END)) - ((SUM(CASE WHEN LOWER(account) LIKE 'income:gross%' THEN amount ELSE 0 END) / 2.0) * -1) - (SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END)) AS amount FROM postings WHERE year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency",
       "visualization": {
         "type": "kpi",
-        "icon": "$",
+        "icon": "💰",
         "iconColor": "blue",
         "multiCurrency": true
       }

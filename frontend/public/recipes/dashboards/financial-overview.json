@@ -21,7 +21,7 @@
       "query": "SELECT currency, SUM(CASE WHEN account_type IN ('Assets', 'Liabilities') THEN amount ELSE 0 END) AS amount FROM postings GROUP BY currency HAVING amount != 0 ORDER BY currency",
       "visualization": {
         "type": "kpi",
-        "icon": "$",
+        "icon": "💰",
         "multiCurrency": true
       }
     },

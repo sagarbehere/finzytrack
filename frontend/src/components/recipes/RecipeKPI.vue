@@ -1,6 +1,6 @@
 <template>
-  <div class="flex items-start h-full overflow-hidden">
-    <div v-if="icon" class="flex-shrink-0 mr-4 mt-1">
+  <div class="flex items-center h-full overflow-hidden">
+    <div v-if="icon" class="flex-shrink-0 mr-4">
       <div
         class="w-12 h-12 rounded-full flex items-center justify-center"
         :class="iconBgClass"
