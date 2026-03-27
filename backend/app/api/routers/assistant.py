@@ -409,7 +409,7 @@ async def assistant_chat(
 
     if not llm_config.model:
         async def _not_configured():
-            yield f"data: {json.dumps({'type': 'error', 'message': 'LLM is not configured. Please set ai.llm.model in your config.'})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': 'AI is not configured. Please set ai.llm.model in your config.'})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return StreamingResponse(_not_configured(), media_type="text/event-stream")
 

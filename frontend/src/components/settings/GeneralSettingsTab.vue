@@ -52,9 +52,9 @@
       </div>
     </SettingsSection>
 
-    <!-- ── AI / LLM ───────────────────────────────────────────────────────── -->
+    <!-- ── AI ─────────────────────────────────────────────────────────────── -->
     <SettingsSection
-      title="AI / LLM"
+      title="AI"
       description="Configure the AI model used across the app."
       :is-dirty="llmIsDirty"
       :is-saving="llmSaving"
@@ -184,7 +184,7 @@
         <ListboxLabel class="block text-sm/6 font-medium text-gray-900 dark:text-white">Engine</ListboxLabel>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
           <strong>Classifier</strong> trains on your existing ledger history.
-          <strong>LLM</strong> uses your configured language model (requires AI / LLM to be set up).
+          <strong>AI</strong> uses your configured language model (requires AI to be set up).
         </p>
         <div class="relative">
           <ListboxButton class="grid w-full cursor-default grid-cols-1 rounded-md bg-white py-1.5 pr-2 pl-3 text-left text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus-visible:outline-indigo-500">
@@ -253,7 +253,7 @@
         <ListboxLabel class="block text-sm/6 font-medium text-gray-900 dark:text-white">Parsing Mode</ListboxLabel>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
           <strong>Regex</strong> uses patterns defined in rule files.
-          <strong>LLM</strong> uses your configured language model (requires AI / LLM to be set up).
+          <strong>AI</strong> uses your configured language model (requires AI to be set up).
           Can be overridden per account or per rule.
         </p>
         <div class="relative">
@@ -498,12 +498,12 @@ const providerOptions = [
 
 const categorizationEngineOptions = [
   { value: 'classifier', label: 'Classifier (scikit-learn)' },
-  { value: 'llm', label: 'LLM' },
+  { value: 'ai', label: 'AI' },
 ] as const
 
 const parsingModeOptions = [
   { value: 'regex', label: 'Regex' },
-  { value: 'llm', label: 'LLM' },
+  { value: 'ai', label: 'AI' },
 ] as const
 
 const logLevelOptions = [

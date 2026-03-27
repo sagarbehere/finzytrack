@@ -12,7 +12,7 @@ export type CategorizationConfig = {
      */
     enabled?: boolean;
     /**
-     * Categorization engine: 'classifier' (scikit-learn) or 'llm' (future, requires ai.llm to be configured)
+     * Categorization engine: 'classifier' (scikit-learn) or 'ai' (requires ai.llm to be configured)
      */
     engine?: CategorizationEngine;
     /**

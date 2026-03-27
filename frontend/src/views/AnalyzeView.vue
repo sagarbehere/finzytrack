@@ -47,7 +47,7 @@
         <a href="https://finzytrack.app/docs/ai-data-sharing" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">Data shared with AI</a>
       </p>
       <p v-if="!config?.ai?.llm?.api_url" class="text-xs text-amber-600 dark:text-amber-400 mb-2">
-        LLM not configured. Set <code class="font-mono">ai.llm.api_url</code> in <code class="font-mono">{{ config?.config_file_path ?? 'config.yaml' }}</code> to enable query generation.
+        AI not configured. Set <code class="font-mono">ai.llm.api_url</code> in <code class="font-mono">{{ config?.config_file_path ?? 'config.yaml' }}</code> to enable query generation.
       </p>
       <textarea
         v-model="nlQuery"

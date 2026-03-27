@@ -27,7 +27,7 @@ def _resolve_anthropic_max_tokens(configured: int) -> int:
     if not _anthropic_max_tokens_warned:
         logger.warning(
             "Anthropic requires max_tokens but it is set to 0 (model default). "
-            "Using fallback of %d. Set max_tokens in Settings → AI & LLM to silence this warning.",
+            "Using fallback of %d. Set max_tokens in Settings → AI to silence this warning.",
             _ANTHROPIC_MAX_TOKENS_DEFAULT,
         )
         _anthropic_max_tokens_warned = True

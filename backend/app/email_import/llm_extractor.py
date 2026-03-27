@@ -94,7 +94,7 @@ def extract_fields_llm(
              "negative_values": [...], "positive_values": [...]}
     """
     if not llm_config.api_url and llm_config.provider != "anthropic":
-        raise LLMExtractionError("LLM API URL is not configured")
+        raise LLMExtractionError("AI API URL is not configured")
 
     user_message = f"Subject: {subject}\n\nBody:\n{body_text}"
 
@@ -104,10 +104,10 @@ def extract_fields_llm(
         else:
             content = _call_openai(llm_config, user_message)
     except Exception as e:
-        raise LLMExtractionError(f"LLM request failed: {e}")
+        raise LLMExtractionError(f"AI request failed: {e}")
 
     if not content:
-        raise LLMExtractionError("LLM returned empty response")
+        raise LLMExtractionError("AI returned empty response")
 
     # Strip markdown fences
     content = content.strip()
@@ -118,7 +118,7 @@ def extract_fields_llm(
     try:
         extracted = json.loads(content)
     except json.JSONDecodeError as e:
-        raise LLMExtractionError(f"LLM returned invalid JSON: {e}. Content: {content[:200]}")
+        raise LLMExtractionError(f"AI returned invalid JSON: {e}. Content: {content[:200]}")
 
     logger.debug("LLM extracted: %s", json.dumps(extracted, default=str))
 

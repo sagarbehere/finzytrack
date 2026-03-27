@@ -121,7 +121,7 @@ export async function generateQuery(
   llmConfig?: NLParserConfig,
 ): Promise<string> {
   if (!llmConfig?.apiUrl) {
-    throw new Error('LLM API not configured. Set api_url under the llm section in config.yaml.')
+    throw new Error('AI not configured. Set api_url under the llm section in config.yaml.')
   }
 
   const systemPrompt = language === 'beanquery'
@@ -152,7 +152,7 @@ export async function generateQuery(
     })
   } catch (e: any) {
     if (e.name === 'AbortError') {
-      throw new Error('LLM request timed out after 30 seconds. Check that your LLM server is running and responsive.')
+      throw new Error('AI request timed out after 30 seconds. Check that your AI server is running and responsive.')
     }
     throw e
   } finally {
@@ -161,7 +161,7 @@ export async function generateQuery(
 
   if (!response.ok) {
     const body = await response.text().catch(() => '')
-    throw new Error(`LLM request failed (${response.status}): ${body}`)
+    throw new Error(`AI request failed (${response.status}): ${body}`)
   }
 
   const data = await response.json()
@@ -171,7 +171,7 @@ export async function generateQuery(
   if (!content) {
     const reason = choice?.finish_reason === 'length'
       ? 'Model ran out of tokens. Try a shorter or simpler question.'
-      : 'LLM returned empty response'
+      : 'AI returned empty response'
     throw new Error(reason)
   }
 

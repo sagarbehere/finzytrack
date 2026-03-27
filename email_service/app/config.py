@@ -48,7 +48,7 @@ class EmailServiceConfig(BaseModel):
     default_lookback_days: int = 7
     max_emails: int = 500         # max emails to fetch per request; truncate with warning
     imap_timeout_secs: int = 30   # socket timeout for IMAP operations; 0 = no timeout
-    parsing_mode: str = "regex"   # "regex" or "llm"; overridden per account or per rule
+    parsing_mode: str = "regex"   # "regex" or "ai"; overridden per account or per rule
     server: ServerConfig = Field(default_factory=ServerConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
 

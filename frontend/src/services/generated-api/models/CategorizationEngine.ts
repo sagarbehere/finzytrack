@@ -7,5 +7,6 @@
  */
 export enum CategorizationEngine {
     CLASSIFIER = 'classifier',
+    AI = 'ai',
     LLM = 'llm',
 }

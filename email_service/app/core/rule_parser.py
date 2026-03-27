@@ -169,7 +169,7 @@ class EmailRuleParser:
         """
         effective_mode = txn_type.parsing_mode or self.account_parsing_mode or parsing_mode
 
-        if effective_mode == 'llm':
+        if effective_mode in ('ai', 'llm'):
             raw = extract_fields_llm(
                 body_text=body_text,
                 subject=subject,

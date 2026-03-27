@@ -119,12 +119,12 @@
               : 'bg-white text-gray-900 inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:inset-ring-white/5 dark:hover:bg-white/20'"
           >Regex</button>
           <button
-            @click="parsingMode = 'llm'"
+            @click="parsingMode = 'ai'"
             class="relative -ml-px inline-flex items-center rounded-r-md px-3 h-9 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-            :class="parsingMode === 'llm'
+            :class="parsingMode === 'ai'
               ? 'bg-indigo-600 text-white inset-ring inset-ring-indigo-600 dark:bg-indigo-500 dark:inset-ring-indigo-500'
               : 'bg-white text-gray-900 inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:inset-ring-white/5 dark:hover:bg-white/20'"
-          >LLM</button>
+          >AI</button>
         </span>
 
         <!-- Action buttons -->

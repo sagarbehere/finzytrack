@@ -14,11 +14,11 @@ server:
   port: 8001
 
 
-# AI settings (categorization and LLM)
+# AI settings (categorization and model)
 ai:
   categorization:
     enabled: true
-    engine: "classifier"  # "classifier" (scikit-learn) or "llm" (future, requires ai.llm to be configured)
+    engine: "classifier"  # "classifier" (scikit-learn) or "ai" (requires ai.llm to be configured)
     training_data_file: "./data/ledgers/one.beancount"  # training data comes from the main ledger
   llm:
     provider: "openai"  # "openai" (any OpenAI-compatible endpoint: LM Studio, Ollama, OpenAI, Groq, etc.) or "anthropic" (Anthropic API directly)
@@ -60,7 +60,7 @@ email_import:
   default_lookback_days: 7                 # Default days to look back for emails
   max_emails: 500                          # Max emails per fetch; truncates with warning
   imap_timeout_secs: 30                    # Socket timeout for IMAP operations; 0 = no timeout
-  parsing_mode: "regex"                    # Default: "regex" or "llm" (uses ai.llm config above)
+  parsing_mode: "regex"                    # Default: "regex" or "ai" (uses ai.llm config above)
 
 # Analytics Configuration
 analytics:

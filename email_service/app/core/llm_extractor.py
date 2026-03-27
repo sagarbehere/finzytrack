@@ -51,7 +51,7 @@ def extract_fields_llm(
              "negative_values": [...], "positive_values": [...]}
     """
     if not llm_config.api_url:
-        raise LLMExtractionError("LLM API URL is not configured")
+        raise LLMExtractionError("AI API URL is not configured")
 
     user_message = f"Subject: {subject}\n\nBody:\n{body_text}"
 
@@ -78,12 +78,12 @@ def extract_fields_llm(
             )
         resp.raise_for_status()
     except httpx.HTTPError as e:
-        raise LLMExtractionError(f"LLM request failed: {e}")
+        raise LLMExtractionError(f"AI request failed: {e}")
 
     data = resp.json()
     content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
     if not content:
-        raise LLMExtractionError("LLM returned empty response")
+        raise LLMExtractionError("AI returned empty response")
 
     # Strip markdown fences
     content = content.strip()
@@ -94,7 +94,7 @@ def extract_fields_llm(
     try:
         extracted = json.loads(content)
     except json.JSONDecodeError as e:
-        raise LLMExtractionError(f"LLM returned invalid JSON: {e}. Content: {content[:200]}")
+        raise LLMExtractionError(f"AI returned invalid JSON: {e}. Content: {content[:200]}")
 
     # Apply explicit sign rule if provided (overrides LLM's is_debit)
     if explicit_sign_rule:

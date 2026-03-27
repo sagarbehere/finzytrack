@@ -149,7 +149,7 @@ async function parseLLM(
     })
   } catch (e: any) {
     if (e.name === 'AbortError') {
-      throw new Error('LLM request timed out after 30 seconds. Check that your LLM server is running and responsive.')
+      throw new Error('AI request timed out after 30 seconds. Check that your AI server is running and responsive.')
     }
     throw e
   } finally {
@@ -158,7 +158,7 @@ async function parseLLM(
 
   if (!response.ok) {
     const body = await response.text().catch(() => '')
-    throw new Error(`LLM request failed (${response.status}): ${body}`)
+    throw new Error(`AI request failed (${response.status}): ${body}`)
   }
 
   const data = await response.json()
@@ -168,7 +168,7 @@ async function parseLLM(
   if (!content) {
     const reason = choice?.finish_reason === 'length'
       ? 'Model ran out of tokens (reasoning took too long). Try a shorter input or simpler description.'
-      : 'LLM returned empty response'
+      : 'AI returned empty response'
     throw new Error(reason)
   }
 
@@ -178,7 +178,7 @@ async function parseLLM(
     const parsed: ParsedTransaction = JSON.parse(jsonStr)
     return parsed
   } catch (e: any) {
-    throw new Error(`LLM returned invalid JSON: ${e.message}\nRaw: ${jsonStr.substring(0, 200)}`)
+    throw new Error(`AI returned invalid JSON: ${e.message}\nRaw: ${jsonStr.substring(0, 200)}`)
   }
 }
 

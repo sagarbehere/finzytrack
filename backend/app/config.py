@@ -34,7 +34,8 @@ class AccountsConfig(BaseModel):
 class CategorizationEngine(str, Enum):
     """Categorization engine selection."""
     CLASSIFIER = "classifier"  # scikit-learn classifier trained on local beancount history
-    LLM = "llm"                # LLM-based categorization (future)
+    AI = "ai"                  # AI-based categorization (future)
+    LLM = "llm"                # Alias for "ai" (backward compat)
 
 
 class CategorizationConfig(BaseModel):
@@ -42,7 +43,7 @@ class CategorizationConfig(BaseModel):
     enabled: bool = Field(default=True, description="Enable auto-categorization")
     engine: CategorizationEngine = Field(
         default=CategorizationEngine.CLASSIFIER,
-        description="Categorization engine: 'classifier' (scikit-learn) or 'llm' (future, requires ai.llm to be configured)"
+        description="Categorization engine: 'classifier' (scikit-learn) or 'ai' (requires ai.llm to be configured)"
     )
     training_data_file: Optional[str] = Field(default="./data/training.beancount", description="Path to training data file (used when engine=local)")
 
@@ -136,7 +137,7 @@ class EmailImportConfig(BaseModel):
     default_lookback_days: int = Field(default=7, ge=1, description="Default number of days to look back for emails")
     max_emails: int = Field(default=500, ge=1, description="Max emails to fetch per request; truncates with warning")
     imap_timeout_secs: int = Field(default=30, ge=0, description="Socket timeout for IMAP operations; 0 = no timeout")
-    parsing_mode: str = Field(default="regex", description="Default parsing mode: 'regex' or 'llm'; overridden per account or per rule")
+    parsing_mode: str = Field(default="regex", description="Default parsing mode: 'regex' or 'ai'; overridden per account or per rule")
 
 
 class Config(BaseModel):

@@ -196,7 +196,7 @@ class EmailRuleParser:
         effective_mode = parsing_mode
         logger.info(f"[{self.profile_id}] Parsing with mode={effective_mode}")
 
-        if effective_mode == 'llm':
+        if effective_mode in ('ai', 'llm'):
             raw = extract_fields_llm(
                 body_text=body_text,
                 subject=subject,

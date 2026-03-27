@@ -389,7 +389,7 @@ async def llm_parse(
 
     if not llm_config.model:
         raise APIError(
-            "LLM is not configured. Go to Settings and configure the AI & LLM section.",
+            "AI is not configured. Go to Settings and configure the AI section.",
             code="LLM_NOT_CONFIGURED",
             status_code=400,
         )

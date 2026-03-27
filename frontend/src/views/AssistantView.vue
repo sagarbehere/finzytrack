@@ -22,7 +22,7 @@
       </button>
     </div>
 
-    <!-- LLM not configured banner -->
+    <!-- AI not configured banner -->
     <div
       v-if="!llmConfigured"
       class="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-700 dark:bg-amber-900/20 p-5 mb-4 flex-none"
@@ -32,11 +32,11 @@
           <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
         </svg>
         <div>
-          <h3 class="font-semibold text-amber-800 dark:text-amber-300">LLM not configured</h3>
+          <h3 class="font-semibold text-amber-800 dark:text-amber-300">AI not configured</h3>
           <p class="mt-1 text-sm text-amber-700 dark:text-amber-400">
-            The AI assistant requires an LLM to be configured. Go to
+            The AI assistant requires an AI model to be configured. Go to
             <RouterLink to="/settings" class="underline font-medium hover:text-amber-900 dark:hover:text-amber-200">
-              Settings → AI &amp; LLM
+              Settings → AI
             </RouterLink>
             and set your provider, API key, and model name.
           </p>

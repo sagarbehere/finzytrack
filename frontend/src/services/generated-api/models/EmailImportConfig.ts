@@ -23,7 +23,7 @@ export type EmailImportConfig = {
      */
     imap_timeout_secs?: number;
     /**
-     * Default parsing mode: 'regex' or 'llm'; overridden per account or per rule
+     * Default parsing mode: 'regex' or 'ai'; overridden per account or per rule
      */
     parsing_mode?: string;
 };
