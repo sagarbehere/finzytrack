@@ -5,7 +5,6 @@ Endpoints:
 - GET /api/filesystem/browse  — list entries in a directory
 """
 
-import os
 from pathlib import Path
 from typing import List, Literal, Optional
 
@@ -49,7 +48,6 @@ def _resolve_safe(raw_path: str) -> Path:
     Raises APIError if:
     - The path does not exist
     - The path is not a directory
-    - The resolved path escapes expected boundaries (symlink tricks)
     """
     try:
         resolved = Path(raw_path).expanduser().resolve(strict=True)
