@@ -1,16 +1,16 @@
 <template>
   <div class="transaction-table-container">
-    <!-- Delete Confirm Dialog -->
-    <DeleteConfirmDialog
-      :is-open="deleteConfirmDialog.isOpen.value"
-      :title="deleteConfirmDialog.dialogOptions.value.title"
-      :message="deleteConfirmDialog.dialogOptions.value.message"
-      :confirm-text="deleteConfirmDialog.dialogOptions.value.confirmText"
-      :cancel-text="deleteConfirmDialog.dialogOptions.value.cancelText"
-      :variant="deleteConfirmDialog.dialogOptions.value.variant"
-      @confirm="deleteConfirmDialog.handleConfirm"
-      @cancel="deleteConfirmDialog.handleCancel"
-      @close="deleteConfirmDialog.handleClose"
+    <!-- Confirm Dialog -->
+    <ConfirmDialog
+      :is-open="confirmDialog.isOpen.value"
+      :title="confirmDialog.dialogOptions.value.title"
+      :message="confirmDialog.dialogOptions.value.message"
+      :confirm-text="confirmDialog.dialogOptions.value.confirmText"
+      :cancel-text="confirmDialog.dialogOptions.value.cancelText"
+      :variant="confirmDialog.dialogOptions.value.variant"
+      @confirm="confirmDialog.handleConfirm"
+      @cancel="confirmDialog.handleCancel"
+      @close="confirmDialog.handleClose"
     />
 
 
@@ -186,10 +186,10 @@ import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
 import PriceTypeDropdown from '@/components/common/PriceTypeDropdown.vue'
 import TransactionStatusIndicator from '@/components/common/TransactionStatusIndicator.vue'
 import ColumnVisibilityControl from '@/components/common/ColumnVisibilityControl.vue'
-import DeleteConfirmDialog from '@/components/common/DeleteConfirmDialog.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { useTableColumns } from '@/composables/useTableColumns'
 import { useTableKeyboardNavigation } from '@/composables/useTableKeyboardNavigation'
-import { useDeleteConfirmation } from '@/composables/useDeleteConfirmation'
+import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useTransactionDeleter } from '@/composables/useTransactionDeleter'
 import { useToast } from '@/composables/useNotifications'
 import type { TransactionViewModel, ImportContext, LedgerContext, PostingViewModel } from '@/types/transactions'
@@ -252,7 +252,7 @@ const {
   handleKeyNavigation
 } = useTableKeyboardNavigation()
 
-const deleteConfirmDialog = useDeleteConfirmation()
+const confirmDialog = useConfirmDialog()
 const { deleteTransactions } = useTransactionDeleter()
 const toast = useToast()
 
@@ -1425,7 +1425,7 @@ Narration: ${transaction.narration}
 This action will immediately update the ledger and cannot be undone.`
 
   // Show confirmation dialog
-  const confirmed = await deleteConfirmDialog.showConfirm({
+  const confirmed = await confirmDialog.showConfirm({
     title: isImportContext ? 'Remove Transaction?' : 'Delete Transaction?',
     message: message,
     confirmText: isImportContext ? 'Remove' : 'Delete',

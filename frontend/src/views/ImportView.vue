@@ -210,7 +210,7 @@
     />
 
     <!-- Register Transactions Confirmation Modal -->
-    <DeleteConfirmDialog
+    <ConfirmDialog
       :is-open="registerConfirmOpen"
       title="Issues Detected"
       :message="registerConfirmMessage"
@@ -235,7 +235,7 @@
   import type { EmailParsedTransaction } from '@/composables/useEmailImporter'
   import TransactionTable from '@/components/common/TransactionTable.vue'
   import DuplicateComparisonModal from '@/components/import/DuplicateComparisonModal.vue'
-  import DeleteConfirmDialog from '@/components/common/DeleteConfirmDialog.vue'
+  import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
   import { v7 as uuidv7 } from 'uuid'
   import type { TransactionViewModel, PostingViewModel, ImportContext, TransactionImportBundle } from '@/types/transactions'
   import type { OFXTransaction, OfxFileDetails } from '@/types/ofx'

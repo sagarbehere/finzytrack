@@ -86,18 +86,33 @@
         Try adjusting your filters or select a different date range.
       </p>
     </div>
+
+    <!-- Unsaved changes confirmation dialog -->
+    <ConfirmDialog
+      :is-open="unsavedConfirm.isOpen.value"
+      :title="unsavedConfirm.dialogOptions.value.title"
+      :message="unsavedConfirm.dialogOptions.value.message"
+      :confirm-text="unsavedConfirm.dialogOptions.value.confirmText"
+      :cancel-text="unsavedConfirm.dialogOptions.value.cancelText"
+      :variant="unsavedConfirm.dialogOptions.value.variant"
+      @confirm="unsavedConfirm.handleConfirm"
+      @cancel="unsavedConfirm.handleCancel"
+      @close="unsavedConfirm.handleClose"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import TransactionTable from '@/components/common/TransactionTable.vue'
 import TransactionFilterPanel from '@/components/transactions/TransactionFilterPanel.vue'
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import type { TransactionViewModel } from '@/types/transactions'
 import type { TransactionFilters } from '@/types/filters'
 import { useTransactionQuery } from '@/composables/useTransactionQuery'
 import { useTransactionUpdater } from '@/composables/useTransactionUpdater'
+import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useLedgerHealth } from '@/composables/useLedgerHealth'
 import { useToast } from '@/composables/useNotifications'
 
@@ -146,6 +161,7 @@ const initialFilters = computed<TransactionFilters | undefined>(() => {
 // Composables
 const { queryTransactions } = useTransactionQuery()
 const { updateTransactions } = useTransactionUpdater()
+const unsavedConfirm = useConfirmDialog()
 const { checkErrors: checkLedgerErrors } = useLedgerHealth()
 const toast = useToast()
 
@@ -261,6 +277,35 @@ async function handleSaveChanges() {
     isSaving.value = false
   }
 }
+
+// Warn before navigating away with unsaved edits (styled dialog)
+onBeforeRouteLeave(async () => {
+  if (hasModifications.value) {
+    const confirmed = await unsavedConfirm.showConfirm({
+      title: 'Unsaved Changes',
+      message: `You have ${modifiedCount.value} unsaved edit${modifiedCount.value > 1 ? 's' : ''} that will be lost if you leave this page.`,
+      confirmText: 'Leave',
+      cancelText: 'Stay',
+      variant: 'warning'
+    })
+    return confirmed
+  }
+})
+
+// Warn before browser refresh/close with unsaved edits (native dialog — browser limitation)
+function beforeUnloadHandler(e: BeforeUnloadEvent) {
+  if (hasModifications.value) {
+    e.preventDefault()
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('beforeunload', beforeUnloadHandler)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', beforeUnloadHandler)
+})
 
 // Initialize on mount - filter panel handles the initial query
 // If URL has query params, those will be used; otherwise filter panel uses defaults

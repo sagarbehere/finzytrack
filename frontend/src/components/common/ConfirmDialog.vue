@@ -83,7 +83,7 @@ import { computed } from 'vue'
 import { Dialog, DialogPanel, DialogTitle, TransitionRoot, TransitionChild } from '@headlessui/vue'
 import { ExclamationTriangleIcon, InformationCircleIcon, CheckCircleIcon } from '@heroicons/vue/24/outline'
 
-export interface DeleteConfirmDialogProps {
+export interface ConfirmDialogProps {
   isOpen: boolean
   title: string
   message: string
@@ -92,7 +92,7 @@ export interface DeleteConfirmDialogProps {
   variant?: 'danger' | 'warning' | 'info' | 'success'
 }
 
-const props = withDefaults(defineProps<DeleteConfirmDialogProps>(), {
+const props = withDefaults(defineProps<ConfirmDialogProps>(), {
   confirmText: 'Confirm',
   cancelText: 'Cancel',
   variant: 'danger'

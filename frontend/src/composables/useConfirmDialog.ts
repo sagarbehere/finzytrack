@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 
-export interface DeleteConfirmDialogOptions {
+export interface ConfirmDialogOptions {
   title: string
   message: string
   confirmText?: string
@@ -8,9 +8,9 @@ export interface DeleteConfirmDialogOptions {
   variant?: 'danger' | 'warning' | 'info' | 'success'
 }
 
-export function useDeleteConfirmation() {
+export function useConfirmDialog() {
   const isOpen = ref(false)
-  const dialogOptions = ref<DeleteConfirmDialogOptions>({
+  const dialogOptions = ref<ConfirmDialogOptions>({
     title: '',
     message: '',
     confirmText: 'Confirm',
@@ -20,7 +20,7 @@ export function useDeleteConfirmation() {
 
   let resolvePromise: ((value: boolean) => void) | null = null
 
-  const showConfirm = (options: DeleteConfirmDialogOptions): Promise<boolean> => {
+  const showConfirm = (options: ConfirmDialogOptions): Promise<boolean> => {
     dialogOptions.value = {
       confirmText: 'Confirm',
       cancelText: 'Cancel',
