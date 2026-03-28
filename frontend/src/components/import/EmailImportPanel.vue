@@ -5,10 +5,8 @@
     <div v-if="!emailImportEnabled" class="rounded-lg border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-4 space-y-2">
       <p class="text-sm font-medium text-amber-800 dark:text-amber-300">Email import is not enabled.</p>
       <p class="text-sm text-amber-700 dark:text-amber-400">
-        Add the following to your <code class="font-mono bg-amber-100 dark:bg-amber-800/50 px-1 rounded">{{ config?.config_file_path ?? 'config.yaml' }}</code> and restart the app:
+        Enable it under <strong>Email Import</strong> in <router-link to="/settings" class="underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200">Settings</router-link>.
       </p>
-      <pre class="text-xs font-mono bg-amber-100 dark:bg-amber-800/40 rounded p-2 text-amber-900 dark:text-amber-200">email_import:
-  enabled: true</pre>
     </div>
 
     <!-- State B: enabled but failed to load profiles -->
