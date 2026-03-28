@@ -157,8 +157,8 @@ async def commit_transactions(
         APIError: If validation or write fails
     """
 
-    # Formatted transaction strings
-    formatted_transactions = []
+    # Validated Beancount transaction objects to append
+    validated_transactions = []
 
     # Process each transaction
     for commit_txn in request.transactions:
@@ -354,9 +354,8 @@ async def commit_transactions(
                     }
                 )
 
-            # Format for writing
-            formatted_txn = _format_beancount_transaction(beancount_txn_with_id, include_transaction_id=True)
-            formatted_transactions.append(formatted_txn)
+            # Collect validated transaction for writing
+            validated_transactions.append(beancount_txn_with_id)
 
         except APIError:
             raise
@@ -369,25 +368,9 @@ async def commit_transactions(
                 details={"date": str(commit_txn.date), "error": str(e)}
             )
 
-    # Write all transactions to ledger atomically (with automatic cache invalidation)
+    # Write all transactions to ledger via the single write path
     try:
-        with beancount_manager.atomic_ledger_write() as f:
-            current_content = f.read()
-
-            # Ensure proper spacing
-            if current_content and not current_content.endswith('\n'):
-                current_content += '\n'
-            if current_content and not current_content.endswith('\n\n'):
-                current_content += '\n'
-
-            # Append all transactions
-            new_content = current_content + '\n'.join(formatted_transactions)
-
-            # Write back
-            f.seek(0)
-            f.write(new_content)
-            f.truncate()
-
+        beancount_manager.append_entries(validated_transactions)
         logger.info(f"Successfully committed {len(request.transactions)} transactions to ledger")
 
         return success_json_response(

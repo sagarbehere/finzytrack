@@ -334,6 +334,16 @@ class BeancountManager:
                 f.write(printer.format_entry(entry))
                 f.write('\n\n')
 
+    def append_entries(self, new_entries) -> None:
+        """
+        Append new entries to the ledger via a full rewrite through _write_entries().
+
+        Reads all current entries from the cache, appends the new entries,
+        and writes everything out. This ensures auto-generated padding
+        transactions are filtered on every write.
+        """
+        self._write_entries(list(self.cache.get_entries()) + list(new_entries))
+
     # =====================================
     # Account Management Methods
     # =====================================
@@ -524,44 +534,20 @@ class BeancountManager:
             if request.code in existing_codes:
                 raise ValueError(f"Commodity already exists: {request.code}")
             
-            # Build the commodity directive
+            # Build the Commodity entry
+            from beancount.core import data as bd
             today = datetime.now().date()
-            directive_lines = [f"{today} commodity {request.code}"]
-            
-            # Add name metadata if provided
+            meta: Dict[str, Any] = {'filename': str(self.ledger_file), 'lineno': 0}
             if request.name:
-                directive_lines.append(f"  name: \"{request.name}\"")
-            
-            # Add type metadata (default to "Unknown" if not provided)
-            commodity_type = request.type or "Unknown"
-            directive_lines.append(f"  type: \"{commodity_type}\"")
-            
-            # Add additional metadata if provided
+                meta['name'] = request.name
+            meta['type'] = request.type or "Unknown"
             if request.metadata:
                 for key, value in request.metadata.items():
-                    if key not in ['name', 'type']:  # Don't duplicate name/type
-                        if isinstance(value, str):
-                            directive_lines.append(f"  {key}: \"{value}\"")
-                        else:
-                            directive_lines.append(f"  {key}: {value}")
-            
-            directive_text = "\n".join(directive_lines)
+                    if key not in ('name', 'type'):
+                        meta[key] = value
 
-            # Use atomic write to add the directive (SIMPLE APPEND)
-            with self.atomic_ledger_write() as f:
-                current_content = f.read()
-                
-                # Simple append with proper formatting
-                if current_content and not current_content.endswith('\n'):
-                    current_content += '\n'
-                if current_content and not current_content.endswith('\n\n'):
-                    current_content += '\n'
-                    
-                new_content = current_content + directive_text + '\n'
-                
-                f.seek(0)
-                f.write(new_content)
-                f.truncate()
+            commodity_entry = bd.Commodity(meta, today, request.code)
+            self.append_entries([commodity_entry])
             
             # Get the created commodity details
             try:
@@ -789,7 +775,6 @@ class BeancountManager:
             APIError: If any transaction ID is not found or update fails
         """
         from app.exceptions import APIError
-        from beancount.parser import printer
 
         # Build lookup map
         update_map = {txn_id: txn for txn_id, txn in transactions}
@@ -837,29 +822,7 @@ class BeancountManager:
                 details={"not_found_ids": list(not_found)}
             )
 
-        # Write updated entries atomically
-        # IMPORTANT: Skip auto-generated padding transactions (flag 'P')
-        # These are created by Beancount when it sees pad + balance directives
-        # and should not be written back to the file
-        with self.atomic_ledger_write() as f:
-            # Truncate the file to ensure old content is removed
-            f.seek(0)
-            f.truncate()
-
-            for entry in updated_entries:
-                # Skip auto-generated padding transactions
-                if isinstance(entry, Transaction) and entry.flag == 'P':
-                    # Check if this is an auto-generated padding (no transaction ID)
-                    has_id = entry.meta and ('id' in entry.meta or 'transaction_id' in entry.meta)
-                    if not has_id:
-                        # This is an auto-generated padding transaction, skip it
-                        logger.debug(f"Skipping auto-generated padding transaction: {entry.narration}")
-                        continue
-
-                entry_str = printer.format_entry(entry)
-                f.write(entry_str)
-                f.write('\n\n')
-
+        self._write_entries(updated_entries)
         logger.info(f"Updated {len(found_ids)} transactions in ledger")
 
         return len(found_ids)
@@ -878,7 +841,6 @@ class BeancountManager:
             APIError: If any transaction ID is not found or delete fails
         """
         from app.exceptions import APIError
-        from beancount.parser import printer
 
         transaction_ids_set = set(transaction_ids)
 
@@ -915,27 +877,7 @@ class BeancountManager:
                 details={"not_found_ids": list(not_found)}
             )
 
-        # Write remaining entries atomically
-        # IMPORTANT: Skip auto-generated padding transactions (flag 'P')
-        with self.atomic_ledger_write() as f:
-            # Truncate the file to ensure old content is removed
-            f.seek(0)
-            f.truncate()
-
-            for entry in remaining_entries:
-                # Skip auto-generated padding transactions
-                if isinstance(entry, Transaction) and entry.flag == 'P':
-                    # Check if this is an auto-generated padding (no transaction ID)
-                    has_id = entry.meta and ('id' in entry.meta or 'transaction_id' in entry.meta)
-                    if not has_id:
-                        # This is an auto-generated padding transaction, skip it
-                        logger.debug(f"Skipping auto-generated padding transaction: {entry.narration}")
-                        continue
-
-                entry_str = printer.format_entry(entry)
-                f.write(entry_str)
-                f.write('\n\n')
-
+        self._write_entries(remaining_entries)
         logger.info(f"Deleted {len(found_ids)} transaction(s) from ledger")
 
         return len(found_ids)
@@ -950,8 +892,6 @@ class BeancountManager:
         Returns:
             Number of transactions deleted
         """
-        from beancount.parser import printer
-
         # Read current entries
         entries = self.cache.get_entries()
 
@@ -981,27 +921,7 @@ class BeancountManager:
         if deleted_count == 0:
             return 0
 
-        # Write remaining entries atomically
-        # IMPORTANT: Skip auto-generated padding transactions (flag 'P')
-        with self.atomic_ledger_write() as f:
-            # Truncate the file to ensure old content is removed
-            f.seek(0)
-            f.truncate()
-
-            for entry in remaining_entries:
-                # Skip auto-generated padding transactions
-                if isinstance(entry, Transaction) and entry.flag == 'P':
-                    # Check if this is an auto-generated padding (no transaction ID)
-                    has_id = entry.meta and ('id' in entry.meta or 'transaction_id' in entry.meta)
-                    if not has_id:
-                        # This is an auto-generated padding transaction, skip it
-                        logger.debug(f"Skipping auto-generated padding transaction: {entry.narration}")
-                        continue
-
-                entry_str = printer.format_entry(entry)
-                f.write(entry_str)
-                f.write('\n\n')
-
+        self._write_entries(remaining_entries)
         logger.info(f"Deleted {deleted_count} transaction(s) for account {account_name}")
 
         return deleted_count
@@ -1098,35 +1018,33 @@ class BeancountManager:
             if not self.is_existing_account(request.pad_source_account):
                 raise ValueError(f"Pad source account not found: {request.pad_source_account}")
 
-        # Build directive text
+        # Build entry objects
+        from beancount.core import data as bd
+        from beancount.core.amount import Amount as BcAmount
+        from decimal import Decimal as D
+
+        balance_date = datetime.strptime(request.date, "%Y-%m-%d").date()
+        meta = {'filename': str(self.ledger_file), 'lineno': 0}
+
+        new_entries = []
         # Pad must be dated before the balance (balance checks at start-of-day),
         # so we date the pad one day prior.
-        directive_lines = []
         if request.include_pad and request.pad_source_account:
-            pad_date = self._day_before(request.date)
-            directive_lines.append(f"{pad_date} pad {account_name} {request.pad_source_account}")
-        directive_lines.append(f"{request.date} balance {account_name} {request.amount} {request.currency}")
+            pad_date = datetime.strptime(self._day_before(request.date), "%Y-%m-%d").date()
+            pad_meta = {'filename': str(self.ledger_file), 'lineno': 0}
+            new_entries.append(bd.Pad(pad_meta, pad_date, account_name, request.pad_source_account))
 
-        directive_text = "\n".join(directive_lines)
+        balance_amount = BcAmount(D(str(request.amount)), request.currency)
+        new_entries.append(bd.Balance(meta, balance_date, account_name, balance_amount, None, None))
 
-        # Append to ledger
-        with self.atomic_ledger_write() as f:
-            current_content = f.read()
-
-            if current_content and not current_content.endswith('\n'):
-                current_content += '\n'
-            if current_content and not current_content.endswith('\n\n'):
-                current_content += '\n'
-
-            new_content = current_content + directive_text + '\n'
-
-            f.seek(0)
-            f.write(new_content)
-            f.truncate()
+        self.append_entries(new_entries)
 
     def update_balance_directive(self, account_name: str, request: BalanceDirectiveUpdateRequest) -> None:
         """
         Update an existing balance directive (and optionally its associated pad) in the ledger.
+
+        Uses parse→modify→print via _write_entries() so that every write goes
+        through the single authorised write path.
 
         Args:
             account_name: The Beancount account name
@@ -1135,86 +1053,76 @@ class BeancountManager:
         Raises:
             ValueError: If the directive is not found or validation fails
         """
+        from beancount.core import data as bd
+        from beancount.core.amount import Amount as BcAmount
+        from decimal import Decimal as D
+
         if not self.is_existing_account(account_name):
             raise ValueError(f"Account not found: {account_name}")
 
         if request.pad_source_account and not self.is_existing_account(request.pad_source_account):
             raise ValueError(f"Pad source account not found: {request.pad_source_account}")
 
-        with self.atomic_ledger_write() as f:
-            current_content = f.read()
-            lines = current_content.split('\n')
+        original_date = datetime.strptime(request.original_date, "%Y-%m-%d").date()
+        original_amount = D(str(request.original_amount))
 
-            # Build match patterns for the original balance line
-            # Pattern: "{date} balance {account} {amount} {currency}"
-            balance_line_idx = -1
-            pad_line_idx = -1
+        entries = list(self.cache.get_entries())
 
-            original_amount_str = self._format_amount(request.original_amount)
+        # Find the matching balance entry
+        balance_idx = None
+        for i, entry in enumerate(entries):
+            if (isinstance(entry, bd.Balance)
+                    and entry.account == account_name
+                    and entry.date == original_date
+                    and entry.amount.currency == request.original_currency
+                    and self._amounts_match(str(entry.amount.number), self._format_amount(request.original_amount))):
+                balance_idx = i
+                break
 
-            for i, line in enumerate(lines):
-                stripped = line.strip()
-                if stripped.startswith(';'):
-                    continue
+        if balance_idx is None:
+            raise ValueError(
+                f"Balance directive not found: {request.original_date} balance {account_name} "
+                f"{request.original_amount} {request.original_currency}"
+            )
 
-                # Match balance directive
-                if balance_line_idx == -1 and ' balance ' in stripped:
-                    parts = stripped.split()
-                    if (len(parts) >= 4 and
-                        parts[0] == request.original_date and
-                        parts[1] == 'balance' and
-                        parts[2] == account_name and
-                        self._amounts_match(parts[3], original_amount_str) and
-                        (len(parts) < 5 or parts[4] == request.original_currency)):
-                        balance_line_idx = i
+        # Find the associated pad (immediately before the balance, same account)
+        pad_idx = self._find_pad_before_balance_entry(entries, balance_idx, account_name)
 
-            if balance_line_idx == -1:
-                raise ValueError(
-                    f"Balance directive not found: {request.original_date} balance {account_name} "
-                    f"{request.original_amount} {request.original_currency}"
-                )
+        # Compute new values
+        new_date = datetime.strptime(request.new_date, "%Y-%m-%d").date() if request.new_date else original_date
+        new_amount = D(str(request.new_amount)) if request.new_amount is not None else original_amount
+        new_currency = request.new_currency or request.original_currency
 
-            # Search backward from the balance line for the nearest pad for this account
-            pad_line_idx = self._find_pad_before_balance(lines, balance_line_idx, account_name)
+        # Replace the balance entry
+        old_balance = entries[balance_idx]
+        new_balance_amount = BcAmount(new_amount, new_currency)
+        entries[balance_idx] = bd.Balance(old_balance.meta, new_date, account_name, new_balance_amount, None, None)
 
-            # Compute new values
-            new_date = request.new_date or request.original_date
-            new_amount = request.new_amount if request.new_amount is not None else request.original_amount
-            new_currency = request.new_currency or request.original_currency
-            new_amount_str = self._format_amount(new_amount)
+        # Handle pad directive changes
+        new_pad_date = datetime.strptime(self._day_before(
+            request.new_date or request.original_date
+        ), "%Y-%m-%d").date()
+        include_pad = request.include_pad
 
-            # Update the balance line
-            lines[balance_line_idx] = f"{new_date} balance {account_name} {new_amount_str} {new_currency}"
+        if include_pad is True:
+            pad_source = request.pad_source_account
+            if not pad_source:
+                raise ValueError("pad_source_account is required when include_pad is True")
+            new_pad = bd.Pad({'filename': str(self.ledger_file), 'lineno': 0}, new_pad_date, account_name, pad_source)
+            if pad_idx is not None:
+                entries[pad_idx] = new_pad
+            else:
+                # Insert pad just before the balance
+                entries.insert(balance_idx, new_pad)
+        elif include_pad is False and pad_idx is not None:
+            entries.pop(pad_idx)
+        elif pad_idx is not None:
+            # include_pad is None (no change requested), but update the date if it changed
+            if new_date != original_date:
+                old_pad = entries[pad_idx]
+                entries[pad_idx] = bd.Pad(old_pad.meta, new_pad_date, old_pad.account, old_pad.source_account)
 
-            # Handle pad directive changes
-            # Pad must be dated one day before the balance date
-            new_pad_date = self._day_before(new_date)
-            include_pad = request.include_pad
-            if include_pad is True:
-                pad_source = request.pad_source_account
-                if not pad_source:
-                    raise ValueError("pad_source_account is required when include_pad is True")
-                if pad_line_idx >= 0:
-                    # Update existing pad
-                    lines[pad_line_idx] = f"{new_pad_date} pad {account_name} {pad_source}"
-                else:
-                    # Insert new pad line before the balance line
-                    lines.insert(balance_line_idx, f"{new_pad_date} pad {account_name} {pad_source}")
-            elif include_pad is False and pad_line_idx >= 0:
-                # Remove existing pad
-                lines.pop(pad_line_idx)
-            elif pad_line_idx >= 0:
-                # include_pad is None (no change requested), but update the date if it changed
-                if new_date != request.original_date:
-                    old_pad = lines[pad_line_idx].strip().split()
-                    pad_source = old_pad[3] if len(old_pad) >= 4 else ''
-                    lines[pad_line_idx] = f"{new_pad_date} pad {account_name} {pad_source}"
-
-            # Write back
-            new_content = '\n'.join(lines)
-            f.seek(0)
-            f.write(new_content)
-            f.truncate()
+        self._write_entries(entries)
 
     def delete_balance_directive(
         self,
@@ -1227,6 +1135,9 @@ class BeancountManager:
         """
         Delete a balance directive (and optionally its associated pad) from the ledger.
 
+        Uses parse→modify→print via _write_entries() so that every write goes
+        through the single authorised write path.
+
         Args:
             account_name: The Beancount account name
             directive_date: Date string (YYYY-MM-DD)
@@ -1237,77 +1148,56 @@ class BeancountManager:
         Raises:
             ValueError: If the directive is not found
         """
-        with self.atomic_ledger_write() as f:
-            current_content = f.read()
-            lines = current_content.split('\n')
+        from beancount.core import data as bd
 
-            amount_str = self._format_amount(amount)
+        target_date = datetime.strptime(directive_date, "%Y-%m-%d").date()
+        entries = list(self.cache.get_entries())
 
-            balance_line_idx = -1
+        # Find the matching balance entry
+        balance_idx = None
+        for i, entry in enumerate(entries):
+            if (isinstance(entry, bd.Balance)
+                    and entry.account == account_name
+                    and entry.date == target_date
+                    and entry.amount.currency == currency
+                    and self._amounts_match(str(entry.amount.number), self._format_amount(amount))):
+                balance_idx = i
+                break
 
-            for i, line in enumerate(lines):
-                stripped = line.strip()
-                if stripped.startswith(';'):
-                    continue
+        if balance_idx is None:
+            raise ValueError(
+                f"Balance directive not found: {directive_date} balance {account_name} "
+                f"{amount} {currency}"
+            )
 
-                # Match balance directive
-                if balance_line_idx == -1 and ' balance ' in stripped:
-                    parts = stripped.split()
-                    if (len(parts) >= 4 and
-                        parts[0] == directive_date and
-                        parts[1] == 'balance' and
-                        parts[2] == account_name and
-                        self._amounts_match(parts[3], amount_str) and
-                        (len(parts) < 5 or parts[4] == currency)):
-                        balance_line_idx = i
+        # Find associated pad
+        pad_idx = None
+        if delete_pad:
+            pad_idx = self._find_pad_before_balance_entry(entries, balance_idx, account_name)
 
-            if balance_line_idx == -1:
-                raise ValueError(
-                    f"Balance directive not found: {directive_date} balance {account_name} "
-                    f"{amount} {currency}"
-                )
+        # Remove entries (higher index first to preserve indices)
+        indices_to_remove = sorted(
+            [i for i in [balance_idx, pad_idx] if i is not None],
+            reverse=True
+        )
+        for idx in indices_to_remove:
+            entries.pop(idx)
 
-            # Search backward for associated pad
-            pad_line_idx = -1
-            if delete_pad:
-                pad_line_idx = self._find_pad_before_balance(lines, balance_line_idx, account_name)
-
-            # Remove lines (remove higher index first to preserve indices)
-            indices_to_remove = [balance_line_idx]
-            if pad_line_idx >= 0:
-                indices_to_remove.append(pad_line_idx)
-            indices_to_remove.sort(reverse=True)
-
-            for idx in indices_to_remove:
-                lines.pop(idx)
-
-            # Clean up double blank lines
-            new_content = '\n'.join(lines)
-            f.seek(0)
-            f.write(new_content)
-            f.truncate()
+        self._write_entries(entries)
 
     @staticmethod
-    def _find_pad_before_balance(lines: List[str], balance_line_idx: int, account_name: str) -> int:
-        """Search backward from a balance line for the nearest pad directive for the same account.
+    def _find_pad_before_balance_entry(entries: list, balance_idx: int, account_name: str):
+        """Search backward from a balance entry for the nearest pad directive for the same account.
 
-        Skips blank lines and comments. Stops at the first non-blank, non-comment,
-        non-pad directive line to avoid matching a pad that belongs to a different
-        balance.
-
-        Returns:
-            Line index of the pad, or -1 if not found.
+        Looks at the entry immediately before the balance. Returns the index
+        if it's a Pad for the same account, otherwise None.
         """
-        for i in range(balance_line_idx - 1, -1, -1):
-            stripped = lines[i].strip()
-            if not stripped or stripped.startswith(';'):
-                continue  # skip blank lines and comments
-            parts = stripped.split()
-            if len(parts) >= 4 and parts[1] == 'pad' and parts[2] == account_name:
-                return i
-            # Hit a non-pad directive — stop searching
-            break
-        return -1
+        from beancount.core import data as bd
+        if balance_idx > 0:
+            prev = entries[balance_idx - 1]
+            if isinstance(prev, bd.Pad) and prev.account == account_name:
+                return balance_idx - 1
+        return None
 
     @staticmethod
     def _day_before(date_str: str) -> str:
