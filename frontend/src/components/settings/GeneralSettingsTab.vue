@@ -25,7 +25,10 @@
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
           Path to your Beancount ledger file. Can be absolute or relative to the directory the backend was started from.
         </p>
-        <input v-model="dataFields.ledger_file" type="text" placeholder="e.g. data/ledger.beancount" :class="inputClass" />
+        <div class="flex gap-2">
+          <input v-model="dataFields.ledger_file" type="text" placeholder="e.g. data/ledger.beancount" :class="[inputClass, 'flex-1']" />
+          <button :class="browseButtonClass" @click="openFilePicker({ title: 'Select Ledger File', mode: 'file', extensions: ['.beancount', '.bean'], initialPath: dataFields.ledger_file, onSelect: p => dataFields.ledger_file = p })">Browse</button>
+        </div>
       </div>
     </SettingsSection>
 
@@ -209,7 +212,10 @@
       <div>
         <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Training Data File</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Path to a Beancount file used as training data for the classifier.</p>
-        <input v-model="categorizationFields.training_data_file" type="text" placeholder="data/training.beancount" :class="inputClass" />
+        <div class="flex gap-2">
+          <input v-model="categorizationFields.training_data_file" type="text" placeholder="data/training.beancount" :class="[inputClass, 'flex-1']" />
+          <button :class="browseButtonClass" @click="openFilePicker({ title: 'Select Training Data File', mode: 'file', extensions: ['.beancount', '.bean'], initialPath: categorizationFields.training_data_file, onSelect: p => categorizationFields.training_data_file = p })">Browse</button>
+        </div>
       </div>
     </SettingsSection>
 
@@ -290,7 +296,10 @@
       <div>
         <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">SQLite Export Path</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Path to the SQLite database file exported from your ledger.</p>
-        <input v-model="analyticsFields.export_path" type="text" placeholder="data/ledger.db" :class="inputClass" />
+        <div class="flex gap-2">
+          <input v-model="analyticsFields.export_path" type="text" placeholder="data/ledger.db" :class="[inputClass, 'flex-1']" />
+          <button :class="browseButtonClass" @click="openFilePicker({ title: 'Select SQLite Export Path', mode: 'file', extensions: ['.db'], initialPath: analyticsFields.export_path, onSelect: p => analyticsFields.export_path = p })">Browse</button>
+        </div>
       </div>
 
       <div class="flex items-center justify-between">
@@ -340,7 +349,10 @@
           <span class="ml-1 text-xs font-medium text-amber-600 dark:text-amber-400">⚠ restart required</span>
         </label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Directory where backup files are stored.</p>
-        <input v-model="backupFields.backup_dir" type="text" placeholder="data/backups" :class="inputClass" />
+        <div class="flex gap-2">
+          <input v-model="backupFields.backup_dir" type="text" placeholder="data/backups" :class="[inputClass, 'flex-1']" />
+          <button :class="browseButtonClass" @click="openFilePicker({ title: 'Select Backup Directory', mode: 'directory', initialPath: backupFields.backup_dir, onSelect: p => backupFields.backup_dir = p })">Browse</button>
+        </div>
       </div>
 
       <div>
@@ -397,7 +409,10 @@
           <span class="ml-1 text-xs font-medium text-amber-600 dark:text-amber-400">⚠ restart required</span>
         </label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Path to the log file.</p>
-        <input v-model="loggingFields.file" type="text" placeholder="logs/finzytrack.log" :class="inputClass" />
+        <div class="flex gap-2">
+          <input v-model="loggingFields.file" type="text" placeholder="logs/finzytrack.log" :class="[inputClass, 'flex-1']" />
+          <button :class="browseButtonClass" @click="openFilePicker({ title: 'Select Log File', mode: 'file', extensions: ['.log'], initialPath: loggingFields.file, onSelect: p => loggingFields.file = p })">Browse</button>
+        </div>
       </div>
 
       <div>
@@ -458,6 +473,17 @@
       </div>
     </SettingsSection>
 
+    <!-- Shared file picker modal -->
+    <FilePickerModal
+      :open="filePicker.open"
+      :title="filePicker.title"
+      :mode="filePicker.mode"
+      :extensions="filePicker.extensions"
+      :initial-path="filePicker.initialPath"
+      @select="(p: string) => { filePicker.onSelect(p); filePicker.open = false }"
+      @close="filePicker.open = false"
+    />
+
   </div>
 </template>
 
@@ -467,6 +493,7 @@ import { Listbox, ListboxButton, ListboxLabel, ListboxOption, ListboxOptions } f
 import { ChevronUpDownIcon } from '@heroicons/vue/16/solid'
 import { CheckIcon } from '@heroicons/vue/20/solid'
 import SettingsSection from './SettingsSection.vue'
+import FilePickerModal from '@/components/common/FilePickerModal.vue'
 import { useConfig } from '@/composables/useConfig'
 import { useAccounts } from '@/composables/useAccounts'
 import { useCommodities } from '@/composables/useCommodities'
@@ -484,6 +511,34 @@ const toast = useToast()
 
 const inputClass = 'block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500'
 
+
+// ─── File picker state ───────────────────────────────────────────────────────
+
+const filePicker = reactive({
+  open: false,
+  title: 'Select File',
+  mode: 'file' as 'file' | 'directory',
+  extensions: undefined as string[] | undefined,
+  initialPath: '',
+  onSelect: (_path: string) => {},
+})
+
+function openFilePicker(opts: {
+  title: string
+  mode: 'file' | 'directory'
+  extensions?: string[]
+  initialPath?: string
+  onSelect: (path: string) => void
+}) {
+  filePicker.title = opts.title
+  filePicker.mode = opts.mode
+  filePicker.extensions = opts.extensions
+  filePicker.initialPath = opts.initialPath ?? ''
+  filePicker.onSelect = opts.onSelect
+  filePicker.open = true
+}
+
+const browseButtonClass = 'shrink-0 rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20'
 
 // ─── Eye toggle for API key ───────────────────────────────────────────────────
 
