@@ -59,12 +59,6 @@ class CategorizationConfig(BaseModel):
     training_data_file: Optional[str] = Field(default="./data/training.beancount", description="Path to training data file (used when engine=local)")
 
 
-class FeaturesConfig(BaseModel):
-    """Feature toggle configuration."""
-    duplicate_detection: bool = Field(default=True, description="Enable duplicate detection")
-    auto_categorization: bool = Field(default=True, description="Enable automatic categorization")
-
-
 class BackupConfig(BaseModel):
     """Backup system configuration."""
     enabled: bool = Field(default=True, description="Enable backup system")
@@ -133,7 +127,6 @@ class Config(BaseModel):
     # Nested configuration sections
     server: ServerConfig = Field(default_factory=ServerConfig)
     accounts: AccountsConfig = Field(default_factory=AccountsConfig)
-    features: FeaturesConfig = Field(default_factory=FeaturesConfig)
     backup: BackupConfig = Field(default_factory=BackupConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     ai: AIConfig = Field(default_factory=AIConfig, description="AI and machine learning settings")

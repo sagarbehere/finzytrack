@@ -115,18 +115,17 @@ import { ref, computed, onMounted } from 'vue'
 import MonacoEditor from './MonacoEditor.vue'
 import UtilityPanel from './UtilityPanel.vue'
 import { FilesService } from '@/services/generated-api'
-import type { Config, ErrorInfo } from '@/services/generated-api'
+import type { ErrorInfo } from '@/services/generated-api'
 import { useToast } from '@/composables/useNotifications'
 
 interface Props {
-  fileType: 'config' | 'ledger'
+  fileType: 'ledger'
   allowEdit?: boolean
   showUtilities?: boolean
 }
 
 interface Emits {
-  (e: 'saved', config: Config): void
-  (e: 'restart-required', reason: string): void
+  (e: 'saved'): void
   (e: 'error', message: string): void
 }
 
@@ -149,9 +148,7 @@ const validationError = ref('')
 const sizeWarning = ref('')
 
 // Computed
-const language = computed(() => {
-  return props.fileType === 'config' ? 'yaml' : 'plaintext'
-})
+const language = computed(() => 'plaintext')
 
 const editorOptions = computed(() => ({
   minimap: { enabled: false },
@@ -167,12 +164,7 @@ const editorOptions = computed(() => ({
 // Methods
 async function loadFile() {
   try {
-    const endpoint =
-      props.fileType === 'config'
-        ? FilesService.getConfigFileApiFilesConfigGet
-        : FilesService.getLedgerFileApiFilesLedgerGet
-
-    const response = await endpoint()
+    const response = await FilesService.getLedgerFileApiFilesLedgerGet()
 
     if (response.success && response.data) {
       originalContent.value = response.data.content
@@ -201,47 +193,9 @@ async function save() {
   validationError.value = ''
 
   try {
-    if (props.fileType === 'config') {
-      await saveConfigFile()
-    } else {
-      await saveLedgerFile()
-    }
+    await saveLedgerFile()
   } finally {
     isSaving.value = false
-  }
-}
-
-async function saveConfigFile() {
-  try {
-    const response = await FilesService.updateConfigFileApiFilesConfigPut({
-      content: content.value,
-    })
-
-    if (response.success && response.data) {
-      // Update local state - use current editor content
-      originalContent.value = content.value
-      isDirty.value = false
-
-      // Emit updated config so parent can update global cache
-      emit('saved', response.data.config)
-
-      // Emit restart info if needed
-      if (response.data.restart_required) {
-        emit('restart-required', response.data.restart_reason || 'Config changes require restart')
-      }
-
-      toast.success('Success', 'Configuration saved successfully')
-    } else {
-      validationError.value = formatError(response.error)
-      emit('error', validationError.value)
-    }
-  } catch (error: any) {
-    if (error.body?.error) {
-      validationError.value = formatError(error.body.error)
-    } else {
-      validationError.value = `Failed to save: ${error?.message || error}`
-    }
-    emit('error', validationError.value)
   }
 }
 

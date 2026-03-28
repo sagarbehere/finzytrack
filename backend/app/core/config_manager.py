@@ -95,7 +95,6 @@ class ConfigManager:
         Hot-reloadable fields (no restart required):
         - ledger_file (hot-switched: validates file, updates cache & SQLite)
         - ml.* (enabled, training_data_file)
-        - features.* (duplicate_detection, auto_categorization)
         - backup.* (enabled, retention_count, cleanup_on_exceed)
         - logging.level (and other logging settings)
         - accounts.* (default_currency, default_unknown_account)

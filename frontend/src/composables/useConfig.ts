@@ -50,7 +50,7 @@ export function useConfig() {
   /**
    * Update cached configuration.
    *
-   * Called by FileEditor after successful config file save to keep
+   * Called after successful config save (e.g. via Settings GUI) to keep
    * the global cache in sync with backend state.
    *
    * @param newConfig - Updated configuration object from backend

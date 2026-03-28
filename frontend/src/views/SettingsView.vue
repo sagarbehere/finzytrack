@@ -5,7 +5,7 @@
       <p class="mt-1 text-gray-600 dark:text-gray-400">Application preferences and configuration</p>
     </div>
 
-    <!-- Restart required banner — shown above all tabs once triggered -->
+    <!-- Restart required banner -->
     <div
       v-if="restartRequired"
       class="mb-6 flex items-start gap-3 rounded-md bg-yellow-50 p-4 text-sm dark:bg-yellow-500/10 dark:outline dark:outline-yellow-500/15"
@@ -16,88 +16,13 @@
       <span>Some changes require an app restart to take effect. Please restart the application.</span>
     </div>
 
-    <!-- Tab Navigation -->
-    <div class="border-b border-gray-200 dark:border-white/10 mb-6">
-      <nav class="-mb-px flex space-x-8">
-        <button
-          v-for="tab in tabs"
-          :key="tab.id"
-          @click="activeTab = tab.id"
-          :class="[
-            activeTab === tab.id
-              ? 'border-indigo-500 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400'
-              : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:border-white/20 dark:hover:text-gray-200',
-            'whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium',
-          ]"
-        >
-          {{ tab.label }}
-        </button>
-      </nav>
-    </div>
-
-    <!-- Tab Content -->
-    <div>
-
-      <!-- General Tab -->
-      <GeneralSettingsTab
-        v-if="activeTab === 'general'"
-        @restart-required="restartRequired = true"
-      />
-
-      <!-- Configuration File Tab -->
-      <div v-if="activeTab === 'config'">
-        <div class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 p-6">
-          <div class="mb-4">
-            <h3 class="text-lg font-medium text-gray-900 dark:text-white">Configuration File</h3>
-            <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">
-              Edit your configuration file directly. Changes to most settings take effect immediately.
-              Server settings require a restart.
-            </p>
-          </div>
-          <FileEditor
-            file-type="config"
-            :allow-edit="true"
-            @saved="handleConfigSaved"
-            @restart-required="restartRequired = true"
-            @error="handleError"
-          />
-        </div>
-      </div>
-
-    </div>
+    <GeneralSettingsTab @restart-required="restartRequired = true" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import FileEditor from '@/components/common/FileEditor.vue'
 import GeneralSettingsTab from '@/components/settings/GeneralSettingsTab.vue'
-import type { Config } from '@/services/generated-api'
-import { useConfig } from '@/composables/useConfig'
-import { useAccounts } from '@/composables/useAccounts'
-import { useCommodities } from '@/composables/useCommodities'
 
-const tabs = [
-  { id: 'general', label: 'General' },
-  { id: 'config', label: 'Configuration File' },
-]
-
-const activeTab = ref('general')
-const { config, updateConfig } = useConfig()
-const { invalidateCache: invalidateAccounts } = useAccounts()
-const { invalidateCache: invalidateCommodities } = useCommodities()
 const restartRequired = ref(false)
-
-function handleConfigSaved(updatedConfig: Config) {
-  // If ledger file changed via raw YAML editor, invalidate cached ledger data
-  if (updatedConfig.ledger_file !== config.value?.ledger_file) {
-    invalidateAccounts()
-    invalidateCommodities()
-  }
-  updateConfig(updatedConfig)
-}
-
-function handleError(errorMsg: string) {
-  console.error('Config editor error:', errorMsg)
-}
 </script>
