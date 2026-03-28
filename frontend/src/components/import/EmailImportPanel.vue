@@ -329,6 +329,11 @@
     }
   })
 
+  // Re-load profiles when email import is enabled via Settings
+  watch(emailImportEnabled, async (enabled) => {
+    if (enabled) await loadProfiles()
+  })
+
   const retryLoad = async () => {
     await loadProfiles()
     if (profilesError.value) {
