@@ -12,11 +12,10 @@ from app.schemas.export_schemas import (
     ExportData,
     ExportStatusData,
 )
-from app.dependencies import get_beancount_manager, get_config_manager
-from app.config import SQLITE_EXPORT_PATH
+from app.config import SQLITE_EXPORT_PATH, SQLITE_ENABLE_WAL
+from app.dependencies import get_beancount_manager
 from app.services.sqlite_exporter import SQLiteExporter
 from app.core.beancount_manager import BeancountManager
-from app.core.config_manager import ConfigManager
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
 
@@ -32,7 +31,6 @@ router = APIRouter()
 )
 async def export_ledger(
     beancount_manager: BeancountManager = Depends(get_beancount_manager),
-    config_manager: ConfigManager = Depends(get_config_manager),
     force: bool = Body(default=False, embed=True),
 ):
     """
@@ -42,10 +40,9 @@ async def export_ledger(
         POST /api/ledger/export
         POST /api/ledger/export {"force": true}
     """
-    config = config_manager.get_config()
     exporter = SQLiteExporter(
         sqlite_path=SQLITE_EXPORT_PATH,
-        enable_wal=config.analytics.sqlite.enable_wal
+        enable_wal=SQLITE_ENABLE_WAL
     )
 
     # Check for ledger errors
@@ -75,7 +72,6 @@ async def export_ledger(
 )
 async def get_export_status(
     beancount_manager: BeancountManager = Depends(get_beancount_manager),
-    config_manager: ConfigManager = Depends(get_config_manager)
 ):
     """
     Get SQLite export status.
@@ -83,10 +79,9 @@ async def get_export_status(
     Examples:
         GET /api/ledger/export/status
     """
-    config = config_manager.get_config()
     exporter = SQLiteExporter(
         sqlite_path=SQLITE_EXPORT_PATH,
-        enable_wal=config.analytics.sqlite.enable_wal
+        enable_wal=SQLITE_ENABLE_WAL
     )
 
     status = await exporter.get_status()

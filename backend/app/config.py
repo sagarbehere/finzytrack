@@ -25,6 +25,9 @@ BACKUP_DIR = "./data/backups"
 LOG_FILE = "./logs/finzytrack.log"
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 CORS_ORIGINS = ["http://127.0.0.1:3000", "http://localhost:3000"]
+SQLITE_AUTO_SYNC = True
+SQLITE_SYNC_DEBOUNCE_SECONDS = 5.0
+SQLITE_ENABLE_WAL = True
 
 
 class ServerConfig(BaseModel):
@@ -112,18 +115,6 @@ class OFXAccountMapping(BaseModel):
     beancount_account: str = Field(..., description="Corresponding Beancount account")
 
 
-class SQLiteConfig(BaseModel):
-    """SQLite export configuration."""
-    auto_sync_enabled: bool = Field(default=True, description="Enable automatic sync on ledger changes")
-    sync_debounce_seconds: float = Field(default=5.0, ge=0.0, description="Debounce delay in seconds before syncing")
-    enable_wal: bool = Field(default=True, description="Enable WAL mode for concurrent access")
-
-
-class AnalyticsConfig(BaseModel):
-    """Analytics and reporting configuration."""
-    sqlite: SQLiteConfig = Field(default_factory=SQLiteConfig, description="SQLite export settings")
-
-
 class EmailImportConfig(BaseModel):
     """Email import configuration (formerly the email_service microservice)."""
     enabled: bool = Field(default=False, description="Enable email import functionality")
@@ -146,9 +137,6 @@ class Config(BaseModel):
     backup: BackupConfig = Field(default_factory=BackupConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     ai: AIConfig = Field(default_factory=AIConfig, description="AI and machine learning settings")
-
-    # Analytics configuration
-    analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig, description="Analytics and reporting settings")
 
     # Email import (merged from email_service microservice)
     email_import: EmailImportConfig = Field(

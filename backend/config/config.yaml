@@ -52,10 +52,3 @@ email_import:
   imap_timeout_secs: 30                    # Socket timeout for IMAP operations; 0 = no timeout
   parsing_mode: "regex"                    # Default: "regex" or "ai" (uses ai.llm config above)
 
-# Analytics Configuration
-analytics:
-  # SQLite export settings
-  sqlite:
-    auto_sync_enabled: true
-    sync_debounce_seconds: 5.0
-    enable_wal: true  # Enable WAL mode for concurrent access

@@ -19,7 +19,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .config import Config, ConfigurationError, SQLITE_EXPORT_PATH, BACKUP_DIR, LOG_FILE, LOG_FORMAT, CORS_ORIGINS
+from .config import (
+    Config, ConfigurationError,
+    SQLITE_EXPORT_PATH, BACKUP_DIR, LOG_FILE, LOG_FORMAT, CORS_ORIGINS,
+    SQLITE_AUTO_SYNC, SQLITE_SYNC_DEBOUNCE_SECONDS, SQLITE_ENABLE_WAL,
+)
 from .api.routers.importer import ofx_accounts, transaction, csv_rules, xls_rules, email as email_import_router, llm_parse
 from .api.routers import accounts, commodities, ledger_export, ledger_transactions, query, config as config_router, files, filesystem, ledger, assistant, recipes
 from .core.beancount_manager import BeancountManager
@@ -134,14 +138,14 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
     # 5. Create SQLite exporter and sync manager
     sqlite_exporter = SQLiteExporter(
         sqlite_path=SQLITE_EXPORT_PATH,
-        enable_wal=config.analytics.sqlite.enable_wal
+        enable_wal=SQLITE_ENABLE_WAL,
     )
 
     sqlite_sync_manager = DBSyncManager(
         exporter=sqlite_exporter,
         ledger_file=config.ledger_file,
-        delay=config.analytics.sqlite.sync_debounce_seconds,
-        db_type="sqlite"
+        delay=SQLITE_SYNC_DEBOUNCE_SECONDS,
+        db_type="sqlite",
     )
 
     # 5b. Give ConfigManager references for hot ledger switching
@@ -157,7 +161,7 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
         raise RuntimeError(f"Failed to initialize ledger file {config.ledger_file}: {e}")
 
     # 7. Register SQLite sync callback
-    if config.analytics.sqlite.auto_sync_enabled:
+    if SQLITE_AUTO_SYNC:
         beancount_manager.register_cache_invalidation_callback(
             sqlite_sync_manager.on_ledger_changed
         )
