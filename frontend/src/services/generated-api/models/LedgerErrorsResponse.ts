@@ -4,12 +4,10 @@
 /* eslint-disable */
 import type { LedgerValidationError } from './LedgerValidationError';
 /**
- * Response for ledger validation.
+ * Current ledger parse errors from the beancount cache.
  */
-export type LedgerValidationResponse = {
-    valid: boolean;
+export type LedgerErrorsResponse = {
+    error_count: number;
     errors: Array<LedgerValidationError>;
-    warnings: Array<LedgerValidationError>;
-    summary: string;
 };
 

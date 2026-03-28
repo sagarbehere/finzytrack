@@ -11,10 +11,6 @@ export type BackupConfig = {
      */
     enabled?: boolean;
     /**
-     * Backup directory path
-     */
-    backup_dir?: string;
-    /**
      * Number of backups to retain
      */
     retention_count?: number;

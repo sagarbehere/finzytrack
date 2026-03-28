@@ -243,12 +243,14 @@
   import type { DuplicateInfo } from '@/services/generated-api'
   import type { ParsedTransaction } from '@/services/nlParser'
   import { useTransactionImporter } from '@/composables/useTransactionImporter'
+  import { useLedgerHealth } from '@/composables/useLedgerHealth'
   import { useToast } from '@/composables/useNotifications'
   import { isTransactionBalanced } from '@/utils/transactions'
 
   defineOptions({ name: 'ImportView' })
 
   const { performCategorization, performCommit, isLoading, categorizeError, commitError } = useTransactionImporter()
+  const { checkErrors: checkLedgerErrors } = useLedgerHealth()
   const { success: showSuccessToast, error: showErrorToast } = useToast()
 
   // Tab state
@@ -800,6 +802,9 @@
 
         // Show success message
         showSuccessToast('Transactions Committed', `Successfully committed ${result.count} transactions`)
+
+        // Check for ledger errors introduced by the import
+        checkLedgerErrors()
       }
     } catch (_error) {
       // Error already displayed via errorHandler.display() in composable

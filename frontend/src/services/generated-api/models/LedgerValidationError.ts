@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Individual validation error with line number.
+ * Individual ledger error with line number.
  */
 export type LedgerValidationError = {
     line: number;

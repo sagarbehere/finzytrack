@@ -3,7 +3,6 @@ import DashboardView from '../views/DashboardView.vue'
 import ImportView from '../views/ImportView.vue'
 import AnalyzeView from '../views/AnalyzeView.vue'
 import TransactionsView from '../views/TransactionsView.vue'
-import RawDataView from '../views/RawDataView.vue'
 import SettingsView from '../views/SettingsView.vue'
 import AssistantView from '../views/AssistantView.vue'
 
@@ -50,14 +49,6 @@ const routes = [
     component: () => import('../views/AccountsView.vue'),
     meta: {
       title: 'Accounts',
-    },
-  },
-  {
-    path: '/raw-data',
-    name: 'raw-data',
-    component: RawDataView,
-    meta: {
-      title: 'Raw Data',
     },
   },
   {

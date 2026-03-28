@@ -98,6 +98,7 @@ import type { TransactionViewModel } from '@/types/transactions'
 import type { TransactionFilters } from '@/types/filters'
 import { useTransactionQuery } from '@/composables/useTransactionQuery'
 import { useTransactionUpdater } from '@/composables/useTransactionUpdater'
+import { useLedgerHealth } from '@/composables/useLedgerHealth'
 import { useToast } from '@/composables/useNotifications'
 
 const route = useRoute()
@@ -145,6 +146,7 @@ const initialFilters = computed<TransactionFilters | undefined>(() => {
 // Composables
 const { queryTransactions } = useTransactionQuery()
 const { updateTransactions } = useTransactionUpdater()
+const { checkErrors: checkLedgerErrors } = useLedgerHealth()
 const toast = useToast()
 
 // Computed
@@ -245,6 +247,9 @@ async function handleSaveChanges() {
         'Changes Saved',
         `Successfully updated ${result.updated_count} transaction${result.updated_count > 1 ? 's' : ''}.`
       )
+
+      // Check for ledger errors introduced by the edit
+      checkLedgerErrors()
     }
   } catch (error: any) {
     console.error('Failed to save changes:', error)

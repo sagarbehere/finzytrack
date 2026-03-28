@@ -267,6 +267,36 @@
 
       <!-- Main content -->
       <main class="flex-1 min-h-0 overflow-auto py-8 min-w-0">
+        <!-- Ledger error banner -->
+        <div
+          v-if="ledgerErrorCount > 0 && !ledgerDismissed"
+          class="mx-4 sm:mx-6 lg:mx-8 mb-4 rounded-md bg-red-50 dark:bg-red-500/10 p-4 dark:outline dark:outline-red-500/15"
+        >
+          <div class="flex items-start gap-3">
+            <ExclamationTriangleIcon class="mt-0.5 h-5 w-5 shrink-0 text-red-600 dark:text-red-400" aria-hidden="true" />
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium text-red-800 dark:text-red-200">
+                Your ledger has {{ ledgerErrorCount }} parsing {{ ledgerErrorCount === 1 ? 'error' : 'errors' }} that may affect app functionality.
+              </p>
+              <details class="mt-2">
+                <summary class="text-sm text-red-700 dark:text-red-300 cursor-pointer hover:text-red-900 dark:hover:text-red-100">Show details</summary>
+                <ul class="mt-2 space-y-1 text-sm text-red-700 dark:text-red-300 font-mono">
+                  <li v-for="(err, i) in ledgerErrors" :key="i">
+                    Line {{ err.line }}: {{ err.message }}
+                  </li>
+                </ul>
+              </details>
+            </div>
+            <button
+              @click="dismissLedgerErrors"
+              class="shrink-0 rounded-md p-1 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-200"
+              aria-label="Dismiss"
+            >
+              <XMarkIcon class="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
         <div class="px-4 sm:px-6 lg:px-8 min-w-0 h-full">
           <slot />
         </div>
@@ -280,6 +310,7 @@
   import { useTheme } from '@/composables/useTheme'
   import { useNotifications } from '@/composables/useNotifications'
   import { useSidebarWidth } from '@/composables/useSidebarWidth'
+  import { useLedgerHealth } from '@/composables/useLedgerHealth'
   import NotificationPanel from '@/components/common/NotificationPanel.vue'
   import GlobalSearch from '@/components/layout/GlobalSearch.vue'
   import { Dialog, DialogPanel, TransitionChild, TransitionRoot } from '@headlessui/vue'
@@ -289,10 +320,10 @@
     ChartBarIcon,
     Cog6ToothIcon,
     ComputerDesktopIcon,
+    ExclamationTriangleIcon,
     HomeIcon,
     ArrowUpTrayIcon,
     TableCellsIcon,
-    DocumentIcon,
     XMarkIcon,
     SunIcon,
     MoonIcon,
@@ -328,6 +359,15 @@
       showNotificationPanel.value = false
     }
   }
+
+  // Ledger health
+  const {
+    errorCount: ledgerErrorCount,
+    errors: ledgerErrors,
+    dismissed: ledgerDismissed,
+    checkErrors: checkLedgerErrors,
+    dismiss: dismissLedgerErrors,
+  } = useLedgerHealth()
 
   // Sidebar resizing
   const { sidebarWidth, sidebarWidthPx, setSidebarWidth } = useSidebarWidth()
@@ -367,6 +407,7 @@
     window.addEventListener('resize', handleWindowResize)
     document.addEventListener('mousedown', handleClickOutside)
     document.addEventListener('keydown', handleEscape)
+    checkLedgerErrors()
   })
 
   // Cleanup on component unmount
@@ -410,12 +451,6 @@
       href: '/accounts',
       icon: WalletIcon,
       id: 'accounts',
-    },
-    {
-      name: 'Raw Data',
-      href: '/raw-data',
-      icon: DocumentIcon,
-      id: 'raw-data',
     },
     {
       name: 'AI Assistant',

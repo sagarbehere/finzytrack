@@ -4,12 +4,9 @@
 /* eslint-disable */
 import type { AccountsConfig } from './AccountsConfig';
 import type { AIConfig } from './AIConfig';
-import type { AnalyticsConfig } from './AnalyticsConfig';
 import type { BackupConfig } from './BackupConfig';
 import type { EmailImportConfig } from './EmailImportConfig';
-import type { FeaturesConfig } from './FeaturesConfig';
 import type { LoggingConfig } from './LoggingConfig';
-import type { SecurityConfig } from './SecurityConfig';
 import type { ServerConfig } from './ServerConfig';
 /**
  * Main application configuration with nested sections.
@@ -21,18 +18,12 @@ export type Config = {
     ledger_file?: string;
     server?: ServerConfig;
     accounts?: AccountsConfig;
-    features?: FeaturesConfig;
     backup?: BackupConfig;
     logging?: LoggingConfig;
-    security?: SecurityConfig;
     /**
      * AI and machine learning settings
      */
     ai?: AIConfig;
-    /**
-     * Analytics and reporting settings
-     */
-    analytics?: AnalyticsConfig;
     /**
      * Email import settings (IMAP fetch, rule parsing)
      */

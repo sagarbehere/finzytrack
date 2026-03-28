@@ -10,13 +10,5 @@ export type LoggingConfig = {
      * Logging level
      */
     level?: string;
-    /**
-     * Log file path
-     */
-    file?: string;
-    /**
-     * Log message format
-     */
-    format?: string;
 };
 

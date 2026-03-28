@@ -5,13 +5,11 @@
 import type { ApiResponse_DeleteTransactionResponse_ } from '../models/ApiResponse_DeleteTransactionResponse_';
 import type { ApiResponse_ExportData_ } from '../models/ApiResponse_ExportData_';
 import type { ApiResponse_ExportStatusData_ } from '../models/ApiResponse_ExportStatusData_';
-import type { ApiResponse_LedgerOperationResponse_ } from '../models/ApiResponse_LedgerOperationResponse_';
-import type { ApiResponse_LedgerValidationResponse_ } from '../models/ApiResponse_LedgerValidationResponse_';
+import type { ApiResponse_LedgerErrorsResponse_ } from '../models/ApiResponse_LedgerErrorsResponse_';
 import type { ApiResponse_QueryData_ } from '../models/ApiResponse_QueryData_';
 import type { ApiResponse_UpdateTransactionResponse_ } from '../models/ApiResponse_UpdateTransactionResponse_';
 import type { Body_exportLedger } from '../models/Body_exportLedger';
 import type { DeleteTransactionRequest } from '../models/DeleteTransactionRequest';
-import type { LedgerOperationRequest } from '../models/LedgerOperationRequest';
 import type { QueryRequest } from '../models/QueryRequest';
 import type { UpdateTransactionRequest } from '../models/UpdateTransactionRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
@@ -155,61 +153,17 @@ export class LedgerService {
         });
     }
     /**
-     * Sort Ledger
-     * Sort ledger directives chronologically.
+     * Get Ledger Errors
+     * Return current ledger parse errors from the cache.
      *
-     * Takes current editor content, sorts it, and saves to ledger file.
-     * Uses BeancountManager's atomic_ledger_write for safe persistence.
-     *
-     * Returns success response. Frontend should issue GET request to reload content.
-     *
-     * Note: This is a simplified implementation that uses beancount's printer.
-     * Known limitations:
-     * - May not preserve all comments and formatting perfectly
-     * - Does not handle includes and options specially
-     * - Uses default spacing from beancount printer
-     *
-     * Future improvements could preserve comments and custom formatting.
-     * @param requestBody
-     * @returns ApiResponse_LedgerOperationResponse_ Successful Response
+     * This is a lightweight read — no re-parsing occurs.
+     * @returns ApiResponse_LedgerErrorsResponse_ Successful Response
      * @throws ApiError
      */
-    public static sortLedgerApiLedgerSortPost(
-        requestBody: LedgerOperationRequest,
-    ): CancelablePromise<ApiResponse_LedgerOperationResponse_> {
+    public static getLedgerErrors(): CancelablePromise<ApiResponse_LedgerErrorsResponse_> {
         return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/ledger/sort',
-            body: requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: `Validation Error`,
-            },
-        });
-    }
-    /**
-     * Validate Ledger
-     * Validate Beancount ledger syntax.
-     *
-     * Runs beancount loader on current editor content without saving.
-     * Returns validation errors and warnings with line numbers.
-     *
-     * This is a read-only operation - does not modify the ledger file.
-     * @param requestBody
-     * @returns ApiResponse_LedgerValidationResponse_ Successful Response
-     * @throws ApiError
-     */
-    public static validateLedgerApiLedgerValidatePost(
-        requestBody: LedgerOperationRequest,
-    ): CancelablePromise<ApiResponse_LedgerValidationResponse_> {
-        return __request(OpenAPI, {
-            method: 'POST',
-            url: '/api/ledger/validate',
-            body: requestBody,
-            mediaType: 'application/json',
-            errors: {
-                422: `Validation Error`,
-            },
+            method: 'GET',
+            url: '/api/ledger/errors',
         });
     }
 }

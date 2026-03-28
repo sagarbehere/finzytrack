@@ -1,4 +1,5 @@
 import { useToast, useNotifications } from '@/composables/useNotifications'
+import { useLedgerHealth } from '@/composables/useLedgerHealth'
 import { ApiError } from '@/services/generated-api'
 
 // Define the display types for errors
@@ -31,6 +32,7 @@ const defaultErrorMappings: ErrorHandlerOptions = {
 class ErrorHandler {
   private toast = useToast()
   private notifications = useNotifications()
+  private ledgerHealth = useLedgerHealth()
 
   /**
    * Displays an error based on predefined conventions, with optional overrides.
@@ -81,6 +83,9 @@ class ErrorHandler {
           this.toast.error('An unexpected error occurred', errorMessage);
       }
     }
+
+    // Check if a ledger problem is the underlying cause
+    this.ledgerHealth.checkErrors()
   }
 
   /**
