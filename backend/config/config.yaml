@@ -37,22 +37,12 @@ features:
 # Backup settings
 backup:
   enabled: true
-  backup_dir: "./data/backups"
   retention_count: 100
   cleanup_on_exceed: true
 
 # Logging
 logging:
   level: "INFO"
-  file: "./logs/finzytrack.log"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-
-# Security settings
-security:
-  # List of allowed CORS origins for the frontend
-  cors_origins:
-    - "http://127.0.0.1:3000"
-    - "http://localhost:3000"
 
 # Email import (IMAP fetch + rule-based parsing)
 email_import:
@@ -66,7 +56,6 @@ email_import:
 analytics:
   # SQLite export settings
   sqlite:
-    export_path: "./data/ledger.db"
     auto_sync_enabled: true
     sync_debounce_seconds: 5.0
     enable_wal: true  # Enable WAL mode for concurrent access

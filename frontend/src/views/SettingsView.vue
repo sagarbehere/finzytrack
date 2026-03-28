@@ -44,41 +44,6 @@
         @restart-required="restartRequired = true"
       />
 
-      <!-- Appearance Tab -->
-      <div v-if="activeTab === 'appearance'" class="space-y-6">
-        <div class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10">
-          <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
-            <h3 class="text-lg font-medium text-gray-900 dark:text-white">Appearance</h3>
-            <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">
-              Customize the look and feel of the application
-            </p>
-          </div>
-          <div class="p-6">
-            <div class="space-y-4">
-              <div>
-                <label class="text-base font-medium text-gray-900 dark:text-white">Theme</label>
-                <p class="text-sm text-gray-500 dark:text-gray-400">Choose your preferred color scheme</p>
-                <fieldset class="mt-4">
-                  <legend class="sr-only">Theme selection</legend>
-                  <div class="space-y-4">
-                    <div v-for="option in themeOptions" :key="option.id" class="flex items-center">
-                      <input
-                        :id="option.id"
-                        name="theme"
-                        type="radio"
-                        :checked="option.id === 'theme-system'"
-                        class="relative size-4 appearance-none rounded-full border border-gray-300 bg-white before:absolute before:inset-1 before:rounded-full before:bg-white not-checked:before:hidden checked:border-indigo-600 checked:bg-indigo-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 dark:border-white/10 dark:bg-white/5 dark:checked:border-indigo-500 dark:checked:bg-indigo-500 dark:focus-visible:outline-indigo-500"
-                      />
-                      <label :for="option.id" class="ml-3 block text-sm/6 font-medium text-gray-900 dark:text-white">{{ option.label }}</label>
-                    </div>
-                  </div>
-                </fieldset>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <!-- Configuration File Tab -->
       <div v-if="activeTab === 'config'">
         <div class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 p-6">
@@ -86,7 +51,7 @@
             <h3 class="text-lg font-medium text-gray-900 dark:text-white">Configuration File</h3>
             <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">
               Edit your configuration file directly. Changes to most settings take effect immediately.
-              Some settings (server, security) require a restart.
+              Server settings require a restart.
             </p>
           </div>
           <FileEditor
@@ -114,17 +79,10 @@ import { useCommodities } from '@/composables/useCommodities'
 
 const tabs = [
   { id: 'general', label: 'General' },
-  { id: 'appearance', label: 'Appearance' },
   { id: 'config', label: 'Configuration File' },
 ]
 
 const activeTab = ref('general')
-
-const themeOptions = [
-  { id: 'theme-system', label: 'System (Auto)' },
-  { id: 'theme-light', label: 'Light' },
-  { id: 'theme-dark', label: 'Dark' },
-]
 const { config, updateConfig } = useConfig()
 const { invalidateCache: invalidateAccounts } = useAccounts()
 const { invalidateCache: invalidateCommodities } = useCommodities()

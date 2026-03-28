@@ -13,6 +13,7 @@ from fastapi.responses import PlainTextResponse
 
 from app.schemas.response_schemas import ApiResponse
 from app.schemas.query_schemas import QueryRequest, QueryData
+from app.config import SQLITE_EXPORT_PATH
 from app.dependencies import get_beancount_manager, get_config_manager
 from app.services.sqlite_exporter import SQLiteExporter
 from app.services.beanquery_service import BeanqueryService
@@ -110,8 +111,7 @@ async def execute_query(
                 )
 
     else:  # sqlite
-        config = config_manager.get_config()
-        exporter = SQLiteExporter(sqlite_path=config.analytics.sqlite.export_path)
+        exporter = SQLiteExporter(sqlite_path=SQLITE_EXPORT_PATH)
 
         status = await exporter.get_status()
         if not status["exists"]:

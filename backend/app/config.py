@@ -19,6 +19,14 @@ class ConfigurationError(Exception):
     pass
 
 
+# ── Fixed paths (not user-configurable) ──────────────────────────────────────
+SQLITE_EXPORT_PATH = "./data/ledger.db"
+BACKUP_DIR = "./data/backups"
+LOG_FILE = "./logs/finzytrack.log"
+LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+CORS_ORIGINS = ["http://127.0.0.1:3000", "http://localhost:3000"]
+
+
 class ServerConfig(BaseModel):
     """Server configuration settings."""
     host: str = Field(default="127.0.0.1", description="Server host address")
@@ -57,7 +65,6 @@ class FeaturesConfig(BaseModel):
 class BackupConfig(BaseModel):
     """Backup system configuration."""
     enabled: bool = Field(default=True, description="Enable backup system")
-    backup_dir: str = Field(default="./data/backups", description="Backup directory path")
     retention_count: int = Field(default=100, ge=1, description="Number of backups to retain")
     cleanup_on_exceed: bool = Field(default=True, description="Automatically cleanup old backups")
 
@@ -65,12 +72,7 @@ class BackupConfig(BaseModel):
 class LoggingConfig(BaseModel):
     """Logging configuration."""
     level: str = Field(default="INFO", description="Logging level")
-    file: str = Field(default="./logs/finzytrack.log", description="Log file path")
-    format: str = Field(
-        default="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        description="Log message format"
-    )
-    
+
     @field_validator('level')
     @classmethod
     def validate_level(cls, v: str) -> str:
@@ -78,14 +80,6 @@ class LoggingConfig(BaseModel):
         if v.upper() not in valid_levels:
             raise ValueError(f'Logging level must be one of: {valid_levels}')
         return v.upper()
-
-
-class SecurityConfig(BaseModel):
-    """Security-related configuration."""
-    cors_origins: List[str] = Field(
-        default=["http://127.0.0.1:3000", "http://localhost:3000"],
-        description="List of allowed CORS origins for the frontend"
-    )
 
 
 class LLMConfig(BaseModel):
@@ -120,7 +114,6 @@ class OFXAccountMapping(BaseModel):
 
 class SQLiteConfig(BaseModel):
     """SQLite export configuration."""
-    export_path: str = Field(default="./data/ledger.db", description="Path to SQLite export file")
     auto_sync_enabled: bool = Field(default=True, description="Enable automatic sync on ledger changes")
     sync_debounce_seconds: float = Field(default=5.0, ge=0.0, description="Debounce delay in seconds before syncing")
     enable_wal: bool = Field(default=True, description="Enable WAL mode for concurrent access")
@@ -152,7 +145,6 @@ class Config(BaseModel):
     features: FeaturesConfig = Field(default_factory=FeaturesConfig)
     backup: BackupConfig = Field(default_factory=BackupConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
-    security: SecurityConfig = Field(default_factory=SecurityConfig)
     ai: AIConfig = Field(default_factory=AIConfig, description="AI and machine learning settings")
 
     # Analytics configuration
@@ -213,7 +205,7 @@ class Config(BaseModel):
                 raise ValueError(f"Cannot create ledger directory {ledger_dir}: {e}")
         
         # Validate backup directory exists or can be created
-        backup_path = Path(self.backup.backup_dir)
+        backup_path = Path(BACKUP_DIR)
         if not backup_path.exists():
             # Try to create backup directory
             try:
@@ -273,18 +265,16 @@ class Config(BaseModel):
             # Server settings
             'server-host': ('server', 'host'),
             'server-port': ('server', 'port'),
-            
+
             # File paths (top-level)
             'ledger-file': ('ledger_file',),
-            'backup-dir': ('backup', 'backup_dir'),
-            
+
             # ML settings
             'ml-enabled': ('ml', 'enabled'),
             'ml-training-data-file': ('ml', 'training_data_file'),
-            
+
             # Logging settings
             'logging-level': ('logging', 'level'),
-            'logging-file': ('logging', 'file'),
         }
         
         for cli_key, value in cli_overrides.items():

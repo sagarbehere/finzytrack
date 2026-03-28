@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .config import Config, ConfigurationError
+from .config import Config, ConfigurationError, SQLITE_EXPORT_PATH, BACKUP_DIR, LOG_FILE, LOG_FORMAT, CORS_ORIGINS
 from .api.routers.importer import ofx_accounts, transaction, csv_rules, xls_rules, email as email_import_router, llm_parse
 from .api.routers import accounts, commodities, ledger_export, ledger_transactions, query, config as config_router, files, filesystem, ledger, assistant, recipes
 from .core.beancount_manager import BeancountManager
@@ -34,12 +34,12 @@ from .services.db_sync_manager import DBSyncManager
 from .email_import.rule_registry import AccountProfileRegistry
 
 
-def setup_logging(level: str, log_file: str, log_format: str) -> None:
+def setup_logging(level: str) -> None:
     """Configure application logging with automatic directory creation."""
     # Create logs directory if it doesn't exist
-    log_path = Path(log_file)
+    log_path = Path(LOG_FILE)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # Configure logging level
     # FIXME: Will fail if level is invalid string. But Pydantic should catch this earlier when validating the config in config.py
     log_level = getattr(logging, level.upper())
@@ -49,21 +49,21 @@ def setup_logging(level: str, log_file: str, log_format: str) -> None:
     # Create logger
     logger = logging.getLogger()
     logger.setLevel(log_level)
-    
+
     # Clear existing handlers
     logger.handlers.clear()
-    
+
     # Create formatter
-    formatter = logging.Formatter(log_format)
-    
+    formatter = logging.Formatter(LOG_FORMAT)
+
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
-    
+
     # File handler
-    file_handler = logging.FileHandler(log_file)
+    file_handler = logging.FileHandler(LOG_FILE)
     file_handler.setLevel(log_level)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -92,7 +92,7 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
 
     # 1. Create BackupManager service
     backup_manager = BackupManager(
-        backup_dir=Path(config.backup.backup_dir),
+        backup_dir=Path(BACKUP_DIR),
         retention_count=config.backup.retention_count
     )
 
@@ -133,7 +133,7 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
 
     # 5. Create SQLite exporter and sync manager
     sqlite_exporter = SQLiteExporter(
-        sqlite_path=config.analytics.sqlite.export_path,
+        sqlite_path=SQLITE_EXPORT_PATH,
         enable_wal=config.analytics.sqlite.enable_wal
     )
 
@@ -210,7 +210,7 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
     # 12. Add CORS middleware for frontend communication
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=config.security.cors_origins,
+        allow_origins=CORS_ORIGINS,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -292,7 +292,7 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
 
         # Check backup directory writability
         try:
-            backup_path = Path(config.backup.backup_dir)
+            backup_path = Path(BACKUP_DIR)
             if backup_path.exists() and os.access(backup_path, os.W_OK):
                 checks["backup_dir_writable"] = True
         except Exception:
@@ -361,9 +361,7 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
               help='Server port (overrides config)')
 @click.option('--ledger-file', 
               help='Path to Beancount ledger file (overrides config)')
-@click.option('--backup-dir', 
-              help='Path to backup directory (overrides config)')
-@click.option('--ml-enabled', is_flag=True, 
+@click.option('--ml-enabled', is_flag=True,
               help='Enable ML categorization (overrides config)')
 @click.option('--ml-disabled', is_flag=True, 
               help='Disable ML categorization (overrides config)')
@@ -372,13 +370,11 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
 @click.option('--log-level', 
               type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], case_sensitive=False),
               help='Logging level (overrides config)')
-@click.option('--log-file', 
-              help='Path to log file (overrides config)')
-@click.option('--debug', is_flag=True, 
+@click.option('--debug', is_flag=True,
               help='Enable debug mode (sets log level to DEBUG)')
 def main(config: str, server_host: str, server_port: int,
-         ledger_file: str, backup_dir: str, ml_enabled: bool, ml_disabled: bool,
-         ml_training_data_file: str, log_level: str, log_file: str, debug: bool):
+         ledger_file: str, ml_enabled: bool, ml_disabled: bool,
+         ml_training_data_file: str, log_level: str, debug: bool):
     """
     Start Finzytrack backend server.
     
@@ -399,8 +395,6 @@ def main(config: str, server_host: str, server_port: int,
         # File paths
         if ledger_file:
             cli_overrides['ledger-file'] = ledger_file
-        if backup_dir:
-            cli_overrides['backup-dir'] = backup_dir
         
         # ML settings (handle conflicting flags)
         if ml_enabled and ml_disabled:
@@ -417,8 +411,6 @@ def main(config: str, server_host: str, server_port: int,
         # Logging settings
         if log_level:
             cli_overrides['logging-level'] = log_level.upper()
-        if log_file:
-            cli_overrides['logging-file'] = log_file
         
         # Debug mode overrides
         if debug:
@@ -428,11 +420,7 @@ def main(config: str, server_host: str, server_port: int,
         app_config = Config.from_yaml_file(config, cli_overrides)
         
         # Setup logging first
-        setup_logging(
-            level=app_config.logging.level,
-            log_file=app_config.logging.file,
-            log_format=app_config.logging.format
-        )
+        setup_logging(level=app_config.logging.level)
         
         logger = logging.getLogger(__name__)
         logger.info("Starting Finzytrack backend server")

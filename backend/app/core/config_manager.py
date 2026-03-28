@@ -102,9 +102,6 @@ class ConfigManager:
 
         Restart-required fields:
         - server.* (host, port)
-        - security.cors_origins
-        - backup.backup_dir (BackupManager initialized at startup)
-        - logging.file (log file handlers set at startup)
 
         Args:
             new_config_data: Dictionary with new configuration data (from YAML)
@@ -128,11 +125,6 @@ class ConfigManager:
             restart_required = True
             restart_reasons.append("server settings changed")
 
-        # CORS origins require restart (middleware configured at startup)
-        if new_config.security.cors_origins != self.config.security.cors_origins:
-            restart_required = True
-            restart_reasons.append("CORS origins changed")
-
         # Ledger file path change — hot-switch if services are available
         if new_config.ledger_file != self.config.ledger_file:
             if self._beancount_manager is not None and self._sqlite_sync_manager is not None:
@@ -140,16 +132,6 @@ class ConfigManager:
             else:
                 restart_required = True
                 restart_reasons.append("ledger file path changed")
-
-        # Backup directory change requires restart (BackupManager initialized at startup)
-        if new_config.backup.backup_dir != self.config.backup.backup_dir:
-            restart_required = True
-            restart_reasons.append("backup directory changed")
-
-        # Log file path change requires restart (log handlers set at startup)
-        if new_config.logging.file != self.config.logging.file:
-            restart_required = True
-            restart_reasons.append("log file path changed")
 
         # Update in-memory config, preserving the config file path
         old_config = self.config

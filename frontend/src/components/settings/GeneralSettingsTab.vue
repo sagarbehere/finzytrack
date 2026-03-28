@@ -293,15 +293,6 @@
       @save="saveAnalytics"
       @reset="resetAnalytics"
     >
-      <div>
-        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">SQLite Export Path</label>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Path to the SQLite database file exported from your ledger.</p>
-        <div class="flex gap-2">
-          <input v-model="analyticsFields.export_path" type="text" placeholder="data/ledger.db" :class="[inputClass, 'flex-1']" />
-          <button :class="browseButtonClass" @click="openFilePicker({ title: 'Select SQLite Export Path', mode: 'file', extensions: ['.db'], initialPath: analyticsFields.export_path, onSelect: p => analyticsFields.export_path = p })">Browse</button>
-        </div>
-      </div>
-
       <div class="flex items-center justify-between">
         <span class="text-sm font-medium text-gray-900 dark:text-white">Auto-sync on ledger changes</span>
         <div class="group relative inline-flex w-11 shrink-0 rounded-full bg-gray-200 p-0.5 inset-ring inset-ring-gray-900/5 outline-offset-2 outline-indigo-600 transition-colors duration-200 ease-in-out has-checked:bg-indigo-600 has-focus-visible:outline-2 dark:bg-white/5 dark:inset-ring-white/10 dark:outline-indigo-500 dark:has-checked:bg-indigo-500">
@@ -340,18 +331,6 @@
         <div class="group relative inline-flex w-11 shrink-0 rounded-full bg-gray-200 p-0.5 inset-ring inset-ring-gray-900/5 outline-offset-2 outline-indigo-600 transition-colors duration-200 ease-in-out has-checked:bg-indigo-600 has-focus-visible:outline-2 dark:bg-white/5 dark:inset-ring-white/10 dark:outline-indigo-500 dark:has-checked:bg-indigo-500">
           <span class="size-5 rounded-full bg-white shadow-xs ring-1 ring-gray-900/5 transition-transform duration-200 ease-in-out group-has-checked:translate-x-5"></span>
           <input type="checkbox" v-model="backupFields.enabled" class="absolute inset-0 size-full appearance-none focus:outline-hidden" aria-label="Enable automatic backups" />
-        </div>
-      </div>
-
-      <div>
-        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">
-          Backup Directory
-          <span class="ml-1 text-xs font-medium text-amber-600 dark:text-amber-400">⚠ restart required</span>
-        </label>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Directory where backup files are stored.</p>
-        <div class="flex gap-2">
-          <input v-model="backupFields.backup_dir" type="text" placeholder="data/backups" :class="[inputClass, 'flex-1']" />
-          <button :class="browseButtonClass" @click="openFilePicker({ title: 'Select Backup Directory', mode: 'directory', initialPath: backupFields.backup_dir, onSelect: p => backupFields.backup_dir = p })">Browse</button>
         </div>
       </div>
 
@@ -403,25 +382,6 @@
         </div>
       </Listbox>
 
-      <div>
-        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">
-          Log File
-          <span class="ml-1 text-xs font-medium text-amber-600 dark:text-amber-400">⚠ restart required</span>
-        </label>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Path to the log file.</p>
-        <div class="flex gap-2">
-          <input v-model="loggingFields.file" type="text" placeholder="logs/finzytrack.log" :class="[inputClass, 'flex-1']" />
-          <button :class="browseButtonClass" @click="openFilePicker({ title: 'Select Log File', mode: 'file', extensions: ['.log'], initialPath: loggingFields.file, onSelect: p => loggingFields.file = p })">Browse</button>
-        </div>
-      </div>
-
-      <div>
-        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Log Format</label>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Python log format string (read-only — edit in the config file directly).</p>
-        <p class="text-sm font-mono text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 px-3 py-2 rounded-md border border-gray-200 dark:border-white/10 break-all">
-          {{ config?.logging?.format ?? '' }}
-        </p>
-      </div>
     </SettingsSection>
 
     <!-- ── Server ─────────────────────────────────────────────────────────── -->
@@ -447,29 +407,6 @@
         <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Port</label>
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Port the server listens on.</p>
         <input v-model.number="serverFields.port" type="number" min="1" max="65535" :class="inputClass" />
-      </div>
-    </SettingsSection>
-
-    <!-- ── Security ───────────────────────────────────────────────────────── -->
-    <SettingsSection
-      title="Security"
-      description="CORS and access control settings."
-      :requires-restart="true"
-      :is-dirty="securityIsDirty"
-      :is-saving="securitySaving"
-      :error="securityError"
-      @save="saveSecurity"
-      @reset="resetSecurity"
-    >
-      <div>
-        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Allowed CORS Origins</label>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">One URL per line. The frontend origin must be listed here when running in development.</p>
-        <textarea
-          v-model="securityFields.cors_origins"
-          rows="4"
-          placeholder="http://localhost:3000&#10;http://127.0.0.1:3000"
-          :class="[inputClass, 'font-mono']"
-        />
       </div>
     </SettingsSection>
 
@@ -774,7 +711,6 @@ function resetEmail() { initEmailFields(); emailError.value = '' }
 // ─── Analytics section ────────────────────────────────────────────────────────
 
 const analyticsFields = reactive({
-  export_path: config.value?.analytics?.sqlite?.export_path ?? '',
   auto_sync_enabled: config.value?.analytics?.sqlite?.auto_sync_enabled ?? true,
   sync_debounce_seconds: config.value?.analytics?.sqlite?.sync_debounce_seconds ?? 5.0,
   enable_wal: config.value?.analytics?.sqlite?.enable_wal ?? true,
@@ -783,14 +719,12 @@ const analyticsSaving = ref(false)
 const analyticsError = ref('')
 
 const analyticsIsDirty = computed(() =>
-  analyticsFields.export_path !== (config.value?.analytics?.sqlite?.export_path ?? '') ||
   analyticsFields.auto_sync_enabled !== (config.value?.analytics?.sqlite?.auto_sync_enabled ?? true) ||
   analyticsFields.sync_debounce_seconds !== (config.value?.analytics?.sqlite?.sync_debounce_seconds ?? 5.0) ||
   analyticsFields.enable_wal !== (config.value?.analytics?.sqlite?.enable_wal ?? true)
 )
 
 function initAnalyticsFields() {
-  analyticsFields.export_path = config.value?.analytics?.sqlite?.export_path ?? ''
   analyticsFields.auto_sync_enabled = config.value?.analytics?.sqlite?.auto_sync_enabled ?? true
   analyticsFields.sync_debounce_seconds = config.value?.analytics?.sqlite?.sync_debounce_seconds ?? 5.0
   analyticsFields.enable_wal = config.value?.analytics?.sqlite?.enable_wal ?? true
@@ -808,7 +742,6 @@ function resetAnalytics() { initAnalyticsFields(); analyticsError.value = '' }
 
 const backupFields = reactive({
   enabled: config.value?.backup?.enabled ?? true,
-  backup_dir: config.value?.backup?.backup_dir ?? '',
   retention_count: config.value?.backup?.retention_count ?? 100,
   cleanup_on_exceed: config.value?.backup?.cleanup_on_exceed ?? true,
 })
@@ -817,14 +750,12 @@ const backupError = ref('')
 
 const backupIsDirty = computed(() =>
   backupFields.enabled !== (config.value?.backup?.enabled ?? true) ||
-  backupFields.backup_dir !== (config.value?.backup?.backup_dir ?? '') ||
   backupFields.retention_count !== (config.value?.backup?.retention_count ?? 100) ||
   backupFields.cleanup_on_exceed !== (config.value?.backup?.cleanup_on_exceed ?? true)
 )
 
 function initBackupFields() {
   backupFields.enabled = config.value?.backup?.enabled ?? true
-  backupFields.backup_dir = config.value?.backup?.backup_dir ?? ''
   backupFields.retention_count = config.value?.backup?.retention_count ?? 100
   backupFields.cleanup_on_exceed = config.value?.backup?.cleanup_on_exceed ?? true
 }
@@ -839,19 +770,16 @@ function resetBackup() { initBackupFields(); backupError.value = '' }
 
 const loggingFields = reactive({
   level: config.value?.logging?.level ?? 'INFO',
-  file: config.value?.logging?.file ?? '',
 })
 const loggingSaving = ref(false)
 const loggingError = ref('')
 
 const loggingIsDirty = computed(() =>
-  loggingFields.level !== (config.value?.logging?.level ?? 'INFO') ||
-  loggingFields.file !== (config.value?.logging?.file ?? '')
+  loggingFields.level !== (config.value?.logging?.level ?? 'INFO')
 )
 
 function initLoggingFields() {
   loggingFields.level = config.value?.logging?.level ?? 'INFO'
-  loggingFields.file = config.value?.logging?.file ?? ''
 }
 
 async function saveLogging() {
@@ -885,29 +813,6 @@ async function saveServer() {
 
 function resetServer() { initServerFields(); serverError.value = '' }
 
-// ─── Security section ─────────────────────────────────────────────────────────
-
-const securityFields = reactive({
-  cors_origins: (config.value?.security?.cors_origins ?? []).join('\n'),
-})
-const securitySaving = ref(false)
-const securityError = ref('')
-
-const securityIsDirty = computed(() =>
-  securityFields.cors_origins !== (config.value?.security?.cors_origins ?? []).join('\n')
-)
-
-function initSecurityFields() {
-  securityFields.cors_origins = (config.value?.security?.cors_origins ?? []).join('\n')
-}
-
-async function saveSecurity() {
-  const cors_origins = securityFields.cors_origins.split('\n').map(s => s.trim()).filter(Boolean)
-  await saveSection({ security: { cors_origins } }, securitySaving, securityError)
-}
-
-function resetSecurity() { initSecurityFields(); securityError.value = '' }
-
 // ─── Sync all sections when config is externally updated ─────────────────────
 // (e.g. after saving via the YAML editor tab)
 
@@ -921,6 +826,5 @@ watch(config, () => {
   if (!backupIsDirty.value) initBackupFields()
   if (!loggingIsDirty.value) initLoggingFields()
   if (!serverIsDirty.value) initServerFields()
-  if (!securityIsDirty.value) initSecurityFields()
 }, { deep: true })
 </script>

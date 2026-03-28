@@ -13,6 +13,7 @@ from app.schemas.export_schemas import (
     ExportStatusData,
 )
 from app.dependencies import get_beancount_manager, get_config_manager
+from app.config import SQLITE_EXPORT_PATH
 from app.services.sqlite_exporter import SQLiteExporter
 from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
@@ -43,7 +44,7 @@ async def export_ledger(
     """
     config = config_manager.get_config()
     exporter = SQLiteExporter(
-        sqlite_path=config.analytics.sqlite.export_path,
+        sqlite_path=SQLITE_EXPORT_PATH,
         enable_wal=config.analytics.sqlite.enable_wal
     )
 
@@ -84,7 +85,7 @@ async def get_export_status(
     """
     config = config_manager.get_config()
     exporter = SQLiteExporter(
-        sqlite_path=config.analytics.sqlite.export_path,
+        sqlite_path=SQLITE_EXPORT_PATH,
         enable_wal=config.analytics.sqlite.enable_wal
     )
 
