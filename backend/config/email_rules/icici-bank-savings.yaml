@@ -69,28 +69,33 @@ transaction_types:
       partial_match_allowed: true
 
   - name: "Finalert_UPI"
-    description: "UPI debit transactions reported via SMS-forwarded Finalert emails"
+    description: "UPI debit/credit transactions reported via SMS-forwarded Finalert emails"
     email_filter:
       subject_regex: "Finalert"
       body_regex: 'UPI:\d+'
     extraction:
       amount:
-        # Matches: "Rs 500.00"
+        # Matches: "Rs 18400.00" or "Rs 9000.00"
         pattern: 'Rs\s*([\d.]+)'
         type: "float"
+      direction:
+        # Matches: "debited" or "credited"
+        pattern: 'XX815\s+(?:is\s+)?(debited|credited)'
+        type: "string"
       payee_raw:
-        # Matches: "Mahesh Bhalchan credited"
-        pattern: '([A-Za-z][A-Za-z ]+?) credited'
+        # Debit: "on 28-Mar-26; WAKE FIT INNOVA credited." → "WAKE FIT INNOVA"
+        # Credit: "on 28-Mar-26 from MADHULI KULKARN." → "MADHULI KULKARN"
+        pattern: '\d{2}-[A-Za-z]{3}-\d{2}[;. ]+(?:from\s+)?([A-Za-z][A-Za-z ]+?)\s*(?:credited|\.|\s+UPI:)'
         type: "string"
         cleanup: "strip_whitespace"
         optional: true
       reference:
-        # Matches: "UPI:182727073202"
+        # Matches: "UPI:184324769423"
         pattern: 'UPI:(\d+)'
         type: "string"
         optional: true
       timestamp:
-        # Matches: "on 20-Mar-26"
+        # Matches: "on 28-Mar-26"
         pattern: 'on (\d{2}-[A-Za-z]{3}-\d{2})'
         type: "datetime"
         format: "%d-%b-%y"
@@ -107,10 +112,11 @@ transaction_types:
       timestamp: "date"
       amount: "amount"
     amount_sign:
-      field: "fixed"
-      value: "negative"    # Finalert debited = payment made
+      field: "direction"
+      negative_values: ["debited"]
+      positive_values: ["credited"]
     error_handling:
-      required_fields: ["amount", "timestamp"]
+      required_fields: ["amount", "timestamp", "direction"]
       partial_match_allowed: true
 
   - name: "Finalert_UPICircle"

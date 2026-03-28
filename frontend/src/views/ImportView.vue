@@ -573,7 +573,7 @@
         date: typeof tx.date === 'string'
           ? tx.date
           : (tx.date as Date).toISOString().split('T')[0],
-        flag: '!',   // pending — requires user review before commit
+        flag: '*',
         payee: tx.payee || '',
         narration: '',
         tags: [],
