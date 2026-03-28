@@ -12,6 +12,22 @@ Python + Beancount + SQLite backend. FastAPI with Pydantic models.
 - Never return raw dicts like `{"success": True, "path": "..."}` — always wrap in `ApiResponse`
 - Reference: `app/exceptions.py`, `app/error_handler.py`, `app/helpers/response_helpers.py`
 
+## Ledger Write Architecture (MANDATORY)
+
+All writes to the Beancount ledger file **must** go through `BeancountManager._write_entries()`. This is the single authorised write path. No exceptions.
+
+**Rules:**
+- **Never do text manipulation on the ledger file** — no reading as raw text, no string concatenation, no line-level editing. The ledger is a structured document owned by the Beancount printer.
+- **Every write is a full rewrite** — read entries from cache, modify the in-memory entry list, then pass the complete list to `_write_entries()` which truncates and rewrites the entire file via `printer.format_entry()`.
+- **To add entries**, use `append_entries(new_entries)` which reads cache + appends + calls `_write_entries()`.
+- **To modify/delete entries**, read from `cache.get_entries()`, mutate the list, then call `_write_entries(entries)`.
+- **`_write_entries()` is the only caller of `atomic_ledger_write()`**, which handles backup creation, atomic temp-file writes, and cache invalidation. No other code should call `atomic_ledger_write()` directly.
+- **Padding transaction filter** — `_write_entries()` silently drops auto-generated padding transactions (flag `'P'` with no stable ID) because Beancount regenerates them from `pad`+`balance` directives at parse time. This filter must live in exactly one place.
+
+**Why:** Beancount's `loader.load_file()` auto-generates padding transactions (`flag='P'`) in memory from `pad` directives. If any write path bypasses the filter (e.g., raw text append, text-level editing), these phantom transactions get materialized to disk and accumulate. This was a real bug that took significant effort to diagnose.
+
+**Reference:** `app/core/beancount_manager.py` — `_write_entries()`, `append_entries()`
+
 ## Config Conventions
 
 - Conventional directories (csv_rules, xls_rules, email_rules, recipes, ofx_mappings.yaml) live under `config/` — these are derived properties on the `Config` model, not user-configurable fields
