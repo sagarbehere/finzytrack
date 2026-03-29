@@ -63,12 +63,13 @@ class BackupConfig(BaseModel):
     """Backup system configuration."""
     enabled: bool = Field(default=True, description="Enable backup system")
     retention_count: int = Field(default=100, ge=1, description="Number of backups to retain")
-    cleanup_on_exceed: bool = Field(default=True, description="Automatically cleanup old backups")
 
 
 class LoggingConfig(BaseModel):
     """Logging configuration."""
     level: str = Field(default="INFO", description="Logging level")
+    max_file_size_mb: int = Field(default=5, ge=1, le=100, description="Maximum log file size in MB before rotation")
+    backup_count: int = Field(default=3, ge=0, le=20, description="Number of rotated log files to keep")
 
     @field_validator('level')
     @classmethod

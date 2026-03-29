@@ -33,11 +33,12 @@ ai:
 backup:
   enabled: true
   retention_count: 100
-  cleanup_on_exceed: true
 
 # Logging
 logging:
   level: "INFO"
+  max_file_size_mb: 5      # Max log file size in MB before rotation
+  backup_count: 3           # Number of rotated log files to keep
 
 # Email import (IMAP fetch + rule-based parsing)
 email_import:

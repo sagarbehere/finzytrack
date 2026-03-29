@@ -307,13 +307,6 @@
         <input v-model.number="backupFields.retention_count" type="number" min="1" :class="inputClass" />
       </div>
 
-      <div class="flex items-center justify-between">
-        <span class="text-sm font-medium text-gray-900 dark:text-white">Automatically remove oldest backups when limit is exceeded</span>
-        <div class="group relative inline-flex w-11 shrink-0 rounded-full bg-gray-200 p-0.5 inset-ring inset-ring-gray-900/5 outline-offset-2 outline-indigo-600 transition-colors duration-200 ease-in-out has-checked:bg-indigo-600 has-focus-visible:outline-2 dark:bg-white/5 dark:inset-ring-white/10 dark:outline-indigo-500 dark:has-checked:bg-indigo-500">
-          <span class="size-5 rounded-full bg-white shadow-xs ring-1 ring-gray-900/5 transition-transform duration-200 ease-in-out group-has-checked:translate-x-5"></span>
-          <input type="checkbox" v-model="backupFields.cleanup_on_exceed" class="absolute inset-0 size-full appearance-none focus:outline-hidden" aria-label="Automatically remove oldest backups when limit is exceeded" />
-        </div>
-      </div>
     </SettingsSection>
 
     <!-- ── Logging ────────────────────────────────────────────────────────── -->
@@ -348,6 +341,18 @@
           </transition>
         </div>
       </Listbox>
+
+      <div>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Max Log File Size (MB)</label>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Log file rotates when it exceeds this size.</p>
+        <input v-model.number="loggingFields.max_file_size_mb" type="number" min="1" max="100" :class="inputClass" />
+      </div>
+
+      <div>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Rotated Files to Keep</label>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Number of old log files to retain after rotation.</p>
+        <input v-model.number="loggingFields.backup_count" type="number" min="0" max="20" :class="inputClass" />
+      </div>
 
     </SettingsSection>
 
@@ -680,21 +685,18 @@ function resetEmail() { initEmailFields(); emailError.value = '' }
 const backupFields = reactive({
   enabled: config.value?.backup?.enabled ?? true,
   retention_count: config.value?.backup?.retention_count ?? 100,
-  cleanup_on_exceed: config.value?.backup?.cleanup_on_exceed ?? true,
 })
 const backupSaving = ref(false)
 const backupError = ref('')
 
 const backupIsDirty = computed(() =>
   backupFields.enabled !== (config.value?.backup?.enabled ?? true) ||
-  backupFields.retention_count !== (config.value?.backup?.retention_count ?? 100) ||
-  backupFields.cleanup_on_exceed !== (config.value?.backup?.cleanup_on_exceed ?? true)
+  backupFields.retention_count !== (config.value?.backup?.retention_count ?? 100)
 )
 
 function initBackupFields() {
   backupFields.enabled = config.value?.backup?.enabled ?? true
   backupFields.retention_count = config.value?.backup?.retention_count ?? 100
-  backupFields.cleanup_on_exceed = config.value?.backup?.cleanup_on_exceed ?? true
 }
 
 async function saveBackup() {
@@ -707,16 +709,22 @@ function resetBackup() { initBackupFields(); backupError.value = '' }
 
 const loggingFields = reactive({
   level: config.value?.logging?.level ?? 'INFO',
+  max_file_size_mb: config.value?.logging?.max_file_size_mb ?? 5,
+  backup_count: config.value?.logging?.backup_count ?? 3,
 })
 const loggingSaving = ref(false)
 const loggingError = ref('')
 
 const loggingIsDirty = computed(() =>
-  loggingFields.level !== (config.value?.logging?.level ?? 'INFO')
+  loggingFields.level !== (config.value?.logging?.level ?? 'INFO') ||
+  loggingFields.max_file_size_mb !== (config.value?.logging?.max_file_size_mb ?? 5) ||
+  loggingFields.backup_count !== (config.value?.logging?.backup_count ?? 3)
 )
 
 function initLoggingFields() {
   loggingFields.level = config.value?.logging?.level ?? 'INFO'
+  loggingFields.max_file_size_mb = config.value?.logging?.max_file_size_mb ?? 5
+  loggingFields.backup_count = config.value?.logging?.backup_count ?? 3
 }
 
 async function saveLogging() {

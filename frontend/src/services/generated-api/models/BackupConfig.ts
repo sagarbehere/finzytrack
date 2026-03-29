@@ -14,9 +14,5 @@ export type BackupConfig = {
      * Number of backups to retain
      */
     retention_count?: number;
-    /**
-     * Automatically cleanup old backups
-     */
-    cleanup_on_exceed?: boolean;
 };
 

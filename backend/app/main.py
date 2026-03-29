@@ -38,8 +38,10 @@ from .services.db_sync_manager import DBSyncManager
 from .email_import.rule_registry import AccountProfileRegistry
 
 
-def setup_logging(level: str) -> None:
-    """Configure application logging with automatic directory creation."""
+def setup_logging(level: str, max_file_size_mb: int = 5, backup_count: int = 3) -> None:
+    """Configure application logging with automatic directory creation and rotation."""
+    from logging.handlers import RotatingFileHandler
+
     # Create logs directory if it doesn't exist
     log_path = Path(LOG_FILE)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -66,8 +68,12 @@ def setup_logging(level: str) -> None:
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # File handler
-    file_handler = logging.FileHandler(LOG_FILE)
+    # Rotating file handler
+    file_handler = RotatingFileHandler(
+        LOG_FILE,
+        maxBytes=max_file_size_mb * 1024 * 1024,
+        backupCount=backup_count,
+    )
     file_handler.setLevel(log_level)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -423,7 +429,11 @@ def main(config: str, server_host: str, server_port: int,
         app_config = Config.from_yaml_file(config, cli_overrides)
         
         # Setup logging first
-        setup_logging(level=app_config.logging.level)
+        setup_logging(
+            level=app_config.logging.level,
+            max_file_size_mb=app_config.logging.max_file_size_mb,
+            backup_count=app_config.logging.backup_count,
+        )
         
         logger = logging.getLogger(__name__)
         logger.info("Starting Finzytrack backend server")

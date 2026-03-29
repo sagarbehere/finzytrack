@@ -95,8 +95,8 @@ class ConfigManager:
         Hot-reloadable fields (no restart required):
         - ledger_file (hot-switched: validates file, updates cache & SQLite)
         - ml.* (enabled, training_data_file)
-        - backup.* (enabled, retention_count, cleanup_on_exceed)
-        - logging.level (and other logging settings)
+        - backup.* (enabled, retention_count)
+        - logging.* (level, max_file_size_mb, backup_count)
         - accounts.* (default_currency, default_unknown_account)
 
         Restart-required fields:
@@ -138,12 +138,28 @@ class ConfigManager:
         self.config = new_config
 
         # Apply hot-reloadable settings that need runtime updates
-        if new_config.logging.level != old_config.logging.level:
+        if new_config.backup.retention_count != old_config.backup.retention_count:
+            self.backup_manager.retention_count = new_config.backup.retention_count
+            logger.info(f"Updated backup retention count to {new_config.backup.retention_count}")
+
+        logging_changed = (
+            new_config.logging.level != old_config.logging.level or
+            new_config.logging.max_file_size_mb != old_config.logging.max_file_size_mb or
+            new_config.logging.backup_count != old_config.logging.backup_count
+        )
+        if logging_changed:
             try:
-                logging.getLogger().setLevel(new_config.logging.level)
-                logger.info(f"Updated logging level to {new_config.logging.level}")
+                from app.main import setup_logging
+                setup_logging(
+                    level=new_config.logging.level,
+                    max_file_size_mb=new_config.logging.max_file_size_mb,
+                    backup_count=new_config.logging.backup_count,
+                )
+                logger.info(f"Updated logging settings (level={new_config.logging.level}, "
+                            f"max_file_size_mb={new_config.logging.max_file_size_mb}, "
+                            f"backup_count={new_config.logging.backup_count})")
             except Exception as e:
-                logger.warning(f"Failed to update logging level: {e}")
+                logger.warning(f"Failed to update logging settings: {e}")
 
         restart_reason = "; ".join(restart_reasons) if restart_reasons else None
 
