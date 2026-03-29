@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ApiResponse_GenerateQueryData_ } from '../models/ApiResponse_GenerateQueryData_';
+import type { ApiResponse_ParseNLTransactionData_ } from '../models/ApiResponse_ParseNLTransactionData_';
 import type { GenerateQueryRequest } from '../models/GenerateQueryRequest';
 import type { ParseNLTransactionRequest } from '../models/ParseNLTransactionRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
@@ -11,12 +13,12 @@ export class AiService {
     /**
      * Parse Nl Transaction
      * @param requestBody
-     * @returns any Successful Response
+     * @returns ApiResponse_ParseNLTransactionData_ Successful Response
      * @throws ApiError
      */
     public static parseNlTransaction(
         requestBody: ParseNLTransactionRequest,
-    ): CancelablePromise<any> {
+    ): CancelablePromise<ApiResponse_ParseNLTransactionData_> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/ai/parse-nl-transaction',
@@ -30,12 +32,12 @@ export class AiService {
     /**
      * Generate Query
      * @param requestBody
-     * @returns any Successful Response
+     * @returns ApiResponse_GenerateQueryData_ Successful Response
      * @throws ApiError
      */
     public static generateQuery(
         requestBody: GenerateQueryRequest,
-    ): CancelablePromise<any> {
+    ): CancelablePromise<ApiResponse_GenerateQueryData_> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/ai/generate-query',

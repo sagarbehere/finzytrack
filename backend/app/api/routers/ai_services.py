@@ -14,10 +14,10 @@ import re
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from app.ai.client import complete_chat
 from app.config import LLMConfig
@@ -26,6 +26,7 @@ from app.core.config_manager import ConfigManager
 from app.dependencies import get_beancount_manager, get_config_manager
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
+from app.schemas.response_schemas import ApiResponse
 
 logger = logging.getLogger(__name__)
 
@@ -112,8 +113,79 @@ def _build_nl_prompt(
     )
 
 
+class Posting(BaseModel):
+    account: str = ""
+    amount: float | int | None = None
+    currency: str = ""
+
+
+class ParsedTransaction(BaseModel):
+    date: str = ""
+    flag: str = "*"
+    payee: str = ""
+    narration: str = ""
+    postings: list[Posting] = []
+    tags: list[str] = []
+    links: list[str] = []
+
+
+class ParseNLTransactionData(BaseModel):
+    transaction: ParsedTransaction
+    warnings: list[str] = []
+
+
+class GenerateQueryData(BaseModel):
+    query: str
+
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _validate_parsed_transaction(
+    raw: dict[str, Any], valid_accounts: set[str], valid_currencies: set[str],
+) -> tuple[dict[str, Any], list[str]]:
+    """Validate and return (cleaned_data, warnings)."""
+    warnings: list[str] = []
+
+    # Structural validation
+    try:
+        txn = ParsedTransaction.model_validate(raw)
+    except ValidationError as e:
+        # Return the raw data with a structural warning rather than rejecting
+        field_errors = ", ".join(
+            f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
+            for err in e.errors()
+        )
+        warnings.append(f"Unexpected response structure: {field_errors}")
+        return raw, warnings
+
+    # Date format
+    if txn.date and not _DATE_RE.match(txn.date):
+        warnings.append(f"Date '{txn.date}' is not in YYYY-MM-DD format.")
+
+    # Account existence
+    for i, p in enumerate(txn.postings):
+        if p.account and p.account not in valid_accounts:
+            warnings.append(f"Account '{p.account}' not found in ledger.")
+
+    # Currency existence
+    for i, p in enumerate(txn.postings):
+        if p.currency and p.currency not in valid_currencies:
+            warnings.append(f"Currency '{p.currency}' not found in ledger.")
+
+    # Postings balance
+    amounts = [p.amount for p in txn.postings if p.amount is not None]
+    if amounts:
+        balance = sum(amounts)
+        if abs(balance) > 0.005:
+            warnings.append(f"Postings do not balance (sum = {balance:.2f}).")
+
+    return txn.model_dump(), warnings
+
+
 @router.post(
     "/ai/parse-nl-transaction",
+    response_model=ApiResponse[ParseNLTransactionData],
     operation_id="parseNlTransaction",
 )
 async def parse_nl_transaction(
@@ -124,7 +196,9 @@ async def parse_nl_transaction(
     llm = _get_llm_config(config_manager)
 
     accounts = sorted(beancount_manager.cache.get_account_names())
+    account_set = beancount_manager.cache.get_account_names()
     currencies = sorted(beancount_manager.cache.get_commodity_codes())
+    currency_set = beancount_manager.cache.get_commodity_codes()
     default_currency = body.default_currency or (currencies[0] if currencies else "USD")
 
     system_prompt = _build_nl_prompt(accounts, currencies, default_currency)
@@ -157,7 +231,8 @@ async def parse_nl_transaction(
             details={"raw": json_str[:300]},
         )
 
-    return success_json_response(data=parsed)
+    transaction, warnings = _validate_parsed_transaction(parsed, account_set, currency_set)
+    return success_json_response(data={"transaction": transaction, "warnings": warnings})
 
 
 # ── Generate Query ───────────────────────────────────────────────────────────
@@ -188,6 +263,7 @@ def _build_sql_prompt() -> str:
 
 @router.post(
     "/ai/generate-query",
+    response_model=ApiResponse[GenerateQueryData],
     operation_id="generateQuery",
 )
 async def generate_query(

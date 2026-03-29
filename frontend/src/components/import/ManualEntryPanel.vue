@@ -36,6 +36,13 @@
         </svg>
         <span>{{ isParsing ? 'Parsing...' : 'Parse & Add' }}</span>
       </button>
+      <!-- Validation warnings -->
+      <div v-if="parseWarnings.length" class="mt-2 rounded-md border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 px-3 py-2">
+        <p class="text-xs font-medium text-amber-800 dark:text-amber-300">Review the transaction below — the AI result had issues:</p>
+        <ul class="mt-1 list-disc list-inside text-xs text-amber-700 dark:text-amber-400">
+          <li v-for="(w, i) in parseWarnings" :key="i">{{ w }}</li>
+        </ul>
+      </div>
     </div>
 
     <div class="text-center text-gray-400 text-sm my-3">or add a blank row</div>
@@ -86,20 +93,23 @@
   const currency = ref('')
   const nlText = ref('')
   const isParsing = ref(false)
+  const parseWarnings = ref<string[]>([])
 
   const handleParseAndAdd = async () => {
     if (!nlText.value.trim() || isParsing.value) return
 
     isParsing.value = true
+    parseWarnings.value = []
     try {
-      const parsed = await parseNaturalLanguageTransaction(
+      const result = await parseNaturalLanguageTransaction(
         nlText.value.trim(),
         currency.value || undefined,
       )
+      parseWarnings.value = result.warnings
       emit('addTransaction', {
         account: account.value,
         currency: currency.value,
-        parsed,
+        parsed: result.transaction,
         scrollToResult: false,
       })
       nlText.value = ''

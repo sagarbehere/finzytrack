@@ -21,7 +21,7 @@ export async function generateQuery(
       question: naturalLanguageQuery,
       language: LANGUAGE_MAP[language],
     })
-    return (resp.data as { query: string }).query
+    return resp.data?.query ?? ''
   } catch (e: unknown) {
     if (e instanceof ApiError) {
       const msg = e.body?.error?.message || e.message

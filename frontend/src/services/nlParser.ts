@@ -1,17 +1,12 @@
 import { AiService, ApiError } from '@/services/generated-api'
+import type { ParsedTransaction } from '@/services/generated-api'
 
-export interface ParsedTransaction {
-  date?: string // YYYY-MM-DD — optional, defaults to today
-  flag?: string // '*' or '!' — optional, defaults to '*'
-  payee?: string // e.g. "Olive Garden"
-  narration?: string // e.g. "Dinner"
-  postings?: Array<{
-    account?: string // e.g. "Expenses:Food:Restaurant"
-    amount?: number | null
-    currency?: string // e.g. "USD"
-  }>
-  tags?: string[]
-  links?: string[]
+// Re-export so existing consumers keep working via this module
+export type { ParsedTransaction }
+
+export interface ParseResult {
+  transaction: ParsedTransaction
+  warnings: string[]
 }
 
 /**
@@ -23,16 +18,19 @@ export interface ParsedTransaction {
 export async function parseNaturalLanguageTransaction(
   text: string,
   defaultCurrency?: string,
-): Promise<ParsedTransaction> {
+): Promise<ParseResult> {
   try {
     const resp = await AiService.parseNlTransaction({
       text,
       default_currency: defaultCurrency || null,
     })
-    return resp.data as ParsedTransaction
+    return {
+      transaction: resp.data?.transaction ?? {},
+      warnings: resp.data?.warnings ?? [],
+    }
   } catch (e: unknown) {
     if (e instanceof ApiError && e.body?.error?.code === 'AI_NOT_CONFIGURED') {
-      return parseStub(text)
+      return { transaction: await parseStub(text), warnings: [] }
     }
     if (e instanceof ApiError) {
       const msg = e.body?.error?.message || e.message
