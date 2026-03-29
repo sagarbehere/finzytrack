@@ -38,6 +38,7 @@ class CategorizeRequest(BaseModel):
     transactions: List[RawTransactionForCategorization] = Field(..., description="List of transactions to categorize")
     source_account: str = Field(..., description="Source account for transactions (e.g., Assets:Bank:Checking)")
     currency: str = Field(..., description="Currency code (e.g., USD)")
+    force_engine: Optional[str] = Field(default=None, description="Override engine for this request only: 'ai' or 'classifier'. If unset, uses config.")
 
 
 class DuplicateInfo(BaseModel):
@@ -74,7 +75,9 @@ class CategorizationStats(BaseModel):
     total_count: int = Field(..., description="Total number of transactions processed")
     categorized_count: int = Field(..., description="Number of transactions with ML categories")
     duplicate_count: int = Field(..., description="Number of potential duplicates detected")
-    ml_training_info: Optional[str] = Field(default=None, description="ML training warnings or info messages")
+    engine_used: str = Field(..., description="Engine used for categorization: 'classifier', 'ai', or 'default'")
+    ml_training_info: Optional[str] = Field(default=None, description="ML training warnings or info messages (deprecated, use warnings)")
+    warnings: List[str] = Field(default_factory=list, description="Warnings from categorization (e.g., AI validation failures, insufficient training data)")
 
 
 class CategorizeResponse(BaseModel):

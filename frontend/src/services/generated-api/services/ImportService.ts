@@ -66,13 +66,13 @@ export class ImportService {
     }
     /**
      * Categorize Transactions
-     * Categorize transactions using ML and detect potential duplicates.
+     * Categorize transactions and detect potential duplicates.
      *
-     * This endpoint:
-     * 1. Trains ML classifier (or skips if disabled/insufficient data)
-     * 2. Categorizes each transaction using ML or fallback to default
-     * 3. Checks for duplicates using OFX ID and fuzzy matching
-     * 4. Returns results in same order as request with statistics
+     * Engine selection:
+     * - force_engine in request overrides config (for one-time AI fallback)
+     * - config.ai.categorization.engine determines default engine
+     * - If engine=classifier but insufficient training data, returns a warning
+     * with ai_fallback_available flag so frontend can offer AI fallback
      *
      * Args:
      * request: CategorizeRequest with transactions to process

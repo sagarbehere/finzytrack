@@ -9,11 +9,17 @@ import { ImportService } from '@/services/generated-api'
 import { errorHandler } from '@/utils/ErrorHandler'
 import type {
   CategorizedTransactionResult,
+  CategorizationStats,
   CategorizeRequest,
   CommitRequest,
   CommitTransaction
 } from '@/services/generated-api'
 import type { TransactionViewModel } from '@/types/transactions'
+
+export interface CategorizationResult {
+  results: CategorizedTransactionResult[]
+  stats: CategorizationStats
+}
 
 export function useTransactionImporter() {
   // State
@@ -30,8 +36,9 @@ export function useTransactionImporter() {
   async function performCategorization(
     transactions: TransactionViewModel[],
     sourceAccount: string,
-    sourceCurrency: string
-  ): Promise<CategorizedTransactionResult[]> {
+    sourceCurrency: string,
+    forceEngine?: string
+  ): Promise<CategorizationResult> {
     isLoading.value = true
     categorizeError.value = null
 
@@ -49,7 +56,8 @@ export function useTransactionImporter() {
           external_id_type: tx.meta['external_id_type'],
         })),
         source_account: sourceAccount,
-        currency: sourceCurrency
+        currency: sourceCurrency,
+        force_engine: forceEngine ?? null
       }
 
       // Call backend API
@@ -59,7 +67,10 @@ export function useTransactionImporter() {
         throw new Error('No data received from categorization endpoint')
       }
 
-      return response.data.results
+      return {
+        results: response.data.results,
+        stats: response.data.stats
+      }
 
     } catch (error) {
       categorizeError.value = error instanceof Error ? error.message : 'Categorization failed'

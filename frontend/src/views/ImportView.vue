@@ -155,7 +155,53 @@
           <span>{{ isLoading ? 'Categorizing...' : 'Autocategorize' }}</span>
         </button>
       </div>
-      
+
+      <!-- AI fallback prompt (shown when classifier has insufficient data and AI is available) -->
+      <div v-if="showAiFallbackPrompt" class="mb-4 rounded-lg bg-indigo-50 p-4 ring-1 ring-indigo-200 dark:bg-indigo-900/20 dark:ring-indigo-500/30">
+        <div class="flex items-start gap-3">
+          <div class="shrink-0 text-indigo-600 dark:text-indigo-400">
+            <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z" clip-rule="evenodd" /></svg>
+          </div>
+          <div class="flex-1">
+            <p class="text-sm font-medium text-indigo-800 dark:text-indigo-300">Insufficient training data for the classifier</p>
+            <p class="mt-1 text-sm text-indigo-700 dark:text-indigo-400">{{ aiFallbackMessage }}</p>
+            <div class="mt-3 flex gap-3">
+              <button
+                @click="autocategorizeWithAi"
+                :disabled="isLoading"
+                class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Use AI
+              </button>
+              <button
+                @click="dismissAiFallback"
+                class="rounded-md bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-gray-300 dark:inset-ring-white/5 dark:hover:bg-white/20"
+              >
+                Skip, I'll categorize manually
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Categorization warnings panel -->
+      <div v-if="categorizationWarnings.length > 0" class="mb-4 rounded-lg bg-yellow-50 p-4 ring-1 ring-yellow-200 dark:bg-yellow-900/20 dark:ring-yellow-500/30">
+        <div class="flex items-start gap-3">
+          <div class="shrink-0 text-yellow-600 dark:text-yellow-400">
+            <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" /></svg>
+          </div>
+          <div class="flex-1">
+            <p class="text-sm font-medium text-yellow-800 dark:text-yellow-300">Categorization warnings</p>
+            <ul class="mt-1 list-disc list-inside text-sm text-yellow-700 dark:text-yellow-400">
+              <li v-for="(warning, idx) in categorizationWarnings" :key="idx">{{ warning }}</li>
+            </ul>
+          </div>
+          <button @click="categorizationWarnings = []" class="shrink-0 text-yellow-600 hover:text-yellow-800 dark:text-yellow-400 dark:hover:text-yellow-300">
+            <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" /></svg>
+          </button>
+        </div>
+      </div>
+
       <!-- Transaction table component with loading overlay -->
       <div class="relative">
         <!-- Loading overlay -->
@@ -278,6 +324,11 @@
   // Register confirmation modal state
   const registerConfirmOpen = ref(false)
 
+  // Categorization warnings and AI fallback state
+  const categorizationWarnings = ref<string[]>([])
+  const showAiFallbackPrompt = ref(false)
+  const aiFallbackMessage = ref('')
+
   const pendingDuplicateCount = computed(() =>
     transactionViewModels.value.filter(t => importContext.value.get(t.id)?.is_duplicate === true).length
   )
@@ -306,6 +357,8 @@
     transactionViewModels.value = []
     importContext.value.clear()
     rawCsvTransactions.value = []
+    categorizationWarnings.value = []
+    showAiFallbackPrompt.value = false
   }
 
   // Handle the Proceed button click from OFXFilePicker
@@ -690,14 +743,73 @@
       importContext.value = newContext
     }
 
+    // Clear categorization state
+    categorizationWarnings.value = []
+    showAiFallbackPrompt.value = false
+
     // Remove focus from the button to hide the focus ring
     if (event?.target) {
       (event.target as HTMLElement).blur()
     }
   }
 
+  // Shared function to apply categorization results to the transaction table
+  const applyCategorizationResults = (results: import('@/services/generated-api').CategorizedTransactionResult[]) => {
+    const resultMap = new Map(results.map(r => [r.id, r]))
+
+    // Verify all transactions have corresponding results
+    transactionViewModels.value.forEach(tx => {
+      if (!resultMap.has(tx.id)) {
+        console.error('Missing categorization result for transaction:', tx)
+        throw new Error(`No categorization result found for transaction ${tx.id}`)
+      }
+    })
+
+    if (results.length !== transactionViewModels.value.length) {
+      console.error('Result count mismatch!', {
+        sent: transactionViewModels.value.length,
+        received: results.length
+      })
+      throw new Error('Backend returned unexpected number of results')
+    }
+
+    // Update transactions with suggested categories and import context using ID-based matching
+    transactionViewModels.value = transactionViewModels.value.map(tx => {
+      const result = resultMap.get(tx.id)!
+
+      // Update import context
+      const existing = importContext.value.get(tx.id)
+      if (existing) {
+        importContext.value.set(tx.id, {
+          ...existing,
+          confidence: result.confidence ?? undefined,
+          is_duplicate: result.is_duplicate ?? false,
+          duplicate_info: result.duplicate_info ?? undefined
+        })
+      }
+
+      // Update transaction postings with suggested category
+      if (result.suggested_category) {
+        const updatedPostings = [...tx.postings]
+        if (updatedPostings.length >= 2) {
+          updatedPostings[1] = {
+            ...updatedPostings[1],
+            account: result.suggested_category
+          }
+        }
+        return { ...tx, postings: updatedPostings }
+      }
+      return tx
+    })
+
+    // Establish new edit baseline
+    nextTick(() => {
+      transactionTableRef.value?.setNewEditBaseline()
+    })
+  }
+
   // Autocategorize function
-  const autocategorize = async (event?: Event) => {
+  const autocategorize = async (event?: Event, forceEngine?: string) => {
     // Remove focus from the button to hide the focus ring
     if (event?.target) {
       (event.target as HTMLElement).blur()
@@ -707,70 +819,47 @@
       return
     }
 
+    // Clear previous warnings and fallback prompt
+    categorizationWarnings.value = []
+    showAiFallbackPrompt.value = false
+
     try {
-      const results = await performCategorization(
+      const { results, stats } = await performCategorization(
         transactionViewModels.value,
         sourceAccount.value,
-        sourceCurrency.value
+        sourceCurrency.value,
+        forceEngine
       )
 
-      // Build a map of results by ID for O(1) lookup
-      const resultMap = new Map(results.map(r => [r.id, r]))
-
-      // Verify all transactions have corresponding results
-      transactionViewModels.value.forEach(tx => {
-        if (!resultMap.has(tx.id)) {
-          console.error('Missing categorization result for transaction:', tx)
-          throw new Error(`No categorization result found for transaction ${tx.id}`)
+      // Show warnings if any
+      if (stats.warnings && stats.warnings.length > 0) {
+        // Check if there's an AI fallback available warning
+        const fallbackWarning = stats.warnings.find(w => w.includes('AI-based categorization is available'))
+        if (fallbackWarning && stats.engine_used === 'default') {
+          aiFallbackMessage.value = fallbackWarning
+          showAiFallbackPrompt.value = true
+          // Show non-fallback warnings separately
+          categorizationWarnings.value = stats.warnings.filter(w => w !== fallbackWarning)
+        } else {
+          categorizationWarnings.value = stats.warnings
         }
-      })
-
-      // Verify no extra results were returned
-      if (results.length !== transactionViewModels.value.length) {
-        console.error('Result count mismatch!', {
-          sent: transactionViewModels.value.length,
-          received: results.length
-        })
-        throw new Error('Backend returned unexpected number of results')
       }
 
-      // Update transactions with suggested categories and import context using ID-based matching
-      transactionViewModels.value = transactionViewModels.value.map(tx => {
-        const result = resultMap.get(tx.id)!
-
-        // Update import context
-        const existing = importContext.value.get(tx.id)
-        if (existing) {
-          importContext.value.set(tx.id, {
-            ...existing,
-            confidence: result.confidence ?? undefined,
-            is_duplicate: result.is_duplicate ?? false,
-            duplicate_info: result.duplicate_info ?? undefined
-          })
-        }
-
-        // Update transaction postings with suggested category
-        if (result.suggested_category) {
-          const updatedPostings = [...tx.postings]
-          if (updatedPostings.length >= 2) {
-            updatedPostings[1] = {
-              ...updatedPostings[1],
-              account: result.suggested_category
-            }
-          }
-          return { ...tx, postings: updatedPostings }
-        }
-        return tx
-      })
-
-      // Establish new edit baseline
-      nextTick(() => {
-        transactionTableRef.value?.setNewEditBaseline()
-      })
+      applyCategorizationResults(results)
 
     } catch (_error) {
       // Error already displayed via errorHandler.display() in composable
     }
+  }
+
+  // AI fallback: re-run categorization with force_engine='ai'
+  const autocategorizeWithAi = async () => {
+    showAiFallbackPrompt.value = false
+    await autocategorize(undefined, 'ai')
+  }
+
+  const dismissAiFallback = () => {
+    showAiFallbackPrompt.value = false
   }
 
   // Register transactions function

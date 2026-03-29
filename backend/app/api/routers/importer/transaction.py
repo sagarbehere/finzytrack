@@ -6,6 +6,7 @@ from beancount.core import data, amount
 from beancount.core.position import Cost
 from beancount.parser import parser
 
+from app.config import CategorizationEngine
 from app.core.config_manager import ConfigManager
 from app.core.beancount_manager import BeancountManager
 from app.dependencies import get_config_manager, get_beancount_manager
@@ -21,6 +22,7 @@ from app.schemas.transaction_schemas import (
 )
 from app.helpers.response_helpers import success_json_response
 from app.services.categorizer import initialize_classifier, categorize_transaction
+from app.services.ai_categorizer import categorize_transactions_ai, AICategorizeError
 from app.services.duplicate_detector import find_duplicate
 
 logger = logging.getLogger(__name__)
@@ -35,13 +37,13 @@ async def categorize_transactions(
     beancount_manager: BeancountManager = Depends(get_beancount_manager)
 ):
     """
-    Categorize transactions using ML and detect potential duplicates.
+    Categorize transactions and detect potential duplicates.
 
-    This endpoint:
-    1. Trains ML classifier (or skips if disabled/insufficient data)
-    2. Categorizes each transaction using ML or fallback to default
-    3. Checks for duplicates using OFX ID and fuzzy matching
-    4. Returns results in same order as request with statistics
+    Engine selection:
+    - force_engine in request overrides config (for one-time AI fallback)
+    - config.ai.categorization.engine determines default engine
+    - If engine=classifier but insufficient training data, returns a warning
+      with ai_fallback_available flag so frontend can offer AI fallback
 
     Args:
         request: CategorizeRequest with transactions to process
@@ -52,42 +54,115 @@ async def categorize_transactions(
         CategorizeResponse with results and stats
     """
     config = config_manager.get_config()
+    default_account = config.accounts.default_unknown_account
+    warnings: list[str] = []
 
-    # Get cached training data and existing transactions (single ledger parse)
+    # Determine which engine to use
+    if request.force_engine:
+        try:
+            engine = CategorizationEngine(request.force_engine)
+        except ValueError:
+            raise APIError(
+                message=f"Invalid force_engine value: '{request.force_engine}'. Must be 'classifier', 'ai', or 'llm'.",
+                code="INVALID_ENGINE",
+                status_code=422,
+            )
+    else:
+        engine = config.ai.categorization.engine
+    # Normalize LLM alias to AI
+    if engine == CategorizationEngine.LLM:
+        engine = CategorizationEngine.AI
+
+    # Get cached data
     training_data = beancount_manager.cache.get_training_data()
     existing_transactions = beancount_manager.cache.get_transactions()
+    account_names = beancount_manager.cache.get_account_names()
     logger.info(f"Using cached data: {len(training_data)} training samples, "
                f"{len(existing_transactions)} existing transactions")
 
-    # Initialize ML classifier with cached training data
-    classifier, ml_warning = initialize_classifier(
-        training_data=training_data,
-        ml_enabled=config.ai.categorization.enabled
-    )
+    # ── Categorization ────────────────────────────────────────────────
+    # Maps transaction id -> (suggested_category, confidence)
+    categorization_map: dict[str, tuple[str, float | None]] = {}
+    engine_used = "default"
+    ml_warning: str | None = None
 
-    # Process each transaction
+    if not config.ai.categorization.enabled:
+        # Categorization disabled — all get default
+        engine_used = "default"
+        for raw_txn in request.transactions:
+            categorization_map[raw_txn.id] = (default_account, None)
+
+    elif engine == CategorizationEngine.AI:
+        # AI engine
+        engine_used = "ai"
+        if not config.ai.llm.model:
+            raise APIError(
+                message="AI is not configured. Go to Settings and configure the AI section (ai.llm.model must be set).",
+                code="LLM_NOT_CONFIGURED",
+                status_code=400,
+            )
+
+        txn_dicts = [
+            {"id": t.id, "payee": t.payee, "memo": t.memo or "", "narration": t.narration or ""}
+            for t in request.transactions
+        ]
+
+        try:
+            ai_results, ai_warnings = categorize_transactions_ai(
+                transactions=txn_dicts,
+                account_names=account_names,
+                default_account=default_account,
+                llm_config=config.ai.llm,
+            )
+            warnings.extend(ai_warnings)
+            for raw_txn in request.transactions:
+                account = ai_results.get(raw_txn.id, default_account)
+                categorization_map[raw_txn.id] = (account, None)
+        except AICategorizeError as e:
+            raise APIError(
+                message=f"AI categorization failed: {e}",
+                code="AI_CATEGORIZE_FAILED",
+                status_code=502,
+            )
+
+    else:
+        # Classifier engine
+        classifier, ml_warning = initialize_classifier(
+            training_data=training_data,
+            ml_enabled=True,
+        )
+
+        if classifier:
+            engine_used = "classifier"
+            for raw_txn in request.transactions:
+                description_parts = [raw_txn.payee]
+                if raw_txn.memo:
+                    description_parts.append(raw_txn.memo)
+                if raw_txn.narration:
+                    description_parts.append(raw_txn.narration)
+                description = " ".join(description_parts)
+                suggested_category, confidence = categorize_transaction(description, classifier)
+                categorization_map[raw_txn.id] = (suggested_category, confidence)
+        else:
+            # Classifier failed — always offer AI fallback (LLM config is checked when user actually tries)
+            engine_used = "default"
+            if ml_warning:
+                warnings.append(
+                    f"{ml_warning}. AI-based categorization is available as a fallback."
+                )
+            for raw_txn in request.transactions:
+                categorization_map[raw_txn.id] = (default_account, None)
+
+    # ── Duplicate detection (always runs, regardless of engine) ───────
     results = []
     categorized_count = 0
     duplicate_count = 0
 
     for raw_txn in request.transactions:
-        # Categorize using ML or default
-        if classifier:
-            # Combine payee, memo, and narration for ML classification
-            description_parts = [raw_txn.payee]
-            if raw_txn.memo:
-                description_parts.append(raw_txn.memo)
-            if raw_txn.narration:
-                description_parts.append(raw_txn.narration)
-            description = " ".join(description_parts)
-            suggested_category, confidence = categorize_transaction(description, classifier)
+        suggested_category, confidence = categorization_map[raw_txn.id]
+        if suggested_category != default_account:
             categorized_count += 1
-        else:
-            # Use default category with zero confidence
-            suggested_category = config.accounts.default_unknown_account
-            confidence = 0.0
 
-        # Detect duplicates
         is_duplicate, duplicate_info = find_duplicate(
             txn_date=raw_txn.date,
             payee=raw_txn.payee,
@@ -102,32 +177,25 @@ async def categorize_transactions(
         if is_duplicate:
             duplicate_count += 1
 
-        # Create result with ID for matching
         result = CategorizedTransactionResult(
-            id=raw_txn.id,  # Echo back the ID for request/response correlation
+            id=raw_txn.id,
             suggested_category=suggested_category,
             confidence=confidence,
             is_duplicate=is_duplicate,
-            duplicate_info=duplicate_info
+            duplicate_info=duplicate_info,
         )
-
         results.append(result)
 
-    # Create statistics
     stats = CategorizationStats(
         total_count=len(request.transactions),
         categorized_count=categorized_count,
         duplicate_count=duplicate_count,
-        ml_training_info=ml_warning
+        engine_used=engine_used,
+        ml_training_info=ml_warning,
+        warnings=warnings,
     )
 
-    # Create response
-    response_data = CategorizeResponse(
-        results=results,
-        stats=stats
-    )
-
-    return success_json_response(response_data)
+    return success_json_response(CategorizeResponse(results=results, stats=stats))
 
 
 @router.post("/commit", response_model=ApiResponse[CommitResponse])

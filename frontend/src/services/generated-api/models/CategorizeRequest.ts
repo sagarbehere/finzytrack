@@ -19,5 +19,9 @@ export type CategorizeRequest = {
      * Currency code (e.g., USD)
      */
     currency: string;
+    /**
+     * Override engine for this request only: 'ai' or 'classifier'. If unset, uses config.
+     */
+    force_engine?: (string | null);
 };
 

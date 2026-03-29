@@ -84,9 +84,9 @@ const statusIcons = computed(() => {
     })
   }
 
-  // Priority 3: Import context - confidence level
+  // Priority 3: Import context - confidence level (skip when null/undefined — AI engine doesn't produce scores)
   const confidence = props.importContext?.confidence
-  if (confidence !== undefined) {
+  if (confidence != null) {
     if (confidence >= 0.95) {
       icons.push({
         key: 'high-confidence',

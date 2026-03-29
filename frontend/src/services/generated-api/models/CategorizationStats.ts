@@ -19,8 +19,16 @@ export type CategorizationStats = {
      */
     duplicate_count: number;
     /**
-     * ML training warnings or info messages
+     * Engine used for categorization: 'classifier', 'ai', or 'default'
+     */
+    engine_used: string;
+    /**
+     * ML training warnings or info messages (deprecated, use warnings)
      */
     ml_training_info?: (string | null);
+    /**
+     * Warnings from categorization (e.g., AI validation failures, insufficient training data)
+     */
+    warnings?: Array<string>;
 };
 

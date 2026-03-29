@@ -45,7 +45,7 @@ class AccountsConfig(BaseModel):
 class CategorizationEngine(str, Enum):
     """Categorization engine selection."""
     CLASSIFIER = "classifier"  # scikit-learn classifier trained on local beancount history
-    AI = "ai"                  # AI-based categorization (future)
+    AI = "ai"                  # AI-based categorization using configured LLM
     LLM = "llm"                # Alias for "ai" (backward compat)
 
 
