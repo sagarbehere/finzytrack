@@ -385,6 +385,24 @@ def build_tool_result_message(tool_call_id: str, result: dict) -> dict:
     }
 
 
+def _sanitize_arguments(raw: str) -> str:
+    """Ensure tool call arguments are valid JSON.
+
+    Providers reject malformed JSON in replayed assistant messages with
+    misleading errors like "Context limit exceeded".  If the LLM produced
+    invalid JSON, replace it with an empty object — the error details are
+    already conveyed to the LLM via the tool result message.
+    """
+    if not raw:
+        return "{}"
+    try:
+        json.loads(raw)
+        return raw
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("Sanitized invalid tool-call arguments (%d chars) to '{}'", len(raw))
+        return "{}"
+
+
 def build_assistant_message(text: str, tool_calls: list[ToolCallEvent]) -> dict:
     """Build an OpenAI-format assistant message (may include tool calls)."""
     msg: dict = {"role": "assistant", "content": text or None}
@@ -395,9 +413,7 @@ def build_assistant_message(text: str, tool_calls: list[ToolCallEvent]) -> dict:
                 "type": "function",
                 "function": {
                     "name": tc.name,
-                    # Normalize empty arguments to valid JSON object —
-                    # some providers reject "" and require "{}"
-                    "arguments": tc.arguments if tc.arguments else "{}",
+                    "arguments": _sanitize_arguments(tc.arguments),
                 },
             }
             for tc in tool_calls
