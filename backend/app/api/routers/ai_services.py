@@ -1,0 +1,222 @@
+"""
+Stateless AI service endpoints.
+
+POST /ai/parse-nl-transaction  — natural language → Beancount transaction JSON
+POST /ai/generate-query        — natural language → SQL or BQL query string
+
+These are simple one-shot request/response calls (no streaming, no tool-use).
+The LLM API key stays server-side — the frontend never sees it.
+"""
+
+import json
+import logging
+import re
+from datetime import date
+from functools import lru_cache
+from pathlib import Path
+from typing import Literal
+
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
+
+from app.ai.client import complete_chat
+from app.config import LLMConfig
+from app.core.beancount_manager import BeancountManager
+from app.core.config_manager import ConfigManager
+from app.dependencies import get_beancount_manager, get_config_manager
+from app.exceptions import APIError
+from app.helpers.response_helpers import success_json_response
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+_PROMPTS_DIR = Path(__file__).parents[3] / "resources" / "prompts"
+
+
+@lru_cache(maxsize=8)
+def _load_prompt(filename: str) -> str:
+    path = _PROMPTS_DIR / filename
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Prompt file not found: {path}. "
+            "Ensure backend/resources/prompts/ contains the expected .md files."
+        )
+    return path.read_text(encoding="utf-8").strip()
+
+
+def _get_llm_config(config_manager: ConfigManager) -> LLMConfig:
+    """Extract and validate LLM config."""
+    llm = config_manager.get_config().ai.llm
+    if not llm.model:
+        raise APIError(
+            message="AI is not configured. Set a model under Settings → AI.",
+            code="AI_NOT_CONFIGURED",
+            status_code=400,
+        )
+    if llm.provider != "anthropic" and not llm.api_url:
+        raise APIError(
+            message="AI API URL is not configured. Set api_url under Settings → AI.",
+            code="AI_NOT_CONFIGURED",
+            status_code=400,
+        )
+    return llm
+
+
+_FENCE_RE = re.compile(r"```(?:\w+)?\s*\n?([\s\S]*?)\n?\s*```")
+
+
+def _strip_fences(text: str) -> str:
+    """Remove markdown code fences if present."""
+    text = text.strip()
+    m = _FENCE_RE.search(text)
+    if m:
+        return m.group(1).strip()
+    return text.replace("```", "").strip()
+
+
+# ── Parse NL Transaction ─────────────────────────────────────────────────────
+
+
+class ParseNLTransactionRequest(BaseModel):
+    text: str = Field(..., description="Natural language transaction description")
+    default_currency: str | None = Field(None, description="Selected default currency")
+
+
+def _build_nl_prompt(
+    accounts: list[str], currencies: list[str], default_currency: str,
+) -> str:
+    """Build system prompt for NL transaction parsing."""
+    template = _load_prompt("nl_transaction_parser.md")
+    today = date.today().isoformat()
+
+    # Group accounts by top-level type
+    grouped: dict[str, list[str]] = {}
+    for name in sorted(accounts):
+        typ = name.split(":")[0]
+        grouped.setdefault(typ, []).append(name)
+
+    account_block = "\n".join(
+        f"{typ}:\n  " + "\n  ".join(names)
+        for typ, names in grouped.items()
+    )
+
+    currency_list = ", ".join(sorted(currencies)) if currencies else "USD"
+
+    return (
+        template
+        .replace("{{TODAY}}", today)
+        .replace("{{ACCOUNT_BLOCK}}", account_block)
+        .replace("{{CURRENCY_LIST}}", currency_list)
+        .replace("{{DEFAULT_CURRENCY}}", default_currency)
+    )
+
+
+@router.post(
+    "/ai/parse-nl-transaction",
+    operation_id="parseNlTransaction",
+)
+async def parse_nl_transaction(
+    body: ParseNLTransactionRequest,
+    config_manager: ConfigManager = Depends(get_config_manager),
+    beancount_manager: BeancountManager = Depends(get_beancount_manager),
+):
+    llm = _get_llm_config(config_manager)
+
+    accounts = sorted(beancount_manager.cache.get_account_names())
+    currencies = sorted(beancount_manager.cache.get_commodity_codes())
+    default_currency = body.default_currency or (currencies[0] if currencies else "USD")
+
+    system_prompt = _build_nl_prompt(accounts, currencies, default_currency)
+
+    try:
+        content = await complete_chat(
+            llm,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": body.text},
+            ],
+            temperature=0.1,
+        )
+    except RuntimeError as e:
+        raise APIError(message=str(e), code="AI_REQUEST_FAILED", status_code=502)
+    except Exception as e:
+        logger.exception("AI request failed")
+        raise APIError(
+            message=f"AI request failed: {e}", code="AI_REQUEST_FAILED", status_code=502,
+        )
+
+    json_str = _strip_fences(content)
+    try:
+        parsed = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        raise APIError(
+            message=f"AI returned invalid JSON: {e}",
+            code="AI_PARSE_ERROR",
+            status_code=502,
+            details={"raw": json_str[:300]},
+        )
+
+    return success_json_response(data=parsed)
+
+
+# ── Generate Query ───────────────────────────────────────────────────────────
+
+
+class GenerateQueryRequest(BaseModel):
+    question: str = Field(..., description="Natural language question")
+    language: Literal["sqlite", "beanquery"] = Field(
+        default="sqlite", description="Target query language"
+    )
+
+
+def _build_sql_prompt() -> str:
+    """Build system prompt for SQLite query generation."""
+    template = _load_prompt("sql_assistant.md")
+    schema = _load_prompt("schema_postings.md")
+    now = date.today()
+    year = now.year
+    month = f"{now.month:02d}"
+    return (
+        template
+        .replace("{{YEAR_MONTH}}", f"{year}-{month}")
+        .replace("{{YEAR}}", str(year))
+        .replace("{{LAST_YEAR}}", str(year - 1))
+        .replace("{{SCHEMA}}", schema)
+    )
+
+
+@router.post(
+    "/ai/generate-query",
+    operation_id="generateQuery",
+)
+async def generate_query(
+    body: GenerateQueryRequest,
+    config_manager: ConfigManager = Depends(get_config_manager),
+):
+    llm = _get_llm_config(config_manager)
+
+    if body.language == "beanquery":
+        system_prompt = _load_prompt("bql_assistant.md")
+    else:
+        system_prompt = _build_sql_prompt()
+
+    try:
+        content = await complete_chat(
+            llm,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": body.question},
+            ],
+            temperature=0.1,
+        )
+    except RuntimeError as e:
+        raise APIError(message=str(e), code="AI_REQUEST_FAILED", status_code=502)
+    except Exception as e:
+        logger.exception("AI request failed")
+        raise APIError(
+            message=f"AI request failed: {e}", code="AI_REQUEST_FAILED", status_code=502,
+        )
+
+    query = _strip_fences(content)
+    return success_json_response(data={"query": query})

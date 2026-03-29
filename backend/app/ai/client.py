@@ -56,7 +56,25 @@ class DoneEvent:
 ChatEvent = TokenEvent | ToolCallEvent | DoneEvent
 
 
-# ── Public entry point ────────────────────────────────────────────────────────
+# ── Public entry points ───────────────────────────────────────────────────────
+
+async def complete_chat(
+    config: LLMConfig,
+    messages: list[dict],
+    temperature: float | None = None,
+) -> str:
+    """
+    Non-streaming one-shot LLM completion.  Returns the full response text.
+
+    Use this for simple request/response calls (NL parsing, query generation)
+    where streaming and tool-use are unnecessary.
+    """
+    temp = temperature if temperature is not None else config.temperature
+
+    if config.provider == "anthropic":
+        return await _complete_anthropic(config, messages, temp)
+    return await _complete_openai(config, messages, temp)
+
 
 async def stream_chat(
     config: LLMConfig,
@@ -215,6 +233,78 @@ async def _stream_anthropic(
         yield ToolCallEvent(id=tc["id"], name=tc["name"], arguments=tc["arguments"])
 
     yield DoneEvent()
+
+
+# ── Non-streaming completions ─────────────────────────────────────────────────
+
+async def _complete_openai(
+    config: LLMConfig, messages: list[dict], temperature: float,
+) -> str:
+    from openai import AsyncOpenAI
+
+    kwargs: dict = {"api_key": config.api_key or "not-needed"}
+    if config.api_url:
+        base = config.api_url.rstrip("/")
+        if not base.endswith("/v1"):
+            base = base + "/v1"
+        kwargs["base_url"] = base
+
+    client = AsyncOpenAI(**kwargs)
+    call_kwargs: dict = dict(
+        model=config.model,
+        messages=messages,
+        temperature=temperature,
+        stream=False,
+    )
+    if config.max_tokens > 0:
+        call_kwargs["max_tokens"] = config.max_tokens
+
+    resp = await client.chat.completions.create(**call_kwargs)
+    content = resp.choices[0].message.content or ""
+    if not content:
+        finish = resp.choices[0].finish_reason
+        if finish == "length":
+            raise RuntimeError(
+                "Model ran out of tokens (reasoning took too long). "
+                "Try a shorter input or increase max_tokens."
+            )
+        raise RuntimeError("AI returned empty response")
+    return content
+
+
+async def _complete_anthropic(
+    config: LLMConfig, messages: list[dict], temperature: float,
+) -> str:
+    import anthropic
+
+    client = anthropic.AsyncAnthropic(api_key=config.api_key or "not-needed")
+
+    system_content = ""
+    anthropic_messages = []
+    for msg in messages:
+        if msg["role"] == "system":
+            system_content = msg["content"] if isinstance(msg["content"], str) else ""
+        else:
+            anthropic_messages.append({"role": msg["role"], "content": msg["content"]})
+
+    call_kwargs: dict = dict(
+        model=config.model,
+        max_tokens=_resolve_anthropic_max_tokens(config.max_tokens),
+        messages=anthropic_messages,
+        temperature=temperature,
+    )
+    if system_content:
+        call_kwargs["system"] = system_content
+
+    resp = await client.messages.create(**call_kwargs)
+    content = resp.content[0].text if resp.content else ""
+    if not content:
+        if resp.stop_reason == "max_tokens":
+            raise RuntimeError(
+                "Model ran out of tokens. Try a shorter input or increase max_tokens."
+            )
+        raise RuntimeError("AI returned empty response")
+    return content
 
 
 # ── Message format conversion ─────────────────────────────────────────────────

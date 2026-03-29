@@ -14,8 +14,8 @@
         AI can make mistakes — review output carefully.
         <a href="https://finzytrack.app/docs/ai-data-sharing" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">Data shared with AI</a>
       </p>
-      <p v-if="!config?.ai?.llm?.api_url" class="text-xs text-amber-600 dark:text-amber-400 mb-1">
-        AI not configured — basic parsing only. Set <code class="font-mono">ai.llm.api_url</code> in <code class="font-mono">{{ config?.config_file_path ?? 'config.yaml' }}</code> to enable full natural language parsing.
+      <p v-if="!config?.ai?.llm?.model" class="text-xs text-amber-600 dark:text-amber-400 mb-1">
+        AI not configured — basic parsing only. Set a model under Settings → AI to enable full natural language parsing.
       </p>
       <textarea
         v-model="nlText"
@@ -72,15 +72,11 @@
   import AccountDropdown from '@/components/common/AccountDropdown.vue'
   import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
   import { parseNaturalLanguageTransaction, type ParsedTransaction } from '@/services/nlParser'
-  import { useAccounts } from '@/composables/useAccounts'
-  import { useCommodities } from '@/composables/useCommodities'
   import { useToast } from '@/composables/useNotifications'
   import { useConfig } from '@/composables/useConfig'
 
   const { error: showErrorToast } = useToast()
   const { config } = useConfig()
-  const { accountNames } = useAccounts()
-  const { commodityCodes } = useCommodities()
 
   const emit = defineEmits<{
     addTransaction: [payload: { account: string; currency: string; parsed?: ParsedTransaction; scrollToResult: boolean }]
@@ -96,16 +92,9 @@
 
     isParsing.value = true
     try {
-      const llm = config.value?.ai?.llm
       const parsed = await parseNaturalLanguageTransaction(
         nlText.value.trim(),
-        {
-          accountNames: accountNames.value,
-          currencies: commodityCodes.value,
-          defaultAccount: account.value || undefined,
-          defaultCurrency: currency.value || undefined,
-        },
-        llm?.api_url ? { apiUrl: llm.api_url, apiKey: llm.api_key || undefined, model: llm.model || undefined, temperature: llm.temperature, maxTokens: llm.max_tokens } : undefined,
+        currency.value || undefined,
       )
       emit('addTransaction', {
         account: account.value,

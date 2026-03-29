@@ -2,32 +2,23 @@
 import json
 import logging
 from decimal import Decimal
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from app.config import LLMConfig
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You extract bank transaction data from email alert text.
+_PROMPTS_DIR = Path(__file__).parents[2] / "resources" / "prompts"
 
-Return ONLY a JSON object with these fields (omit fields you cannot find):
-{
-  "amount": number (positive, absolute value — do not apply sign here),
-  "is_debit": boolean (true if money left the account, false if money entered),
-  "payee": string or null,
-  "date": "YYYY-MM-DD" or null,
-  "reference": string or null (transaction reference/ID number),
-  "masked_account": string or null (e.g. "XX8968", "XXXXXXXX8815")
-}
 
-Rules:
-- amount must be a positive number. Use is_debit to indicate direction.
-- is_debit=true means debit (payment, withdrawal, money leaving account).
-- is_debit=false means credit (deposit, refund, money entering account).
-- If you cannot determine direction with confidence, omit is_debit.
-- date: use the transaction date, not the email send date.
-- reference: the transaction ID, UPI reference, NEFT reference, etc.
-- Return ONLY the JSON object. No markdown. No explanation."""
+@lru_cache(maxsize=1)
+def _load_system_prompt() -> str:
+    path = _PROMPTS_DIR / "email_extractor.md"
+    if not path.is_file():
+        raise FileNotFoundError(f"Email extractor prompt not found: {path}")
+    return path.read_text(encoding="utf-8").strip()
 
 
 class LLMExtractionError(Exception):
@@ -50,7 +41,7 @@ def _call_openai(llm_config: LLMConfig, user_message: str) -> str:
         model=llm_config.model or "gpt-4o",
         temperature=llm_config.temperature,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": _load_system_prompt()},
             {"role": "user", "content": user_message},
         ],
     )
@@ -71,7 +62,7 @@ def _call_anthropic(llm_config: LLMConfig, user_message: str) -> str:
     resp = client.messages.create(
         model=llm_config.model,
         max_tokens=max_tokens,
-        system=SYSTEM_PROMPT,
+        system=_load_system_prompt(),
         messages=[{"role": "user", "content": user_message}],
     )
     return resp.content[0].text if resp.content else ""

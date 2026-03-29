@@ -605,7 +605,11 @@ function initLlmFields() {
 }
 
 async function saveLlm() {
-  await saveSection({ ai: { llm: { ...llmFields } } }, llmSaving, llmError)
+  // Omit api_key from patch when empty — the backend redacts it in GET responses,
+  // so empty here means "unchanged", not "clear the key".
+  const { api_key, ...rest } = llmFields
+  const llmPatch = api_key ? { ...rest, api_key } : { ...rest }
+  await saveSection({ ai: { llm: llmPatch } }, llmSaving, llmError)
 }
 
 function resetLlm() { initLlmFields(); llmError.value = '' }

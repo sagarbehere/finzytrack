@@ -46,8 +46,8 @@
         AI can make mistakes — review output carefully.
         <a href="https://finzytrack.app/docs/ai-data-sharing" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">Data shared with AI</a>
       </p>
-      <p v-if="!config?.ai?.llm?.api_url" class="text-xs text-amber-600 dark:text-amber-400 mb-2">
-        AI not configured. Set <code class="font-mono">ai.llm.api_url</code> in <code class="font-mono">{{ config?.config_file_path ?? 'config.yaml' }}</code> to enable query generation.
+      <p v-if="!config?.ai?.llm?.model" class="text-xs text-amber-600 dark:text-amber-400 mb-2">
+        AI not configured. Set a model under Settings → AI to enable query generation.
       </p>
       <textarea
         v-model="nlQuery"
@@ -60,7 +60,7 @@
       <div class="mt-2 flex items-center gap-2">
         <button
           @click="handleGenerate"
-          :disabled="!nlQuery.trim() || isGenerating || !config?.ai?.llm?.api_url"
+          :disabled="!nlQuery.trim() || isGenerating || !config?.ai?.llm?.model"
           class="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400 dark:focus-visible:outline-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-2"
         >
           <svg v-if="isGenerating" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -459,9 +459,7 @@
     isGenerating.value = true
     errorMessage.value = ''
     try {
-      const llm = config.value?.ai?.llm
-      const llmConfig = llm?.api_url ? { apiUrl: llm.api_url, apiKey: llm.api_key || undefined, model: llm.model || undefined, temperature: llm.temperature, maxTokens: llm.max_tokens } : undefined
-      const query = await generateQuery(nlQuery.value.trim(), queryLanguage.value, llmConfig)
+      const query = await generateQuery(nlQuery.value.trim(), queryLanguage.value)
       queryText.value = query
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Failed to generate query'
