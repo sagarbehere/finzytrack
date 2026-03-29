@@ -36,8 +36,7 @@ export function useTransactionImporter() {
   async function performCategorization(
     transactions: TransactionViewModel[],
     sourceAccount: string,
-    sourceCurrency: string,
-    forceEngine?: string
+    sourceCurrency: string
   ): Promise<CategorizationResult> {
     isLoading.value = true
     categorizeError.value = null
@@ -56,8 +55,7 @@ export function useTransactionImporter() {
           external_id_type: tx.meta['external_id_type'],
         })),
         source_account: sourceAccount,
-        currency: sourceCurrency,
-        force_engine: forceEngine ?? null
+        currency: sourceCurrency
       }
 
       // Call backend API

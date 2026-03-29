@@ -156,34 +156,6 @@
         </button>
       </div>
 
-      <!-- AI fallback prompt (shown when classifier has insufficient data and AI is available) -->
-      <div v-if="showAiFallbackPrompt" class="mb-4 rounded-lg bg-indigo-50 p-4 ring-1 ring-indigo-200 dark:bg-indigo-900/20 dark:ring-indigo-500/30">
-        <div class="flex items-start gap-3">
-          <div class="shrink-0 text-indigo-600 dark:text-indigo-400">
-            <svg class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z" clip-rule="evenodd" /></svg>
-          </div>
-          <div class="flex-1">
-            <p class="text-sm font-medium text-indigo-800 dark:text-indigo-300">Insufficient training data for the classifier</p>
-            <p class="mt-1 text-sm text-indigo-700 dark:text-indigo-400">{{ aiFallbackMessage }}</p>
-            <div class="mt-3 flex gap-3">
-              <button
-                @click="autocategorizeWithAi"
-                :disabled="isLoading"
-                class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Use AI
-              </button>
-              <button
-                @click="dismissAiFallback"
-                class="rounded-md bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-gray-300 dark:inset-ring-white/5 dark:hover:bg-white/20"
-              >
-                Skip, I'll categorize manually
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <!-- Categorization warnings panel -->
       <div v-if="categorizationWarnings.length > 0" class="mb-4 rounded-lg bg-yellow-50 p-4 ring-1 ring-yellow-200 dark:bg-yellow-900/20 dark:ring-yellow-500/30">
         <div class="flex items-start gap-3">
@@ -324,10 +296,8 @@
   // Register confirmation modal state
   const registerConfirmOpen = ref(false)
 
-  // Categorization warnings and AI fallback state
+  // Categorization warnings state
   const categorizationWarnings = ref<string[]>([])
-  const showAiFallbackPrompt = ref(false)
-  const aiFallbackMessage = ref('')
 
   const pendingDuplicateCount = computed(() =>
     transactionViewModels.value.filter(t => importContext.value.get(t.id)?.is_duplicate === true).length
@@ -358,7 +328,6 @@
     importContext.value.clear()
     rawCsvTransactions.value = []
     categorizationWarnings.value = []
-    showAiFallbackPrompt.value = false
   }
 
   // Handle the Proceed button click from OFXFilePicker
@@ -745,7 +714,6 @@
 
     // Clear categorization state
     categorizationWarnings.value = []
-    showAiFallbackPrompt.value = false
 
     // Remove focus from the button to hide the focus ring
     if (event?.target) {
@@ -809,7 +777,7 @@
   }
 
   // Autocategorize function
-  const autocategorize = async (event?: Event, forceEngine?: string) => {
+  const autocategorize = async (event?: Event) => {
     // Remove focus from the button to hide the focus ring
     if (event?.target) {
       (event.target as HTMLElement).blur()
@@ -821,28 +789,17 @@
 
     // Clear previous warnings and fallback prompt
     categorizationWarnings.value = []
-    showAiFallbackPrompt.value = false
 
     try {
       const { results, stats } = await performCategorization(
         transactionViewModels.value,
         sourceAccount.value,
-        sourceCurrency.value,
-        forceEngine
+        sourceCurrency.value
       )
 
       // Show warnings if any
       if (stats.warnings && stats.warnings.length > 0) {
-        // Check if there's an AI fallback available warning
-        const fallbackWarning = stats.warnings.find(w => w.includes('AI-based categorization is available'))
-        if (fallbackWarning && stats.engine_used === 'default') {
-          aiFallbackMessage.value = fallbackWarning
-          showAiFallbackPrompt.value = true
-          // Show non-fallback warnings separately
-          categorizationWarnings.value = stats.warnings.filter(w => w !== fallbackWarning)
-        } else {
-          categorizationWarnings.value = stats.warnings
-        }
+        categorizationWarnings.value = stats.warnings
       }
 
       applyCategorizationResults(results)
@@ -850,16 +807,6 @@
     } catch (_error) {
       // Error already displayed via errorHandler.display() in composable
     }
-  }
-
-  // AI fallback: re-run categorization with force_engine='ai'
-  const autocategorizeWithAi = async () => {
-    showAiFallbackPrompt.value = false
-    await autocategorize(undefined, 'ai')
-  }
-
-  const dismissAiFallback = () => {
-    showAiFallbackPrompt.value = false
   }
 
   // Register transactions function

@@ -73,12 +73,13 @@ async def categorize_transactions(
     if engine == CategorizationEngine.LLM:
         engine = CategorizationEngine.AI
 
-    # Get cached data
-    training_data = beancount_manager.cache.get_training_data()
+    # Get cached data (only fetch what's needed for the selected engine)
     existing_transactions = beancount_manager.cache.get_transactions()
     account_names = beancount_manager.cache.get_account_names()
-    logger.info(f"Using cached data: {len(training_data)} training samples, "
-               f"{len(existing_transactions)} existing transactions")
+    training_data = beancount_manager.cache.get_training_data() if engine == CategorizationEngine.CLASSIFIER else []
+    logger.info(f"Categorization engine={engine.value}, "
+               f"{len(existing_transactions)} existing transactions, "
+               f"{len(account_names)} accounts")
 
     # ── Categorization ────────────────────────────────────────────────
     # Maps transaction id -> (suggested_category, confidence)
@@ -112,6 +113,7 @@ async def categorize_transactions(
                 transactions=txn_dicts,
                 account_names=account_names,
                 default_account=default_account,
+                source_account=request.source_account,
                 llm_config=config.ai.llm,
             )
             warnings.extend(ai_warnings)
@@ -144,12 +146,10 @@ async def categorize_transactions(
                 suggested_category, confidence = categorize_transaction(description, classifier)
                 categorization_map[raw_txn.id] = (suggested_category, confidence)
         else:
-            # Classifier failed — always offer AI fallback (LLM config is checked when user actually tries)
+            # Classifier has insufficient data — use default account
             engine_used = "default"
             if ml_warning:
-                warnings.append(
-                    f"{ml_warning}. AI-based categorization is available as a fallback."
-                )
+                warnings.append(ml_warning)
             for raw_txn in request.transactions:
                 categorization_map[raw_txn.id] = (default_account, None)
 

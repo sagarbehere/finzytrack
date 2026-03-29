@@ -22,18 +22,22 @@ BATCH_SIZE = 30
 # Max validation retries when LLM returns non-existent accounts
 MAX_VALIDATION_RETRIES = 2
 
-SYSTEM_PROMPT = """You categorize personal finance transactions into accounting categories.
+SYSTEM_PROMPT = """You categorize personal finance transactions into double-entry accounting categories.
+
+Context: Each transaction has a source account (e.g. Assets:BofA:Checking) already set. You are assigning the OTHER leg — the category account (Expenses:* or Income:*).
 
 You will receive:
-1. A list of the user's account names (these are the ONLY valid categories)
-2. A list of transactions, each with an id and description (payee, memo, narration)
-
-For each transaction, assign the most appropriate account from the provided list.
+1. The source account these transactions come from
+2. A list of valid category accounts (the ONLY accounts you may use)
+3. Transactions to categorize, each with an id and description
 
 Rules:
-- You MUST only use accounts from the provided list. Do NOT invent accounts.
-- Focus on Expenses:* and Income:* accounts. Ignore Assets:* and Liabilities:* accounts (those are source accounts, not categories).
-- If no account is a good fit, use the default account provided.
+- ONLY use accounts from the provided list. Never invent accounts.
+- For money leaving the source account (payments, purchases): use an Expenses:* account.
+- For money entering the source account (salary, interest, refunds): use an Income:* account.
+- Use the source account name to disambiguate. E.g. "Interest Earned" from Assets:BofA:Checking should map to Income:*:BofA:Checking, not Income:*:BofA:Savings.
+- Transfers between the user's own accounts (e.g. "transfer to savings", "wire transfer") are hard to categorize — use the default account for these.
+- If unsure, use the default account. A wrong guess is worse than the default.
 - Return ONLY a JSON array of objects with "id" and "account" fields.
 - No markdown fences. No explanation. Just the JSON array."""
 
@@ -47,6 +51,7 @@ def _build_user_message(
     transactions: List[Dict[str, str]],
     accounts: List[str],
     default_account: str,
+    source_account: str,
 ) -> str:
     """Build the user message for the LLM with transactions and account list."""
     accounts_text = "\n".join(f"- {a}" for a in sorted(accounts))
@@ -63,7 +68,8 @@ def _build_user_message(
     txn_text = "[\n" + ",\n".join(txn_lines) + "\n]"
 
     return (
-        f"Available accounts:\n{accounts_text}\n\n"
+        f"Source account: {source_account}\n\n"
+        f"Available category accounts:\n{accounts_text}\n\n"
         f"Default account (use when no good match): {default_account}\n\n"
         f"Transactions to categorize:\n{txn_text}"
     )
@@ -193,6 +199,7 @@ def categorize_batch(
     transactions: List[Dict[str, str]],
     accounts: List[str],
     default_account: str,
+    source_account: str,
     llm_config: LLMConfig,
     valid_accounts: Set[str],
 ) -> Tuple[Dict[str, str], List[str]]:
@@ -205,6 +212,7 @@ def categorize_batch(
         transactions: List of dicts with id, payee, memo, narration
         accounts: List of valid account names for the prompt
         default_account: Fallback account
+        source_account: Source account name for context
         llm_config: LLM configuration
         valid_accounts: Set of all valid account names for validation
 
@@ -249,10 +257,17 @@ def categorize_batch(
     if not categorization_accounts:
         categorization_accounts = accounts
 
+    logger.info(
+        f"AI categorize batch: {len(transactions)} transactions "
+        f"({len(deduped_txns)} unique), {len(categorization_accounts)} accounts in prompt"
+    )
+
     # Call LLM
-    user_message = _build_user_message(deduped_txns, categorization_accounts, default_account)
+    user_message = _build_user_message(deduped_txns, categorization_accounts, default_account, source_account)
+    logger.debug(f"AI categorize prompt length: {len(user_message)} chars")
     content = _call_llm(llm_config, user_message)
     results = _parse_llm_response(content)
+    logger.info(f"AI categorize batch complete: {len(results)} results returned")
 
     # Validate accounts and retry if needed
     valid_results, invalid_results = _validate_accounts(results, valid_accounts)
@@ -300,6 +315,7 @@ def categorize_transactions_ai(
     transactions: List[Dict[str, str]],
     account_names: Set[str],
     default_account: str,
+    source_account: str,
     llm_config: LLMConfig,
 ) -> Tuple[Dict[str, str], List[str]]:
     """
@@ -309,6 +325,7 @@ def categorize_transactions_ai(
         transactions: List of dicts with id, payee, memo, narration
         account_names: Set of all valid account names from the ledger
         default_account: Fallback account for unknown transactions
+        source_account: Source account name for context
         llm_config: LLM configuration
 
     Returns:
@@ -333,6 +350,7 @@ def categorize_transactions_ai(
             transactions=batch,
             accounts=accounts_list,
             default_account=default_account,
+            source_account=source_account,
             llm_config=llm_config,
             valid_accounts=account_names,
         )
