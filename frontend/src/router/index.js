@@ -32,7 +32,7 @@ const routes = [
     name: 'analyze',
     component: AnalyzeView,
     meta: {
-      title: 'Analyze',
+      title: 'Query',
     },
   },
   {

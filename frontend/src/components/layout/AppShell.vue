@@ -435,7 +435,7 @@
       id: 'import',
     },
     {
-      name: 'Analyze',
+      name: 'Query',
       href: '/analyze',
       icon: ChartBarIcon,
       id: 'analyze',

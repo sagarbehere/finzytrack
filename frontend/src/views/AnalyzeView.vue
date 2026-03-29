@@ -2,9 +2,9 @@
   <div>
     <div class="mb-6 flex items-start justify-between">
       <div>
-        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Analyze</h1>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Query</h1>
         <p class="mt-1 text-gray-600 dark:text-gray-400">
-          Query your financial data using natural language or {{ queryLanguage === 'sqlite' ? 'SQL' : 'BQL' }}
+          Run {{ queryLanguage === 'sqlite' ? 'SQL' : 'BQL' }} queries against your financial data
         </p>
       </div>
 
@@ -40,10 +40,10 @@
     <!-- Natural Language Input -->
     <div class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 p-4 mb-4">
       <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">
-        Ask a question in plain English
+        Quick query builder
       </label>
       <p class="text-xs text-gray-400 dark:text-gray-500 mb-1">
-        AI can make mistakes — review output carefully.
+        Describe a simple query in plain English and AI will generate the {{ queryLanguage === 'sqlite' ? 'SQL' : 'BQL' }}. For multi-step analysis or follow-up questions, use the <router-link to="/assistant" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">AI Assistant</router-link>.
         <a href="https://finzytrack.app/docs/ai-data-sharing" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">Data shared with AI</a>
       </p>
       <p v-if="!config?.ai?.llm?.model" class="text-xs text-amber-600 dark:text-amber-400 mb-2">
@@ -196,6 +196,7 @@
 
       <!-- Chart Tab -->
       <div v-if="activeTab === 'chart'" class="p-4">
+        <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">For richer visualizations, ask the <router-link to="/assistant" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">AI Assistant</router-link> to preview a dashboard widget.</p>
         <!-- Chart Controls -->
         <div class="flex flex-wrap items-end gap-4 mb-4">
           <!-- Chart Type -->
@@ -315,7 +316,7 @@
     <div v-else-if="!errorMessage && !isExecuting" class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 p-6">
       <div class="text-center py-8 text-gray-500 dark:text-gray-400">
         <p class="text-sm">
-          Write {{ queryLanguage === 'sqlite' ? 'an SQL' : 'a BQL' }} query or ask a question above, then execute to see results here.
+          Write {{ queryLanguage === 'sqlite' ? 'an SQL' : 'a BQL' }} query or use the quick query builder above, then execute to see results here.
         </p>
         <p class="text-xs mt-2 text-gray-400 dark:text-gray-500">
           Tip: Press Cmd+Enter (or Ctrl+Enter) to execute quickly.
@@ -412,6 +413,24 @@
             radius: ['30%', '70%'],
             encode: { itemName: x, value: yCols[0] },
           },
+        ],
+      }
+    }
+
+    if (type === 'treemap') {
+      const data = resultRows.value.map((row) => ({
+        name: String(row[x] ?? ''),
+        value: Math.abs(Number(row[yCols[0]] ?? 0)),
+      }))
+      return {
+        tooltip: { trigger: 'item' },
+        series: [
+          {
+            type: 'treemap',
+            data,
+            leafDepth: 1,
+            label: { show: true, formatter: '{b}' },
+          } as Record<string, unknown>,
         ],
       }
     }
