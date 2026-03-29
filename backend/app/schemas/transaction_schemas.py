@@ -76,6 +76,7 @@ class CategorizationStats(BaseModel):
     categorized_count: int = Field(..., description="Number of transactions with ML categories")
     duplicate_count: int = Field(..., description="Number of potential duplicates detected")
     engine_used: str = Field(..., description="Engine used for categorization: 'classifier', 'ai', or 'default'")
+    duration_secs: float = Field(..., description="Time taken for categorization in seconds")
     ml_training_info: Optional[str] = Field(default=None, description="ML training warnings or info messages (deprecated, use warnings)")
     warnings: List[str] = Field(default_factory=list, description="Warnings from categorization (e.g., AI validation failures, insufficient training data)")
 

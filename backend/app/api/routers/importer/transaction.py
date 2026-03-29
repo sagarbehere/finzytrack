@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 import logging
+import time
 from decimal import Decimal
 
 from beancount.core import data, amount
@@ -56,6 +57,7 @@ async def categorize_transactions(
     config = config_manager.get_config()
     default_account = config.accounts.default_unknown_account
     warnings: list[str] = []
+    start_time = time.monotonic()
 
     # Determine which engine to use
     if request.force_engine:
@@ -186,11 +188,14 @@ async def categorize_transactions(
         )
         results.append(result)
 
+    duration_secs = round(time.monotonic() - start_time, 1)
+
     stats = CategorizationStats(
         total_count=len(request.transactions),
         categorized_count=categorized_count,
         duplicate_count=duplicate_count,
         engine_used=engine_used,
+        duration_secs=duration_secs,
         ml_training_info=ml_warning,
         warnings=warnings,
     )

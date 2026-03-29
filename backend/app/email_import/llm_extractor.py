@@ -45,7 +45,7 @@ def _call_openai(llm_config: LLMConfig, user_message: str) -> str:
             base = base + "/v1"
         kwargs["base_url"] = base
 
-    client = OpenAI(**kwargs, timeout=60.0)
+    client = OpenAI(**kwargs, timeout=float(llm_config.timeout_secs))
     call_kwargs: dict[str, Any] = dict(
         model=llm_config.model or "gpt-4o",
         temperature=llm_config.temperature,

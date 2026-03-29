@@ -34,6 +34,10 @@ export type LLMConfig = {
      * Maximum tool-call round-trips per user message in the AI assistant.
      */
     max_tool_rounds?: number;
+    /**
+     * Timeout in seconds for LLM API requests.
+     */
+    timeout_secs?: number;
 };
 export namespace LLMConfig {
     /**

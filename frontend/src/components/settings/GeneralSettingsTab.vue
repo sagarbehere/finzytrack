@@ -162,6 +162,11 @@
           <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Tool-call round-trips per message.</p>
           <input v-model.number="llmFields.max_tool_rounds" type="number" min="1" max="50" step="1" :class="inputClass" />
         </div>
+        <div>
+          <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Timeout (seconds)</label>
+          <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Timeout for LLM API requests.</p>
+          <input v-model.number="llmFields.timeout_secs" type="number" min="10" max="600" step="10" :class="inputClass" />
+        </div>
       </div>
     </SettingsSection>
 
@@ -572,6 +577,7 @@ const llmFields = reactive({
   temperature: config.value?.ai?.llm?.temperature ?? 0.1,
   max_tokens: config.value?.ai?.llm?.max_tokens ?? 0,
   max_tool_rounds: config.value?.ai?.llm?.max_tool_rounds ?? 12,
+  timeout_secs: config.value?.ai?.llm?.timeout_secs ?? 120,
 })
 const llmSaving = ref(false)
 const llmError = ref('')
@@ -583,7 +589,8 @@ const llmIsDirty = computed(() =>
   llmFields.model !== (config.value?.ai?.llm?.model ?? '') ||
   llmFields.temperature !== (config.value?.ai?.llm?.temperature ?? 0.1) ||
   llmFields.max_tokens !== (config.value?.ai?.llm?.max_tokens ?? 0) ||
-  llmFields.max_tool_rounds !== (config.value?.ai?.llm?.max_tool_rounds ?? 12)
+  llmFields.max_tool_rounds !== (config.value?.ai?.llm?.max_tool_rounds ?? 12) ||
+  llmFields.timeout_secs !== (config.value?.ai?.llm?.timeout_secs ?? 120)
 )
 
 function initLlmFields() {
@@ -594,6 +601,7 @@ function initLlmFields() {
   llmFields.temperature = config.value?.ai?.llm?.temperature ?? 0.1
   llmFields.max_tokens = config.value?.ai?.llm?.max_tokens ?? 0
   llmFields.max_tool_rounds = config.value?.ai?.llm?.max_tool_rounds ?? 12
+  llmFields.timeout_secs = config.value?.ai?.llm?.timeout_secs ?? 120
 }
 
 async function saveLlm() {

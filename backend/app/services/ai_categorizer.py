@@ -10,6 +10,8 @@ Follows the same sync LLM call patterns as email_import/llm_extractor.py.
 
 import json
 import logging
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from app.config import LLMConfig
@@ -17,29 +19,20 @@ from app.config import LLMConfig
 logger = logging.getLogger(__name__)
 
 # Max transactions per LLM batch call
-BATCH_SIZE = 30
+BATCH_SIZE = 20
 
 # Max validation retries when LLM returns non-existent accounts
 MAX_VALIDATION_RETRIES = 2
 
-SYSTEM_PROMPT = """You categorize personal finance transactions into double-entry accounting categories.
+_PROMPTS_DIR = Path(__file__).parents[2] / "resources" / "prompts"
 
-Context: Each transaction has a source account (e.g. Assets:BofA:Checking) already set. You are assigning the OTHER leg — the category account (Expenses:* or Income:*).
 
-You will receive:
-1. The source account these transactions come from
-2. A list of valid category accounts (the ONLY accounts you may use)
-3. Transactions to categorize, each with an id and description
-
-Rules:
-- ONLY use accounts from the provided list. Never invent accounts.
-- For money leaving the source account (payments, purchases): use an Expenses:* account.
-- For money entering the source account (salary, interest, refunds): use an Income:* account.
-- Use the source account name to disambiguate. E.g. "Interest Earned" from Assets:BofA:Checking should map to Income:*:BofA:Checking, not Income:*:BofA:Savings.
-- Transfers between the user's own accounts (e.g. "transfer to savings", "wire transfer") are hard to categorize — use the default account for these.
-- If unsure, use the default account. A wrong guess is worse than the default.
-- Return ONLY a JSON array of objects with "id" and "account" fields.
-- No markdown fences. No explanation. Just the JSON array."""
+@lru_cache(maxsize=1)
+def _load_system_prompt() -> str:
+    path = _PROMPTS_DIR / "categorize_transactions.md"
+    if not path.is_file():
+        raise FileNotFoundError(f"Categorization prompt not found: {path}")
+    return path.read_text(encoding="utf-8").strip()
 
 
 class AICategorizeError(Exception):
@@ -86,12 +79,12 @@ def _call_openai(llm_config: LLMConfig, user_message: str) -> str:
             base = base + "/v1"
         kwargs["base_url"] = base
 
-    client = OpenAI(**kwargs, timeout=120.0)
+    client = OpenAI(**kwargs, timeout=float(llm_config.timeout_secs))
     call_kwargs: dict[str, Any] = dict(
         model=llm_config.model or "gpt-4o",
         temperature=llm_config.temperature,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": _load_system_prompt()},
             {"role": "user", "content": user_message},
         ],
     )
@@ -112,7 +105,7 @@ def _call_anthropic(llm_config: LLMConfig, user_message: str) -> str:
     resp = client.messages.create(
         model=llm_config.model,
         max_tokens=max_tokens,
-        system=SYSTEM_PROMPT,
+        system=_load_system_prompt(),
         messages=[{"role": "user", "content": user_message}],
     )
     return resp.content[0].text if resp.content else ""

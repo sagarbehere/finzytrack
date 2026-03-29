@@ -92,6 +92,7 @@ class LLMConfig(BaseModel):
     temperature: float = Field(default=0.1, ge=0.0, le=2.0, description="Sampling temperature (0=deterministic, 2=very random)")
     max_tokens: int = Field(default=0, ge=0, description="Maximum tokens in LLM response. 0 = use model default (Anthropic requires a value > 0).")
     max_tool_rounds: int = Field(default=12, ge=1, le=50, description="Maximum tool-call round-trips per user message in the AI assistant.")
+    timeout_secs: int = Field(default=120, ge=10, le=600, description="Timeout in seconds for LLM API requests.")
 
 
 class AIConfig(BaseModel):

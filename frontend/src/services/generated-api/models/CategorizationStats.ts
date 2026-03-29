@@ -23,6 +23,10 @@ export type CategorizationStats = {
      */
     engine_used: string;
     /**
+     * Time taken for categorization in seconds
+     */
+    duration_secs: number;
+    /**
      * ML training warnings or info messages (deprecated, use warnings)
      */
     ml_training_info?: (string | null);

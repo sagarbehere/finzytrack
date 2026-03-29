@@ -804,6 +804,10 @@
 
       applyCategorizationResults(results)
 
+      // Show timing summary
+      const engine = stats.engine_used === 'ai' ? 'AI' : stats.engine_used === 'classifier' ? 'classifier' : 'default'
+      showSuccessToast('Autocategorize complete', `${stats.total_count} transactions in ${stats.duration_secs}s (${engine})`)
+
     } catch (_error) {
       // Error already displayed via errorHandler.display() in composable
     }
