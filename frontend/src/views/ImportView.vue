@@ -20,7 +20,7 @@
               'whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium',
             ]"
           >
-            OFX Import
+            OFX
           </button>
           <button
             @click="activeTab = 'csv'"
@@ -31,7 +31,7 @@
               'whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium',
             ]"
           >
-            CSV Import
+            CSV
           </button>
           <button
             @click="activeTab = 'xls'"
@@ -42,7 +42,7 @@
               'whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium',
             ]"
           >
-            XLS Import
+            XLS
           </button>
           <button
             @click="activeTab = 'email'"
@@ -53,7 +53,7 @@
               'whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium',
             ]"
           >
-            Email Import
+            Email
           </button>
           <button
             @click="activeTab = 'manual'"
@@ -64,7 +64,7 @@
               'whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium',
             ]"
           >
-            Manual Entry
+            Manual
           </button>
           <button
             @click="activeTab = 'ai'"
@@ -75,7 +75,7 @@
               'whitespace-nowrap border-b-2 py-4 px-1 text-sm font-medium',
             ]"
           >
-            AI Import
+            AI
           </button>
         </nav>
       </div>
