@@ -432,6 +432,10 @@ def main(config: str, server_host: str, server_port: int,
         # Seed config directory on first run (before loading config)
         _seed_config(Path('./config'))
 
+        # Load environment variables from config/.env (secrets like IMAP credentials)
+        from dotenv import load_dotenv
+        load_dotenv(Path('./config/.env'))
+
         # Load configuration with CLI overrides using Pydantic
         app_config = Config.from_yaml_file(config, cli_overrides)
         
