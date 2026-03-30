@@ -414,20 +414,21 @@
           </div>
           <div class="flex-1 min-w-0">
             <label class="block text-xs text-gray-400 dark:text-gray-500 mb-0.5">Account</label>
-            <input
+            <AccountDropdown
               v-model="ruleAccount"
-              type="text"
               placeholder="Assets:Bank:Name"
-              class="w-full rounded-md bg-white px-2 py-1.5 text-xs text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
+              :account-types="['Assets', 'Liabilities']"
+              :allow-custom="true"
+              custom-class="!py-1 !text-xs"
             />
           </div>
-          <div class="w-24">
+          <div class="w-32">
             <label class="block text-xs text-gray-400 dark:text-gray-500 mb-0.5">Currency</label>
-            <input
+            <CommodityDropdown
               v-model="ruleCurrency"
-              type="text"
               placeholder="INR"
-              class="w-full rounded-md bg-white px-2 py-1.5 text-xs text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
+              :allow-custom="true"
+              custom-class="!py-1 !text-xs"
             />
           </div>
           <div v-if="previewSheets" class="w-24">
@@ -516,6 +517,8 @@ import { useConfig } from '@/composables/useConfig'
 import { parseCsvContent, extractCsvRows } from '@/composables/useCsvParser'
 import { parseXlsContent, extractXlsText, extractXlsSheets } from '@/composables/useXlsParser'
 import type { CsvParsedTransaction } from '@/types/csv'
+import AccountDropdown from '@/components/common/AccountDropdown.vue'
+import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
 import FilePreviewTable from '@/components/FilePreviewTable.vue'
 import RecipeDashboard from '@/components/recipes/RecipeDashboard.vue'
 import type { JsonDashboardRecipe } from '@/types/recipes'
