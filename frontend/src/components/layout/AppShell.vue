@@ -435,12 +435,6 @@
       id: 'import',
     },
     {
-      name: 'Query',
-      href: '/analyze',
-      icon: ChartBarIcon,
-      id: 'analyze',
-    },
-    {
       name: 'Transactions',
       href: '/transactions',
       icon: TableCellsIcon,
@@ -451,6 +445,12 @@
       href: '/accounts',
       icon: WalletIcon,
       id: 'accounts',
+    },
+    {
+      name: 'Query',
+      href: '/analyze',
+      icon: ChartBarIcon,
+      id: 'analyze',
     },
     {
       name: 'AI Assistant',
