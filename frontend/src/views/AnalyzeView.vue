@@ -304,7 +304,7 @@
 
         <!-- Chart -->
         <div v-if="chartReady" class="h-[400px]">
-          <RecipeChart :chart-options="builtChartOptions" :data="resultRows" />
+          <RecipeChart :chart-options="builtChartOptions" :data="chartData" />
         </div>
         <div v-else class="h-[400px] flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
           Select columns above to render a chart.
@@ -418,16 +418,11 @@
     }
 
     if (type === 'treemap') {
-      const data = resultRows.value.map((row) => ({
-        name: String(row[x] ?? ''),
-        value: Math.abs(Number(row[yCols[0]] ?? 0)),
-      }))
       return {
         tooltip: { trigger: 'item' },
         series: [
           {
             type: 'treemap',
-            data,
             leafDepth: 1,
             label: { show: true, formatter: '{b}' },
           } as Record<string, unknown>,
@@ -451,6 +446,20 @@
       yAxis: { type: 'value' as const },
       series,
     }
+  })
+
+  /** Data passed to RecipeChart — treemap needs {name, value} objects */
+  const chartData = computed(() => {
+    if (chartType.value === 'treemap') {
+      const x = chartXColumn.value
+      const y = effectiveYColumns.value[0]
+      if (!x || !y) return []
+      return resultRows.value.map((row) => ({
+        name: String(row[x] ?? ''),
+        value: Math.abs(Number(row[y] ?? 0)),
+      }))
+    }
+    return resultRows.value
   })
 
   // Auto-select sensible defaults when results change
