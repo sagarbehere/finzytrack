@@ -33,14 +33,6 @@ echo "==> Running PyInstaller..."
 cd "$SCRIPT_DIR"
 pyinstaller finzytrack.spec --noconfirm
 
-echo "==> Ad-hoc code signing (eliminates macOS first-launch delay)..."
-# Sign every Mach-O binary (not just .so/.dylib — also embedded frameworks like Python.framework)
-find "$SCRIPT_DIR/dist/FinzyTrack" -type f -exec sh -c 'file "$1" | grep -q Mach-O' _ {} \; -print \
-  | grep -v '/FinzyTrack$' \
-  | xargs -n1 codesign --force --sign -
-# Sign the main executable last
-codesign --force --sign - "$SCRIPT_DIR/dist/FinzyTrack/FinzyTrack"
-
 echo ""
 echo "==> Done. Bundle is at: $SCRIPT_DIR/dist/FinzyTrack/"
 echo "    To run: ./dist/FinzyTrack/FinzyTrack"

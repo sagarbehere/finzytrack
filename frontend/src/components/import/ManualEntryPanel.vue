@@ -4,8 +4,8 @@
       Describe a transaction in plain language and let it be parsed automatically, or add a blank row to fill in manually.
     </p>
 
-    <!-- Natural language input (requires AI) -->
-    <div v-if="config?.ai?.llm?.model" class="mb-4">
+    <!-- Natural language input -->
+    <div class="mb-4">
       <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">
         Describe a transaction
       </label>
@@ -14,17 +14,21 @@
         AI can make mistakes — review output carefully.
         <a href="https://finzytrack.app/docs/ai-data-sharing" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">Data shared with AI</a>
       </p>
+      <p v-if="!config?.ai?.llm?.model" class="text-xs text-amber-600 dark:text-amber-400 mb-2">
+        AI not configured. Set a model under <strong>AI</strong> in <router-link to="/settings" class="underline underline-offset-2">Settings</router-link> to enable natural language parsing.
+      </p>
       <textarea
         v-model="nlText"
+        :disabled="!config?.ai?.llm?.model"
         placeholder="e.g. Paid $45 for dinner at Olive Garden on chase"
         rows="2"
-        class="w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
+        class="w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
         @keydown.meta.enter="handleParseAndAdd"
         @keydown.ctrl.enter="handleParseAndAdd"
       />
       <button
         @click="handleParseAndAdd"
-        :disabled="!nlText.trim() || isParsing"
+        :disabled="!nlText.trim() || isParsing || !config?.ai?.llm?.model"
         class="mt-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400 dark:focus-visible:outline-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
       >
         <svg v-if="isParsing" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -42,7 +46,7 @@
       </div>
     </div>
 
-    <div v-if="config?.ai?.llm?.model" class="text-center text-gray-400 text-sm my-3">or add a blank row</div>
+    <div class="text-center text-gray-400 text-sm my-3">or add a blank row</div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
       <AccountDropdown
