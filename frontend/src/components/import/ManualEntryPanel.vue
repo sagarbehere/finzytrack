@@ -4,8 +4,8 @@
       Describe a transaction in plain language and let it be parsed automatically, or add a blank row to fill in manually.
     </p>
 
-    <!-- Natural language input -->
-    <div class="mb-4">
+    <!-- Natural language input (requires AI) -->
+    <div v-if="config?.ai?.llm?.model" class="mb-4">
       <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">
         Describe a transaction
       </label>
@@ -13,9 +13,6 @@
         Use $ or ₹ to hint the currency, or select one below for the default.
         AI can make mistakes — review output carefully.
         <a href="https://finzytrack.app/docs/ai-data-sharing" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">Data shared with AI</a>
-      </p>
-      <p v-if="!config?.ai?.llm?.model" class="text-xs text-amber-600 dark:text-amber-400 mb-1">
-        AI not configured — basic parsing only. Set a model under Settings → AI to enable full natural language parsing.
       </p>
       <textarea
         v-model="nlText"
@@ -45,7 +42,7 @@
       </div>
     </div>
 
-    <div class="text-center text-gray-400 text-sm my-3">or add a blank row</div>
+    <div v-if="config?.ai?.llm?.model" class="text-center text-gray-400 text-sm my-3">or add a blank row</div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
       <AccountDropdown

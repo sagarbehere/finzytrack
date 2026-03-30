@@ -235,7 +235,13 @@ def main():
         height=860,
         min_size=(900, 600),
     )
-    webview.start(debug=True)  # Enables Safari DevTools — remove for production
+
+    if not args.debug:
+        def on_loaded():
+            window.evaluate_js("document.addEventListener('contextmenu', e => e.preventDefault())")
+        window.events.loaded += on_loaded
+
+    webview.start(debug=args.debug)
 
 
 if __name__ == '__main__':

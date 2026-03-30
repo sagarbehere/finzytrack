@@ -52,9 +52,8 @@
         </div>
       </div>
 
-      <div v-if="profiles.length === 0 && !isLoadingProfiles" class="text-sm text-gray-500 dark:text-gray-400">
-        No account profiles configured. Add YAML rule files to
-        the <code class="font-mono bg-gray-100 dark:bg-gray-400/10 px-1 rounded">config/email_rules/</code> directory.
+      <div v-if="profiles.length === 0 && !isLoadingProfiles" class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 text-sm text-yellow-800 dark:text-yellow-200">
+        No email rules found. <a href="https://finzytrack.app/docs/email-rules" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 hover:text-yellow-900 dark:hover:text-yellow-100">Learn how to create email rule files</a>.
       </div>
 
       <div v-else class="flex flex-wrap items-center gap-2">

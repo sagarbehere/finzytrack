@@ -1,6 +1,16 @@
 <template>
   <div class="w-full">
-    <!-- File Upload Widget -->
+    <!-- AI not configured banner -->
+    <div v-if="!config?.ai?.llm?.model" class="rounded-lg border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-4 space-y-2">
+      <p class="text-sm font-medium text-amber-800 dark:text-amber-300">AI is not configured.</p>
+      <p class="text-sm text-amber-700 dark:text-amber-400">
+        Set a model under <strong>AI</strong> in <router-link to="/settings" class="underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200">Settings</router-link>.
+        <a href="https://finzytrack.app/docs/ai-setup" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200">Learn more</a>.
+      </p>
+    </div>
+
+    <!-- File Upload Widget (hidden when AI not configured) -->
+    <template v-else>
     <div
       class="relative border-2 border-dashed rounded-lg p-8 text-center transition-all duration-200"
       :class="[
@@ -141,6 +151,7 @@
         </div>
       </div>
     </div>
+    </template>
   </div>
 </template>
 
@@ -156,7 +167,10 @@
   import AccountDropdown from '@/components/common/AccountDropdown.vue'
   import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
   import { ImportService } from '@/services/generated-api'
+  import { useConfig } from '@/composables/useConfig'
   import type { CsvParsedTransaction, CsvFileDetails } from '@/types/csv'
+
+  const { config } = useConfig()
 
   const emit = defineEmits<{
     (e: 'proceedWithImport', payload: {

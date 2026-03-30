@@ -29,32 +29,10 @@ export async function parseNaturalLanguageTransaction(
       warnings: resp.data?.warnings ?? [],
     }
   } catch (e: unknown) {
-    if (e instanceof ApiError && e.body?.error?.code === 'AI_NOT_CONFIGURED') {
-      return { transaction: await parseStub(text), warnings: [] }
-    }
     if (e instanceof ApiError) {
       const msg = e.body?.error?.message || e.message
       throw new Error(msg)
     }
     throw e
-  }
-}
-
-async function parseStub(text: string): Promise<ParsedTransaction> {
-  await new Promise(resolve => setTimeout(resolve, 300))
-
-  const today = new Date().toISOString().split('T')[0]
-  const amountMatch = text.match(/\$(\d+(?:\.\d{1,2})?)/)
-  const amount = amountMatch ? parseFloat(amountMatch[1]) : null
-
-  return {
-    date: today,
-    flag: '*',
-    payee: text,
-    narration: '',
-    postings: [
-      { amount: amount !== null ? -amount : null },
-      { account: 'Expenses:Unknown', amount: amount },
-    ],
   }
 }

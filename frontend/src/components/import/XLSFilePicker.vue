@@ -13,7 +13,7 @@
         {{ rulesLoadError }}
       </div>
       <div v-else-if="availableRules.length === 0" class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 text-sm text-yellow-800 dark:text-yellow-200">
-        No XLS rules found. Add YAML rule files to the xls-rules directory.
+        No XLS rules found. <a href="https://finzytrack.app/docs/xls-rules" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 hover:text-yellow-900 dark:hover:text-yellow-100">Learn how to create XLS rule files</a>.
       </div>
       <div v-else class="flex gap-2">
         <Listbox as="div" v-model="selectedRuleFilename" class="flex-1">
