@@ -84,6 +84,18 @@
       <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">
         {{ queryLanguage === 'sqlite' ? 'SQL Query' : 'BQL Query' }}
       </label>
+      <p class="mt-0.5 mb-1.5 text-xs text-gray-500 dark:text-gray-400">
+        <template v-if="queryLanguage === 'sqlite'">
+          Write an SQL query against your ledger data. See the
+          <a href="https://finzytrack.app/docs/schema" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">database schema</a>
+          for available tables and columns.
+        </template>
+        <template v-else>
+          Write a BQL query against your ledger. See the
+          <a href="https://finzytrack.app/docs/bql" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">BQL reference</a>
+          for syntax and available fields.
+        </template>
+      </p>
       <textarea
         v-model="queryText"
         :placeholder="queryPlaceholder"
