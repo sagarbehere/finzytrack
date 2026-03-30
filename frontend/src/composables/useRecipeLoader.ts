@@ -50,7 +50,7 @@ async function fetchJson<T>(path: string): Promise<T> {
 }
 
 /**
- * Load user recipes from the public/recipes/ directory
+ * Load user recipes from the backend API (/api/recipes)
  */
 async function loadUserRecipes(): Promise<void> {
   if (isLoaded.value || isLoading.value) return

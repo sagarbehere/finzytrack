@@ -80,17 +80,23 @@ def setup_logging(level: str, max_file_size_mb: int = 5, backup_count: int = 3) 
 
 
 
-_DEFAULT_RECIPES_DIR = Path(__file__).parents[1] / "resources" / "default_recipes"
+_SEED_CONFIG_DIR = Path(__file__).parents[1] / "resources" / "seed_config"
 
 
-def _seed_recipes(recipes_dir: Path) -> None:
-    """Copy bundled default recipes to config/recipes/ if the directory is empty or absent."""
-    if recipes_dir.exists() and any(recipes_dir.iterdir()):
-        return  # User already has recipes — don't overwrite
-    if not _DEFAULT_RECIPES_DIR.is_dir():
-        return  # No bundled defaults to copy
-    shutil.copytree(_DEFAULT_RECIPES_DIR, recipes_dir, dirs_exist_ok=True)
-    logging.getLogger(__name__).info(f"Seeded default recipes → {recipes_dir}")
+def _seed_config(config_dir: Path) -> None:
+    """Copy seed config template to config/ on first run.
+
+    Copies the bundled seed_config/ (default config.yaml, empty rule
+    directories, default dashboard recipes) into the working config
+    directory.  Skipped if config/ already exists — user data is never
+    overwritten.
+    """
+    if config_dir.exists():
+        return  # User already has a config directory — don't overwrite
+    if not _SEED_CONFIG_DIR.is_dir():
+        return  # No bundled seed config to copy (shouldn't happen)
+    shutil.copytree(_SEED_CONFIG_DIR, config_dir)
+    logging.getLogger(__name__).info(f"Seeded config directory → {config_dir}")
 
 
 def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
@@ -123,9 +129,6 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
         logger.info(f"Email import enabled: {email_registry.profile_count} profiles loaded from {email_rules_path}")
     else:
         logger.info("Email import disabled (email_import.enabled=false)")
-
-    # 2d. Seed default recipes if config/recipes/ is absent
-    _seed_recipes(Path(config.recipes_dir))
 
     # 3. Create LedgerInitializer
     ledger_initializer = LedgerInitializer(
@@ -426,6 +429,9 @@ def main(config: str, server_host: str, server_port: int,
         if debug:
             cli_overrides['logging-level'] = 'DEBUG'
         
+        # Seed config directory on first run (before loading config)
+        _seed_config(Path('./config'))
+
         # Load configuration with CLI overrides using Pydantic
         app_config = Config.from_yaml_file(config, cli_overrides)
         

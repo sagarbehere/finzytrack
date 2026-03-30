@@ -48,4 +48,3 @@ email_import:
   max_emails: 500                          # Max emails per fetch; truncates with warning
   imap_timeout_secs: 30                    # Socket timeout for IMAP operations; 0 = no timeout
   parsing_mode: "regex"                    # Default: "regex" or "ai" (uses ai.llm config above)
-

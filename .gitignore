@@ -2,6 +2,9 @@ venv
 data
 ignore
 
+# User's active config (personal rules, recipes, API keys) — seeded from resources/seed_config/
+backend/config/
+
 __pycache__/
 *.pyc
 *.pyo
