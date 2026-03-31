@@ -1,0 +1,58 @@
+;; Finzytrack Ledger File
+
+;; Base accounts - modify as needed
+1970-01-01 open Assets:Cash                USD
+1970-01-01 open Assets:Bank:Checking       USD
+1970-01-01 open Assets:Bank:Savings        USD
+1970-01-01 open Liabilities:Bank:CreditCard USD
+1970-01-01 open Income:Salary              USD
+1970-01-01 open Equity:Opening-Balances    USD
+
+;; Housing
+1970-01-01 open Expenses:HouseRent         USD
+1970-01-01 open Expenses:HouseCleaning     USD
+1970-01-01 open Expenses:HouseholdItems    USD
+1970-01-01 open Expenses:Utilities         USD
+
+;; Food
+1970-01-01 open Expenses:Groceries         USD
+1970-01-01 open Expenses:EatingOut         USD
+
+;; Transportation
+1970-01-01 open Expenses:Car               USD
+1970-01-01 open Expenses:AutoInsurance     USD
+1970-01-01 open Expenses:Gas               USD
+1970-01-01 open Expenses:Parking           USD
+
+;; Health
+1970-01-01 open Expenses:Healthcare        USD
+;; Lifestyle
+1970-01-01 open Expenses:Entertainment     USD
+1970-01-01 open Expenses:Hobbies           USD
+1970-01-01 open Expenses:Travel            USD
+1970-01-01 open Expenses:Grooming          USD
+1970-01-01 open Expenses:PersonalItems     USD
+1970-01-01 open Expenses:Gadgets           USD
+
+;; Communication & Tech
+1970-01-01 open Expenses:Internet          USD
+1970-01-01 open Expenses:Phone             USD
+1970-01-01 open Expenses:CloudServices     USD
+
+;; Education
+1970-01-01 open Expenses:School            USD
+
+;; Giving
+1970-01-01 open Expenses:Donations         USD
+1970-01-01 open Expenses:Gifts             USD
+
+;; Fees
+1970-01-01 open Expenses:Fees:Banking      USD
+1970-01-01 open Expenses:Fees:CreditCard   USD
+
+;; Cash & Misc
+1970-01-01 open Expenses:Cash              USD
+1970-01-01 open Expenses:Miscellaneous     USD
+1970-01-01 open Expenses:Unknown           USD
+
+;; Your transactions will appear below this line

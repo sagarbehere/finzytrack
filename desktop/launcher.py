@@ -21,17 +21,23 @@ if getattr(sys, 'frozen', False):
     BUNDLE_DIR = sys._MEIPASS
     FRONTEND_DIST = os.path.join(BUNDLE_DIR, 'frontend_dist')
     SEED_CONFIG_DIR = os.path.join(BUNDLE_DIR, 'backend', 'seed_config')
+    SEED_DATA_DIR = os.path.join(BUNDLE_DIR, 'backend', 'seed_data')
     # Working directory = folder containing the FinzyTrack executable.
     # All relative paths in config.yaml resolve from here.
     APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
     os.chdir(APP_DIR)
-    # On first run, copy seed config template to APP_DIR/config/ so that
-    # relative paths like ./config/csv_rules in config.yaml resolve correctly.
+    # On first run, copy seed templates so that relative paths in
+    # config.yaml resolve correctly.
     local_config_dir = os.path.join(APP_DIR, 'config')
     if not os.path.exists(local_config_dir):
         import shutil
         shutil.copytree(SEED_CONFIG_DIR, local_config_dir)
         print('[launcher] Seeded config directory from template.', flush=True)
+    local_data_dir = os.path.join(APP_DIR, 'data')
+    if not os.path.exists(local_data_dir):
+        import shutil
+        shutil.copytree(SEED_DATA_DIR, local_data_dir)
+        print('[launcher] Seeded data directory from template.', flush=True)
 else:
     # Running from source (development / POC testing).
     ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))

@@ -81,6 +81,7 @@ def setup_logging(level: str, max_file_size_mb: int = 5, backup_count: int = 3) 
 
 
 _SEED_CONFIG_DIR = Path(__file__).parents[1] / "resources" / "seed_config"
+_SEED_DATA_DIR = Path(__file__).parents[1] / "resources" / "seed_data"
 
 
 def _seed_config(config_dir: Path) -> None:
@@ -97,6 +98,21 @@ def _seed_config(config_dir: Path) -> None:
         return  # No bundled seed config to copy (shouldn't happen)
     shutil.copytree(_SEED_CONFIG_DIR, config_dir)
     logging.getLogger(__name__).info(f"Seeded config directory → {config_dir}")
+
+
+def _seed_data(data_dir: Path) -> None:
+    """Copy seed data template to data/ on first run.
+
+    Copies the bundled seed_data/ (starter ledger file with default
+    accounts) into the working data directory.  Skipped if data/
+    already exists — user data is never overwritten.
+    """
+    if data_dir.exists():
+        return
+    if not _SEED_DATA_DIR.is_dir():
+        return
+    shutil.copytree(_SEED_DATA_DIR, data_dir)
+    logging.getLogger(__name__).info(f"Seeded data directory → {data_dir}")
 
 
 def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
@@ -429,8 +445,9 @@ def main(config: str, server_host: str, server_port: int,
         if debug:
             cli_overrides['logging-level'] = 'DEBUG'
         
-        # Seed config directory on first run (before loading config)
+        # Seed config and data directories on first run (before loading config)
         _seed_config(Path('./config'))
+        _seed_data(Path('./data'))
 
         # Load environment variables from config/.env (secrets like IMAP credentials)
         from dotenv import load_dotenv
