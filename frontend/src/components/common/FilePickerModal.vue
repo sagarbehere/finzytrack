@@ -277,5 +277,5 @@ watch(() => props.open, (isOpen) => {
   if (isOpen) {
     loadDirectory(deriveStartPath())
   }
-})
+}, { immediate: true })
 </script>

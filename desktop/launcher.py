@@ -37,15 +37,7 @@ if getattr(sys, 'frozen', False):
                                'FinzyTrack')
     os.makedirs(APP_DIR, exist_ok=True)
     os.chdir(APP_DIR)
-    # On first run, copy seed templates so that relative paths in
-    # config.yaml resolve correctly.
-    local_config_dir = os.path.join(APP_DIR, 'config')
-    if not os.path.exists(local_config_dir):
-        import shutil
-        shutil.copytree(SEED_CONFIG_DIR, local_config_dir)
-        print('[launcher] Seeded config directory from template.', flush=True)
-    # Data directory is seeded by the setup wizard (POST /api/setup/complete)
-    # so the user's chosen currency can be applied to the starter ledger.
+    # Config and data directories are seeded by main.py on first run.
 else:
     # Running from source (development / POC testing).
     ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -157,20 +149,10 @@ def find_config_path() -> str:
 
 
 def start_backend(args):
-    """Start uvicorn in a background thread."""
-    def p(msg):
-        print(f'[backend] {msg}', flush=True)
+    """Start uvicorn in a background thread via the shared start_server() path."""
+    from app.main import start_server
 
-    p('importing Config...')
-    from app.config import Config, ConfigurationError
-    p('importing create_app...')
-    from app.main import create_app, setup_logging
-    p('importing uvicorn...')
-    import uvicorn
-
-    p('finding config path...')
     config_path = args.config or find_config_path()
-    p(f'loading config from {config_path}...')
 
     # Build CLI overrides from launcher args — only pass values explicitly
     # provided so config file values aren't accidentally overwritten by defaults.
@@ -185,24 +167,16 @@ def start_backend(args):
     if log_level != _FALLBACK_DEFAULTS['log_level']:
         cli_overrides['logging-level'] = log_level
 
-    try:
-        config = Config.from_yaml_file(config_path, cli_overrides or None)
-    except ConfigurationError as e:
-        print(f'[backend] Config error: {e}', file=sys.stderr, flush=True)
-        return
-
-    p('setting up logging...')
-    setup_logging(config.logging.level)
-
-    p('creating FastAPI app...')
     static_dir = FRONTEND_DIST if os.path.exists(FRONTEND_DIST) else None
-    app = create_app(config, static_dir=static_dir)
 
-    p(f'starting uvicorn on {config.server.host}:{config.server.port}...')
     try:
-        uvicorn.run(app, host=config.server.host, port=config.server.port, log_level='warning')
+        start_server(
+            config_path=config_path,
+            cli_overrides=cli_overrides or None,
+            static_dir=static_dir,
+        )
     except Exception as e:
-        print(f'[backend] uvicorn crashed: {e}', flush=True)
+        print(f'[backend] crashed: {e}', file=sys.stderr, flush=True)
         raise
 
 

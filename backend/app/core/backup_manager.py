@@ -23,13 +23,17 @@ class BackupManager:
             backup_dir: The directory where backups will be stored.
             retention_count: The number of backups to retain for each file.
         """
-        if not backup_dir.exists():
-            backup_dir.mkdir(parents=True, exist_ok=True)
         self.backup_dir = backup_dir
         self.retention_count = retention_count
 
+    def _ensure_backup_dir(self) -> None:
+        """Create the backup directory on first use."""
+        if not self.backup_dir.exists():
+            self.backup_dir.mkdir(parents=True, exist_ok=True)
+
     def _create_backup(self, file_path: Path) -> Path:
         """Create a timestamped backup of the file in the backup directory."""
+        self._ensure_backup_dir()
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             backup_filename = f"{file_path.name}.{timestamp}.backup"

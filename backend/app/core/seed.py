@@ -16,22 +16,15 @@ def seed_data_with_currency(data_dir: Path, currency: str) -> None:
     """Copy seed data template to data/, substituting {default_currency}.
 
     Called by the setup wizard endpoint after the user picks a currency.
-    The data/ directory must not already exist.
+    Uses dirs_exist_ok=True so pre-existing subdirectories (e.g. backups/)
+    don't cause failures.
     """
     logger = logging.getLogger(__name__)
-
-    if data_dir.exists():
-        entries = list(data_dir.iterdir())
-        if entries:
-            logger.error(f"Data directory {data_dir} already exists and is not empty: {[e.name for e in entries]}")
-            raise RuntimeError(f"Data directory {data_dir} already exists and is not empty")
-        # Empty directory — remove so copytree can create it
-        data_dir.rmdir()
 
     if not SEED_DATA_DIR.is_dir():
         raise RuntimeError(f"Seed data directory not found: {SEED_DATA_DIR}")
 
-    shutil.copytree(SEED_DATA_DIR, data_dir)
+    shutil.copytree(SEED_DATA_DIR, data_dir, dirs_exist_ok=True)
     # Substitute {default_currency} in all .beancount files
     for bc_file in data_dir.rglob("*.beancount"):
         content = bc_file.read_text(encoding="utf-8")

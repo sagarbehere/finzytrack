@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from app.config import Config, BACKUP_DIR
+from app.config import Config
 from app.exceptions import APIError
 from app.schemas.response_schemas import ApiResponse
 from app.helpers.response_helpers import success_json_response
@@ -91,9 +91,8 @@ async def complete_setup(
                 "FILE_NOT_FOUND",
                 status_code=404,
             )
-        # Create data directory structure and copy the existing file
+        # Create ledger directory and copy the existing file
         ledger_path.parent.mkdir(parents=True, exist_ok=True)
-        Path(BACKUP_DIR).mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(src), str(ledger_path))
     else:
         # Fresh start — seed data directory with currency substitution

@@ -80,7 +80,10 @@ def setup_logging(level: str, max_file_size_mb: int = 5, backup_count: int = 3) 
 
 
 
-_SEED_CONFIG_DIR = Path(__file__).parents[1] / "resources" / "seed_config"
+# Seed config location differs between dev and packaged app.
+_SEED_CONFIG_DIR_DEV = Path(__file__).parents[1] / "resources" / "seed_config"
+_SEED_CONFIG_DIR_FROZEN = Path(getattr(sys, '_MEIPASS', '')) / "backend" / "seed_config"
+_SEED_CONFIG_DIR = _SEED_CONFIG_DIR_FROZEN if getattr(sys, 'frozen', False) else _SEED_CONFIG_DIR_DEV
 
 
 def _seed_config(config_dir: Path) -> None:
@@ -368,24 +371,85 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
 
 
 
+def start_server(
+    config_path: str = './config/config.yaml',
+    cli_overrides: Optional[dict[str, Any]] = None,
+    static_dir: Optional[str] = None,
+) -> None:
+    """Seed config, load settings, create app, and run uvicorn.
+
+    This is the single startup path used by both the CLI (main()) and the
+    desktop launcher.  All directory seeding and initialisation happens here
+    so that every deployment context (dev, Docker, packaged app) behaves
+    identically.
+    """
+    # Set up logging with defaults first so seed/config errors are captured.
+    # Reconfigured below with user settings once config is loaded.
+    setup_logging(level='INFO')
+
+    # Seed config directory on first run (before loading config).
+    # Data directory is seeded later by the setup wizard so the user's
+    # chosen currency can be applied to the starter ledger.
+    _seed_config(Path('./config'))
+
+    # Load environment variables from config/.env (secrets like IMAP credentials)
+    from dotenv import load_dotenv
+    load_dotenv(Path('./config/.env'))
+
+    # Load configuration with CLI overrides using Pydantic
+    app_config = Config.from_yaml_file(config_path, cli_overrides)
+
+    # Reconfigure logging with user settings
+    setup_logging(
+        level=app_config.logging.level,
+        max_file_size_mb=app_config.logging.max_file_size_mb,
+        backup_count=app_config.logging.backup_count,
+    )
+
+    logger = logging.getLogger(__name__)
+    logger.info("Starting Finzytrack backend server")
+    logger.info(f"Configuration loaded from: {config_path}")
+    logger.info(f"Server will start on {app_config.server.host}:{app_config.server.port}")
+
+    if cli_overrides:
+        logger.info(f"CLI overrides applied: {list(cli_overrides.keys())}")
+
+    # Create FastAPI app
+    app = create_app(app_config, static_dir=static_dir)
+
+    # Ensure uvicorn loggers use the same level and handlers
+    uvi_level = app_config.logging.level.upper()
+    logging.getLogger("uvicorn").setLevel(uvi_level)
+    logging.getLogger("uvicorn.error").setLevel(uvi_level)
+    logging.getLogger("uvicorn.access").setLevel(uvi_level)
+
+    # Start server
+    uvicorn.run(
+        app,
+        host=app_config.server.host,
+        port=app_config.server.port,
+        log_config=None,
+    )
+
+
 @click.command()
-@click.option('--config', '-c', 
+@click.option('--config', '-c',
               default='./config/config.yaml',
               help='Path to configuration file',
               show_default=True)
-@click.option('--server-host', 
+@click.option('--server-host',
               help='Server host address (overrides config)')
-@click.option('--server-port', type=int, 
+@click.option('--server-port', type=int,
               help='Server port (overrides config)')
-@click.option('--ledger-file', 
+@click.option('--ledger-file',
               help='Path to Beancount ledger file (overrides config)')
 @click.option('--ml-enabled', is_flag=True,
               help='Enable ML categorization (overrides config)')
-@click.option('--ml-disabled', is_flag=True, 
+@click.option('--ml-disabled', is_flag=True,
               help='Disable ML categorization (overrides config)')
-@click.option('--ml-training-data-file', 
+@click.option('--ml-training-data-file',
               help='Path to ML training data file (overrides config)')
-@click.option('--log-level', 
+@click.option('--log-level',
               type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], case_sensitive=False),
               help='Logging level (overrides config)')
 @click.option('--debug', is_flag=True,
@@ -395,25 +459,25 @@ def main(config: str, server_host: str, server_port: int,
          ml_training_data_file: str, log_level: str, debug: bool):
     """
     Start Finzytrack backend server.
-    
+
     CLI arguments take precedence over YAML configuration file settings.
     Use flattened argument names for nested config values.
     """
-    
+
     try:
         # Prepare CLI overrides dictionary
         cli_overrides: dict[str, Any] = {}
-        
+
         # Server settings
         if server_host:
             cli_overrides['server-host'] = server_host
         if server_port:
             cli_overrides['server-port'] = server_port
-        
+
         # File paths
         if ledger_file:
             cli_overrides['ledger-file'] = ledger_file
-        
+
         # ML settings (handle conflicting flags)
         if ml_enabled and ml_disabled:
             click.echo("Error: Cannot specify both --ml-enabled and --ml-disabled", err=True)
@@ -422,62 +486,23 @@ def main(config: str, server_host: str, server_port: int,
             cli_overrides['ml-enabled'] = True
         elif ml_disabled:
             cli_overrides['ml-enabled'] = False
-        
+
         if ml_training_data_file:
             cli_overrides['ml-training-data-file'] = ml_training_data_file
-        
+
         # Logging settings
         if log_level:
             cli_overrides['logging-level'] = log_level.upper()
-        
+
         # Debug mode overrides
         if debug:
             cli_overrides['logging-level'] = 'DEBUG'
-        
-        # Seed config directory on first run (before loading config).
-        # Data directory is seeded by the setup wizard (POST /api/setup/complete)
-        # so the user's chosen currency can be applied to the starter ledger.
-        _seed_config(Path('./config'))
 
-        # Load environment variables from config/.env (secrets like IMAP credentials)
-        from dotenv import load_dotenv
-        load_dotenv(Path('./config/.env'))
-
-        # Load configuration with CLI overrides using Pydantic
-        app_config = Config.from_yaml_file(config, cli_overrides)
-        
-        # Setup logging first
-        setup_logging(
-            level=app_config.logging.level,
-            max_file_size_mb=app_config.logging.max_file_size_mb,
-            backup_count=app_config.logging.backup_count,
+        start_server(
+            config_path=config,
+            cli_overrides=cli_overrides or None,
         )
-        
-        logger = logging.getLogger(__name__)
-        logger.info("Starting Finzytrack backend server")
-        logger.info(f"Configuration loaded from: {config}")
-        logger.info(f"Server will start on {app_config.server.host}:{app_config.server.port}")
-        
-        if cli_overrides:
-            logger.info(f"CLI overrides applied: {list(cli_overrides.keys())}")
-        
-        # Create FastAPI app
-        app = create_app(app_config)
 
-        # Ensure uvicorn loggers use the same level and handlers
-        log_level = app_config.logging.level.upper()
-        logging.getLogger("uvicorn").setLevel(log_level)
-        logging.getLogger("uvicorn.error").setLevel(log_level)
-        logging.getLogger("uvicorn.access").setLevel(log_level)
-        
-        # Start server
-        uvicorn.run(
-            app,
-            host=app_config.server.host,
-            port=app_config.server.port,
-            log_config=None
-        )
-        
     except ConfigurationError as e:
         click.echo(f"Configuration Error: {e}", err=True)
         sys.exit(1)
