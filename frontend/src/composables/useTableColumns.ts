@@ -13,7 +13,7 @@ export interface ColumnConfig {
 }
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
-  { id: 'status', label: 'Status', defaultVisible: true, defaultWidth: 60, minWidth: 30, resizable: false },
+  { id: 'status', label: 'Status', defaultVisible: true, defaultWidth: 60, minWidth: 30, resizable: true },
   { id: 'index', label: '#', defaultVisible: true, defaultWidth: 50, minWidth: 30, resizable: true },
   { id: 'date', label: 'Date', defaultVisible: true, defaultWidth: 120, minWidth: 60, resizable: true },
   { id: 'flag', label: 'Flag', defaultVisible: false, defaultWidth: 60, minWidth: 30, resizable: true },
@@ -31,7 +31,7 @@ const COLUMN_CONFIGS: ColumnConfig[] = [
   { id: 'price_currency', label: 'Price Currency', defaultVisible: false, defaultWidth: 100, minWidth: 30, resizable: true },
   { id: 'price_type', label: 'Price Type', defaultVisible: false, defaultWidth: 90, minWidth: 30, resizable: true },
   { id: 'balance', label: 'Balance', defaultVisible: false, defaultWidth: 120, minWidth: 40, resizable: true, disabled: true, disabledReason: 'Coming Soon' },
-  { id: 'actions', label: 'Actions', defaultVisible: true, defaultWidth: 100, minWidth: 40, resizable: false },
+  { id: 'actions', label: 'Actions', defaultVisible: true, defaultWidth: 100, minWidth: 40, resizable: true },
 ]
 
 export function useTableColumns() {

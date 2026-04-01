@@ -52,7 +52,7 @@
     <!-- Main table -->
     <div class="overflow-hidden rounded-lg ring-1 ring-gray-200 dark:ring-white/10">
       <div class="table-scroll-container">
-        <table class="w-full table-auto">
+        <table class="w-full table-fixed">
           <!-- Table Header -->
           <thead class="bg-gray-50 dark:bg-gray-800/50">
             <tr v-for="headerGroup in table.getHeaderGroups()" :key="headerGroup.id">
@@ -97,6 +97,7 @@
                     :data-column-id="cell.column.id"
                     :data-row="row.original.transactionIndex"
                     :data-posting="row.original.postingIndex"
+                    :style="{ width: `${cell.column.getSize()}px` }"
                     :class="getCellClasses(cell)"
                     @keydown.capture="(e) => handleCellKeydown(e, cell, row.original)"
                     @click="(e) => handleCellClick(e, cell, row.original)"
@@ -805,7 +806,7 @@ const getTransactionRowClasses = (rowData: any) => {
 
 const getCellClasses = (cell: Cell<any, any>) => {
   const classes = [
-    'px-3', 'py-2', 'text-sm',
+    'px-3', 'py-2', 'text-sm', 'overflow-hidden',
     'border-r', 'border-b', 'border-gray-200', 'dark:border-white/10',
     'last:border-r-0'
   ]
@@ -1577,7 +1578,6 @@ defineExpose({
 /* Ensure table doesn't compress columns too much */
 .table-scroll-container table {
   min-width: 100%;
-  width: max-content; /* Allow table to grow wider than container */
 }
 
 /* Resize handle for column resizing */
@@ -1609,7 +1609,7 @@ defineExpose({
 }
 
 table {
-  table-layout: auto;
+  table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0; /* Remove gaps between cells */
 }
@@ -1657,7 +1657,7 @@ td[data-column-id="narration"] textarea {
   height: 100%;
 }
 
-/* Ensure dropdowns can escape table cell boundaries */
+/* Allow dropdowns to escape table cell boundaries */
 td[data-column-id="account"],
 td[data-column-id="currency"] {
   overflow: visible;
