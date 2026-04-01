@@ -5,11 +5,12 @@ Endpoints:
 - POST /api/setup/complete - Apply wizard choices and finalize setup
 """
 
+import logging
 import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
 from app.config import Config
@@ -20,6 +21,8 @@ from app.core.config_manager import ConfigManager
 from app.core.backup_manager import BackupManager
 from app.dependencies import get_config_manager, get_backup_manager
 from app.core.seed import seed_data_with_currency
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -49,6 +52,7 @@ class SetupResponse(BaseModel):
 @router.post("/setup/complete", response_model=ApiResponse[SetupResponse])
 async def complete_setup(
     request: SetupRequest,
+    raw_request: Request,
     config_manager: ConfigManager = Depends(get_config_manager),
     backup_manager: BackupManager = Depends(get_backup_manager),
 ):
@@ -145,5 +149,21 @@ async def complete_setup(
     # Reload in-memory config
     config_manager.reload_config(_to_plain_dict(data))
     updated_config = config_manager.get_config()
+
+    # Initialize ledger services that were skipped at startup because
+    # setup_complete was false.  The BeancountManager and SQLiteExporter
+    # already exist on app.state — they just haven't parsed/exported yet.
+    try:
+        beancount_manager = raw_request.app.state.beancount_manager
+        entries = beancount_manager.cache.get_entries()
+        logger.info(f"Ledger loaded after setup: {len(entries)} entries")
+
+        sqlite_exporter = raw_request.app.state.sqlite_exporter
+        await sqlite_exporter.export_entries(entries)
+        logger.info("SQLite exported after setup completion")
+    except Exception as e:
+        logger.error(f"Post-setup initialization failed: {e}", exc_info=True)
+        # Don't fail the wizard — config is saved, ledger exists.
+        # The user can trigger a manual export from the UI.
 
     return success_json_response(SetupResponse(config=updated_config))

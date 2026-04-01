@@ -130,29 +130,26 @@ def parse_args():
 
 
 def find_config_path() -> str:
-    """Return the config file path to use.
+    """Return the config file path if it exists.
 
-    Both packaged and development mode use config/config.yaml as the
-    single user-editable config.  In dev mode, the backend's _seed_config()
-    will create it from resources/seed_config/ if it doesn't exist yet.
+    Used only by load_config_defaults() to read CLI defaults from the
+    config file before argparse runs.  On first run the file won't exist
+    yet (start_server seeds it), so callers must handle FileNotFoundError.
     """
     path = './config/config.yaml'
     if os.path.exists(path):
         return path
-    if getattr(sys, 'frozen', False):
-        # Should not happen after first-run copy, but fall back to bundle
-        return os.path.join(SEED_CONFIG_DIR, 'config.yaml')
     raise FileNotFoundError(
         'No config.yaml found. Expected ./config/config.yaml '
-        '(run the backend once to seed from resources/seed_config/)'
+        '(start_server will seed it on first run)'
     )
 
 
-def start_backend(args):
+def start_backend(args, shutdown_event):
     """Start uvicorn in a background thread via the shared start_server() path."""
     from app.main import start_server
 
-    config_path = args.config or find_config_path()
+    config_path = args.config or './config/config.yaml'
 
     # Build CLI overrides from launcher args — only pass values explicitly
     # provided so config file values aren't accidentally overwritten by defaults.
@@ -174,6 +171,7 @@ def start_backend(args):
             config_path=config_path,
             cli_overrides=cli_overrides or None,
             static_dir=static_dir,
+            shutdown_event=shutdown_event,
         )
     except Exception as e:
         print(f'[backend] crashed: {e}', file=sys.stderr, flush=True)
@@ -205,8 +203,10 @@ def main():
     # Host and port for the window URL come from args (which already reflect config defaults)
     url = f'http://{args.host}:{args.port}'
 
-    # Start backend in daemon thread (dies automatically when main thread exits)
-    thread = threading.Thread(target=start_backend, args=(args,), daemon=True)
+    # Event to signal a graceful backend shutdown when the window closes.
+    shutdown_event = threading.Event()
+
+    thread = threading.Thread(target=start_backend, args=(args, shutdown_event))
     thread.start()
 
     print(f'[launcher] Waiting for backend on {url}...', flush=True)
@@ -229,7 +229,15 @@ def main():
             window.evaluate_js("document.addEventListener('contextmenu', e => e.preventDefault())")
         window.events.loaded += on_loaded
 
+    # Blocks until the window is closed.
     webview.start(debug=args.debug)
+
+    # Window closed — tell the backend to shut down gracefully so FastAPI
+    # lifespan cleanup runs (cancels pending SQLite syncs, flushes logs).
+    print('[launcher] Window closed, shutting down backend...', flush=True)
+    shutdown_event.set()
+    thread.join(timeout=5)
+    print('[launcher] Done.', flush=True)
 
 
 if __name__ == '__main__':

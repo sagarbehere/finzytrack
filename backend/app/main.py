@@ -375,6 +375,7 @@ def start_server(
     config_path: str = './config/config.yaml',
     cli_overrides: Optional[dict[str, Any]] = None,
     static_dir: Optional[str] = None,
+    shutdown_event: Optional[Any] = None,
 ) -> None:
     """Seed config, load settings, create app, and run uvicorn.
 
@@ -382,6 +383,12 @@ def start_server(
     desktop launcher.  All directory seeding and initialisation happens here
     so that every deployment context (dev, Docker, packaged app) behaves
     identically.
+
+    Args:
+        shutdown_event: Optional threading.Event.  When set, uvicorn will
+            perform a graceful shutdown (running FastAPI lifespan cleanup).
+            Used by the desktop launcher to stop the backend when the
+            window closes.
     """
     # Set up logging with defaults first so seed/config errors are captured.
     # Reconfigured below with user settings once config is loaded.
@@ -424,12 +431,26 @@ def start_server(
     logging.getLogger("uvicorn.access").setLevel(uvi_level)
 
     # Start server
-    uvicorn.run(
+    uvi_config = uvicorn.Config(
         app,
         host=app_config.server.host,
         port=app_config.server.port,
         log_config=None,
     )
+    server = uvicorn.Server(uvi_config)
+
+    if shutdown_event is not None:
+        # Poll the event so the desktop launcher can trigger a graceful stop.
+        import threading
+
+        def _watch_shutdown():
+            shutdown_event.wait()
+            logger.info("Shutdown event received — stopping server gracefully")
+            server.should_exit = True
+
+        threading.Thread(target=_watch_shutdown, daemon=True).start()
+
+    server.run()
 
 
 @click.command()

@@ -326,6 +326,11 @@ async function handleDateFilterChange(newDateFilter: AccountDateFilter) {
 onMounted(async () => {
   await loadAccounts()
   hasLoaded.value = true
+
+  // Auto-expand all nodes when navigated with ?expanded=1 (e.g. from setup wizard)
+  if (route.query.expanded) {
+    expandAll(filteredTree.value)
+  }
 })
 
 // Auto-refresh accounts when data-modifying modals close
