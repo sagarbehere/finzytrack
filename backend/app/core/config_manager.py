@@ -85,7 +85,7 @@ class ConfigManager:
             yaml.dump(data, f)
             f.truncate()
 
-    def reload_config(self, new_config_data: Dict[str, Any]) -> Tuple[bool, Optional[str], Optional[str]]:
+    async def reload_config(self, new_config_data: Dict[str, Any]) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Reload configuration from new data.
 
@@ -127,7 +127,7 @@ class ConfigManager:
         # Ledger file path change — hot-switch if services are available
         if new_config.ledger_file != self.config.ledger_file:
             if self._beancount_manager is not None and self._sqlite_sync_manager is not None:
-                notice = self._switch_ledger(new_config.ledger_file)
+                notice = await self._switch_ledger(new_config.ledger_file)
             else:
                 restart_required = True
                 restart_reasons.append("ledger file path changed")
@@ -170,14 +170,13 @@ class ConfigManager:
 
         return restart_required, restart_reason, notice
 
-    def _switch_ledger(self, new_ledger_file: str) -> Optional[str]:
+    async def _switch_ledger(self, new_ledger_file: str) -> Optional[str]:
         """
         Hot-switch to a different ledger file at runtime.
 
         If the file does not exist it is created from the default template
         using LedgerInitializer. Validates accessibility, then updates all
-        dependent services. Raises APIError with a user-friendly message
-        if the new file cannot be used.
+        dependent services and forces an immediate SQLite re-export.
 
         Returns:
             An optional notice string for the user (e.g. when a new file
@@ -226,16 +225,13 @@ class ConfigManager:
         # Update the sync manager so mtime checks use the new file
         self._sqlite_sync_manager.ledger_file = new_ledger_file
 
-        # Trigger an immediate cache parse + SQLite re-export so the
-        # new ledger's data is available right away
+        # Parse the new ledger and force an immediate SQLite re-export.
+        # We bypass the debounced callback because mtime checks are
+        # meaningless when switching between different ledger files —
+        # the new file may be older than the existing SQLite DB.
         try:
             entries = self._beancount_manager.cache.get_entries()
-            # Notify cache invalidation callbacks (triggers debounced SQLite export)
-            for callback in self._beancount_manager._on_cache_invalidated_callbacks:
-                try:
-                    callback(entries)
-                except Exception as e:
-                    logger.error(f"Error in cache invalidation callback after ledger switch: {e}", exc_info=True)
+            await self._sqlite_sync_manager.force_export(entries)
         except Exception as e:
             logger.error(f"Failed to parse new ledger after switch: {e}", exc_info=True)
             raise APIError(

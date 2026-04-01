@@ -81,7 +81,7 @@ query via `:paramName` placeholders.
     "name": "currency",
     "label": "Currency",
     "type": "select",
-    "default": "USD",
+    "default": { "$gen": "defaultCurrency" },
     "optionsFrom": "currencies"
   },
   {
@@ -353,7 +353,7 @@ For a user request like "show me a bar chart of my top 10 expense categories":
       "name": "currency",
       "label": "Currency",
       "type": "select",
-      "default": "USD",
+      "default": { "$gen": "defaultCurrency" },
       "optionsFrom": "currencies"
     }
   ],

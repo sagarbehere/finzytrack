@@ -13,7 +13,7 @@ interface StoredTabState {
   activeTabId: string | null
 }
 
-const DEFAULT_DASHBOARD_ID = 'financial-overview'
+const DEFAULT_DASHBOARD_IDS = ['financial-overview', 'year-summary', 'month-summary']
 
 // Shared state across all component instances
 const tabs = ref<DashboardTab[]>([])
@@ -78,12 +78,17 @@ export function useDashboardTabs() {
    * Set up default tabs (financial-overview)
    */
   function setDefaultTabs(): void {
-    const defaultDashboard = getDashboard(DEFAULT_DASHBOARD_ID)
-    if (defaultDashboard) {
-      tabs.value = [{ id: DEFAULT_DASHBOARD_ID, title: defaultDashboard.title }]
-      activeTabId.value = DEFAULT_DASHBOARD_ID
+    const defaultTabs: DashboardTab[] = []
+    for (const id of DEFAULT_DASHBOARD_IDS) {
+      const dashboard = getDashboard(id)
+      if (dashboard) {
+        defaultTabs.push({ id, title: dashboard.title })
+      }
+    }
+    if (defaultTabs.length > 0) {
+      tabs.value = defaultTabs
+      activeTabId.value = defaultTabs[0].id
     } else {
-      // No default dashboard available
       tabs.value = []
       activeTabId.value = null
     }

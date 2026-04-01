@@ -125,6 +125,25 @@ class DBSyncManager:
             logger.error(f"Error checking if export needed: {e}")
             return True  # Err on the side of exporting
 
+    async def force_export(self, entries: List[Any]) -> None:
+        """
+        Force an immediate export, bypassing debounce and mtime checks.
+
+        Used when switching ledger files, where the mtime comparison is
+        meaningless because the SQLite contains data from a different file.
+        """
+        # Cancel any pending debounced export first
+        if self._pending_task and not self._pending_task.done():
+            self._pending_task.cancel()
+            try:
+                await self._pending_task
+            except asyncio.CancelledError:
+                pass
+
+        logger.info(f"Starting forced {self.db_type} export (ledger switch)")
+        await self.exporter.export_entries(entries)
+        logger.info(f"{self.db_type} force-exported after ledger switch")
+
     async def cancel_pending_sync(self) -> None:
         """
         Cancel any pending debounced export.

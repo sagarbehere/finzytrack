@@ -8,7 +8,7 @@
         <span class="text-white text-xl font-semibold">{{ icon }}</span>
       </div>
     </div>
-    <div class="flex-1 min-w-0 overflow-hidden">
+    <div ref="textContainer" class="flex-1 min-w-0 overflow-hidden">
       <p v-if="label" class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
         {{ label }}
       </p>
@@ -17,16 +17,18 @@
         <p
           v-for="(item, index) in values"
           :key="index"
-          :class="[
-            'font-bold text-gray-900 dark:text-white truncate',
-            values.length >= 3 ? 'text-lg' : values.length === 2 ? 'text-xl' : 'text-2xl',
-          ]"
+          class="font-bold text-gray-900 dark:text-white whitespace-nowrap"
+          :style="{ fontSize: valueFontSize(values.length) }"
         >
           {{ formatCurrencyAmount(item) }}
         </p>
       </template>
       <!-- Single value (backward compatible) -->
-      <p v-else class="text-2xl font-bold text-gray-900 dark:text-white">
+      <p
+        v-else
+        class="font-bold text-gray-900 dark:text-white whitespace-nowrap"
+        :style="{ fontSize: valueFontSize(1) }"
+      >
         {{ formattedValue }}
       </p>
       <div v-if="showTrend && trend !== null" class="flex items-center mt-1">
@@ -43,7 +45,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import type { CurrencyAmount } from '@/types/recipes'
 import { formatAmount } from '@/utils/currencyFormat'
 
@@ -64,6 +66,34 @@ const props = withDefaults(defineProps<Props>(), {
   showTrend: false,
   trend: null,
 })
+
+const textContainer = ref<HTMLElement | null>(null)
+const containerWidth = ref(300)
+
+let observer: ResizeObserver | null = null
+
+onMounted(() => {
+  if (textContainer.value) {
+    containerWidth.value = textContainer.value.clientWidth
+    observer = new ResizeObserver((entries) => {
+      containerWidth.value = entries[0].contentRect.width
+    })
+    observer.observe(textContainer.value)
+  }
+})
+
+onUnmounted(() => observer?.disconnect())
+
+// Max font sizes per currency count: 1 → 24px, 2 → 20px, 3+ → 18px
+const maxSizes: Record<number, number> = { 1: 24, 2: 20, 3: 18 }
+
+function valueFontSize(count: number): string {
+  const maxPx = maxSizes[Math.min(count, 3)]
+  // Scale: at 200px width → 14px, at 350px+ → max size
+  const w = containerWidth.value
+  const size = Math.min(maxPx, Math.max(14, 14 + ((w - 200) / 150) * (maxPx - 14)))
+  return `${size}px`
+}
 
 const iconBgClass = computed(() => {
   const colors = {

@@ -6,14 +6,13 @@ Endpoints:
 """
 
 import logging
-import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
-from app.config import Config
+from app.config import BACKUP_DIR, Config
 from app.exceptions import APIError
 from app.schemas.response_schemas import ApiResponse
 from app.helpers.response_helpers import success_json_response
@@ -59,8 +58,9 @@ async def complete_setup(
     """
     Finalize first-run setup.
 
-    Applies the user's wizard choices: sets currency, creates or copies
-    the ledger file, optionally configures AI, and marks setup as complete.
+    Applies the user's wizard choices: sets currency, points to an existing
+    ledger or creates a new one, optionally configures AI, and marks setup
+    as complete.
     """
     config = config_manager.get_config()
 
@@ -95,9 +95,9 @@ async def complete_setup(
                 "FILE_NOT_FOUND",
                 status_code=404,
             )
-        # Create ledger directory and copy the existing file
-        ledger_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(src), str(ledger_path))
+        # Use the existing file in-place (no copy) and ensure backup dir exists
+        Path(BACKUP_DIR).mkdir(parents=True, exist_ok=True)
+        patch["ledger_file"] = str(src)
     else:
         # Fresh start — seed data directory with currency substitution
         seed_data_with_currency(Path('./data'), currency)
@@ -147,7 +147,7 @@ async def complete_setup(
         f.truncate()
 
     # Reload in-memory config
-    config_manager.reload_config(_to_plain_dict(data))
+    await config_manager.reload_config(_to_plain_dict(data))
     updated_config = config_manager.get_config()
 
     # Initialize ledger services that were skipped at startup because

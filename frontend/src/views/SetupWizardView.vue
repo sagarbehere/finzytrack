@@ -126,9 +126,8 @@
           <div v-if="ledgerMode === 'existing'" class="mt-4">
             <div class="rounded-lg border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-3 mb-3">
               <p class="text-xs text-amber-700 dark:text-amber-400">
-                A copy of the selected file will be made for use by the app and stored at
-                <code class="font-mono bg-amber-100 dark:bg-amber-800/30 px-1 rounded">{{ config?.ledger_file || './data/ledgers/main.beancount' }}</code>.
-                Your original file will not be modified. We still recommend making a backup before proceeding.
+                The app will use the selected file directly — no copy is made.
+                We recommend making a backup before proceeding.
               </p>
             </div>
             <div class="flex gap-2">

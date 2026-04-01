@@ -56,7 +56,7 @@
           "name": "currency",
           "label": "Currency",
           "type": "select",
-          "default": "USD",
+          "default": { "$gen": "defaultCurrency" },
           "optionsFrom": "currencies"
         }
       ],
@@ -94,7 +94,7 @@
           "name": "currency",
           "label": "Currency",
           "type": "select",
-          "default": "USD",
+          "default": { "$gen": "defaultCurrency" },
           "optionsFrom": "currencies"
         }
       ],

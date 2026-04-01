@@ -130,7 +130,7 @@ async def patch_config_endpoint(
         f.truncate()
 
     # Reload the in-memory config
-    restart_required, restart_reason, notice = config_manager.reload_config(_to_plain_dict(data))
+    restart_required, restart_reason, notice = await config_manager.reload_config(_to_plain_dict(data))
 
     updated_config = config_manager.get_config()
     return success_json_response(ConfigPatchResponse(
