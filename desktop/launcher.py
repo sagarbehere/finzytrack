@@ -33,11 +33,8 @@ if getattr(sys, 'frozen', False):
         import shutil
         shutil.copytree(SEED_CONFIG_DIR, local_config_dir)
         print('[launcher] Seeded config directory from template.', flush=True)
-    local_data_dir = os.path.join(APP_DIR, 'data')
-    if not os.path.exists(local_data_dir):
-        import shutil
-        shutil.copytree(SEED_DATA_DIR, local_data_dir)
-        print('[launcher] Seeded data directory from template.', flush=True)
+    # Data directory is seeded by the setup wizard (POST /api/setup/complete)
+    # so the user's chosen currency can be applied to the starter ledger.
 else:
     # Running from source (development / POC testing).
     ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))

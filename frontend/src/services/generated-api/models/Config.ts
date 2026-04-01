@@ -13,6 +13,10 @@ import type { ServerConfig } from './ServerConfig';
  */
 export type Config = {
     /**
+     * Whether the first-run setup wizard has been completed
+     */
+    setup_complete?: boolean;
+    /**
      * Path to main Beancount ledger
      */
     ledger_file?: string;

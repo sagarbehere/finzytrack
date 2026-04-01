@@ -5,11 +5,22 @@ import AnalyzeView from '../views/AnalyzeView.vue'
 import TransactionsView from '../views/TransactionsView.vue'
 import SettingsView from '../views/SettingsView.vue'
 import AssistantView from '../views/AssistantView.vue'
+import SetupWizardView from '../views/SetupWizardView.vue'
+import { useConfig } from '../composables/useConfig'
 
 const routes = [
   {
     path: '/',
     redirect: '/dashboard',
+  },
+  {
+    path: '/setup',
+    name: 'setup',
+    component: SetupWizardView,
+    meta: {
+      title: 'Setup',
+      layout: 'none',  // Bypass AppShell
+    },
   },
   {
     path: '/dashboard',
@@ -74,10 +85,30 @@ const router = createRouter({
   routes,
 })
 
-// Update document title based on route
-router.beforeEach((to, from, next) => {
+// Redirect to setup wizard on first run
+let configLoaded = false
+
+router.beforeEach(async (to, from, next) => {
   document.title = to.meta.title ? `${to.meta.title} - Finzytrack` : 'Finzytrack'
-  next()
+
+  // Ensure config is loaded (once per session)
+  const { loadConfig, config } = useConfig()
+  if (!configLoaded) {
+    configLoaded = true
+    await loadConfig()
+  }
+
+  const setupComplete = config.value?.setup_complete ?? false
+
+  // Redirect to setup if not complete (unless already going there)
+  if (!setupComplete && to.name !== 'setup') {
+    next({ name: 'setup' })
+  } else if (setupComplete && to.name === 'setup') {
+    // Don't allow revisiting setup after completion
+    next({ name: 'dashboard' })
+  } else {
+    next()
+  }
 })
 
 export default router

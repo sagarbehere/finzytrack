@@ -3,7 +3,7 @@
     <div class="mb-6">
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Import Financial Data</h1>
       <p class="mt-1 text-gray-600 dark:text-gray-400">
-        Import transactions from OFX files, CSV files, email, or enter them manually
+        Import transactions from account statements in various configured formats, or use AI for quick import
       </p>
     </div>
 

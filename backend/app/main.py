@@ -25,7 +25,7 @@ from .config import (
     SQLITE_AUTO_SYNC, SQLITE_SYNC_DEBOUNCE_SECONDS, SQLITE_ENABLE_WAL,
 )
 from .api.routers.importer import ofx_accounts, transaction, csv_rules, xls_rules, email as email_import_router, llm_parse
-from .api.routers import accounts, commodities, ledger_export, ledger_transactions, query, config as config_router, filesystem, ledger, assistant, recipes, ai_services
+from .api.routers import accounts, commodities, ledger_export, ledger_transactions, query, config as config_router, filesystem, ledger, assistant, recipes, ai_services, setup as setup_router
 from .core.beancount_manager import BeancountManager
 from .error_handler import setup_error_handlers
 from .core.backup_manager import BackupManager
@@ -81,7 +81,6 @@ def setup_logging(level: str, max_file_size_mb: int = 5, backup_count: int = 3) 
 
 
 _SEED_CONFIG_DIR = Path(__file__).parents[1] / "resources" / "seed_config"
-_SEED_DATA_DIR = Path(__file__).parents[1] / "resources" / "seed_data"
 
 
 def _seed_config(config_dir: Path) -> None:
@@ -98,21 +97,6 @@ def _seed_config(config_dir: Path) -> None:
         return  # No bundled seed config to copy (shouldn't happen)
     shutil.copytree(_SEED_CONFIG_DIR, config_dir)
     logging.getLogger(__name__).info(f"Seeded config directory → {config_dir}")
-
-
-def _seed_data(data_dir: Path) -> None:
-    """Copy seed data template to data/ on first run.
-
-    Copies the bundled seed_data/ (starter ledger file with default
-    accounts) into the working data directory.  Skipped if data/
-    already exists — user data is never overwritten.
-    """
-    if data_dir.exists():
-        return
-    if not _SEED_DATA_DIR.is_dir():
-        return
-    shutil.copytree(_SEED_DATA_DIR, data_dir)
-    logging.getLogger(__name__).info(f"Seeded data directory → {data_dir}")
 
 
 def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
@@ -177,13 +161,17 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
     config_manager.set_ledger_services(beancount_manager, sqlite_sync_manager)
 
     # 6. Ensure ledger exists - fail fast if it can't be created
-    try:
-        if not ledger_initializer.ensure_ledger_exists():
-            raise RuntimeError(f"Failed to create ledger file at {config.ledger_file}")
-        logger.info(f"Ledger verified/created: {config.ledger_file}")
-    except Exception as e:
-        logger.error(f"Fatal: Cannot initialize ledger file {config.ledger_file}: {e}")
-        raise RuntimeError(f"Failed to initialize ledger file {config.ledger_file}: {e}")
+    #    Skip when setup is incomplete — the setup wizard will create the ledger.
+    if config.setup_complete:
+        try:
+            if not ledger_initializer.ensure_ledger_exists():
+                raise RuntimeError(f"Failed to create ledger file at {config.ledger_file}")
+            logger.info(f"Ledger verified/created: {config.ledger_file}")
+        except Exception as e:
+            logger.error(f"Fatal: Cannot initialize ledger file {config.ledger_file}: {e}")
+            raise RuntimeError(f"Failed to initialize ledger file {config.ledger_file}: {e}")
+    else:
+        logger.info("Setup not complete — skipping ledger initialization")
 
     # 7. Register SQLite sync callback
     if SQLITE_AUTO_SYNC:
@@ -203,8 +191,8 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
         # STARTUP: Tasks to run when the application starts
         logger.info("Application starting up...")
 
-        # Export SQLite on startup if out of date
-        if sqlite_sync_manager._needs_export():
+        # Export SQLite on startup if out of date (skip when setup is incomplete)
+        if config.setup_complete and sqlite_sync_manager._needs_export():
             try:
                 entries = beancount_manager.cache.get_entries()
                 await sqlite_exporter.export_entries(entries)
@@ -278,6 +266,7 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
     app.include_router(assistant.router, prefix="/api", tags=["assistant"])
     app.include_router(ai_services.router, prefix="/api", tags=["ai"])
     app.include_router(recipes.router, prefix="/api", tags=["recipes"])
+    app.include_router(setup_router.router, prefix="/api", tags=["setup"])
 
     
     # Serve bundled Vue frontend (used in packaged/desktop mode)
@@ -445,9 +434,10 @@ def main(config: str, server_host: str, server_port: int,
         if debug:
             cli_overrides['logging-level'] = 'DEBUG'
         
-        # Seed config and data directories on first run (before loading config)
+        # Seed config directory on first run (before loading config).
+        # Data directory is seeded by the setup wizard (POST /api/setup/complete)
+        # so the user's chosen currency can be applied to the starter ledger.
         _seed_config(Path('./config'))
-        _seed_data(Path('./data'))
 
         # Load environment variables from config/.env (secrets like IMAP credentials)
         from dotenv import load_dotenv

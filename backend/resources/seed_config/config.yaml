@@ -1,5 +1,8 @@
 # Finzytrack Backend Configuration
 
+# First-run setup (set to true by the setup wizard)
+setup_complete: false
+
 # File paths
 ledger_file: "./data/ledgers/one.beancount"
 

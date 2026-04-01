@@ -122,7 +122,10 @@ class EmailImportConfig(BaseModel):
 
 class Config(BaseModel):
     """Main application configuration with nested sections."""
-    
+
+    # Setup
+    setup_complete: bool = Field(default=False, description="Whether the first-run setup wizard has been completed")
+
     # File paths
     ledger_file: str = Field(default="./data/ledgers/main.beancount", description="Path to main Beancount ledger")
     
@@ -177,24 +180,21 @@ class Config(BaseModel):
 
     @model_validator(mode='after')
     def validate_directory_paths(self) -> 'Config':
-        """Validate that required directories exist for file operations."""
-        # Validate ledger file directory exists or can be created
+        """Validate that required directories exist.
+
+        Directory creation is handled by the setup wizard (seed_data_with_currency)
+        on first run. This validator only checks that they exist after setup.
+        """
+        if not self.setup_complete:
+            return self  # Directories don't exist yet — wizard will create them
+
         ledger_dir = Path(self.ledger_file).parent
         if not ledger_dir.exists():
-            # Try to create ledger directory
-            try:
-                ledger_dir.mkdir(parents=True, exist_ok=True)
-            except (PermissionError, OSError) as e:
-                raise ValueError(f"Cannot create ledger directory {ledger_dir}: {e}")
-        
-        # Validate backup directory exists or can be created
+            raise ValueError(f"Ledger directory does not exist: {ledger_dir}")
+
         backup_path = Path(BACKUP_DIR)
         if not backup_path.exists():
-            # Try to create backup directory
-            try:
-                backup_path.mkdir(parents=True, exist_ok=True)
-            except (PermissionError, OSError) as e:
-                raise ValueError(f"Cannot create backup directory {backup_path}: {e}")
+            raise ValueError(f"Backup directory does not exist: {backup_path}")
         
         # Note: training data for the classifier comes from the ledger cache (the main
         # ledger file), not from training_data_file directly. The field is kept for

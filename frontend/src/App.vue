@@ -1,24 +1,21 @@
 <template>
   <div id="app" class="h-full bg-white dark:bg-gray-900">
-    <AppShell>
-      <!-- Dynamic content based on current page -->
-      <router-view v-if="$router" v-slot="{ Component }">
-        <KeepAlive :include="['AssistantView', 'ImportView']">
-          <component :is="Component" />
-        </KeepAlive>
-      </router-view>
-      <div v-else>
-        <!-- Fallback content when router is not available -->
-        <div class="text-center py-12">
-          <h1 class="text-2xl font-bold text-gray-900 dark:text-white mb-4">
-            Welcome to Finzytrack
-          </h1>
-          <p class="text-gray-600 dark:text-gray-400">
-            Your privacy-focused personal finance application
-          </p>
-        </div>
-      </div>
-    </AppShell>
+    <!-- Wait for initial navigation to resolve before rendering.
+         This prevents AppShell from briefly mounting (and making API calls)
+         before the router guard redirects to /setup on first run. -->
+    <template v-if="routerReady">
+      <!-- Full-screen views (setup wizard) bypass AppShell -->
+      <router-view v-if="$route.meta.layout === 'none'" />
+
+      <!-- Normal views get the AppShell wrapper -->
+      <AppShell v-else>
+        <router-view v-slot="{ Component }">
+          <KeepAlive :include="['AssistantView', 'ImportView']">
+            <component :is="Component" />
+          </KeepAlive>
+        </router-view>
+      </AppShell>
+    </template>
 
     <!-- Add toast notifications component -->
     <ToastNotifications />
@@ -26,8 +23,14 @@
 </template>
 
 <script setup>
+  import { ref } from 'vue'
+  import { useRouter } from 'vue-router'
   import AppShell from './components/layout/AppShell.vue'
   import ToastNotifications from './components/common/ToastNotifications.vue'
+
+  const router = useRouter()
+  const routerReady = ref(false)
+  router.isReady().then(() => { routerReady.value = true })
 </script>
 
 <style>
