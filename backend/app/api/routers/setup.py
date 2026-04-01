@@ -78,6 +78,14 @@ async def complete_setup(
     currency = request.currency.strip().upper()
     config_path = config.config_file_path or Path('./config/config.yaml')
 
+    # --- Build config patch ---
+    patch: Dict[str, Any] = {
+        "setup_complete": True,
+        "accounts": {
+            "default_currency": currency,
+        },
+    }
+
     # --- Ledger creation ---
     ledger_path = Path(config.ledger_file)
 
@@ -101,14 +109,6 @@ async def complete_setup(
     else:
         # Fresh start — seed data directory with currency substitution
         seed_data_with_currency(Path('./data'), currency)
-
-    # --- Build config patch ---
-    patch: Dict[str, Any] = {
-        "setup_complete": True,
-        "accounts": {
-            "default_currency": currency,
-        },
-    }
 
     # AI config (if provided)
     if request.ai_config:
