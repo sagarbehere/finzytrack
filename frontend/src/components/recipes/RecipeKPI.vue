@@ -1,5 +1,5 @@
 <template>
-  <div class="flex items-center h-full overflow-hidden">
+  <div ref="kpiRoot" class="flex items-center h-full overflow-hidden">
     <div v-if="icon" class="flex-shrink-0 mr-4">
       <div
         class="w-12 h-12 rounded-full flex items-center justify-center"
@@ -8,7 +8,7 @@
         <span class="text-white text-xl font-semibold">{{ icon }}</span>
       </div>
     </div>
-    <div ref="textContainer" class="flex-1 min-w-0 overflow-hidden">
+    <div class="flex-1 min-w-0 overflow-hidden">
       <p v-if="label" class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
         {{ label }}
       </p>
@@ -18,7 +18,7 @@
           v-for="(item, index) in values"
           :key="index"
           class="font-bold text-gray-900 dark:text-white whitespace-nowrap"
-          :style="{ fontSize: valueFontSize(values.length) }"
+          :style="valueStyle(values.length)"
         >
           {{ formatCurrencyAmount(item) }}
         </p>
@@ -27,7 +27,7 @@
       <p
         v-else
         class="font-bold text-gray-900 dark:text-white whitespace-nowrap"
-        :style="{ fontSize: valueFontSize(1) }"
+        :style="valueStyle(1)"
       >
         {{ formattedValue }}
       </p>
@@ -67,18 +67,21 @@ const props = withDefaults(defineProps<Props>(), {
   trend: null,
 })
 
-const textContainer = ref<HTMLElement | null>(null)
-const containerWidth = ref(300)
+// Measure the root KPI element (the full card content area) rather than
+// the inner text container, since the root has a definite size from the
+// grid layout while the inner flex child may not resize as expected.
+const kpiRoot = ref<HTMLElement | null>(null)
+const rootWidth = ref(400)
 
 let observer: ResizeObserver | null = null
 
 onMounted(() => {
-  if (textContainer.value) {
-    containerWidth.value = textContainer.value.clientWidth
+  if (kpiRoot.value) {
+    rootWidth.value = kpiRoot.value.clientWidth
     observer = new ResizeObserver((entries) => {
-      containerWidth.value = entries[0].contentRect.width
+      rootWidth.value = entries[0].contentRect.width
     })
-    observer.observe(textContainer.value)
+    observer.observe(kpiRoot.value)
   }
 })
 
@@ -87,12 +90,13 @@ onUnmounted(() => observer?.disconnect())
 // Max font sizes per currency count: 1 → 24px, 2 → 20px, 3+ → 18px
 const maxSizes: Record<number, number> = { 1: 24, 2: 20, 3: 18 }
 
-function valueFontSize(count: number): string {
+function valueStyle(count: number): Record<string, string> {
   const maxPx = maxSizes[Math.min(count, 3)]
-  // Scale: at 200px width → 14px, at 350px+ → max size
-  const w = containerWidth.value
-  const size = Math.min(maxPx, Math.max(14, 14 + ((w - 200) / 150) * (maxPx - 14)))
-  return `${size}px`
+  // Subtract icon width (~64px) to get effective text area width.
+  // Scale: at 150px text area → 14px, at 300px+ → max size.
+  const textWidth = rootWidth.value - (props.icon ? 64 : 0)
+  const size = Math.min(maxPx, Math.max(14, 14 + ((textWidth - 150) / 150) * (maxPx - 14)))
+  return { fontSize: `${size}px` }
 }
 
 const iconBgClass = computed(() => {

@@ -377,7 +377,7 @@ const shouldSkipCell = (cell: Cell<any, any>) => {
 
 // Helper functions for cell styling
 const getEditableInputClasses = (extraClasses = '') => {
-  return `w-full min-w-0 rounded-md bg-white py-1.5 px-3 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500 ${extraClasses}`
+  return `w-full min-w-0 rounded-md border-0 bg-white py-1.5 px-3 text-sm text-gray-900 outline-0 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:placeholder:text-gray-500 dark:focus:outline-indigo-500 ${extraClasses}`
 }
 
 const getDisplayClasses = () => {
