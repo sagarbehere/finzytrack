@@ -33,6 +33,15 @@ echo "==> Running PyInstaller..."
 cd "$SCRIPT_DIR"
 pyinstaller finzytrack.spec --noconfirm
 
+echo "==> Signing .app bundle (ad-hoc)..."
+# Sign all nested Mach-O binaries first, then the bundle itself.
+# A signed .app bundle is verified once by Gatekeeper, avoiding the
+# per-binary scan that causes a long first-launch delay.
+codesign --force --deep --sign - "$SCRIPT_DIR/dist/FinzyTrack.app"
+
+echo "==> Removing quarantine attribute..."
+xattr -cr "$SCRIPT_DIR/dist/FinzyTrack.app"
+
 echo ""
-echo "==> Done. Bundle is at: $SCRIPT_DIR/dist/FinzyTrack/"
-echo "    To run: ./dist/FinzyTrack/FinzyTrack"
+echo "==> Done. App bundle is at: $SCRIPT_DIR/dist/FinzyTrack.app"
+echo "    To run: open dist/FinzyTrack.app"

@@ -3,7 +3,7 @@
 PyInstaller spec for FinzyTrack desktop app.
 
 Build with:  pyinstaller finzytrack.spec
-Output:      dist/FinzyTrack/  (onedir bundle)
+Output:      dist/FinzyTrack.app  (macOS .app bundle)
 """
 
 import os
@@ -85,9 +85,9 @@ exe = EXE(
     name='FinzyTrack',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=False,
+    strip=True,
     upx=True,
-    console=True,           # Enabled for debugging — set to False for production
+    console=False,
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,
@@ -100,8 +100,21 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
-    strip=False,
+    strip=True,
     upx=True,
     upx_exclude=[],
     name='FinzyTrack',
+)
+
+# macOS .app bundle — Gatekeeper verifies the bundle signature once
+# instead of scanning every individual Mach-O binary on first launch.
+app = BUNDLE(
+    coll,
+    name='FinzyTrack.app',
+    bundle_identifier='com.finzytrack.app',
+    info_plist={
+        'NSHighResolutionCapable': True,
+        'CFBundleShortVersionString': '0.1.0',
+    },
+    # icon='assets/icon.icns',  # Uncomment when icon is ready
 )

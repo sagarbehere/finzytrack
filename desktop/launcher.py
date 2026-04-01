@@ -17,14 +17,25 @@ import urllib.error
 if getattr(sys, 'frozen', False):
     # Running inside PyInstaller bundle.
     # Python bytecode is accessible via import machinery from sys._MEIPASS.
-    # User data (config, ledger, etc.) lives next to the executable.
     BUNDLE_DIR = sys._MEIPASS
     FRONTEND_DIST = os.path.join(BUNDLE_DIR, 'frontend_dist')
     SEED_CONFIG_DIR = os.path.join(BUNDLE_DIR, 'backend', 'seed_config')
     SEED_DATA_DIR = os.path.join(BUNDLE_DIR, 'backend', 'seed_data')
-    # Working directory = folder containing the FinzyTrack executable.
-    # All relative paths in config.yaml resolve from here.
-    APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
+    # User data (config, ledger, etc.) in the platform-standard location:
+    #   macOS:   ~/Library/Application Support/FinzyTrack
+    #   Windows: %LOCALAPPDATA%/FinzyTrack
+    #   Linux:   ~/.local/share/FinzyTrack (XDG_DATA_HOME)
+    if sys.platform == 'darwin':
+        APP_DIR = os.path.join(os.path.expanduser('~'), 'Library',
+                               'Application Support', 'FinzyTrack')
+    elif sys.platform == 'win32':
+        APP_DIR = os.path.join(os.environ.get('LOCALAPPDATA',
+                               os.path.expanduser('~')), 'FinzyTrack')
+    else:
+        APP_DIR = os.path.join(os.environ.get('XDG_DATA_HOME',
+                               os.path.join(os.path.expanduser('~'), '.local', 'share')),
+                               'FinzyTrack')
+    os.makedirs(APP_DIR, exist_ok=True)
     os.chdir(APP_DIR)
     # On first run, copy seed templates so that relative paths in
     # config.yaml resolve correctly.
