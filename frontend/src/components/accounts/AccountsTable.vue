@@ -61,7 +61,7 @@
               <button
                 v-if="!node.isVirtual"
                 @click="emit('show-detail', node)"
-                class="text-sm font-medium text-gray-900 dark:text-white hover:text-indigo-600 dark:hover:text-indigo-400 text-left"
+                class="text-sm font-medium text-gray-900 dark:text-white hover:text-indigo-600 dark:hover:text-indigo-400 text-left cursor-pointer"
               >
                 {{ node.name }}
               </button>
@@ -119,7 +119,7 @@
               <button
                 v-if="formatBalanceDisplay(node).display"
                 @click="emit('view-transactions', node)"
-                class="text-indigo-600 hover:text-indigo-800 hover:underline dark:text-indigo-400 dark:hover:text-indigo-300"
+                class="text-indigo-600 hover:text-indigo-800 hover:underline dark:text-indigo-400 dark:hover:text-indigo-300 cursor-pointer"
                 title="View transactions for this account"
               >
                 {{ formatBalanceDisplay(node).display }}
