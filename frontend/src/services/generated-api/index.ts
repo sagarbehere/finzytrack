@@ -53,6 +53,9 @@ export type { ApiResponse_ProfilesListResponse_ } from './models/ApiResponse_Pro
 export type { ApiResponse_QueryData_ } from './models/ApiResponse_QueryData_';
 export type { ApiResponse_RecipeWriteResponse_ } from './models/ApiResponse_RecipeWriteResponse_';
 export type { ApiResponse_ReloadResponse_ } from './models/ApiResponse_ReloadResponse_';
+export type { ApiResponse_RuleContentResponse_ } from './models/ApiResponse_RuleContentResponse_';
+export type { ApiResponse_RuleDeleteResponse_ } from './models/ApiResponse_RuleDeleteResponse_';
+export type { ApiResponse_RuleWriteResponse_ } from './models/ApiResponse_RuleWriteResponse_';
 export type { ApiResponse_SetupResponse_ } from './models/ApiResponse_SetupResponse_';
 export type { ApiResponse_TestConnectionResponse_ } from './models/ApiResponse_TestConnectionResponse_';
 export type { ApiResponse_TrialExtractResult_ } from './models/ApiResponse_TrialExtractResult_';
@@ -132,6 +135,11 @@ export type { RawTransactionForCategorization } from './models/RawTransactionFor
 export type { RecipeWriteRequest } from './models/RecipeWriteRequest';
 export type { RecipeWriteResponse } from './models/RecipeWriteResponse';
 export type { ReloadResponse } from './models/ReloadResponse';
+export type { RuleContentResponse } from './models/RuleContentResponse';
+export type { RuleCreateRequest } from './models/RuleCreateRequest';
+export type { RuleDeleteResponse } from './models/RuleDeleteResponse';
+export type { RuleWriteRequest } from './models/RuleWriteRequest';
+export type { RuleWriteResponse } from './models/RuleWriteResponse';
 export type { ServerConfig } from './models/ServerConfig';
 export type { SetupRequest } from './models/SetupRequest';
 export type { SetupResponse } from './models/SetupResponse';

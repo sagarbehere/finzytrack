@@ -6,16 +6,23 @@ Provides:
   POST /api/import/email/test-connection - validate IMAP credentials
   POST /api/import/email/fetch           - stream fetch progress as SSE
   POST /api/import/email/trial-extract   - run rule against .eml for validation
+  GET  /api/import/email/rules/{f}/raw   - read raw YAML of an email rule
+  POST /api/import/email/rules           - create a new email rule file
+  PUT  /api/import/email/rules/{f}       - update an email rule file
+  DELETE /api/import/email/rules/{f}     - delete an email rule file
 """
 import email as email_stdlib
 import imaplib
+import logging
 import re
 from datetime import date as date_type, timedelta
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from app.ai.tools.test_email_extraction import _test_one_field
+from app.core.backup_manager import BackupManager
 from app.email_import.imap_client import _derive_domains
 from app.email_import.rule_registry import AccountProfileRegistry
 from app.email_import.rule_schemas import RuleFile
@@ -30,11 +37,21 @@ from app.email_import.result_schemas import (
     TrialExtractResult,
     TrialExtractedField,
 )
-from app.dependencies import get_config_manager, get_email_registry
+from app.dependencies import get_backup_manager, get_config_manager, get_email_registry
 from app.core.config_manager import ConfigManager
 from app.exceptions import APIError
+from app.helpers.rule_validation import parse_yaml, resolve_rule_path, validate_rule_schema
+from app.schemas.rule_write_schemas import (
+    RuleContentResponse,
+    RuleCreateRequest,
+    RuleDeleteResponse,
+    RuleWriteRequest,
+    RuleWriteResponse,
+)
 from app.schemas.response_schemas import ApiResponse
 from app.helpers.response_helpers import success_json_response
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -292,3 +309,139 @@ async def trial_extract_email(
         fields=fields,
         note=note,
     ))
+
+
+# ---------------------------------------------------------------------------
+# Email rule file CRUD
+# ---------------------------------------------------------------------------
+
+def _email_rules_dir(config_manager: ConfigManager) -> Path:
+    return Path(config_manager.get_config().email_rules_dir)
+
+
+@router.get(
+    "/email/rules/{filename}/raw",
+    response_model=ApiResponse[RuleContentResponse],
+    operation_id="getEmailRuleRaw",
+)
+async def get_email_rule_raw(
+    filename: str,
+    config_manager: ConfigManager = Depends(get_config_manager),
+):
+    """Read raw YAML content of an email rule file."""
+    rules_dir = _email_rules_dir(config_manager)
+    target = resolve_rule_path(rules_dir, filename)
+    if not target.exists():
+        raise APIError(
+            message=f"Email rule file not found: {filename}",
+            code="RESOURCE_NOT_FOUND",
+            status_code=404,
+            details={"filename": filename},
+        )
+    content = target.read_text(encoding="utf-8")
+    return success_json_response(RuleContentResponse(filename=target.name, content=content))
+
+
+@router.post(
+    "/email/rules",
+    response_model=ApiResponse[RuleWriteResponse],
+    operation_id="createEmailRule",
+    status_code=201,
+)
+async def create_email_rule(
+    body: RuleCreateRequest,
+    config_manager: ConfigManager = Depends(get_config_manager),
+    registry: AccountProfileRegistry = Depends(get_email_registry),
+):
+    """Create a new email rule file."""
+    rules_dir = _email_rules_dir(config_manager)
+    target = resolve_rule_path(rules_dir, body.filename)
+
+    if target.exists():
+        raise APIError(
+            message=f"File '{target.name}' already exists. Use PUT to update it.",
+            code="RESOURCE_CONFLICT",
+            status_code=409,
+            details={"filename": target.name},
+        )
+
+    data = parse_yaml(body.content)
+    validate_rule_schema(data, RuleFile, "Email")
+
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    target.write_text(body.content, encoding="utf-8")
+    logger.info(f"Created email rule: {target}")
+    registry.reload()
+
+    return success_json_response(
+        RuleWriteResponse(filename=target.name, path=str(target), backup_created=False),
+        status_code=201,
+    )
+
+
+@router.put(
+    "/email/rules/{filename}",
+    response_model=ApiResponse[RuleWriteResponse],
+    operation_id="updateEmailRule",
+)
+async def update_email_rule(
+    filename: str,
+    body: RuleWriteRequest,
+    config_manager: ConfigManager = Depends(get_config_manager),
+    backup_manager: BackupManager = Depends(get_backup_manager),
+    registry: AccountProfileRegistry = Depends(get_email_registry),
+):
+    """Update an existing email rule file with atomic write + backup."""
+    rules_dir = _email_rules_dir(config_manager)
+    target = resolve_rule_path(rules_dir, filename)
+
+    if not target.exists():
+        raise APIError(
+            message=f"Email rule file not found: {filename}",
+            code="RESOURCE_NOT_FOUND",
+            status_code=404,
+            details={"filename": filename},
+        )
+
+    data = parse_yaml(body.content)
+    validate_rule_schema(data, RuleFile, "Email")
+
+    with backup_manager.atomic_write(str(target)) as f:
+        f.seek(0)
+        f.truncate()
+        f.write(body.content)
+    logger.info(f"Updated email rule: {target}")
+    registry.reload()
+
+    return success_json_response(
+        RuleWriteResponse(filename=target.name, path=str(target), backup_created=True)
+    )
+
+
+@router.delete(
+    "/email/rules/{filename}",
+    response_model=ApiResponse[RuleDeleteResponse],
+    operation_id="deleteEmailRule",
+)
+async def delete_email_rule(
+    filename: str,
+    config_manager: ConfigManager = Depends(get_config_manager),
+    registry: AccountProfileRegistry = Depends(get_email_registry),
+):
+    """Delete an email rule file."""
+    rules_dir = _email_rules_dir(config_manager)
+    target = resolve_rule_path(rules_dir, filename)
+
+    if not target.exists():
+        raise APIError(
+            message=f"Email rule file not found: {filename}",
+            code="RESOURCE_NOT_FOUND",
+            status_code=404,
+            details={"filename": filename},
+        )
+
+    target.unlink()
+    logger.info(f"Deleted email rule: {target}")
+    registry.reload()
+
+    return success_json_response(RuleDeleteResponse(filename=target.name))

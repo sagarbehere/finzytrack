@@ -16,13 +16,66 @@
       <span>Some changes require an app restart to take effect. Please restart the application.</span>
     </div>
 
-    <GeneralSettingsTab @restart-required="restartRequired = true" />
+    <!-- Tab bar -->
+    <div class="mb-6 border-b border-gray-200 dark:border-white/10">
+      <nav class="-mb-px flex space-x-8">
+        <button
+          v-for="tab in tabs"
+          :key="tab.id"
+          @click="switchTab(tab.id)"
+          :class="[
+            activeTab === tab.id
+              ? 'border-indigo-500 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400'
+              : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700 dark:text-gray-400 dark:hover:border-white/20 dark:hover:text-gray-200',
+            'border-b-2 px-1 py-4 text-sm font-medium whitespace-nowrap'
+          ]"
+        >
+          {{ tab.label }}
+        </button>
+      </nav>
+    </div>
+
+    <!-- Tab content -->
+    <GeneralSettingsTab v-if="activeTab === 'general'" @restart-required="restartRequired = true" />
+    <RulesTab v-else-if="activeTab === 'rules'" :initial-rule-type="initialRuleType" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import GeneralSettingsTab from '@/components/settings/GeneralSettingsTab.vue'
+import RulesTab from '@/components/settings/RulesTab.vue'
+
+const route = useRoute()
+const router = useRouter()
+
+const tabs = [
+  { id: 'general', label: 'General' },
+  { id: 'rules', label: 'Rules' },
+] as const
+
+type TabId = typeof tabs[number]['id']
 
 const restartRequired = ref(false)
+
+const activeTab = ref<TabId>(
+  (route.query.tab as TabId) === 'rules' ? 'rules' : 'general'
+)
+
+const initialRuleType = computed(() => route.query.type as string | undefined)
+
+function switchTab(tabId: TabId) {
+  activeTab.value = tabId
+  router.replace({ query: tabId === 'general' ? {} : { tab: tabId, ...(route.query.type ? { type: route.query.type } : {}) } })
+}
+
+// Sync when navigating via deep link (e.g. gear icon from import tabs)
+watch(() => route.query.tab, (newTab) => {
+  if (newTab === 'rules' || newTab === 'general') {
+    activeTab.value = newTab
+  } else if (!newTab) {
+    activeTab.value = 'general'
+  }
+})
 </script>

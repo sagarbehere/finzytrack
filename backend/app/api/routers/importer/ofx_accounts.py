@@ -1,17 +1,32 @@
+import io
+import logging
+from pathlib import Path
+
 from fastapi import APIRouter, Depends
+from pydantic import ValidationError
+from ruamel.yaml import YAML
+
 from app.config import OFXAccountMapping
+from app.core.backup_manager import BackupManager
 from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
 from app.exceptions import APIError
-from app.dependencies import get_config_manager, get_beancount_manager
+from app.dependencies import get_backup_manager, get_config_manager, get_beancount_manager
 from app.schemas.ofx_schemas import (
     OFXDetectionRequest,
     OFXDetectionData,
     LearnOFXAccountRequest,
     LearnOFXAccountData
 )
+from app.schemas.rule_write_schemas import (
+    RuleContentResponse,
+    RuleWriteRequest,
+    RuleWriteResponse,
+)
 from app.schemas.response_schemas import ApiResponse
 from app.helpers.response_helpers import success_json_response
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -139,4 +154,88 @@ async def learn_ofx_account(
             status_code=500,
             details={"error": str(e)}
         )
+
+
+# ---------------------------------------------------------------------------
+# OFX mappings raw read / write
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/ofx-mappings/raw",
+    response_model=ApiResponse[RuleContentResponse],
+    operation_id="getOfxMappingsRaw",
+)
+async def get_ofx_mappings_raw(
+    config_manager: ConfigManager = Depends(get_config_manager),
+):
+    """Read raw YAML content of the OFX mappings file."""
+    mappings_path = Path(config_manager.get_config().ofx_mappings_file)
+    if not mappings_path.exists():
+        return success_json_response(RuleContentResponse(filename=mappings_path.name, content=""))
+    content = mappings_path.read_text(encoding="utf-8")
+    return success_json_response(RuleContentResponse(filename=mappings_path.name, content=content))
+
+
+@router.put(
+    "/ofx-mappings",
+    response_model=ApiResponse[RuleWriteResponse],
+    operation_id="updateOfxMappings",
+)
+async def update_ofx_mappings(
+    body: RuleWriteRequest,
+    config_manager: ConfigManager = Depends(get_config_manager),
+    backup_manager: BackupManager = Depends(get_backup_manager),
+):
+    """Validate and write the OFX mappings file with atomic write + backup."""
+    mappings_path = Path(config_manager.get_config().ofx_mappings_file)
+
+    # Parse YAML
+    try:
+        yaml = YAML(typ="safe")
+        data = yaml.load(io.StringIO(body.content))
+    except Exception as e:
+        raise APIError(
+            message=f"YAML parse error: {e}",
+            code="YAML_PARSE_ERROR",
+            status_code=400,
+        )
+
+    # Accept null/empty as empty list
+    if data is None:
+        data = []
+
+    if not isinstance(data, list):
+        raise APIError(
+            message="OFX mappings file must be a YAML list of account mappings.",
+            code="VALIDATION_ERROR",
+            status_code=400,
+        )
+
+    # Validate each entry
+    for i, entry in enumerate(data):
+        try:
+            OFXAccountMapping.model_validate(entry)
+        except (ValidationError, Exception) as e:
+            raise APIError(
+                message=f"OFX mapping entry {i + 1} is invalid: {e}",
+                code="VALIDATION_ERROR",
+                status_code=400,
+            )
+
+    mappings_path.parent.mkdir(parents=True, exist_ok=True)
+    file_existed = mappings_path.exists()
+
+    if file_existed:
+        with backup_manager.atomic_write(str(mappings_path)) as f:
+            f.seek(0)
+            f.truncate()
+            f.write(body.content)
+    else:
+        mappings_path.write_text(body.content, encoding="utf-8")
+
+    logger.info(f"Updated OFX mappings: {mappings_path}")
+
+    return success_json_response(
+        RuleWriteResponse(filename=mappings_path.name, path=str(mappings_path), backup_created=file_existed)
+    )
 

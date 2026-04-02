@@ -14,14 +14,23 @@
       </div>
       <div v-else-if="availableRules.length === 0" class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 text-sm text-yellow-800 dark:text-yellow-200 flex items-center justify-between gap-4">
         <span>No XLS rules found. <a href="https://finzytrack.app/docs/xls-rules" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 hover:text-yellow-900 dark:hover:text-yellow-100">Learn how to create XLS rule files</a>.</span>
-        <button
-          @click="handleReloadRules"
-          :disabled="isReloadingRules"
-          class="rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 disabled:opacity-50 shrink-0 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
-          title="Reload rules from disk"
-        >
-          {{ isReloadingRules ? 'Reloading…' : 'Reload' }}
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            @click="handleReloadRules"
+            :disabled="isReloadingRules"
+            class="rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 disabled:opacity-50 shrink-0 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+            title="Reload rules from disk"
+          >
+            {{ isReloadingRules ? 'Reloading…' : 'Reload' }}
+          </button>
+          <button
+            @click="router.push({ path: '/settings', query: { tab: 'rules', type: 'xls' } })"
+            class="rounded-md bg-white p-1.5 text-gray-500 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 hover:text-gray-700 shrink-0 dark:bg-white/10 dark:text-gray-400 dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20 dark:hover:text-gray-200"
+            title="Manage XLS rules"
+          >
+            <Cog6ToothIcon class="h-5 w-5" />
+          </button>
+        </div>
       </div>
       <div v-else class="flex gap-2">
         <Listbox as="div" v-model="selectedRuleFilename" class="flex-1">
@@ -52,6 +61,13 @@
           title="Reload rules from disk"
         >
           {{ isReloadingRules ? 'Reloading…' : 'Reload' }}
+        </button>
+        <button
+          @click="router.push({ path: '/settings', query: { tab: 'rules', type: 'xls' } })"
+          class="rounded-md bg-white p-1.5 text-gray-500 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 hover:text-gray-700 shrink-0 dark:bg-white/10 dark:text-gray-400 dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20 dark:hover:text-gray-200"
+          title="Manage XLS rules"
+        >
+          <Cog6ToothIcon class="h-5 w-5" />
         </button>
       </div>
     </div>
@@ -281,8 +297,12 @@
 <script setup lang="ts">
   import { ref, computed, watch, onMounted } from 'vue'
   import { Listbox, ListboxButton, ListboxLabel, ListboxOption, ListboxOptions } from '@headlessui/vue'
+  import { useRouter } from 'vue-router'
   import { ChevronUpDownIcon } from '@heroicons/vue/16/solid'
   import { CheckIcon } from '@heroicons/vue/20/solid'
+  import { Cog6ToothIcon } from '@heroicons/vue/24/outline'
+
+  const router = useRouter()
   import { useToast } from '@/composables/useNotifications'
   import { useAccounts } from '@/composables/useAccounts'
   import {

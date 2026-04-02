@@ -10,6 +10,9 @@ import type { ApiResponse_LearnOFXAccountData_ } from '../models/ApiResponse_Lea
 import type { ApiResponse_OFXDetectionData_ } from '../models/ApiResponse_OFXDetectionData_';
 import type { ApiResponse_ProfilesListResponse_ } from '../models/ApiResponse_ProfilesListResponse_';
 import type { ApiResponse_ReloadResponse_ } from '../models/ApiResponse_ReloadResponse_';
+import type { ApiResponse_RuleContentResponse_ } from '../models/ApiResponse_RuleContentResponse_';
+import type { ApiResponse_RuleDeleteResponse_ } from '../models/ApiResponse_RuleDeleteResponse_';
+import type { ApiResponse_RuleWriteResponse_ } from '../models/ApiResponse_RuleWriteResponse_';
 import type { ApiResponse_TestConnectionResponse_ } from '../models/ApiResponse_TestConnectionResponse_';
 import type { ApiResponse_TrialExtractResult_ } from '../models/ApiResponse_TrialExtractResult_';
 import type { ApiResponse_XlsRule_ } from '../models/ApiResponse_XlsRule_';
@@ -20,6 +23,8 @@ import type { CommitRequest } from '../models/CommitRequest';
 import type { FetchRequest } from '../models/FetchRequest';
 import type { LearnOFXAccountRequest } from '../models/LearnOFXAccountRequest';
 import type { OFXDetectionRequest } from '../models/OFXDetectionRequest';
+import type { RuleCreateRequest } from '../models/RuleCreateRequest';
+import type { RuleWriteRequest } from '../models/RuleWriteRequest';
 import type { TestConnectionRequest } from '../models/TestConnectionRequest';
 import type { TrialExtractRequest } from '../models/TrialExtractRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
@@ -57,6 +62,38 @@ export class ImportService {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/api/import/learn-ofx-account',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Get Ofx Mappings Raw
+     * Read raw YAML content of the OFX mappings file.
+     * @returns ApiResponse_RuleContentResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static getOfxMappingsRaw(): CancelablePromise<ApiResponse_RuleContentResponse_> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/import/ofx-mappings/raw',
+        });
+    }
+    /**
+     * Update Ofx Mappings
+     * Validate and write the OFX mappings file with atomic write + backup.
+     * @param requestBody
+     * @returns ApiResponse_RuleWriteResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static updateOfxMappings(
+        requestBody: RuleWriteRequest,
+    ): CancelablePromise<ApiResponse_RuleWriteResponse_> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/api/import/ofx-mappings',
             body: requestBody,
             mediaType: 'application/json',
             errors: {
@@ -147,6 +184,26 @@ export class ImportService {
         });
     }
     /**
+     * Create Csv Rule
+     * Create a new CSV rule file.
+     * @param requestBody
+     * @returns ApiResponse_RuleWriteResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static createCsvRule(
+        requestBody: RuleCreateRequest,
+    ): CancelablePromise<ApiResponse_RuleWriteResponse_> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/import/csv-rules',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
      * Get Csv Rule
      * @param filename
      * @returns ApiResponse_CsvRule_ Successful Response
@@ -167,6 +224,73 @@ export class ImportService {
         });
     }
     /**
+     * Update Csv Rule
+     * Update an existing CSV rule file with atomic write + backup.
+     * @param filename
+     * @param requestBody
+     * @returns ApiResponse_RuleWriteResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static updateCsvRule(
+        filename: string,
+        requestBody: RuleWriteRequest,
+    ): CancelablePromise<ApiResponse_RuleWriteResponse_> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/api/import/csv-rules/{filename}',
+            path: {
+                'filename': filename,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Delete Csv Rule
+     * Delete a CSV rule file.
+     * @param filename
+     * @returns ApiResponse_RuleDeleteResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static deleteCsvRule(
+        filename: string,
+    ): CancelablePromise<ApiResponse_RuleDeleteResponse_> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/import/csv-rules/{filename}',
+            path: {
+                'filename': filename,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Get Csv Rule Raw
+     * Read raw YAML content of a CSV rule file.
+     * @param filename
+     * @returns ApiResponse_RuleContentResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static getCsvRuleRaw(
+        filename: string,
+    ): CancelablePromise<ApiResponse_RuleContentResponse_> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/import/csv-rules/{filename}/raw',
+            path: {
+                'filename': filename,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
      * List Xls Rules
      * @returns ApiResponse_XlsRuleListData_ Successful Response
      * @throws ApiError
@@ -175,6 +299,26 @@ export class ImportService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/import/xls-rules',
+        });
+    }
+    /**
+     * Create Xls Rule
+     * Create a new XLS rule file.
+     * @param requestBody
+     * @returns ApiResponse_RuleWriteResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static createXlsRule(
+        requestBody: RuleCreateRequest,
+    ): CancelablePromise<ApiResponse_RuleWriteResponse_> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/import/xls-rules',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**
@@ -189,6 +333,73 @@ export class ImportService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/import/xls-rules/{filename}',
+            path: {
+                'filename': filename,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Update Xls Rule
+     * Update an existing XLS rule file with atomic write + backup.
+     * @param filename
+     * @param requestBody
+     * @returns ApiResponse_RuleWriteResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static updateXlsRule(
+        filename: string,
+        requestBody: RuleWriteRequest,
+    ): CancelablePromise<ApiResponse_RuleWriteResponse_> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/api/import/xls-rules/{filename}',
+            path: {
+                'filename': filename,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Delete Xls Rule
+     * Delete an XLS rule file.
+     * @param filename
+     * @returns ApiResponse_RuleDeleteResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static deleteXlsRule(
+        filename: string,
+    ): CancelablePromise<ApiResponse_RuleDeleteResponse_> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/import/xls-rules/{filename}',
+            path: {
+                'filename': filename,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Get Xls Rule Raw
+     * Read raw YAML content of an XLS rule file.
+     * @param filename
+     * @returns ApiResponse_RuleContentResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static getXlsRuleRaw(
+        filename: string,
+    ): CancelablePromise<ApiResponse_RuleContentResponse_> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/import/xls-rules/{filename}/raw',
             path: {
                 'filename': filename,
             },
@@ -286,6 +497,93 @@ export class ImportService {
             url: '/api/import/email/trial-extract',
             body: requestBody,
             mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Get Email Rule Raw
+     * Read raw YAML content of an email rule file.
+     * @param filename
+     * @returns ApiResponse_RuleContentResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static getEmailRuleRaw(
+        filename: string,
+    ): CancelablePromise<ApiResponse_RuleContentResponse_> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/import/email/rules/{filename}/raw',
+            path: {
+                'filename': filename,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Create Email Rule
+     * Create a new email rule file.
+     * @param requestBody
+     * @returns ApiResponse_RuleWriteResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static createEmailRule(
+        requestBody: RuleCreateRequest,
+    ): CancelablePromise<ApiResponse_RuleWriteResponse_> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/import/email/rules',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Update Email Rule
+     * Update an existing email rule file with atomic write + backup.
+     * @param filename
+     * @param requestBody
+     * @returns ApiResponse_RuleWriteResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static updateEmailRule(
+        filename: string,
+        requestBody: RuleWriteRequest,
+    ): CancelablePromise<ApiResponse_RuleWriteResponse_> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/api/import/email/rules/{filename}',
+            path: {
+                'filename': filename,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Delete Email Rule
+     * Delete an email rule file.
+     * @param filename
+     * @returns ApiResponse_RuleDeleteResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static deleteEmailRule(
+        filename: string,
+    ): CancelablePromise<ApiResponse_RuleDeleteResponse_> {
+        return __request(OpenAPI, {
+            method: 'DELETE',
+            url: '/api/import/email/rules/{filename}',
+            path: {
+                'filename': filename,
+            },
             errors: {
                 422: `Validation Error`,
             },

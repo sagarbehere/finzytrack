@@ -12,8 +12,9 @@ export class SetupService {
      * Complete Setup
      * Finalize first-run setup.
      *
-     * Applies the user's wizard choices: sets currency, creates or copies
-     * the ledger file, optionally configures AI, and marks setup as complete.
+     * Applies the user's wizard choices: sets currency, points to an existing
+     * ledger or creates a new one, optionally configures AI, and marks setup
+     * as complete.
      * @param requestBody
      * @returns ApiResponse_SetupResponse_ Successful Response
      * @throws ApiError
