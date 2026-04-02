@@ -61,7 +61,8 @@
 
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import { PlusIcon, XMarkIcon, ArrowPathIcon, Cog6ToothIcon } from '@heroicons/vue/20/solid'
+import { PlusIcon, XMarkIcon, ArrowPathIcon } from '@heroicons/vue/20/solid'
+import { Cog6ToothIcon } from '@heroicons/vue/24/outline'
 import type { DashboardTab } from '@/composables/useDashboardTabs'
 
 const router = useRouter()
