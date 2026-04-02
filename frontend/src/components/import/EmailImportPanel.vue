@@ -52,8 +52,15 @@
         </div>
       </div>
 
-      <div v-if="profiles.length === 0 && !isLoadingProfiles" class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 text-sm text-yellow-800 dark:text-yellow-200">
-        No email rules found. <a href="https://finzytrack.app/docs/email-rules" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 hover:text-yellow-900 dark:hover:text-yellow-100">Learn how to create email rule files</a>.
+      <div v-if="profiles.length === 0 && !isLoadingProfiles" class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 text-sm text-yellow-800 dark:text-yellow-200 flex items-center justify-between gap-4">
+        <span>No email rules found. <a href="https://finzytrack.app/docs/email-rules" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 hover:text-yellow-900 dark:hover:text-yellow-100">Learn how to create email rule files</a>.</span>
+        <button
+          @click="handleReload"
+          class="rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 shrink-0 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+          title="Reload rules from disk"
+        >
+          Reload
+        </button>
       </div>
 
       <div v-else class="flex flex-wrap items-center gap-2">
