@@ -210,6 +210,28 @@
         <!-- Separator for mobile -->
         <div class="h-6 w-px bg-gray-200 lg:hidden dark:bg-white/10" aria-hidden="true" />
 
+        <!-- Back / Forward navigation -->
+        <div class="hidden lg:flex items-center gap-x-1">
+          <button
+            type="button"
+            class="-m-1 p-1 text-gray-400 hover:text-gray-500 dark:hover:text-white transition-colors"
+            title="Go back"
+            @click="router.back()"
+          >
+            <span class="sr-only">Go back</span>
+            <ChevronLeftIcon class="size-5" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            class="-m-1 p-1 text-gray-400 hover:text-gray-500 dark:hover:text-white transition-colors"
+            title="Go forward"
+            @click="router.forward()"
+          >
+            <span class="sr-only">Go forward</span>
+            <ChevronRightIcon class="size-5" aria-hidden="true" />
+          </button>
+        </div>
+
         <!-- Top bar content -->
         <div class="flex flex-1 gap-x-4 self-stretch lg:gap-x-6">
           <!-- Search bar -->
@@ -307,6 +329,7 @@
 
 <script setup>
   import { ref, onMounted, onUnmounted } from 'vue'
+  import { useRouter } from 'vue-router'
   import { useTheme } from '@/composables/useTheme'
   import { useNotifications } from '@/composables/useNotifications'
   import { useSidebarWidth } from '@/composables/useSidebarWidth'
@@ -318,6 +341,8 @@
     Bars3Icon,
     BellIcon,
     ChartBarIcon,
+    ChevronLeftIcon,
+    ChevronRightIcon,
     Cog6ToothIcon,
     ComputerDesktopIcon,
     ExclamationTriangleIcon,
@@ -330,6 +355,8 @@
     WalletIcon,
     SparklesIcon,
   } from '@heroicons/vue/24/outline'
+
+  const router = useRouter()
 
   // Props
 

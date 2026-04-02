@@ -47,12 +47,24 @@
     >
       <ArrowPathIcon class="h-4 w-4" :class="{ 'animate-spin': reloading }" />
     </button>
+
+    <!-- Manage recipes (gear icon) -->
+    <button
+      @click="router.push({ path: '/settings', query: { tab: 'dashboards' } })"
+      class="flex items-center justify-center p-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors"
+      title="Manage recipes"
+    >
+      <Cog6ToothIcon class="h-4 w-4" />
+    </button>
   </div>
 </template>
 
 <script setup lang="ts">
-import { PlusIcon, XMarkIcon, ArrowPathIcon } from '@heroicons/vue/20/solid'
+import { useRouter } from 'vue-router'
+import { PlusIcon, XMarkIcon, ArrowPathIcon, Cog6ToothIcon } from '@heroicons/vue/20/solid'
 import type { DashboardTab } from '@/composables/useDashboardTabs'
+
+const router = useRouter()
 
 interface Props {
   tabs: readonly DashboardTab[]
