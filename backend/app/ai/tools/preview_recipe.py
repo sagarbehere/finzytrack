@@ -11,11 +11,11 @@ it without the LLM needing to re-output the entire JSON.
 import logging
 
 from app.ai.tools.base import BaseTool
-from app.ai.tools.write_recipe import (
-    _validate_dashboard,
-    _validate_widget,
-    _validate_id,
-    _dry_run_queries,
+from app.ai.tools.write_recipe import _dry_run_queries
+from app.helpers.recipe_validation import (
+    validate_dashboard as _validate_dashboard,
+    validate_id as _validate_id,
+    validate_widget as _validate_widget,
 )
 
 logger = logging.getLogger(__name__)

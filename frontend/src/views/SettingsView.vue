@@ -38,6 +38,7 @@
     <!-- Tab content -->
     <GeneralSettingsTab v-if="activeTab === 'general'" @restart-required="restartRequired = true" />
     <RulesTab v-else-if="activeTab === 'rules'" :initial-rule-type="initialRuleType" />
+    <DashboardsTab v-else-if="activeTab === 'dashboards'" :initial-recipe-type="initialRuleType" />
   </div>
 </template>
 
@@ -46,13 +47,15 @@ import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GeneralSettingsTab from '@/components/settings/GeneralSettingsTab.vue'
 import RulesTab from '@/components/settings/RulesTab.vue'
+import DashboardsTab from '@/components/settings/DashboardsTab.vue'
 
 const route = useRoute()
 const router = useRouter()
 
 const tabs = [
   { id: 'general', label: 'General' },
-  { id: 'rules', label: 'Rules' },
+  { id: 'rules', label: 'Import Rules' },
+  { id: 'dashboards', label: 'Dashboards' },
 ] as const
 
 type TabId = typeof tabs[number]['id']
@@ -60,7 +63,9 @@ type TabId = typeof tabs[number]['id']
 const restartRequired = ref(false)
 
 const activeTab = ref<TabId>(
-  (route.query.tab as TabId) === 'rules' ? 'rules' : 'general'
+  (['rules', 'dashboards'] as const).includes(route.query.tab as any)
+    ? (route.query.tab as TabId)
+    : 'general'
 )
 
 const initialRuleType = computed(() => route.query.type as string | undefined)
@@ -70,9 +75,9 @@ function switchTab(tabId: TabId) {
   router.replace({ query: tabId === 'general' ? {} : { tab: tabId, ...(route.query.type ? { type: route.query.type } : {}) } })
 }
 
-// Sync when navigating via deep link (e.g. gear icon from import tabs)
+// Sync when navigating via deep link
 watch(() => route.query.tab, (newTab) => {
-  if (newTab === 'rules' || newTab === 'general') {
+  if (newTab === 'rules' || newTab === 'general' || newTab === 'dashboards') {
     activeTab.value = newTab
   } else if (!newTab) {
     activeTab.value = 'general'

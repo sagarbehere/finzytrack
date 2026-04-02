@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ApiResponse_RecipeWriteResponse_ } from '../models/ApiResponse_RecipeWriteResponse_';
+import type { ApiResponse_RuleContentResponse_ } from '../models/ApiResponse_RuleContentResponse_';
 import type { RecipeWriteRequest } from '../models/RecipeWriteRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -18,6 +19,27 @@ export class RecipesService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/recipes/manifest.json',
+        });
+    }
+    /**
+     * Get Recipe File Raw
+     * Return raw text content of a recipe JSON file.
+     * @param filePath
+     * @returns ApiResponse_RuleContentResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static getRecipeRaw(
+        filePath: string,
+    ): CancelablePromise<ApiResponse_RuleContentResponse_> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/recipes/{file_path}/raw',
+            path: {
+                'file_path': filePath,
+            },
+            errors: {
+                422: `Validation Error`,
+            },
         });
     }
     /**
@@ -43,7 +65,7 @@ export class RecipesService {
     }
     /**
      * Write Recipe File
-     * Write or update a recipe JSON file.
+     * Write or update a recipe JSON file. Validates content and updates manifest.
      * @param filePath
      * @param requestBody
      * @returns ApiResponse_RecipeWriteResponse_ Successful Response
