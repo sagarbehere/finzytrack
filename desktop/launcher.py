@@ -231,7 +231,11 @@ def main():
         window.events.loaded += on_loaded
 
     # Blocks until the window is closed.
-    webview.start(debug=args.debug)
+    webview.start(
+        debug=args.debug,
+        private_mode=False,
+        storage_path=os.path.join(APP_DIR, 'browser_storage'),
+    )
 
     # Window closed — tell the backend to shut down gracefully so FastAPI
     # lifespan cleanup runs (cancels pending SQLite syncs, flushes logs).
