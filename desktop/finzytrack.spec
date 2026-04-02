@@ -8,8 +8,18 @@ Output:      dist/FinzyTrack.app  (macOS .app bundle)
 
 import os
 import sys
+import platform
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+
+# Platform-specific icon
+ICONS = Path('..') / 'assets' / 'icons'
+if sys.platform == 'darwin':
+    ICON = 'icon.icns'
+elif sys.platform == 'win32':
+    ICON = str(ICONS / 'windows' / 'app.ico')
+else:
+    ICON = None  # Linux: icons set via .desktop file, not embedded in binary
 
 ROOT = Path('..')
 
@@ -92,7 +102,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # icon='assets/icon.icns',  # Uncomment when icon is ready
+    icon=ICON,
 )
 
 coll = COLLECT(
@@ -116,5 +126,5 @@ app = BUNDLE(
         'NSHighResolutionCapable': True,
         'CFBundleShortVersionString': '0.1.0',
     },
-    # icon='assets/icon.icns',  # Uncomment when icon is ready
+    icon='icon.icns',
 )
