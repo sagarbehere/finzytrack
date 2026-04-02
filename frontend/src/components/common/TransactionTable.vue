@@ -1503,6 +1503,14 @@ defineExpose({
     editBaselineTransactions.value = JSON.parse(JSON.stringify(props.transactions))
   },
 
+  // Called by parent when a single transaction is appended (e.g., manual entry)
+  // Adds the transaction to both baselines so edit tracking works for it
+  addToBaselines: (transaction: TransactionViewModel) => {
+    const copy = JSON.parse(JSON.stringify(transaction))
+    importedTransactions.value.push(copy)
+    editBaselineTransactions.value.push(JSON.parse(JSON.stringify(transaction)))
+  },
+
   clearState: () => {
     importedTransactions.value = []
     editBaselineTransactions.value = []

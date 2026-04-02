@@ -44,8 +44,8 @@
         leave-from-class="" 
         leave-to-class="opacity-0"
       >
-        <ComboboxOptions 
-          v-if="(filteredAccounts.length > 0 || query.length > 0) && !isLoading" 
+        <ComboboxOptions
+          v-if="(filteredAccounts.length > 0 || query.length > 0) && !isLoading"
           class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10"
         >
           <!-- Custom query option - allows user to type new account name -->

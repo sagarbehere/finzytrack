@@ -48,6 +48,8 @@ a = Analysis(
         (str(BACKEND / 'resources' / 'seed_config'), 'backend/seed_config'),
         # Seed data template (copied to user's data/ on first run)
         (str(BACKEND / 'resources' / 'seed_data'), 'backend/seed_data'),
+        # AI prompt templates
+        (str(BACKEND / 'resources' / 'prompts'), 'resources/prompts'),
         # Frontend built assets
         (str(FRONTEND_DIST), 'frontend_dist'),
         # beancount VERSION file (read at import time)

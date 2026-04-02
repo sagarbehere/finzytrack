@@ -9,14 +9,16 @@
     traditionally print the left margin rule in red ink.
 
   Colour palette:
-    Background  #050C18  (near-black navy)
-    Blue        #60A5FA  (Tailwind blue-400)
-    Red         #F87171  (Tailwind red-400)
+    Background  #FFFFFF  (white — matches app's light-mode background)
+    Structural  #1E3A5F  (dark navy — crossbar and centre divider)
+    Red         #DC2626  (dark red — F accent stroke, historically grounded)
+    Entries     #2563EB  (dark blue — ledger entry lines)
 
   Stroke weights (at 1024px):
-    Structural (crossbar, divider)  13px
-    Red accent stroke               6.5px  (half of structural)
-    Ledger entry lines              9px    (opacity: 80/50/28/14 %)
+    Border                          24px   (#D1D5DB — anchors icon in light dock)
+    Structural (crossbar, divider)  17px
+    Red accent stroke               8.5px  (half of structural)
+    Ledger entry lines              12px   (opacity: 82/56/34/18 %)
 
   Geometry note:
     The crossbar, T-divider, and red stroke use <path fill> rather than
@@ -37,66 +39,69 @@
      width="1024" height="1024">
 
   <!-- ── Background ─────────────────────────────────────────────────── -->
-  <rect width="1024" height="1024" rx="230" fill="#050C18"/>
+  <!-- Border (24px at 1024px ≈ 1.5px at 64px) anchors the white icon   -->
+  <!-- against both light and dark dock backgrounds.                      -->
+  <rect width="1024" height="1024" rx="230" fill="#FFFFFF"
+        stroke="#D1D5DB" stroke-width="24"/>
 
   <!-- ── Crossbar ───────────────────────────────────────────────────── -->
   <!-- Flat left end at x=115 (red stroke sits here). Round right cap.  -->
-  <!-- Body: y=300.5 to y=313.5 (13px centred on y=307).               -->
-  <path d="M 115 300.5
-           L 909 300.5
-           A 6.5 6.5 0 0 1 915.5 307
-           A 6.5 6.5 0 0 1 909 313.5
-           L 115 313.5 Z"
-        fill="#60A5FA" fill-opacity="0.92"/>
+  <!-- Body: y=298.5 to y=315.5 (17px centred on y=307).               -->
+  <path d="M 115 298.5
+           L 909 298.5
+           A 8.5 8.5 0 0 1 917.5 307
+           A 8.5 8.5 0 0 1 909 315.5
+           L 115 315.5 Z"
+        fill="#1E3A5F" fill-opacity="0.95"/>
 
   <!-- ── Centre divider ─────────────────────────────────────────────── -->
-  <!-- Flat top, flush with crossbar top (y=300.5). Round bottom.       -->
-  <path d="M 505.5 300.5
-           L 518.5 300.5
-           L 518.5 858
-           A 6.5 6.5 0 0 1 512 864.5
-           A 6.5 6.5 0 0 1 505.5 858 Z"
-        fill="#60A5FA" fill-opacity="0.92"/>
+  <!-- Flat top, flush with crossbar top (y=298.5). Round bottom.       -->
+  <path d="M 503.5 298.5
+           L 520.5 298.5
+           L 520.5 858
+           A 8.5 8.5 0 0 1 512 866.5
+           A 8.5 8.5 0 0 1 503.5 858 Z"
+        fill="#1E3A5F" fill-opacity="0.95"/>
 
   <!-- ── Red left stroke (F accent) ────────────────────────────────── -->
   <!-- Drawn last so it sits cleanly on top of the crossbar left edge.  -->
-  <!-- Flat top at y=300.5 (crossbar top). Round bottom.               -->
-  <!-- Width 6.5px centred on x=115 → x=111.75 to x=118.25.           -->
-  <path d="M 111.75 300.5
-           L 118.25 300.5
-           L 118.25 858
-           A 3.25 3.25 0 0 1 115 861.25
-           A 3.25 3.25 0 0 1 111.75 858 Z"
-        fill="#F87171" fill-opacity="0.92"/>
+  <!-- Flat top at y=298.5 (crossbar top). Round bottom.               -->
+  <!-- Width 8.5px centred on x=115 → x=110.75 to x=119.25.           -->
+  <path d="M 110.75 298.5
+           L 119.25 298.5
+           L 119.25 858
+           A 4.25 4.25 0 0 1 115 862.25
+           A 4.25 4.25 0 0 1 110.75 858 Z"
+        fill="#DC2626" fill-opacity="0.80"/>
 
   <!-- ── Left column entries (debits) ──────────────────────────────── -->
   <!-- These are isolated lines (no shared endpoints) so round caps     -->
   <!-- are fine and desirable.                                          -->
   <line x1="141" y1="422" x2="448" y2="422"
-        stroke="#60A5FA" stroke-width="9" stroke-opacity="0.80"
+        stroke="#2563EB" stroke-width="12" stroke-opacity="0.82"
         stroke-linecap="round"/>
   <line x1="141" y1="525" x2="397" y2="525"
-        stroke="#60A5FA" stroke-width="9" stroke-opacity="0.50"
+        stroke="#2563EB" stroke-width="12" stroke-opacity="0.56"
         stroke-linecap="round"/>
   <line x1="141" y1="627" x2="429" y2="627"
-        stroke="#60A5FA" stroke-width="9" stroke-opacity="0.28"
+        stroke="#2563EB" stroke-width="12" stroke-opacity="0.34"
         stroke-linecap="round"/>
   <line x1="141" y1="730" x2="358" y2="730"
-        stroke="#60A5FA" stroke-width="9" stroke-opacity="0.14"
+        stroke="#2563EB" stroke-width="12" stroke-opacity="0.18"
         stroke-linecap="round"/>
 
   <!-- ── Right column entries (credits) ────────────────────────────── -->
   <line x1="550" y1="422" x2="858" y2="422"
-        stroke="#60A5FA" stroke-width="9" stroke-opacity="0.80"
+        stroke="#2563EB" stroke-width="12" stroke-opacity="0.82"
         stroke-linecap="round"/>
   <line x1="550" y1="525" x2="691" y2="525"
-        stroke="#60A5FA" stroke-width="9" stroke-opacity="0.50"
+        stroke="#2563EB" stroke-width="12" stroke-opacity="0.56"
         stroke-linecap="round"/>
   <line x1="550" y1="627" x2="742" y2="627"
-        stroke="#60A5FA" stroke-width="9" stroke-opacity="0.28"
+        stroke="#2563EB" stroke-width="12" stroke-opacity="0.34"
         stroke-linecap="round"/>
   <line x1="550" y1="730" x2="640" y2="730"
-        stroke="#60A5FA" stroke-width="9" stroke-opacity="0.14"
+        stroke="#2563EB" stroke-width="12" stroke-opacity="0.18"
         stroke-linecap="round"/>
 
 </svg>

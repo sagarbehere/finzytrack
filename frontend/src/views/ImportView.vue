@@ -670,13 +670,15 @@
 
     showTransactionTable.value = true
 
-    if (payload.scrollToResult) {
-      nextTick(() => {
-        if (transactionTableRef.value) {
+    // Add the new transaction to the table's baselines so edit tracking works
+    nextTick(() => {
+      if (transactionTableRef.value) {
+        transactionTableRef.value.addToBaselines(transaction)
+        if (payload.scrollToResult) {
           transactionTableRef.value.scrollToTable()
         }
-      })
-    }
+      }
+    })
   }
 
   // Handle updates to transactions in the table
