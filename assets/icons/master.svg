@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Finzytrack — Master Icon SVG
+  ════════════════════════════
+  Design concept:
+    T-Account (double-entry bookkeeping). Full crossbar + centre vertical = T.
+    Red left stroke + left crossbar + first left entry = F (Finzytrack).
+    The red margin rule is historically grounded: physical ledger books
+    traditionally print the left margin rule in red ink.
+
+  Colour palette:
+    Background  #050C18  (near-black navy)
+    Blue        #60A5FA  (Tailwind blue-400)
+    Red         #F87171  (Tailwind red-400)
+
+  Stroke weights (at 1024px):
+    Structural (crossbar, divider)  13px
+    Red accent stroke               6.5px  (half of structural)
+    Ledger entry lines              9px    (opacity: 80/50/28/14 %)
+
+  Geometry note:
+    The crossbar, T-divider, and red stroke use <path fill> rather than
+    <line stroke> to achieve pixel-perfect junctions. Each structural
+    element has a FLAT end where it meets another element, and a ROUND
+    end where it terminates in open space. This avoids the overlapping
+    semicircular linecaps that <line stroke-linecap="round"> would produce
+    at shared endpoints.
+
+  Regenerating raster assets:
+    python3 generate.py
+
+  Making a macOS .icns from the iconset:
+    iconutil -c icns macos/AppIcon.iconset -o macos/AppIcon.icns
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 1024 1024"
+     width="1024" height="1024">
+
+  <!-- ── Background ─────────────────────────────────────────────────── -->
+  <rect width="1024" height="1024" rx="230" fill="#050C18"/>
+
+  <!-- ── Crossbar ───────────────────────────────────────────────────── -->
+  <!-- Flat left end at x=115 (red stroke sits here). Round right cap.  -->
+  <!-- Body: y=300.5 to y=313.5 (13px centred on y=307).               -->
+  <path d="M 115 300.5
+           L 909 300.5
+           A 6.5 6.5 0 0 1 915.5 307
+           A 6.5 6.5 0 0 1 909 313.5
+           L 115 313.5 Z"
+        fill="#60A5FA" fill-opacity="0.92"/>
+
+  <!-- ── Centre divider ─────────────────────────────────────────────── -->
+  <!-- Flat top, flush with crossbar top (y=300.5). Round bottom.       -->
+  <path d="M 505.5 300.5
+           L 518.5 300.5
+           L 518.5 858
+           A 6.5 6.5 0 0 1 512 864.5
+           A 6.5 6.5 0 0 1 505.5 858 Z"
+        fill="#60A5FA" fill-opacity="0.92"/>
+
+  <!-- ── Red left stroke (F accent) ────────────────────────────────── -->
+  <!-- Drawn last so it sits cleanly on top of the crossbar left edge.  -->
+  <!-- Flat top at y=300.5 (crossbar top). Round bottom.               -->
+  <!-- Width 6.5px centred on x=115 → x=111.75 to x=118.25.           -->
+  <path d="M 111.75 300.5
+           L 118.25 300.5
+           L 118.25 858
+           A 3.25 3.25 0 0 1 115 861.25
+           A 3.25 3.25 0 0 1 111.75 858 Z"
+        fill="#F87171" fill-opacity="0.92"/>
+
+  <!-- ── Left column entries (debits) ──────────────────────────────── -->
+  <!-- These are isolated lines (no shared endpoints) so round caps     -->
+  <!-- are fine and desirable.                                          -->
+  <line x1="141" y1="422" x2="448" y2="422"
+        stroke="#60A5FA" stroke-width="9" stroke-opacity="0.80"
+        stroke-linecap="round"/>
+  <line x1="141" y1="525" x2="397" y2="525"
+        stroke="#60A5FA" stroke-width="9" stroke-opacity="0.50"
+        stroke-linecap="round"/>
+  <line x1="141" y1="627" x2="429" y2="627"
+        stroke="#60A5FA" stroke-width="9" stroke-opacity="0.28"
+        stroke-linecap="round"/>
+  <line x1="141" y1="730" x2="358" y2="730"
+        stroke="#60A5FA" stroke-width="9" stroke-opacity="0.14"
+        stroke-linecap="round"/>
+
+  <!-- ── Right column entries (credits) ────────────────────────────── -->
+  <line x1="550" y1="422" x2="858" y2="422"
+        stroke="#60A5FA" stroke-width="9" stroke-opacity="0.80"
+        stroke-linecap="round"/>
+  <line x1="550" y1="525" x2="691" y2="525"
+        stroke="#60A5FA" stroke-width="9" stroke-opacity="0.50"
+        stroke-linecap="round"/>
+  <line x1="550" y1="627" x2="742" y2="627"
+        stroke="#60A5FA" stroke-width="9" stroke-opacity="0.28"
+        stroke-linecap="round"/>
+  <line x1="550" y1="730" x2="640" y2="730"
+        stroke="#60A5FA" stroke-width="9" stroke-opacity="0.14"
+        stroke-linecap="round"/>
+
+</svg>
