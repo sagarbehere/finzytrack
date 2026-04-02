@@ -222,6 +222,7 @@ def main():
         width=1380,
         height=860,
         min_size=(900, 600),
+        text_select=True,
     )
 
     if not args.debug:

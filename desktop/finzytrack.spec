@@ -12,10 +12,14 @@ import platform
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
-# Platform-specific icon
+# Platform-specific icon — built from assets/icons/ at build time
 ICONS = Path('..') / 'assets' / 'icons'
 if sys.platform == 'darwin':
-    ICON = 'icon.icns'
+    ICON = str(Path('build') / 'icon.icns')
+    iconset = ICONS / 'macos' / 'AppIcon.iconset'
+    if iconset.exists():
+        Path('build').mkdir(exist_ok=True)
+        os.system(f'iconutil -c icns "{iconset}" -o "{ICON}"')
 elif sys.platform == 'win32':
     ICON = str(ICONS / 'windows' / 'app.ico')
 else:
@@ -126,5 +130,5 @@ app = BUNDLE(
         'NSHighResolutionCapable': True,
         'CFBundleShortVersionString': '0.1.0',
     },
-    icon='icon.icns',
+    icon=ICON,
 )
