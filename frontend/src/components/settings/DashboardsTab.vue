@@ -30,7 +30,7 @@
     <template v-else>
       <!-- Empty state -->
       <div
-        v-if="files.length === 0"
+        v-if="files.length === 0 && !isCreating"
         class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 text-sm text-yellow-800 dark:text-yellow-200 flex items-center justify-between gap-4"
       >
         <span>
