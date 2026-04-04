@@ -102,6 +102,28 @@ def _seed_config(config_dir: Path) -> None:
     logging.getLogger(__name__).info(f"Seeded config directory → {config_dir}")
 
 
+_RULE_TEMPLATE_FILES = ["csv-template.yaml", "xls-template.yaml", "email-template.yaml"]
+
+
+def _check_rule_templates(logger: logging.Logger) -> None:
+    """Log a warning if any rule template files are missing.
+
+    Templates are read-only app resources served via importlib.resources,
+    not user-editable config.  A missing template is non-fatal — the API
+    endpoint returns a proper error and the frontend falls back to an
+    empty editor.
+    """
+    try:
+        import importlib.resources
+        pkg = importlib.resources.files("app.templates.rules")
+        for name in _RULE_TEMPLATE_FILES:
+            resource = pkg.joinpath(name)
+            if not resource.is_file():
+                logger.warning(f"Rule template missing: {name} — 'New Rule' will not pre-fill a template for this type")
+    except Exception as e:
+        logger.warning(f"Could not verify rule templates: {e}")
+
+
 def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
     """Create FastAPI application with configuration."""
     # Get logger for this module
@@ -421,6 +443,9 @@ def start_server(
 
     if cli_overrides:
         logger.info(f"CLI overrides applied: {list(cli_overrides.keys())}")
+
+    # Check rule templates are accessible (non-fatal — endpoint returns 404 if missing)
+    _check_rule_templates(logger)
 
     # Create FastAPI app
     app = create_app(app_config, static_dir=static_dir)

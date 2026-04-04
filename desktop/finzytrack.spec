@@ -48,6 +48,8 @@ a = Analysis(
         (str(BACKEND / 'resources' / 'seed_config'), 'backend/seed_config'),
         # Seed data template (copied to user's data/ on first run)
         (str(BACKEND / 'resources' / 'seed_data'), 'backend/seed_data'),
+        # Rule + ledger templates (YAML/beancount data files inside the Python package)
+        (str(BACKEND / 'app' / 'templates'), 'app/templates'),
         # AI prompt templates
         (str(BACKEND / 'resources' / 'prompts'), 'resources/prompts'),
         # Frontend built assets
