@@ -465,13 +465,18 @@ async function handleEditSubmit(data: { name: string; openDate: string; currenci
   try {
     const metadata: Record<string, string> = { ...data.metadata }
     if (data.description) metadata['description'] = data.description
+    const isRenamed = data.name !== editingAccount.value.fullPath
     await updateAccount(editingAccount.value.fullPath, {
+      new_name: isRenamed ? data.name : undefined,
       open_date: data.openDate,
       currencies: data.currencies,
       metadata,
     })
     showEditModal.value = false
-    toast.success('Account Updated', `Account "${editingAccount.value.fullPath}" updated successfully.`)
+    const successMsg = isRenamed
+      ? `Account renamed from "${editingAccount.value.fullPath}" to "${data.name}".`
+      : `Account "${editingAccount.value.fullPath}" updated successfully.`
+    toast.success(isRenamed ? 'Account Renamed' : 'Account Updated', successMsg)
     // Reload with current date filter
     await loadAccounts()
   } catch (_error) {

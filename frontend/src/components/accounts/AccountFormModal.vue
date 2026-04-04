@@ -39,13 +39,15 @@
                     id="name"
                     v-model="formData.name"
                     type="text"
-                    :disabled="mode === 'edit'"
                     placeholder="e.g., Assets:Bank:Checking"
-                    class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500 disabled:bg-gray-100 disabled:dark:bg-gray-800 disabled:cursor-not-allowed"
+                    class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
                     :class="{ 'border-red-500': errors.name }"
                   />
                   <p v-if="errors.name" class="mt-1 text-sm text-red-600 dark:text-red-400">
                     {{ errors.name }}
+                  </p>
+                  <p v-else-if="mode === 'edit' && formData.name !== originalName" class="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                    Renaming will update all transactions referencing this account.
                   </p>
                   <p v-else class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                     Format: Type:Category:SubCategory (e.g., Assets:Bank:Checking)
@@ -284,6 +286,7 @@ const emit = defineEmits<Emits>()
 
 const isSubmitting = ref(false)
 const currencyInput = ref('')
+const originalName = ref('')
 
 const formData = reactive<InternalFormData>({
   name: '',
@@ -305,6 +308,7 @@ const errors = reactive({
 // Watch for account changes to populate edit form
 watch(() => props.account, (account) => {
   if (account && props.mode === 'edit') {
+    originalName.value = account.fullPath
     formData.name = account.fullPath
     formData.openDate = account.openDate || new Date().toISOString().split('T')[0]
     formData.currencies = [...account.currencyBadges]
