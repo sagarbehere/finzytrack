@@ -1,0 +1,13 @@
+name: "Axis Bank NRO"
+sheet_name: "Statement"
+skip_lines_start: 18
+skip_lines_end: 28
+date_format: "%d-%m-%Y"
+columns:
+  date: 2
+  payee: 4
+  memo: 3
+  amount_debit: 5
+  amount_credit: 6
+default_account: "Assets:Liquid:Savings:AxisBank:NRO"
+default_currency: "INR"
