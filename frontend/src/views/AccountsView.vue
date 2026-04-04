@@ -459,7 +459,7 @@ async function handleCreateSubmit(data: { name: string; openDate: string; curren
   }
 }
 
-async function handleEditSubmit(data: { name: string; openDate: string; currencies: string[]; description: string; metadata: Record<string, string> }) {
+async function handleEditSubmit(data: { name: string; openDate: string; closeDate?: string | null; currencies: string[]; description: string; metadata: Record<string, string> }) {
   if (!editingAccount.value) return
 
   try {
@@ -469,6 +469,7 @@ async function handleEditSubmit(data: { name: string; openDate: string; currenci
     await updateAccount(editingAccount.value.fullPath, {
       new_name: isRenamed ? data.name : undefined,
       open_date: data.openDate,
+      close_date: data.closeDate !== undefined ? (data.closeDate || '') : undefined,
       currencies: data.currencies,
       metadata,
     })

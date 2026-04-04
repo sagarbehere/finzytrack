@@ -71,6 +71,23 @@
                   </p>
                 </div>
 
+                <!-- Close Date (edit mode, closed accounts only) -->
+                <div v-if="mode === 'edit' && account?.closeDate">
+                  <label for="closeDate" class="block text-sm/6 font-medium text-gray-900 dark:text-white">
+                    Close Date
+                  </label>
+                  <input
+                    id="closeDate"
+                    v-model="formData.closeDate"
+                    type="date"
+                    class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
+                    :class="{ 'border-red-500': errors.closeDate }"
+                  />
+                  <p v-if="errors.closeDate" class="mt-1 text-sm text-red-600 dark:text-red-400">
+                    {{ errors.closeDate }}
+                  </p>
+                </div>
+
                 <!-- Currencies -->
                 <div>
                   <label for="currencies" class="block text-sm/6 font-medium text-gray-900 dark:text-white">
@@ -263,6 +280,7 @@ interface Emits {
 export interface FormSubmitData {
   name: string
   openDate: string
+  closeDate?: string | null
   currencies: string[]
   description: string
   metadata: Record<string, string>
@@ -271,6 +289,7 @@ export interface FormSubmitData {
 interface InternalFormData {
   name: string
   openDate: string
+  closeDate: string
   currencies: string[]
   description: string
   accountNumber: string
@@ -291,6 +310,7 @@ const originalName = ref('')
 const formData = reactive<InternalFormData>({
   name: '',
   openDate: new Date().toISOString().split('T')[0],
+  closeDate: '',
   currencies: [],
   description: '',
   accountNumber: '',
@@ -302,6 +322,7 @@ const formData = reactive<InternalFormData>({
 const errors = reactive({
   name: '',
   openDate: '',
+  closeDate: '',
   currencies: '',
 })
 
@@ -311,6 +332,7 @@ watch(() => props.account, (account) => {
     originalName.value = account.fullPath
     formData.name = account.fullPath
     formData.openDate = account.openDate || new Date().toISOString().split('T')[0]
+    formData.closeDate = account.closeDate || ''
     formData.currencies = [...account.currencyBadges]
     formData.description = account.notes || ''
     formData.accountNumber = account.metadata['account_number'] || ''
@@ -327,6 +349,7 @@ watch(() => props.open, (isOpen) => {
   if (isOpen && props.mode === 'create') {
     formData.name = ''
     formData.openDate = new Date().toISOString().split('T')[0]
+    formData.closeDate = ''
     formData.currencies = []
     formData.description = ''
     formData.accountNumber = ''
@@ -341,6 +364,7 @@ watch(() => props.open, (isOpen) => {
 function clearErrors() {
   errors.name = ''
   errors.openDate = ''
+  errors.closeDate = ''
   errors.currencies = ''
 }
 
@@ -385,6 +409,11 @@ function validate(): boolean {
     valid = false
   }
 
+  if (formData.closeDate && formData.openDate && formData.closeDate < formData.openDate) {
+    errors.closeDate = 'Close date must be on or after the open date'
+    valid = false
+  }
+
   if (formData.currencies.length === 0) {
     errors.currencies = 'At least one currency is required'
     valid = false
@@ -411,13 +440,18 @@ async function handleSubmit() {
 
   isSubmitting.value = true
   try {
-    emit('submit', {
+    const submitData: FormSubmitData = {
       name: formData.name,
       openDate: formData.openDate,
       currencies: formData.currencies,
       description: formData.description,
       metadata: buildMetadata(),
-    })
+    }
+    // Include closeDate only in edit mode for closed accounts
+    if (props.mode === 'edit' && props.account?.closeDate) {
+      submitData.closeDate = formData.closeDate || null
+    }
+    emit('submit', submitData)
   } finally {
     isSubmitting.value = false
   }
