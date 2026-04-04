@@ -51,6 +51,12 @@
           </div>
         </div>
         <div class="p-4">
+          <div v-if="editorError" class="mb-3 rounded-md bg-red-50 p-3 dark:bg-red-900/20">
+            <div class="flex items-start gap-2">
+              <XCircleIcon class="h-5 w-5 shrink-0 text-red-400 dark:text-red-500 mt-0.5" />
+              <pre class="text-sm text-red-700 dark:text-red-300 whitespace-pre-wrap font-sans">{{ editorError }}</pre>
+            </div>
+          </div>
           <textarea
             v-model="editorContent"
             spellcheck="false"
@@ -161,6 +167,12 @@
 
           <!-- Textarea -->
           <div class="flex-1 p-4">
+            <div v-if="editorError && (selectedFile || isCreating)" class="mb-3 rounded-md bg-red-50 p-3 dark:bg-red-900/20">
+              <div class="flex items-start gap-2">
+                <XCircleIcon class="h-5 w-5 shrink-0 text-red-400 dark:text-red-500 mt-0.5" />
+                <pre class="text-sm text-red-700 dark:text-red-300 whitespace-pre-wrap font-sans">{{ editorError }}</pre>
+              </div>
+            </div>
             <textarea
               v-if="selectedFile || isCreating"
               v-model="editorContent"
@@ -194,10 +206,10 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
-import { ExclamationTriangleIcon } from '@heroicons/vue/24/outline'
+import { ExclamationTriangleIcon, XCircleIcon } from '@heroicons/vue/24/outline'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
-import { ImportService } from '@/services/generated-api'
+import { ImportService, ApiError, RuleTemplateType } from '@/services/generated-api'
 import { errorHandler } from '@/utils/ErrorHandler'
 
 import type { CsvRuleSummary } from '@/services/generated-api/models/CsvRuleSummary'
@@ -262,6 +274,7 @@ const isDeleting = ref(false)
 
 const isCreating = ref(false)
 const newFilename = ref('')
+const editorError = ref<string | null>(null)
 
 const canSave = computed(() => {
   if (isCreating.value) return newFilename.value.trim().length > 0 && editorContent.value.trim().length > 0
@@ -269,6 +282,11 @@ const canSave = computed(() => {
 })
 
 const confirmDialog = useConfirmDialog()
+
+// Clear inline error when user edits content
+watch(editorContent, () => {
+  if (editorError.value) editorError.value = null
+})
 
 // --- Data loading ---
 
@@ -374,17 +392,37 @@ async function switchRuleType(newType: RuleTypeId) {
   await loadFileList()
 }
 
+const _ruleTypeToTemplateType: Partial<Record<RuleTypeId, RuleTemplateType>> = {
+  csv: RuleTemplateType.CSV,
+  xls: RuleTemplateType.XLS,
+  email: RuleTemplateType.EMAIL,
+}
+
 async function startCreate() {
   if (!(await checkDirtyBeforeAction())) return
 
   isCreating.value = true
   selectedFile.value = null
   newFilename.value = ''
-  editorContent.value = ''
+  editorError.value = null
+
+  // Pre-fill with template for this rule type
+  const templateType = _ruleTypeToTemplateType[ruleType.value]
+  if (templateType) {
+    try {
+      const resp = await ImportService.getRuleTemplate(templateType)
+      editorContent.value = resp.data!.content
+    } catch {
+      editorContent.value = ''
+    }
+  } else {
+    editorContent.value = ''
+  }
   originalContent.value = ''
 }
 
 function handleCancel() {
+  editorError.value = null
   if (isCreating.value) {
     isCreating.value = false
     newFilename.value = ''
@@ -397,6 +435,7 @@ function handleCancel() {
 
 async function handleSave() {
   isSaving.value = true
+  editorError.value = null
   try {
     if (ruleType.value === 'ofx') {
       await ImportService.updateOfxMappings({ content: editorContent.value })
@@ -430,6 +469,9 @@ async function handleSave() {
       await loadFileList()
     }
   } catch (e) {
+    if (e instanceof ApiError) {
+      editorError.value = e.body?.error?.message || e.statusText || 'Save failed'
+    }
     errorHandler.display(e)
   } finally {
     isSaving.value = false

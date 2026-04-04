@@ -24,6 +24,7 @@ import type { FetchRequest } from '../models/FetchRequest';
 import type { LearnOFXAccountRequest } from '../models/LearnOFXAccountRequest';
 import type { OFXDetectionRequest } from '../models/OFXDetectionRequest';
 import type { RuleCreateRequest } from '../models/RuleCreateRequest';
+import type { RuleTemplateType } from '../models/RuleTemplateType';
 import type { RuleWriteRequest } from '../models/RuleWriteRequest';
 import type { TestConnectionRequest } from '../models/TestConnectionRequest';
 import type { TrialExtractRequest } from '../models/TrialExtractRequest';
@@ -604,6 +605,27 @@ export class ImportService {
             url: '/api/import/llm-parse',
             formData: formData,
             mediaType: 'multipart/form-data',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Get Rule Template
+     * Return a YAML template for the given rule type.
+     * @param ruleType
+     * @returns ApiResponse_RuleContentResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static getRuleTemplate(
+        ruleType: RuleTemplateType,
+    ): CancelablePromise<ApiResponse_RuleContentResponse_> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/import/rule-templates/{rule_type}',
+            path: {
+                'rule_type': ruleType,
+            },
             errors: {
                 422: `Validation Error`,
             },

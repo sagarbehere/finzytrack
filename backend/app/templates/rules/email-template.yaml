@@ -1,0 +1,75 @@
+# Display name and account info
+metadata:
+  name: "My Bank Alerts"
+  beancount_account: "Assets:Bank:Checking"
+  default_currency: "USD"
+  institution: "My Bank"
+  description: "Transaction alerts from My Bank"
+
+# IMAP connection — use ${ENV_VAR} syntax for credentials
+imap_server:
+  server: "imap.gmail.com"
+  port: 993
+  username: "${IMAP_USERNAME}"
+  password: "${IMAP_PASSWORD}"
+  folder: "INBOX"
+
+# How many days back to scan for emails (overrides global setting if set)
+# lookback_days: 30
+
+# Only process emails from these sender addresses
+bank_emails:
+  - "alerts@mybank.com"
+
+# Optional server-side IMAP keyword filter (reduces emails fetched)
+# body_keyword: "transaction"
+
+# Each entry below defines how to identify and parse one type of transaction email
+transaction_types:
+  - name: "Debit"
+    description: "Money sent / debited from account"
+
+    # Regex filters to identify this transaction type
+    email_filter:
+      subject_regex: "Debit.*Alert"
+      # body_regex: "debited"
+
+    # Fields to extract from the email body using regex
+    # Each pattern must have exactly one capture group (...)
+    extraction:
+      amount:
+        pattern: "amount of (?:USD|\\$)\\s?([\\d,]+\\.\\d{2})"
+        type: "float"
+        source: "body"
+        cleanup: "remove_commas"
+      timestamp:
+        pattern: "on (\\d{2}/\\d{2}/\\d{4})"
+        type: "datetime"
+        source: "body"
+        format: "%d/%m/%Y"
+      payee:
+        pattern: "to ([A-Za-z0-9 ]+)"
+        type: "string"
+        source: "body"
+        optional: true
+      reference:
+        pattern: "Ref(?:erence)?[: ]+([A-Za-z0-9]+)"
+        type: "string"
+        source: "body"
+        optional: true
+
+    # Map extracted field names to transaction attributes
+    mapping:
+      amount: "amount"
+      timestamp: "date"
+      payee: "payee"
+      reference: "external_id"
+
+    # How to determine the sign of the amount
+    amount_sign:
+      field: "fixed"
+      value: "negative"
+
+    error_handling:
+      required_fields: ["amount", "timestamp"]
+      partial_match_allowed: true

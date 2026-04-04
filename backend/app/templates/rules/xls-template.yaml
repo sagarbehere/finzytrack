@@ -1,0 +1,39 @@
+# Rule name — a descriptive label for this import rule
+name: "My Bank Statement"
+
+# Sheet selection (0-based index, or use sheet_name to select by name)
+sheet_index: 0
+# sheet_name: "Sheet1"
+
+# Number of rows to skip at the start (including header rows) and at the end
+skip_lines_start: 0
+skip_lines_end: 0
+
+# Date format using Python strftime tokens (used when date cells are strings)
+# If the spreadsheet stores dates as Excel date objects, this is ignored
+# Examples: "%Y-%m-%d" (2024-01-15), "%m/%d/%Y" (01/15/2024), "%d/%b/%Y" (15/Jan/2024)
+date_format: "%Y-%m-%d"
+
+# Decimal separator for string-valued amount cells ("." or ",")
+decimal_separator: "."
+
+# Column index mappings (0-based — count columns starting from 0)
+columns:
+  date: 0
+  # Use 'amount' for a single amount column:
+  amount: 1
+  # OR use separate debit/credit columns (uncomment below, remove 'amount' above):
+  # amount_debit: 1
+  # amount_credit: 2
+  payee: 2
+  narration: 3
+  # memo: 4
+
+# Beancount account that this bank statement belongs to
+default_account: "Assets:Bank:Checking"
+
+# Currency for transactions
+default_currency: "USD"
+
+# Set to true if your bank shows debits as positive (e.g. credit card statements)
+negate_amounts: false

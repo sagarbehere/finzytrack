@@ -24,7 +24,7 @@ from .config import (
     SQLITE_EXPORT_PATH, BACKUP_DIR, LOG_FILE, LOG_FORMAT, CORS_ORIGINS,
     SQLITE_AUTO_SYNC, SQLITE_SYNC_DEBOUNCE_SECONDS, SQLITE_ENABLE_WAL,
 )
-from .api.routers.importer import ofx_accounts, transaction, csv_rules, xls_rules, email as email_import_router, llm_parse
+from .api.routers.importer import ofx_accounts, transaction, csv_rules, xls_rules, email as email_import_router, llm_parse, rule_templates
 from .api.routers import accounts, commodities, ledger_export, ledger_transactions, query, config as config_router, filesystem, ledger, assistant, recipes, ai_services, setup as setup_router
 from .core.beancount_manager import BeancountManager
 from .error_handler import setup_error_handlers
@@ -257,6 +257,7 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
     app.include_router(xls_rules.router, prefix="/api/import", tags=["import"])
     app.include_router(email_import_router.router, prefix="/api/import", tags=["import"])
     app.include_router(llm_parse.router, prefix="/api/import", tags=["import"])
+    app.include_router(rule_templates.router, prefix="/api/import", tags=["import"])
     app.include_router(accounts.router, prefix="/api", tags=["accounts"])
     app.include_router(commodities.router, prefix="/api", tags=["commodities"])
     app.include_router(ledger_export.router, prefix="/api/ledger", tags=["ledger"])

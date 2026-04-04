@@ -138,6 +138,7 @@ export type { ReloadResponse } from './models/ReloadResponse';
 export type { RuleContentResponse } from './models/RuleContentResponse';
 export type { RuleCreateRequest } from './models/RuleCreateRequest';
 export type { RuleDeleteResponse } from './models/RuleDeleteResponse';
+export { RuleTemplateType } from './models/RuleTemplateType';
 export type { RuleWriteRequest } from './models/RuleWriteRequest';
 export type { RuleWriteResponse } from './models/RuleWriteResponse';
 export type { ServerConfig } from './models/ServerConfig';
