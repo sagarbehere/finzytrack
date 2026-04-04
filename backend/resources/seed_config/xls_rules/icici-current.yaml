@@ -1,0 +1,13 @@
+name: "ICICI Bank Current Account"
+sheet_index: 0
+skip_lines_start: 17
+skip_lines_end: 37
+date_format: "%d/%b/%Y"
+columns:
+  date: 4
+  memo: 6
+  payee: 7
+  amount_debit: 8
+  amount_credit: 9
+default_account: "Assets:Liquid:Checking:ICICI"
+default_currency: "INR"

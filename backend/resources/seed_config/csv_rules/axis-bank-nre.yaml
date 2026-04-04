@@ -1,0 +1,16 @@
+name: "Axis Bank NRE Savings"
+separator: ","
+encoding: "utf-8"
+skip_lines_start: 19
+skip_lines_end: 20
+date_format: "%d-%m-%Y"
+decimal_separator: "."
+negate_amounts: false
+columns:
+  date: 1
+  memo: 2
+  payee: 3
+  amount_debit: 4
+  amount_credit: 5
+default_account: "Assets:Liquid:Savings:AxisBank:NRE"
+default_currency: "INR"
