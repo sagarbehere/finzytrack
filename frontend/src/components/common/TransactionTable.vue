@@ -1258,7 +1258,12 @@ const updatePostingAccount = (transaction: TransactionViewModel, postingIndex: n
   const updatedTransactions = [...props.transactions]
   const txIndex = findTransactionIndex(transaction)
   if (txIndex !== -1) {
+    const oldAccount = updatedTransactions[txIndex].postings[postingIndex].account
     updatedTransactions[txIndex].postings[postingIndex].account = newAccount
+    // Keep source_account in sync when the source posting is renamed
+    if (updatedTransactions[txIndex].meta['source_account'] === oldAccount) {
+      updatedTransactions[txIndex].meta['source_account'] = newAccount
+    }
     updatedTransactions[txIndex].internal.isModified = checkIfModified(updatedTransactions[txIndex])
     emitUpdate(updatedTransactions)
     // After update, try to maintain the same page
