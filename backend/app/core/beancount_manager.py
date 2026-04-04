@@ -365,7 +365,11 @@ class BeancountManager:
             return entry._replace(account=r(entry.account), source_account=r(entry.source_account))
         if isinstance(entry, bd.Transaction):
             new_postings = [p._replace(account=r(p.account)) for p in entry.postings]
-            return entry._replace(postings=new_postings)
+            new_meta = dict(entry.meta)
+            for key, val in new_meta.items():
+                if isinstance(val, str):
+                    new_meta[key] = r(val)
+            return entry._replace(meta=new_meta, postings=new_postings)
         return entry
 
     def create_account_directive(self, request: AccountCreateRequest) -> AccountCreateData:
