@@ -98,7 +98,7 @@ async def _stream_openai(
 ) -> AsyncIterator[ChatEvent]:
     from openai import AsyncOpenAI
 
-    kwargs = {"api_key": config.api_key or "not-needed"}
+    kwargs = {"api_key": config.api_key.get_secret_value() or "not-needed"}
     if config.api_url:
         # Ensure the base URL ends without a trailing /v1 (SDK appends it)
         base = config.api_url.rstrip("/")
@@ -176,7 +176,7 @@ async def _stream_anthropic(
 ) -> AsyncIterator[ChatEvent]:
     import anthropic
 
-    client = anthropic.AsyncAnthropic(api_key=config.api_key or "not-needed")
+    client = anthropic.AsyncAnthropic(api_key=config.api_key.get_secret_value() or "not-needed")
 
     # Anthropic takes system separately; extract it from messages
     system_content = ""
@@ -242,7 +242,7 @@ async def _complete_openai(
 ) -> str:
     from openai import AsyncOpenAI
 
-    kwargs: dict = {"api_key": config.api_key or "not-needed"}
+    kwargs: dict = {"api_key": config.api_key.get_secret_value() or "not-needed"}
     if config.api_url:
         base = config.api_url.rstrip("/")
         if not base.endswith("/v1"):
@@ -277,7 +277,7 @@ async def _complete_anthropic(
 ) -> str:
     import anthropic
 
-    client = anthropic.AsyncAnthropic(api_key=config.api_key or "not-needed")
+    client = anthropic.AsyncAnthropic(api_key=config.api_key.get_secret_value() or "not-needed")
 
     system_content = ""
     anthropic_messages = []

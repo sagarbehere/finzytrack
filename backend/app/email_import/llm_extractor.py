@@ -29,7 +29,7 @@ def _call_openai(llm_config: LLMConfig, user_message: str) -> str:
     """Call an OpenAI-compatible API (sync) and return the response text."""
     from openai import OpenAI
 
-    kwargs: dict[str, Any] = {"api_key": llm_config.api_key or "not-needed"}
+    kwargs: dict[str, Any] = {"api_key": llm_config.api_key.get_secret_value() or "not-needed"}
     if llm_config.api_url:
         base = llm_config.api_url.rstrip("/")
         if not base.endswith("/v1"):
@@ -56,7 +56,7 @@ def _call_anthropic(llm_config: LLMConfig, user_message: str) -> str:
     """Call the Anthropic API (sync) and return the response text."""
     import anthropic
 
-    client = anthropic.Anthropic(api_key=llm_config.api_key or "not-needed")
+    client = anthropic.Anthropic(api_key=llm_config.api_key.get_secret_value() or "not-needed")
     max_tokens = llm_config.max_tokens if llm_config.max_tokens > 0 else 4096
 
     resp = client.messages.create(

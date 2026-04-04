@@ -605,10 +605,11 @@ function initLlmFields() {
 }
 
 async function saveLlm() {
-  // Omit api_key from patch when empty — the backend redacts it in GET responses,
-  // so empty here means "unchanged", not "clear the key".
+  // Omit api_key when it's the redacted placeholder or empty — sending it
+  // back would overwrite the real key with the mask string.
   const { api_key, ...rest } = llmFields
-  const llmPatch = api_key ? { ...rest, api_key } : { ...rest }
+  const isRealKey = api_key && !/^\*+$/.test(api_key)
+  const llmPatch = isRealKey ? { ...rest, api_key } : { ...rest }
   await saveSection({ ai: { llm: llmPatch } }, llmSaving, llmError)
 }
 

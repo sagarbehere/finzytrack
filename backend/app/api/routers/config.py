@@ -67,11 +67,7 @@ async def get_config_endpoint(config_manager: ConfigManager = Depends(get_config
     will automatically generate complete TypeScript types from it.
     """
     config = config_manager.get_config()
-    # Redact the API key — it should never be sent to the browser.
-    data = _to_plain_dict(config)
-    if "ai" in data and "llm" in data["ai"]:
-        data["ai"]["llm"]["api_key"] = ""
-    return success_json_response(data)
+    return success_json_response(config)
 
 
 @router.patch("/config", response_model=ApiResponse[ConfigPatchResponse])
@@ -101,11 +97,12 @@ async def patch_config_endpoint(
     with open(config_path, 'r') as f:
         data = yaml.load(f)
 
-    # Never allow an empty api_key to overwrite a stored one.
-    # The GET endpoint redacts api_key, so a round-trip would blank it out.
+    # Never allow a redacted or empty api_key to overwrite the stored one.
+    # SecretStr serializes as '**********', so a round-trip would corrupt it.
+    # We check for an all-asterisks string to avoid coupling to the exact mask length.
     try:
         incoming_key = patch["ai"]["llm"]["api_key"]
-        if not incoming_key:
+        if not incoming_key or set(incoming_key) == {'*'}:
             del patch["ai"]["llm"]["api_key"]
     except (KeyError, TypeError):
         pass
