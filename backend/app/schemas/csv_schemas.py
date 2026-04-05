@@ -3,7 +3,7 @@ from typing import Optional, List
 
 
 class CsvColumnMapping(BaseModel):
-    """Column index mapping for CSV files (0-based indices).
+    """Column index mapping for CSV files (1-based indices — column 1 is leftmost).
 
     Use either 'amount' for a single amount column, or both 'amount_debit'
     and 'amount_credit' for banks that use separate DR/CR columns.

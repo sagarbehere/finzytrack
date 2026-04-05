@@ -119,70 +119,146 @@
           </ul>
         </div>
 
-        <!-- Editor (right) -->
-        <div class="flex-1 rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 flex flex-col">
-          <!-- Editor header -->
-          <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-white/10">
-            <div class="flex items-center gap-2 min-w-0">
-              <span v-if="isCreating" class="text-sm font-medium text-gray-900 dark:text-white">New Rule</span>
-              <span v-else-if="selectedFile" class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ selectedFile }}</span>
-              <span v-else class="text-sm text-gray-500 dark:text-gray-400">Select a file to edit</span>
-              <span v-if="isDirty" class="text-xs text-amber-600 dark:text-amber-400">Unsaved changes</span>
-            </div>
-            <div v-if="selectedFile || isCreating" class="flex items-center gap-2 shrink-0">
-              <button
-                v-if="selectedFile && !isCreating"
-                @click="handleDelete"
-                :disabled="isDeleting"
-                class="rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-red-600 shadow-xs inset-ring inset-ring-gray-300 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed shrink-0 dark:bg-white/10 dark:text-red-400 dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-red-900/20"
-              >
-                {{ isDeleting ? 'Deleting...' : 'Delete' }}
-              </button>
-              <button
-                @click="handleCancel"
-                class="rounded-md bg-white px-3 py-1.5 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
-              >
-                Cancel
-              </button>
-              <button
-                @click="handleSave"
-                :disabled="!canSave || isSaving"
-                class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400 dark:focus-visible:outline-indigo-500"
-              >
-                {{ isSaving ? 'Saving...' : 'Save' }}
-              </button>
-            </div>
-          </div>
-
-          <!-- New file: filename input -->
-          <div v-if="isCreating" class="border-b border-gray-200 px-4 py-3 dark:border-white/10">
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Filename</label>
-            <input
-              v-model="newFilename"
-              type="text"
-              placeholder="my-rule.yaml"
-              class="block w-full rounded-md bg-white px-3 py-1.5 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
-            />
-          </div>
-
-          <!-- Textarea -->
-          <div class="flex-1 p-4">
-            <div v-if="editorError && (selectedFile || isCreating)" class="mb-3 rounded-md bg-red-50 p-3 dark:bg-red-900/20">
-              <div class="flex items-start gap-2">
-                <XCircleIcon class="h-5 w-5 shrink-0 text-red-400 dark:text-red-500 mt-0.5" />
-                <pre class="text-sm text-red-700 dark:text-red-300 whitespace-pre-wrap font-sans">{{ editorError }}</pre>
+        <!-- Editor + Preview (right) -->
+        <div class="flex-1 flex gap-4 min-w-0" :class="previewLayoutVertical || !previewSheets ? 'flex-col' : 'flex-row'">
+          <!-- Editor card -->
+          <div class="rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 flex flex-col" :class="!previewLayoutVertical && previewSheets ? 'flex-1 min-w-0' : ''" style="min-height: 500px;">
+            <!-- Editor header -->
+            <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-white/10">
+              <div class="flex items-center gap-2 min-w-0">
+                <span v-if="isCreating" class="text-sm font-medium text-gray-900 dark:text-white">New Rule</span>
+                <span v-else-if="selectedFile" class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ selectedFile }}</span>
+                <span v-else class="text-sm text-gray-500 dark:text-gray-400">Select a file to edit</span>
+                <span v-if="isDirty" class="text-xs text-amber-600 dark:text-amber-400">Unsaved changes</span>
+              </div>
+              <div v-if="selectedFile || isCreating" class="flex items-center gap-2 shrink-0">
+                <button
+                  v-if="selectedFile && !isCreating"
+                  @click="handleDelete"
+                  :disabled="isDeleting"
+                  class="rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-red-600 shadow-xs inset-ring inset-ring-gray-300 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed shrink-0 dark:bg-white/10 dark:text-red-400 dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-red-900/20"
+                >
+                  {{ isDeleting ? 'Deleting...' : 'Delete' }}
+                </button>
+                <button
+                  @click="handleCancel"
+                  class="rounded-md bg-white px-3 py-1.5 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+                >
+                  Cancel
+                </button>
+                <button
+                  @click="handleSave"
+                  :disabled="!canSave || isSaving"
+                  class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400 dark:focus-visible:outline-indigo-500"
+                >
+                  {{ isSaving ? 'Saving...' : 'Save' }}
+                </button>
               </div>
             </div>
-            <textarea
-              v-if="selectedFile || isCreating"
-              v-model="editorContent"
-              spellcheck="false"
-              class="w-full h-full font-mono text-sm rounded-md bg-white px-3 py-2 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500 min-h-[400px] resize-y"
-              :placeholder="`# ${ruleTypeLabel} rule YAML...`"
-            />
-            <div v-else class="flex items-center justify-center h-full text-sm text-gray-400 dark:text-gray-500">
-              Select a file from the list or create a new rule
+
+            <!-- New file: filename input -->
+            <div v-if="isCreating" class="border-b border-gray-200 px-4 py-3 dark:border-white/10">
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Filename</label>
+              <input
+                v-model="newFilename"
+                type="text"
+                placeholder="my-rule.yaml"
+                class="block w-full rounded-md bg-white px-3 py-1.5 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
+              />
             </div>
+
+            <!-- File upload prompt (CSV / XLS only) -->
+            <div v-if="showFilePreview && (selectedFile || isCreating)" class="border-b border-gray-200 px-4 py-3 dark:border-white/10">
+              <div class="flex items-center gap-3">
+                <DocumentArrowUpIcon class="h-5 w-5 shrink-0 text-gray-400 dark:text-gray-500" />
+                <div class="flex-1 min-w-0">
+                  <span v-if="!previewFileName" class="text-sm text-gray-500 dark:text-gray-400">
+                    Upload an example {{ ruleTypeLabel }} file to see a preview that helps you configure the rule.
+                  </span>
+                  <span v-else class="text-sm text-gray-700 dark:text-gray-300 truncate block">
+                    {{ previewFileName }}
+                  </span>
+                </div>
+                <input
+                  ref="fileInputRef"
+                  type="file"
+                  :accept="acceptedExtensions()"
+                  class="hidden"
+                  @change="handlePreviewFile"
+                />
+                <button
+                  @click="triggerFilePicker"
+                  class="rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 shrink-0 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+                >
+                  {{ previewFileName ? 'Change file' : 'Choose file' }}
+                </button>
+                <button
+                  v-if="previewFileName"
+                  @click="clearPreview"
+                  class="text-sm text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
+                  title="Remove preview"
+                >&times;</button>
+              </div>
+            </div>
+
+            <!-- Textarea -->
+            <div class="flex-1 p-4">
+              <div v-if="editorError && (selectedFile || isCreating)" class="mb-3 rounded-md bg-red-50 p-3 dark:bg-red-900/20">
+                <div class="flex items-start gap-2">
+                  <XCircleIcon class="h-5 w-5 shrink-0 text-red-400 dark:text-red-500 mt-0.5" />
+                  <pre class="text-sm text-red-700 dark:text-red-300 whitespace-pre-wrap font-sans">{{ editorError }}</pre>
+                </div>
+              </div>
+              <textarea
+                v-if="selectedFile || isCreating"
+                v-model="editorContent"
+                spellcheck="false"
+                class="w-full h-full font-mono text-sm rounded-md bg-white px-3 py-2 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500 min-h-[400px] resize-y"
+                :placeholder="`# ${ruleTypeLabel} rule YAML...`"
+              />
+              <div v-else class="flex items-center justify-center h-full text-sm text-gray-400 dark:text-gray-500">
+                Select a file from the list or create a new rule
+              </div>
+            </div>
+          </div>
+
+          <!-- File preview card -->
+          <div
+            v-if="showFilePreview && (previewSheets || previewError) && (selectedFile || isCreating)"
+            class="rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 flex flex-col overflow-hidden"
+            :class="!previewLayoutVertical && previewSheets ? 'flex-1 min-w-0' : ''"
+          >
+            <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-white/10">
+              <span class="text-sm font-medium text-gray-900 dark:text-white">File Preview</span>
+              <div class="flex items-center gap-2">
+                <span class="text-xs text-gray-400 dark:text-gray-500 hidden sm:inline">Row numbers help identify skip_lines; column numbers help identify column indices</span>
+                <button
+                  @click="togglePreviewLayout"
+                  class="rounded-md bg-white p-1.5 text-gray-500 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 hover:text-gray-700 shrink-0 dark:bg-white/10 dark:text-gray-400 dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20 dark:hover:text-gray-200"
+                  :title="previewLayoutVertical ? 'Switch to side-by-side layout' : 'Switch to stacked layout'"
+                >
+                  <!-- Side-by-side icon (currently stacked, click to go side-by-side) -->
+                  <svg v-if="previewLayoutVertical" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 4.5v15m6-15v15M4.5 19.5h15a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5h-15A1.5 1.5 0 003 6v12a1.5 1.5 0 001.5 1.5z" />
+                  </svg>
+                  <!-- Stacked icon (currently side-by-side, click to go stacked) -->
+                  <svg v-else class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 9h15m-15 6h15M4.5 4.5h15a1.5 1.5 0 011.5 1.5v12a1.5 1.5 0 01-1.5 1.5h-15A1.5 1.5 0 013 18V6a1.5 1.5 0 011.5-1.5z" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <!-- Preview error -->
+            <div v-if="previewError" class="p-4">
+              <div class="rounded-md bg-red-50 p-3 dark:bg-red-900/20">
+                <div class="flex items-start gap-2">
+                  <XCircleIcon class="h-5 w-5 shrink-0 text-red-400 dark:text-red-500 mt-0.5" />
+                  <p class="text-sm text-red-700 dark:text-red-300">{{ previewError }}</p>
+                </div>
+              </div>
+            </div>
+            <!-- Preview table -->
+            <FilePreviewTable v-else-if="previewSheets" :sheets="previewSheets" />
           </div>
         </div>
       </div>
@@ -206,11 +282,16 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
-import { ExclamationTriangleIcon, XCircleIcon } from '@heroicons/vue/24/outline'
+import { ExclamationTriangleIcon, XCircleIcon, DocumentArrowUpIcon } from '@heroicons/vue/24/outline'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+import FilePreviewTable from '@/components/FilePreviewTable.vue'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { ImportService, ApiError, RuleTemplateType } from '@/services/generated-api'
 import { errorHandler } from '@/utils/ErrorHandler'
+import { extractCsvRows } from '@/composables/useCsvParser'
+import { extractXlsSheets } from '@/composables/useXlsParser'
+import { getStorageAdapter } from '@/services/storage'
+import { STORAGE_KEYS } from '@/services/storage/keys'
 
 import type { CsvRuleSummary } from '@/services/generated-api/models/CsvRuleSummary'
 import type { InvalidRuleSummary } from '@/services/generated-api/models/InvalidRuleSummary'
@@ -282,6 +363,105 @@ const canSave = computed(() => {
 })
 
 const confirmDialog = useConfirmDialog()
+
+// --- File preview state (CSV / XLS only) ---
+
+interface FileSheet {
+  name: string
+  rows: string[][]
+}
+
+const previewSheets = ref<FileSheet[] | null>(null)
+const previewError = ref<string | null>(null)
+const previewFileName = ref<string | null>(null)
+const fileInputRef = ref<HTMLInputElement | null>(null)
+
+const showFilePreview = computed(() => ruleType.value === 'csv' || ruleType.value === 'xls')
+
+const previewLayoutVertical = ref(getStorageAdapter().get<string>(STORAGE_KEYS.RULES_TAB_LAYOUT) !== 'horizontal')
+
+function togglePreviewLayout() {
+  previewLayoutVertical.value = !previewLayoutVertical.value
+  getStorageAdapter().set(STORAGE_KEYS.RULES_TAB_LAYOUT, previewLayoutVertical.value ? 'vertical' : 'horizontal')
+}
+
+function acceptedExtensions(): string {
+  return ruleType.value === 'csv' ? '.csv,.tsv,.txt' : '.xls,.xlsx,.xlsm,.xlsb'
+}
+
+function triggerFilePicker() {
+  fileInputRef.value?.click()
+}
+
+async function handlePreviewFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  // Reset so the same file can be re-selected
+  input.value = ''
+  if (!file) return
+  await parsePreviewFile(file)
+}
+
+async function parsePreviewFile(file: File) {
+  previewError.value = null
+  previewSheets.value = null
+  previewFileName.value = file.name
+
+  try {
+    const lower = file.name.toLowerCase()
+    if (ruleType.value === 'csv') {
+      if (!lower.endsWith('.csv') && !lower.endsWith('.tsv') && !lower.endsWith('.txt')) {
+        previewError.value = 'Please select a CSV, TSV, or TXT file.'
+        return
+      }
+      const text = await readFileAsText(file)
+      const rows = extractCsvRows(text)
+      if (rows.length === 0) {
+        previewError.value = 'The file appears to be empty.'
+        return
+      }
+      previewSheets.value = [{ name: file.name, rows }]
+    } else if (ruleType.value === 'xls') {
+      if (!lower.endsWith('.xls') && !lower.endsWith('.xlsx') && !lower.endsWith('.xlsm') && !lower.endsWith('.xlsb')) {
+        previewError.value = 'Please select an XLS or XLSX file.'
+        return
+      }
+      const buffer = await readFileAsArrayBuffer(file)
+      const sheets = extractXlsSheets(buffer)
+      if (sheets.length === 0 || sheets.every(s => s.rows.length === 0)) {
+        previewError.value = 'The file appears to be empty or has no readable sheets.'
+        return
+      }
+      previewSheets.value = sheets
+    }
+  } catch (err) {
+    previewError.value = `Failed to parse file: ${err instanceof Error ? err.message : String(err)}`
+  }
+}
+
+function clearPreview() {
+  previewSheets.value = null
+  previewError.value = null
+  previewFileName.value = null
+}
+
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = (e) => resolve(e.target?.result as string)
+    reader.onerror = () => reject(new Error('Failed to read file'))
+    reader.readAsText(file)
+  })
+}
+
+function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = (e) => resolve(e.target?.result as ArrayBuffer)
+    reader.onerror = () => reject(new Error('Failed to read file'))
+    reader.readAsArrayBuffer(file)
+  })
+}
 
 // Clear inline error when user edits content
 watch(editorContent, () => {
@@ -389,6 +569,7 @@ async function switchRuleType(newType: RuleTypeId) {
   newFilename.value = ''
   editorContent.value = ''
   originalContent.value = ''
+  clearPreview()
   await loadFileList()
 }
 

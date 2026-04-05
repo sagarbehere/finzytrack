@@ -13,6 +13,8 @@ export const STORAGE_KEYS = {
   WIDGET_SETTINGS: 'widgetSettings',
   /** Dashboards tab editor/preview layout: 'vertical' (stacked) or 'horizontal' (side-by-side) */
   DASHBOARDS_TAB_LAYOUT: 'dashboardsTabLayout',
+  /** Rules tab editor/preview layout: 'vertical' (stacked) or 'horizontal' (side-by-side) */
+  RULES_TAB_LAYOUT: 'rulesTabLayout',
 } as const
 
 export type StorageKey = (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS]

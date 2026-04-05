@@ -18,17 +18,17 @@ date_format: "%Y-%m-%d"
 # Decimal separator ("." for most locales, "," for some European formats)
 decimal_separator: "."
 
-# Column index mappings (0-based — open your CSV and count columns starting from 0)
+# Column index mappings (1-based — column 1 is the leftmost column)
 columns:
-  date: 0
+  date: 1
   # Use 'amount' for a single amount column:
-  amount: 1
+  amount: 2
   # OR use separate debit/credit columns (uncomment below, remove 'amount' above):
-  # amount_debit: 1
-  # amount_credit: 2
-  payee: 2
-  narration: 3
-  # memo: 4
+  # amount_debit: 2
+  # amount_credit: 3
+  payee: 3
+  narration: 4
+  # memo: 5
 
 # Beancount account that this bank statement belongs to
 default_account: "Assets:Bank:Checking"
