@@ -1,5 +1,5 @@
 <template>
-  <div ref="kpiRoot" class="flex items-center h-full overflow-hidden">
+  <div class="flex items-center h-full overflow-hidden">
     <div v-if="icon" class="flex-shrink-0 mr-4">
       <div
         class="w-12 h-12 rounded-full flex items-center justify-center"
@@ -8,7 +8,10 @@
         <span class="text-white text-xl font-semibold">{{ icon }}</span>
       </div>
     </div>
-    <div class="flex-1 min-w-0 overflow-hidden">
+    <div
+      class="flex-1 min-w-0 overflow-hidden"
+      style="container-type: inline-size"
+    >
       <p v-if="label" class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
         {{ label }}
       </p>
@@ -17,8 +20,8 @@
         <p
           v-for="(item, index) in values"
           :key="index"
-          class="font-bold text-gray-900 dark:text-white whitespace-nowrap"
-          :style="valueStyle(values.length)"
+          class="kpi-value font-bold text-gray-900 dark:text-white whitespace-nowrap"
+          :style="{ '--kpi-max-fs': maxFontSize(values.length) }"
         >
           {{ formatCurrencyAmount(item) }}
         </p>
@@ -26,8 +29,8 @@
       <!-- Single value (backward compatible) -->
       <p
         v-else
-        class="font-bold text-gray-900 dark:text-white whitespace-nowrap"
-        :style="valueStyle(1)"
+        class="kpi-value font-bold text-gray-900 dark:text-white whitespace-nowrap"
+        :style="{ '--kpi-max-fs': maxFontSize(1) }"
       >
         {{ formattedValue }}
       </p>
@@ -45,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed } from 'vue'
 import type { CurrencyAmount } from '@/types/recipes'
 import { formatAmount } from '@/utils/currencyFormat'
 
@@ -67,36 +70,11 @@ const props = withDefaults(defineProps<Props>(), {
   trend: null,
 })
 
-// Measure the root KPI element (the full card content area) rather than
-// the inner text container, since the root has a definite size from the
-// grid layout while the inner flex child may not resize as expected.
-const kpiRoot = ref<HTMLElement | null>(null)
-const rootWidth = ref(400)
+// Max font sizes per currency count: 1 → 26px, 2 → 22px, 3+ → 18px
+const maxSizes: Record<number, number> = { 1: 26, 2: 22, 3: 18 }
 
-let observer: ResizeObserver | null = null
-
-onMounted(() => {
-  if (kpiRoot.value) {
-    rootWidth.value = kpiRoot.value.clientWidth
-    observer = new ResizeObserver((entries) => {
-      rootWidth.value = entries[0].contentRect.width
-    })
-    observer.observe(kpiRoot.value)
-  }
-})
-
-onUnmounted(() => observer?.disconnect())
-
-// Max font sizes per currency count: 1 → 24px, 2 → 20px, 3+ → 18px
-const maxSizes: Record<number, number> = { 1: 24, 2: 20, 3: 18 }
-
-function valueStyle(count: number): Record<string, string> {
-  const maxPx = maxSizes[Math.min(count, 3)]
-  // Subtract icon width (~64px) to get effective text area width.
-  // Scale: at 150px text area → 14px, at 300px+ → max size.
-  const textWidth = rootWidth.value - (props.icon ? 64 : 0)
-  const size = Math.min(maxPx, Math.max(14, 14 + ((textWidth - 150) / 150) * (maxPx - 14)))
-  return { fontSize: `${size}px` }
+function maxFontSize(count: number): string {
+  return `${maxSizes[Math.min(count, 3)]}px`
 }
 
 const iconBgClass = computed(() => {
@@ -129,3 +107,12 @@ function formatTrend(value: number): string {
   })
 }
 </script>
+
+<style scoped>
+/* Font scales with container width (cqw) via container query on the
+   text wrapper (container-type: inline-size).  The --kpi-max-fs custom
+   property is set per-element based on currency count. */
+.kpi-value {
+  font-size: clamp(0.875rem, 12cqw, var(--kpi-max-fs, 26px));
+}
+</style>
