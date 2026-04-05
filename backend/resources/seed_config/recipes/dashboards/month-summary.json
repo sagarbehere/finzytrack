@@ -25,19 +25,15 @@
     "widgets": [
       {
         "widgetId": "monthly-income",
-        "gridArea": "1 / 1 / 2 / 4"
+        "gridArea": "1 / 1 / 2 / 5"
       },
       {
         "widgetId": "monthly-expenses",
-        "gridArea": "1 / 4 / 2 / 7"
-      },
-      {
-        "widgetId": "monthly-estimated-taxes",
-        "gridArea": "1 / 7 / 2 / 10"
+        "gridArea": "1 / 5 / 2 / 9"
       },
       {
         "widgetId": "monthly-savings",
-        "gridArea": "1 / 10 / 2 / 13"
+        "gridArea": "1 / 9 / 2 / 13"
       },
       {
         "widgetId": "expense-treemap",
@@ -85,20 +81,9 @@
       }
     },
     {
-      "id": "monthly-estimated-taxes",
-      "title": "Estimated Taxes",
-      "helpText": "Estimated as 50% of Income:Gross",
-      "query": "SELECT currency, (SUM(amount) / 2.0) * -1 AS amount FROM postings WHERE account_type = 'Income' AND LOWER(account) LIKE 'income:gross%' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY currency",
-      "visualization": {
-        "type": "kpi",
-        "icon": "%",
-        "multiCurrency": true
-      }
-    },
-    {
       "id": "monthly-savings",
-      "title": "Estimated Savings",
-      "query": "SELECT currency, (-1 * SUM(CASE WHEN account_type = 'Income' THEN amount ELSE 0 END)) - ((SUM(CASE WHEN LOWER(account) LIKE 'income:gross%' THEN amount ELSE 0 END) / 2.0) * -1) - (SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END)) AS amount FROM postings WHERE year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY currency",
+      "title": "Savings",
+      "query": "SELECT currency, (SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END)) - (SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END)) AS amount FROM postings WHERE year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month AND account_type IN ('Income', 'Expenses') GROUP BY currency HAVING amount != 0 ORDER BY currency",
       "visualization": {
         "type": "kpi",
         "icon": "$",
