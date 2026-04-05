@@ -210,25 +210,35 @@
         <!-- Separator for mobile -->
         <div class="h-6 w-px bg-gray-200 lg:hidden dark:bg-white/10" aria-hidden="true" />
 
-        <!-- Back / Forward navigation -->
-        <div class="hidden lg:flex items-center gap-x-1">
+        <!-- Back / Forward / Refresh navigation -->
+        <div class="hidden lg:flex items-center gap-x-2 -ml-2">
           <button
             type="button"
-            class="-m-1 p-1 text-gray-400 hover:text-gray-500 dark:hover:text-white transition-colors"
+            class="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-white dark:hover:bg-white/10 transition-colors"
             title="Go back"
             @click="router.back()"
           >
             <span class="sr-only">Go back</span>
-            <ChevronLeftIcon class="size-5" aria-hidden="true" />
+            <ArrowLeftIcon class="size-4" aria-hidden="true" />
           </button>
           <button
             type="button"
-            class="-m-1 p-1 text-gray-400 hover:text-gray-500 dark:hover:text-white transition-colors"
+            class="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-white dark:hover:bg-white/10 transition-colors"
             title="Go forward"
             @click="router.forward()"
           >
             <span class="sr-only">Go forward</span>
-            <ChevronRightIcon class="size-5" aria-hidden="true" />
+            <ArrowRightIcon class="size-4" aria-hidden="true" />
+          </button>
+          <div class="h-4 w-px bg-gray-200 dark:bg-white/10" aria-hidden="true" />
+          <button
+            type="button"
+            class="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-white dark:hover:bg-white/10 transition-colors"
+            title="Refresh page"
+            @click="router.go(0)"
+          >
+            <span class="sr-only">Refresh page</span>
+            <ArrowPathIcon class="size-4" aria-hidden="true" />
           </button>
         </div>
 
@@ -341,8 +351,9 @@
     Bars3Icon,
     BellIcon,
     ChartBarIcon,
-    ChevronLeftIcon,
-    ChevronRightIcon,
+    ArrowLeftIcon,
+    ArrowPathIcon,
+    ArrowRightIcon,
     Cog6ToothIcon,
     ComputerDesktopIcon,
     ExclamationTriangleIcon,
