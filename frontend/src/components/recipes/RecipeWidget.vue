@@ -153,7 +153,7 @@ import type {
 import {
   useRecipeExecutor,
   type AnyWidgetRecipe,
-  predefinedFormats,
+  getFormats,
 } from '@/composables/useRecipeExecutor'
 import RecipeChart from './RecipeChart.vue'
 import RecipeKPI from './RecipeKPI.vue'
@@ -192,6 +192,9 @@ const currencyParam = computed<string | undefined>(() => {
   const v = mergedParameters.value.currency
   return typeof v === 'string' ? v : undefined
 })
+
+// Format functions with currency-aware formatting
+const formats = computed(() => getFormats(currencyParam.value))
 
 // Data from query execution
 const data = ref<unknown>(null)
@@ -305,7 +308,7 @@ function getKPIFormatFunction(): ((value: number) => string) | undefined {
 
   // JSON recipe with format string
   if (isJsonKPIVisualization(viz) && viz.format) {
-    return predefinedFormats[viz.format]
+    return formats.value[viz.format]
   }
 
   return undefined
@@ -366,7 +369,7 @@ function getTableColumns(): TableColumn[] {
         format: jsonCol.format
           ? (value: unknown) => {
               if (typeof value === 'number') {
-                return predefinedFormats[jsonCol.format as ValueFormat](value)
+                return formats.value[jsonCol.format as ValueFormat](value)
               }
               return String(value ?? '—')
             }
@@ -426,7 +429,7 @@ function getPivotValueFormat(): ((value: number) => string) | undefined {
 
   // JSON recipe with format string
   if ('format' in viz && typeof viz.format === 'string') {
-    return (value: number) => predefinedFormats[viz.format as ValueFormat](value)
+    return (value: number) => formats.value[viz.format as ValueFormat](value)
   }
 
   return undefined

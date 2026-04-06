@@ -223,87 +223,100 @@ const configurableTransforms: Record<
 // ============================================================================
 
 /**
- * Predefined format functions for JSON recipes
- * These can format both numbers and strings depending on the format type
+ * Predefined format functions for JSON recipes.
+ * These can format both numbers and strings depending on the format type.
+ * Uses USD as the default currency — use getFormats(currency) for locale-aware currency formatting.
  */
-export const predefinedFormats: Record<ValueFormat, (value: unknown) => string> = {
-  // Number formats
-  currency: (value) => {
-    const num = typeof value === 'number' ? value : parseFloat(String(value)) || 0
-    return formatAmount(num, 'USD')
-  },
+export const predefinedFormats: Record<ValueFormat, (value: unknown) => string> = getFormats()
 
-  signedCurrency: (value) => {
-    const num = typeof value === 'number' ? value : parseFloat(String(value)) || 0
-    return formatSignedAmount(num, 'USD')
-  },
+/**
+ * Create a set of format functions with the given currency for locale-aware formatting.
+ * Currency-dependent formats (currency, signedCurrency) use the specified currency code
+ * to determine locale and symbol. Non-currency formats are unaffected.
+ *
+ * @param currency - ISO 4217 currency code (e.g., 'USD', 'INR'). Defaults to 'USD'.
+ */
+export function getFormats(currency?: string): Record<ValueFormat, (value: unknown) => string> {
+  const curr = currency || 'USD'
+  return {
+    // Number formats
+    currency: (value) => {
+      const num = typeof value === 'number' ? value : parseFloat(String(value)) || 0
+      return formatAmount(num, curr)
+    },
 
-  percent: (value) => {
-    const num = typeof value === 'number' ? value : parseFloat(String(value)) || 0
-    return num.toLocaleString('en-US', {
-      style: 'percent',
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1,
-    })
-  },
+    signedCurrency: (value) => {
+      const num = typeof value === 'number' ? value : parseFloat(String(value)) || 0
+      return formatSignedAmount(num, curr)
+    },
 
-  number: (value) => {
-    const num = typeof value === 'number' ? value : parseFloat(String(value)) || 0
-    return num.toLocaleString('en-US', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    })
-  },
+    percent: (value) => {
+      const num = typeof value === 'number' ? value : parseFloat(String(value)) || 0
+      return num.toLocaleString('en-US', {
+        style: 'percent',
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      })
+    },
 
-  compact: (value) => {
-    const num = typeof value === 'number' ? value : parseFloat(String(value)) || 0
-    if (Math.abs(num) >= 1000000) {
-      return (num / 1000000).toFixed(1) + 'M'
-    }
-    if (Math.abs(num) >= 1000) {
-      return (num / 1000).toFixed(1) + 'k'
-    }
-    return num.toFixed(0)
-  },
+    number: (value) => {
+      const num = typeof value === 'number' ? value : parseFloat(String(value)) || 0
+      return num.toLocaleString('en-US', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      })
+    },
 
-  // Date formats
-  date: (value) => {
-    const str = String(value)
-    const date = new Date(str)
-    if (isNaN(date.getTime())) return str
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    })
-  },
+    compact: (value) => {
+      const num = typeof value === 'number' ? value : parseFloat(String(value)) || 0
+      if (Math.abs(num) >= 1000000) {
+        return (num / 1000000).toFixed(1) + 'M'
+      }
+      if (Math.abs(num) >= 1000) {
+        return (num / 1000).toFixed(1) + 'k'
+      }
+      return num.toFixed(0)
+    },
 
-  dateShort: (value) => {
-    const str = String(value)
-    const date = new Date(str)
-    if (isNaN(date.getTime())) return str
-    return date.toLocaleDateString('en-US', {
-      year: '2-digit',
-      month: 'numeric',
-      day: 'numeric',
-    })
-  },
+    // Date formats
+    date: (value) => {
+      const str = String(value)
+      const date = new Date(str)
+      if (isNaN(date.getTime())) return str
+      return date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      })
+    },
 
-  // Account name formats
-  accountName: (value) => {
-    const str = String(value)
-    const segments = str.split(':')
-    return segments[segments.length - 1] || str
-  },
+    dateShort: (value) => {
+      const str = String(value)
+      const date = new Date(str)
+      if (isNaN(date.getTime())) return str
+      return date.toLocaleDateString('en-US', {
+        year: '2-digit',
+        month: 'numeric',
+        day: 'numeric',
+      })
+    },
 
-  accountName2: (value) => {
-    const str = String(value)
-    const segments = str.split(':')
-    if (segments.length >= 2) {
-      return segments.slice(-2).join(':')
-    }
-    return str
-  },
+    // Account name formats
+    accountName: (value) => {
+      const str = String(value)
+      const segments = str.split(':')
+      return segments[segments.length - 1] || str
+    },
+
+    accountName2: (value) => {
+      const str = String(value)
+      const segments = str.split(':')
+      if (segments.length >= 2) {
+        return segments.slice(-2).join(':')
+      }
+      return str
+    },
+  }
 }
 
 /**
@@ -432,11 +445,11 @@ export function useRecipeExecutor() {
   }
 
   /**
-   * Get format function for a value format type
+   * Get format function for a value format type, with optional currency for locale-aware formatting.
    */
-  function getFormatFunction(format?: ValueFormat): ((value: number) => string) | undefined {
+  function getFormatFunction(format?: ValueFormat, currency?: string): ((value: number) => string) | undefined {
     if (!format) return undefined
-    return predefinedFormats[format]
+    return getFormats(currency)[format]
   }
 
   return {

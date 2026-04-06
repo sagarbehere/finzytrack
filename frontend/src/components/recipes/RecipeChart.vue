@@ -18,7 +18,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import type { EChartsOption } from 'echarts'
 import type { ECharts as EChartsInstance } from 'echarts/core'
 import { formatAmount } from '@/utils/currencyFormat'
-import { predefinedFormats } from '@/composables/useRecipeExecutor'
+import { getFormats } from '@/composables/useRecipeExecutor'
 import type { ValueFormat } from '@/types/recipes'
 
 // Register ECharts components
@@ -125,9 +125,10 @@ function isPieChart(): boolean {
   return series.every((s) => typeof s === 'object' && s !== null && (s as { type?: string }).type === 'pie')
 }
 
-// Build a formatter function from a ValueFormat string
+// Build a formatter function from a ValueFormat string, using the widget's currency for locale-aware formatting
 function buildFormatter(format: ValueFormat): (value: unknown) => string {
-  const fn = predefinedFormats[format]
+  const formats = getFormats(props.currency)
+  const fn = formats[format]
   if (typeof fn !== 'function') {
     console.warn(`[RecipeChart] Unknown format "${format}", falling back to String()`)
     return (value: unknown) => String(value ?? '')
