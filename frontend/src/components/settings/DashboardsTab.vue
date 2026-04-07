@@ -218,7 +218,7 @@ import { useRecipeLoader } from '@/composables/useRecipeLoader'
 import { resolveGenerators } from '@/recipes/functions'
 import type { JsonDashboardRecipe } from '@/types/recipes'
 
-const { loadUserRecipes } = useRecipeLoader()
+const { loadUserRecipes, checkIdConflict } = useRecipeLoader()
 
 const props = defineProps<{
   initialRecipeType?: string
@@ -444,6 +444,47 @@ async function handleSave() {
     return
   }
   jsonParseError.value = null
+
+  // Check for ID conflicts before saving
+  const recipeId = parsed.id as string | undefined
+  if (recipeId) {
+    const type = recipeType.value === 'dashboards' ? 'dashboard' : 'widget'
+    const currentPath = isCreating.value ? undefined : selectedFile.value ?? undefined
+    const conflict = checkIdConflict(recipeId, type as 'widget' | 'dashboard', currentPath)
+    if (conflict) {
+      const kindLabel =
+        conflict.kind === 'widget' ? 'a standalone widget recipe' :
+        conflict.kind === 'dashboard' ? 'a dashboard recipe' :
+        'an inline widget in a dashboard'
+      const proceed = await confirmDialog.showConfirm({
+        title: 'Recipe ID Conflict',
+        message: `The ${type} ID "${recipeId}" is already used by ${kindLabel} in ${conflict.conflictingFile}. Saving will cause one definition to silently override the other, leading to unpredictable behavior.\n\nDo you want to save anyway?`,
+        confirmText: 'Save Anyway',
+        cancelText: 'Go Back',
+        variant: 'warning',
+      })
+      if (!proceed) return
+    }
+
+    // For dashboards, also check inline widget IDs against standalone widgets
+    if (type === 'dashboard' && Array.isArray(parsed.widgets)) {
+      for (const inlineWidget of parsed.widgets as Array<{ id?: string }>) {
+        if (!inlineWidget.id) continue
+        const inlineConflict = checkIdConflict(inlineWidget.id, 'widget', undefined)
+        if (inlineConflict) {
+          const proceed = await confirmDialog.showConfirm({
+            title: 'Inline Widget ID Conflict',
+            message: `This dashboard defines an inline widget with ID "${inlineWidget.id}" which conflicts with ${inlineConflict.conflictingFile}. The inline definition will silently override the standalone widget recipe.\n\nDo you want to save anyway?`,
+            confirmText: 'Save Anyway',
+            cancelText: 'Go Back',
+            variant: 'warning',
+          })
+          if (!proceed) return
+          break
+        }
+      }
+    }
+  }
 
   isSaving.value = true
   try {

@@ -40,6 +40,45 @@
       </div>
     </div>
 
+    <!-- Recipe ID conflict banner -->
+    <div
+      v-if="recipeIdConflicts.length > 0 && !conflictBannerDismissed"
+      class="flex-shrink-0 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 px-4 py-3"
+    >
+      <div class="flex items-start justify-between gap-4">
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-medium text-amber-800 dark:text-amber-300">
+            {{ recipeIdConflicts.length }} recipe ID {{ recipeIdConflicts.length === 1 ? 'conflict' : 'conflicts' }} detected — this may cause unpredictable behavior
+          </p>
+          <ul class="mt-1 space-y-1">
+            <li
+              v-for="(conflict, idx) in recipeIdConflicts"
+              :key="idx"
+              class="text-xs text-amber-700 dark:text-amber-400"
+            >
+              <template v-if="conflict.kind === 'widget'">Widget</template>
+              <template v-else-if="conflict.kind === 'dashboard'">Dashboard</template>
+              <template v-else>Widget</template>
+              ID "<span class="font-mono font-semibold">{{ conflict.id }}</span>"
+              is defined in both
+              <span class="font-mono">{{ conflict.files[0] }}</span> and
+              <template v-if="conflict.kind === 'inline-widget'">inline in </template>
+              <span class="font-mono">{{ conflict.files[1] }}</span>
+            </li>
+          </ul>
+        </div>
+        <button
+          @click="conflictBannerDismissed = true"
+          class="flex-shrink-0 text-amber-400 hover:text-amber-600 dark:hover:text-amber-300"
+          aria-label="Dismiss"
+        >
+          <svg class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
     <!-- Tab bar -->
     <DashboardTabs
       :tabs="tabs"
@@ -96,9 +135,10 @@ import { errorHandler } from '@/utils/ErrorHandler'
 
 const route = useRoute()
 const router = useRouter()
-const { loadUserRecipes, reloadUserRecipes, getAllDashboardIds, getDashboard, isUserRecipe, getManifestPath, recipeLoadErrors, isLoading } = useRecipeLoader()
+const { loadUserRecipes, reloadUserRecipes, getAllDashboardIds, getDashboard, isUserRecipe, getManifestPath, recipeLoadErrors, recipeIdConflicts, isLoading } = useRecipeLoader()
 
 const bannerDismissed = ref(false)
+const conflictBannerDismissed = ref(false)
 const { tabs, activeTabId, addTab, removeTab, setActiveTab, loadTabs, activeDashboard } = useDashboardTabs()
 
 const showPicker = ref(false)
@@ -173,6 +213,7 @@ function handleTabSelect(tabId: string) {
 // Reload all recipes without a full page refresh
 async function handleReloadRecipes() {
   bannerDismissed.value = false
+  conflictBannerDismissed.value = false
   await reloadUserRecipes()
   // Refresh the active tab's dashboard object in case it changed
   await loadTabs()
@@ -226,6 +267,7 @@ watch(() => route.query, (newQuery, oldQuery) => {
 // Initialize on mount
 onMounted(async () => {
   bannerDismissed.value = false
+  conflictBannerDismissed.value = false
   await loadUserRecipes()
   await loadTabs()
 

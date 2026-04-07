@@ -28,6 +28,12 @@ export interface RecipeFileError {
   errors: string[]
 }
 
+export interface RecipeIdConflict {
+  id: string
+  kind: 'widget' | 'dashboard' | 'inline-widget'
+  files: [string, string]
+}
+
 // Shared state across all component instances
 const userWidgets = ref<Record<string, JsonWidgetRecipe>>({})
 const userDashboards = ref<Record<string, JsonDashboardRecipe>>({})
@@ -37,6 +43,92 @@ const isLoaded = ref(false)
 const isLoading = ref(false)
 const loadError = ref<string | null>(null)
 const recipeLoadErrors = ref<RecipeFileError[]>([])
+const recipeIdConflicts = ref<RecipeIdConflict[]>([])
+
+/**
+ * Detect ID conflicts among user recipe files.
+ * Checks: duplicate widget IDs, duplicate dashboard IDs, and standalone widget IDs
+ * that clash with inline widget definitions inside dashboards.
+ */
+function detectConflicts(
+  widgetResults: [JsonWidgetRecipe, string][],
+  dashboardResults: [JsonDashboardRecipe, string][],
+): RecipeIdConflict[] {
+  const conflicts: RecipeIdConflict[] = []
+
+  // Widget-Widget: two standalone widget files with same ID
+  const widgetById = new Map<string, string>()
+  for (const [w, path] of widgetResults) {
+    const existing = widgetById.get(w.id)
+    if (existing) {
+      conflicts.push({ id: w.id, kind: 'widget', files: [existing, path] })
+    } else {
+      widgetById.set(w.id, path)
+    }
+  }
+
+  // Dashboard-Dashboard: two dashboard files with same ID
+  const dashboardById = new Map<string, string>()
+  for (const [d, path] of dashboardResults) {
+    const existing = dashboardById.get(d.id)
+    if (existing) {
+      conflicts.push({ id: d.id, kind: 'dashboard', files: [existing, path] })
+    } else {
+      dashboardById.set(d.id, path)
+    }
+  }
+
+  // Inline-Widget: standalone widget ID matches an inline widget in a dashboard
+  for (const [dashboard, dashPath] of dashboardResults) {
+    if (!dashboard.widgets) continue
+    for (const inlineWidget of dashboard.widgets) {
+      const standalonePath = widgetById.get(inlineWidget.id)
+      if (standalonePath) {
+        conflicts.push({ id: inlineWidget.id, kind: 'inline-widget', files: [standalonePath, dashPath] })
+      }
+    }
+  }
+
+  return conflicts
+}
+
+/**
+ * Check if a given recipe ID would conflict with any already-loaded recipe.
+ * Excludes the file at `excludeManifestPath` (so editing a file doesn't conflict with itself).
+ */
+function checkIdConflict(
+  id: string,
+  type: 'widget' | 'dashboard',
+  excludeManifestPath?: string,
+): { conflictingFile: string; kind: RecipeIdConflict['kind'] } | null {
+  if (type === 'widget') {
+    // Check against other standalone widgets
+    if (id in userWidgets.value) {
+      const path = recipeManifestPaths.value[id]
+      if (path && path !== excludeManifestPath) {
+        return { conflictingFile: path, kind: 'widget' }
+      }
+    }
+    // Check against inline widgets in dashboards
+    for (const [dId, dashboard] of Object.entries(userDashboards.value)) {
+      if (!dashboard.widgets) continue
+      for (const inlineWidget of dashboard.widgets) {
+        if (inlineWidget.id === id) {
+          return { conflictingFile: recipeManifestPaths.value[dId], kind: 'inline-widget' }
+        }
+      }
+    }
+  } else {
+    // Check against other dashboards
+    if (id in userDashboards.value) {
+      const path = recipeManifestPaths.value[id]
+      if (path && path !== excludeManifestPath) {
+        return { conflictingFile: path, kind: 'dashboard' }
+      }
+    }
+  }
+  return null
+}
 
 /**
  * Fetch and parse a JSON file
@@ -58,6 +150,7 @@ async function loadUserRecipes(): Promise<void> {
   isLoading.value = true
   loadError.value = null
   recipeLoadErrors.value = []
+  recipeIdConflicts.value = []
 
   try {
     // Try to fetch manifest
@@ -132,6 +225,12 @@ async function loadUserRecipes(): Promise<void> {
     // Wait for all to load
     const widgetResults = (await Promise.all(widgetPromises)).filter(Boolean) as [JsonWidgetRecipe, string][]
     const dashboardResults = (await Promise.all(dashboardPromises)).filter(Boolean) as [JsonDashboardRecipe, string][]
+
+    // Detect ID conflicts before storing (storing with Object.fromEntries silently drops duplicates)
+    recipeIdConflicts.value = detectConflicts(widgetResults, dashboardResults)
+    if (recipeIdConflicts.value.length > 0) {
+      console.warn('[RecipeLoader] ID conflicts detected:', recipeIdConflicts.value)
+    }
 
     // Store in state
     userWidgets.value = Object.fromEntries(widgetResults.map(([w]) => [w.id, w]))
@@ -231,6 +330,7 @@ async function reloadUserRecipes(): Promise<void> {
   userWidgets.value = {}
   userDashboards.value = {}
   recipeManifestPaths.value = {}
+  recipeIdConflicts.value = []
   await loadUserRecipes()
 }
 
@@ -241,6 +341,7 @@ export function useRecipeLoader() {
     isLoading: readonly(isLoading),
     loadError: readonly(loadError),
     recipeLoadErrors: readonly(recipeLoadErrors),
+    recipeIdConflicts: readonly(recipeIdConflicts),
     userWidgets: readonly(userWidgets),
     userDashboards: readonly(userDashboards),
 
@@ -254,5 +355,6 @@ export function useRecipeLoader() {
     getAllDashboardIds,
     isUserRecipe,
     getManifestPath,
+    checkIdConflict,
   }
 }
