@@ -369,10 +369,10 @@ const COLUMN_DEFS: TransactionColumnDef[] = [
   { id: 'amount', header: 'Amount', type: 'numeric', field: 'amount', span: 'posting', align: 'right', colorize: true },
   { id: 'currency', header: 'Currency', type: 'dropdown', field: 'currency', span: 'posting', component: CommodityDropdown, componentProps: { 'allow-custom': false, 'show-details': false }, placeholder: 'CURR' },
   { id: 'cost_amount', header: 'Cost Amount', type: 'numeric', field: 'cost.amount', span: 'posting', align: 'right', accessor: (row: TableRowData) => row.cost?.amount },
-  { id: 'cost_currency', header: 'Cost Currency', type: 'dropdown', field: 'cost.currency', span: 'posting', component: CommodityDropdown, componentProps: { 'allow-custom': false, 'show-details': false }, placeholder: 'CURR', accessor: (row: TableRowData) => row.cost?.currency },
+  { id: 'cost_currency', header: 'Cost Currency', type: 'dropdown', field: 'cost.currency', span: 'posting', component: CommodityDropdown, componentProps: { 'allow-custom': false, 'show-details': false, clearable: true }, placeholder: 'CURR', accessor: (row: TableRowData) => row.cost?.currency },
   { id: 'cost_date', header: 'Cost Date', type: 'date', field: 'cost.date', span: 'posting', accessor: (row: TableRowData) => row.cost?.date },
   { id: 'price_amount', header: 'Price Amount', type: 'numeric', field: 'price.amount', span: 'posting', align: 'right', accessor: (row: TableRowData) => row.price?.amount },
-  { id: 'price_currency', header: 'Price Currency', type: 'dropdown', field: 'price.currency', span: 'posting', component: CommodityDropdown, componentProps: { 'allow-custom': false, 'show-details': false }, placeholder: 'CURR', accessor: (row: TableRowData) => row.price?.currency },
+  { id: 'price_currency', header: 'Price Currency', type: 'dropdown', field: 'price.currency', span: 'posting', component: CommodityDropdown, componentProps: { 'allow-custom': false, 'show-details': false, clearable: true }, placeholder: 'CURR', accessor: (row: TableRowData) => row.price?.currency },
   { id: 'price_type', header: 'Price Type', type: 'dropdown', field: 'price.type', span: 'posting', component: PriceTypeDropdown, placeholder: 'Type', accessor: (row: TableRowData) => row.price?.type },
   {
     id: 'balance', header: 'Balance', type: 'display', span: 'posting',

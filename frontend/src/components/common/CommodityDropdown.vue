@@ -52,6 +52,23 @@
             class="fixed z-[9999] max-h-60 w-max overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10"
             :style="dropdownStyle"
           >
+            <!-- Clear option -->
+            <ComboboxOption
+              v-if="clearable"
+              :value="''"
+              as="template"
+              v-slot="{ active }"
+            >
+              <li :class="[
+                'relative cursor-default px-3 py-2 select-none',
+                active
+                  ? 'bg-indigo-600 text-white outline-hidden dark:bg-indigo-500'
+                  : 'text-gray-900 dark:text-white'
+              ]">
+                <span class="block truncate text-gray-400 dark:text-gray-500">(none)</span>
+              </li>
+            </ComboboxOption>
+
             <!-- Custom query option - allows user to type new commodity code -->
             <ComboboxOption
               v-if="queryCommodity && allowCustom"
@@ -140,6 +157,7 @@ interface Props {
   excludePattern?: string | RegExp
   commodityTypes?: string[] // e.g., ['Currency', 'Stock']
   showDetails?: boolean // Show commodity name/type in dropdown
+  clearable?: boolean // Show a (none) option to clear the selection
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -148,7 +166,8 @@ const props = withDefaults(defineProps<Props>(), {
   disabled: false,
   customClass: '',
   allowCustom: false,
-  showDetails: true
+  showDetails: true,
+  clearable: false,
 })
 
 const emit = defineEmits<{
