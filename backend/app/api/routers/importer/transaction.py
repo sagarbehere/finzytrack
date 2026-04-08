@@ -349,7 +349,8 @@ async def commit_transactions(
                         # Total price: divide by number of units
                         units_value = abs(Decimal(str(posting.amount)))
                         if units_value != 0:
-                            price_value = price_value / units_value
+                            price_value = (price_value / units_value).quantize(
+                                Decimal('0.0000000001'))  # 10 decimal places
                         else:
                             raise APIError(
                                 message="Cannot use @@ price with zero units",
