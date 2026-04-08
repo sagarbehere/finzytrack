@@ -64,29 +64,25 @@ def _validate_against_email(
     Only checks the first transaction type whose email_filter matches.
     """
     errors: list[str] = []
+    matched_any = False
 
     for txn_type in data.get("transaction_types", []):
         type_name = txn_type.get("name", "<unnamed>")
         email_filter = txn_type.get("email_filter") or {}
 
-        # Check if this transaction type's filters match the email
+        # Check if this transaction type's filters match the email.
+        # Non-matching types are expected (they handle different email formats)
+        # so we silently skip them — only the matching type gets validated.
         subj_pat = email_filter.get("subject_regex")
         if subj_pat and not re.search(subj_pat, email_subject, re.IGNORECASE):
-            errors.append(
-                f"transaction_type '{type_name}': subject_regex '{subj_pat}' "
-                f"does not match subject '{email_subject}'"
-            )
             continue
 
         body_pat = email_filter.get("body_regex")
         if body_pat and not re.search(body_pat, email_body, re.IGNORECASE):
-            errors.append(
-                f"transaction_type '{type_name}': body_regex '{body_pat}' "
-                f"does not match email body"
-            )
             continue
 
         # Filters matched — now test every extraction field
+        matched_any = True
         extraction = txn_type.get("extraction") or {}
         for field_name, field_raw in extraction.items():
             if not isinstance(field_raw, dict):
@@ -102,6 +98,13 @@ def _validate_against_email(
             if not result.get("matched", False) and not is_optional:
                 err_detail = result.get("error", "pattern did not match")
                 errors.append(f"'{type_name}'.{field_name}: {err_detail}")
+
+    if not matched_any:
+        type_names = [t.get("name", "<unnamed>") for t in data.get("transaction_types", [])]
+        errors.append(
+            f"No transaction type's email_filter matched the provided email. "
+            f"Types checked: {', '.join(type_names)}"
+        )
 
     return errors
 
