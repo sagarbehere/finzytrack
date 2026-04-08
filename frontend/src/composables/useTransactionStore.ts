@@ -1,4 +1,4 @@
-import { type Ref, ref, watch } from 'vue'
+import { type Ref, ref } from 'vue'
 import type { TransactionViewModel } from '@/types/transactions'
 import { isModified } from '@/utils/transactionModification'
 
@@ -36,10 +36,16 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
   const importedBaseline = ref<TransactionViewModel[]>(deepCopy(input.value))
   const editBaseline = ref<TransactionViewModel[]>(deepCopy(input.value))
 
-  // Sync transactions when parent replaces the array, but do NOT update baselines
-  watch(input, (newVal) => {
+  function replaceTransactions(newVal: TransactionViewModel[]): void {
     transactions.value = deepCopy(newVal)
-  })
+  }
+
+  // After in-place mutation, create a new array reference so downstream
+  // computeds re-evaluate and TanStack re-renders affected cells.
+  // This is a shallow clone — cheap, same objects, just a new array.
+  function notifyChange(): void {
+    transactions.value = [...transactions.value]
+  }
 
   function refreshModifiedFlag(tx: TransactionViewModel): void {
     tx.internal.isModified = isModified(tx, editBaseline.value)
@@ -56,6 +62,7 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
       tx.tags = parts.filter(p => p.startsWith('#')).map(p => p.substring(1))
       tx.links = parts.filter(p => p.startsWith('^')).map(p => p.substring(1))
       refreshModifiedFlag(tx)
+      notifyChange()
       return
     }
 
@@ -69,6 +76,7 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
         tx.meta['source_account'] = value as string
       }
       refreshModifiedFlag(tx)
+      notifyChange()
       return
     }
 
@@ -85,12 +93,14 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
         posting.cost.date = tx.date
       }
       refreshModifiedFlag(tx)
+      notifyChange()
       return
     }
 
     // General case: set by path
     setByPath(tx as unknown as Record<string, any>, path, value)
     refreshModifiedFlag(tx)
+    notifyChange()
   }
 
   function addPosting(txId: string): void {
@@ -105,6 +115,7 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
       meta: undefined,
     })
     refreshModifiedFlag(tx)
+    notifyChange()
   }
 
   function removePosting(txId: string, postingIndex: number): void {
@@ -112,6 +123,7 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
     if (!tx || tx.postings.length <= 1) return
     tx.postings.splice(postingIndex, 1)
     refreshModifiedFlag(tx)
+    notifyChange()
   }
 
   function removeTransaction(txId: string): void {
@@ -155,6 +167,7 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
 
   return {
     transactions,
+    replaceTransactions,
     updateField,
     addPosting,
     removePosting,

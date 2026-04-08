@@ -203,11 +203,43 @@ const toast = useToast()
 // Transaction store — owns data, mutations, baselines
 const store = useTransactionStore(toRef(props, 'transactions'))
 
-// Emit updates whenever store transactions change
-// (The store mutates in-place for reactivity, but the parent expects emitted arrays)
-watch(store.transactions, (newVal) => {
-  emit('transactionsUpdated', newVal)
-}, { deep: true })
+// Emit helper — mirrors the original emitUpdate() pattern
+const emitTransactions = () => {
+  emit('transactionsUpdated', store.transactions.value)
+}
+
+// Watch for EXTERNAL parent changes (e.g., parent loads new data, not echo-back from our emit).
+// Uses a flag to skip the echo: we set it before emitting, clear after the prop watch runs.
+let isOwnEmit = false
+const emitAndGuard = () => {
+  isOwnEmit = true
+  emitTransactions()
+}
+
+watch(() => props.transactions, (newVal) => {
+  if (isOwnEmit) {
+    isOwnEmit = false
+    return
+  }
+  // Genuinely new data from parent — sync into the store
+  store.replaceTransactions(newVal)
+})
+
+// Wrapped mutation methods — call store then emit to parent
+const handleUpdateField = (txId: string, path: string, value: unknown) => {
+  store.updateField(txId, path, value)
+  emitAndGuard()
+}
+
+const handleAddPosting = (txId: string) => {
+  store.addPosting(txId)
+  emitAndGuard()
+}
+
+const handleRemovePosting = (txId: string, postingIndex: number) => {
+  store.removePosting(txId, postingIndex)
+  emitAndGuard()
+}
 
 // State
 const globalFilter = ref('')
@@ -360,7 +392,7 @@ const shouldSkipCell = (cell: Cell<any, any>) => {
 const columns = computed(() => {
   const factoryColumns = buildTanStackColumns(COLUMN_DEFS, {
     editable: props.editable ?? true,
-    updateField: store.updateField,
+    updateField: handleUpdateField,
     numericInputProps,
     getImportContext,
     getLedgerContext,
@@ -409,14 +441,14 @@ const columns = computed(() => {
       if (row.original.isFirstPosting) {
         buttons.push(
           h('button', {
-            onClick: () => store.removePosting(row.original.transaction.id, row.original.postingIndex),
+            onClick: () => handleRemovePosting(row.original.transaction.id, row.original.postingIndex),
             class: 'inline-flex items-center justify-center w-6 h-6 text-red-600 hover:text-red-800 hover:bg-red-50 rounded text-sm dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-900/20',
             title: 'Remove posting'
           }, '×')
         )
         buttons.push(
           h('button', {
-            onClick: () => store.addPosting(row.original.transaction.id),
+            onClick: () => handleAddPosting(row.original.transaction.id),
             class: 'inline-flex items-center justify-center w-6 h-6 text-green-600 hover:text-green-800 hover:bg-green-50 rounded text-sm dark:text-green-400 dark:hover:text-green-300 dark:hover:bg-green-900/20',
             title: 'Add posting'
           }, '+')
@@ -431,7 +463,7 @@ const columns = computed(() => {
       } else {
         buttons.push(
           h('button', {
-            onClick: () => store.removePosting(row.original.transaction.id, row.original.postingIndex),
+            onClick: () => handleRemovePosting(row.original.transaction.id, row.original.postingIndex),
             class: 'inline-flex items-center justify-center w-6 h-6 text-red-600 hover:text-red-800 hover:bg-red-50 rounded text-sm dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-900/20',
             title: 'Remove posting'
           }, '×')
@@ -601,6 +633,7 @@ This action will immediately update the ledger and cannot be undone.`
     }
 
     store.removeTransaction(transaction.id)
+    emitAndGuard()
 
     if (!isImportContext) {
       toast.success(
@@ -678,12 +711,18 @@ onMounted(() => {
 })
 
 defineExpose({
-  resetToOriginal: store.resetToImported,
+  resetToOriginal: () => {
+    store.resetToImported()
+    emitAndGuard()
+  },
   scrollToTable,
   setNewEditBaseline: store.setEditBaseline,
   reinitializeBaselines: store.reinitializeBaselines,
   addToBaselines: store.addToBaselines,
-  clearState: store.clearState,
+  clearState: () => {
+    store.clearState()
+    emitAndGuard()
+  },
 })
 </script>
 
