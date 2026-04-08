@@ -255,7 +255,12 @@ const numericInputProps = (
 ) => {
   const key = `${txId}-${postingIdx}-${field}`
   const rawStr = rawAmountStrings.value[key]
-  const fallback = currentValue !== null && currentValue !== undefined ? String(currentValue) : ''
+  const fallback = (() => {
+    if (currentValue === null || currentValue === undefined) return ''
+    const s = String(currentValue)
+    const decimals = s.includes('.') ? s.split('.')[1].length : 0
+    return decimals < 2 ? currentValue.toFixed(2) : s
+  })()
   return {
     type: 'text',
     inputmode: 'decimal',
@@ -874,7 +879,10 @@ td[data-column-id="narration"] textarea {
 
 /* Allow dropdowns to escape table cell boundaries */
 td[data-column-id="account"],
-td[data-column-id="currency"] {
+td[data-column-id="currency"],
+td[data-column-id="cost_currency"],
+td[data-column-id="price_currency"],
+td[data-column-id="price_type"] {
   overflow: visible;
 }
 

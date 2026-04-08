@@ -320,10 +320,13 @@ async def commit_transactions(
             # Create postings
             beancount_postings = []
             for posting in commit_txn.postings:
-                posting_amount = amount.Amount(
-                    Decimal(str(posting.amount)),
-                    posting.currency
-                )
+                # Ensure at least 2 decimal places so Beancount infers proper
+                # tolerance (integer amounts like 85000 would infer zero tolerance,
+                # causing price-converted postings to fail balance checks).
+                raw_amount = Decimal(str(posting.amount))
+                if raw_amount == raw_amount.to_integral_value():
+                    raw_amount = raw_amount.quantize(Decimal('0.01'))
+                posting_amount = amount.Amount(raw_amount, posting.currency)
 
                 # Create cost object if cost fields present and amount is non-zero
                 posting_cost = None
@@ -346,11 +349,21 @@ async def commit_transactions(
                     # because Beancount's price field is always per-unit
                     price_value = Decimal(str(posting.price_amount))
                     if posting.price_type == '@@':
-                        # Total price: divide by number of units
+                        # Total price: divide by units to get per-unit price.
+                        # Round to the fewest decimal places where
+                        # |units × rounded_price - total| < 0.005 (Beancount's
+                        # default tolerance for 2-decimal currencies like USD).
                         units_value = abs(Decimal(str(posting.amount)))
                         if units_value != 0:
-                            price_value = (price_value / units_value).quantize(
-                                Decimal('0.0000000001'))  # 10 decimal places
+                            tolerance = Decimal('0.005')
+                            raw = price_value / units_value
+                            for places in range(2, 29):
+                                quantized = raw.quantize(Decimal(10) ** -places)
+                                if abs(units_value * quantized - price_value) < tolerance:
+                                    price_value = quantized
+                                    break
+                            else:
+                                price_value = raw  # fallback: use full precision
                         else:
                             raise APIError(
                                 message="Cannot use @@ price with zero units",

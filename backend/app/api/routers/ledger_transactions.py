@@ -130,7 +130,11 @@ def _convert_to_beancount_transaction(update_txn: UpdateTransaction) -> Transact
     postings = []
     for p in update_txn.postings:
         # Build amount
-        amount = Amount(Decimal(str(p.amount)), p.currency) if p.amount is not None else None
+        # Ensure at least 2 decimal places so Beancount infers proper tolerance
+        raw_amount = Decimal(str(p.amount)) if p.amount is not None else None
+        if raw_amount is not None and raw_amount == raw_amount.to_integral_value():
+            raw_amount = raw_amount.quantize(Decimal('0.01'))
+        amount = Amount(raw_amount, p.currency) if raw_amount is not None else None
 
         # Build cost
         cost = None
