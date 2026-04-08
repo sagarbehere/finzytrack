@@ -176,7 +176,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** complexity
 - **Description:** Handles widget execution, parameter binding, visualization rendering, and result display in a single component. The `useRecipeExecutor` composable exists but the component still does significant orchestration.
 - **Recommendation:** Consider extracting the visualization dispatching (chart vs table vs KPI) into a `RecipeWidgetRenderer.vue` sub-component.
-- **Fix-eligible:** no (moderate risk, needs testing)
+- **Fix-eligible:** no (moderate risk, needs testing) — **DONE** (extracted RecipeWidgetRenderer.vue; parent 173 lines, renderer 469 lines; vue-tsc clean)
 
 ---
 
@@ -389,7 +389,7 @@ The following fix-eligible items were **not** completed because they require hum
 | **2B-4** — Three unimplemented commodity CRUD endpoints | ~~DONE — removed stub routes, schemas kept as placeholder~~ |
 | **2E-1** — TransactionTable.vue decomposition (1,777 lines) | Large refactor requiring careful prop/emit design and thorough testing of inline editing and keyboard navigation. |
 | **2E-2** — GeneralSettingsTab.vue decomposition (786 lines) | Requires deciding how form state and save actions should be scoped across sub-components. |
-| **2E-4** — RecipeWidget.vue presentation extraction | Moderate risk; needs testing of visualization dispatching. |
+| **2E-4** — RecipeWidget.vue presentation extraction | ~~DONE — extracted RecipeWidgetRenderer.vue~~ |
 | **2F-3** — useAccountsTree decomposition | Borderline; current size is acceptable. |
 | **2J-1** — Backend fixed paths should become configurable | Changes config interface; needs design decision on YAML exposure and defaults. |
 | **2H-3** — Error codes: router adoption | The `error_codes.py` constants module was created, but existing routers still use raw string literals. Updating all routers to import constants is a large, low-risk change that can be done incrementally. |
