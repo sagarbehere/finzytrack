@@ -461,7 +461,7 @@
   // Navigation configuration based on Finzytrack spec
   const mainNavigation = [
     {
-      name: 'Dashboard',
+      name: 'Dashboards',
       href: '/dashboard',
       icon: HomeIcon,
       id: 'dashboard',
