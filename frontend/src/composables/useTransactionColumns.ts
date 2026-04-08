@@ -200,7 +200,7 @@ export function buildTanStackColumns(
       }
     }
 
-    if (def.type === 'display' || def.type === 'component') {
+    if ((def.type === 'display' || def.type === 'component') && !accessorFn) {
       return columnHelper.display({
         id: def.id,
         header: def.header,
