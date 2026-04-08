@@ -9,6 +9,8 @@
     "preview": "vite preview",
     "lint": "eslint . --fix",
     "format": "prettier --write src/",
+    "test": "vitest",
+    "test:run": "vitest run",
     "generate-api": "npx openapi-typescript-codegen --input http://localhost:8001/openapi.json --output ./src/services/generated-api"
   },
   "dependencies": {
@@ -38,9 +40,11 @@
     "@typescript-eslint/parser": "^8.43.0",
     "@vitejs/plugin-vue": "^5.1.0",
     "@vue/eslint-config-prettier": "^9.0.0",
+    "@vue/test-utils": "^2.4.6",
     "buffer": "^6.0.3",
     "eslint": "^8.57.0",
     "eslint-plugin-vue": "^9.27.0",
+    "happy-dom": "^20.8.9",
     "openapi-typescript-codegen": "^0.29.0",
     "prettier": "^3.3.0",
     "stream-browserify": "^3.0.0",
@@ -48,7 +52,8 @@
     "timers-browserify": "^2.0.12",
     "util": "^0.12.5",
     "vite": "^5.4.0",
-    "vite-plugin-monaco-editor": "^1.1.0"
+    "vite-plugin-monaco-editor": "^1.1.0",
+    "vitest": "^3.2.4"
   },
   "engines": {
     "node": ">=18.0.0"
