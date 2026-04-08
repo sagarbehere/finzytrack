@@ -16,7 +16,6 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 
 from app.dependencies import get_config_manager, get_backup_manager
 from app.core.config_manager import ConfigManager
@@ -27,6 +26,7 @@ from app.helpers.recipe_validation import (
     validate_id,
     validate_widget,
 )
+from app.schemas.recipe_schemas import RecipeWriteRequest, RecipeWriteResponse
 from app.schemas.rule_write_schemas import RuleContentResponse
 from app.schemas.response_schemas import ApiResponse
 from app.helpers.response_helpers import success_json_response
@@ -34,15 +34,6 @@ from app.helpers.response_helpers import success_json_response
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-class RecipeWriteRequest(BaseModel):
-    content: dict
-
-
-class RecipeWriteResponse(BaseModel):
-    path: str
-    warning: Optional[str] = None
 
 
 def _recipes_dir(config_manager: ConfigManager) -> Path:

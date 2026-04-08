@@ -9,32 +9,13 @@ from pathlib import Path
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel
 
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
+from app.schemas.filesystem_schemas import FileEntry, BrowseResponse
 from app.schemas.response_schemas import ApiResponse
 
 router = APIRouter()
-
-
-# ============================================================================
-# Response Schemas
-# ============================================================================
-
-class FileEntry(BaseModel):
-    """A single file or directory entry."""
-    name: str
-    type: Literal["file", "directory"]
-    size: Optional[int] = None  # bytes, only for files
-
-
-class BrowseResponse(BaseModel):
-    """Directory listing response."""
-    current_path: str
-    parent_path: Optional[str] = None  # null at filesystem root
-    home_path: str
-    entries: List[FileEntry]
 
 
 # ============================================================================

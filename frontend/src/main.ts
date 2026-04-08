@@ -2,7 +2,7 @@ import { createApp } from 'vue'
 import App from './App.vue'
 import router from './router'
 import './style.css'
-import { vFormError } from './directives/formError.js'
+
 import { OpenAPI } from './services/generated-api'
 import { ConfigService } from './services/generated-api'
 import { useConfig } from './composables/useConfig'
@@ -25,7 +25,6 @@ async function initApp() {
 
   const app = createApp(App)
   app.use(router)
-  app.directive('form-error', vFormError)
   app.mount('#app')
 }
 

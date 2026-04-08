@@ -111,7 +111,7 @@ def _extract_one_field(
 
     # Must have a pattern for non-header sources
     if not field_def.pattern:
-        raise ExtractionError(f"No pattern defined and source is not email_header_date")
+        raise ExtractionError("No pattern defined and source is not email_header_date")
 
     flags = re.DOTALL if field_def.multiline else 0
     try:

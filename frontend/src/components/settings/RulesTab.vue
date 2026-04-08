@@ -280,7 +280,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { ExclamationTriangleIcon, XCircleIcon, DocumentArrowUpIcon } from '@heroicons/vue/24/outline'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'

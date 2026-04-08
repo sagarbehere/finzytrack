@@ -6,9 +6,6 @@
  * Request to update an existing balance directive.
  */
 export type BalanceDirectiveUpdateRequest = {
-    /**
-     * Date in YYYY-MM-DD format
-     */
     original_date: string;
     original_currency: string;
     original_amount: number;

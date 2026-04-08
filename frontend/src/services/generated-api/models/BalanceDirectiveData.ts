@@ -6,9 +6,6 @@
  * A balance assertion directive with optional associated pad.
  */
 export type BalanceDirectiveData = {
-    /**
-     * Date in YYYY-MM-DD format
-     */
     date: string;
     currency: string;
     expected_balance: number;

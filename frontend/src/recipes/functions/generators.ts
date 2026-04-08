@@ -6,6 +6,7 @@
  */
 
 import type { RecipeParameterOption } from '@/types/recipes'
+import { ACCOUNT_TYPES } from '@/types/accounts'
 import { useConfig } from '@/composables/useConfig'
 
 export interface GeneratorConfig {
@@ -97,13 +98,7 @@ export function quarterOptions(): RecipeParameterOption[] {
  * Returns: [{ value: "Assets", label: "Assets" }, ...]
  */
 export function accountTypeOptions(): RecipeParameterOption[] {
-  return [
-    { value: 'Assets', label: 'Assets' },
-    { value: 'Liabilities', label: 'Liabilities' },
-    { value: 'Income', label: 'Income' },
-    { value: 'Expenses', label: 'Expenses' },
-    { value: 'Equity', label: 'Equity' },
-  ]
+  return ACCOUNT_TYPES.map(type => ({ value: type, label: type }))
 }
 
 // ============================================================================

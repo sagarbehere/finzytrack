@@ -1,6 +1,8 @@
 // Account management types for the Accounts view
 
-export type AccountType = 'Assets' | 'Liabilities' | 'Equity' | 'Income' | 'Expenses';
+/** The five Beancount account types — single source of truth. */
+export const ACCOUNT_TYPES = ['Assets', 'Liabilities', 'Equity', 'Income', 'Expenses'] as const;
+export type AccountType = typeof ACCOUNT_TYPES[number];
 export type AccountStatus = 'open' | 'closed';
 
 export interface AggregatedBalance {
@@ -23,16 +25,6 @@ export interface AccountTreeNode {
   notes: string | null;                 // From metadata.description
   currencyBadges: string[];             // From accountDetails.currencies
   metadata: Record<string, string>;     // All metadata from beancount open directive
-}
-
-export interface BalanceDirective {
-  date: string
-  currency: string
-  expectedBalance: number
-  hasPad: boolean
-  padSourceAccount: string | null
-  hasError: boolean
-  errorMessage: string | null
 }
 
 export interface AccountFilters {

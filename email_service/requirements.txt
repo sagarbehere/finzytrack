@@ -1,9 +1,0 @@
-fastapi>=0.118.0
-uvicorn[standard]>=0.37.0
-pydantic>=2.11.9
-pyyaml>=6.0.3
-beautifulsoup4>=4.14.3
-httpx>=0.28.1
-click>=8.3.0
-openai>=2.29.0
-anthropic>=0.86.0

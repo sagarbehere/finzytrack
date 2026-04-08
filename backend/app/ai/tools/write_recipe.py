@@ -16,7 +16,6 @@ from pathlib import Path
 from app.ai.tools.base import BaseTool
 from app.core.backup_manager import BackupManager
 from app.helpers.recipe_validation import (
-    is_non_empty_str,
     validate_dashboard as _validate_dashboard,
     validate_id as _validate_id,
     validate_widget as _validate_widget,

@@ -12,7 +12,7 @@ import json
 import logging
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 from app.config import LLMConfig
 
@@ -246,7 +246,8 @@ def categorize_batch(
         return {}, warnings
 
     # Filter accounts to Expenses:* and Income:* for the prompt (keep full set for validation)
-    categorization_accounts = [a for a in accounts if a.startswith("Expenses:") or a.startswith("Income:")]
+    from app.core.constants import INCOME_STATEMENT_PREFIXES
+    categorization_accounts = [a for a in accounts if a.startswith(INCOME_STATEMENT_PREFIXES)]
     if not categorization_accounts:
         categorization_accounts = accounts
 

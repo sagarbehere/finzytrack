@@ -7,7 +7,7 @@ Supports CLI argument overrides using flattened argument names.
 import os
 import yaml
 from enum import Enum
-from typing import Dict, Any, List, Literal, Optional
+from typing import Dict, Any, Literal, Optional
 from pathlib import Path
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
@@ -275,22 +275,5 @@ class Config(BaseModel):
                 current[path[-1]] = value
         
         return data
-    
-    # def get_account_mapping(self, institution: str, account_type: str, account_id: str, institution_fid: Optional[str] = None) -> Optional[OFXAccountMapping]:
-    #     """Find matching account mapping."""
-    #     for mapping in self.ofx_account_mappings:
-    #         # Institution match - prefer FID if available, fallback to name
-    #         institution_match = False
-    #         if institution_fid and mapping.institution_fid:
-    #             institution_match = mapping.institution_fid == institution_fid
-    #         else:
-    #             institution_match = mapping.institution.upper() == institution.upper()
-
-    #         if (institution_match and
-    #             mapping.account_type.upper() == account_type.upper() and
-    #             mapping.account_id == account_id):  # Full account ID match!
-    #             return mapping
-
-    #     return None
     
     

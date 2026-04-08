@@ -10,6 +10,7 @@ from decimal import Decimal
 import uuid_utils as uuid
 
 from app.core.backup_manager import BackupManager
+from app.core.constants import ACCOUNT_TYPE_PREFIXES, BALANCE_SHEET_PREFIXES, BALANCE_SHEET_TYPES, SOURCE_ACCOUNT_PREFIXES
 from app.core.ledger_cache import LedgerCache
 from .ledger_initializer import LedgerInitializer
 from app.schemas.account_schemas import (
@@ -105,10 +106,9 @@ class BeancountManager:
             return False
         
         # Check if account name starts with one of the required account types (case insensitive)
-        valid_account_types = ['Income:', 'Expenses:', 'Equity:', 'Assets:', 'Liabilities:']
         account_lower = account_name.lower()
-        
-        return any(account_lower.startswith(account_type.lower()) for account_type in valid_account_types)
+
+        return any(account_lower.startswith(prefix.lower()) for prefix in ACCOUNT_TYPE_PREFIXES)
     
     def has_parsing_errors(self) -> bool:
         """Check if ledger file has parsing errors."""
@@ -174,67 +174,17 @@ class BeancountManager:
             logger.warning(f"Beancount parsing warnings: {len(errors)} issues found")
 
         # Balance sheet account types (balance = cumulative up to end_date)
-        balance_sheet_prefixes = ('Assets:', 'Liabilities:', 'Equity:')
+        balance_sheet_prefixes = BALANCE_SHEET_PREFIXES
         # Also handle root accounts without colon
-        balance_sheet_roots = ('Assets', 'Liabilities', 'Equity')
+        balance_sheet_roots = BALANCE_SHEET_TYPES
 
         result = []
 
         for account_name, account_detail in cached_accounts.items():
-            # Determine if this is a balance sheet or income statement account
-            is_balance_sheet = (
-                account_name.startswith(balance_sheet_prefixes) or
-                account_name in balance_sheet_roots
+            currencies = self._compute_filtered_balances(
+                account_name, entries, start_date, end_date,
+                balance_sheet_prefixes, balance_sheet_roots
             )
-
-            # Compute filtered currency data
-            currency_info: Dict[str, Dict[str, Any]] = {}
-
-            for entry in entries:
-                if isinstance(entry, data.Transaction):
-                    txn_date = entry.date
-
-                    # Apply date filtering based on account type
-                    if is_balance_sheet:
-                        # Balance sheet: include if transaction is on or before end_date
-                        if txn_date > end_date:
-                            continue
-                    else:
-                        # Income statement: include if transaction is within the period
-                        if start_date and txn_date < start_date:
-                            continue
-                        if txn_date > end_date:
-                            continue
-
-                    # Process postings for this account
-                    for posting in entry.postings:
-                        if posting.account == account_name and posting.units:
-                            currency = posting.units.currency
-
-                            if currency not in currency_info:
-                                currency_info[currency] = {
-                                    "transaction_count": 0,
-                                    "last_transaction_date": None,
-                                    "balance": Decimal(0)
-                                }
-
-                            currency_info[currency]["transaction_count"] += 1
-
-                            if (currency_info[currency]["last_transaction_date"] is None or
-                                txn_date > currency_info[currency]["last_transaction_date"]):
-                                currency_info[currency]["last_transaction_date"] = txn_date
-
-                            currency_info[currency]["balance"] += posting.units.number
-
-            # Convert to AccountCurrencyData objects
-            currencies = []
-            for currency, info in currency_info.items():
-                currencies.append(AccountCurrencyData(
-                    currency=currency,
-                    transaction_count=info["transaction_count"],
-                    last_transaction_date=info["last_transaction_date"].isoformat() if info["last_transaction_date"] else None,
-                    balance=float(info["balance"])
-                ))
 
             # Create new AccountDetails with filtered currency data
             result.append(AccountDetails(
@@ -246,6 +196,79 @@ class BeancountManager:
             ))
 
         return result
+
+    def _compute_filtered_balances(
+        self,
+        account_name: str,
+        entries: List[Any],
+        start_date: Optional[date],
+        end_date: date,
+        balance_sheet_prefixes: Tuple[str, ...],
+        balance_sheet_roots: Tuple[str, ...],
+    ) -> List[AccountCurrencyData]:
+        """
+        Compute date-filtered currency balances for a single account.
+
+        For balance sheet accounts, includes all transactions up to end_date.
+        For income statement accounts, includes transactions within [start_date, end_date].
+
+        Returns a list of AccountCurrencyData with balance, transaction count,
+        and last transaction date per currency.
+        """
+        is_balance_sheet = (
+            account_name.startswith(balance_sheet_prefixes) or
+            account_name in balance_sheet_roots
+        )
+
+        currency_info: Dict[str, Dict[str, Any]] = {}
+
+        for entry in entries:
+            if isinstance(entry, data.Transaction):
+                txn_date = entry.date
+
+                # Apply date filtering based on account type
+                if is_balance_sheet:
+                    # Balance sheet: include if transaction is on or before end_date
+                    if txn_date > end_date:
+                        continue
+                else:
+                    # Income statement: include if transaction is within the period
+                    if start_date and txn_date < start_date:
+                        continue
+                    if txn_date > end_date:
+                        continue
+
+                # Process postings for this account
+                for posting in entry.postings:
+                    if posting.account == account_name and posting.units:
+                        currency = posting.units.currency
+
+                        if currency not in currency_info:
+                            currency_info[currency] = {
+                                "transaction_count": 0,
+                                "last_transaction_date": None,
+                                "balance": Decimal(0)
+                            }
+
+                        currency_info[currency]["transaction_count"] += 1
+
+                        if (currency_info[currency]["last_transaction_date"] is None or
+                            txn_date > currency_info[currency]["last_transaction_date"]):
+                            currency_info[currency]["last_transaction_date"] = txn_date
+
+                        currency_info[currency]["balance"] += posting.units.number
+
+        # Convert to AccountCurrencyData objects
+        currencies = []
+        for currency, info in currency_info.items():
+            currencies.append(AccountCurrencyData(
+                currency=currency,
+                transaction_count=info["transaction_count"],
+                last_transaction_date=info["last_transaction_date"],
+                balance=float(info["balance"])
+            ))
+
+        return currencies
     
     def get_account_open_date(self, account_name: str) -> Optional[date]:
         """Get opening date for an account from cache."""
@@ -386,11 +409,6 @@ class BeancountManager:
         if self.is_existing_account(request.name):
             raise ValueError(f"Account already exists: {request.name}")
 
-        try:
-            open_date_obj = datetime.strptime(request.open_date, "%Y-%m-%d").date()
-        except ValueError:
-            raise ValueError(f"Invalid open_date format: {request.open_date}")
-
         from beancount.core import data as bd
         meta: Dict[str, Any] = {'filename': str(self.ledger_file), 'lineno': 0}
         if request.description:
@@ -398,7 +416,7 @@ class BeancountManager:
         if request.metadata:
             meta.update(request.metadata)
 
-        open_entry = bd.Open(meta, open_date_obj, request.name, request.currencies or [], None)
+        open_entry = bd.Open(meta, request.open_date, request.name, request.currencies or [], None)
         self._write_entries(list(self.cache.get_entries()) + [open_entry])
 
         # Return the newly created account details from the refreshed cache
@@ -416,10 +434,11 @@ class BeancountManager:
         account_name: str,
         *,
         new_name: Optional[str] = None,
-        open_date: Optional[str] = None,
+        open_date: Optional[date] = None,
         currencies: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        close_date: Optional[str] = None,  # YYYY-MM-DD = set/update, "" = reopen, None = no change
+        close_date: Optional[date] = None,
+        reopen: bool = False,
     ) -> None:
         """
         Update an existing account's Open (and optionally Close) directive.
@@ -430,7 +449,6 @@ class BeancountManager:
         updated in the same write.
         """
         from beancount.core import data as bd
-        import datetime as _dt
 
         final_name = new_name or account_name
         entries = self.cache.get_entries()
@@ -441,7 +459,7 @@ class BeancountManager:
         for entry in entries:
             if isinstance(entry, bd.Open) and entry.account == account_name:
                 found_open = True
-                final_date = _dt.datetime.strptime(open_date, "%Y-%m-%d").date() if open_date else entry.date
+                final_date = open_date or entry.date
                 final_currencies = currencies or list(entry.currencies or [])
                 # Carry forward existing metadata and merge in new values
                 carried = {k: v for k, v in (entry.meta or {}).items() if k not in ('filename', 'lineno')}
@@ -453,14 +471,13 @@ class BeancountManager:
 
             elif isinstance(entry, bd.Close) and entry.account == account_name:
                 found_close = True
-                if close_date is None:
+                if reopen:
+                    pass  # Drop the Close directive entirely
+                elif close_date is not None:
+                    new_entries.append(bd.Close(entry.meta, close_date, final_name))
+                else:
                     # No change requested — keep directive, but rename if necessary
                     new_entries.append(entry._replace(account=final_name))
-                elif close_date == '':
-                    pass  # Reopen: drop the Close directive entirely
-                else:
-                    final_close = _dt.datetime.strptime(close_date, "%Y-%m-%d").date()
-                    new_entries.append(bd.Close(entry.meta, final_close, final_name))
 
             elif final_name != account_name:
                 new_entries.append(self._rename_account_in_entry(entry, account_name, final_name))
@@ -472,11 +489,9 @@ class BeancountManager:
             raise ValueError(f"Account open directive not found: {account_name}")
 
         # If caller wants a close date and there was no existing Close, append one
-        if close_date and close_date != '' and not found_close:
-            import datetime as _dt2
+        if close_date is not None and not found_close:
             close_meta = {'filename': str(self.ledger_file), 'lineno': 0}
-            final_close = _dt2.datetime.strptime(close_date, "%Y-%m-%d").date()
-            new_entries.append(bd.Close(close_meta, final_close, final_name))
+            new_entries.append(bd.Close(close_meta, close_date, final_name))
 
         self._write_entries(new_entries)
 
@@ -732,7 +747,7 @@ class BeancountManager:
         else:
             # Infer from first Assets/Liabilities posting
             for posting in txn.postings:
-                if posting.account.startswith(('Assets:', 'Liabilities:')):
+                if posting.account.startswith(SOURCE_ACCOUNT_PREFIXES):
                     source_account = posting.account
                     break
 
@@ -989,7 +1004,7 @@ class BeancountManager:
                 error_message = error_by_line.get(entry_lineno)
 
                 result.append(BalanceDirectiveData(
-                    date=entry.date.isoformat(),
+                    date=entry.date,
                     currency=entry.amount.currency,
                     expected_balance=float(entry.amount.number) if entry.amount.number is not None else 0.0,
                     has_pad=pad_source is not None,
@@ -1027,14 +1042,15 @@ class BeancountManager:
         from beancount.core.amount import Amount as BcAmount
         from decimal import Decimal as D
 
-        balance_date = datetime.strptime(request.date, "%Y-%m-%d").date()
+        from datetime import timedelta
+        balance_date = request.date
         meta = {'filename': str(self.ledger_file), 'lineno': 0}
 
         new_entries = []
         # Pad must be dated before the balance (balance checks at start-of-day),
         # so we date the pad one day prior.
         if request.include_pad and request.pad_source_account:
-            pad_date = datetime.strptime(self._day_before(request.date), "%Y-%m-%d").date()
+            pad_date = balance_date - timedelta(days=1)
             pad_meta = {'filename': str(self.ledger_file), 'lineno': 0}
             new_entries.append(bd.Pad(pad_meta, pad_date, account_name, request.pad_source_account))
 
@@ -1067,7 +1083,7 @@ class BeancountManager:
         if request.pad_source_account and not self.is_existing_account(request.pad_source_account):
             raise ValueError(f"Pad source account not found: {request.pad_source_account}")
 
-        original_date = datetime.strptime(request.original_date, "%Y-%m-%d").date()
+        original_date = request.original_date
         original_amount = D(str(request.original_amount))
 
         entries = list(self.cache.get_entries())
@@ -1093,7 +1109,7 @@ class BeancountManager:
         pad_idx = self._find_pad_before_balance_entry(entries, balance_idx, account_name)
 
         # Compute new values
-        new_date = datetime.strptime(request.new_date, "%Y-%m-%d").date() if request.new_date else original_date
+        new_date = request.new_date if request.new_date else original_date
         new_amount = D(str(request.new_amount)) if request.new_amount is not None else original_amount
         new_currency = request.new_currency or request.original_currency
 
@@ -1103,9 +1119,8 @@ class BeancountManager:
         entries[balance_idx] = bd.Balance(old_balance.meta, new_date, account_name, new_balance_amount, None, None)
 
         # Handle pad directive changes
-        new_pad_date = datetime.strptime(self._day_before(
-            request.new_date or request.original_date
-        ), "%Y-%m-%d").date()
+        from datetime import timedelta
+        new_pad_date = new_date - timedelta(days=1)
         include_pad = request.include_pad
 
         if include_pad is True:
@@ -1154,7 +1169,7 @@ class BeancountManager:
         """
         from beancount.core import data as bd
 
-        target_date = datetime.strptime(directive_date, "%Y-%m-%d").date()
+        target_date = datetime.strptime(directive_date, "%Y-%m-%d").date()  # string from query param
         entries = list(self.cache.get_entries())
 
         # Find the matching balance entry

@@ -16,7 +16,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** dead-code
 - **Description:** The email import functionality has been merged into the main backend (`backend/app/email_import/`). The top-level `email_service/` directory is a remnant of the former standalone microservice and is not referenced by any active code.
 - **Recommendation:** Delete the `email_service/` directory. Git history preserves it if ever needed.
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE** (directory deleted)
 
 #### 2A-2: Four `.js` files in an otherwise TypeScript frontend
 - **Files:** `frontend/src/main.js`, `frontend/src/router/index.js`, `frontend/src/composables/useTheme.js`, `frontend/src/directives/formError.js`
@@ -24,7 +24,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** inconsistency
 - **Description:** The entire frontend is TypeScript (strict mode enabled), but four files remain as plain JavaScript. This creates an inconsistency and bypasses type checking for entry points and a composable.
 - **Recommendation:** Convert all four to `.ts` with proper type annotations. `main.js` and `router/index.js` are particularly important since they're app entry points.
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE** (`formError.js` deleted per 2A-3; `main.js`, `router/index.js`, `useTheme.js` converted to `.ts` with type annotations)
 
 #### 2A-3: `v-form-error` directive registered but never used
 - **Files:** `frontend/src/directives/formError.js`, `frontend/src/main.js` (line registering the directive)
@@ -32,7 +32,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** dead-code
 - **Description:** The `vFormError` custom directive is imported and registered globally in `main.js`, but no `.vue` template in the project uses `v-form-error`. Components use the `FormFeedback.vue` component for inline errors instead.
 - **Recommendation:** Remove `formError.js` and its registration in `main.js`.
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE** (directive file and registration removed, empty `directives/` dir deleted)
 
 #### 2A-4: `node_modules/` at repo root (no root `package.json`)
 - **Files:** `/node_modules/` (root level)
@@ -40,7 +40,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** inconsistency
 - **Description:** A `node_modules/` directory exists at the repo root despite there being no root `package.json`. It's gitignored, so it's a local artifact only — likely from an accidental `npm install` at root level. Not harmful but could confuse contributors.
 - **Recommendation:** Delete the root `node_modules/` directory.
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE**
 
 #### 2A-5: Backend scripts lack documentation and include one-time migration scripts
 - **Files:** `backend/scripts/debug_fetch.py`, `backend/scripts/find_duplicates.py`, `backend/scripts/migrate_to_uuid_system.py`, `backend/scripts/test_pad_autogeneration.py`
@@ -48,7 +48,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** dead-code
 - **Description:** `migrate_to_uuid_system.py` is a run-once data migration from Feb 2025 that's no longer needed. `test_pad_autogeneration.py` is a standalone test/reference script, not part of any test suite.
 - **Recommendation:** Move `migrate_to_uuid_system.py` to `ignore/` or delete it. Consider whether `test_pad_autogeneration.py` should be a proper test or removed.
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE** (both scripts deleted)
 
 #### 2A-6: Some Pydantic schemas defined inline in route files instead of `schemas/`
 - **Files:** `backend/app/api/routers/recipes.py` (defines `RecipeWriteRequest` inline), `backend/app/api/routers/filesystem.py` (defines `FileEntry`, `BrowseResponse` inline)
@@ -56,7 +56,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** inconsistency
 - **Description:** Most routers import schemas from `backend/app/schemas/`. However, `recipes.py` and `filesystem.py` define their request/response models directly in the route file. This breaks the consistent pattern.
 - **Recommendation:** Move these schemas to `schemas/recipe_schemas.py` and `schemas/filesystem_schemas.py`, then import them in the routers.
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE** (schemas moved to `recipe_schemas.py` and `filesystem_schemas.py`)
 
 ---
 
@@ -68,7 +68,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** duplication
 - **Description:** A ~15-line try/except block catching `FileNotFoundError`, `PermissionError`, and generic `Exception` (converting each to `APIError`) is copy-pasted into 10+ route handlers. This is the single largest source of code duplication in the backend. The global exception handler in `error_handler.py` already catches unhandled exceptions, making most of these redundant.
 - **Recommendation:** Create a decorator or context manager (e.g., `@handle_ledger_errors` or `with ledger_error_context(config):`) that wraps the common pattern. Only keep route-specific exception handling where the error message or code is truly unique.
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE** (created `helpers/error_context.py` with `ledger_error_context()` context manager; updated `accounts.py` and `commodities.py`)
 
 #### 2B-2: Fat route handlers for account mutations
 - **Files:** `backend/app/api/routers/accounts.py` — `update_account()` (~150 lines, starting line 203), `delete_account()` (~85 lines, starting line 514), `close_account()` (~75 lines, starting line 355)
@@ -84,7 +84,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** duplication
 - **Description:** Date string parsing (`datetime.strptime(date_str, "%Y-%m-%d").date()`) with try/except `ValueError` raising `APIError(code="VALIDATION_ERROR")` appears 5+ times with near-identical code.
 - **Recommendation:** Create a helper `parse_date_param(date_str: str, param_name: str) -> date` in `helpers/` that validates and raises `APIError` on failure. Alternatively, use a Pydantic `@field_validator` on date fields in the request schemas.
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE** (created `helpers/date_helpers.py` with `parse_date_param()` and `parse_optional_date_param()`; updated `accounts.py`)
 
 #### 2B-4: Three commodity endpoints are unimplemented stubs
 - **Files:** `backend/app/api/routers/commodities.py` (lines 67, 82, 96)
@@ -100,7 +100,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** duplication
 - **Description:** `app.state.config_manager = config_manager` appears on two consecutive lines — a copy-paste artifact.
 - **Recommendation:** Remove the duplicate line.
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE**
 
 ---
 
@@ -112,7 +112,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** missing-abstraction
 - **Description:** Date fields in request schemas are typed as `str` and validated manually in route handlers (see 2B-3). These should use Pydantic `@field_validator` or a custom `Date` type so invalid dates are rejected at the schema boundary.
 - **Recommendation:** Add `@field_validator` for date fields in request schemas, or use `datetime.date` directly as the field type (Pydantic v2 can parse date strings automatically).
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE** (replaced `DateStr` string type with `datetime.date` in `account_schemas.py` and `commodity_schemas.py`; updated `ledger_cache.py` and `beancount_manager.py` to pass date objects directly; removed manual `strptime` parsing from route handlers)
 
 #### 2C-2: No shared base for CRUD response patterns
 - **Files:** `backend/app/schemas/account_schemas.py`, `commodity_schemas.py`, `csv_schemas.py`, `xls_schemas.py`
@@ -132,7 +132,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** duplication
 - **Description:** Account type prefixes (`'Assets'`, `'Liabilities'`, `'Equity'`, `'Income'`, `'Expenses'`) and groupings (balance sheet vs income statement) are hardcoded in multiple locations.
 - **Recommendation:** Create a constants module (`backend/app/constants.py` or `backend/app/core/constants.py`) defining `ACCOUNT_TYPES`, `BALANCE_SHEET_TYPES`, `INCOME_STATEMENT_TYPES`. Reference from all locations.
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE** (created `core/constants.py`; updated `beancount_manager.py`, `ledger_cache.py`, `sqlite_exporter.py`, `ai_categorizer.py`)
 
 #### 2D-2: Beancount parsing and caching architecture is well-designed (positive)
 - **Files:** `backend/app/core/ledger_cache.py`, `backend/app/core/beancount_manager.py`
@@ -168,7 +168,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** duplication
 - **Description:** These two components share ~300 lines of identical structure: rule selector dropdown with reload, file upload handler, preview table, and rule management UI. The only differences are the parser composable used and some format-specific column mapping.
 - **Recommendation:** Extract shared logic into a `BaseFilePicker.vue` component or a `useFilePicker` composable that handles the common rule-selection + file-upload + preview pattern. Format-specific behavior passed via props/slots.
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE** (created `composables/useFilePicker.ts`; updated both `CSVFilePicker.vue` and `XLSFilePicker.vue` to use it)
 
 #### 2E-4: RecipeWidget.vue mixes execution and presentation (612 lines)
 - **Files:** `frontend/src/components/recipes/RecipeWidget.vue`
@@ -196,7 +196,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** complexity
 - **Description:** Handles query execution, simple transforms, configurable transforms (sort, limit, pluck, pivot), and value formatting. The pivot transform logic alone is ~100 lines.
 - **Recommendation:** Extract transform logic into a separate `useRecipeTransforms.ts` composable or pure utility functions.
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE** (created `composables/useRecipeTransforms.ts` with `applyPredefinedTransform()` and helpers)
 
 #### 2F-3: useAccountsTree is large (340 lines)
 - **Files:** `frontend/src/composables/useAccountsTree.ts`
@@ -228,7 +228,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** duplication / type-safety
 - **Description:** The hand-written `BalanceDirective` interface in `types/accounts.ts` duplicates the generated `BalanceDirectiveData` type. The hand-written version uses camelCase field names while the generated version uses snake_case (matching the Pydantic schema). This creates drift risk and confusion about which type to use.
 - **Recommendation:** Remove the hand-written `BalanceDirective` interface and use the generated `BalanceDirectiveData` type throughout. If camelCase is needed for UI ergonomics, create a mapper function rather than a parallel type.
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE** (removed unused hand-written `BalanceDirective` interface from `types/accounts.ts`)
 
 #### 2H-2: Account type constants duplicated across frontend and backend
 - **Files:** `frontend/src/types/accounts.ts` (line 3: `AccountType` union), `frontend/src/composables/useAccountsTree.ts`, `frontend/src/recipes/functions/generators.ts`, `backend/app/core/beancount_manager.py`
@@ -236,7 +236,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** duplication
 - **Description:** The five Beancount account types (`Assets`, `Liabilities`, `Equity`, `Income`, `Expenses`) are hardcoded independently in 4+ locations across frontend and backend. These are stable Beancount domain constants unlikely to change, but the duplication means a typo in one place wouldn't be caught.
 - **Recommendation:** On the frontend, centralize into a single `constants.ts` file and import everywhere. The backend already has this recommendation (see 2D-1).
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE** (added `ACCOUNT_TYPES` const array to `types/accounts.ts`; updated `useAccountsTree.ts` and `generators.ts` to use it)
 
 #### 2H-3: Error codes are magic strings with no shared contract
 - **Files:** `backend/app/api/routers/*.py` (error code strings in `APIError` raises), `frontend/src/utils/ErrorHandler.ts` (error code mappings)
@@ -244,7 +244,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** inconsistency
 - **Description:** Error codes like `"VALIDATION_ERROR"`, `"FILE_NOT_FOUND"`, `"RESOURCE_CONFLICT"`, `"ACCOUNT_CREATION_NEEDED"` are hardcoded as strings in both backend route handlers and the frontend error handler mapping. No shared enum or documented contract exists. If a backend developer changes a code string, the frontend mapping silently falls through to the default handler.
 - **Recommendation:** Create an `error_codes.py` module in the backend defining all error codes as string constants. Optionally expose them via the OpenAPI schema so the frontend codegen can pick them up.
-- **Fix-eligible:** yes (backend constants module)
+- **Fix-eligible:** yes (backend constants module) — **DONE** (created `error_codes.py` with all 62 error code constants; routers not yet updated to import from it — constants module is available for incremental adoption)
 
 ---
 
@@ -256,7 +256,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** complexity
 - **Description:** This method handles date filtering, currency accumulation, nested loops for balance computation, and response building. It could be decomposed.
 - **Recommendation:** Extract `_apply_date_filters()` and `_compute_account_balances()` as private methods.
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE** (extracted `_compute_filtered_balances()` private method)
 
 #### 2I-2: Commented-out `get_account_mapping()` method in config.py
 - **Files:** `backend/app/config.py` (lines 279-294)
@@ -264,7 +264,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** dead-code
 - **Description:** A 16-line method is fully commented out. It was replaced by the OFX mappings system but left as reference.
 - **Recommendation:** Delete. Git history preserves it.
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE**
 
 #### 2I-3: Frontend — complex template expressions in several components
 - **Files:** `frontend/src/views/AnalyzeView.vue`, `frontend/src/components/common/TransactionTable.vue`
@@ -272,7 +272,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** complexity
 - **Description:** Some templates contain complex conditional class bindings and inline calculations that would be clearer as computed properties.
 - **Recommendation:** Extract to computed properties where readability is impacted.
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE** (extracted `languageToggleClasses()`, `resultTabClasses()`, `chartTypeClasses()` in AnalyzeView; `getAmountColorClass()` in TransactionTable)
 
 #### 2I-4: `useTransactionQuery.ts` — `buildSQLQuery()` is ~80 lines
 - **Files:** `frontend/src/composables/useTransactionQuery.ts`
@@ -280,7 +280,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** complexity
 - **Description:** Builds a complex SQL query string with multiple filter branches, GROUP BY logic, and ORDER BY construction.
 - **Recommendation:** Extract into `buildWhereClause()`, `buildGroupByClause()`, `buildOrderByClause()` helper functions.
-- **Fix-eligible:** yes
+- **Fix-eligible:** yes — **DONE** (extracted `buildWhereClause()`, `buildGroupByClause()`, `buildOrderByClause()`, `escapeSQLString()` as module-level functions)
 
 ---
 
@@ -351,17 +351,15 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Files:** `frontend/src/components/settings/GeneralSettingsTab.vue` (786 lines)
 - **Decision needed:** Splitting into per-domain sections requires deciding how form state and save actions should be scoped (per-section save vs. single save-all).
 
-#### CSVFilePicker / XLSFilePicker unification
-- **Files:** `frontend/src/components/import/CSVFilePicker.vue`, `XLSFilePicker.vue`
-- **Decision needed:** Unifying requires designing a base component or composable API that accommodates format-specific differences. Needs design input on how much generalization is warranted.
+#### ~~CSVFilePicker / XLSFilePicker unification~~ — **DONE**
+- Unified via `useFilePicker.ts` composable.
 
 #### Backend fixed paths should become configurable
 - **Files:** `backend/app/config.py` (lines 23-30: `SQLITE_EXPORT_PATH`, `BACKUP_DIR`, `LOG_FILE`)
 - **Decision needed:** Whether these should be exposed in `config.yaml` for user override, and what the defaults/validation should be.
 
-#### `.js` to `.ts` migration for four frontend files
-- **Files:** `frontend/src/main.js`, `frontend/src/router/index.js`, `frontend/src/composables/useTheme.js`, `frontend/src/directives/formError.js`
-- **Decision needed:** `formError.js` should be deleted (see 2A-3). The other three should be converted to TypeScript, but this may require updating Vite's entry point configuration.
+#### ~~`.js` to `.ts` migration for four frontend files~~ — **DONE**
+- `formError.js` deleted; `main.js`, `router/index.js`, `useTheme.js` converted to `.ts` with type annotations. `index.html` entry point updated.
 
 ---
 
@@ -378,3 +376,20 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 | 7 | `backend/app/api/routers/commodities.py` | 67 | TODO | "Implement commodity creation logic" |
 | 8 | `backend/app/api/routers/commodities.py` | 82 | TODO | "Implement commodity update logic" |
 | 9 | `backend/app/api/routers/commodities.py` | 96 | TODO | "Implement commodity deletion logic" |
+
+---
+
+## Remaining Items Requiring Human Review
+
+The following fix-eligible items were **not** completed because they require human decisions or carry risk beyond safe refactoring:
+
+| Finding | Reason Not Done |
+|---------|----------------|
+| **2B-2** — Fat route handlers for account mutations | FIXME comments flag known business logic errors. Extracting to `BeancountManager` methods requires domain-expert review of edge cases (updating accounts with transactions, closing with pending balances). |
+| **2B-4** — Three unimplemented commodity CRUD endpoints | Needs decision: implement for first release or remove from the API surface. |
+| **2E-1** — TransactionTable.vue decomposition (1,777 lines) | Large refactor requiring careful prop/emit design and thorough testing of inline editing and keyboard navigation. |
+| **2E-2** — GeneralSettingsTab.vue decomposition (786 lines) | Requires deciding how form state and save actions should be scoped across sub-components. |
+| **2E-4** — RecipeWidget.vue presentation extraction | Moderate risk; needs testing of visualization dispatching. |
+| **2F-3** — useAccountsTree decomposition | Borderline; current size is acceptable. |
+| **2J-1** — Backend fixed paths should become configurable | Changes config interface; needs design decision on YAML exposure and defaults. |
+| **2H-3** — Error codes: router adoption | The `error_codes.py` constants module was created, but existing routers still use raw string literals. Updating all routers to import constants is a large, low-risk change that can be done incrementally. |

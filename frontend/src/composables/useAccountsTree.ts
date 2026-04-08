@@ -1,6 +1,6 @@
 import { ref, type Ref } from 'vue'
 import type { AccountDetails } from '@/services/generated-api'
-import type { AccountTreeNode, AccountFilters, AccountType, AggregatedBalance } from '@/types/accounts'
+import { ACCOUNT_TYPES, type AccountTreeNode, type AccountFilters, type AccountType, type AggregatedBalance } from '@/types/accounts'
 import { getLocale } from '@/utils/currencyFormat'
 
 interface UseAccountsTreeReturn {
@@ -24,7 +24,7 @@ const expandedIds = ref<Set<string>>(new Set())
  */
 function getAccountType(fullPath: string): AccountType {
   const firstPart = fullPath.split(':')[0]
-  if (['Assets', 'Liabilities', 'Equity', 'Income', 'Expenses'].includes(firstPart)) {
+  if ((ACCOUNT_TYPES as readonly string[]).includes(firstPart)) {
     return firstPart as AccountType
   }
   return 'Assets' // Default fallback
@@ -180,7 +180,7 @@ function buildTree(accounts: AccountDetails[]): AccountTreeNode[] {
   }
 
   // Sort roots by type order
-  const typeOrder = ['Assets', 'Liabilities', 'Equity', 'Income', 'Expenses']
+  const typeOrder: readonly string[] = ACCOUNT_TYPES
   roots.sort((a, b) => typeOrder.indexOf(a.name) - typeOrder.indexOf(b.name))
 
   return roots

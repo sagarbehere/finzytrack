@@ -6,10 +6,12 @@ export const THEMES = {
   SYSTEM: 'system',
   LIGHT: 'light',
   DARK: 'dark',
-}
+} as const
+
+type ThemeValue = typeof THEMES[keyof typeof THEMES]
 
 // Global theme state (singleton)
-const currentTheme = ref(THEMES.SYSTEM)
+const currentTheme = ref<ThemeValue>(THEMES.SYSTEM)
 const isDarkMode = ref(false)
 
 export function useTheme() {
@@ -22,7 +24,7 @@ export function useTheme() {
   }
 
   // Apply theme to DOM
-  const applyTheme = (theme) => {
+  const applyTheme = (theme: ThemeValue) => {
     if (typeof document === 'undefined') return
 
     const html = document.documentElement
@@ -51,22 +53,22 @@ export function useTheme() {
   }
 
   // Save theme via storage adapter
-  const saveTheme = (theme) => {
+  const saveTheme = (theme: ThemeValue) => {
     getStorageAdapter().set(STORAGE_KEYS.THEME, theme)
   }
 
   // Load theme via storage adapter
-  const loadTheme = () => {
-    const saved = getStorageAdapter().get(STORAGE_KEYS.THEME)
-    if (saved && Object.values(THEMES).includes(saved)) {
-      return saved
+  const loadTheme = (): ThemeValue => {
+    const saved = getStorageAdapter().get<string>(STORAGE_KEYS.THEME)
+    if (saved && (Object.values(THEMES) as string[]).includes(saved)) {
+      return saved as ThemeValue
     }
     return THEMES.SYSTEM
   }
 
   // Set theme
-  const setTheme = (theme) => {
-    if (!Object.values(THEMES).includes(theme)) {
+  const setTheme = (theme: ThemeValue) => {
+    if (!(Object.values(THEMES) as string[]).includes(theme)) {
       console.warn(`Invalid theme: ${theme}`)
       return
     }

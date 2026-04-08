@@ -24,7 +24,7 @@
             {{ isReloadingRules ? 'Reloading…' : 'Reload' }}
           </button>
           <button
-            @click="router.push({ path: '/settings', query: { tab: 'rules', type: 'xls' } })"
+            @click="navigateToRuleSettings"
             class="rounded-md bg-white p-1.5 text-gray-500 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 hover:text-gray-700 shrink-0 dark:bg-white/10 dark:text-gray-400 dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20 dark:hover:text-gray-200"
             title="Manage XLS rules"
           >
@@ -63,7 +63,7 @@
           {{ isReloadingRules ? 'Reloading…' : 'Reload' }}
         </button>
         <button
-          @click="router.push({ path: '/settings', query: { tab: 'rules', type: 'xls' } })"
+          @click="navigateToRuleSettings"
           class="rounded-md bg-white p-1.5 text-gray-500 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 hover:text-gray-700 shrink-0 dark:bg-white/10 dark:text-gray-400 dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20 dark:hover:text-gray-200"
           title="Manage XLS rules"
         >
@@ -295,16 +295,10 @@
 </template>
 
 <script setup lang="ts">
-  import { ref, computed, watch, onMounted } from 'vue'
   import { Listbox, ListboxButton, ListboxLabel, ListboxOption, ListboxOptions } from '@headlessui/vue'
-  import { useRouter } from 'vue-router'
   import { ChevronUpDownIcon } from '@heroicons/vue/16/solid'
   import { CheckIcon } from '@heroicons/vue/20/solid'
   import { Cog6ToothIcon } from '@heroicons/vue/24/outline'
-
-  const router = useRouter()
-  import { useToast } from '@/composables/useNotifications'
-  import { useAccounts } from '@/composables/useAccounts'
   import {
     DocumentArrowUpIcon,
     DocumentCheckIcon,
@@ -315,8 +309,9 @@
   import AccountDropdown from '@/components/common/AccountDropdown.vue'
   import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
   import { useXlsParser } from '@/composables/useXlsParser'
+  import { useFilePicker } from '@/composables/useFilePicker'
   import { ImportService } from '@/services/generated-api'
-  import type { XlsRule, XlsRuleSummary, InvalidRuleSummary } from '@/services/generated-api'
+  import type { XlsRule, XlsRuleSummary } from '@/services/generated-api'
   import type { CsvFileDetails } from '@/types/csv'
 
   const emit = defineEmits<{
@@ -334,188 +329,42 @@
     fileDetails,
     parseError,
     isParsing,
-    processFile,
-    clearFile,
-  } = useXlsParser()
-
-  // Rule state
-  const availableRules = ref<XlsRuleSummary[]>([])
-  const invalidRules = ref<InvalidRuleSummary[]>([])
-  const selectedRuleFilename = ref<string>('')
-
-  const xlsRuleOptions = computed(() => [
-    { value: '', label: 'Select a rule...' },
-    ...availableRules.value.map(rule => ({
-      value: rule.filename,
-      label: `${rule.name} (${rule.default_account})`,
-    })),
-  ])
-  const selectedRule = ref<XlsRule | null>(null)
-  const isLoadingRules = ref<boolean>(false)
-  const isReloadingRules = ref<boolean>(false)
-  const rulesLoadError = ref<string | null>(null)
-  const toast = useToast()
-  const { accountDetails, hasBeenFetched } = useAccounts()
-
-  // Account/currency state
-  const selectedAccount = ref<string>('')
-  const selectedCurrency = ref<string>('')
-
-  const accountNotInLedger = computed(() => {
-    if (!selectedAccount.value || !hasBeenFetched.value) return false
-    const openAccounts = accountDetails.value.filter(a => !a.close_date).map(a => a.name)
-    return !openAccounts.includes(selectedAccount.value)
+    availableRules,
+    invalidRules,
+    selectedRuleFilename,
+    selectedRule,
+    isLoadingRules,
+    isReloadingRules,
+    rulesLoadError,
+    ruleOptions: xlsRuleOptions,
+    selectedAccount,
+    selectedCurrency,
+    accountNotInLedger,
+    fileInput,
+    isDragOver,
+    previewTransactions,
+    handleReloadRules,
+    handleDrop,
+    handleDragEnter,
+    handleDragOver,
+    handleDragLeave,
+    openFilePicker,
+    handleFileSelect,
+    handleClearFile: clearFileAction,
+    proceedWithImport: proceedAction,
+    navigateToRuleSettings,
+    formatFileSize,
+    formatDateRange,
+  } = useFilePicker<XlsRuleSummary, XlsRule>({
+    parser: useXlsParser(),
+    service: {
+      listRules: () => ImportService.listXlsRules(),
+      getRule: (filename: string) => ImportService.getXlsRule(filename),
+    },
+    formatLabel: 'XLS',
+    ruleType: 'xls',
   })
 
-  // UI state
-  const fileInput = ref<HTMLInputElement | null>(null)
-  const isDragOver = ref<boolean>(false)
-
-  const previewTransactions = computed(() => {
-    if (!fileDetails.value) return []
-    return fileDetails.value.rawTransactions.slice(0, 5)
-  })
-
-  // Load rules on mount
-  onMounted(async () => {
-    isLoadingRules.value = true
-    try {
-      const response = await ImportService.listXlsRules()
-      if (response.success && response.data) {
-        availableRules.value = response.data.rules || []
-        invalidRules.value = response.data.invalid_rules || []
-      }
-    } catch (err: any) {
-      rulesLoadError.value = 'Failed to load XLS rules.'
-      console.error('Failed to load XLS rules:', err)
-    } finally {
-      isLoadingRules.value = false
-    }
-  })
-
-  watch(selectedRuleFilename, () => handleRuleChange())
-
-  const handleRuleChange = async () => {
-    if (!selectedRuleFilename.value) {
-      selectedRule.value = null
-      return
-    }
-
-    try {
-      const response = await ImportService.getXlsRule(selectedRuleFilename.value)
-      if (response.success && response.data) {
-        selectedRule.value = response.data
-        selectedAccount.value = response.data.default_account
-        selectedCurrency.value = response.data.default_currency || 'USD'
-
-        // Re-parse if file already selected
-        if (selectedFile.value) {
-          processFile(selectedFile.value, response.data)
-        }
-      }
-    } catch (err: any) {
-      console.error('Failed to load XLS rule:', err)
-      parseError.value = 'Failed to load the selected rule.'
-    }
-  }
-
-  const handleReloadRules = async () => {
-    isReloadingRules.value = true
-    try {
-      const response = await ImportService.listXlsRules()
-      if (response.success && response.data) {
-        availableRules.value = response.data.rules || []
-        invalidRules.value = response.data.invalid_rules || []
-
-        // Re-fetch the selected rule if it still exists, then re-parse if file is loaded
-        if (selectedRuleFilename.value) {
-          const stillExists = availableRules.value.some(r => r.filename === selectedRuleFilename.value)
-          if (stillExists) {
-            const ruleResponse = await ImportService.getXlsRule(selectedRuleFilename.value)
-            if (ruleResponse.success && ruleResponse.data) {
-              selectedRule.value = ruleResponse.data
-              selectedAccount.value = ruleResponse.data.default_account
-              selectedCurrency.value = ruleResponse.data.default_currency || 'USD'
-              if (selectedFile.value) {
-                processFile(selectedFile.value, ruleResponse.data)
-              }
-            }
-          } else {
-            selectedRuleFilename.value = ''
-            selectedRule.value = null
-          }
-        }
-
-        toast.success('Rules reloaded', `${availableRules.value.length} rule${availableRules.value.length === 1 ? '' : 's'} loaded.`)
-      }
-    } catch {
-      toast.error('Reload failed', 'Could not reload XLS rules.')
-    } finally {
-      isReloadingRules.value = false
-    }
-  }
-
-  const handleDrop = (e: DragEvent) => {
-    e.preventDefault()
-    isDragOver.value = false
-    const files = e.dataTransfer?.files
-    if (files && files.length > 0 && selectedRule.value) {
-      processFile(files[0], selectedRule.value)
-    }
-  }
-
-  const handleDragEnter = (e: DragEvent) => { e.preventDefault(); isDragOver.value = true }
-  const handleDragOver = (e: DragEvent) => { e.preventDefault(); isDragOver.value = true }
-  const handleDragLeave = (e: DragEvent) => {
-    e.preventDefault()
-    if (e.currentTarget instanceof HTMLElement && !e.currentTarget.contains(e.relatedTarget as Node)) {
-      isDragOver.value = false
-    }
-  }
-
-  const openFilePicker = () => fileInput.value?.click()
-
-  const handleFileSelect = (e: Event) => {
-    const target = e.target as HTMLInputElement
-    const files = target.files
-    if (files && files.length > 0 && selectedRule.value) {
-      processFile(files[0], selectedRule.value)
-    }
-  }
-
-  const handleClearFile = () => {
-    clearFile()
-    if (fileInput.value) fileInput.value.value = ''
-    emit('fileCleared')
-  }
-
-  const proceedWithImport = () => {
-    if (selectedFile.value && fileDetails.value && selectedAccount.value && selectedCurrency.value) {
-      emit('proceedWithImport', {
-        file: selectedFile.value,
-        details: fileDetails.value,
-        account: selectedAccount.value,
-        currency: selectedCurrency.value,
-      })
-    }
-  }
-
-  const formatFileSize = (bytes: number): string => {
-    if (bytes === 0) return '0 Bytes'
-    const k = 1024
-    const sizes = ['Bytes', 'KB', 'MB', 'GB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-  }
-
-  const formatDateRange = (startDate: string | null, endDate: string | null): string => {
-    if (!startDate || !endDate) return 'Unknown'
-    const formatDate = (date: string) =>
-      new Date(date).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-      })
-    return `${formatDate(startDate)} - ${formatDate(endDate)}`
-  }
+  const handleClearFile = () => clearFileAction(() => emit('fileCleared'))
+  const proceedWithImport = () => proceedAction((payload) => emit('proceedWithImport', payload))
 </script>

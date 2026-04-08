@@ -16,6 +16,8 @@ from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
 from app.dependencies import get_config_manager, get_beancount_manager
 from app.exceptions import APIError
+from app.helpers.date_helpers import parse_optional_date_param
+from app.helpers.error_context import ledger_error_context
 from app.helpers.response_helpers import success_json_response
 
 logger = logging.getLogger(__name__)
@@ -41,32 +43,10 @@ async def list_accounts(
     """
     config = config_manager.get_config()
 
-    try:
+    with ledger_error_context(config.ledger_file):
         # Parse date parameters if provided
-        start_date_obj = None
-        end_date_obj = None
-
-        if start_date:
-            try:
-                start_date_obj = datetime.strptime(start_date, "%Y-%m-%d").date()
-            except ValueError:
-                raise APIError(
-                    message="Invalid start_date format",
-                    code="VALIDATION_ERROR",
-                    status_code=422,
-                    details={"field": "start_date", "value": start_date, "help": "Date must be in YYYY-MM-DD format"}
-                )
-
-        if end_date:
-            try:
-                end_date_obj = datetime.strptime(end_date, "%Y-%m-%d").date()
-            except ValueError:
-                raise APIError(
-                    message="Invalid end_date format",
-                    code="VALIDATION_ERROR",
-                    status_code=422,
-                    details={"field": "end_date", "value": end_date, "help": "Date must be in YYYY-MM-DD format"}
-                )
+        start_date_obj = parse_optional_date_param(start_date, "start_date")
+        end_date_obj = parse_optional_date_param(end_date, "end_date")
 
         # Get detailed account information with optional date filtering
         if start_date_obj is not None or end_date_obj is not None:
@@ -79,30 +59,6 @@ async def list_accounts(
 
         accounts_data = AccountListData(accounts=detailed_accounts)
         return success_json_response(accounts_data)
-        
-    except FileNotFoundError:
-        raise APIError(
-            message="Ledger file not found", 
-            code="FILE_NOT_FOUND", 
-            status_code=404, 
-            details={"path": config.ledger_file}
-        )
-    except PermissionError:
-        raise APIError(
-            message="Permission denied accessing ledger file",
-            code="FILE_PERMISSION_ERROR",
-            status_code=403,
-            details={"path": config.ledger_file}
-        )
-    except APIError:
-        # Re-raise API errors (validation errors for date params, etc.)
-        raise
-    except Exception as e:
-        raise APIError(
-            message=f"Error accessing ledger: {str(e)}",
-            code="UNKNOWN_SERVER_ERROR",
-            status_code=500
-        )
 
 @router.post("/accounts", response_model=ApiResponse[AccountCreateData], status_code=201, operation_id="createAccount")
 async def create_account_endpoint(
@@ -209,8 +165,8 @@ async def update_account(
 ):
     """Update account details."""
     config = config_manager.get_config()
-    
-    try:
+
+    with ledger_error_context(config.ledger_file):
         # Validate account exists
         if not beancount_manager.is_existing_account(account_name):
             raise APIError(
@@ -219,13 +175,13 @@ async def update_account(
                 status_code=404,
                 details={"account_name": account_name}
             )
-        
+
         # Validate no updates if account is closed (can only reopen via close_date=null)
         close_date = beancount_manager.get_account_close_date(account_name)
         if close_date and request.close_date is None:
             # Attempting to reopen a closed account
             pass  # This is allowed
-        
+
         # Validate new name (if provided)
         if request.new_name:
             if not beancount_manager.validate_account_format(request.new_name):
@@ -239,7 +195,7 @@ async def update_account(
                         "help": "New account name must follow Beancount naming conventions (e.g., 'Assets:Bank:Checking')"
                     }
                 )
-            
+
             # Check if new name already exists (and it's not the same as current name)
             if request.new_name != account_name and beancount_manager.is_existing_account(request.new_name):
                 raise APIError(
@@ -248,55 +204,23 @@ async def update_account(
                     status_code=409,
                     details={"new_name": request.new_name}
                 )
-        
-        # Validate open_date (if provided)
-        open_date_obj = None
-        if request.open_date:
-            try:
-                open_date_obj = datetime.strptime(request.open_date, "%Y-%m-%d").date()
-            except ValueError:
-                raise APIError(
-                    message="Invalid open_date format",
-                    code="VALIDATION_ERROR",
-                    status_code=422,
-                    details={
-                        "field": "open_date",
-                        "open_date": request.open_date,
-                        "help": "Date must be in YYYY-MM-DD format"
-                    }
-                )
-        
-        # Validate close_date (if provided)
-        close_date_obj = None
+
+        # Validate close_date vs open_date
         if request.close_date:
-            try:
-                close_date_obj = datetime.strptime(request.close_date, "%Y-%m-%d").date()
-            except ValueError:
-                raise APIError(
-                    message="Invalid close_date format",
-                    code="VALIDATION_ERROR",
-                    status_code=422,
-                    details={
-                        "field": "close_date",
-                        "close_date": request.close_date,
-                        "help": "Date must be in YYYY-MM-DD format"
-                    }
-                )
-            
-            # Get current open date for validation
             current_open_date = beancount_manager.get_account_open_date(account_name)
-            if close_date_obj < (open_date_obj or current_open_date or datetime.min.date()):
+            effective_open = request.open_date or current_open_date or datetime.min.date()
+            if request.close_date < effective_open:
                 raise APIError(
                     message="Close date must be after open date",
                     code="VALIDATION_ERROR",
                     status_code=422,
                     details={
                         "field": "close_date",
-                        "close_date": request.close_date,
+                        "close_date": request.close_date.isoformat(),
                         "help": "Accounts cannot be closed before they were opened"
                     }
                 )
-        
+
         new_name = request.new_name or account_name
 
         # Delegate the write to BeancountManager (parse → modify entries → print)
@@ -304,10 +228,10 @@ async def update_account(
             beancount_manager.update_account_directive(
                 account_name,
                 new_name=request.new_name or None,
-                open_date=request.open_date or None,
+                open_date=request.open_date,
                 currencies=request.currencies or None,
                 metadata=request.metadata or None,
-                close_date=request.close_date,  # None = no change, "" = reopen, "YYYY-MM-DD" = set
+                close_date=request.close_date,
             )
         except ValueError as e:
             raise APIError(message=str(e), code="ACCOUNT_UPDATE_ERROR", status_code=400)
@@ -327,30 +251,6 @@ async def update_account(
             message=f"Account '{new_name}' updated successfully" if updated else f"Account '{new_name}' unchanged",
         )
         return success_json_response(update_data)
-            
-    except APIError:
-        # Re-raise API errors as-is
-        raise
-    except FileNotFoundError:
-        raise APIError(
-            message="Ledger file not found", 
-            code="FILE_NOT_FOUND", 
-            status_code=404, 
-            details={"path": config.ledger_file}
-        )
-    except PermissionError:
-        raise APIError(
-            message="Permission denied accessing ledger file", 
-            code="FILE_PERMISSION_ERROR", 
-            status_code=403, 
-            details={"path": config.ledger_file}
-        )
-    except Exception as e:
-        raise APIError(
-            message=f"Error updating account: {str(e)}", 
-            code="UNKNOWN_SERVER_ERROR", 
-            status_code=500
-        )
 
 # FIXME: This function needs to be rigorously reviewed and updated. It has many business logic errors/inadquacies
 @router.post("/accounts/{account_name}/close", response_model=ApiResponse[AccountCloseData], operation_id="closeAccount")
@@ -362,8 +262,8 @@ async def close_account(
 ):
     """Close an account by adding a closing directive to the Beancount ledger."""
     config = config_manager.get_config()
-    
-    try:
+
+    with ledger_error_context(config.ledger_file):
         # Validate account exists
         if not beancount_manager.is_existing_account(account_name):
             raise APIError(
@@ -372,7 +272,7 @@ async def close_account(
                 status_code=404,
                 details={"account_name": account_name}
             )
-        
+
         # Check if account is already closed
         existing_close_date = beancount_manager.get_account_close_date(account_name)
         if existing_close_date:
@@ -382,72 +282,31 @@ async def close_account(
                 status_code=409,
                 details={"account_name": account_name, "close_date": existing_close_date.isoformat()}
             )
-        
-        # Parse and validate close_date
-        try:
-            close_date_obj = datetime.strptime(request.close_date, "%Y-%m-%d").date()
-        except ValueError:
-            raise APIError(
-                message="Invalid close_date format",
-                code="VALIDATION_ERROR",
-                status_code=422,
-                details={
-                    "field": "close_date",
-                    "close_date": request.close_date,
-                    "help": "Date must be in YYYY-MM-DD format"
-                }
-            )
-        
+
         # Ensure close_date is after open_date
         open_date = beancount_manager.get_account_open_date(account_name)
-        if open_date and close_date_obj < open_date:
+        if open_date and request.close_date < open_date:
             raise APIError(
                 message="Close date must be after open date",
                 code="VALIDATION_ERROR",
                 status_code=422,
                 details={
                     "field": "close_date",
-                    "close_date": request.close_date,
+                    "close_date": request.close_date.isoformat(),
                     "open_date": open_date.isoformat(),
                     "help": "Accounts cannot be closed before they were opened"
                 }
             )
-        
-        # Delegate the write to BeancountManager (parse → modify entries → print)
-        beancount_manager.close_account_directive(account_name, close_date_obj, reason=request.reason or None)
-        
 
-        
+        # Delegate the write to BeancountManager (parse → modify entries → print)
+        beancount_manager.close_account_directive(account_name, request.close_date, reason=request.reason or None)
+
         close_data = AccountCloseData(
             account_closed=True,
             message=f"Account '{account_name}' closed successfully"
         )
-        
+
         return success_json_response(close_data)
-        
-    except APIError:
-        # Re-raise API errors as-is
-        raise
-    except FileNotFoundError:
-        raise APIError(
-            message="Ledger file not found", 
-            code="FILE_NOT_FOUND", 
-            status_code=404, 
-            details={"path": config.ledger_file}
-        )
-    except PermissionError:
-        raise APIError(
-            message="Permission denied accessing ledger file", 
-            code="FILE_PERMISSION_ERROR", 
-            status_code=403, 
-            details={"path": config.ledger_file}
-        )
-    except Exception as e:
-        raise APIError(
-            message=f"Error closing account: {str(e)}",
-            code="UNKNOWN_SERVER_ERROR",
-            status_code=500
-        )
 
 @router.post("/accounts/{account_name}/reopen", response_model=ApiResponse[AccountReopenData], operation_id="reopenAccount")
 async def reopen_account(
@@ -458,7 +317,7 @@ async def reopen_account(
     """Reopen a closed account by removing the close directive from the ledger."""
     config = config_manager.get_config()
 
-    try:
+    with ledger_error_context(config.ledger_file):
         # Validate account exists
         if not beancount_manager.is_existing_account(account_name):
             raise APIError(
@@ -488,29 +347,6 @@ async def reopen_account(
 
         return success_json_response(reopen_data)
 
-    except APIError:
-        raise
-    except FileNotFoundError:
-        raise APIError(
-            message="Ledger file not found",
-            code="FILE_NOT_FOUND",
-            status_code=404,
-            details={"path": config.ledger_file}
-        )
-    except PermissionError:
-        raise APIError(
-            message="Permission denied accessing ledger file",
-            code="FILE_PERMISSION_ERROR",
-            status_code=403,
-            details={"path": config.ledger_file}
-        )
-    except Exception as e:
-        raise APIError(
-            message=f"Error reopening account: {str(e)}",
-            code="UNKNOWN_SERVER_ERROR",
-            status_code=500
-        )
-
 # FIXME: This function needs to be rigorously reviewed and updated. It has many business logic errors/inadquacies
 @router.delete("/accounts/{account_name}", response_model=ApiResponse[AccountDeleteData], operation_id="deleteAccount")
 async def delete_account(
@@ -524,7 +360,7 @@ async def delete_account(
     warnings = []
     transactions_deleted = 0
 
-    try:
+    with ledger_error_context(config.ledger_file):
         # Validate account exists
         if not beancount_manager.is_existing_account(account_name):
             raise APIError(
@@ -554,7 +390,6 @@ async def delete_account(
         # Get additional account info for warning messages
         open_date = beancount_manager.get_account_open_date(account_name)
         if open_date:
-            # Calculate age of account
             from datetime import date
             current_date = date.today()
             account_age = (current_date - open_date).days
@@ -582,32 +417,8 @@ async def delete_account(
             warnings=warnings if warnings else None,
             transactions_deleted=transactions_deleted if delete_transactions else None
         )
-        
+
         return success_json_response(delete_data)
-        
-    except APIError:
-        # Re-raise API errors as-is
-        raise
-    except FileNotFoundError:
-        raise APIError(
-            message="Ledger file not found", 
-            code="FILE_NOT_FOUND", 
-            status_code=404, 
-            details={"path": config.ledger_file}
-        )
-    except PermissionError:
-        raise APIError(
-            message="Permission denied accessing ledger file", 
-            code="FILE_PERMISSION_ERROR", 
-            status_code=403, 
-            details={"path": config.ledger_file}
-        )
-    except Exception as e:
-        raise APIError(
-            message=f"Error deleting account: {str(e)}",
-            code="UNKNOWN_SERVER_ERROR",
-            status_code=500
-        )
 
 # =====================================
 # Balance & Pad Directive Endpoints

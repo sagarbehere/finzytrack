@@ -10,8 +10,8 @@ from typing import Any, Dict, Optional
 import yaml
 
 from app.email_import.rule_schemas import RuleFile, TransactionTypeDef
-from app.email_import.regex_extractor import extract_fields, ExtractionError
-from app.email_import.llm_extractor import extract_fields_llm, LLMExtractionError
+from app.email_import.regex_extractor import extract_fields
+from app.email_import.llm_extractor import extract_fields_llm
 from app.config import LLMConfig
 
 logger = logging.getLogger(__name__)

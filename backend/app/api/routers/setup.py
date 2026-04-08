@@ -87,8 +87,6 @@ async def complete_setup(
     }
 
     # --- Ledger creation ---
-    ledger_path = Path(config.ledger_file)
-
     if request.ledger_mode == "existing":
         if not request.existing_ledger_path:
             raise APIError(

@@ -6,9 +6,6 @@
  * Request to create a balance assertion (optionally with pad).
  */
 export type BalanceDirectiveCreateRequest = {
-    /**
-     * Date in YYYY-MM-DD format
-     */
     date: string;
     currency: string;
     amount: number;

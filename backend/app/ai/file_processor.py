@@ -157,7 +157,7 @@ def _csv_parse_hint(lines: list[str]) -> str:
     # Count only non-blank footer rows for the skip_lines_end hint.
     # Blank rows at the end are harmless — the date filter skips them — so they
     # should not inflate the recommended count.
-    non_blank_footer = [l for l in footer_lines if l.strip()]
+    non_blank_footer = [line for line in footer_lines if line.strip()]
     footer_note = (
         f" {len(non_blank_footer)} trailing footer rows detected — set skip_lines_end: {len(non_blank_footer)}."
         if non_blank_footer else ""
@@ -245,7 +245,7 @@ def _xls_parse_hint(rows: list[str]) -> str:
     skip_start = len(header_lines) + 1  # +1 for column header row (data_lines[0])
 
     n_transactions = len(data_lines) - 1
-    non_blank_footer = [l for l in footer_lines if l.strip()]
+    non_blank_footer = [line for line in footer_lines if line.strip()]
     if non_blank_footer:
         footer_note = (
             f" Recommended skip_lines_end: {len(non_blank_footer)}"

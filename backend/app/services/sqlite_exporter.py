@@ -14,6 +14,8 @@ from typing import Dict, Any, List, Optional
 from decimal import Decimal
 from datetime import datetime
 
+from app.core.constants import SOURCE_ACCOUNT_TYPES
+
 from beancount.core.data import Transaction, Posting
 
 logger = logging.getLogger(__name__)
@@ -382,7 +384,7 @@ class SQLiteExporter:
         # Rule 3 & 4: Find Assets/Liabilities accounts
         asset_liability_postings = [
             p for p in other_postings
-            if SQLiteExporter._get_account_type(p.account) in ('Assets', 'Liabilities')
+            if SQLiteExporter._get_account_type(p.account) in SOURCE_ACCOUNT_TYPES
         ]
 
         if len(asset_liability_postings) == 1:

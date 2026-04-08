@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
+from app.core.constants import INCOME_STATEMENT_PREFIXES, SOURCE_ACCOUNT_PREFIXES
+
 from beancount import loader
 from beancount.core import data
 
@@ -149,7 +151,7 @@ class LedgerCache:
 
                 accounts[account_name] = AccountDetails(
                     name=account_name,
-                    open_date=entry.date.isoformat(),
+                    open_date=entry.date,
                     close_date=None,
                     currencies=[],  # Will be populated in second pass
                     metadata=metadata
@@ -159,13 +161,13 @@ class LedgerCache:
             elif isinstance(entry, data.Close):
                 account_name = entry.account
                 if account_name in accounts:
-                    accounts[account_name].close_date = entry.date.isoformat()
+                    accounts[account_name].close_date = entry.date
                 else:
                     # Account closed without open directive
                     accounts[account_name] = AccountDetails(
                         name=account_name,
-                        open_date="1970-01-01",
-                        close_date=entry.date.isoformat(),
+                        open_date=date(1970, 1, 1),
+                        close_date=entry.date,
                         currencies=[],
                         metadata={"error": "Account has close directive but no open directive"}
                     )
@@ -179,8 +181,8 @@ class LedgerCache:
                     code=commodity_code,
                     name=metadata.get('name'),
                     type=metadata.get('type'),
-                    first_seen=entry.date.isoformat(),
-                    last_seen=entry.date.isoformat(),
+                    first_seen=entry.date,
+                    last_seen=entry.date,
                     usage=CommodityUsageData(transaction_count=0, total_volume=0.0),
                     metadata=metadata
                 )
@@ -213,7 +215,7 @@ class LedgerCache:
 
                     # Find first Expenses or Income account for training
                     for posting in entry.postings:
-                        if posting.account.startswith(('Expenses:', 'Income:')):
+                        if posting.account.startswith(INCOME_STATEMENT_PREFIXES):
                             training_data.append((description, posting.account))
                             break
 
@@ -235,7 +237,7 @@ class LedgerCache:
                 for posting in entry.postings:
                     if posting.units:
                         # If source_account is not set, look for Assets/Liabilities
-                        if not source_account and posting.account.startswith(('Assets:', 'Liabilities:')):
+                        if not source_account and posting.account.startswith(SOURCE_ACCOUNT_PREFIXES):
                             source_account = posting.account
                             transaction_amount = posting.units.number
                             break
@@ -298,8 +300,8 @@ class LedgerCache:
                                 code=commodity_code,
                                 name=None,
                                 type=None,
-                                first_seen=entry.date.isoformat(),
-                                last_seen=entry.date.isoformat(),
+                                first_seen=entry.date,
+                                last_seen=entry.date,
                                 usage=CommodityUsageData(transaction_count=0, total_volume=0.0),
                                 metadata={}
                             )
@@ -313,8 +315,8 @@ class LedgerCache:
                         code=commodity_code,
                         name=None,
                         type=None,
-                        first_seen=entry.date.isoformat(),
-                        last_seen=entry.date.isoformat(),
+                        first_seen=entry.date,
+                        last_seen=entry.date,
                         usage=CommodityUsageData(transaction_count=0, total_volume=0.0),
                         metadata={}
                     )
@@ -336,14 +338,10 @@ class LedgerCache:
                 usage_first = usage_data["first_seen"]
                 usage_last = usage_data["last_seen"]
 
-                from datetime import datetime
-                current_first = datetime.fromisoformat(commodity_detail.first_seen).date() if commodity_detail.first_seen else None
-                current_last = datetime.fromisoformat(commodity_detail.last_seen).date() if commodity_detail.last_seen else None
-
-                if current_first is None or usage_first < current_first:
-                    commodity_detail.first_seen = usage_first.isoformat()
-                if current_last is None or usage_last > current_last:
-                    commodity_detail.last_seen = usage_last.isoformat()
+                if commodity_detail.first_seen is None or usage_first < commodity_detail.first_seen:
+                    commodity_detail.first_seen = usage_first
+                if commodity_detail.last_seen is None or usage_last > commodity_detail.last_seen:
+                    commodity_detail.last_seen = usage_last
 
         # Store in cache
         self._cache = LedgerData(
@@ -416,7 +414,7 @@ class LedgerCache:
             result.append(AccountCurrencyData(
                 currency=currency,
                 transaction_count=info["transaction_count"],
-                last_transaction_date=info["last_transaction_date"].isoformat() if info["last_transaction_date"] else None,
+                last_transaction_date=info["last_transaction_date"],
                 balance=float(info["balance"])
             ))
 

@@ -263,7 +263,6 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
 
     # 14. Store managers in app state for access in routes
     app.state.config_manager = config_manager
-    app.state.config_manager = config_manager
     app.state.beancount_manager = beancount_manager
     app.state.backup_manager = backup_manager
     app.state.sqlite_exporter = sqlite_exporter

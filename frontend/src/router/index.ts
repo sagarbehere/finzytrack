@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, type RouteRecordRaw, type RouteLocationNormalized, type NavigationGuardNext } from 'vue-router'
 import DashboardView from '../views/DashboardView.vue'
 import ImportView from '../views/ImportView.vue'
 import AnalyzeView from '../views/AnalyzeView.vue'
@@ -8,7 +8,7 @@ import AssistantView from '../views/AssistantView.vue'
 import SetupWizardView from '../views/SetupWizardView.vue'
 import { useConfig } from '../composables/useConfig'
 
-const routes = [
+const routes: RouteRecordRaw[] = [
   {
     path: '/',
     redirect: '/dashboard',
@@ -88,7 +88,7 @@ const router = createRouter({
 // Redirect to setup wizard on first run
 let configLoaded = false
 
-router.beforeEach(async (to, from, next) => {
+router.beforeEach(async (to: RouteLocationNormalized, _from: RouteLocationNormalized, next: NavigationGuardNext) => {
   document.title = to.meta.title ? `${to.meta.title} - Finzytrack` : 'Finzytrack'
 
   // Ensure config is loaded (once per session)

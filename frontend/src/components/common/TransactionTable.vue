@@ -535,11 +535,7 @@ const columns = computed(() => {
       header: 'Amount',
       cell: ({ row, getValue }) => {
         const amount = getValue()
-        const amountColorClass = (amount ?? 0) > 0
-          ? 'text-green-700 dark:text-green-400'
-          : (amount ?? 0) < 0
-          ? 'text-red-700 dark:text-red-400'
-          : 'text-gray-700 dark:text-gray-300'
+        const amountColorClass = getAmountColorClass(amount)
 
         if (props.editable) {
           return h('input', numericInputProps(
@@ -788,6 +784,13 @@ const columns = computed(() => {
     return columnId && columnVisibility.value[columnId] === true
   })
 })
+
+/** Returns color classes for a monetary amount (green for positive, red for negative, gray for zero/null) */
+const getAmountColorClass = (amount: number | null | undefined): string => {
+  if ((amount ?? 0) > 0) return 'text-green-700 dark:text-green-400'
+  if ((amount ?? 0) < 0) return 'text-red-700 dark:text-red-400'
+  return 'text-gray-700 dark:text-gray-300'
+}
 
 // Helper functions for styling
 const getTransactionRowClasses = (rowData: any) => {

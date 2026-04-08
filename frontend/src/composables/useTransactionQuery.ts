@@ -5,6 +5,102 @@ import { LedgerService } from '@/services/generated-api'
 import type { QueryRequest } from '@/services/generated-api'
 import { errorHandler } from '@/utils/ErrorHandler'
 
+/**
+ * Escape SQL string to prevent injection.
+ * Note: This is basic escaping. For production, consider using parameterized queries.
+ */
+function escapeSQLString(str: string): string {
+  return str.replace(/'/g, "''")
+}
+
+/**
+ * Build WHERE clauses from transaction-level and posting-level filters.
+ * Returns the full WHERE clause string (including the WHERE keyword), or empty string if no filters.
+ */
+function buildWhereClause(filters: TransactionFilters): string {
+  const transactionLevelWhereClauses: string[] = []
+  const postingLevelFilters: string[] = []
+
+  if (filters.dateFrom) {
+    transactionLevelWhereClauses.push(`transaction_date >= '${filters.dateFrom}'`)
+  }
+  if (filters.dateTo) {
+    transactionLevelWhereClauses.push(`transaction_date <= '${filters.dateTo}'`)
+  }
+  if (filters.search) {
+    const term = escapeSQLString(filters.search)
+    transactionLevelWhereClauses.push(`(LOWER(transaction_payee) LIKE LOWER('%${term}%') OR LOWER(transaction_narration) LIKE LOWER('%${term}%'))`)
+  }
+  if (filters.payeeContains) {
+    transactionLevelWhereClauses.push(`LOWER(transaction_payee) LIKE LOWER('%${escapeSQLString(filters.payeeContains)}%')`)
+  }
+  if (filters.narrationContains) {
+    transactionLevelWhereClauses.push(`LOWER(transaction_narration) LIKE LOWER('%${escapeSQLString(filters.narrationContains)}%')`)
+  }
+  if (filters.flag) {
+    transactionLevelWhereClauses.push(`LOWER(transaction_flag) = LOWER('${escapeSQLString(filters.flag)}')`)
+  }
+  if (filters.tagsContain) {
+    transactionLevelWhereClauses.push(`LOWER(transaction_tags) LIKE LOWER('%${escapeSQLString(filters.tagsContain)}%')`)
+  }
+  if (filters.linksContain) {
+    transactionLevelWhereClauses.push(`LOWER(transaction_links) LIKE LOWER('%${escapeSQLString(filters.linksContain)}%')`)
+  }
+  if (filters.year !== undefined) {
+    transactionLevelWhereClauses.push(`year = ${filters.year}`)
+  }
+  if (filters.quarter !== undefined) {
+    transactionLevelWhereClauses.push(`quarter = ${filters.quarter}`)
+  }
+
+  // POSTING-LEVEL FILTERS
+  if (filters.accountContains) {
+    postingLevelFilters.push(`LOWER(account) LIKE LOWER('%${escapeSQLString(filters.accountContains)}%')`)
+  }
+  if (filters.amountGreaterThan !== undefined) {
+    postingLevelFilters.push(`ABS(amount) > ${filters.amountGreaterThan}`)
+  }
+  if (filters.amountLessThan !== undefined) {
+    postingLevelFilters.push(`ABS(amount) < ${filters.amountLessThan}`)
+  }
+  if (filters.currency) {
+    postingLevelFilters.push(`LOWER(currency) = LOWER('${escapeSQLString(filters.currency)}')`)
+  }
+  if (filters.accountType) {
+    postingLevelFilters.push(`LOWER(account_type) = LOWER('${escapeSQLString(filters.accountType)}')`)
+  }
+
+  if (postingLevelFilters.length > 0) {
+    const postingFilterClause = postingLevelFilters.join(' AND ')
+    transactionLevelWhereClauses.push(
+      `transaction_id IN (SELECT DISTINCT transaction_id FROM postings WHERE ${postingFilterClause})`
+    )
+  }
+
+  return transactionLevelWhereClauses.length > 0
+    ? `WHERE ${transactionLevelWhereClauses.join(' AND ')}`
+    : ''
+}
+
+/** Build the GROUP BY clause for transaction grouping. */
+function buildGroupByClause(): string {
+  return `GROUP BY
+          transaction_id,
+          transaction_content_hash,
+          transaction_date,
+          transaction_flag,
+          transaction_payee,
+          transaction_narration,
+          transaction_tags,
+          transaction_links,
+          transaction_metadata_json`
+}
+
+/** Build the ORDER BY clause for result ordering. */
+function buildOrderByClause(): string {
+  return `ORDER BY transaction_date DESC, transaction_id`
+}
+
 export function useTransactionQuery() {
   const isLoading = ref(false)
   const error = ref<string | null>(null)
@@ -55,74 +151,9 @@ export function useTransactionQuery() {
    * 4. Use json_group_array() to collect postings per transaction
    */
   function buildSQLQuery(filters: TransactionFilters, limit: number = 1000): string {
-    // Separate filters into two categories:
-    // 1. Transaction-level filters: Apply to transaction fields (safe to use in WHERE before GROUP BY)
-    //    These work because all postings in a transaction share the same transaction-level values
-    // 2. Posting-level filters: Apply to posting fields (need subquery to keep transactions balanced)
-    //    These need special handling because different postings in same transaction have different values
-
-    const transactionLevelWhereClauses: string[] = []
-    const postingLevelFilters: string[] = []
-
-    if (filters.dateFrom) {
-      transactionLevelWhereClauses.push(`transaction_date >= '${filters.dateFrom}'`)
-    }
-    if (filters.dateTo) {
-      transactionLevelWhereClauses.push(`transaction_date <= '${filters.dateTo}'`)
-    }
-    if (filters.search) {
-      const term = escapeSQLString(filters.search)
-      transactionLevelWhereClauses.push(`(LOWER(transaction_payee) LIKE LOWER('%${term}%') OR LOWER(transaction_narration) LIKE LOWER('%${term}%'))`)
-    }
-    if (filters.payeeContains) {
-      transactionLevelWhereClauses.push(`LOWER(transaction_payee) LIKE LOWER('%${escapeSQLString(filters.payeeContains)}%')`)
-    }
-    if (filters.narrationContains) {
-      transactionLevelWhereClauses.push(`LOWER(transaction_narration) LIKE LOWER('%${escapeSQLString(filters.narrationContains)}%')`)
-    }
-    if (filters.flag) {
-      transactionLevelWhereClauses.push(`LOWER(transaction_flag) = LOWER('${escapeSQLString(filters.flag)}')`)
-    }
-    if (filters.tagsContain) {
-      transactionLevelWhereClauses.push(`LOWER(transaction_tags) LIKE LOWER('%${escapeSQLString(filters.tagsContain)}%')`)
-    }
-    if (filters.linksContain) {
-      transactionLevelWhereClauses.push(`LOWER(transaction_links) LIKE LOWER('%${escapeSQLString(filters.linksContain)}%')`)
-    }
-    if (filters.year !== undefined) {
-      transactionLevelWhereClauses.push(`year = ${filters.year}`)
-    }
-    if (filters.quarter !== undefined) {
-      transactionLevelWhereClauses.push(`quarter = ${filters.quarter}`)
-    }
-
-    // POSTING-LEVEL FILTERS
-    if (filters.accountContains) {
-      postingLevelFilters.push(`LOWER(account) LIKE LOWER('%${escapeSQLString(filters.accountContains)}%')`)
-    }
-    if (filters.amountGreaterThan !== undefined) {
-      postingLevelFilters.push(`ABS(amount) > ${filters.amountGreaterThan}`)
-    }
-    if (filters.amountLessThan !== undefined) {
-      postingLevelFilters.push(`ABS(amount) < ${filters.amountLessThan}`)
-    }
-    if (filters.currency) {
-      postingLevelFilters.push(`LOWER(currency) = LOWER('${escapeSQLString(filters.currency)}')`)
-    }
-    if (filters.accountType) {
-      postingLevelFilters.push(`LOWER(account_type) = LOWER('${escapeSQLString(filters.accountType)}')`)
-    }
-
-    if (postingLevelFilters.length > 0) {
-      const postingFilterClause = postingLevelFilters.join(' AND ')
-      transactionLevelWhereClauses.push(
-        `transaction_id IN (SELECT DISTINCT transaction_id FROM postings WHERE ${postingFilterClause})`
-      )
-    }
-
-    const whereClause = transactionLevelWhereClauses.length > 0
-      ? `WHERE ${transactionLevelWhereClauses.join(' AND ')}`
-      : ''
+    const whereClause = buildWhereClause(filters)
+    const groupByClause = buildGroupByClause()
+    const orderByClause = buildOrderByClause()
 
     return `
       WITH grouped_transactions AS (
@@ -150,22 +181,13 @@ export function useTransactionQuery() {
           ) AS postings
         FROM postings
         ${whereClause}
-        GROUP BY
-          transaction_id,
-          transaction_content_hash,
-          transaction_date,
-          transaction_flag,
-          transaction_payee,
-          transaction_narration,
-          transaction_tags,
-          transaction_links,
-          transaction_metadata_json
+        ${groupByClause}
       )
       SELECT
         *,
         COUNT(*) OVER() as total_count
       FROM grouped_transactions
-      ORDER BY transaction_date DESC, transaction_id
+      ${orderByClause}
       LIMIT ${limit}
     `.trim()
   }
@@ -239,14 +261,6 @@ export function useTransactionQuery() {
     })
 
     return { transactions, totalCount }
-  }
-
-  /**
-   * Escape SQL string to prevent injection.
-   * Note: This is basic escaping. For production, consider using parameterized queries.
-   */
-  function escapeSQLString(str: string): string {
-    return str.replace(/'/g, "''")
   }
 
   return {

@@ -345,7 +345,7 @@ import { useTheme } from '@/composables/useTheme'
 useTheme()
 
 const router = useRouter()
-const { config, reloadConfig } = useConfig()
+const { reloadConfig } = useConfig()
 
 // Wizard state
 const step = ref(1)

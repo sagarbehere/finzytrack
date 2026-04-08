@@ -267,9 +267,9 @@
 
   defineOptions({ name: 'ImportView' })
 
-  const { performCategorization, performCommit, isLoading, categorizeError, commitError } = useTransactionImporter()
+  const { performCategorization, performCommit, isLoading } = useTransactionImporter()
   const { checkErrors: checkLedgerErrors } = useLedgerHealth()
-  const { success: showSuccessToast, error: showErrorToast } = useToast()
+  const { success: showSuccessToast } = useToast()
 
   // Tab state
   const activeTab = ref<string>('ofx')

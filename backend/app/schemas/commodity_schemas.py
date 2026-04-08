@@ -1,8 +1,6 @@
+from datetime import date
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Annotated
-
-# Reuse existing types from account_schemas.py
-from app.schemas.account_schemas import DateStr
 
 # Define CommodityStr for consistent commodity code validation
 CommodityStr = Annotated[
@@ -25,8 +23,8 @@ class CommodityDetails(BaseModel):
     code: CommodityStr = Field(..., description="Commodity/currency code (e.g., 'USD', 'AAPL')")
     name: Optional[str] = Field(None, description="Full name from commodity directive")
     type: Optional[str] = Field(None, description="Commodity type (e.g., 'Currency', 'Stock', 'ETF')")
-    first_seen: Optional[DateStr] = Field(None, description="Earliest date this commodity appeared")
-    last_seen: Optional[DateStr] = Field(None, description="Latest date this commodity appeared")
+    first_seen: Optional[date] = Field(None, description="Earliest date this commodity appeared")
+    last_seen: Optional[date] = Field(None, description="Latest date this commodity appeared")
     usage: CommodityUsageData = Field(..., description="Transaction usage statistics")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional commodity metadata")
 

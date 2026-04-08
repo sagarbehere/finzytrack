@@ -11,6 +11,7 @@ from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
 from app.dependencies import get_config_manager, get_beancount_manager
 from app.exceptions import APIError
+from app.helpers.error_context import ledger_error_context
 from app.helpers.response_helpers import success_json_response
 
 logger = logging.getLogger(__name__)
@@ -28,34 +29,11 @@ async def list_commodities(
     Returns commodities discovered from commodity directives, transactions, and price entries.
     """
     config = config_manager.get_config()
-    
-    try:
-        # Get detailed commodity information from BeancountManager
+
+    with ledger_error_context(config.ledger_file):
         detailed_commodities = beancount_manager.get_detailed_commodities()
-        
         commodities_data = CommodityListData(commodities=detailed_commodities)
         return success_json_response(commodities_data)
-        
-    except FileNotFoundError:
-        raise APIError(
-            message="Ledger file not found", 
-            code="FILE_NOT_FOUND", 
-            status_code=404, 
-            details={"path": config.ledger_file}
-        )
-    except PermissionError:
-        raise APIError(
-            message="Permission denied accessing ledger file", 
-            code="FILE_PERMISSION_ERROR", 
-            status_code=403, 
-            details={"path": config.ledger_file}
-        )
-    except Exception as e:
-        raise APIError(
-            message=f"Error accessing ledger: {str(e)}", 
-            code="UNKNOWN_SERVER_ERROR", 
-            status_code=500
-        )
 
 @router.post("/commodities", response_model=ApiResponse[CommodityCreateData], status_code=201, operation_id="createCommodity")
 async def create_commodity_endpoint(

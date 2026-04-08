@@ -796,7 +796,6 @@ async function sendMessage() {
   // These local vars capture what happened this turn; persistent refs are the fallback
   let savedRuleTool: 'write_csv_rule' | 'write_xls_rule' | 'write_email_rule' | null = null
   let savedRuleFilename: string | null = null
-  let ruleWrittenThisTurn = false
 
   try {
     const ctx: Record<string, string> = { page: 'assistant', mode: sessionMode.value }
@@ -831,10 +830,8 @@ async function sendMessage() {
           }
         }
         // Track write tool calls for post-stream validation.
-        // Always set ruleWrittenThisTurn regardless of success, so we validate
-        // even after a failed write (shows current on-disk rule state to the user).
+        // Track write tool calls for post-stream validation.
         if (event.tool === 'write_csv_rule' || event.tool === 'write_xls_rule' || event.tool === 'write_email_rule') {
-          ruleWrittenThisTurn = true
           savedRuleTool = event.tool
           const match = event.message.match(/`([^`]+)`/)
           if (match) {
