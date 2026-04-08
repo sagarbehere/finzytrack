@@ -152,10 +152,6 @@ async def create_account_endpoint(
             status_code=500
         )
 
-# FIXME: This update_account() function needs to be rigorously reviewed and updated.
-# FIXME: It has many business logic errors/inadquacies
-# FIXME: Also, implementation sub-optimalities. E.g. at the end, it should not look for different types of errors and raise API errors. 
-# There's already code in setup_error_handlers in error_handler.py that converts any uncaught exception to a 500 APIError.
 @router.put("/accounts/{account_name}", response_model=ApiResponse[AccountUpdateData], operation_id="updateAccount")
 async def update_account(
     request: AccountUpdateRequest,
@@ -175,12 +171,6 @@ async def update_account(
                 status_code=404,
                 details={"account_name": account_name}
             )
-
-        # Validate no updates if account is closed (can only reopen via close_date=null)
-        close_date = beancount_manager.get_account_close_date(account_name)
-        if close_date and request.close_date is None:
-            # Attempting to reopen a closed account
-            pass  # This is allowed
 
         # Validate new name (if provided)
         if request.new_name:
@@ -224,17 +214,14 @@ async def update_account(
         new_name = request.new_name or account_name
 
         # Delegate the write to BeancountManager (parse → modify entries → print)
-        try:
-            beancount_manager.update_account_directive(
-                account_name,
-                new_name=request.new_name or None,
-                open_date=request.open_date,
-                currencies=request.currencies or None,
-                metadata=request.metadata or None,
-                close_date=request.close_date,
-            )
-        except ValueError as e:
-            raise APIError(message=str(e), code="ACCOUNT_UPDATE_ERROR", status_code=400)
+        beancount_manager.update_account_directive(
+            account_name,
+            new_name=request.new_name or None,
+            open_date=request.open_date,
+            currencies=request.currencies or None,
+            metadata=request.metadata or None,
+            close_date=request.close_date,
+        )
 
         # Build response from refreshed cache
         updated_detailed_accounts = beancount_manager.get_detailed_accounts()
@@ -252,7 +239,6 @@ async def update_account(
         )
         return success_json_response(update_data)
 
-# FIXME: This function needs to be rigorously reviewed and updated. It has many business logic errors/inadquacies
 @router.post("/accounts/{account_name}/close", response_model=ApiResponse[AccountCloseData], operation_id="closeAccount")
 async def close_account(
     request: AccountCloseRequest,
@@ -347,7 +333,6 @@ async def reopen_account(
 
         return success_json_response(reopen_data)
 
-# FIXME: This function needs to be rigorously reviewed and updated. It has many business logic errors/inadquacies
 @router.delete("/accounts/{account_name}", response_model=ApiResponse[AccountDeleteData], operation_id="deleteAccount")
 async def delete_account(
     account_name: str = Path(..., description="Beancount account name to delete"),
@@ -357,8 +342,6 @@ async def delete_account(
 ):
     """Remove account from ledger. Optionally deletes associated transactions."""
     config = config_manager.get_config()
-    warnings = []
-    transactions_deleted = 0
 
     with ledger_error_context(config.ledger_file):
         # Validate account exists
@@ -370,51 +353,29 @@ async def delete_account(
                 details={"account_name": account_name}
             )
 
-        # Check if account has transactions
-        total_transactions = 0
+        # Atomic delete: transactions + directives in one write
         try:
+            transactions_deleted = beancount_manager.delete_account(account_name, delete_transactions=delete_transactions)
+        except ValueError:
+            # Account has transactions but delete_transactions is False
             transaction_summary = beancount_manager.get_account_transactions_summary(account_name)
-            total_transactions = sum(summary.transaction_count for summary in transaction_summary.values())
+            total = sum(s.transaction_count for s in transaction_summary.values())
+            raise APIError(
+                message=f"Account '{account_name}' has {total} transaction(s). "
+                        f"Either set delete_transactions=true or remove them manually first.",
+                code="ACCOUNT_HAS_TRANSACTIONS",
+                status_code=409,
+                details={"account_name": account_name, "transaction_count": total}
+            )
 
-            if total_transactions > 0 and not delete_transactions:
-                warnings.append(f"Account has {total_transactions} transactions associated with it (not deleted)")
-        except Exception:
-            # If we can't check transactions, proceed with caution
-            warnings.append("Unable to verify account transaction history")
-
-        # Check if account is closed
-        close_date = beancount_manager.get_account_close_date(account_name)
-        if not close_date:
-            warnings.append("Account is still open")
-
-        # Get additional account info for warning messages
-        open_date = beancount_manager.get_account_open_date(account_name)
-        if open_date:
-            from datetime import date
-            current_date = date.today()
-            account_age = (current_date - open_date).days
-            if account_age > 365:  # Older than 1 year
-                warnings.append(f"Account has been active for {account_age} days")
-
-        # Delete transactions if requested
-        if delete_transactions and total_transactions > 0:
-            transactions_deleted = beancount_manager.delete_transactions_for_account(account_name)
-
-        # Delegate the write to BeancountManager (parse → modify entries → print)
-        beancount_manager.delete_account_directive(account_name)
-
-        # Prepare success message
         if transactions_deleted > 0:
             message = f"Account '{account_name}' and {transactions_deleted} transaction(s) deleted successfully"
-        elif warnings:
-            message = f"Account '{account_name}' deleted with warnings"
         else:
             message = f"Account '{account_name}' deleted successfully"
 
         delete_data = AccountDeleteData(
             account_deleted=True,
             message=message,
-            warnings=warnings if warnings else None,
             transactions_deleted=transactions_deleted if delete_transactions else None
         )
 

@@ -76,7 +76,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** complexity
 - **Description:** These three endpoints contain inline date parsing, validation logic, account existence checks, and multiple error branches — all directly in the route function. The FIXME comments (lines 199-201, 355, 514) acknowledge this. By contrast, `create_account()` correctly delegates to `beancount_manager`.
 - **Recommendation:** Extract the business logic into `BeancountManager` methods (e.g., `update_account()`, `close_account()`, `delete_account()`) so the route handlers become thin orchestrators: validate input -> call service -> return response.
-- **Fix-eligible:** no (needs human review of business logic correctness — the FIXMEs flag known issues)
+- **Fix-eligible:** no (needs human review of business logic correctness — the FIXMEs flag known issues) — **DONE** (reviewed with user; slimmed route handlers, removed FIXMEs, created atomic `BeancountManager.delete_account()`, option C for transaction conflict)
 
 #### 2B-3: Duplicated date-parsing validation in route handlers
 - **Files:** `backend/app/api/routers/accounts.py` (lines 50-58, 61-69, 255-267, 272-284, 388-392), `ledger_transactions.py` (line 124, 141-142)
@@ -385,7 +385,7 @@ The following fix-eligible items were **not** completed because they require hum
 
 | Finding | Reason Not Done |
 |---------|----------------|
-| **2B-2** — Fat route handlers for account mutations | FIXME comments flag known business logic errors. Extracting to `BeancountManager` methods requires domain-expert review of edge cases (updating accounts with transactions, closing with pending balances). |
+| **2B-2** — Fat route handlers for account mutations | ~~DONE — reviewed with user, handlers slimmed, atomic delete_account() created~~ |
 | **2B-4** — Three unimplemented commodity CRUD endpoints | Needs decision: implement for first release or remove from the API surface. |
 | **2E-1** — TransactionTable.vue decomposition (1,777 lines) | Large refactor requiring careful prop/emit design and thorough testing of inline editing and keyboard navigation. |
 | **2E-2** — GeneralSettingsTab.vue decomposition (786 lines) | Requires deciding how form state and save actions should be scoped across sub-components. |

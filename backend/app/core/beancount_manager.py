@@ -945,6 +945,54 @@ class BeancountManager:
 
         return deleted_count
 
+    def delete_account(self, account_name: str, delete_transactions: bool = True) -> int:
+        """
+        Atomically delete an account and optionally its transactions in a single write.
+
+        If delete_transactions is False and the account has transactions, raises
+        ValueError — the caller should not proceed with orphaned postings.
+
+        Args:
+            account_name: The account to delete
+            delete_transactions: If True, also remove transactions referencing this account
+
+        Returns:
+            Number of transactions deleted (0 if delete_transactions is False)
+
+        Raises:
+            ValueError: If delete_transactions is False and transactions exist
+        """
+        from beancount.core import data as bd
+
+        entries = self.cache.get_entries()
+        remaining_entries = []
+        transactions_deleted = 0
+
+        for entry in entries:
+            # Drop Open/Close directives for this account
+            if isinstance(entry, (bd.Open, bd.Close)) and entry.account == account_name:
+                continue
+
+            # Handle transactions with postings to this account
+            if isinstance(entry, Transaction):
+                has_posting = any(p.account == account_name for p in entry.postings)
+                if has_posting:
+                    transactions_deleted += 1
+                    if not delete_transactions:
+                        raise ValueError(
+                            f"Account '{account_name}' has transactions. "
+                            f"Set delete_transactions=True to delete them, or remove them manually first."
+                        )
+                    logger.debug(f"Deleting transaction with posting to {account_name}: {entry.narration}")
+                    continue
+
+            remaining_entries.append(entry)
+
+        self._write_entries(remaining_entries)
+        logger.info(f"Deleted account {account_name} and {transactions_deleted} transaction(s)")
+
+        return transactions_deleted
+
     # =====================================
     # Balance & Pad Directive Management
     # =====================================
