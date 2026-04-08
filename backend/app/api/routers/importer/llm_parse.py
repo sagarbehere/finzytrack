@@ -26,6 +26,7 @@ from app.dependencies import get_config_manager
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
 from app.schemas.llm_parse_schemas import LlmParsedTransaction, LlmParseResult
+from app import error_codes as ec
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -71,7 +72,7 @@ def _detect_file_type(ext: str) -> str:
         return "image"
     raise APIError(
         f"Unsupported file type: {ext}",
-        code="UNSUPPORTED_FILE_TYPE",
+        code=ec.UNSUPPORTED_FILE_TYPE,
         status_code=400,
         details={"supported": "csv, tsv, txt, xls, xlsx, pdf, eml, jpg, png, gif, webp"},
     )
@@ -86,7 +87,7 @@ def _xls_to_text(file_bytes: bytes, filename: str) -> str:
     except Exception as e:
         raise APIError(
             f"Failed to read Excel file: {e}",
-            code="FILE_PARSE_ERROR",
+            code=ec.FILE_PARSE_ERROR,
             status_code=400,
         )
 
@@ -111,7 +112,7 @@ def _pdf_to_text(file_bytes: bytes) -> str:
             "PDF text extraction requires the 'pdfplumber' package. "
             "Install it with: pip install pdfplumber. "
             "Alternatively, use an Anthropic provider which supports native PDF input.",
-            code="MISSING_DEPENDENCY",
+            code=ec.MISSING_DEPENDENCY,
             status_code=500,
         )
 
@@ -127,14 +128,14 @@ def _pdf_to_text(file_bytes: bytes) -> str:
                     "Could not extract any text from the PDF. "
                     "The PDF may be image-only. Try using an Anthropic provider "
                     "which can read image-based PDFs natively, or upload a screenshot instead.",
-                    code="PDF_NO_TEXT",
+                    code=ec.PDF_NO_TEXT,
                     status_code=400,
                 )
             return "\n\n".join(pages)
     except APIError:
         raise
     except Exception as e:
-        raise APIError(f"Failed to read PDF: {e}", code="FILE_PARSE_ERROR", status_code=400)
+        raise APIError(f"Failed to read PDF: {e}", code=ec.FILE_PARSE_ERROR, status_code=400)
 
 
 def _build_user_content(
@@ -226,7 +227,7 @@ def _build_user_content(
                 {"type": "text", "text": context_line},
             ]
 
-    raise APIError(f"Unsupported file type: {file_type}", code="UNSUPPORTED_FILE_TYPE", status_code=400)
+    raise APIError(f"Unsupported file type: {file_type}", code=ec.UNSUPPORTED_FILE_TYPE, status_code=400)
 
 
 def _build_pdf_text_fallback(file_bytes: bytes, account: str, currency: str) -> str:
@@ -272,14 +273,14 @@ def _extract_json(raw: str) -> dict:
         raise APIError(
             f"The AI returned a response that could not be parsed as JSON. "
             f"This usually means the file format was not recognized. Error: {e}",
-            code="LLM_INVALID_JSON",
+            code=ec.LLM_INVALID_JSON,
             status_code=422,
         )
 
     if not isinstance(parsed, dict):
         raise APIError(
             "The AI returned an unexpected format. Expected a JSON object with a 'transactions' array.",
-            code="LLM_INVALID_FORMAT",
+            code=ec.LLM_INVALID_FORMAT,
             status_code=422,
         )
 
@@ -390,18 +391,18 @@ async def llm_parse(
     if not llm_config.model:
         raise APIError(
             "AI is not configured. Go to Settings and configure the AI section.",
-            code="LLM_NOT_CONFIGURED",
+            code=ec.LLM_NOT_CONFIGURED,
             status_code=400,
         )
 
     # Read and validate file
     file_bytes = await file.read()
     if len(file_bytes) == 0:
-        raise APIError("Uploaded file is empty.", code="EMPTY_FILE", status_code=400)
+        raise APIError("Uploaded file is empty.", code=ec.EMPTY_FILE, status_code=400)
     if len(file_bytes) > _MAX_FILE_SIZE:
         raise APIError(
             f"File is too large ({len(file_bytes) / 1024 / 1024:.1f} MB). Maximum size is {_MAX_FILE_SIZE / 1024 / 1024:.0f} MB.",
-            code="FILE_TOO_LARGE",
+            code=ec.FILE_TOO_LARGE,
             status_code=400,
         )
 
@@ -413,7 +414,7 @@ async def llm_parse(
     try:
         system_prompt = _load_system_prompt()
     except FileNotFoundError as e:
-        raise APIError(str(e), code="CONFIG_ERROR", status_code=500)
+        raise APIError(str(e), code=ec.CONFIG_ERROR, status_code=500)
 
     # For PDFs, allow the frontend to force text extraction mode
     if file_type == "pdf" and force_text_extraction:
@@ -436,20 +437,20 @@ async def llm_parse(
             raise APIError(
                 "Your model provider does not support native PDF input. "
                 "Retrying with local text extraction...",
-                code="PDF_NATIVE_NOT_SUPPORTED",
+                code=ec.PDF_NATIVE_NOT_SUPPORTED,
                 status_code=422,
             )
         logger.error("LLM call failed: %s", e, exc_info=True)
         raise APIError(
             f"Failed to get a response from the AI model: {e}",
-            code="LLM_CALL_FAILED",
+            code=ec.LLM_CALL_FAILED,
             status_code=502,
         )
 
     if not raw_response.strip():
         raise APIError(
             "The AI model returned an empty response. Please try again.",
-            code="LLM_EMPTY_RESPONSE",
+            code=ec.LLM_EMPTY_RESPONSE,
             status_code=422,
         )
 
@@ -460,7 +461,7 @@ async def llm_parse(
     if not isinstance(raw_transactions, list):
         raise APIError(
             "The AI response did not contain a 'transactions' array.",
-            code="LLM_INVALID_FORMAT",
+            code=ec.LLM_INVALID_FORMAT,
             status_code=422,
         )
 
@@ -469,7 +470,7 @@ async def llm_parse(
             "The AI could not find any transactions in this file. "
             "The file may not contain financial transaction data, "
             "or the format may not be recognized.",
-            code="NO_TRANSACTIONS_FOUND",
+            code=ec.NO_TRANSACTIONS_FOUND,
             status_code=422,
         )
 
@@ -481,7 +482,7 @@ async def llm_parse(
             "All transactions extracted by the AI failed validation "
             "(invalid dates or amounts). The file may not contain "
             "recognizable transaction data.",
-            code="ALL_TRANSACTIONS_INVALID",
+            code=ec.ALL_TRANSACTIONS_INVALID,
             status_code=422,
         )
 

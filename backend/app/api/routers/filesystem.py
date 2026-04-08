@@ -14,6 +14,7 @@ from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
 from app.schemas.filesystem_schemas import FileEntry, BrowseResponse
 from app.schemas.response_schemas import ApiResponse
+from app import error_codes as ec
 
 router = APIRouter()
 
@@ -35,26 +36,26 @@ def _resolve_safe(raw_path: str) -> Path:
     except FileNotFoundError:
         raise APIError(
             f"Directory not found: {raw_path}",
-            code="DIRECTORY_NOT_FOUND",
+            code=ec.DIRECTORY_NOT_FOUND,
             status_code=404,
         )
     except PermissionError:
         raise APIError(
             f"Permission denied: {raw_path}",
-            code="PERMISSION_DENIED",
+            code=ec.PERMISSION_DENIED,
             status_code=403,
         )
     except (OSError, RuntimeError) as e:
         raise APIError(
             f"Cannot access path: {e}",
-            code="PATH_ACCESS_ERROR",
+            code=ec.PATH_ACCESS_ERROR,
             status_code=400,
         )
 
     if not resolved.is_dir():
         raise APIError(
             f"Not a directory: {raw_path}",
-            code="NOT_A_DIRECTORY",
+            code=ec.NOT_A_DIRECTORY,
             status_code=400,
         )
 
@@ -130,7 +131,7 @@ async def browse_directory(
     except PermissionError:
         raise APIError(
             f"Permission denied reading directory: {target}",
-            code="PERMISSION_DENIED",
+            code=ec.PERMISSION_DENIED,
             status_code=403,
         )
 

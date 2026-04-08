@@ -8,6 +8,7 @@ from app.exceptions import APIError
 from app.schemas.rule_write_schemas import RuleContentResponse
 from app.schemas.response_schemas import ApiResponse
 from app.helpers.response_helpers import success_json_response
+from app import error_codes as ec
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ async def get_rule_template(rule_type: RuleTemplateType):
         logger.error(f"Failed to load rule template {template_filename}: {e}")
         raise APIError(
             message=f"Rule template not found: {template_filename}",
-            code="RESOURCE_NOT_FOUND",
+            code=ec.RESOURCE_NOT_FOUND,
             status_code=404,
         )
     return success_json_response(

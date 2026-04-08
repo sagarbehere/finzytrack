@@ -19,6 +19,7 @@ from app.schemas.rule_write_schemas import (
 )
 from app.schemas.response_schemas import ApiResponse
 from app.helpers.response_helpers import success_json_response
+from app import error_codes as ec
 
 logger = logging.getLogger(__name__)
 
@@ -55,21 +56,21 @@ async def get_xls_rule(
     except FileNotFoundError:
         raise APIError(
             message=f"XLS rule file not found: {filename}",
-            code="RESOURCE_NOT_FOUND",
+            code=ec.RESOURCE_NOT_FOUND,
             status_code=404,
             details={"filename": filename},
         )
     except ValueError as e:
         raise APIError(
             message=str(e),
-            code="VALIDATION_ERROR",
+            code=ec.VALIDATION_ERROR,
             status_code=400,
             details={"filename": filename},
         )
     except Exception as e:
         raise APIError(
             message=f"Failed to load XLS rule: {e}",
-            code="UNKNOWN_SERVER_ERROR",
+            code=ec.UNKNOWN_SERVER_ERROR,
             status_code=500,
             details={"filename": filename},
         )
@@ -91,7 +92,7 @@ async def get_xls_rule_raw(
     if not target.exists():
         raise APIError(
             message=f"XLS rule file not found: {filename}",
-            code="RESOURCE_NOT_FOUND",
+            code=ec.RESOURCE_NOT_FOUND,
             status_code=404,
             details={"filename": filename},
         )
@@ -116,7 +117,7 @@ async def create_xls_rule(
     if target.exists():
         raise APIError(
             message=f"File '{target.name}' already exists. Use PUT to update it.",
-            code="RESOURCE_CONFLICT",
+            code=ec.RESOURCE_CONFLICT,
             status_code=409,
             details={"filename": target.name},
         )
@@ -126,7 +127,7 @@ async def create_xls_rule(
     if csv_keys:
         raise APIError(
             message=f"This rule contains CSV-specific fields ({', '.join(sorted(csv_keys))}) — use a CSV rule instead.",
-            code="VALIDATION_ERROR",
+            code=ec.VALIDATION_ERROR,
             status_code=400,
         )
     validate_rule_schema(data, XlsRule, "XLS")
@@ -159,7 +160,7 @@ async def update_xls_rule(
     if not target.exists():
         raise APIError(
             message=f"XLS rule file not found: {filename}",
-            code="RESOURCE_NOT_FOUND",
+            code=ec.RESOURCE_NOT_FOUND,
             status_code=404,
             details={"filename": filename},
         )
@@ -169,7 +170,7 @@ async def update_xls_rule(
     if csv_keys:
         raise APIError(
             message=f"This rule contains CSV-specific fields ({', '.join(sorted(csv_keys))}) — use a CSV rule instead.",
-            code="VALIDATION_ERROR",
+            code=ec.VALIDATION_ERROR,
             status_code=400,
         )
     validate_rule_schema(data, XlsRule, "XLS")
@@ -201,7 +202,7 @@ async def delete_xls_rule(
     if not target.exists():
         raise APIError(
             message=f"XLS rule file not found: {filename}",
-            code="RESOURCE_NOT_FOUND",
+            code=ec.RESOURCE_NOT_FOUND,
             status_code=404,
             details={"filename": filename},
         )

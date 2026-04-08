@@ -25,6 +25,7 @@ from app.schemas.rule_write_schemas import (
 )
 from app.schemas.response_schemas import ApiResponse
 from app.helpers.response_helpers import success_json_response
+from app import error_codes as ec
 
 logger = logging.getLogger(__name__)
 
@@ -43,16 +44,16 @@ async def detect_ofx_account(
             # This is a specific case where the ledger exists but is empty or uninitialized.
             raise APIError(
                 message="Ledger file contains no open accounts.",
-                code="RESOURCE_NOT_FOUND",
+                code=ec.RESOURCE_NOT_FOUND,
                 status_code=404,
                 details={"resource_type": "account", "ledger_file": config.ledger_file}
             )
     except FileNotFoundError:
-        raise APIError(message="Ledger file not found", code="FILE_NOT_FOUND", status_code=404, details={"path": config.ledger_file})
+        raise APIError(message="Ledger file not found", code=ec.FILE_NOT_FOUND, status_code=404, details={"path": config.ledger_file})
     except PermissionError:
-        raise APIError(message="Permission denied accessing ledger file", code="FILE_PERMISSION_ERROR", status_code=403, details={"path": config.ledger_file})
+        raise APIError(message="Permission denied accessing ledger file", code=ec.FILE_PERMISSION_ERROR, status_code=403, details={"path": config.ledger_file})
     except Exception as e:
-        raise APIError(message=f"Failed to read ledger file: {e}", code="UNKNOWN_SERVER_ERROR", status_code=500, details={"path": config.ledger_file})
+        raise APIError(message=f"Failed to read ledger file: {e}", code=ec.UNKNOWN_SERVER_ERROR, status_code=500, details={"path": config.ledger_file})
     
     for mapping in config_manager.get_ofx_mappings():
         if (mapping.institution.lower() == request.institution.lower() and
@@ -86,7 +87,7 @@ async def learn_ofx_account(
     if not beancount_manager.validate_account_format(request.beancount_account):
         raise APIError(
             message="Invalid account format",
-            code="VALIDATION_ERROR",
+            code=ec.VALIDATION_ERROR,
             status_code=422,
             details={
                 "field": "beancount_account",
@@ -98,11 +99,11 @@ async def learn_ofx_account(
     try:
         account_exists = beancount_manager.is_existing_account(request.beancount_account)
     except FileNotFoundError:
-        raise APIError(message="Ledger file not found", code="FILE_NOT_FOUND", status_code=404, details={"path": config.ledger_file})
+        raise APIError(message="Ledger file not found", code=ec.FILE_NOT_FOUND, status_code=404, details={"path": config.ledger_file})
     except PermissionError:
-        raise APIError(message="Permission denied accessing ledger file", code="FILE_PERMISSION_ERROR", status_code=403, details={"path": config.ledger_file})
+        raise APIError(message="Permission denied accessing ledger file", code=ec.FILE_PERMISSION_ERROR, status_code=403, details={"path": config.ledger_file})
     except Exception as e:
-        raise APIError(message=f"Failed to validate account: {e}", code="UNKNOWN_SERVER_ERROR", status_code=500, details={"path": config.ledger_file})
+        raise APIError(message=f"Failed to validate account: {e}", code=ec.UNKNOWN_SERVER_ERROR, status_code=500, details={"path": config.ledger_file})
     
     if not account_exists:
         learn_data = LearnOFXAccountData(
@@ -128,7 +129,7 @@ async def learn_ofx_account(
             
             raise APIError(
                 message=f"Mapping already exists for this OFX account: {existing_mapping.beancount_account}",
-                code="RESOURCE_CONFLICT",
+                code=ec.RESOURCE_CONFLICT,
                 status_code=409
             )
 
@@ -143,14 +144,14 @@ async def learn_ofx_account(
     except PermissionError:
         raise APIError(
             message="Permission denied saving configuration file",
-            code="CONFIG_SAVE_ERROR",
+            code=ec.CONFIG_SAVE_ERROR,
             status_code=403,
             details={"path": getattr(config, 'config_path', 'config.yaml')}
         )
     except Exception as e:
         raise APIError(
             message="Failed to save mapping to configuration file",
-            code="UNKNOWN_SERVER_ERROR",
+            code=ec.UNKNOWN_SERVER_ERROR,
             status_code=500,
             details={"error": str(e)}
         )
@@ -196,7 +197,7 @@ async def update_ofx_mappings(
     except Exception as e:
         raise APIError(
             message=f"YAML parse error: {e}",
-            code="YAML_PARSE_ERROR",
+            code=ec.YAML_PARSE_ERROR,
             status_code=400,
         )
 
@@ -207,7 +208,7 @@ async def update_ofx_mappings(
     if not isinstance(data, list):
         raise APIError(
             message="OFX mappings file must be a YAML list of account mappings.",
-            code="VALIDATION_ERROR",
+            code=ec.VALIDATION_ERROR,
             status_code=400,
         )
 
@@ -218,7 +219,7 @@ async def update_ofx_mappings(
         except (ValidationError, Exception) as e:
             raise APIError(
                 message=f"OFX mapping entry {i + 1} is invalid: {e}",
-                code="VALIDATION_ERROR",
+                code=ec.VALIDATION_ERROR,
                 status_code=400,
             )
 

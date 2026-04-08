@@ -25,6 +25,7 @@ from app.helpers.response_helpers import success_json_response
 from app.services.categorizer import initialize_classifier, categorize_transaction
 from app.services.ai_categorizer import categorize_transactions_ai, AICategorizeError
 from app.services.duplicate_detector import find_duplicate
+from app import error_codes as ec
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ async def categorize_transactions(
         except ValueError:
             raise APIError(
                 message=f"Invalid force_engine value: '{request.force_engine}'. Must be 'classifier', 'ai', or 'llm'.",
-                code="INVALID_ENGINE",
+                code=ec.INVALID_ENGINE,
                 status_code=422,
             )
     else:
@@ -101,7 +102,7 @@ async def categorize_transactions(
         if not config.ai.llm.model:
             raise APIError(
                 message="AI is not configured. Go to Settings and configure the AI section (ai.llm.model must be set).",
-                code="LLM_NOT_CONFIGURED",
+                code=ec.LLM_NOT_CONFIGURED,
                 status_code=400,
             )
 
@@ -125,7 +126,7 @@ async def categorize_transactions(
         except AICategorizeError as e:
             raise APIError(
                 message=f"AI categorization failed: {e}",
-                code="AI_CATEGORIZE_FAILED",
+                code=ec.AI_CATEGORIZE_FAILED,
                 status_code=502,
             )
 
@@ -240,7 +241,7 @@ async def commit_transactions(
             if not beancount_manager.validate_account_format(posting.account):
                 raise APIError(
                     message=f"Invalid account format: {posting.account}",
-                    code="INVALID_ACCOUNT_FORMAT",
+                    code=ec.INVALID_ACCOUNT_FORMAT,
                     status_code=422,
                     details={"account": posting.account, "date": str(commit_txn.date)}
                 )
@@ -248,7 +249,7 @@ async def commit_transactions(
             if not beancount_manager.is_existing_account(posting.account):
                 raise APIError(
                     message=f"Account does not exist in ledger: {posting.account}",
-                    code="ACCOUNT_NOT_FOUND",
+                    code=ec.ACCOUNT_NOT_FOUND,
                     status_code=422,
                     details={
                         "account": posting.account,
@@ -265,7 +266,7 @@ async def commit_transactions(
                 if posting.cost_currency is None:
                     raise APIError(
                         message="Cost amount specified but cost currency missing",
-                        code="INVALID_COST",
+                        code=ec.INVALID_COST,
                         status_code=422,
                         details={
                             "account": posting.account,
@@ -276,7 +277,7 @@ async def commit_transactions(
             elif posting.cost_currency is not None:
                 raise APIError(
                     message="Cost currency specified but cost amount missing or zero",
-                    code="INVALID_COST",
+                    code=ec.INVALID_COST,
                     status_code=422,
                     details={"account": posting.account, "date": str(commit_txn.date)}
                 )
@@ -287,7 +288,7 @@ async def commit_transactions(
                 if posting.price_currency is None or posting.price_type is None:
                     raise APIError(
                         message="Price amount specified but price currency or type missing",
-                        code="INVALID_PRICE",
+                        code=ec.INVALID_PRICE,
                         status_code=422,
                         details={
                             "account": posting.account,
@@ -300,7 +301,7 @@ async def commit_transactions(
             elif posting.price_currency is not None or posting.price_type is not None:
                 raise APIError(
                     message="Price currency or type specified but price amount missing or zero",
-                    code="INVALID_PRICE",
+                    code=ec.INVALID_PRICE,
                     status_code=422,
                     details={"account": posting.account, "date": str(commit_txn.date)}
                 )
@@ -309,7 +310,7 @@ async def commit_transactions(
             if posting.price_type is not None and posting.price_type not in ['@', '@@']:
                 raise APIError(
                     message=f"Invalid price type: {posting.price_type} (must be '@' or '@@')",
-                    code="INVALID_PRICE_TYPE",
+                    code=ec.INVALID_PRICE_TYPE,
                     status_code=422,
                     details={"account": posting.account, "date": str(commit_txn.date)}
                 )
@@ -352,7 +353,7 @@ async def commit_transactions(
                         else:
                             raise APIError(
                                 message="Cannot use @@ price with zero units",
-                                code="INVALID_PRICE",
+                                code=ec.INVALID_PRICE,
                                 status_code=422,
                                 details={"account": posting.account, "date": str(commit_txn.date)}
                             )
@@ -418,7 +419,7 @@ async def commit_transactions(
                 error_messages = [str(error.message) for error in errors]
                 raise APIError(
                     message=f"Transaction validation failed: {'; '.join(error_messages)}",
-                    code="TRANSACTION_VALIDATION_FAILED",
+                    code=ec.TRANSACTION_VALIDATION_FAILED,
                     status_code=422,
                     details={
                         "date": str(commit_txn.date),
@@ -436,7 +437,7 @@ async def commit_transactions(
             logger.error(f"Failed to create Beancount transaction: {e}")
             raise APIError(
                 message=f"Failed to create transaction: {str(e)}",
-                code="TRANSACTION_CREATION_FAILED",
+                code=ec.TRANSACTION_CREATION_FAILED,
                 status_code=500,
                 details={"date": str(commit_txn.date), "error": str(e)}
             )
@@ -458,7 +459,7 @@ async def commit_transactions(
         logger.error(f"Failed to write to ledger: {e}")
         raise APIError(
             message=f"Failed to write to ledger: {str(e)}",
-            code="LEDGER_WRITE_FAILED",
+            code=ec.LEDGER_WRITE_FAILED,
             status_code=500,
             details={"error": str(e)}
         )

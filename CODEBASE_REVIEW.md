@@ -244,7 +244,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** inconsistency
 - **Description:** Error codes like `"VALIDATION_ERROR"`, `"FILE_NOT_FOUND"`, `"RESOURCE_CONFLICT"`, `"ACCOUNT_CREATION_NEEDED"` are hardcoded as strings in both backend route handlers and the frontend error handler mapping. No shared enum or documented contract exists. If a backend developer changes a code string, the frontend mapping silently falls through to the default handler.
 - **Recommendation:** Create an `error_codes.py` module in the backend defining all error codes as string constants. Optionally expose them via the OpenAPI schema so the frontend codegen can pick them up.
-- **Fix-eligible:** yes (backend constants module) — **DONE** (created `error_codes.py` with all 62 error code constants; routers not yet updated to import from it — constants module is available for incremental adoption)
+- **Fix-eligible:** yes (backend constants module) — **DONE** (created `error_codes.py` with all 65 error code constants; all 14 routers + error_handler.py updated to use `ec.CONSTANT` imports)
 
 ---
 
@@ -392,4 +392,4 @@ The following fix-eligible items were **not** completed because they require hum
 | **2E-4** — RecipeWidget.vue presentation extraction | ~~DONE — extracted RecipeWidgetRenderer.vue~~ |
 | **2F-3** — useAccountsTree decomposition | Borderline; current size is acceptable. |
 | **2J-1** — Backend fixed paths should become configurable | Changes config interface; needs design decision on YAML exposure and defaults. |
-| **2H-3** — Error codes: router adoption | The `error_codes.py` constants module was created, but existing routers still use raw string literals. Updating all routers to import constants is a large, low-risk change that can be done incrementally. |
+| **2H-3** — Error codes: router adoption | ~~DONE — all 14 routers + error_handler.py now import from `error_codes.py`~~ |

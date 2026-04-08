@@ -30,6 +30,7 @@ from app.schemas.recipe_schemas import RecipeWriteRequest, RecipeWriteResponse
 from app.schemas.rule_write_schemas import RuleContentResponse
 from app.schemas.response_schemas import ApiResponse
 from app.helpers.response_helpers import success_json_response
+from app import error_codes as ec
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ def _recipe_type_from_path(file_path: str) -> str:
     else:
         raise APIError(
             message="Recipe path must start with 'dashboards/' or 'widgets/'.",
-            code="VALIDATION_ERROR",
+            code=ec.VALIDATION_ERROR,
             status_code=400,
             details={"file_path": file_path},
         )
@@ -166,7 +167,7 @@ async def write_recipe_file(
     if errors:
         raise APIError(
             message=f"{'Widget' if recipe_type == 'widget' else 'Dashboard'} recipe validation failed.",
-            code="VALIDATION_ERROR",
+            code=ec.VALIDATION_ERROR,
             status_code=400,
             details={"validation_errors": errors},
         )

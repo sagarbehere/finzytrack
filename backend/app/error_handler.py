@@ -10,6 +10,7 @@ import logging
 
 from app.exceptions import APIError, convert_stdlib_exception
 from app.helpers.response_helpers import create_error_response
+from app import error_codes as ec
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ def setup_error_handlers(app: FastAPI):
         
         response = create_error_response(
             message="Request validation failed",
-            code="VALIDATION_ERROR",
+            code=ec.VALIDATION_ERROR,
             details=error_details
         )
         return JSONResponse(
@@ -45,7 +46,7 @@ def setup_error_handlers(app: FastAPI):
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
         """Handle FastAPI HTTP exceptions."""
-        response = create_error_response(message=exc.detail, code="HTTP_EXCEPTION", details=None)
+        response = create_error_response(message=exc.detail, code=ec.HTTP_EXCEPTION, details=None)
         return JSONResponse(
             status_code=exc.status_code,
             content=response.model_dump()

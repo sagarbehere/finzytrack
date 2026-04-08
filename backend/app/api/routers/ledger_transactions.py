@@ -19,6 +19,7 @@ from app.dependencies import get_beancount_manager
 from app.core.beancount_manager import BeancountManager
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
+from app import error_codes as ec
 from beancount.core.data import Transaction, Posting
 from beancount.core.amount import Amount
 from beancount.core.position import Cost
@@ -55,7 +56,7 @@ async def update_ledger_transactions(
         if not transactions_to_update:
             raise APIError(
                 message="No transactions provided",
-                code="NO_TRANSACTIONS",
+                code=ec.NO_TRANSACTIONS,
                 status_code=400
             )
 
@@ -73,7 +74,7 @@ async def update_ledger_transactions(
                 if errors:
                     raise APIError(
                         message=f"Validation failed for transaction {update_txn.id}",
-                        code="TRANSACTION_VALIDATION_FAILED",
+                        code=ec.TRANSACTION_VALIDATION_FAILED,
                         status_code=400,
                         details={"errors": [str(e) for e in errors]}
                     )
@@ -84,7 +85,7 @@ async def update_ledger_transactions(
                 logger.error(f"Validation error for transaction {update_txn.id}: {e}")
                 raise APIError(
                     message=f"Invalid transaction {update_txn.id}: {str(e)}",
-                    code="TRANSACTION_INVALID",
+                    code=ec.TRANSACTION_INVALID,
                     status_code=400,
                     details={"transaction_id": update_txn.id, "error": str(e)}
                 )
@@ -109,7 +110,7 @@ async def update_ledger_transactions(
         logger.error(f"Failed to update transactions: {e}", exc_info=True)
         raise APIError(
             message="Failed to update transactions",
-            code="UPDATE_FAILED",
+            code=ec.UPDATE_FAILED,
             status_code=500,
             details={"error": str(e)}
         )
@@ -209,7 +210,7 @@ async def delete_ledger_transactions(
         if not transaction_ids:
             raise APIError(
                 message="No transaction IDs provided",
-                code="NO_TRANSACTION_IDS",
+                code=ec.NO_TRANSACTION_IDS,
                 status_code=400
             )
 
@@ -233,7 +234,7 @@ async def delete_ledger_transactions(
         logger.error(f"Failed to delete transactions: {e}", exc_info=True)
         raise APIError(
             message="Failed to delete transactions",
-            code="DELETE_FAILED",
+            code=ec.DELETE_FAILED,
             status_code=500,
             details={"error": str(e)}
         )

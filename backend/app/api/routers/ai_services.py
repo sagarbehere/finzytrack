@@ -27,6 +27,7 @@ from app.dependencies import get_beancount_manager, get_config_manager
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
 from app.schemas.response_schemas import ApiResponse
+from app import error_codes as ec
 
 logger = logging.getLogger(__name__)
 
@@ -52,13 +53,13 @@ def _get_llm_config(config_manager: ConfigManager) -> LLMConfig:
     if not llm.model:
         raise APIError(
             message="AI is not configured. Set a model under Settings → AI.",
-            code="AI_NOT_CONFIGURED",
+            code=ec.AI_NOT_CONFIGURED,
             status_code=400,
         )
     if llm.provider != "anthropic" and not llm.api_url:
         raise APIError(
             message="AI API URL is not configured. Set api_url under Settings → AI.",
-            code="AI_NOT_CONFIGURED",
+            code=ec.AI_NOT_CONFIGURED,
             status_code=400,
         )
     return llm
@@ -213,11 +214,11 @@ async def parse_nl_transaction(
             temperature=0.1,
         )
     except RuntimeError as e:
-        raise APIError(message=str(e), code="AI_REQUEST_FAILED", status_code=502)
+        raise APIError(message=str(e), code=ec.AI_REQUEST_FAILED, status_code=502)
     except Exception as e:
         logger.exception("AI request failed")
         raise APIError(
-            message=f"AI request failed: {e}", code="AI_REQUEST_FAILED", status_code=502,
+            message=f"AI request failed: {e}", code=ec.AI_REQUEST_FAILED, status_code=502,
         )
 
     json_str = _strip_fences(content)
@@ -226,7 +227,7 @@ async def parse_nl_transaction(
     except json.JSONDecodeError as e:
         raise APIError(
             message=f"AI returned invalid JSON: {e}",
-            code="AI_PARSE_ERROR",
+            code=ec.AI_PARSE_ERROR,
             status_code=502,
             details={"raw": json_str[:300]},
         )
@@ -287,11 +288,11 @@ async def generate_query(
             temperature=0.1,
         )
     except RuntimeError as e:
-        raise APIError(message=str(e), code="AI_REQUEST_FAILED", status_code=502)
+        raise APIError(message=str(e), code=ec.AI_REQUEST_FAILED, status_code=502)
     except Exception as e:
         logger.exception("AI request failed")
         raise APIError(
-            message=f"AI request failed: {e}", code="AI_REQUEST_FAILED", status_code=502,
+            message=f"AI request failed: {e}", code=ec.AI_REQUEST_FAILED, status_code=502,
         )
 
     query = _strip_fences(content)

@@ -50,6 +50,7 @@ from app.schemas.rule_write_schemas import (
 )
 from app.schemas.response_schemas import ApiResponse
 from app.helpers.response_helpers import success_json_response
+from app import error_codes as ec
 
 logger = logging.getLogger(__name__)
 
@@ -334,7 +335,7 @@ async def get_email_rule_raw(
     if not target.exists():
         raise APIError(
             message=f"Email rule file not found: {filename}",
-            code="RESOURCE_NOT_FOUND",
+            code=ec.RESOURCE_NOT_FOUND,
             status_code=404,
             details={"filename": filename},
         )
@@ -360,7 +361,7 @@ async def create_email_rule(
     if target.exists():
         raise APIError(
             message=f"File '{target.name}' already exists. Use PUT to update it.",
-            code="RESOURCE_CONFLICT",
+            code=ec.RESOURCE_CONFLICT,
             status_code=409,
             details={"filename": target.name},
         )
@@ -398,7 +399,7 @@ async def update_email_rule(
     if not target.exists():
         raise APIError(
             message=f"Email rule file not found: {filename}",
-            code="RESOURCE_NOT_FOUND",
+            code=ec.RESOURCE_NOT_FOUND,
             status_code=404,
             details={"filename": filename},
         )
@@ -435,7 +436,7 @@ async def delete_email_rule(
     if not target.exists():
         raise APIError(
             message=f"Email rule file not found: {filename}",
-            code="RESOURCE_NOT_FOUND",
+            code=ec.RESOURCE_NOT_FOUND,
             status_code=404,
             details={"filename": filename},
         )

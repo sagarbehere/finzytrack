@@ -18,6 +18,7 @@ from app.services.sqlite_exporter import SQLiteExporter
 from app.core.beancount_manager import BeancountManager
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
+from app import error_codes as ec
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ async def export_ledger(
     if errors:
         raise APIError(
             message="Ledger file has parsing errors",
-            code="LEDGER_PARSE_ERROR",
+            code=ec.LEDGER_PARSE_ERROR,
             status_code=400,
             details={
                 "error_count": len(errors),

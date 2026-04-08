@@ -19,6 +19,7 @@ from app.exceptions import APIError
 from app.helpers.date_helpers import parse_optional_date_param
 from app.helpers.error_context import ledger_error_context
 from app.helpers.response_helpers import success_json_response
+from app import error_codes as ec
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ async def create_account_endpoint(
         if "Invalid account format" in error_message:
             raise APIError(
                 message="Invalid account format",
-                code="VALIDATION_ERROR",
+                code=ec.VALIDATION_ERROR,
                 status_code=422,
                 details={
                     "field": "name",
@@ -92,14 +93,14 @@ async def create_account_endpoint(
         elif "Account already exists" in error_message:
             raise APIError(
                 message="Account already exists",
-                code="ACCOUNT_ALREADY_EXISTS",
+                code=ec.ACCOUNT_ALREADY_EXISTS,
                 status_code=409,
                 details={"account_name": request.name}
             )
         elif "Invalid open_date format" in error_message:
             raise APIError(
                 message="Invalid open_date format",
-                code="VALIDATION_ERROR",
+                code=ec.VALIDATION_ERROR,
                 status_code=422,
                 details={
                     "field": "open_date",
@@ -111,7 +112,7 @@ async def create_account_endpoint(
             # Generic validation error
             raise APIError(
                 message="Validation failed",
-                code="VALIDATION_ERROR",
+                code=ec.VALIDATION_ERROR,
                 status_code=422,
                 details={"validation_error": error_message}
             )
@@ -119,14 +120,14 @@ async def create_account_endpoint(
     except FileNotFoundError as e:
         raise APIError(
             message="Ledger file not found", 
-            code="FILE_NOT_FOUND", 
+            code=ec.FILE_NOT_FOUND, 
             status_code=404, 
             details={"path": str(e).split(": ")[-1]}  # Extract file path from exception
         )
     except PermissionError as e:
         raise APIError(
             message="Permission denied accessing ledger file", 
-            code="FILE_PERMISSION_ERROR", 
+            code=ec.FILE_PERMISSION_ERROR, 
             status_code=403, 
             details={"path": str(e).split(": ")[-1]}  # Extract file path from exception
         )
@@ -148,7 +149,7 @@ async def create_account_endpoint(
         # Handle other unexpected errors
         raise APIError(
             message=f"Error creating account: {error_message}", 
-            code="UNKNOWN_SERVER_ERROR", 
+            code=ec.UNKNOWN_SERVER_ERROR, 
             status_code=500
         )
 
@@ -167,7 +168,7 @@ async def update_account(
         if not beancount_manager.is_existing_account(account_name):
             raise APIError(
                 message=f"Account not found: {account_name}",
-                code="ACCOUNT_NOT_FOUND",
+                code=ec.ACCOUNT_NOT_FOUND,
                 status_code=404,
                 details={"account_name": account_name}
             )
@@ -177,7 +178,7 @@ async def update_account(
             if not beancount_manager.validate_account_format(request.new_name):
                 raise APIError(
                     message="Invalid new account format",
-                    code="VALIDATION_ERROR",
+                    code=ec.VALIDATION_ERROR,
                     status_code=422,
                     details={
                         "field": "new_name",
@@ -190,7 +191,7 @@ async def update_account(
             if request.new_name != account_name and beancount_manager.is_existing_account(request.new_name):
                 raise APIError(
                     message=f"Account name already exists: {request.new_name}",
-                    code="ACCOUNT_ALREADY_EXISTS",
+                    code=ec.ACCOUNT_ALREADY_EXISTS,
                     status_code=409,
                     details={"new_name": request.new_name}
                 )
@@ -202,7 +203,7 @@ async def update_account(
             if request.close_date < effective_open:
                 raise APIError(
                     message="Close date must be after open date",
-                    code="VALIDATION_ERROR",
+                    code=ec.VALIDATION_ERROR,
                     status_code=422,
                     details={
                         "field": "close_date",
@@ -254,7 +255,7 @@ async def close_account(
         if not beancount_manager.is_existing_account(account_name):
             raise APIError(
                 message=f"Account not found: {account_name}",
-                code="ACCOUNT_NOT_FOUND",
+                code=ec.ACCOUNT_NOT_FOUND,
                 status_code=404,
                 details={"account_name": account_name}
             )
@@ -264,7 +265,7 @@ async def close_account(
         if existing_close_date:
             raise APIError(
                 message=f"Account is already closed: {account_name}",
-                code="ACCOUNT_ALREADY_CLOSED",
+                code=ec.ACCOUNT_ALREADY_CLOSED,
                 status_code=409,
                 details={"account_name": account_name, "close_date": existing_close_date.isoformat()}
             )
@@ -274,7 +275,7 @@ async def close_account(
         if open_date and request.close_date < open_date:
             raise APIError(
                 message="Close date must be after open date",
-                code="VALIDATION_ERROR",
+                code=ec.VALIDATION_ERROR,
                 status_code=422,
                 details={
                     "field": "close_date",
@@ -308,7 +309,7 @@ async def reopen_account(
         if not beancount_manager.is_existing_account(account_name):
             raise APIError(
                 message=f"Account not found: {account_name}",
-                code="ACCOUNT_NOT_FOUND",
+                code=ec.ACCOUNT_NOT_FOUND,
                 status_code=404,
                 details={"account_name": account_name}
             )
@@ -318,7 +319,7 @@ async def reopen_account(
         if not close_date:
             raise APIError(
                 message=f"Account is not closed: {account_name}",
-                code="ACCOUNT_NOT_CLOSED",
+                code=ec.ACCOUNT_NOT_CLOSED,
                 status_code=409,
                 details={"account_name": account_name}
             )
@@ -348,7 +349,7 @@ async def delete_account(
         if not beancount_manager.is_existing_account(account_name):
             raise APIError(
                 message=f"Account not found: {account_name}",
-                code="ACCOUNT_NOT_FOUND",
+                code=ec.ACCOUNT_NOT_FOUND,
                 status_code=404,
                 details={"account_name": account_name}
             )
@@ -363,7 +364,7 @@ async def delete_account(
             raise APIError(
                 message=f"Account '{account_name}' has {total} transaction(s). "
                         f"Either set delete_transactions=true or remove them manually first.",
-                code="ACCOUNT_HAS_TRANSACTIONS",
+                code=ec.ACCOUNT_HAS_TRANSACTIONS,
                 status_code=409,
                 details={"account_name": account_name, "transaction_count": total}
             )
@@ -398,7 +399,7 @@ async def list_balance_directives(
     if not beancount_manager.is_existing_account(account_name):
         raise APIError(
             message=f"Account not found: {account_name}",
-            code="ACCOUNT_NOT_FOUND",
+            code=ec.ACCOUNT_NOT_FOUND,
             status_code=404,
             details={"account_name": account_name}
         )
@@ -437,13 +438,13 @@ async def create_balance_directive(
         if "not found" in error_msg:
             raise APIError(
                 message=error_msg,
-                code="ACCOUNT_NOT_FOUND",
+                code=ec.ACCOUNT_NOT_FOUND,
                 status_code=404,
                 details={"account_name": account_name}
             )
         raise APIError(
             message=error_msg,
-            code="VALIDATION_ERROR",
+            code=ec.VALIDATION_ERROR,
             status_code=422,
             details={"account_name": account_name}
         )
@@ -463,7 +464,7 @@ async def update_balance_directive(
     if not beancount_manager.is_existing_account(account_name):
         raise APIError(
             message=f"Account not found: {account_name}",
-            code="ACCOUNT_NOT_FOUND",
+            code=ec.ACCOUNT_NOT_FOUND,
             status_code=404,
             details={"account_name": account_name}
         )
@@ -479,13 +480,13 @@ async def update_balance_directive(
         if "not found" in error_msg.lower():
             raise APIError(
                 message=error_msg,
-                code="DIRECTIVE_NOT_FOUND",
+                code=ec.DIRECTIVE_NOT_FOUND,
                 status_code=404,
                 details={"account_name": account_name}
             )
         raise APIError(
             message=error_msg,
-            code="VALIDATION_ERROR",
+            code=ec.VALIDATION_ERROR,
             status_code=422,
             details={"account_name": account_name}
         )
@@ -508,7 +509,7 @@ async def delete_balance_directive(
     if not beancount_manager.is_existing_account(account_name):
         raise APIError(
             message=f"Account not found: {account_name}",
-            code="ACCOUNT_NOT_FOUND",
+            code=ec.ACCOUNT_NOT_FOUND,
             status_code=404,
             details={"account_name": account_name}
         )
@@ -525,7 +526,7 @@ async def delete_balance_directive(
     except ValueError as e:
         raise APIError(
             message=str(e),
-            code="DIRECTIVE_NOT_FOUND",
+            code=ec.DIRECTIVE_NOT_FOUND,
             status_code=404,
             details={"account_name": account_name}
         )

@@ -21,6 +21,7 @@ from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
+from app import error_codes as ec
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ async def execute_query(
     if engine not in ["sqlite", "beanquery"]:
         raise APIError(
             message="Invalid database/engine type",
-            code="ENGINE_NOT_SUPPORTED",
+            code=ec.ENGINE_NOT_SUPPORTED,
             status_code=400,
             details={"supported_engines": ["sqlite", "beanquery"]}
         )
@@ -69,7 +70,7 @@ async def execute_query(
     if fatal_errors:
         raise APIError(
             message="Ledger file has parsing errors",
-            code="LEDGER_PARSE_ERROR",
+            code=ec.LEDGER_PARSE_ERROR,
             status_code=400,
             details={
                 "error_count": len(fatal_errors),
@@ -90,7 +91,7 @@ async def execute_query(
         except asyncio.TimeoutError:
             raise APIError(
                 message="Query execution timed out",
-                code="QUERY_TIMEOUT",
+                code=ec.QUERY_TIMEOUT,
                 status_code=408
             )
         except Exception as e:
@@ -98,14 +99,14 @@ async def execute_query(
             if "syntax error" in error_msg.lower():
                 raise APIError(
                     message="Beanquery syntax error",
-                    code="QUERY_SYNTAX_ERROR",
+                    code=ec.QUERY_SYNTAX_ERROR,
                     status_code=400,
                     details={"error": error_msg}
                 )
             else:
                 raise APIError(
                     message="Failed to execute beanquery",
-                    code="QUERY_EXECUTION_ERROR",
+                    code=ec.QUERY_EXECUTION_ERROR,
                     status_code=500,
                     details={"error": error_msg}
                 )
@@ -117,7 +118,7 @@ async def execute_query(
         if not status["exists"]:
             raise APIError(
                 message="SQLite database does not exist. Please export the ledger first.",
-                code="DATABASE_NOT_FOUND",
+                code=ec.DATABASE_NOT_FOUND,
                 status_code=404,
                 details={"db_type": "sqlite", "path": exporter.export_path}
             )
@@ -130,7 +131,7 @@ async def execute_query(
         except asyncio.TimeoutError:
             raise APIError(
                 message="Query execution timed out",
-                code="QUERY_TIMEOUT",
+                code=ec.QUERY_TIMEOUT,
                 status_code=408
             )
         except Exception as e:
@@ -138,21 +139,21 @@ async def execute_query(
             if "syntax error" in error_msg.lower() or "parse error" in error_msg.lower():
                 raise APIError(
                     message="SQL syntax error",
-                    code="QUERY_SYNTAX_ERROR",
+                    code=ec.QUERY_SYNTAX_ERROR,
                     status_code=400,
                     details={"error": error_msg}
                 )
             elif "no such table" in error_msg.lower():
                 raise APIError(
                     message="Table not found",
-                    code="TABLE_NOT_FOUND",
+                    code=ec.TABLE_NOT_FOUND,
                     status_code=400,
                     details={"error": error_msg}
                 )
             else:
                 raise APIError(
                     message="Failed to execute SQL query",
-                    code="QUERY_EXECUTION_ERROR",
+                    code=ec.QUERY_EXECUTION_ERROR,
                     status_code=500,
                     details={"error": error_msg}
                 )
@@ -182,7 +183,7 @@ async def get_postings_schema():
     if not _SCHEMA_POSTINGS_PATH.is_file():
         raise APIError(
             message="Schema file not found",
-            code="SCHEMA_NOT_FOUND",
+            code=ec.SCHEMA_NOT_FOUND,
             status_code=500,
         )
     return PlainTextResponse(
