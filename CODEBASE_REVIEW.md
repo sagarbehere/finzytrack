@@ -92,7 +92,7 @@ Finzytrack is a well-structured personal finance app with a clean monorepo layou
 - **Nature:** dead-code
 - **Description:** `POST /commodities`, `PUT /commodities/{code}`, and `DELETE /commodities/{code}` all raise `APIError(code="NOT_IMPLEMENTED")`. These appear in the OpenAPI spec and the generated frontend client, but don't work.
 - **Recommendation:** Either implement them or remove them from the router and regenerate the frontend API client.
-- **Fix-eligible:** no (needs decision on whether to implement or remove)
+- **Fix-eligible:** no (needs decision on whether to implement or remove) — **DONE** (removed stub routes; schemas kept as placeholder)
 
 #### 2B-5: Duplicate `app.state.config_manager` assignment
 - **Files:** `backend/app/main.py` (lines 265-266)
@@ -386,7 +386,7 @@ The following fix-eligible items were **not** completed because they require hum
 | Finding | Reason Not Done |
 |---------|----------------|
 | **2B-2** — Fat route handlers for account mutations | ~~DONE — reviewed with user, handlers slimmed, atomic delete_account() created~~ |
-| **2B-4** — Three unimplemented commodity CRUD endpoints | Needs decision: implement for first release or remove from the API surface. |
+| **2B-4** — Three unimplemented commodity CRUD endpoints | ~~DONE — removed stub routes, schemas kept as placeholder~~ |
 | **2E-1** — TransactionTable.vue decomposition (1,777 lines) | Large refactor requiring careful prop/emit design and thorough testing of inline editing and keyboard navigation. |
 | **2E-2** — GeneralSettingsTab.vue decomposition (786 lines) | Requires deciding how form state and save actions should be scoped across sub-components. |
 | **2E-4** — RecipeWidget.vue presentation extraction | Moderate risk; needs testing of visualization dispatching. |
