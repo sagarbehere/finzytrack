@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
-from app.config import BACKUP_DIR, Config
+from app.config import Config
 from app.exceptions import APIError
 from app.schemas.response_schemas import ApiResponse
 from app.helpers.response_helpers import success_json_response
@@ -102,7 +102,7 @@ async def complete_setup(
                 status_code=404,
             )
         # Use the existing file in-place (no copy) and ensure backup dir exists
-        Path(BACKUP_DIR).mkdir(parents=True, exist_ok=True)
+        Path(config.backup_dir).mkdir(parents=True, exist_ok=True)
         patch["ledger_file"] = str(src)
     else:
         # Fresh start — seed data directory with currency substitution

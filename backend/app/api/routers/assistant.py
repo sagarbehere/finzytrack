@@ -50,7 +50,6 @@ from app.ai.tools.read_recipe import ReadRecipeTool
 from app.ai.tools.get_recipe_schema import GetRecipeSchemaTool
 from app.ai.tools.preview_recipe import PreviewRecipeTool
 from app.ai.tools.write_recipe import WriteRecipeTool
-from app.config import SQLITE_EXPORT_PATH
 from app.core.backup_manager import BackupManager
 from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
@@ -439,7 +438,7 @@ async def assistant_chat(
         # Follow-up turn — frontend sent the file_type from the original attachment
         file_type = context["file_type"]
 
-    sqlite_path = SQLITE_EXPORT_PATH
+    sqlite_path = config.sqlite_export_path
     recipes_dir = Path(config.recipes_dir) if config.recipes_dir else None
     registry = _build_registry(
         csv_rules_manager, xls_rules_manager, email_registry,

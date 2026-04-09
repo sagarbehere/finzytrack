@@ -19,10 +19,7 @@ class ConfigurationError(Exception):
     pass
 
 
-# ── Fixed paths (not user-configurable) ──────────────────────────────────────
-SQLITE_EXPORT_PATH = "./data/ledger.db"
-BACKUP_DIR = "./data/backups"
-LOG_FILE = "./logs/finzytrack.log"
+# ── Non-path constants (not user-configurable) ─────────────────────────────
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 CORS_ORIGINS = ["http://127.0.0.1:3000", "http://localhost:3000"]
 SQLITE_AUTO_SYNC = True
@@ -123,12 +120,17 @@ class EmailImportConfig(BaseModel):
 class Config(BaseModel):
     """Main application configuration with nested sections."""
 
+    # Root directory — all conventional paths resolve relative to this.
+    # Desktop mode: Path(".") (identical to the pre-refactor hardcoded paths).
+    # Hosted mode: Path("./users/{user_id}") per user.
+    root_dir: Path = Field(default=Path("."), exclude=True, description="Root directory for all data, config, and log paths")
+
     # Setup
     setup_complete: bool = Field(default=False, description="Whether the first-run setup wizard has been completed")
 
     # File paths
     ledger_file: str = Field(default="./data/ledgers/main.beancount", description="Path to main Beancount ledger")
-    
+
     # Nested configuration sections
     server: ServerConfig = Field(default_factory=ServerConfig)
     accounts: AccountsConfig = Field(default_factory=AccountsConfig)
@@ -149,14 +151,20 @@ class Config(BaseModel):
 
     @property
     def config_dir(self) -> Path:
-        """The config/ directory — conventional subdirectories live here.
+        """The config/ directory — conventional subdirectories live here."""
+        return self.root_dir / 'config'
 
-        This is always ``./config/`` relative to CWD (which the launcher sets
-        to the backend dir in dev or the app dir when packaged). The config
-        *file* itself may live elsewhere (e.g. ``data/config.yaml`` for dev
-        overrides), but the conventional directories are always under config/.
-        """
-        return Path('./config')
+    @property
+    def sqlite_export_path(self) -> str:
+        return str(self.root_dir / 'data' / 'ledger.db')
+
+    @property
+    def backup_dir(self) -> str:
+        return str(self.root_dir / 'data' / 'backups')
+
+    @property
+    def log_file(self) -> str:
+        return str(self.root_dir / 'logs' / 'finzytrack.log')
 
     @property
     def csv_rules_dir(self) -> str:
@@ -192,7 +200,7 @@ class Config(BaseModel):
         if not ledger_dir.exists():
             raise ValueError(f"Ledger directory does not exist: {ledger_dir}")
 
-        backup_path = Path(BACKUP_DIR)
+        backup_path = Path(self.backup_dir)
         if not backup_path.exists():
             raise ValueError(f"Backup directory does not exist: {backup_path}")
         
@@ -204,11 +212,23 @@ class Config(BaseModel):
         return self
     
     @classmethod
-    def from_yaml_file(cls, config_path: str, cli_overrides: Optional[Dict[str, Any]] = None) -> 'Config':
-        """Load configuration from YAML file with optional CLI overrides."""
+    def from_yaml_file(
+        cls,
+        config_path: str,
+        cli_overrides: Optional[Dict[str, Any]] = None,
+        root_dir: Optional[Path] = None,
+    ) -> 'Config':
+        """Load configuration from YAML file with optional CLI overrides.
+
+        Args:
+            config_path: Path to the YAML config file.
+            cli_overrides: Optional dict of CLI flag overrides.
+            root_dir: Root directory for resolving conventional paths.
+                      Defaults to Path(".") (desktop mode).
+        """
         if not os.path.exists(config_path):
             raise ConfigurationError(f"Config file not found: {config_path}")
-        
+
         try:
             with open(config_path, 'r') as f:
                 yaml_data = yaml.safe_load(f) or {}
@@ -216,11 +236,15 @@ class Config(BaseModel):
             raise ConfigurationError(f"Invalid YAML in config file: {e}")
         except Exception as e:
             raise ConfigurationError(f"Failed to read config file: {e}")
-        
+
         # Apply CLI overrides to YAML data
         if cli_overrides:
             yaml_data = cls._apply_cli_overrides(yaml_data, cli_overrides)
-        
+
+        # Inject root_dir (not stored in YAML — determined by deployment mode)
+        if root_dir is not None:
+            yaml_data['root_dir'] = root_dir
+
         # Create and validate config using Pydantic
         try:
             config = cls.model_validate(yaml_data)

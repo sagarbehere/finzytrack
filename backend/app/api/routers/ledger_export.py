@@ -12,8 +12,8 @@ from app.schemas.export_schemas import (
     ExportData,
     ExportStatusData,
 )
-from app.config import SQLITE_EXPORT_PATH, SQLITE_ENABLE_WAL
-from app.dependencies import get_beancount_manager
+from app.config import SQLITE_ENABLE_WAL
+from app.dependencies import get_beancount_manager, get_config_manager
 from app.services.sqlite_exporter import SQLiteExporter
 from app.core.beancount_manager import BeancountManager
 from app.exceptions import APIError
@@ -32,6 +32,7 @@ router = APIRouter()
 )
 async def export_ledger(
     beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    config_manager=Depends(get_config_manager),
     force: bool = Body(default=False, embed=True),
 ):
     """
@@ -42,7 +43,7 @@ async def export_ledger(
         POST /api/ledger/export {"force": true}
     """
     exporter = SQLiteExporter(
-        sqlite_path=SQLITE_EXPORT_PATH,
+        sqlite_path=config_manager.get_config().sqlite_export_path,
         enable_wal=SQLITE_ENABLE_WAL
     )
 
@@ -73,6 +74,7 @@ async def export_ledger(
 )
 async def get_export_status(
     beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    config_manager=Depends(get_config_manager),
 ):
     """
     Get SQLite export status.
@@ -81,7 +83,7 @@ async def get_export_status(
         GET /api/ledger/export/status
     """
     exporter = SQLiteExporter(
-        sqlite_path=SQLITE_EXPORT_PATH,
+        sqlite_path=config_manager.get_config().sqlite_export_path,
         enable_wal=SQLITE_ENABLE_WAL
     )
 

@@ -11,7 +11,7 @@ from app.core.backup_manager import BackupManager
 from app.exceptions import APIError
 
 if TYPE_CHECKING:
-    from app.core.beancount_manager import BeancountManager
+    from app.core.ledger_manager import LedgerManager
     from app.services.db_sync_manager import DBSyncManager
 
 logger = logging.getLogger(__name__)
@@ -23,12 +23,12 @@ class ConfigManager:
         self.config = config
         self.backup_manager = backup_manager
         # Optional references for hot-reloading; set via set_ledger_services()
-        self._beancount_manager: Optional[BeancountManager] = None
+        self._ledger_manager: Optional[LedgerManager] = None
         self._sqlite_sync_manager: Optional[DBSyncManager] = None
 
     def set_ledger_services(
         self,
-        beancount_manager: BeancountManager,
+        ledger_manager: LedgerManager,
         sqlite_sync_manager: DBSyncManager,
     ) -> None:
         """
@@ -36,7 +36,7 @@ class ConfigManager:
 
         Called once during app startup after all services are created.
         """
-        self._beancount_manager = beancount_manager
+        self._ledger_manager = ledger_manager
         self._sqlite_sync_manager = sqlite_sync_manager
 
     def get_config(self) -> Config:
@@ -126,7 +126,7 @@ class ConfigManager:
 
         # Ledger file path change — hot-switch if services are available
         if new_config.ledger_file != self.config.ledger_file:
-            if self._beancount_manager is not None and self._sqlite_sync_manager is not None:
+            if self._ledger_manager is not None and self._sqlite_sync_manager is not None:
                 notice = await self._switch_ledger(new_config.ledger_file)
             else:
                 restart_required = True
@@ -182,7 +182,7 @@ class ConfigManager:
             An optional notice string for the user (e.g. when a new file
             was created), or None.
         """
-        assert self._beancount_manager is not None
+        assert self._ledger_manager is not None
         assert self._sqlite_sync_manager is not None
 
         ledger_path = Path(new_ledger_file)
@@ -191,8 +191,8 @@ class ConfigManager:
         # If file doesn't exist, try to create a new ledger
         if not ledger_path.exists():
             # Point the initializer at the new path and attempt creation
-            self._beancount_manager.ledger_initializer.ledger_file = new_ledger_file
-            created = self._beancount_manager.ledger_initializer.ensure_ledger_exists()
+            self._ledger_manager.ledger_initializer.ledger_file = new_ledger_file
+            created = self._ledger_manager.ledger_initializer.ensure_ledger_exists()
             if not created:
                 raise APIError(
                     f"Ledger file does not exist and could not be created: {new_ledger_file}",
@@ -220,7 +220,7 @@ class ConfigManager:
             )
 
         # Switch the beancount manager (cache, initializer, etc.)
-        self._beancount_manager.switch_ledger(new_ledger_file)
+        self._ledger_manager.switch_ledger(new_ledger_file)
 
         # Update the sync manager so mtime checks use the new file
         self._sqlite_sync_manager.ledger_file = new_ledger_file
@@ -230,7 +230,7 @@ class ConfigManager:
         # meaningless when switching between different ledger files —
         # the new file may be older than the existing SQLite DB.
         try:
-            entries = self._beancount_manager.cache.get_entries()
+            entries = self._ledger_manager.cache.get_entries()
             await self._sqlite_sync_manager.force_export(entries)
         except Exception as e:
             logger.error(f"Failed to parse new ledger after switch: {e}", exc_info=True)

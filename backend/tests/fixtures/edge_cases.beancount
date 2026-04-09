@@ -1,0 +1,66 @@
+;; Edge case ledger: special characters, multi-currency, unusual structures
+
+option "operating_currency" "USD"
+
+1970-01-01 open Assets:Bank:Checking       USD
+1970-01-01 open Assets:Bank:Euro           EUR
+1970-01-01 open Assets:Investments:Stocks  USD,AAPL
+1970-01-01 open Liabilities:CreditCard     USD
+1970-01-01 open Income:Salary              USD
+1970-01-01 open Income:Dividends           USD
+1970-01-01 open Expenses:Food              USD,EUR
+1970-01-01 open Expenses:Fees:Banking      USD
+1970-01-01 open Expenses:Unknown           USD
+1970-01-01 open Equity:Opening-Balances    USD,EUR
+
+1970-01-01 commodity USD
+1970-01-01 commodity EUR
+1970-01-01 commodity AAPL
+
+;; Multi-currency opening balances
+2024-01-01 * "Opening Balance" "USD account"
+  Assets:Bank:Checking        3000.00 USD
+  Equity:Opening-Balances    -3000.00 USD
+
+2024-01-01 * "Opening Balance" "EUR account"
+  Assets:Bank:Euro            2000.00 EUR
+  Equity:Opening-Balances    -2000.00 EUR
+
+;; Special characters in payee/narration
+2024-01-10 * "Café René & Fils" "Lunch — crème brûlée"
+  Expenses:Food                 25.50 EUR
+  Assets:Bank:Euro             -25.50 EUR
+
+2024-01-12 * "O'Brien's Pub" "Drinks with 'friends'"
+  Expenses:Food                 42.00 USD
+  Assets:Bank:Checking         -42.00 USD
+
+;; Very long narration
+2024-01-15 * "Employer" "This is a deliberately long narration to test how the system handles extended text descriptions in transaction records. It includes multiple sentences and goes well beyond what a typical narration would contain."
+  Assets:Bank:Checking        4500.00 USD
+  Income:Salary              -4500.00 USD
+
+;; Zero-amount posting (valid in beancount for cost tracking)
+2024-02-01 * "Bank" "Fee waiver"
+  Expenses:Fees:Banking          0.00 USD
+  Assets:Bank:Checking           0.00 USD
+
+;; Transaction with metadata
+2024-02-10 * "Store" "Purchase with receipt"
+  receipt: "receipt-2024-0210.pdf"
+  Expenses:Food                 30.00 USD
+  Assets:Bank:Checking         -30.00 USD
+
+;; Deeply nested account
+1970-01-01 open Expenses:Travel:Flights:Domestic:Economy USD
+2024-03-01 * "Airline" "Flight"
+  Expenses:Travel:Flights:Domestic:Economy  350.00 USD
+  Liabilities:CreditCard                   -350.00 USD
+
+;; Balance assertion
+2024-03-15 balance Assets:Bank:Checking  7428.00 USD
+
+;; Pad directive
+1970-01-01 open Expenses:Adjustments USD
+2024-03-31 pad Assets:Bank:Checking Expenses:Adjustments
+2024-04-01 balance Assets:Bank:Checking 7500.00 USD

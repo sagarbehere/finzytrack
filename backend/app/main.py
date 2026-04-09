@@ -21,12 +21,12 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import (
     Config, ConfigurationError,
-    SQLITE_EXPORT_PATH, BACKUP_DIR, LOG_FILE, LOG_FORMAT, CORS_ORIGINS,
+    LOG_FORMAT, CORS_ORIGINS,
     SQLITE_AUTO_SYNC, SQLITE_SYNC_DEBOUNCE_SECONDS, SQLITE_ENABLE_WAL,
 )
 from .api.routers.importer import ofx_accounts, transaction, csv_rules, xls_rules, email as email_import_router, llm_parse, rule_templates
 from .api.routers import accounts, commodities, ledger_export, ledger_transactions, query, config as config_router, filesystem, ledger, assistant, recipes, ai_services, setup as setup_router
-from .core.beancount_manager import BeancountManager
+from .core.ledger_manager import LedgerManager
 from .error_handler import setup_error_handlers
 from .core.backup_manager import BackupManager
 from .core.config_manager import ConfigManager
@@ -36,14 +36,20 @@ from .core.ledger_initializer import LedgerInitializer
 from .services.sqlite_exporter import SQLiteExporter
 from .services.db_sync_manager import DBSyncManager
 from .email_import.rule_registry import AccountProfileRegistry
+from .user_services import UserServices
 
 
-def setup_logging(level: str, max_file_size_mb: int = 5, backup_count: int = 3) -> None:
+def setup_logging(
+    level: str,
+    max_file_size_mb: int = 5,
+    backup_count: int = 3,
+    log_file: str = "./logs/finzytrack.log",
+) -> None:
     """Configure application logging with automatic directory creation and rotation."""
     from logging.handlers import RotatingFileHandler
 
     # Create logs directory if it doesn't exist
-    log_path = Path(LOG_FILE)
+    log_path = Path(log_file)
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Configure logging level
@@ -70,7 +76,7 @@ def setup_logging(level: str, max_file_size_mb: int = 5, backup_count: int = 3) 
 
     # Rotating file handler
     file_handler = RotatingFileHandler(
-        LOG_FILE,
+        log_file,
         maxBytes=max_file_size_mb * 1024 * 1024,
         backupCount=backup_count,
     )
@@ -133,7 +139,7 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
 
     # 1. Create BackupManager service
     backup_manager = BackupManager(
-        backup_dir=Path(BACKUP_DIR),
+        backup_dir=Path(config.backup_dir),
         retention_count=config.backup.retention_count
     )
 
@@ -162,8 +168,8 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
         backup_manager=backup_manager
     )
 
-    # 4. Create BeancountManager
-    beancount_manager = BeancountManager(
+    # 4. Create LedgerManager
+    ledger_manager = LedgerManager(
         ledger_file=config.ledger_file,
         backup_manager=backup_manager,
         ledger_initializer=ledger_initializer
@@ -171,7 +177,7 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
 
     # 5. Create SQLite exporter and sync manager
     sqlite_exporter = SQLiteExporter(
-        sqlite_path=SQLITE_EXPORT_PATH,
+        sqlite_path=config.sqlite_export_path,
         enable_wal=SQLITE_ENABLE_WAL,
     )
 
@@ -183,7 +189,7 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
     )
 
     # 5b. Give ConfigManager references for hot ledger switching
-    config_manager.set_ledger_services(beancount_manager, sqlite_sync_manager)
+    config_manager.set_ledger_services(ledger_manager, sqlite_sync_manager)
 
     # 6. Ensure ledger exists - fail fast if it can't be created
     #    Skip when setup is incomplete — the setup wizard will create the ledger.
@@ -200,7 +206,7 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
 
     # 7. Register SQLite sync callback
     if SQLITE_AUTO_SYNC:
-        beancount_manager.register_cache_invalidation_callback(
+        ledger_manager.register_cache_invalidation_callback(
             sqlite_sync_manager.on_ledger_changed
         )
         logger.info("SQLite auto-sync enabled with debouncing")
@@ -219,7 +225,7 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
         # Export SQLite on startup if out of date (skip when setup is incomplete)
         if config.setup_complete and sqlite_sync_manager._needs_export():
             try:
-                entries = beancount_manager.cache.get_entries()
+                entries = ledger_manager.cache.get_entries()
                 await sqlite_exporter.export_entries(entries)
                 logger.info("SQLite exported on startup")
             except Exception as e:
@@ -261,15 +267,18 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
     # 13. Register centralized exception handlers
     setup_error_handlers(app)
 
-    # 14. Store managers in app state for access in routes
-    app.state.config_manager = config_manager
-    app.state.beancount_manager = beancount_manager
-    app.state.backup_manager = backup_manager
-    app.state.sqlite_exporter = sqlite_exporter
-    app.state.sqlite_sync_manager = sqlite_sync_manager
-    app.state.csv_rules_manager = csv_rules_manager
-    app.state.xls_rules_manager = xls_rules_manager
-    app.state.email_registry = email_registry
+    # 14. Bundle managers into UserServices and store in app state
+    services = UserServices(
+        ledger_manager=ledger_manager,
+        config_manager=config_manager,
+        backup_manager=backup_manager,
+        csv_rules_manager=csv_rules_manager,
+        xls_rules_manager=xls_rules_manager,
+        email_registry=email_registry,
+        sqlite_exporter=sqlite_exporter,
+        db_sync_manager=sqlite_sync_manager,
+    )
+    app.state.services = services
 
     # Include API routers
     app.include_router(ofx_accounts.router, prefix="/api/import", tags=["import"])
@@ -335,7 +344,7 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
 
         # Check backup directory writability
         try:
-            backup_path = Path(BACKUP_DIR)
+            backup_path = Path(config.backup_dir)
             if backup_path.exists() and os.access(backup_path, os.W_OK):
                 checks["backup_dir_writable"] = True
         except Exception:
@@ -345,16 +354,14 @@ def create_app(config: Config, static_dir: Optional[str] = None) -> FastAPI:
         # Insufficient training data is handled gracefully at categorization time.
         training_samples = 0
         try:
-            from app.core.beancount_manager import BeancountManager
-            bm: BeancountManager = app.state.beancount_manager
-            training_samples = len(bm.cache.get_training_data())
+            training_samples = len(services.ledger_manager.cache.get_training_data())
         except Exception:
             pass
         checks["training_samples"] = training_samples
 
         # Email import registry status — informational only
         try:
-            registry = app.state.email_registry
+            registry = services.email_registry
             checks["email_import"] = {
                 "enabled": config.email_import.enabled,
                 "profiles_loaded": registry.profile_count,
@@ -433,6 +440,7 @@ def start_server(
         level=app_config.logging.level,
         max_file_size_mb=app_config.logging.max_file_size_mb,
         backup_count=app_config.logging.backup_count,
+        log_file=app_config.log_file,
     )
 
     logger = logging.getLogger(__name__)

@@ -1,0 +1,96 @@
+;; Small test ledger: ~20 transactions across 5 accounts
+;; Covers basic CRUD testing
+
+option "operating_currency" "USD"
+
+1970-01-01 open Assets:Bank:Checking       USD
+1970-01-01 open Assets:Bank:Savings        USD
+1970-01-01 open Liabilities:CreditCard     USD
+1970-01-01 open Income:Salary              USD
+1970-01-01 open Expenses:Food              USD
+1970-01-01 open Expenses:Rent              USD
+1970-01-01 open Expenses:Transport         USD
+1970-01-01 open Expenses:Unknown           USD
+1970-01-01 open Equity:Opening-Balances    USD
+
+1970-01-01 commodity USD
+
+2024-01-01 * "Opening Balance"
+  Assets:Bank:Checking        5000.00 USD
+  Equity:Opening-Balances    -5000.00 USD
+
+2024-01-15 * "Employer" "January salary"
+  Assets:Bank:Checking        4500.00 USD
+  Income:Salary              -4500.00 USD
+
+2024-01-16 * "Landlord" "January rent"
+  Expenses:Rent               1500.00 USD
+  Assets:Bank:Checking       -1500.00 USD
+
+2024-01-18 * "Grocery Store" "Weekly groceries"
+  Expenses:Food                120.50 USD
+  Assets:Bank:Checking        -120.50 USD
+
+2024-01-20 * "Restaurant" "Dinner out"
+  Expenses:Food                 45.00 USD
+  Liabilities:CreditCard       -45.00 USD
+
+2024-01-22 * "Gas Station" "Fuel"
+  Expenses:Transport            55.00 USD
+  Liabilities:CreditCard       -55.00 USD
+
+2024-01-25 * "Grocery Store" "Midweek groceries"
+  Expenses:Food                 85.30 USD
+  Assets:Bank:Checking         -85.30 USD
+
+2024-02-01 * "Transfer" "Savings transfer"
+  Assets:Bank:Savings          500.00 USD
+  Assets:Bank:Checking        -500.00 USD
+
+2024-02-15 * "Employer" "February salary"
+  Assets:Bank:Checking        4500.00 USD
+  Income:Salary              -4500.00 USD
+
+2024-02-16 * "Landlord" "February rent"
+  Expenses:Rent               1500.00 USD
+  Assets:Bank:Checking       -1500.00 USD
+
+2024-02-18 * "Grocery Store" "Weekly groceries"
+  Expenses:Food                110.25 USD
+  Assets:Bank:Checking        -110.25 USD
+
+2024-02-20 * "Train" "Monthly pass"
+  Expenses:Transport           120.00 USD
+  Assets:Bank:Checking        -120.00 USD
+
+2024-02-22 * "Restaurant" "Team lunch"
+  Expenses:Food                 35.00 USD
+  Liabilities:CreditCard       -35.00 USD
+
+2024-02-28 * "Credit Card" "CC payment"
+  Liabilities:CreditCard       135.00 USD
+  Assets:Bank:Checking        -135.00 USD
+
+2024-03-01 * "Transfer" "Savings transfer"
+  Assets:Bank:Savings          500.00 USD
+  Assets:Bank:Checking        -500.00 USD
+
+2024-03-15 * "Employer" "March salary"
+  Assets:Bank:Checking        4500.00 USD
+  Income:Salary              -4500.00 USD
+
+2024-03-16 * "Landlord" "March rent"
+  Expenses:Rent               1500.00 USD
+  Assets:Bank:Checking       -1500.00 USD
+
+2024-03-18 * "Grocery Store" "Weekly groceries"
+  Expenses:Food                 95.75 USD
+  Assets:Bank:Checking         -95.75 USD
+
+2024-03-20 * "Uber" "Ride to airport"
+  Expenses:Transport            32.50 USD
+  Liabilities:CreditCard       -32.50 USD
+
+2024-03-25 * "Restaurant" "Birthday dinner"
+  Expenses:Food                 78.90 USD
+  Liabilities:CreditCard       -78.90 USD
