@@ -126,6 +126,10 @@ def parse_args():
         '--debug', action='store_true',
         help='Enable debug mode (sets log level to DEBUG)'
     )
+    parser.add_argument(
+        '--headless', action='store_true',
+        help='Run without a GUI window (server only, access via browser)'
+    )
     return parser.parse_args()
 
 
@@ -215,6 +219,18 @@ def main():
         sys.exit(1)
 
     print(f'[launcher] Backend ready at {url}')
+
+    if args.headless:
+        # Headless mode — no GUI window, just run the server until Ctrl+C.
+        print(f'[launcher] Running headless. Open {url} in a browser.', flush=True)
+        try:
+            thread.join()
+        except KeyboardInterrupt:
+            print('\n[launcher] Interrupted, shutting down...', flush=True)
+            shutdown_event.set()
+            thread.join(timeout=5)
+            print('[launcher] Done.', flush=True)
+        return
 
     window = webview.create_window(
         'FinzyTrack',
