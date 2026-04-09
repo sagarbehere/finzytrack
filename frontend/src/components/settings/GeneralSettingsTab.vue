@@ -69,61 +69,38 @@
         <a href="https://finzytrack.app/docs/ai-data-sharing" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 underline underline-offset-2">What data is shared with the AI model?</a>
       </p>
 
-      <Listbox as="div" v-model="llmFields.provider">
-        <ListboxLabel class="block text-sm/6 font-medium text-gray-900 dark:text-white">Provider</ListboxLabel>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
-          Use <strong>OpenAI-compatible</strong> for local models (LM Studio, Ollama), OpenAI, or Groq.
-          Use <strong>Anthropic</strong> for the Anthropic API directly.
-        </p>
-        <div class="relative">
-          <ListboxButton class="grid w-full cursor-default grid-cols-1 rounded-md bg-white py-1.5 pr-2 pl-3 text-left text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus-visible:outline-indigo-500">
-            <span class="col-start-1 row-start-1 truncate pr-6">{{ providerOptions.find(o => o.value === llmFields.provider)?.label ?? llmFields.provider }}</span>
-            <ChevronUpDownIcon class="col-start-1 row-start-1 size-5 self-center justify-self-end text-gray-500 sm:size-4 dark:text-gray-400" aria-hidden="true" />
-          </ListboxButton>
-          <transition leave-active-class="transition ease-in duration-100" leave-to-class="opacity-0">
-            <ListboxOptions class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline-1 outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10">
-              <ListboxOption v-for="opt in providerOptions" :key="opt.value" :value="opt.value" as="template" v-slot="{ active, selected }">
-                <li :class="[active ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'text-gray-900 dark:text-white', 'relative cursor-default py-2 pr-9 pl-3 select-none']">
-                  <span :class="[selected ? 'font-semibold' : 'font-normal', 'block truncate']">{{ opt.label }}</span>
-                  <span v-if="selected" :class="[active ? 'text-white' : 'text-indigo-600 dark:text-indigo-400', 'absolute inset-y-0 right-0 flex items-center pr-4']">
-                    <CheckIcon class="size-5" aria-hidden="true" />
-                  </span>
-                </li>
-              </ListboxOption>
-            </ListboxOptions>
-          </transition>
+      <!-- Finzytrack AI toggle -->
+      <div class="flex items-center justify-between">
+        <div>
+          <span class="text-sm font-medium text-gray-900 dark:text-white">Use Finzytrack AI</span>
+          <p class="text-sm text-gray-500 dark:text-gray-400">AI features work out of the box. No API key or model configuration needed.</p>
         </div>
-      </Listbox>
-
-      <div v-if="llmFields.provider === 'openai'">
-        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">API URL</label>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
-          Base URL of the OpenAI-compatible endpoint, e.g. <code class="font-mono">http://127.0.0.1:1234</code> or <code class="font-mono">https://api.openai.com</code>.
-        </p>
-        <input v-model="llmFields.api_url" type="text" placeholder="http://127.0.0.1:1234" :class="inputClass" />
+        <div class="group relative inline-flex w-11 shrink-0 rounded-full bg-gray-200 p-0.5 inset-ring inset-ring-gray-900/5 outline-offset-2 outline-indigo-600 transition-colors duration-200 ease-in-out has-checked:bg-indigo-600 has-focus-visible:outline-2 dark:bg-white/5 dark:inset-ring-white/10 dark:outline-indigo-500 dark:has-checked:bg-indigo-500">
+          <span class="size-5 rounded-full bg-white shadow-xs ring-1 ring-gray-900/5 transition-transform duration-200 ease-in-out group-has-checked:translate-x-5"></span>
+          <input type="checkbox" v-model="llmFields.finzytrack_ai" class="absolute inset-0 size-full appearance-none focus:outline-hidden" aria-label="Use Finzytrack AI" />
+        </div>
       </div>
 
-      <div>
-        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">API Key</label>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Required for cloud providers. Leave empty for local models.</p>
+      <!-- Finzytrack AI token (shown when enabled) -->
+      <div v-if="llmFields.finzytrack_ai">
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Finzytrack AI Token</label>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Your authentication token for the Finzytrack AI service.</p>
         <div class="relative">
           <input
-            v-model="llmFields.api_key"
-            :type="showApiKey ? 'text' : 'password'"
-            placeholder="sk-..."
+            v-model="llmFields.finzytrack_ai_token"
+            :type="showFinzytrackToken ? 'text' : 'password'"
+            placeholder="ft_tok_..."
             :class="[inputClass, 'pr-10']"
           />
           <button
             type="button"
-            @click="showApiKey = !showApiKey"
+            @click="showFinzytrackToken = !showFinzytrackToken"
             class="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-            :aria-label="showApiKey ? 'Hide API key' : 'Show API key'"
+            :aria-label="showFinzytrackToken ? 'Hide token' : 'Show token'"
           >
-            <!-- Eye-off -->
-            <svg v-if="showApiKey" class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg v-if="showFinzytrackToken" class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
             </svg>
-            <!-- Eye -->
             <svg v-else class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
@@ -132,15 +109,80 @@
         </div>
       </div>
 
-      <div>
-        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Model</label>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
-          Model name, e.g. <code class="font-mono">gpt-4o</code>, <code class="font-mono">claude-sonnet-4-6</code>, <code class="font-mono">llama-3.1-8b-instruct</code>.
-        </p>
-        <input v-model="llmFields.model" type="text" placeholder="gpt-4o" :class="inputClass" />
-      </div>
+      <!-- Bring-your-own provider fields (shown when Finzytrack AI is off) -->
+      <template v-if="!llmFields.finzytrack_ai">
+        <Listbox as="div" v-model="llmFields.provider">
+          <ListboxLabel class="block text-sm/6 font-medium text-gray-900 dark:text-white">Provider</ListboxLabel>
+          <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
+            Use <strong>OpenAI-compatible</strong> for local models (LM Studio, Ollama), OpenAI, or Groq.
+            Use <strong>Anthropic</strong> for the Anthropic API directly.
+          </p>
+          <div class="relative">
+            <ListboxButton class="grid w-full cursor-default grid-cols-1 rounded-md bg-white py-1.5 pr-2 pl-3 text-left text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus-visible:outline-indigo-500">
+              <span class="col-start-1 row-start-1 truncate pr-6">{{ providerOptions.find(o => o.value === llmFields.provider)?.label ?? llmFields.provider }}</span>
+              <ChevronUpDownIcon class="col-start-1 row-start-1 size-5 self-center justify-self-end text-gray-500 sm:size-4 dark:text-gray-400" aria-hidden="true" />
+            </ListboxButton>
+            <transition leave-active-class="transition ease-in duration-100" leave-to-class="opacity-0">
+              <ListboxOptions class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline-1 outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10">
+                <ListboxOption v-for="opt in providerOptions" :key="opt.value" :value="opt.value" as="template" v-slot="{ active, selected }">
+                  <li :class="[active ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'text-gray-900 dark:text-white', 'relative cursor-default py-2 pr-9 pl-3 select-none']">
+                    <span :class="[selected ? 'font-semibold' : 'font-normal', 'block truncate']">{{ opt.label }}</span>
+                    <span v-if="selected" :class="[active ? 'text-white' : 'text-indigo-600 dark:text-indigo-400', 'absolute inset-y-0 right-0 flex items-center pr-4']">
+                      <CheckIcon class="size-5" aria-hidden="true" />
+                    </span>
+                  </li>
+                </ListboxOption>
+              </ListboxOptions>
+            </transition>
+          </div>
+        </Listbox>
 
-      <div class="grid grid-cols-3 gap-4">
+        <div v-if="llmFields.provider === 'openai'">
+          <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">API URL</label>
+          <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
+            Base URL of the OpenAI-compatible endpoint, e.g. <code class="font-mono">http://127.0.0.1:1234</code> or <code class="font-mono">https://api.openai.com</code>.
+          </p>
+          <input v-model="llmFields.api_url" type="text" placeholder="http://127.0.0.1:1234" :class="inputClass" />
+        </div>
+
+        <div>
+          <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">API Key</label>
+          <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Required for cloud providers. Leave empty for local models.</p>
+          <div class="relative">
+            <input
+              v-model="llmFields.api_key"
+              :type="showApiKey ? 'text' : 'password'"
+              placeholder="sk-..."
+              :class="[inputClass, 'pr-10']"
+            />
+            <button
+              type="button"
+              @click="showApiKey = !showApiKey"
+              class="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              :aria-label="showApiKey ? 'Hide API key' : 'Show API key'"
+            >
+              <svg v-if="showApiKey" class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+              </svg>
+              <svg v-else class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Model</label>
+          <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
+            Model name, e.g. <code class="font-mono">gpt-4o</code>, <code class="font-mono">claude-sonnet-4-6</code>, <code class="font-mono">llama-3.1-8b-instruct</code>.
+          </p>
+          <input v-model="llmFields.model" type="text" placeholder="gpt-4o" :class="inputClass" />
+        </div>
+      </template>
+
+      <!-- Advanced settings (only shown for bring-your-own) -->
+      <div v-if="!llmFields.finzytrack_ai" class="grid grid-cols-3 gap-4">
         <div>
           <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Temperature</label>
           <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">0 = deterministic, 2 = very random.</p>
@@ -457,6 +499,7 @@ const browseButtonClass = 'shrink-0 rounded-md bg-white px-2.5 py-1.5 text-sm fo
 // ─── Eye toggle for API key ───────────────────────────────────────────────────
 
 const showApiKey = ref(false)
+const showFinzytrackToken = ref(false)
 
 // ─── Select option constants ─────────────────────────────────────────────────
 
@@ -570,6 +613,9 @@ function resetAccounts() { initAccountsFields(); accountsError.value = '' }
 // ─── LLM section ──────────────────────────────────────────────────────────────
 
 const llmFields = reactive({
+  finzytrack_ai: config.value?.ai?.llm?.finzytrack_ai ?? false,
+  finzytrack_ai_token: config.value?.ai?.llm?.finzytrack_ai_token ?? '',
+  finzytrack_ai_url: config.value?.ai?.llm?.finzytrack_ai_url ?? '',
   provider: (config.value?.ai?.llm?.provider ?? 'openai') as string,
   api_url: config.value?.ai?.llm?.api_url ?? '',
   api_key: config.value?.ai?.llm?.api_key ?? '',
@@ -583,6 +629,9 @@ const llmSaving = ref(false)
 const llmError = ref('')
 
 const llmIsDirty = computed(() =>
+  llmFields.finzytrack_ai !== (config.value?.ai?.llm?.finzytrack_ai ?? false) ||
+  llmFields.finzytrack_ai_token !== (config.value?.ai?.llm?.finzytrack_ai_token ?? '') ||
+  llmFields.finzytrack_ai_url !== (config.value?.ai?.llm?.finzytrack_ai_url ?? '') ||
   llmFields.provider !== (config.value?.ai?.llm?.provider ?? 'openai') ||
   llmFields.api_url !== (config.value?.ai?.llm?.api_url ?? '') ||
   llmFields.api_key !== (config.value?.ai?.llm?.api_key ?? '') ||
@@ -594,6 +643,9 @@ const llmIsDirty = computed(() =>
 )
 
 function initLlmFields() {
+  llmFields.finzytrack_ai = config.value?.ai?.llm?.finzytrack_ai ?? false
+  llmFields.finzytrack_ai_token = config.value?.ai?.llm?.finzytrack_ai_token ?? ''
+  llmFields.finzytrack_ai_url = config.value?.ai?.llm?.finzytrack_ai_url ?? ''
   llmFields.provider = config.value?.ai?.llm?.provider ?? 'openai'
   llmFields.api_url = config.value?.ai?.llm?.api_url ?? ''
   llmFields.api_key = config.value?.ai?.llm?.api_key ?? ''
@@ -605,11 +657,14 @@ function initLlmFields() {
 }
 
 async function saveLlm() {
-  // Omit api_key when it's the redacted placeholder or empty — sending it
-  // back would overwrite the real key with the mask string.
-  const { api_key, ...rest } = llmFields
+  // Omit secret fields when they are the redacted placeholder or empty —
+  // sending them back would overwrite the real value with the mask string.
+  const { api_key, finzytrack_ai_token, ...rest } = llmFields
+  const llmPatch: Record<string, unknown> = { ...rest }
   const isRealKey = api_key && !/^\*+$/.test(api_key)
-  const llmPatch = isRealKey ? { ...rest, api_key } : { ...rest }
+  if (isRealKey) llmPatch.api_key = api_key
+  const isRealToken = finzytrack_ai_token && !/^\*+$/.test(finzytrack_ai_token)
+  if (isRealToken) llmPatch.finzytrack_ai_token = finzytrack_ai_token
   await saveSection({ ai: { llm: llmPatch } }, llmSaving, llmError)
 }
 

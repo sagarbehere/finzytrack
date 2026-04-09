@@ -1,5 +1,5 @@
 """
-System prompt builder for the FinzyTrack AI assistant.
+System prompt builder for the Finzytrack AI assistant.
 
 Prompt content lives in backend/resources/prompts/ as plain Markdown files:
   assistant_base.md      — role, workflow, instructions (setup mode)

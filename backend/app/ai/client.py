@@ -11,6 +11,9 @@ import logging
 from dataclasses import dataclass
 from typing import AsyncIterator
 
+import httpx
+from pydantic import SecretStr
+
 from app.config import LLMConfig
 
 logger = logging.getLogger(__name__)
@@ -56,6 +59,78 @@ class DoneEvent:
 ChatEvent = TokenEvent | ToolCallEvent | DoneEvent
 
 
+# ── Finzytrack AI config resolution ──────────────────────────────────────────
+
+_proxy_config_cache: dict[str, dict] = {}  # proxy_url -> config dict
+
+
+async def _fetch_proxy_config(proxy_url: str) -> dict:
+    """Fetch client settings from the Finzytrack AI proxy's /v1/config endpoint."""
+    if proxy_url in _proxy_config_cache:
+        return _proxy_config_cache[proxy_url]
+
+    url = proxy_url.rstrip("/") + "/v1/config"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+            _proxy_config_cache[proxy_url] = data
+            logger.info(
+                "Finzytrack AI proxy config: model=%s temperature=%s max_tokens=%s",
+                data.get("model"), data.get("temperature"), data.get("max_tokens"),
+            )
+            return data
+    except Exception as exc:
+        logger.warning("Failed to fetch config from Finzytrack AI proxy: %s", exc)
+    return {}
+
+
+async def resolve_config(config: LLMConfig) -> LLMConfig:
+    """Return the effective LLM config, applying Finzytrack AI overrides if enabled.
+
+    When ``finzytrack_ai`` is True, all LLM settings are fetched from the proxy.
+    If the user also configured their own provider settings, a warning is logged
+    and Finzytrack AI takes precedence.
+    """
+    if not config.finzytrack_ai:
+        return config
+
+    # Warn if the user also configured bring-your-own fields
+    has_own = bool(config.api_key.get_secret_value()) or bool(config.api_url)
+    if has_own:
+        logger.warning(
+            "Both Finzytrack AI and a custom provider are configured. "
+            "Finzytrack AI takes precedence — custom provider/api_url/api_key/model are ignored."
+        )
+
+    token = config.finzytrack_ai_token.get_secret_value()
+    if not token:
+        logger.error("Finzytrack AI is enabled but finzytrack_ai_token is empty")
+        return config
+
+    proxy_url = config.finzytrack_ai_url
+    proxy_cfg = await _fetch_proxy_config(proxy_url)
+
+    updates: dict = {
+        "provider": "openai",
+        "api_url": proxy_url,
+        "api_key": SecretStr(token),
+    }
+    if proxy_cfg.get("model"):
+        updates["model"] = proxy_cfg["model"]
+    if "temperature" in proxy_cfg:
+        updates["temperature"] = proxy_cfg["temperature"]
+    if "max_tokens" in proxy_cfg:
+        updates["max_tokens"] = proxy_cfg["max_tokens"]
+    if "max_tool_rounds" in proxy_cfg:
+        updates["max_tool_rounds"] = proxy_cfg["max_tool_rounds"]
+    if "timeout_secs" in proxy_cfg:
+        updates["timeout_secs"] = proxy_cfg["timeout_secs"]
+
+    return config.model_copy(update=updates)
+
+
 # ── Public entry points ───────────────────────────────────────────────────────
 
 async def complete_chat(
@@ -69,6 +144,7 @@ async def complete_chat(
     Use this for simple request/response calls (NL parsing, query generation)
     where streaming and tool-use are unnecessary.
     """
+    config = await resolve_config(config)
     temp = temperature if temperature is not None else config.temperature
 
     if config.provider == "anthropic":
@@ -81,6 +157,7 @@ async def stream_chat(
     messages: list[dict],
     tools: list[dict],  # provider-specific schemas (caller passes correct format)
 ) -> AsyncIterator[ChatEvent]:
+    config = await resolve_config(config)
     if config.provider == "anthropic":
         async for event in _stream_anthropic(config, messages, tools):
             yield event
@@ -176,7 +253,10 @@ async def _stream_anthropic(
 ) -> AsyncIterator[ChatEvent]:
     import anthropic
 
-    client = anthropic.AsyncAnthropic(api_key=config.api_key.get_secret_value() or "not-needed")
+    client_kwargs: dict = {"api_key": config.api_key.get_secret_value() or "not-needed"}
+    if config.api_url:
+        client_kwargs["base_url"] = config.api_url.rstrip("/")
+    client = anthropic.AsyncAnthropic(**client_kwargs)
 
     # Anthropic takes system separately; extract it from messages
     system_content = ""
@@ -277,7 +357,10 @@ async def _complete_anthropic(
 ) -> str:
     import anthropic
 
-    client = anthropic.AsyncAnthropic(api_key=config.api_key.get_secret_value() or "not-needed")
+    client_kwargs: dict = {"api_key": config.api_key.get_secret_value() or "not-needed"}
+    if config.api_url:
+        client_kwargs["base_url"] = config.api_url.rstrip("/")
+    client = anthropic.AsyncAnthropic(**client_kwargs)
 
     system_content = ""
     anthropic_messages = []

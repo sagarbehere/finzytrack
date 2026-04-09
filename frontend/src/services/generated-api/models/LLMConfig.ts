@@ -7,6 +7,18 @@
  */
 export type LLMConfig = {
     /**
+     * Use FinzyTrack AI managed service. When enabled, provider/api_url/api_key/model are ignored — the proxy controls everything.
+     */
+    finzytrack_ai?: boolean;
+    /**
+     * Authentication token for FinzyTrack AI service.
+     */
+    finzytrack_ai_token?: string;
+    /**
+     * FinzyTrack AI proxy URL (override for development/testing).
+     */
+    finzytrack_ai_url?: string;
+    /**
      * LLM provider: 'openai' (any OpenAI-compatible endpoint incl. LM Studio, Ollama, OpenAI, Groq) or 'anthropic' (Anthropic API directly)
      */
     provider?: LLMConfig.provider;

@@ -77,15 +77,36 @@ class LoggingConfig(BaseModel):
         return v.upper()
 
 
+_FINZYTRACK_AI_DEFAULT_URL = "https://ai.finzytrack.com"
+
+
 class LLMConfig(BaseModel):
     """LLM API configuration for natural language features."""
+
+    # ── Finzytrack AI (managed service) ─────────────────────────────────
+    finzytrack_ai: bool = Field(
+        default=False,
+        description="Use Finzytrack AI managed service. When enabled, provider/api_url/api_key/model are ignored — the proxy controls everything.",
+    )
+    finzytrack_ai_token: SecretStr = Field(
+        default=SecretStr(""),
+        description="Authentication token for Finzytrack AI service.",
+    )
+    finzytrack_ai_url: str = Field(
+        default=_FINZYTRACK_AI_DEFAULT_URL,
+        description="Finzytrack AI proxy URL (override for development/testing).",
+    )
+
+    # ── Bring-your-own provider ─────────────────────────────────────────
     provider: Literal["openai", "anthropic"] = Field(
         default="openai",
-        description="LLM provider: 'openai' (any OpenAI-compatible endpoint incl. LM Studio, Ollama, OpenAI, Groq) or 'anthropic' (Anthropic API directly)"
+        description="LLM provider: 'openai' (any OpenAI-compatible endpoint incl. LM Studio, Ollama, OpenAI, Groq) or 'anthropic' (Anthropic API directly)",
     )
     api_url: str = Field(default="", description="OpenAI-compatible API base URL — only used when provider=openai (e.g. http://127.0.0.1:1234 or https://api.openai.com)")
     api_key: SecretStr = Field(default=SecretStr(""), description="API key (required for cloud providers, leave empty for local LLMs)")
     model: str = Field(default="", description="Model name (e.g. gpt-4o, claude-sonnet-4-6, llama-3.1-8b-instruct)")
+
+    # ── Shared settings ─────────────────────────────────────────────────
     temperature: float = Field(default=0.1, ge=0.0, le=2.0, description="Sampling temperature (0=deterministic, 2=very random)")
     max_tokens: int = Field(default=0, ge=0, description="Maximum tokens in LLM response. 0 = use model default (Anthropic requires a value > 0).")
     max_tool_rounds: int = Field(default=12, ge=1, le=50, description="Maximum tool-call round-trips per user message in the AI assistant.")
