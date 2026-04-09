@@ -223,6 +223,16 @@ def main():
     if args.headless:
         # Headless mode — no GUI window, just run the server until Ctrl+C.
         print(f'[launcher] Running headless. Open {url} in a browser.', flush=True)
+        if args.host == '0.0.0.0':
+            try:
+                import socket
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(('8.8.8.8', 80))
+                local_ip = s.getsockname()[0]
+                s.close()
+                print(f'[launcher] Local network: http://{local_ip}:{args.port}', flush=True)
+            except Exception:
+                pass
         try:
             thread.join()
         except KeyboardInterrupt:
