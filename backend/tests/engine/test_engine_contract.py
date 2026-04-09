@@ -173,34 +173,41 @@ class TestAccountCRUD:
         closes = {e.account for e in entries if e.__class__.__name__ == 'Close'}
         assert "Expenses:Unknown" not in closes
 
-    def test_delete_account_removes_open(self, engine, base_entries):
-        """Deleting an account removes its Open directive."""
-        # Expenses:Unknown has no transactions in small_ledger
+    def test_delete_account_no_transactions_returns_zero(self, engine, base_entries):
+        """Deleting an account with no transactions returns count=0."""
         entries, count = engine.delete_account(base_entries, "Expenses:Unknown", delete_transactions=True)
         opens = {e.account for e in entries if e.__class__.__name__ == 'Open'}
         assert "Expenses:Unknown" not in opens
+        assert count == 0
 
     def test_delete_account_with_transactions_raises_without_flag(self, engine, base_entries):
         """Deleting an account with transactions should raise if delete_transactions=False."""
         with pytest.raises(ValueError, match="has transactions"):
             engine.delete_account(base_entries, "Expenses:Food", delete_transactions=False)
 
-    def test_delete_account_with_transactions_removes_them(self, engine, base_entries):
-        """With delete_transactions=True, transactions are also removed."""
+    def test_delete_account_removes_all_transactions(self, engine, base_entries):
+        """delete_account must remove ALL transactions, not just the first one.
+
+        Expenses:Food has multiple transactions in the fixture. The returned
+        count must match, and no transaction may reference the account.
+        """
+        # Count how many transactions reference Expenses:Food before deletion
+        food_txn_count = sum(
+            1 for e in base_entries
+            if isinstance(e, Transaction)
+            and any(p.account == "Expenses:Food" for p in e.postings)
+        )
+        assert food_txn_count > 1, "Test requires multiple transactions for Expenses:Food"
+
         entries, count = engine.delete_account(base_entries, "Expenses:Food", delete_transactions=True)
-        assert count > 0
-        # No remaining transactions should reference the deleted account
+        assert count == food_txn_count
         for entry in entries:
             if isinstance(entry, Transaction):
                 for posting in entry.postings:
                     assert posting.account != "Expenses:Food"
 
     def test_update_account_rename(self, engine, base_entries):
-        """Renaming an account updates Open + all referencing entries.
-
-        We rename Expenses:Food (which has transactions) to verify that
-        transaction postings are also updated.
-        """
+        """Renaming updates Open directive + all transaction postings."""
         entries = engine.update_account(
             base_entries, "Expenses:Food", new_name="Expenses:Groceries",
         )
@@ -208,12 +215,81 @@ class TestAccountCRUD:
         assert "Expenses:Groceries" in opens
         assert "Expenses:Food" not in opens
 
-        # All transaction postings must reference the new name, not the old
         for entry in entries:
             if isinstance(entry, Transaction):
                 for posting in entry.postings:
                     assert posting.account != "Expenses:Food", \
                         f"Transaction still references old name: {entry.narration}"
+
+    def test_update_nonexistent_account_raises(self, engine, base_entries):
+        """Updating an account that doesn't exist should raise ValueError."""
+        with pytest.raises(ValueError, match="not found"):
+            engine.update_account(base_entries, "Expenses:DoesNotExist", new_name="Expenses:Nope")
+
+    def test_update_account_preserves_other_opens(self, engine, base_entries):
+        """Renaming one account must not alter any other account's Open."""
+        original_opens = {
+            e.account for e in base_entries
+            if e.__class__.__name__ == 'Open' and e.account != "Expenses:Food"
+        }
+        entries = engine.update_account(
+            base_entries, "Expenses:Food", new_name="Expenses:Groceries",
+        )
+        remaining_opens = {
+            e.account for e in entries
+            if e.__class__.__name__ == 'Open' and e.account != "Expenses:Groceries"
+        }
+        assert remaining_opens == original_opens
+
+    def test_close_account_with_reason(self, engine, base_entries):
+        """Close directive should carry the reason metadata."""
+        entries = engine.close_account(
+            base_entries, "Expenses:Unknown", date(2024, 12, 31),
+            reason="No longer needed",
+        )
+        close_entries = [e for e in entries if e.__class__.__name__ == 'Close' and e.account == "Expenses:Unknown"]
+        assert len(close_entries) == 1
+        assert close_entries[0].meta.get("reason") == "No longer needed"
+
+    def test_rename_sub_accounts(self, engine):
+        """Renaming a parent account should also rename child accounts in postings.
+
+        E.g., renaming Expenses:Fees should also rename Expenses:Fees:Banking.
+        """
+        from beancount.core import data as bd
+        from beancount.core.amount import Amount as Amt
+
+        entries = [
+            bd.Open({'filename': '', 'lineno': 0}, date(2024, 1, 1), "Expenses:Fees", ["USD"], None),
+            bd.Open({'filename': '', 'lineno': 0}, date(2024, 1, 1), "Expenses:Fees:Banking", ["USD"], None),
+            bd.Open({'filename': '', 'lineno': 0}, date(2024, 1, 1), "Assets:Bank", ["USD"], None),
+            Transaction(
+                meta={'filename': '', 'lineno': 0},
+                date=date(2024, 3, 1), flag='*', payee="Bank", narration="Fee",
+                tags=frozenset(), links=frozenset(),
+                postings=[
+                    Posting("Expenses:Fees:Banking", Amt(Decimal("5"), "USD"), None, None, None, None),
+                    Posting("Assets:Bank", Amt(Decimal("-5"), "USD"), None, None, None, None),
+                ],
+            ),
+        ]
+        updated = engine.update_account(entries, "Expenses:Fees", new_name="Expenses:BankFees")
+
+        # Parent renamed
+        opens = {e.account for e in updated if e.__class__.__name__ == 'Open'}
+        assert "Expenses:BankFees" in opens
+        assert "Expenses:Fees" not in opens
+
+        # Child renamed
+        assert "Expenses:BankFees:Banking" in opens
+        assert "Expenses:Fees:Banking" not in opens
+
+        # Transaction posting also renamed
+        for entry in updated:
+            if isinstance(entry, Transaction):
+                accounts = {p.account for p in entry.postings}
+                assert "Expenses:BankFees:Banking" in accounts
+                assert "Expenses:Fees:Banking" not in accounts
 
 
 class TestTransactionCRUD:
@@ -271,6 +347,56 @@ class TestTransactionCRUD:
         """Deleting a non-existent transaction ID should raise."""
         with pytest.raises(Exception):
             engine.delete_transactions(list(base_entries), ["nonexistent-id"])
+
+    def test_content_hash_is_deterministic(self, engine):
+        """Same inputs must produce the same content_hash."""
+        def make():
+            return engine.create_transaction(
+                date(2024, 4, 1), "Store", "Groceries",
+                [
+                    Posting("Assets:Bank:Checking", Amount(Decimal("-50"), "USD"), None, None, None, None),
+                    Posting("Expenses:Food", Amount(Decimal("50"), "USD"), None, None, None, None),
+                ],
+                "Assets:Bank:Checking",
+            )
+        txn1 = make()
+        txn2 = make()
+        assert txn1.meta["content_hash"] == txn2.meta["content_hash"]
+
+    def test_content_hash_changes_with_amount(self, engine):
+        """Different amounts must produce different content_hashes."""
+        txn1 = engine.create_transaction(
+            date(2024, 4, 1), "Store", "Groceries",
+            [
+                Posting("Assets:Bank:Checking", Amount(Decimal("-50"), "USD"), None, None, None, None),
+                Posting("Expenses:Food", Amount(Decimal("50"), "USD"), None, None, None, None),
+            ],
+            "Assets:Bank:Checking",
+        )
+        txn2 = engine.create_transaction(
+            date(2024, 4, 1), "Store", "Groceries",
+            [
+                Posting("Assets:Bank:Checking", Amount(Decimal("-99"), "USD"), None, None, None, None),
+                Posting("Expenses:Food", Amount(Decimal("99"), "USD"), None, None, None, None),
+            ],
+            "Assets:Bank:Checking",
+        )
+        assert txn1.meta["content_hash"] != txn2.meta["content_hash"]
+
+    def test_create_transaction_with_external_id(self, engine):
+        """External IDs (OFX FITID, UPI ref) should be stored in metadata."""
+        txn = engine.create_transaction(
+            date(2024, 4, 1), "Store", "Purchase",
+            [
+                Posting("Assets:Bank:Checking", Amount(Decimal("-30"), "USD"), None, None, None, None),
+                Posting("Expenses:Food", Amount(Decimal("30"), "USD"), None, None, None, None),
+            ],
+            "Assets:Bank:Checking",
+            external_id="OFX-12345",
+            external_id_type="OFX",
+        )
+        assert txn.meta["external_id"] == "OFX-12345"
+        assert txn.meta["external_id_type"] == "OFX"
 
 
 class TestTransactionValidation:
@@ -344,6 +470,42 @@ class TestBalanceDirectives:
             if isinstance(e, bd.Balance) and e.account == "Assets:Bank:Checking" and e.date == date(2024, 12, 31)
         ]
         assert len(balances) == 0
+
+    def test_delete_balance_with_pad_removes_both(self, engine, base_entries):
+        """Deleting a balance directive with delete_pad=True must also remove the pad."""
+        from beancount.core import data as bd
+        entries = engine.add_balance_directive(
+            base_entries, "Assets:Bank:Checking",
+            date(2024, 12, 31), "USD", 10000.00,
+            include_pad=True,
+            pad_source_account="Expenses:Adjustments",
+        )
+        # Verify pad exists before deletion
+        pads_before = [e for e in entries if isinstance(e, bd.Pad) and e.account == "Assets:Bank:Checking"]
+        assert len(pads_before) >= 1
+
+        entries = engine.delete_balance_directive(
+            entries, "Assets:Bank:Checking",
+            date(2024, 12, 31), "USD", 10000.00,
+            delete_pad=True,
+        )
+        # Both balance and pad should be gone
+        balances = [e for e in entries if isinstance(e, bd.Balance) and e.account == "Assets:Bank:Checking" and e.date == date(2024, 12, 31)]
+        pads = [e for e in entries if isinstance(e, bd.Pad) and e.account == "Assets:Bank:Checking" and e.date == date(2024, 12, 30)]
+        assert len(balances) == 0
+        assert len(pads) == 0
+
+    def test_add_balance_without_pad_flag_creates_no_pad(self, engine, base_entries):
+        """include_pad=False should not create a pad directive."""
+        from beancount.core import data as bd
+        count_before = len([e for e in base_entries if isinstance(e, bd.Pad)])
+        entries = engine.add_balance_directive(
+            base_entries, "Assets:Bank:Checking",
+            date(2024, 12, 31), "USD", 10000.00,
+            include_pad=False,
+        )
+        count_after = len([e for e in entries if isinstance(e, bd.Pad)])
+        assert count_after == count_before
 
 
 class TestCommodityCRUD:
