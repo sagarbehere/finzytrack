@@ -34,6 +34,34 @@ All writes to the Beancount ledger file **must** go through `BeancountManager._w
 - `config_dir` property always returns `Path('./config')` relative to CWD
 - Only `ledger_file` is a user-configurable file path (supports hot-switching at runtime)
 
+## Testing (MANDATORY)
+
+Tests must verify the **specification**, not mirror the implementation. See `dev-docs/testing-approach.md` for the full strategy.
+
+**Rules when writing tests:**
+- Every mutating endpoint test (create, update, delete) must verify the outcome via a subsequent read — never trust the response alone
+- Use exact assertions (`==`) not subset assertions (`issubset`) unless there's a documented reason
+- Assert exact counts, not `> 0`
+- Engine contract tests are parameterized by engine (`@pytest.fixture(params=["beancount"])`) — they must not use Beancount-specific internals
+- Do not assert on error message strings — assert on error codes and status codes
+
+**Running tests:**
+```bash
+cd backend
+python -m pytest tests/ -q                    # run all tests
+python -m coverage run -m pytest tests/ -q    # run with coverage
+python -m coverage report --show-missing      # see uncovered lines
+```
+
+**Before merging changes to `app/core/` or `app/api/routers/`:**
+1. Run `python -m pytest tests/` — all tests must pass
+2. Run coverage — new/changed code should be covered
+3. Run mutation testing on changed files:
+   ```bash
+   python -m mutmut run --paths-to-mutate=<changed-file> --tests-dir=tests/
+   ```
+4. Investigate surviving mutations on covered lines — add tests for real behavioral gaps (not metadata/error-message/default-param mutations)
+
 ## API Codegen Workflow
 
 When adding or modifying endpoints:
