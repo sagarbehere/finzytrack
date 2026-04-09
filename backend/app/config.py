@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Dict, Any, Literal, Optional
 from pathlib import Path
 
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, computed_field, field_validator, model_validator
 from pydantic_core import ValidationError as PydanticValidationError
 
 
@@ -105,6 +105,13 @@ class LLMConfig(BaseModel):
     api_url: str = Field(default="", description="OpenAI-compatible API base URL — only used when provider=openai (e.g. http://127.0.0.1:1234 or https://api.openai.com)")
     api_key: SecretStr = Field(default=SecretStr(""), description="API key (required for cloud providers, leave empty for local LLMs)")
     model: str = Field(default="", description="Model name (e.g. gpt-4o, claude-sonnet-4-6, llama-3.1-8b-instruct)")
+
+    # ── Computed ─────────────────────────────────────────────────────────
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def is_configured(self) -> bool:
+        """True if AI is usable — either via Finzytrack AI or a bring-your-own model."""
+        return self.finzytrack_ai or bool(self.model)
 
     # ── Shared settings ─────────────────────────────────────────────────
     temperature: float = Field(default=0.1, ge=0.0, le=2.0, description="Sampling temperature (0=deterministic, 2=very random)")

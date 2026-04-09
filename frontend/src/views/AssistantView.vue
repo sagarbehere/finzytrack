@@ -657,8 +657,7 @@ const { loadConfig, config: appConfig } = useConfig()
 onMounted(async () => {
   try {
     await loadConfig()
-    const model = appConfig.value?.ai?.llm?.model ?? ''
-    llmConfigured.value = model.trim().length > 0
+    llmConfigured.value = appConfig.value?.ai?.llm?.is_configured ?? false
   } catch {
     // If we can't reach the backend, show the chat anyway and let the
     // server return an error when the user sends a message.

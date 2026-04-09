@@ -407,9 +407,9 @@ async def assistant_chat(
     config = config_manager.get_config()
     llm_config = config.ai.llm
 
-    if not llm_config.model:
+    if not llm_config.is_configured:
         async def _not_configured():
-            yield f"data: {json.dumps({'type': 'error', 'message': 'AI is not configured. Please set ai.llm.model in your config.'})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': 'AI is not configured. Enable Finzytrack AI or set a model under Settings → AI.'})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return StreamingResponse(_not_configured(), media_type="text/event-stream")
 

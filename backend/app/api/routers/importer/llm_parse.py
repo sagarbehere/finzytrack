@@ -388,9 +388,9 @@ async def llm_parse(
     llm_config = config.ai.llm
     force_text_extraction = text_extraction.lower() == "true"
 
-    if not llm_config.model:
+    if not llm_config.is_configured:
         raise APIError(
-            "AI is not configured. Go to Settings and configure the AI section.",
+            "AI is not configured. Enable Finzytrack AI or configure a model under Settings → AI.",
             code=ec.LLM_NOT_CONFIGURED,
             status_code=400,
         )

@@ -50,13 +50,13 @@ def _load_prompt(filename: str) -> str:
 def _get_llm_config(config_manager: ConfigManager) -> LLMConfig:
     """Extract and validate LLM config."""
     llm = config_manager.get_config().ai.llm
-    if not llm.model:
+    if not llm.is_configured:
         raise APIError(
-            message="AI is not configured. Set a model under Settings → AI.",
+            message="AI is not configured. Enable Finzytrack AI or set a model under Settings → AI.",
             code=ec.AI_NOT_CONFIGURED,
             status_code=400,
         )
-    if llm.provider != "anthropic" and not llm.api_url:
+    if not llm.finzytrack_ai and llm.provider != "anthropic" and not llm.api_url:
         raise APIError(
             message="AI API URL is not configured. Set api_url under Settings → AI.",
             code=ec.AI_NOT_CONFIGURED,

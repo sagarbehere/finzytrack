@@ -167,31 +167,51 @@
         <div v-if="step === 3" class="p-6 sm:p-8">
           <h1 class="text-xl font-semibold text-gray-900 dark:text-white">AI model <span class="text-sm font-normal text-gray-400 dark:text-gray-500">(optional)</span></h1>
           <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
-            FinzyTrack works fully without AI. An AI model makes certain tasks faster — creating import rules, parsing bank statements without rules, and conversational finance queries.
-          </p>
-          <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
-            A capable model with tool-calling support, 128k+ context, and 32B+ active parameters is recommended. For example, GLM-4.7 has been tested with satisfactory results.
-            <a href="https://finzytrack.app/docs/ai-setup" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 underline underline-offset-2">Learn more</a>.
+            Finzytrack works fully without AI. An AI model makes certain tasks faster — creating import rules, parsing bank statements without rules, and conversational finance queries.
           </p>
 
           <div class="mt-6 space-y-4">
-            <div class="flex items-center gap-3">
-              <button
-                @click="configureAI = !configureAI"
-                :class="configureAI ? 'bg-indigo-600 dark:bg-indigo-500' : 'bg-gray-200 dark:bg-gray-700'"
-                class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-                role="switch"
-                :aria-checked="configureAI"
-              >
-                <span
-                  :class="configureAI ? 'translate-x-5' : 'translate-x-0'"
-                  class="pointer-events-none relative inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
-                />
-              </button>
-              <span class="text-sm font-medium text-gray-900 dark:text-white">Configure an AI model now</span>
+            <!-- AI mode selector -->
+            <Listbox as="div" v-model="aiMode">
+              <ListboxLabel class="block text-sm/6 font-medium text-gray-900 dark:text-white">AI setup</ListboxLabel>
+              <div class="relative mt-1">
+                <ListboxButton class="grid w-full cursor-default grid-cols-1 rounded-md bg-white py-1.5 pr-2 pl-3 text-left text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus-visible:outline-indigo-500">
+                  <span class="col-start-1 row-start-1 truncate pr-6">
+                    {{ AI_MODES.find(o => o.value === aiMode)?.label ?? aiMode }}
+                  </span>
+                  <ChevronUpDownIcon class="col-start-1 row-start-1 size-5 self-center justify-self-end text-gray-500 sm:size-4 dark:text-gray-400" aria-hidden="true" />
+                </ListboxButton>
+                <transition leave-active-class="transition ease-in duration-100" leave-to-class="opacity-0">
+                  <ListboxOptions class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline-1 outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10">
+                    <ListboxOption v-for="opt in AI_MODES" :key="opt.value" :value="opt.value" as="template" v-slot="{ active, selected }">
+                      <li :class="[active ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'text-gray-900 dark:text-white', 'relative cursor-default py-2 pr-9 pl-3 select-none']">
+                        <div>
+                          <span :class="[selected ? 'font-semibold' : 'font-normal', 'block truncate']">{{ opt.label }}</span>
+                          <span :class="[active ? 'text-indigo-100' : 'text-gray-500 dark:text-gray-400', 'block text-xs mt-0.5']">{{ opt.description }}</span>
+                        </div>
+                        <span v-if="selected" :class="[active ? 'text-white' : 'text-indigo-600 dark:text-indigo-400', 'absolute inset-y-0 right-0 flex items-center pr-4']">
+                          <CheckIcon class="size-5" aria-hidden="true" />
+                        </span>
+                      </li>
+                    </ListboxOption>
+                  </ListboxOptions>
+                </transition>
+              </div>
+            </Listbox>
+
+            <!-- Finzytrack AI: token only -->
+            <div v-if="aiMode === 'finzytrack'">
+              <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Finzytrack AI Token</label>
+              <input
+                v-model="aiFinzytrackToken"
+                type="password"
+                placeholder="ft_tok_..."
+                class="mt-1 block w-full rounded-md bg-white py-1.5 px-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
+              />
             </div>
 
-            <template v-if="configureAI">
+            <!-- Bring your own: provider, url, key, model -->
+            <template v-if="aiMode === 'custom'">
               <Listbox as="div" v-model="aiProvider">
                 <ListboxLabel class="block text-sm/6 font-medium text-gray-900 dark:text-white">Provider</ListboxLabel>
                 <div class="relative mt-1">
@@ -245,6 +265,11 @@
                   class="mt-1 block w-full rounded-md bg-white py-1.5 px-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
                 />
               </div>
+
+              <p class="text-sm text-gray-500 dark:text-gray-400">
+                A capable model with tool-calling support, 128k+ context, and 32B+ active parameters is recommended.
+                <a href="https://finzytrack.app/docs/ai-setup" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 underline underline-offset-2">Learn more</a>.
+              </p>
             </template>
           </div>
 
@@ -257,7 +282,7 @@
             </button>
             <button
               @click="completeSetup"
-              :disabled="isSubmitting || (configureAI && !aiModel.trim())"
+              :disabled="isSubmitting || (aiMode === 'custom' && !aiModel.trim()) || (aiMode === 'finzytrack' && !aiFinzytrackToken.trim())"
               class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400 flex items-center gap-2"
             >
               <div v-if="isSubmitting" class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
@@ -280,7 +305,10 @@
           <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
             Your ledger is ready with <strong>{{ currency }}</strong> as the default currency.
           </p>
-          <p v-if="configureAI && aiModel" class="mt-1 text-sm text-gray-600 dark:text-gray-400">
+          <p v-if="aiMode === 'finzytrack'" class="mt-1 text-sm text-gray-600 dark:text-gray-400">
+            Finzytrack AI has been configured.
+          </p>
+          <p v-else-if="aiMode === 'custom' && aiModel" class="mt-1 text-sm text-gray-600 dark:text-gray-400">
             AI model <strong>{{ aiModel }}</strong> has been configured.
           </p>
 
@@ -415,11 +443,17 @@ const handleFileSelect = (path: string) => {
 }
 
 // Step 3: AI
+const AI_MODES = [
+  { value: 'none', label: 'Skip for now', description: 'You can configure AI later in Settings.' },
+  { value: 'finzytrack', label: 'Use Finzytrack AI', description: 'AI features work out of the box. Just enter your token.' },
+  { value: 'custom', label: 'Bring your own model', description: 'Use your own API key and model (local or cloud).' },
+]
 const AI_PROVIDERS = [
   { value: 'openai', label: 'OpenAI-compatible (LM Studio, Ollama, OpenAI, Groq, etc.)' },
   { value: 'anthropic', label: 'Anthropic' },
 ]
-const configureAI = ref(false)
+const aiMode = ref('none')
+const aiFinzytrackToken = ref('')
 const aiProvider = ref('openai')
 const aiApiUrl = ref('')
 const aiApiKey = ref('')
@@ -440,7 +474,12 @@ const completeSetup = async () => {
       request.existing_ledger_path = existingLedgerPath.value.trim()
     }
 
-    if (configureAI.value && aiModel.value.trim()) {
+    if (aiMode.value === 'finzytrack' && aiFinzytrackToken.value.trim()) {
+      request.ai_config = {
+        finzytrack_ai: true,
+        finzytrack_ai_token: aiFinzytrackToken.value.trim(),
+      }
+    } else if (aiMode.value === 'custom' && aiModel.value.trim()) {
       request.ai_config = {
         provider: aiProvider.value,
         model: aiModel.value.trim(),

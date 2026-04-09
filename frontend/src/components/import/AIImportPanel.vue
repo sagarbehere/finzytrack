@@ -1,7 +1,7 @@
 <template>
   <div class="w-full">
     <!-- AI not configured banner -->
-    <div v-if="!config?.ai?.llm?.model" class="rounded-lg border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-4 space-y-2">
+    <div v-if="!config?.ai?.llm?.is_configured" class="rounded-lg border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 p-4 space-y-2">
       <p class="text-sm font-medium text-amber-800 dark:text-amber-300">AI is not configured.</p>
       <p class="text-sm text-amber-700 dark:text-amber-400">
         Set a model under <strong>AI</strong> in <router-link to="/settings" class="underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200">Settings</router-link>.

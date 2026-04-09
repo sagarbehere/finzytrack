@@ -327,10 +327,9 @@ def categorize_transactions_ai(
         - Dict mapping transaction id -> suggested account
         - List of warning messages
     """
-    if not llm_config.model:
+    if not llm_config.is_configured:
         raise AICategorizeError(
-            "AI is not configured. Go to Settings and configure the AI section "
-            "(ai.llm.model must be set)."
+            "AI is not configured. Enable Finzytrack AI or set a model under Settings → AI."
         )
 
     accounts_list = sorted(account_names)

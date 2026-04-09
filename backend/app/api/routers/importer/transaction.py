@@ -99,9 +99,9 @@ async def categorize_transactions(
     elif engine == CategorizationEngine.AI:
         # AI engine
         engine_used = "ai"
-        if not config.ai.llm.model:
+        if not config.ai.llm.is_configured:
             raise APIError(
-                message="AI is not configured. Go to Settings and configure the AI section (ai.llm.model must be set).",
+                message="AI is not configured. Enable Finzytrack AI or set a model under Settings → AI.",
                 code=ec.LLM_NOT_CONFIGURED,
                 status_code=400,
             )
