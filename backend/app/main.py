@@ -506,11 +506,14 @@ def start_server(
 @click.option('--log-level',
               type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], case_sensitive=False),
               help='Logging level (overrides config)')
+@click.option('--static-dir',
+              help='Path to built frontend (e.g. ../frontend/dist) to serve the UI')
 @click.option('--debug', is_flag=True,
               help='Enable debug mode (sets log level to DEBUG)')
 def main(config: str, server_host: str, server_port: int,
          ledger_file: str, ml_enabled: bool, ml_disabled: bool,
-         ml_training_data_file: str, log_level: str, debug: bool):
+         ml_training_data_file: str, log_level: str, static_dir: str,
+         debug: bool):
     """
     Start Finzytrack backend server.
 
@@ -555,6 +558,7 @@ def main(config: str, server_host: str, server_port: int,
         start_server(
             config_path=config,
             cli_overrides=cli_overrides or None,
+            static_dir=static_dir,
         )
 
     except ConfigurationError as e:
