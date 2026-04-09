@@ -106,7 +106,7 @@ async def complete_setup(
         patch["ledger_file"] = str(src)
     else:
         # Fresh start — seed data directory with currency substitution
-        seed_data_with_currency(Path('./data'), currency)
+        seed_data_with_currency(config.root_dir / 'data', currency)
 
     # AI config (if provided)
     if request.ai_config:
