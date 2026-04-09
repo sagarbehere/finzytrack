@@ -49,13 +49,30 @@ class TestListAccounts:
         assert "metadata" in account
 
     def test_filters_by_date_range(self, test_client):
-        """Accounts should be filterable by date range via query params."""
-        resp = test_client.get(
+        """Date filtering should affect reported balances.
+
+        The small_ledger has transactions in Jan, Feb, and Mar 2024.
+        Filtering to Feb only should produce different balance figures
+        for income/expense accounts than an unfiltered request.
+        """
+        unfiltered = test_client.get("/api/accounts")
+        filtered = test_client.get(
             "/api/accounts",
             params={"start_date": "2024-02-01", "end_date": "2024-02-28"},
         )
-        assert resp.status_code == 200
-        assert resp.json()["success"] is True
+        assert filtered.status_code == 200
+        assert filtered.json()["success"] is True
+
+        # Expenses:Food has transactions in Jan, Feb, and Mar.
+        # A Feb-only filter should show a smaller balance than unfiltered.
+        def get_food_balance(resp):
+            accounts = resp.json()["data"]["accounts"]
+            food = next(a for a in accounts if a["name"] == "Expenses:Food")
+            return sum(c["balance"] for c in food["currencies"])
+
+        full_balance = get_food_balance(unfiltered)
+        feb_balance = get_food_balance(filtered)
+        assert feb_balance < full_balance
 
 
 class TestCreateAccount:
@@ -175,6 +192,14 @@ class TestCloseAccount:
         assert body["success"] is True
         assert body["data"]["account_closed"] is True
 
+        # Verify the account actually reports a close_date
+        list_resp = test_client.get("/api/accounts")
+        acct = next(
+            a for a in list_resp.json()["data"]["accounts"]
+            if a["name"] == "Expenses:Unknown"
+        )
+        assert acct["close_date"] == "2024-12-31"
+
     def test_close_nonexistent_returns_error(self, test_client):
         resp = test_client.post(
             "/api/accounts/Expenses:Ghost/close",
@@ -199,6 +224,14 @@ class TestReopenAccount:
         body = resp.json()
         assert body["success"] is True
         assert body["data"]["account_reopened"] is True
+
+        # Verify close_date is actually gone
+        list_resp = test_client.get("/api/accounts")
+        acct = next(
+            a for a in list_resp.json()["data"]["accounts"]
+            if a["name"] == "Expenses:Unknown"
+        )
+        assert acct["close_date"] is None
 
 
 class TestDeleteAccount:
@@ -306,6 +339,11 @@ class TestBalanceDirectives:
         )
         assert resp.status_code == 200
         assert resp.json()["success"] is True
+
+        # Verify it's actually gone
+        list_resp = test_client.get("/api/accounts/Assets:Bank:Checking/balance-directives")
+        dates = [d["date"] for d in list_resp.json()["data"]["directives"]]
+        assert "2024-05-01" not in dates
 
 
 class TestEdgeCases:

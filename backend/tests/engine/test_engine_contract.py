@@ -44,29 +44,62 @@ class TestFormatAndParse:
         assert original_opens == reparsed_opens
 
     def test_padding_transactions_are_filtered(self, engine):
-        """format_entries must drop auto-generated padding transactions (flag='P', no stable ID)."""
-        content = (FIXTURES_DIR / "edge_cases.beancount").read_text()
-        entries = engine.parse(content)
+        """format_entries must drop auto-generated padding transactions (flag='P', no stable ID).
 
-        # Beancount generates padding txns from pad directives
-        padding_txns = [
-            e for e in entries
-            if isinstance(e, Transaction) and e.flag == 'P'
-               and not (e.meta and ('id' in e.meta or 'transaction_id' in e.meta))
-        ]
+        In production, Beancount's loader generates padding transactions from
+        pad+balance directives. We simulate this by injecting a synthetic
+        padding transaction (flag='P', no id) into the entry list and verifying
+        that format_entries drops it, while keeping a normal transaction and a
+        user-created 'P' transaction that has a stable ID.
+        """
+        from beancount.core.data import Transaction as Txn
+        from beancount.core.amount import Amount as Amt
+
+        content = (FIXTURES_DIR / "small_ledger.beancount").read_text()
+        entries = list(engine.parse(content))
+
+        # Inject a synthetic padding transaction (no stable ID) — this is what
+        # Beancount's loader generates from pad directives
+        padding_txn = Txn(
+            meta={'filename': 'test', 'lineno': 0},
+            date=date(2024, 3, 31),
+            flag='P',
+            payee=None,
+            narration="(Padding inserted for balance)",
+            tags=frozenset(),
+            links=frozenset(),
+            postings=[
+                Posting("Assets:Bank:Checking", Amt(Decimal("72"), "USD"), None, None, None, None),
+                Posting("Expenses:Adjustments", Amt(Decimal("-72"), "USD"), None, None, None, None),
+            ],
+        )
+
+        # Also inject a 'P'-flagged transaction WITH a stable ID — this should
+        # be kept (it's a user-created pending transaction, not auto-padding)
+        user_pending_txn = Txn(
+            meta={'filename': 'test', 'lineno': 0, 'id': 'user-created-id'},
+            date=date(2024, 3, 31),
+            flag='P',
+            payee="User",
+            narration="Pending review",
+            tags=frozenset(),
+            links=frozenset(),
+            postings=[
+                Posting("Assets:Bank:Checking", Amt(Decimal("-20"), "USD"), None, None, None, None),
+                Posting("Expenses:Food", Amt(Decimal("20"), "USD"), None, None, None, None),
+            ],
+        )
+
+        entries.append(padding_txn)
+        entries.append(user_pending_txn)
+
         text = engine.format_entries(entries)
 
-        # Re-parsing the formatted output should not contain the padding txns
-        # that were present in the original parse (they'd be regenerated)
-        reparsed = engine.parse(text)
-        reparsed_padding = [
-            e for e in reparsed
-            if isinstance(e, Transaction) and e.flag == 'P'
-               and not (e.meta and ('id' in e.meta or 'transaction_id' in e.meta))
-        ]
-        # The padding filter should have removed them during format
-        # (Beancount may regenerate them on parse, but that's expected)
-        assert 'P *' not in text or len(reparsed_padding) <= len(padding_txns)
+        # The auto-padding (no ID) must be absent
+        assert "(Padding inserted for balance)" not in text
+
+        # The user-created 'P' transaction (has ID) must be present
+        assert "Pending review" in text
 
 
 class TestAccountFormat:
