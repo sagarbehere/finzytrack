@@ -53,7 +53,7 @@ class TestSetupWizard:
     """POST /api/setup/complete — first-run setup."""
 
     def test_fresh_setup_succeeds(self, setup_client):
-        """A fresh setup with a new ledger should succeed."""
+        """A fresh setup with a new ledger should succeed and make the app usable."""
         resp = setup_client.post(
             "/api/setup/complete",
             json={"currency": "USD", "ledger_mode": "fresh"},
@@ -62,6 +62,13 @@ class TestSetupWizard:
         body = resp.json()
         assert body["success"] is True
         assert body["data"]["config"]["setup_complete"] is True
+
+        # The app should now be usable — accounts endpoint should work
+        accounts_resp = setup_client.get("/api/accounts")
+        assert accounts_resp.status_code == 200
+        assert accounts_resp.json()["success"] is True
+        # A fresh ledger should have starter accounts
+        assert len(accounts_resp.json()["data"]["accounts"]) > 0
 
     def test_setup_sets_currency(self, setup_client):
         """The chosen currency should be reflected in the config."""

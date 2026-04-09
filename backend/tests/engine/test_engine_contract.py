@@ -36,12 +36,25 @@ class TestFormatAndParse:
     """Roundtrip: format → parse should preserve data."""
 
     def test_format_then_parse_preserves_accounts(self, engine, base_entries):
-        """Account Open directives survive a format→parse roundtrip."""
+        """Open directives survive a format→parse roundtrip."""
         text = engine.format_entries(base_entries)
         reparsed = engine.parse(text)
         original_opens = {e.account for e in base_entries if hasattr(e, 'account') and e.__class__.__name__ == 'Open'}
         reparsed_opens = {e.account for e in reparsed if hasattr(e, 'account') and e.__class__.__name__ == 'Open'}
         assert original_opens == reparsed_opens
+
+    def test_format_then_parse_preserves_transactions(self, engine, base_entries):
+        """Transaction count and payees survive a format→parse roundtrip."""
+        original_txns = [e for e in base_entries if isinstance(e, Transaction)]
+
+        text = engine.format_entries(base_entries)
+        reparsed = engine.parse(text)
+        reparsed_txns = [e for e in reparsed if isinstance(e, Transaction)]
+
+        assert len(reparsed_txns) == len(original_txns)
+        original_payees = sorted(t.payee or "" for t in original_txns)
+        reparsed_payees = sorted(t.payee or "" for t in reparsed_txns)
+        assert original_payees == reparsed_payees
 
     def test_padding_transactions_are_filtered(self, engine):
         """format_entries must drop auto-generated padding transactions (flag='P', no stable ID).
@@ -183,13 +196,24 @@ class TestAccountCRUD:
                     assert posting.account != "Expenses:Food"
 
     def test_update_account_rename(self, engine, base_entries):
-        """Renaming an account updates Open + all referencing entries."""
+        """Renaming an account updates Open + all referencing entries.
+
+        We rename Expenses:Food (which has transactions) to verify that
+        transaction postings are also updated.
+        """
         entries = engine.update_account(
-            base_entries, "Expenses:Unknown", new_name="Expenses:Miscellaneous",
+            base_entries, "Expenses:Food", new_name="Expenses:Groceries",
         )
         opens = {e.account for e in entries if e.__class__.__name__ == 'Open'}
-        assert "Expenses:Miscellaneous" in opens
-        assert "Expenses:Unknown" not in opens
+        assert "Expenses:Groceries" in opens
+        assert "Expenses:Food" not in opens
+
+        # All transaction postings must reference the new name, not the old
+        for entry in entries:
+            if isinstance(entry, Transaction):
+                for posting in entry.postings:
+                    assert posting.account != "Expenses:Food", \
+                        f"Transaction still references old name: {entry.narration}"
 
 
 class TestTransactionCRUD:
@@ -221,30 +245,24 @@ class TestTransactionCRUD:
 
     def test_delete_transaction_by_id(self, engine, base_entries):
         """Deleting by ID should remove exactly that transaction."""
-        # Find a transaction with an ID
-        txns_with_id = [
-            e for e in base_entries
-            if isinstance(e, Transaction) and e.meta and 'id' in e.meta
-        ]
-
-        if not txns_with_id:
-            # Add a transaction with an ID for testing
-            txn = engine.create_transaction(
-                date(2024, 4, 1), "Test", "Test txn",
-                [
-                    Posting("Assets:Bank:Checking", Amount(Decimal("-10"), "USD"), None, None, None, None),
-                    Posting("Expenses:Food", Amount(Decimal("10"), "USD"), None, None, None, None),
-                ],
-                "Assets:Bank:Checking",
-            )
-            entries = list(base_entries) + [txn]
-            txn_id = txn.meta["id"]
-        else:
-            entries = list(base_entries)
-            txn_id = txns_with_id[0].meta["id"]
+        # Always create a known transaction so the test is deterministic
+        txn = engine.create_transaction(
+            date(2024, 4, 1), "TestPayee", "Delete me",
+            [
+                Posting("Assets:Bank:Checking", Amount(Decimal("-10"), "USD"), None, None, None, None),
+                Posting("Expenses:Food", Amount(Decimal("10"), "USD"), None, None, None, None),
+            ],
+            "Assets:Bank:Checking",
+        )
+        entries = list(base_entries) + [txn]
+        txn_id = txn.meta["id"]
+        count_before = len([e for e in entries if isinstance(e, Transaction)])
 
         remaining, count = engine.delete_transactions(entries, [txn_id])
         assert count == 1
+        count_after = len([e for e in remaining if isinstance(e, Transaction)])
+        assert count_after == count_before - 1
+        # The specific transaction must be gone
         for e in remaining:
             if isinstance(e, Transaction) and e.meta:
                 assert e.meta.get("id") != txn_id
@@ -296,16 +314,19 @@ class TestBalanceDirectives:
         assert any(b.date == date(2024, 12, 31) for b in balances)
 
     def test_add_balance_with_pad(self, engine, base_entries):
+        """Pad must be dated one day before the balance directive."""
         from beancount.core import data as bd
+        balance_date = date(2024, 12, 31)
         entries = engine.add_balance_directive(
             base_entries, "Assets:Bank:Checking",
-            date(2024, 12, 31), "USD", 10000.00,
+            balance_date, "USD", 10000.00,
             include_pad=True,
             pad_source_account="Expenses:Adjustments",
         )
         pads = [e for e in entries if isinstance(e, bd.Pad) and e.account == "Assets:Bank:Checking"]
         assert len(pads) >= 1
         assert pads[-1].source_account == "Expenses:Adjustments"
+        assert pads[-1].date == date(2024, 12, 30), "Pad must be dated one day before the balance"
 
     def test_delete_balance_directive(self, engine, base_entries):
         from beancount.core import data as bd

@@ -20,11 +20,10 @@ class TestListAccounts:
         assert "accounts" in body["data"]
 
     def test_returns_all_accounts_from_fixture(self, test_client):
-        """The small_ledger fixture has 9 accounts. All should be listed."""
+        """The small_ledger fixture has exactly 9 accounts."""
         resp = test_client.get("/api/accounts")
         accounts = resp.json()["data"]["accounts"]
         names = {a["name"] for a in accounts}
-        # These accounts are defined in small_ledger.beancount
         expected = {
             "Assets:Bank:Checking",
             "Assets:Bank:Savings",
@@ -36,7 +35,7 @@ class TestListAccounts:
             "Expenses:Unknown",
             "Equity:Opening-Balances",
         }
-        assert expected.issubset(names)
+        assert names == expected
 
     def test_account_has_required_fields(self, test_client):
         resp = test_client.get("/api/accounts")
@@ -149,6 +148,15 @@ class TestCreateAccount:
         )
         assert resp.status_code == 201
         assert resp.json()["data"]["account_created"] is True
+
+        # Verify metadata was actually persisted
+        list_resp = test_client.get("/api/accounts")
+        acct = next(
+            a for a in list_resp.json()["data"]["accounts"]
+            if a["name"] == "Assets:Bank:HighYield"
+        )
+        assert acct["metadata"].get("description") == "High yield savings"
+        assert acct["metadata"].get("institution") == "BankCo"
 
 
 class TestUpdateAccount:
