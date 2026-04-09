@@ -34,7 +34,7 @@
         Describe a simple query in plain English and AI will generate the {{ queryLanguage === 'sqlite' ? 'SQL' : 'BQL' }}. For multi-step analysis or follow-up questions, use the <router-link to="/assistant" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">AI Assistant</router-link>.
         <a href="https://finzytrack.app/docs/ai-data-sharing" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">Data shared with AI</a>
       </p>
-      <p v-if="!config?.ai?.llm?.model" class="text-xs text-amber-600 dark:text-amber-400 mb-2">
+      <p v-if="!config?.ai?.llm?.is_configured" class="text-xs text-amber-600 dark:text-amber-400 mb-2">
         AI not configured. Set a model under Settings → AI to enable query generation.
       </p>
       <textarea
@@ -48,7 +48,7 @@
       <div class="mt-2 flex items-center gap-2">
         <button
           @click="handleGenerate"
-          :disabled="!nlQuery.trim() || isGenerating || !config?.ai?.llm?.model"
+          :disabled="!nlQuery.trim() || isGenerating || !config?.ai?.llm?.is_configured"
           class="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400 dark:focus-visible:outline-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex items-center gap-2"
         >
           <svg v-if="isGenerating" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
