@@ -149,15 +149,14 @@ async def complete_setup(
     updated_config = config_manager.get_config()
 
     # Initialize ledger services that were skipped at startup because
-    # setup_complete was false.  The BeancountManager and SQLiteExporter
-    # already exist on app.state — they just haven't parsed/exported yet.
+    # setup_complete was false.  The managers already exist in
+    # app.state.services — they just haven't parsed/exported yet.
     try:
-        beancount_manager = raw_request.app.state.beancount_manager
-        entries = beancount_manager.cache.get_entries()
+        services = raw_request.app.state.services
+        entries = services.ledger_manager.cache.get_entries()
         logger.info(f"Ledger loaded after setup: {len(entries)} entries")
 
-        sqlite_exporter = raw_request.app.state.sqlite_exporter
-        await sqlite_exporter.export_entries(entries)
+        await services.sqlite_exporter.export_entries(entries)
         logger.info("SQLite exported after setup completion")
     except Exception as e:
         logger.error(f"Post-setup initialization failed: {e}", exc_info=True)
