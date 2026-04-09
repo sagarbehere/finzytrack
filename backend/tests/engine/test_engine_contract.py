@@ -241,6 +241,41 @@ class TestAccountCRUD:
         }
         assert remaining_opens == original_opens
 
+    def test_update_account_with_close_date(self, engine, base_entries):
+        """update_account with close_date should add a Close directive.
+
+        If the account has no existing Close, one should be appended.
+        The Open directive should be preserved.
+        """
+        entries = engine.update_account(
+            base_entries, "Expenses:Unknown", close_date=date(2024, 12, 31),
+        )
+        opens = {e.account for e in entries if e.__class__.__name__ == 'Open'}
+        closes = {e.account: e for e in entries if e.__class__.__name__ == 'Close'}
+        assert "Expenses:Unknown" in opens, "Open directive must be preserved"
+        assert "Expenses:Unknown" in closes, "Close directive must be added"
+        assert closes["Expenses:Unknown"].date == date(2024, 12, 31)
+
+    def test_update_account_changes_existing_close_date(self, engine, base_entries):
+        """If the account already has a Close, update_account should change its date."""
+        # First close the account
+        entries = engine.close_account(base_entries, "Expenses:Unknown", date(2024, 6, 30))
+        # Now update with a new close date
+        entries = engine.update_account(
+            entries, "Expenses:Unknown", close_date=date(2024, 12, 31),
+        )
+        close_entries = [e for e in entries if e.__class__.__name__ == 'Close' and e.account == "Expenses:Unknown"]
+        assert len(close_entries) == 1, "Should have exactly one Close directive"
+        assert close_entries[0].date == date(2024, 12, 31)
+
+    def test_update_account_currencies(self, engine, base_entries):
+        """update_account should be able to change an account's currencies."""
+        entries = engine.update_account(
+            base_entries, "Expenses:Unknown", currencies=["USD", "EUR"],
+        )
+        open_entry = next(e for e in entries if e.__class__.__name__ == 'Open' and e.account == "Expenses:Unknown")
+        assert set(open_entry.currencies) == {"USD", "EUR"}
+
     def test_close_account_with_reason(self, engine, base_entries):
         """Close directive should carry the reason metadata."""
         entries = engine.close_account(
