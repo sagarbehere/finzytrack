@@ -24,12 +24,12 @@
             leave-from="opacity-100 scale-100"
             leave-to="opacity-0 scale-95"
           >
-            <DialogPanel class="w-full max-w-md transform overflow-hidden rounded-lg bg-white dark:bg-gray-800 p-6 text-left shadow-xl transition-all">
-              <div class="flex items-start gap-4">
+            <DialogPanel class="w-full max-w-md transform overflow-hidden rounded-lg bg-white dark:bg-gray-800 p-4 sm:p-6 text-left shadow-xl transition-all">
+              <div class="flex items-start gap-3 sm:gap-4">
                 <div class="flex-shrink-0 flex items-center justify-center h-10 w-10 rounded-full bg-red-100 dark:bg-red-900/30">
                   <ExclamationTriangleIcon class="h-6 w-6 text-red-600 dark:text-red-400" />
                 </div>
-                <div class="flex-1">
+                <div class="flex-1 min-w-0">
                   <DialogTitle as="h3" class="text-lg font-medium leading-6 text-gray-900 dark:text-white">
                     Delete Account
                   </DialogTitle>
@@ -37,7 +37,7 @@
                     <p class="text-sm text-gray-600 dark:text-gray-400">
                       Are you sure you want to delete this account?
                     </p>
-                    <p class="mt-2 font-medium text-gray-900 dark:text-white">
+                    <p class="mt-2 font-medium text-gray-900 dark:text-white break-all">
                       {{ account?.fullPath }}
                     </p>
                   </div>
