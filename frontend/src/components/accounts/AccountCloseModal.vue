@@ -24,7 +24,7 @@
             leave-from="opacity-100 scale-100"
             leave-to="opacity-0 scale-95"
           >
-            <DialogPanel class="w-full max-w-md transform overflow-hidden rounded-lg bg-white dark:bg-gray-800 p-6 text-left shadow-xl transition-all">
+            <DialogPanel class="w-full max-w-md transform overflow-hidden rounded-lg bg-white dark:bg-gray-800 p-4 sm:p-6 text-left shadow-xl transition-all">
               <DialogTitle as="h3" class="text-lg font-medium leading-6 text-gray-900 dark:text-white mb-4">
                 Close Account
               </DialogTitle>
@@ -33,7 +33,7 @@
                 <p class="text-sm text-gray-600 dark:text-gray-400">
                   You are about to close the account:
                 </p>
-                <p class="mt-1 font-medium text-gray-900 dark:text-white">
+                <p class="mt-1 font-medium text-gray-900 dark:text-white break-all">
                   {{ account?.fullPath }}
                 </p>
               </div>
