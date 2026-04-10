@@ -1,9 +1,9 @@
 <template>
-  <div class="flex flex-wrap items-center gap-3">
+  <div class="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
     <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Period:</span>
 
     <!-- Quick Access Buttons -->
-    <div class="flex gap-1">
+    <div class="flex flex-wrap gap-1">
       <button
         v-for="preset in quickPresets"
         :key="preset.label"
@@ -105,26 +105,30 @@
     </div>
 
     <!-- Custom Date Inputs -->
-    <div class="flex items-center gap-2 ml-2 rounded-md outline-1 -outline-offset-1 outline-gray-200 dark:outline-white/10 px-2 py-0.5">
-      <span class="text-sm text-gray-500 dark:text-gray-400">From:</span>
-      <input
-        :value="localStartDate"
-        type="date"
-        class="px-1.5 py-1 text-sm bg-transparent border-none focus:outline-none focus:ring-0 dark:text-white"
-        @change="onDateChange($event, 'startDate')"
-        @keydown.enter="applyDateInputs"
-      />
-      <span class="text-sm text-gray-500 dark:text-gray-400">To:</span>
-      <input
-        :value="localEndDate"
-        type="date"
-        class="px-1.5 py-1 text-sm bg-transparent border-none focus:outline-none focus:ring-0 dark:text-white"
-        @change="onDateChange($event, 'endDate')"
-        @keydown.enter="applyDateInputs"
-      />
+    <div class="flex flex-col gap-2 rounded-md outline-1 -outline-offset-1 outline-gray-200 dark:outline-white/10 px-2 py-1.5 sm:ml-2 sm:flex-row sm:items-center sm:py-0.5">
+      <div class="flex items-center gap-2">
+        <span class="text-sm text-gray-500 dark:text-gray-400 min-w-[3rem]">From:</span>
+        <input
+          :value="localStartDate"
+          type="date"
+          class="flex-1 px-1.5 py-1 text-sm bg-transparent border-none focus:outline-none focus:ring-0 dark:text-white"
+          @change="onDateChange($event, 'startDate')"
+          @keydown.enter="applyDateInputs"
+        />
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-sm text-gray-500 dark:text-gray-400 min-w-[3rem]">To:</span>
+        <input
+          :value="localEndDate"
+          type="date"
+          class="flex-1 px-1.5 py-1 text-sm bg-transparent border-none focus:outline-none focus:ring-0 dark:text-white"
+          @change="onDateChange($event, 'endDate')"
+          @keydown.enter="applyDateInputs"
+        />
+      </div>
       <button
         @click="applyDateInputs"
-        class="rounded-md bg-indigo-600 px-2 py-1 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400"
+        class="rounded-md bg-indigo-600 px-2 py-1 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400 sm:self-auto self-end"
       >
         Go
       </button>

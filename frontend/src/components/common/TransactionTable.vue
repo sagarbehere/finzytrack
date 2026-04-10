@@ -1,5 +1,5 @@
 <template>
-  <div class="transaction-table-container">
+  <div class="transaction-table-container px-4 md:px-0">
     <!-- Confirm Dialog -->
     <ConfirmDialog
       :is-open="confirmDialog.isOpen.value"
@@ -15,7 +15,7 @@
 
 
     <!-- Table Controls -->
-    <div class="flex items-center justify-between mb-4 gap-4">
+    <div class="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
       <!-- Global search bar (when enabled) -->
       <div v-if="showSearch" class="flex-1 max-w-md">
         <div class="relative">
@@ -49,8 +49,8 @@
       </div>
     </div>
 
-    <!-- Main table -->
-    <div class="overflow-hidden rounded-lg ring-1 ring-gray-200 dark:ring-white/10">
+    <!-- Desktop: Table layout (md and above) -->
+    <div v-if="isMd" class="overflow-hidden rounded-lg ring-1 ring-gray-200 dark:ring-white/10">
       <div class="table-scroll-container">
         <table class="w-full table-fixed">
           <!-- Table Header -->
@@ -112,6 +112,21 @@
       </div>
     </div>
 
+    <!-- Mobile: Card layout (below md) -->
+    <TransactionCardList
+      v-else
+      :transactions="filteredTransactions"
+      :column-visibility="columnVisibility"
+      :editable="editable"
+      :import-context="importContext"
+      :ledger-context="ledgerContext"
+      @update-field="handleUpdateField"
+      @add-posting="handleAddPosting"
+      @remove-posting="handleRemovePosting"
+      @remove-transaction="removeTransaction"
+      @duplicate-click="(id) => emit('duplicateClick', id)"
+    />
+
     <!-- Summary section (when enabled) -->
     <TransactionTableSummary
       v-if="showSummary"
@@ -131,6 +146,7 @@ import {
   FlexRender,
 } from '@tanstack/vue-table'
 import { MagnifyingGlassIcon } from '@heroicons/vue/20/solid'
+import { useBreakpoint } from '@/composables/useBreakpoint'
 import AccountDropdown from '@/components/common/AccountDropdown.vue'
 import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
 import PriceTypeDropdown from '@/components/common/PriceTypeDropdown.vue'
@@ -138,6 +154,7 @@ import TransactionStatusIndicator from '@/components/common/TransactionStatusInd
 import ColumnVisibilityControl from '@/components/common/ColumnVisibilityControl.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import TransactionTableSummary from '@/components/common/TransactionTableSummary.vue'
+import TransactionCardList from '@/components/common/TransactionCardList.vue'
 import { useTableColumns } from '@/composables/useTableColumns'
 import { useTableKeyboardNavigation } from '@/composables/useTableKeyboardNavigation'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
@@ -197,6 +214,7 @@ const {
 } = useTableKeyboardNavigation()
 
 const confirmDialog = useConfirmDialog()
+const { isMd } = useBreakpoint()
 const { deleteTransactions } = useTransactionDeleter()
 const toast = useToast()
 
@@ -252,7 +270,7 @@ const numericInputProps = (
   currentValue: number | null | undefined,
   updateFn: (raw: string) => void,
   extraClasses: string = ''
-) => {
+): Record<string, unknown> => {
   const key = `${txId}-${postingIdx}-${field}`
   const rawStr = rawAmountStrings.value[key]
   const fallback = (() => {
@@ -676,6 +694,7 @@ const table = useVueTable({
 const onGlobalFilterChange = (e: Event) => {
   globalFilter.value = (e.target as HTMLInputElement).value
 }
+
 
 const scrollToTable = () => {
   nextTick(() => {

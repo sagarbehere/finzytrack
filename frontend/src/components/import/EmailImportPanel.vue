@@ -97,19 +97,23 @@
         </Listbox>
 
         <!-- Date range -->
-        <div class="flex items-center gap-2 border border-gray-200 dark:border-white/10 rounded-md px-2 h-9 shrink-0">
-          <span class="text-sm text-gray-500 dark:text-gray-400">From:</span>
-          <input
-            v-model="sinceDate"
-            type="date"
-            class="px-1.5 py-1 text-sm bg-transparent border-none focus:outline-none focus:ring-0 text-gray-900 dark:text-white"
-          />
-          <span class="text-sm text-gray-500 dark:text-gray-400">To:</span>
-          <input
-            v-model="untilDate"
-            type="date"
-            class="px-1.5 py-1 text-sm bg-transparent border-none focus:outline-none focus:ring-0 text-gray-900 dark:text-white"
-          />
+        <div class="flex flex-col gap-1 border border-gray-200 dark:border-white/10 rounded-md px-2 py-1.5 w-full sm:flex-row sm:items-center sm:gap-2 sm:h-9 sm:py-0 sm:w-auto sm:shrink-0">
+          <div class="flex items-center gap-2">
+            <span class="text-sm text-gray-500 dark:text-gray-400">From:</span>
+            <input
+              v-model="sinceDate"
+              type="date"
+              class="flex-1 px-1.5 py-1 text-sm bg-transparent border-none focus:outline-none focus:ring-0 text-gray-900 dark:text-white"
+            />
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-sm text-gray-500 dark:text-gray-400 ml-5 sm:ml-0">To:</span>
+            <input
+              v-model="untilDate"
+              type="date"
+              class="flex-1 px-1.5 py-1 text-sm bg-transparent border-none focus:outline-none focus:ring-0 text-gray-900 dark:text-white"
+            />
+          </div>
         </div>
 
         <!-- Currency -->

@@ -9,8 +9,8 @@
 
     <!-- Import tabs -->
     <div class="rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10">
-      <div class="border-b border-gray-200 dark:border-white/10">
-        <nav class="-mb-px flex space-x-8 px-6" aria-label="Tabs">
+      <div class="border-b border-gray-200 dark:border-white/10 overflow-x-auto">
+        <nav class="-mb-px flex space-x-4 px-4 sm:space-x-8 sm:px-6" aria-label="Tabs">
           <button
             @click="activeTab = 'ofx'"
             :class="[
@@ -80,7 +80,7 @@
         </nav>
       </div>
 
-      <div class="p-6">
+      <div class="p-4 sm:p-6">
         <!-- OFX Import Tab -->
         <div v-if="activeTab === 'ofx'">
           <OFXFilePicker
