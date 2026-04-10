@@ -101,7 +101,7 @@
           "optionsFrom": "currencies"
         }
       ],
-      "query": "SELECT year_month, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) AS income, SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END) AS expenses, SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) - SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END) AS savings FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses') GROUP BY year_month ORDER BY year_month",
+      "query": "SELECT year_month, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, ROUND(SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END), 2) AS income, ROUND(SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END), 2) AS expenses, ROUND(SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) - SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END), 2) AS savings FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses') GROUP BY year_month ORDER BY year_month",
       "visualization": {
         "type": "chart",
         "chartType": "bar",

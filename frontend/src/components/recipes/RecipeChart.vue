@@ -255,6 +255,25 @@ const finalOptions = computed<EChartsOption>(() => {
             }) as any,
           }
         : {}),
+      // For axis-trigger charts (bar, line), use valueFormatter to round/format values.
+      // This avoids floating-point noise like 52021.060000000005 in tooltips.
+      ...(props.currency && !treemap && !pie
+        ? {
+            valueFormatter: ((value: number | string) => {
+              const num = typeof value === 'number' ? value : parseFloat(String(value))
+              if (isNaN(num)) return String(value)
+              return formatAmount(num, props.currency!)
+            }) as any,
+          }
+        : !treemap && !pie
+        ? {
+            valueFormatter: ((value: number | string) => {
+              const num = typeof value === 'number' ? value : parseFloat(String(value))
+              if (isNaN(num)) return String(value)
+              return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+            }) as any,
+          }
+        : {}),
       ...((props.chartOptions.tooltip as object) || {}),
     },
     legend: {
