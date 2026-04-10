@@ -53,7 +53,6 @@ class CategorizationConfig(BaseModel):
         default=CategorizationEngine.CLASSIFIER,
         description="Categorization engine: 'classifier' (scikit-learn) or 'ai' (requires ai.llm to be configured)"
     )
-    training_data_file: Optional[str] = Field(default="./data/training.beancount", description="Path to training data file (used when engine=local)")
 
 
 class BackupConfig(BaseModel):
@@ -157,7 +156,7 @@ class Config(BaseModel):
     setup_complete: bool = Field(default=False, description="Whether the first-run setup wizard has been completed")
 
     # File paths
-    ledger_file: str = Field(default="./data/ledgers/main.beancount", description="Path to main Beancount ledger")
+    ledger_file: str = Field(default="./data/ledgers/one.beancount", description="Path to main Beancount ledger")
 
     # Nested configuration sections
     server: ServerConfig = Field(default_factory=ServerConfig)
@@ -232,11 +231,6 @@ class Config(BaseModel):
         if not backup_path.exists():
             raise ValueError(f"Backup directory does not exist: {backup_path}")
         
-        # Note: training data for the classifier comes from the ledger cache (the main
-        # ledger file), not from training_data_file directly. The field is kept for
-        # reference/future use. No hard validation here — insufficient training data
-        # is handled gracefully at runtime by initialize_classifier().
-        
         return self
     
     @classmethod
@@ -306,7 +300,6 @@ class Config(BaseModel):
 
             # ML settings
             'ml-enabled': ('ml', 'enabled'),
-            'ml-training-data-file': ('ml', 'training_data_file'),
 
             # Logging settings
             'logging-level': ('logging', 'level'),

@@ -501,8 +501,6 @@ def start_server(
               help='Enable ML categorization (overrides config)')
 @click.option('--ml-disabled', is_flag=True,
               help='Disable ML categorization (overrides config)')
-@click.option('--ml-training-data-file',
-              help='Path to ML training data file (overrides config)')
 @click.option('--log-level',
               type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], case_sensitive=False),
               help='Logging level (overrides config)')
@@ -512,7 +510,7 @@ def start_server(
               help='Enable debug mode (sets log level to DEBUG)')
 def main(config: str, server_host: str, server_port: int,
          ledger_file: str, ml_enabled: bool, ml_disabled: bool,
-         ml_training_data_file: str, log_level: str, static_dir: str,
+         log_level: str, static_dir: str,
          debug: bool):
     """
     Start Finzytrack backend server.
@@ -543,9 +541,6 @@ def main(config: str, server_host: str, server_port: int,
             cli_overrides['ml-enabled'] = True
         elif ml_disabled:
             cli_overrides['ml-enabled'] = False
-
-        if ml_training_data_file:
-            cli_overrides['ml-training-data-file'] = ml_training_data_file
 
         # Logging settings
         if log_level:

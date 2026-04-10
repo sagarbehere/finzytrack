@@ -22,7 +22,6 @@ ai:
   categorization:
     enabled: true
     engine: "classifier"  # "classifier" (scikit-learn) or "ai" (requires ai.llm to be configured)
-    training_data_file: "./data/ledgers/one.beancount"  # training data comes from the main ledger
   llm:
     provider: "openai"  # "openai" (any OpenAI-compatible endpoint: LM Studio, Ollama, OpenAI, Groq, etc.) or "anthropic" (Anthropic API directly)
     api_url: ""         # Only used when provider=openai — e.g. http://127.0.0.1:1234 or https://api.openai.com (leave empty for default OpenAI endpoint)

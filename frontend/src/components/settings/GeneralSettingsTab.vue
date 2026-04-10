@@ -256,14 +256,6 @@
         </div>
       </Listbox>
 
-      <div>
-        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Training Data File</label>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Path to a Beancount file used as training data for the classifier.</p>
-        <div class="flex gap-2">
-          <input v-model="categorizationFields.training_data_file" type="text" placeholder="data/training.beancount" :class="[inputClass, 'flex-1']" />
-          <button :class="browseButtonClass" @click="openFilePicker({ title: 'Select Training Data File', mode: 'file', extensions: ['.beancount', '.bean'], initialPath: categorizationFields.training_data_file, onSelect: p => categorizationFields.training_data_file = p })">Browse</button>
-        </div>
-      </div>
     </SettingsSection>
 
     <!-- ── Email Import ────────────────────────────────────────────────── -->
@@ -675,21 +667,18 @@ function resetLlm() { initLlmFields(); llmError.value = '' }
 const categorizationFields = reactive({
   enabled: config.value?.ai?.categorization?.enabled ?? true,
   engine: config.value?.ai?.categorization?.engine ?? 'classifier',
-  training_data_file: config.value?.ai?.categorization?.training_data_file ?? '',
 })
 const categorizationSaving = ref(false)
 const categorizationError = ref('')
 
 const categorizationIsDirty = computed(() =>
   categorizationFields.enabled !== (config.value?.ai?.categorization?.enabled ?? true) ||
-  categorizationFields.engine !== (config.value?.ai?.categorization?.engine ?? 'classifier') ||
-  categorizationFields.training_data_file !== (config.value?.ai?.categorization?.training_data_file ?? '')
+  categorizationFields.engine !== (config.value?.ai?.categorization?.engine ?? 'classifier')
 )
 
 function initCategorizationFields() {
   categorizationFields.enabled = config.value?.ai?.categorization?.enabled ?? true
   categorizationFields.engine = config.value?.ai?.categorization?.engine ?? 'classifier'
-  categorizationFields.training_data_file = config.value?.ai?.categorization?.training_data_file ?? ''
 }
 
 async function saveCategorization() {
@@ -698,7 +687,6 @@ async function saveCategorization() {
       categorization: {
         enabled: categorizationFields.enabled,
         engine: categorizationFields.engine,
-        training_data_file: categorizationFields.training_data_file || null,
       },
     },
   }, categorizationSaving, categorizationError)
