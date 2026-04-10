@@ -8,7 +8,7 @@
   >
     <!-- Header -->
     <div
-      class="px-4 py-3 border-b border-gray-200 dark:border-white/10 flex items-center justify-between"
+      class="px-3 py-2 sm:px-4 sm:py-3 border-b border-gray-200 dark:border-white/10 flex flex-wrap items-center justify-between gap-1"
     >
       <h3 class="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-1.5">
         {{ recipe.title }}
@@ -24,12 +24,11 @@
         v-if="widgetOnlyParameters.length > 0"
         :parameters="widgetOnlyParameters"
         v-model="localParameters"
-        class="ml-4"
       />
     </div>
 
     <!-- Content -->
-    <div class="flex-1 p-4 min-h-0 overflow-hidden">
+    <div class="flex-1 p-2 sm:p-4 min-h-0 overflow-hidden">
       <!-- Loading state -->
       <div
         v-if="isLoading"
