@@ -10,9 +10,9 @@
     />
 
     <!-- Filter Row -->
-    <div class="flex flex-wrap items-center gap-4">
+    <div class="flex flex-wrap items-center gap-3 sm:gap-4">
       <!-- Search Input -->
-      <div class="flex-1 min-w-[200px]">
+      <div class="w-full sm:w-auto sm:flex-1 sm:min-w-[200px]">
         <label for="search" class="sr-only">Search accounts</label>
         <div class="relative">
           <MagnifyingGlassIcon class="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
@@ -27,7 +27,7 @@
       </div>
 
       <!-- Type Filter -->
-      <Listbox as="div" v-model="localFilters.type" class="min-w-[150px]">
+      <Listbox as="div" v-model="localFilters.type" class="flex-1 min-w-[120px] sm:min-w-[150px] sm:flex-none">
         <ListboxLabel class="sr-only">Filter by type</ListboxLabel>
         <div class="relative">
           <ListboxButton class="grid w-full cursor-default grid-cols-1 rounded-md bg-white py-1.5 pr-2 pl-3 text-left text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus-visible:outline-indigo-500">
@@ -50,7 +50,7 @@
       </Listbox>
 
       <!-- Status Filter -->
-      <Listbox as="div" v-model="localFilters.status" class="min-w-[130px]">
+      <Listbox as="div" v-model="localFilters.status" class="flex-1 min-w-[110px] sm:min-w-[130px] sm:flex-none">
         <ListboxLabel class="sr-only">Filter by status</ListboxLabel>
         <div class="relative">
           <ListboxButton class="grid w-full cursor-default grid-cols-1 rounded-md bg-white py-1.5 pr-2 pl-3 text-left text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus-visible:outline-indigo-500">

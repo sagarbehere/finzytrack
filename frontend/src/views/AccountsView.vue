@@ -53,8 +53,8 @@
         </button>
       </div>
 
-      <!-- Table -->
-      <div class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10">
+      <!-- Desktop: Table -->
+      <div v-if="isMd" class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10">
         <AccountsTable
           :display-nodes="displayNodes"
           :expanded-ids="expandedIds"
@@ -70,6 +70,23 @@
           @show-detail="handleShowDetail"
         />
       </div>
+
+      <!-- Mobile: Card list -->
+      <AccountsCardList
+        v-else
+        :display-nodes="displayNodes"
+        :expanded-ids="expandedIds"
+        @toggle="toggleExpand"
+        @edit="handleEdit"
+        @close="handleClose"
+        @reopen="handleReopen"
+        @delete="handleDelete"
+        @show-balances="handleShowBalances"
+        @show-balance-directives="handleShowBalanceDirectives"
+        @show-statement="handleShowStatement"
+        @view-transactions="handleViewTransactions"
+        @show-detail="handleShowDetail"
+      />
 
       <!-- Expand/Collapse All Controls (below table) -->
       <div v-if="treeRoots.length > 0" class="mt-4 flex justify-end items-center gap-2">
@@ -158,6 +175,8 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import AccountsFilterPanel from '@/components/accounts/AccountsFilterPanel.vue'
 import AccountsTable from '@/components/accounts/AccountsTable.vue'
+import AccountsCardList from '@/components/accounts/AccountsCardList.vue'
+import { useBreakpoint } from '@/composables/useBreakpoint'
 import AccountFormModal from '@/components/accounts/AccountFormModal.vue'
 import AccountCloseModal from '@/components/accounts/AccountCloseModal.vue'
 import AccountDeleteModal from '@/components/accounts/AccountDeleteModal.vue'
@@ -173,6 +192,7 @@ import type { AccountTreeNode, AccountFilters } from '@/types/accounts'
 
 const router = useRouter()
 const route = useRoute()
+const { isMd } = useBreakpoint()
 
 // Composables
 const {
