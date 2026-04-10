@@ -24,7 +24,7 @@
             leave-from="opacity-100 scale-100"
             leave-to="opacity-0 scale-95"
           >
-            <DialogPanel class="w-full max-w-lg transform overflow-hidden rounded-lg bg-white dark:bg-gray-800 p-6 text-left shadow-xl transition-all">
+            <DialogPanel class="w-full max-w-lg transform overflow-hidden rounded-lg bg-white dark:bg-gray-800 p-4 sm:p-6 text-left shadow-xl transition-all">
               <DialogTitle as="h3" class="text-lg font-medium leading-6 text-gray-900 dark:text-white mb-2">
                 Balance Breakdown
               </DialogTitle>
@@ -46,7 +46,7 @@
               </div>
 
               <!-- Balances table -->
-              <div class="max-h-80 overflow-y-auto">
+              <div class="max-h-80 overflow-x-auto overflow-y-auto">
                 <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
                   <thead class="bg-gray-50 dark:bg-gray-800/75 sticky top-0">
                     <tr>

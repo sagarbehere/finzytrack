@@ -24,7 +24,7 @@
             leave-from="opacity-100 scale-100"
             leave-to="opacity-0 scale-95"
           >
-            <DialogPanel class="w-full max-w-6xl transform overflow-hidden rounded-lg bg-white dark:bg-gray-800 p-6 text-left shadow-xl transition-all">
+            <DialogPanel class="w-full max-w-6xl transform overflow-hidden rounded-lg bg-white dark:bg-gray-800 p-4 sm:p-6 text-left shadow-xl transition-all">
               <DialogTitle as="h3" class="text-lg font-medium leading-6 text-gray-900 dark:text-white mb-1">
                 Account Statement
               </DialogTitle>
@@ -46,7 +46,7 @@
               <!-- Search + Currency chips -->
               <div class="mb-3 flex flex-wrap items-center gap-3">
                 <!-- Search input -->
-                <div class="relative flex-1 min-w-[200px] max-w-sm">
+                <div class="relative flex-1 min-w-0 sm:min-w-[200px] max-w-sm">
                   <MagnifyingGlassIcon class="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                   <input
                     v-model="searchText"
@@ -135,7 +135,7 @@
                     >
                       <td class="px-3 py-2 text-xs text-gray-400 dark:text-gray-500 tabular-nums">{{ idx + 1 }}</td>
                       <td class="px-3 py-2 text-sm text-gray-900 dark:text-white whitespace-nowrap tabular-nums">{{ tx.date }}</td>
-                      <td class="px-3 py-2 text-sm text-gray-900 dark:text-white truncate max-w-[300px]" :title="txDescription(tx)">
+                      <td class="px-3 py-2 text-sm text-gray-900 dark:text-white truncate max-w-[150px] sm:max-w-[300px]" :title="txDescription(tx)">
                         {{ txDescription(tx) }}
                       </td>
                       <template v-for="ccy in visibleCurrenciesSorted" :key="ccy">

@@ -24,7 +24,7 @@
             leave-from="opacity-100 scale-100"
             leave-to="opacity-0 scale-95"
           >
-            <DialogPanel class="w-full max-w-3xl transform overflow-hidden rounded-lg bg-white dark:bg-gray-800 p-6 text-left shadow-xl transition-all">
+            <DialogPanel class="w-full max-w-3xl transform overflow-hidden rounded-lg bg-white dark:bg-gray-800 p-4 sm:p-6 text-left shadow-xl transition-all">
               <DialogTitle as="h3" class="text-lg font-medium leading-6 text-gray-900 dark:text-white mb-1">
                 Balance Assertions
               </DialogTitle>
@@ -48,7 +48,7 @@
               <!-- Add form -->
               <div v-if="showAddForm" class="mb-4 p-4 border border-indigo-200 dark:border-indigo-800 rounded-lg bg-indigo-50 dark:bg-indigo-900/20">
                 <h4 class="text-sm font-medium text-gray-900 dark:text-white mb-3">New Balance Assertion</h4>
-                <div class="grid grid-cols-3 gap-3">
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div>
                     <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Date</label>
                     <input
@@ -209,7 +209,7 @@
                 <h4 class="text-sm font-medium text-gray-900 dark:text-white mb-3">
                   Edit Balance Assertion ({{ directives[editingIndex].date }})
                 </h4>
-                <div class="grid grid-cols-3 gap-3">
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div>
                     <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Date</label>
                     <input

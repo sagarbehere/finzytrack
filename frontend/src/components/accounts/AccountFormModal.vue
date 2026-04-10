@@ -24,7 +24,7 @@
             leave-from="opacity-100 scale-100"
             leave-to="opacity-0 scale-95"
           >
-            <DialogPanel class="w-full max-w-lg transform overflow-hidden rounded-lg bg-white dark:bg-gray-800 p-6 text-left shadow-xl transition-all">
+            <DialogPanel class="w-full max-w-lg transform overflow-hidden rounded-lg bg-white dark:bg-gray-800 p-4 sm:p-6 text-left shadow-xl transition-all">
               <DialogTitle as="h3" class="text-lg font-medium leading-6 text-gray-900 dark:text-white mb-4">
                 {{ mode === 'create' ? 'Create Account' : 'Edit Account' }}
               </DialogTitle>
@@ -158,7 +158,7 @@
                         class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
                       />
                     </div>
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
                         <label for="ifscCode" class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">IFSC Code</label>
                         <input
@@ -200,13 +200,13 @@
                     <div
                       v-for="(field, index) in formData.customFields"
                       :key="index"
-                      class="flex gap-2 items-start"
+                      class="flex flex-wrap gap-2 items-start sm:flex-nowrap"
                     >
                       <input
                         v-model="field.key"
                         type="text"
                         placeholder="key"
-                        class="w-2/5 rounded-md bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 font-mono placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
+                        class="w-full sm:w-2/5 rounded-md bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 font-mono placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
                         :class="{ 'border-red-400': field.key && !isValidKey(field.key) }"
                       />
                       <input
