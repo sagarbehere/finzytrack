@@ -1,5 +1,5 @@
 <template>
-  <div class="flex items-center border-b border-gray-200 dark:border-white/10">
+  <div class="flex items-center border-b border-gray-200 dark:border-white/10 overflow-x-auto">
     <!-- Tabs -->
     <div
       v-for="tab in tabs"

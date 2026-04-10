@@ -1,7 +1,7 @@
 <template>
   <div class="space-y-6">
     <!-- Dashboard header -->
-    <div class="flex items-start justify-between">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <h1 class="text-2xl font-bold text-gray-900 dark:text-white">
           {{ dashboard.title }}
@@ -130,5 +130,18 @@ watch(dashboardParameters, (newParams) => {
 <style scoped>
 .dashboard-grid {
   display: grid;
+}
+
+/* On mobile, collapse the multi-column grid to single column */
+@media (max-width: 767px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr !important;
+    grid-auto-rows: auto !important;
+  }
+
+  .dashboard-grid > * {
+    grid-area: auto !important;
+    min-height: 200px;
+  }
 }
 </style>

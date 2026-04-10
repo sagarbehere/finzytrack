@@ -91,7 +91,7 @@
     />
 
     <!-- Dashboard content -->
-    <div class="flex-1 overflow-auto p-6">
+    <div class="flex-1 overflow-auto p-4 sm:p-6">
       <RecipeDashboard
         v-if="activeDashboard"
         :dashboard="activeDashboard"

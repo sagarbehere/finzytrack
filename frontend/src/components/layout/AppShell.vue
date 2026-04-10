@@ -338,8 +338,8 @@
 </template>
 
 <script setup>
-  import { ref, onMounted, onUnmounted } from 'vue'
-  import { useRouter } from 'vue-router'
+  import { ref, watch, onMounted, onUnmounted } from 'vue'
+  import { useRouter, useRoute } from 'vue-router'
   import { useTheme } from '@/composables/useTheme'
   import { useNotifications } from '@/composables/useNotifications'
   import { useSidebarWidth } from '@/composables/useSidebarWidth'
@@ -368,11 +368,17 @@
   } from '@heroicons/vue/24/outline'
 
   const router = useRouter()
+  const route = useRoute()
 
   // Props
 
   // Reactive state
   const sidebarOpen = ref(false)
+
+  // Close mobile sidebar on route change
+  watch(() => route.path, () => {
+    sidebarOpen.value = false
+  })
 
   // Theme system
   const { themeIcon, themeLabel, toggleTheme } = useTheme()
