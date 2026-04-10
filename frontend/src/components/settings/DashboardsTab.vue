@@ -1,7 +1,7 @@
 <template>
   <div class="pb-6">
     <!-- Recipe type selector (pill tabs) -->
-    <div class="mb-2 flex space-x-4">
+    <div class="mb-2 flex flex-wrap gap-2 sm:space-x-4 sm:gap-0">
       <button
         v-for="rt in recipeTypes"
         :key="rt.id"
@@ -31,7 +31,7 @@
       <!-- Empty state -->
       <div
         v-if="files.length === 0 && !isCreating"
-        class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 text-sm text-yellow-800 dark:text-yellow-200 flex items-center justify-between gap-4"
+        class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 text-sm text-yellow-800 dark:text-yellow-200 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
       >
         <span>
           No {{ recipeTypeLabel }} recipes found.
@@ -48,9 +48,9 @@
       </div>
 
       <!-- Two-column layout: file list + editor/preview -->
-      <div v-else class="flex gap-4">
-        <!-- File list (left) -->
-        <div class="w-64 shrink-0 rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 flex flex-col" style="min-height: 500px;">
+      <div v-else class="flex flex-col gap-4 md:flex-row">
+        <!-- File list -->
+        <div class="w-full md:w-64 md:shrink-0 rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 flex flex-col max-h-48 md:max-h-none">
           <div class="border-b border-gray-200 px-3 py-2.5 dark:border-white/10 flex items-center justify-between">
             <span class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Files</span>
             <button
@@ -82,14 +82,14 @@
           <!-- Editor card -->
           <div class="rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10 flex flex-col" :class="layoutVertical ? '' : 'flex-1 min-w-0'">
             <!-- Editor header -->
-            <div class="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-white/10">
+            <div class="flex flex-col gap-2 border-b border-gray-200 px-4 py-3 dark:border-white/10 sm:flex-row sm:items-center sm:justify-between">
               <div class="flex items-center gap-2 min-w-0">
                 <span v-if="isCreating" class="text-sm font-medium text-gray-900 dark:text-white">New Recipe</span>
                 <span v-else-if="selectedFile" class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ selectedDisplayName }}</span>
                 <span v-else class="text-sm text-gray-500 dark:text-gray-400">Select a file to edit</span>
                 <span v-if="isDirty" class="text-xs text-amber-600 dark:text-amber-400">Unsaved changes</span>
               </div>
-              <div v-if="selectedFile || isCreating" class="flex items-center gap-2 shrink-0">
+              <div v-if="selectedFile || isCreating" class="flex items-center gap-2 shrink-0 self-end sm:self-auto">
                 <button
                   v-if="selectedFile && !isCreating"
                   @click="handleDelete"

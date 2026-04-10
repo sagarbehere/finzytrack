@@ -18,7 +18,7 @@
 
     <!-- Tab bar -->
     <div class="mb-6 border-b border-gray-200 dark:border-white/10">
-      <nav class="-mb-px flex space-x-8">
+      <nav class="-mb-px flex space-x-4 sm:space-x-8 overflow-x-auto">
         <button
           v-for="tab in tabs"
           :key="tab.id"
