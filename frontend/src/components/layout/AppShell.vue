@@ -211,7 +211,7 @@
         <div class="h-6 w-px bg-gray-200 lg:hidden dark:bg-white/10" aria-hidden="true" />
 
         <!-- Back / Forward / Refresh navigation -->
-        <div class="hidden lg:flex items-center gap-x-2 -ml-2">
+        <div class="flex items-center gap-x-1 sm:gap-x-2 -ml-2">
           <button
             type="button"
             class="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:text-white dark:hover:bg-white/10 transition-colors"
