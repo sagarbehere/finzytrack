@@ -10,9 +10,16 @@
       "default": 10,
       "min": 5,
       "max": 20
+    },
+    {
+      "name": "currency",
+      "label": "Currency",
+      "type": "select",
+      "default": { "$gen": "defaultCurrency" },
+      "optionsFrom": "currencies"
     }
   ],
-  "query": "SELECT account, SUM(amount) AS total FROM postings WHERE account_type = 'Expenses' AND currency = 'USD' GROUP BY account ORDER BY total ASC LIMIT :limit",
+  "query": "SELECT account, SUM(amount) AS total FROM postings WHERE account_type = 'Expenses' AND currency = :currency GROUP BY account ORDER BY total DESC LIMIT :limit",
   "visualization": {
     "type": "chart",
     "chartType": "bar",
