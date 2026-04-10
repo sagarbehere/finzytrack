@@ -21,6 +21,7 @@ from app.dependencies import get_config_manager, get_backup_manager
 from app.core.config_manager import ConfigManager
 from app.core.backup_manager import BackupManager
 from app.exceptions import APIError
+from app.helpers.path_guard import guard_path
 from app.helpers.recipe_validation import (
     validate_dashboard,
     validate_id,
@@ -117,8 +118,7 @@ async def get_recipe_file_raw(
     recipes_path = _recipes_dir(config_manager)
     target = (recipes_path / file_path).resolve()
 
-    if not str(target).startswith(str(recipes_path.resolve())):
-        raise APIError("Invalid path", "INVALID_PATH", 400)
+    guard_path(target, recipes_path, "recipe path")
 
     if not target.is_file():
         raise APIError(f"Recipe file not found: {file_path}", "RECIPE_NOT_FOUND", 404)
@@ -137,8 +137,7 @@ async def get_recipe_file(
     target = (recipes_path / file_path).resolve()
 
     # Prevent path traversal
-    if not str(target).startswith(str(recipes_path.resolve())):
-        raise APIError("Invalid path", "INVALID_PATH", 400)
+    guard_path(target, recipes_path, "recipe path")
 
     if not target.is_file():
         raise APIError(f"Recipe file not found: {file_path}", "RECIPE_NOT_FOUND", 404)
@@ -158,8 +157,7 @@ async def write_recipe_file(
     target = (recipes_path / file_path).resolve()
 
     # Prevent path traversal
-    if not str(target).startswith(str(recipes_path.resolve())):
-        raise APIError("Invalid path", "INVALID_PATH", 400)
+    guard_path(target, recipes_path, "recipe path")
 
     # Determine type and validate
     recipe_type = _recipe_type_from_path(file_path)
@@ -201,8 +199,7 @@ async def delete_recipe_file(
     target = (recipes_path / file_path).resolve()
 
     # Prevent path traversal
-    if not str(target).startswith(str(recipes_path.resolve())):
-        raise APIError("Invalid path", "INVALID_PATH", 400)
+    guard_path(target, recipes_path, "recipe path")
 
     if not target.is_file():
         raise APIError(f"Recipe file not found: {file_path}", "RECIPE_NOT_FOUND", 404)

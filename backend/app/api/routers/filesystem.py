@@ -8,10 +8,13 @@ Endpoints:
 from pathlib import Path
 from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query, Request
 
+from app.app_mode import AppMode, UserContext
 from app.exceptions import APIError
+from app.helpers.path_guard import guard_path
 from app.helpers.response_helpers import success_json_response
+from app.middleware.auth import get_user_context
 from app.schemas.filesystem_schemas import FileEntry, BrowseResponse
 from app.schemas.response_schemas import ApiResponse
 from app import error_codes as ec
@@ -68,6 +71,7 @@ def _resolve_safe(raw_path: str) -> Path:
 
 @router.get("/filesystem/browse", response_model=ApiResponse[BrowseResponse])
 async def browse_directory(
+    request: Request,
     path: Optional[str] = Query(
         default=None,
         description="Directory to list. Defaults to current working directory.",
@@ -81,6 +85,7 @@ async def browse_directory(
         description="Comma-separated file extensions to filter by (e.g. '.beancount,.bean'). "
                     "Only applies when mode=file. Directories are always shown.",
     ),
+    ctx: UserContext = Depends(get_user_context),
 ):
     """
     List entries in a directory for the file picker UI.
@@ -93,6 +98,11 @@ async def browse_directory(
         target = _resolve_safe(path)
     else:
         target = Path.cwd().resolve()
+
+    # In hosted mode, restrict browsing to the user's own directory tree.
+    # Desktop mode is unrestricted (file picker needs full filesystem access).
+    if request.app.state.mode == AppMode.HOSTED:
+        guard_path(target, ctx.root_dir, "browse path")
 
     home = Path.home().resolve()
 

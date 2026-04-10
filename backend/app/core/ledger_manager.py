@@ -23,6 +23,7 @@ from app.core.backup_manager import BackupManager
 from app.core.beancount_engine import BeancountEngine
 from app.core.constants import BALANCE_SHEET_PREFIXES, BALANCE_SHEET_TYPES, SOURCE_ACCOUNT_PREFIXES
 from app.core.ledger_cache import LedgerCache
+from app.write_lock import WriteLockManager
 from .ledger_initializer import LedgerInitializer
 from app.schemas.account_schemas import (
     AccountDetails, AccountCurrencyData, AccountCreateRequest, AccountCreateData,
@@ -36,12 +37,19 @@ logger = logging.getLogger(__name__)
 
 
 class LedgerManager:
-    def __init__(self, ledger_file: str, backup_manager: BackupManager, ledger_initializer: LedgerInitializer):
+    def __init__(
+        self,
+        ledger_file: str,
+        backup_manager: BackupManager,
+        ledger_initializer: LedgerInitializer,
+        write_lock: Optional[WriteLockManager] = None,
+    ):
         self.ledger_file = ledger_file
         self.backup_manager = backup_manager
         self.ledger_initializer = ledger_initializer
         self.cache = LedgerCache(ledger_file)
         self.engine = BeancountEngine()
+        self._write_lock = write_lock
         self._on_cache_invalidated_callbacks: List[Callable[[List[Any]], None]] = []
 
     def register_cache_invalidation_callback(
@@ -214,7 +222,17 @@ class LedgerManager:
         """Write all entries to the ledger using the engine's formatter.
 
         This is the single authorised path for mutating the ledger file.
+        When a WriteLockManager is present (multi-user / concurrent access),
+        the write is serialised under the per-user lock.
         """
+        if self._write_lock:
+            with self._write_lock.acquire("_write_entries"):
+                self._do_write_entries(entries)
+        else:
+            self._do_write_entries(entries)
+
+    def _do_write_entries(self, entries) -> None:
+        """Perform the actual atomic write (called by _write_entries)."""
         with self.atomic_ledger_write() as f:
             f.seek(0)
             f.truncate()

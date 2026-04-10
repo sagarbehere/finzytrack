@@ -12,13 +12,17 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
+from app.app_mode import AppMode, UserContext
 from app.config import Config
 from app.exceptions import APIError
+from app.helpers.path_guard import guard_path
 from app.schemas.response_schemas import ApiResponse
 from app.helpers.response_helpers import success_json_response
 from app.core.config_manager import ConfigManager
 from app.core.backup_manager import BackupManager
-from app.dependencies import get_config_manager, get_backup_manager
+from app.dependencies import get_config_manager, get_backup_manager, get_user_services
+from app.middleware.auth import get_user_context
+from app.user_services import UserServices
 from app.core.seed import seed_data_with_currency
 
 logger = logging.getLogger(__name__)
@@ -52,6 +56,8 @@ class SetupResponse(BaseModel):
 async def complete_setup(
     request: SetupRequest,
     raw_request: Request,
+    services: UserServices = Depends(get_user_services),
+    ctx: UserContext = Depends(get_user_context),
     config_manager: ConfigManager = Depends(get_config_manager),
     backup_manager: BackupManager = Depends(get_backup_manager),
 ):
@@ -95,6 +101,9 @@ async def complete_setup(
                 status_code=422,
             )
         src = Path(request.existing_ledger_path)
+        # In hosted mode, restrict to the user's own directory tree
+        if raw_request.app.state.mode == AppMode.HOSTED:
+            guard_path(src.resolve(), ctx.root_dir, "existing ledger path")
         if not src.exists():
             raise APIError(
                 f"File not found: {request.existing_ledger_path}",
@@ -152,7 +161,6 @@ async def complete_setup(
     # setup_complete was false.  The managers already exist in
     # app.state.services — they just haven't parsed/exported yet.
     try:
-        services = raw_request.app.state.services
         entries = services.ledger_manager.cache.get_entries()
         logger.info(f"Ledger loaded after setup: {len(entries)} entries")
 

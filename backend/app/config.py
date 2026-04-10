@@ -214,6 +214,19 @@ class Config(BaseModel):
         return str(self.config_dir / 'email_rules')
 
     @model_validator(mode='after')
+    def resolve_relative_paths(self) -> 'Config':
+        """Resolve relative ``ledger_file`` against ``root_dir``.
+
+        In desktop mode ``root_dir`` is ``.`` so this is a no-op.  In
+        hosted mode it turns ``./data/ledgers/main.beancount`` into an
+        absolute path under the user's directory.
+        """
+        ledger = Path(self.ledger_file)
+        if not ledger.is_absolute():
+            self.ledger_file = str(self.root_dir / ledger)
+        return self
+
+    @model_validator(mode='after')
     def validate_directory_paths(self) -> 'Config':
         """Validate that required directories exist.
 
