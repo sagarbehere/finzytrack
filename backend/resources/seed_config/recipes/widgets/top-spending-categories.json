@@ -38,6 +38,7 @@
       },
       "yAxis": {
         "type": "category",
+        "inverse": true,
         "axisLabel": {
           "width": 100,
           "overflow": "truncate"
