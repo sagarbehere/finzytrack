@@ -14,6 +14,8 @@ build/
 dist/
 .pytest_cache/
 .coverage
+.mutmut-cache
+mutants/
 
 .DS_Store
 *.local
@@ -49,3 +51,5 @@ node_modules
 .env.*
 !.env.example
 .vite
+.astro/
+.claude/
