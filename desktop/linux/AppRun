@@ -1,0 +1,4 @@
+#!/bin/bash
+# AppImage entry point — launch the FinzyTrack binary from the AppDir.
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/usr/bin/FinzyTrack" "$@"

@@ -12,7 +12,6 @@ openpyxl>=3.1.0   # required by pandas for .xlsx files
 xlrd>=2.0.0       # required by pandas for legacy .xls files
 numpy>=2.3.3
 scipy>=1.16.2
-duckdb>=1.4.1
 httpx>=0.28.1
 beautifulsoup4>=4.14.3
 cryptography>=46.0.2

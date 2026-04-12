@@ -80,7 +80,6 @@ a = Analysis(
         # other
         'ruamel.yaml',
         'ruamel.yaml.clib',
-        'duckdb',
         'rapidfuzz',
     ],
     hookspath=[],
@@ -126,13 +125,14 @@ coll = COLLECT(
 
 # macOS .app bundle — Gatekeeper verifies the bundle signature once
 # instead of scanning every individual Mach-O binary on first launch.
-app = BUNDLE(
-    coll,
-    name='FinzyTrack.app',
-    bundle_identifier='com.finzytrack.app',
-    info_plist={
-        'NSHighResolutionCapable': True,
-        'CFBundleShortVersionString': '0.1.0',
-    },
-    icon=ICON,
-)
+if sys.platform == 'darwin':
+    app = BUNDLE(
+        coll,
+        name='FinzyTrack.app',
+        bundle_identifier='com.finzytrack.app',
+        info_plist={
+            'NSHighResolutionCapable': True,
+            'CFBundleShortVersionString': '0.1.0',
+        },
+        icon=ICON,
+    )
