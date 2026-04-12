@@ -46,25 +46,8 @@ Query rules:
 
 ---
 
-Additional tables (ledger mirror — normalized views of non-transaction data):
-
-accounts (name TEXT PK, open_date TEXT, close_date TEXT, currencies_json TEXT, booking TEXT, metadata_json TEXT)
-account_balances (account TEXT, currency TEXT, balance TEXT, transaction_count INTEGER, last_transaction_date TEXT) — PK: (account, currency)
-commodities (code TEXT PK, declaration_date TEXT, name TEXT, type TEXT, metadata_json TEXT)
-commodity_usage (code TEXT PK, transaction_count INTEGER, total_volume TEXT, first_seen TEXT, last_seen TEXT)
-prices (id INTEGER PK, date TEXT, base_currency TEXT, quote_number TEXT, quote_currency TEXT, metadata_json TEXT)
-balance_assertions (id INTEGER PK, date TEXT, account TEXT, amount_number TEXT, amount_currency TEXT, passed INTEGER, diff_number TEXT)
-pad_directives (id INTEGER PK, date TEXT, account TEXT, source_account TEXT)
-lots (id INTEGER PK, account TEXT, units_number TEXT, units_currency TEXT, cost_number TEXT, cost_currency TEXT, acquisition_date TEXT, book_value TEXT)
-ledger_errors (id INTEGER PK, source_file TEXT, line_number INTEGER, message TEXT)
-training_data (id INTEGER PK, description TEXT, category TEXT)
-notes (id INTEGER PK, date TEXT, account TEXT, comment TEXT)
-events (id INTEGER PK, date TEXT, type TEXT, description TEXT)
-documents (id INTEGER PK, date TEXT, account TEXT, filename TEXT)
-ledger_options (key TEXT PK, value_json TEXT)
-
-Notes on ledger mirror tables:
-- balance and amount columns use TEXT for decimal precision. Cast to REAL for arithmetic: CAST(balance AS REAL).
-- The postings table remains the primary table for aggregate/analytics queries. Use ledger mirror tables for account metadata, price history, lot tracking, and balance assertions.
-- JOIN accounts with account_balances for accounts with their balances.
-- JOIN commodities with commodity_usage for commodities with transaction stats.
+Beyond "postings", additional tables exist for account metadata, price history, investment lots, balance assertions, and more. If the user's question involves data not in the postings table (e.g. "what accounts are open?", "show price history for AAPL", "what are my lot positions?"), discover the available tables and their columns by running:
+  SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;
+  PRAGMA table_info(<table_name>);
+Key tables: accounts, account_balances, commodities, prices, lots, balance_assertions.
+Numeric columns in these tables use TEXT for decimal precision — cast with CAST(value AS REAL) for arithmetic.
