@@ -318,6 +318,38 @@ class TestExportAccountBalances:
             f"Double-entry violated: all balances sum to {total}, expected 0"
 
 
+class TestExportZeroAmountPostings:
+    """Zero-amount postings (e.g. fee waivers) must be exported with their
+    currency intact, not as NULL. Beancount's Amount is falsy when the number
+    is zero, so naive truthiness checks produce NULL currency in the DB."""
+
+    def test_zero_amount_posting_has_currency(self, edge_case_db):
+        """edge_cases has a 0.00 USD posting for Expenses:Fees:Banking.
+        It must appear in the postings table with currency='USD', not NULL."""
+        db_path, _, _, _ = edge_case_db
+        con = sqlite3.connect(str(db_path))
+        rows = con.execute(
+            "SELECT amount, currency FROM postings "
+            "WHERE account = 'Expenses:Fees:Banking'"
+        ).fetchall()
+        con.close()
+
+        assert len(rows) == 1
+        assert rows[0][0] == 0.0
+        assert rows[0][1] == "USD"
+
+    def test_no_null_currencies_in_postings(self, edge_case_db):
+        """No posting should ever have a NULL currency."""
+        db_path, _, _, _ = edge_case_db
+        con = sqlite3.connect(str(db_path))
+        null_count = con.execute(
+            "SELECT COUNT(*) FROM postings WHERE currency IS NULL"
+        ).fetchone()[0]
+        con.close()
+        assert null_count == 0, \
+            f"Found {null_count} postings with NULL currency"
+
+
 class TestExportCommodities:
     """commodities table must match Commodity directives."""
 
