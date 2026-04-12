@@ -318,10 +318,13 @@ class TestExportAccountBalances:
             f"Double-entry violated: all balances sum to {total}, expected 0"
 
 
-class TestExportZeroAmountPostings:
-    """Zero-amount postings (e.g. fee waivers) must be exported with their
-    currency intact, not as NULL. Beancount's Amount is falsy when the number
-    is zero, so naive truthiness checks produce NULL currency in the DB."""
+class TestExportZeroValuePostings:
+    """Beancount's Amount type is falsy when its number is zero. Naive
+    truthiness checks (``if posting.units``, ``if posting.price``) treat
+    zero-value postings as absent, writing NULLs to the database.
+
+    These tests verify that zero amounts, zero costs, and zero prices are
+    all exported with their currency and numeric value intact."""
 
     def test_zero_amount_posting_has_currency(self, edge_case_db):
         """edge_cases has a 0.00 USD posting for Expenses:Fees:Banking.
@@ -338,6 +341,43 @@ class TestExportZeroAmountPostings:
         assert rows[0][0] == 0.0
         assert rows[0][1] == "USD"
 
+    def test_zero_cost_posting_has_cost_fields(self, edge_case_db):
+        """edge_cases has a posting with {0.00 USD} cost (worthless shares).
+        cost_amount and cost_currency must not be NULL."""
+        db_path, _, _, _ = edge_case_db
+        con = sqlite3.connect(str(db_path))
+        rows = con.execute(
+            "SELECT cost_amount, cost_currency FROM postings "
+            "WHERE transaction_narration LIKE '%worthless%' "
+            "AND account = 'Assets:Investments:Stocks'"
+        ).fetchall()
+        con.close()
+
+        assert len(rows) >= 1
+        for cost_amount, cost_currency in rows:
+            assert cost_amount is not None, "cost_amount is NULL for zero-cost posting"
+            assert cost_currency == "USD", \
+                f"cost_currency should be 'USD', got {cost_currency!r}"
+            assert cost_amount == 0.0
+
+    def test_zero_price_posting_has_price_fields(self, edge_case_db):
+        """edge_cases has a posting with @ 0.00 USD price (mark to zero).
+        price_amount and price_currency must not be NULL."""
+        db_path, _, _, _ = edge_case_db
+        con = sqlite3.connect(str(db_path))
+        rows = con.execute(
+            "SELECT price_amount, price_currency FROM postings "
+            "WHERE transaction_narration LIKE '%Mark shares to zero%' "
+            "AND account = 'Assets:Investments:Stocks'"
+        ).fetchall()
+        con.close()
+
+        assert len(rows) == 1
+        assert rows[0][0] is not None, "price_amount is NULL for zero-price posting"
+        assert rows[0][0] == 0.0
+        assert rows[0][1] == "USD", \
+            f"price_currency should be 'USD', got {rows[0][1]!r}"
+
     def test_no_null_currencies_in_postings(self, edge_case_db):
         """No posting should ever have a NULL currency."""
         db_path, _, _, _ = edge_case_db
@@ -348,6 +388,18 @@ class TestExportZeroAmountPostings:
         con.close()
         assert null_count == 0, \
             f"Found {null_count} postings with NULL currency"
+
+    def test_no_null_cost_currency_when_cost_exists(self, edge_case_db):
+        """If a posting has a cost_amount, it must also have a cost_currency."""
+        db_path, _, _, _ = edge_case_db
+        con = sqlite3.connect(str(db_path))
+        broken = con.execute(
+            "SELECT COUNT(*) FROM postings "
+            "WHERE cost_amount IS NOT NULL AND cost_currency IS NULL"
+        ).fetchone()[0]
+        con.close()
+        assert broken == 0, \
+            f"Found {broken} postings with cost_amount but NULL cost_currency"
 
 
 class TestExportCommodities:

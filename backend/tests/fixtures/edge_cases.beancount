@@ -57,6 +57,16 @@ option "operating_currency" "USD"
   Expenses:Travel:Flights:Domestic:Economy  350.00 USD
   Liabilities:CreditCard                   -350.00 USD
 
+;; Zero-cost posting (e.g. worthless security grant)
+2024-03-10 * "Broker" "Receive worthless shares"
+  Assets:Investments:Stocks   100 AAPL {0.00 USD}
+  Equity:Opening-Balances
+
+;; Zero-price posting (e.g. mark to zero)
+2024-03-12 * "Broker" "Mark shares to zero"
+  Assets:Investments:Stocks   -100 AAPL {0.00 USD} @ 0.00 USD
+  Income:Dividends
+
 ;; Balance assertion
 2024-03-15 balance Assets:Bank:Checking  7428.00 USD
 
