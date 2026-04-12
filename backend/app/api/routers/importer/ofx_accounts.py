@@ -11,7 +11,8 @@ from app.core.backup_manager import BackupManager
 from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
 from app.exceptions import APIError
-from app.dependencies import get_backup_manager, get_config_manager, get_beancount_manager
+from app.dependencies import get_backup_manager, get_config_manager, get_beancount_manager, get_sqlite_reader
+from app.services.sqlite_reader import SqliteReader
 from app.schemas.ofx_schemas import (
     OFXDetectionRequest,
     OFXDetectionData,
@@ -35,11 +36,11 @@ router = APIRouter()
 async def detect_ofx_account(
     request: OFXDetectionRequest,
     config_manager: ConfigManager = Depends(get_config_manager),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
 ):
     config = config_manager.get_config()
     try:
-        detailed_accounts = beancount_manager.get_detailed_accounts()
+        detailed_accounts = sqlite_reader.get_accounts()
         if not detailed_accounts:
             # This is a specific case where the ledger exists but is empty or uninitialized.
             raise APIError(
@@ -81,7 +82,8 @@ async def detect_ofx_account(
 async def learn_ofx_account(
     request: LearnOFXAccountRequest,
     config_manager: ConfigManager = Depends(get_config_manager),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
+    beancount_manager: BeancountManager = Depends(get_beancount_manager),
 ):
     config = config_manager.get_config()
     if not beancount_manager.validate_account_format(request.beancount_account):
@@ -95,9 +97,9 @@ async def learn_ofx_account(
                 "help": "Account name must follow Beancount naming conventions"
             }
         )
-    
+
     try:
-        account_exists = beancount_manager.is_existing_account(request.beancount_account)
+        account_exists = request.beancount_account in sqlite_reader.get_account_names()
     except FileNotFoundError:
         raise APIError(message="Ledger file not found", code=ec.FILE_NOT_FOUND, status_code=404, details={"path": config.ledger_file})
     except PermissionError:

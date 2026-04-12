@@ -13,9 +13,9 @@ from app.schemas.export_schemas import (
     ExportStatusData,
 )
 from app.config import SQLITE_ENABLE_WAL
-from app.dependencies import get_beancount_manager, get_config_manager
+from app.dependencies import get_config_manager, get_sqlite_reader
 from app.services.sqlite_exporter import SQLiteExporter
-from app.core.beancount_manager import BeancountManager
+from app.services.sqlite_reader import SqliteReader
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
 from app import error_codes as ec
@@ -31,12 +31,12 @@ router = APIRouter()
     operation_id="exportLedger"
 )
 async def export_ledger(
-    beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
     config_manager=Depends(get_config_manager),
     force: bool = Body(default=False, embed=True),
 ):
     """
-    Export ledger to SQLite database.
+    Export ledger to SQLite database (full export — all tables).
 
     Examples:
         POST /api/ledger/export
@@ -47,21 +47,23 @@ async def export_ledger(
         enable_wal=SQLITE_ENABLE_WAL
     )
 
-    # Check for ledger errors
-    errors = beancount_manager.cache.get_errors()
-    if errors:
+    # Check for ledger errors via SQLite
+    if sqlite_reader.has_errors():
+        raw_errors = sqlite_reader.get_errors()
         raise APIError(
             message="Ledger file has parsing errors",
             code=ec.LEDGER_PARSE_ERROR,
             status_code=400,
             details={
-                "error_count": len(errors),
-                "errors": [str(e) for e in errors[:5]]
+                "error_count": len(raw_errors),
+                "errors": [e.get("message", "") for e in raw_errors[:5]]
             }
         )
 
-    entries = beancount_manager.cache.get_entries()
-    result = await exporter.export_entries(entries, force=force)
+    # Full export via transient parse
+    from app.core.ledger_loader import load_ledger_checked
+    entries, errors, options = load_ledger_checked(config_manager.get_config().ledger_file)
+    result = await exporter.export_full(entries, errors, options)
 
     export_data = ExportData(**result, db_type="sqlite")
     return success_json_response(export_data)
@@ -73,7 +75,6 @@ async def export_ledger(
     operation_id="getExportStatus"
 )
 async def get_export_status(
-    beancount_manager: BeancountManager = Depends(get_beancount_manager),
     config_manager=Depends(get_config_manager),
 ):
     """
@@ -82,14 +83,15 @@ async def get_export_status(
     Examples:
         GET /api/ledger/export/status
     """
+    config = config_manager.get_config()
     exporter = SQLiteExporter(
-        sqlite_path=config_manager.get_config().sqlite_export_path,
+        sqlite_path=config.sqlite_export_path,
         enable_wal=SQLITE_ENABLE_WAL
     )
 
     status = await exporter.get_status()
 
-    ledger_file = Path(beancount_manager.ledger_file)
+    ledger_file = Path(config.ledger_file)
     is_current = False
     ledger_modified = None
 

@@ -21,6 +21,7 @@ from app.core.xls_rules_manager import XlsRulesManager
 from app.core.ledger_initializer import LedgerInitializer
 from app.core.ledger_manager import LedgerManager
 from app.services.sqlite_exporter import SQLiteExporter
+from app.services.sqlite_reader import SqliteReader
 from app.services.db_sync_manager import DBSyncManager
 from app.email_import.rule_registry import AccountProfileRegistry
 from app.user_services import UserServices
@@ -98,19 +99,27 @@ def create_user_services(config: Config, user_id: str = "local") -> UserServices
         backup_manager=backup_manager,
     )
 
-    # 4. LedgerManager (with per-user write lock)
+    # 4. SQLite exporter (created before LedgerManager so it can be injected)
+    sqlite_exporter = SQLiteExporter(
+        sqlite_path=config.sqlite_export_path,
+        enable_wal=SQLITE_ENABLE_WAL,
+    )
+
+    # 5. LedgerManager (with per-user write lock + sqlite exporter for inline export)
     write_lock = WriteLockManager(user_id=user_id)
     ledger_manager = LedgerManager(
         ledger_file=config.ledger_file,
         backup_manager=backup_manager,
         ledger_initializer=ledger_initializer,
         write_lock=write_lock,
+        sqlite_exporter=sqlite_exporter,
     )
 
-    # 5. SQLite exporter + debounced sync
-    sqlite_exporter = SQLiteExporter(
-        sqlite_path=config.sqlite_export_path,
-        enable_wal=SQLITE_ENABLE_WAL,
+    # 5b. SqliteReader + DBSyncManager
+    sqlite_reader = SqliteReader(
+        sqlite_path=Path(config.sqlite_export_path),
+        ledger_file=Path(config.ledger_file),
+        exporter=sqlite_exporter,
     )
     db_sync_manager = DBSyncManager(
         exporter=sqlite_exporter,
@@ -119,7 +128,7 @@ def create_user_services(config: Config, user_id: str = "local") -> UserServices
         db_type="sqlite",
     )
 
-    # 5b. Hot ledger switching references
+    # 5c. Hot ledger switching references
     config_manager.set_ledger_services(ledger_manager, db_sync_manager)
 
     # 6. Ensure ledger exists (skip when setup is incomplete)
@@ -142,12 +151,10 @@ def create_user_services(config: Config, user_id: str = "local") -> UserServices
     else:
         logger.info("Setup not complete — skipping ledger initialization")
 
-    # 7. Register SQLite sync callback
+    # 7. SQLite sync: writes export inline now; keep debounced callback
+    #    as a safety net for any edge cases during transition
     if SQLITE_AUTO_SYNC:
-        ledger_manager.register_cache_invalidation_callback(
-            db_sync_manager.on_ledger_changed
-        )
-        logger.info("SQLite auto-sync enabled with debouncing")
+        logger.info("SQLite auto-sync: inline export on writes + startup mtime check")
 
     return UserServices(
         ledger_manager=ledger_manager,
@@ -157,6 +164,7 @@ def create_user_services(config: Config, user_id: str = "local") -> UserServices
         xls_rules_manager=xls_rules_manager,
         email_registry=email_registry,
         sqlite_exporter=sqlite_exporter,
+        sqlite_reader=sqlite_reader,
         db_sync_manager=db_sync_manager,
     )
 
@@ -165,9 +173,10 @@ async def startup_user_services(services: UserServices, config: Config) -> None:
     """Run async post-creation setup (e.g. SQLite export on startup)."""
     if config.setup_complete and services.db_sync_manager._needs_export():
         try:
-            entries = services.ledger_manager.cache.get_entries()
-            await services.sqlite_exporter.export_entries(entries)
-            logger.info("SQLite exported on startup for user services")
+            from beancount import loader
+            entries, errors, options = loader.load_file(config.ledger_file)
+            await services.sqlite_exporter.export_full(entries, errors, options)
+            logger.info("SQLite full-exported on startup for user services")
         except Exception as e:
             logger.error("Failed to export SQLite on startup: %s", e)
 

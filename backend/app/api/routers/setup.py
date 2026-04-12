@@ -161,11 +161,14 @@ async def complete_setup(
     # setup_complete was false.  The managers already exist in
     # app.state.services — they just haven't parsed/exported yet.
     try:
-        entries = services.ledger_manager.cache.get_entries()
+        from beancount import loader
+        entries, errors, options = loader.load_file(
+            services.ledger_manager.ledger_file
+        )
         logger.info(f"Ledger loaded after setup: {len(entries)} entries")
 
-        await services.sqlite_exporter.export_entries(entries)
-        logger.info("SQLite exported after setup completion")
+        await services.sqlite_exporter.export_full(entries, errors, options)
+        logger.info("SQLite full-exported after setup completion")
     except Exception as e:
         logger.error(f"Post-setup initialization failed: {e}", exc_info=True)
         # Don't fail the wizard — config is saved, ledger exists.

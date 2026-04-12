@@ -10,7 +10,7 @@ import logging
 import sqlite3
 
 from app.ai.tools.base import BaseTool
-from app.core.beancount_manager import BeancountManager
+from app.services.sqlite_reader import SqliteReader
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +37,8 @@ class GetLedgerContextTool(BaseTool):
             "required": [],
         }
 
-    def __init__(self, beancount_manager: BeancountManager, sqlite_path: str):
-        self._manager = beancount_manager
+    def __init__(self, sqlite_reader: SqliteReader, sqlite_path: str):
+        self._reader = sqlite_reader
         self._sqlite_path = sqlite_path
 
     async def execute(self) -> dict:
@@ -98,8 +98,8 @@ class GetLedgerContextTool(BaseTool):
                 con.close()
         except Exception as e:
             logger.warning(f"SQLite balance query failed: {e}")
-            # Fallback: account names only from beancount cache
-            for name in sorted(self._manager.cache.get_account_names()):
+            # Fallback: account names from SqliteReader
+            for name in sorted(self._reader.get_account_names()):
                 accounts_with_balances.append({
                     "account": name,
                     "currency": None,

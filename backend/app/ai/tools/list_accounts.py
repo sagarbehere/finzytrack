@@ -1,7 +1,7 @@
 import logging
 
 from app.ai.tools.base import BaseTool
-from app.core.beancount_manager import BeancountManager
+from app.services.sqlite_reader import SqliteReader
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +28,12 @@ class ListAccountsTool(BaseTool):
             "required": [],
         }
 
-    def __init__(self, beancount_manager: BeancountManager):
-        self._manager = beancount_manager
+    def __init__(self, sqlite_reader: SqliteReader):
+        self._reader = sqlite_reader
 
     async def execute(self) -> dict:
         try:
-            accounts = sorted(self._manager.cache.get_account_names())
+            accounts = sorted(self._reader.get_account_names())
             return {"success": True, "accounts": accounts}
         except Exception as e:
             logger.error(f"list_accounts failed: {e}")

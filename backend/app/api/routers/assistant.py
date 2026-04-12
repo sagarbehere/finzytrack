@@ -62,8 +62,10 @@ from app.dependencies import (
     get_config_manager,
     get_csv_rules_manager,
     get_email_registry,
+    get_sqlite_reader,
     get_xls_rules_manager,
 )
+from app.services.sqlite_reader import SqliteReader
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -160,6 +162,7 @@ def _build_registry(
     xls_rules_manager: XlsRulesManager,
     email_registry: AccountProfileRegistry,
     beancount_manager: BeancountManager,
+    sqlite_reader: SqliteReader,
     backup_manager: BackupManager,
     file_type: str | None = None,
     sqlite_path: str | None = None,
@@ -176,7 +179,7 @@ def _build_registry(
     if file_type:
         # Setup mode — register only tools relevant to the attached file type
         registry.register(ReadFileTool(allowed_read_dirs))
-        registry.register(ListAccountsTool(beancount_manager))
+        registry.register(ListAccountsTool(sqlite_reader))
         registry.register(ListRuleFilesTool(csv_dir, xls_dir, email_dir))
 
         if file_type == "csv":
@@ -193,7 +196,7 @@ def _build_registry(
         # list_accounts is not registered here to avoid redundant tool calls.
         if sqlite_path:
             registry.register(ExecuteQueryTool(sqlite_path))
-            registry.register(GetLedgerContextTool(beancount_manager, sqlite_path))
+            registry.register(GetLedgerContextTool(sqlite_reader, sqlite_path))
         if recipes_dir:
             registry.register(GetRecipeSchemaTool())
             registry.register(ListRecipesTool(recipes_dir))
@@ -399,6 +402,7 @@ async def assistant_chat(
     body: AssistantChatRequest,
     config_manager: ConfigManager = Depends(get_config_manager),
     beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
     backup_manager: BackupManager = Depends(get_backup_manager),
     csv_rules_manager: CsvRulesManager = Depends(get_csv_rules_manager),
     xls_rules_manager: XlsRulesManager = Depends(get_xls_rules_manager),
@@ -442,7 +446,7 @@ async def assistant_chat(
     recipes_dir = Path(config.recipes_dir) if config.recipes_dir else None
     registry = _build_registry(
         csv_rules_manager, xls_rules_manager, email_registry,
-        beancount_manager, backup_manager,
+        beancount_manager, sqlite_reader, backup_manager,
         file_type=file_type, sqlite_path=sqlite_path,
         recipes_dir=recipes_dir,
     )

@@ -10,7 +10,8 @@ from beancount.parser import parser
 from app.config import CategorizationEngine
 from app.core.config_manager import ConfigManager
 from app.core.beancount_manager import BeancountManager
-from app.dependencies import get_config_manager, get_beancount_manager
+from app.services.sqlite_reader import SqliteReader
+from app.dependencies import get_config_manager, get_beancount_manager, get_sqlite_reader
 from app.exceptions import APIError
 from app.schemas.response_schemas import ApiResponse
 from app.schemas.transaction_schemas import (
@@ -36,7 +37,8 @@ router = APIRouter()
 async def categorize_transactions(
     request: CategorizeRequest,
     config_manager: ConfigManager = Depends(get_config_manager),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
+    beancount_manager: BeancountManager = Depends(get_beancount_manager),
 ):
     """
     Categorize transactions and detect potential duplicates.
@@ -76,10 +78,10 @@ async def categorize_transactions(
     if engine == CategorizationEngine.LLM:
         engine = CategorizationEngine.AI
 
-    # Get cached data (only fetch what's needed for the selected engine)
-    existing_transactions = beancount_manager.cache.get_transactions()
-    account_names = beancount_manager.cache.get_account_names()
-    training_data = beancount_manager.cache.get_training_data() if engine == CategorizationEngine.CLASSIFIER else []
+    # Get cached data via SqliteReader
+    existing_transactions = sqlite_reader.get_transactions()
+    account_names = sqlite_reader.get_account_names()
+    training_data = sqlite_reader.get_training_data() if engine == CategorizationEngine.CLASSIFIER else []
     logger.info(f"Categorization engine={engine.value}, "
                f"{len(existing_transactions)} existing transactions, "
                f"{len(account_names)} accounts")
@@ -208,7 +210,8 @@ async def categorize_transactions(
 async def commit_transactions(
     request: CommitRequest,
     config_manager: ConfigManager = Depends(get_config_manager),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
+    beancount_manager: BeancountManager = Depends(get_beancount_manager),
 ):
     """
     Commit transactions to the Beancount ledger.
@@ -246,7 +249,7 @@ async def commit_transactions(
                     details={"account": posting.account, "date": str(commit_txn.date)}
                 )
 
-            if not beancount_manager.is_existing_account(posting.account):
+            if posting.account not in sqlite_reader.get_account_names():
                 raise APIError(
                     message=f"Account does not exist in ledger: {posting.account}",
                     code=ec.ACCOUNT_NOT_FOUND,

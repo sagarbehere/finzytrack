@@ -240,7 +240,7 @@ def create_app(
 
             training_samples = 0
             try:
-                training_samples = len(svc.ledger_manager.cache.get_training_data())
+                training_samples = len(svc.sqlite_reader.get_training_data())
             except Exception:
                 pass
             checks["training_samples"] = training_samples

@@ -14,7 +14,8 @@ from app.schemas.account_schemas import (
 )
 from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
-from app.dependencies import get_config_manager, get_beancount_manager
+from app.services.sqlite_reader import SqliteReader
+from app.dependencies import get_config_manager, get_beancount_manager, get_sqlite_reader
 from app.exceptions import APIError
 from app.helpers.date_helpers import parse_optional_date_param
 from app.helpers.error_context import ledger_error_context
@@ -30,7 +31,7 @@ async def list_accounts(
     start_date: Optional[str] = Query(None, description="Start date for balance filtering (YYYY-MM-DD). For Income/Expenses only."),
     end_date: Optional[str] = Query(None, description="End date for balance filtering (YYYY-MM-DD). Defaults to today."),
     config_manager: ConfigManager = Depends(get_config_manager),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
 ):
     """
     Retrieve all accounts with full details including transaction history and balances.
@@ -51,12 +52,12 @@ async def list_accounts(
 
         # Get detailed account information with optional date filtering
         if start_date_obj is not None or end_date_obj is not None:
-            detailed_accounts = beancount_manager.get_detailed_accounts_filtered(
+            detailed_accounts = sqlite_reader.get_accounts_filtered(
                 start_date=start_date_obj,
-                end_date=end_date_obj
+                end_date=end_date_obj,
             )
         else:
-            detailed_accounts = beancount_manager.get_detailed_accounts()
+            detailed_accounts = sqlite_reader.get_accounts()
 
         accounts_data = AccountListData(accounts=detailed_accounts)
         return success_json_response(accounts_data)
@@ -158,14 +159,16 @@ async def update_account(
     request: AccountUpdateRequest,
     account_name: str = Path(..., description="Beancount account name to update"),
     config_manager: ConfigManager = Depends(get_config_manager),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
+    beancount_manager: BeancountManager = Depends(get_beancount_manager),
 ):
     """Update account details."""
     config = config_manager.get_config()
 
     with ledger_error_context(config.ledger_file):
         # Validate account exists
-        if not beancount_manager.is_existing_account(account_name):
+        account_names = sqlite_reader.get_account_names()
+        if account_name not in account_names:
             raise APIError(
                 message=f"Account not found: {account_name}",
                 code=ec.ACCOUNT_NOT_FOUND,
@@ -188,7 +191,7 @@ async def update_account(
                 )
 
             # Check if new name already exists (and it's not the same as current name)
-            if request.new_name != account_name and beancount_manager.is_existing_account(request.new_name):
+            if request.new_name != account_name and request.new_name in account_names:
                 raise APIError(
                     message=f"Account name already exists: {request.new_name}",
                     code=ec.ACCOUNT_ALREADY_EXISTS,
@@ -198,7 +201,8 @@ async def update_account(
 
         # Validate close_date vs open_date
         if request.close_date:
-            current_open_date = beancount_manager.get_account_open_date(account_name)
+            acct = sqlite_reader.get_account(account_name)
+            current_open_date = acct.open_date if acct else None
             effective_open = request.open_date or current_open_date or datetime.min.date()
             if request.close_date < effective_open:
                 raise APIError(
@@ -224,8 +228,8 @@ async def update_account(
             close_date=request.close_date,
         )
 
-        # Build response from refreshed cache
-        updated_detailed_accounts = beancount_manager.get_detailed_accounts()
+        # Build response from refreshed data
+        updated_detailed_accounts = sqlite_reader.get_accounts()
         updated_account_info = next((a for a in updated_detailed_accounts if a.name == new_name), None)
 
         updated = bool(
@@ -245,14 +249,16 @@ async def close_account(
     request: AccountCloseRequest,
     account_name: str = Path(..., description="Beancount account name to close"),
     config_manager: ConfigManager = Depends(get_config_manager),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
+    beancount_manager: BeancountManager = Depends(get_beancount_manager),
 ):
     """Close an account by adding a closing directive to the Beancount ledger."""
     config = config_manager.get_config()
 
     with ledger_error_context(config.ledger_file):
         # Validate account exists
-        if not beancount_manager.is_existing_account(account_name):
+        acct = sqlite_reader.get_account(account_name)
+        if not acct:
             raise APIError(
                 message=f"Account not found: {account_name}",
                 code=ec.ACCOUNT_NOT_FOUND,
@@ -261,18 +267,16 @@ async def close_account(
             )
 
         # Check if account is already closed
-        existing_close_date = beancount_manager.get_account_close_date(account_name)
-        if existing_close_date:
+        if acct.close_date:
             raise APIError(
                 message=f"Account is already closed: {account_name}",
                 code=ec.ACCOUNT_ALREADY_CLOSED,
                 status_code=409,
-                details={"account_name": account_name, "close_date": existing_close_date.isoformat()}
+                details={"account_name": account_name, "close_date": acct.close_date.isoformat()}
             )
 
         # Ensure close_date is after open_date
-        open_date = beancount_manager.get_account_open_date(account_name)
-        if open_date and request.close_date < open_date:
+        if acct.open_date and request.close_date < acct.open_date:
             raise APIError(
                 message="Close date must be after open date",
                 code=ec.VALIDATION_ERROR,
@@ -280,7 +284,7 @@ async def close_account(
                 details={
                     "field": "close_date",
                     "close_date": request.close_date.isoformat(),
-                    "open_date": open_date.isoformat(),
+                    "open_date": acct.open_date.isoformat(),
                     "help": "Accounts cannot be closed before they were opened"
                 }
             )
@@ -299,14 +303,16 @@ async def close_account(
 async def reopen_account(
     account_name: str = Path(..., description="Beancount account name to reopen"),
     config_manager: ConfigManager = Depends(get_config_manager),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
+    beancount_manager: BeancountManager = Depends(get_beancount_manager),
 ):
     """Reopen a closed account by removing the close directive from the ledger."""
     config = config_manager.get_config()
 
     with ledger_error_context(config.ledger_file):
         # Validate account exists
-        if not beancount_manager.is_existing_account(account_name):
+        acct = sqlite_reader.get_account(account_name)
+        if not acct:
             raise APIError(
                 message=f"Account not found: {account_name}",
                 code=ec.ACCOUNT_NOT_FOUND,
@@ -315,8 +321,7 @@ async def reopen_account(
             )
 
         # Check if account is actually closed
-        close_date = beancount_manager.get_account_close_date(account_name)
-        if not close_date:
+        if not acct.close_date:
             raise APIError(
                 message=f"Account is not closed: {account_name}",
                 code=ec.ACCOUNT_NOT_CLOSED,
@@ -339,14 +344,15 @@ async def delete_account(
     account_name: str = Path(..., description="Beancount account name to delete"),
     delete_transactions: bool = Query(True, description="Whether to delete transactions associated with this account"),
     config_manager: ConfigManager = Depends(get_config_manager),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
+    beancount_manager: BeancountManager = Depends(get_beancount_manager),
 ):
     """Remove account from ledger. Optionally deletes associated transactions."""
     config = config_manager.get_config()
 
     with ledger_error_context(config.ledger_file):
         # Validate account exists
-        if not beancount_manager.is_existing_account(account_name):
+        if account_name not in sqlite_reader.get_account_names():
             raise APIError(
                 message=f"Account not found: {account_name}",
                 code=ec.ACCOUNT_NOT_FOUND,
@@ -359,7 +365,8 @@ async def delete_account(
             transactions_deleted = beancount_manager.delete_account(account_name, delete_transactions=delete_transactions)
         except ValueError:
             # Account has transactions but delete_transactions is False
-            transaction_summary = beancount_manager.get_account_transactions_summary(account_name)
+            acct_detail = sqlite_reader.get_account(account_name)
+            transaction_summary = {c.currency: c for c in acct_detail.currencies} if acct_detail else {}
             total = sum(s.transaction_count for s in transaction_summary.values())
             raise APIError(
                 message=f"Account '{account_name}' has {total} transaction(s). "
@@ -393,10 +400,10 @@ async def delete_account(
 )
 async def list_balance_directives(
     account_name: str = Path(..., description="Beancount account name"),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
 ):
     """List all balance directives for an account, including pad and error info."""
-    if not beancount_manager.is_existing_account(account_name):
+    if account_name not in sqlite_reader.get_account_names():
         raise APIError(
             message=f"Account not found: {account_name}",
             code=ec.ACCOUNT_NOT_FOUND,
@@ -404,7 +411,7 @@ async def list_balance_directives(
             details={"account_name": account_name}
         )
 
-    directives = beancount_manager.get_balance_directives(account_name)
+    directives = sqlite_reader.get_balance_directives(account_name)
     return success_json_response(BalanceDirectiveListData(
         account=account_name,
         directives=directives,
@@ -458,10 +465,11 @@ async def create_balance_directive(
 async def update_balance_directive(
     request: BalanceDirectiveUpdateRequest,
     account_name: str = Path(..., description="Beancount account name"),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
+    beancount_manager: BeancountManager = Depends(get_beancount_manager),
 ):
     """Update an existing balance directive."""
-    if not beancount_manager.is_existing_account(account_name):
+    if account_name not in sqlite_reader.get_account_names():
         raise APIError(
             message=f"Account not found: {account_name}",
             code=ec.ACCOUNT_NOT_FOUND,
@@ -503,10 +511,11 @@ async def delete_balance_directive(
     currency: str = Query(..., description="Currency code"),
     amount: float = Query(..., description="Expected balance amount"),
     delete_pad: bool = Query(True, description="Also delete associated pad directive"),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
+    beancount_manager: BeancountManager = Depends(get_beancount_manager),
 ):
     """Delete a balance directive (and optionally its associated pad)."""
-    if not beancount_manager.is_existing_account(account_name):
+    if account_name not in sqlite_reader.get_account_names():
         raise APIError(
             message=f"Account not found: {account_name}",
             code=ec.ACCOUNT_NOT_FOUND,

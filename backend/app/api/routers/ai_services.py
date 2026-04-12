@@ -21,9 +21,9 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.ai.client import complete_chat
 from app.config import LLMConfig
-from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
-from app.dependencies import get_beancount_manager, get_config_manager
+from app.dependencies import get_config_manager, get_sqlite_reader
+from app.services.sqlite_reader import SqliteReader
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
 from app.schemas.response_schemas import ApiResponse
@@ -192,14 +192,14 @@ def _validate_parsed_transaction(
 async def parse_nl_transaction(
     body: ParseNLTransactionRequest,
     config_manager: ConfigManager = Depends(get_config_manager),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
 ):
     llm = _get_llm_config(config_manager)
 
-    accounts = sorted(beancount_manager.cache.get_account_names())
-    account_set = beancount_manager.cache.get_account_names()
-    currencies = sorted(beancount_manager.cache.get_commodity_codes())
-    currency_set = beancount_manager.cache.get_commodity_codes()
+    account_set = sqlite_reader.get_account_names()
+    accounts = sorted(account_set)
+    currency_set = sqlite_reader.get_commodity_codes()
+    currencies = sorted(currency_set)
     default_currency = body.default_currency or (currencies[0] if currencies else "USD")
 
     system_prompt = _build_nl_prompt(accounts, currencies, default_currency)

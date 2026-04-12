@@ -22,6 +22,7 @@ from app.core.backup_manager import BackupManager
 from app.core.csv_rules_manager import CsvRulesManager
 from app.core.xls_rules_manager import XlsRulesManager
 from app.email_import.rule_registry import AccountProfileRegistry
+from app.services.sqlite_reader import SqliteReader
 
 
 async def get_user_services(
@@ -73,3 +74,9 @@ async def get_email_registry(
     services: UserServices = Depends(get_user_services),
 ) -> AccountProfileRegistry:
     return services.email_registry
+
+
+async def get_sqlite_reader(
+    services: UserServices = Depends(get_user_services),
+) -> SqliteReader:
+    return services.sqlite_reader

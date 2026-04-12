@@ -2,7 +2,7 @@
 Ledger API Router - Provides ledger health and utility endpoints.
 
 Endpoints:
-- GET /api/ledger/errors - Get current ledger parse errors from cache
+- GET /api/ledger/errors - Get current ledger parse errors from SQLite
 """
 
 from typing import List
@@ -12,8 +12,8 @@ from pydantic import BaseModel
 
 from app.helpers.response_helpers import success_json_response
 from app.schemas.response_schemas import ApiResponse
-from app.core.beancount_manager import BeancountManager
-from app.dependencies import get_beancount_manager
+from app.services.sqlite_reader import SqliteReader
+from app.dependencies import get_sqlite_reader
 
 router = APIRouter()
 
@@ -34,7 +34,7 @@ class LedgerValidationError(BaseModel):
 # ============================================================================
 
 class LedgerErrorsResponse(BaseModel):
-    """Current ledger parse errors from the beancount cache."""
+    """Current ledger parse errors."""
     error_count: int
     errors: List[LedgerValidationError]
 
@@ -45,21 +45,21 @@ class LedgerErrorsResponse(BaseModel):
     operation_id="getLedgerErrors",
 )
 async def get_ledger_errors(
-    beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
 ):
     """
-    Return current ledger parse errors from the cache.
+    Return current ledger parse errors from SQLite.
 
     This is a lightweight read — no re-parsing occurs.
     """
-    raw_errors = beancount_manager.cache.get_errors()
+    raw_errors = sqlite_reader.get_errors()
     errors = [
         LedgerValidationError(
-            line=e.source.get("lineno", 0) if e.source else 0,
-            message=e.message,
+            line=e.get("line_number", 0) or 0,
+            message=e.get("message", ""),
             source=(
-                f"{e.source.get('filename', 'unknown')}:{e.source.get('lineno', 0)}"
-                if e.source
+                f"{e.get('source_file', 'unknown')}:{e.get('line_number', 0)}"
+                if e.get("source_file")
                 else "unknown"
             ),
         )

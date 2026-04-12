@@ -13,10 +13,10 @@ from fastapi.responses import PlainTextResponse
 
 from app.schemas.response_schemas import ApiResponse
 from app.schemas.query_schemas import QueryRequest, QueryData
-from app.dependencies import get_beancount_manager, get_config_manager
+from app.dependencies import get_config_manager, get_sqlite_reader
 from app.services.sqlite_exporter import SQLiteExporter
 from app.services.beanquery_service import BeanqueryService
-from app.core.beancount_manager import BeancountManager
+from app.services.sqlite_reader import SqliteReader
 from app.core.config_manager import ConfigManager
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
@@ -38,8 +38,8 @@ async def execute_query(
         None,
         description="Database/engine type: 'sqlite' or 'beanquery'. Defaults to 'sqlite'."
     ),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager),
-    config_manager: ConfigManager = Depends(get_config_manager)
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
+    config_manager: ConfigManager = Depends(get_config_manager),
 ):
     """
     Execute a query against the specified database engine.
@@ -60,10 +60,11 @@ async def execute_query(
         )
 
     # Check for ledger errors (filter out warnings like PadError which are non-fatal)
-    errors = beancount_manager.cache.get_errors()
+    raw_errors = sqlite_reader.get_errors()
+    # Filter non-fatal errors by message content (class info not available in SQLite)
     fatal_errors = [
-        error for error in errors
-        if error.__class__.__name__ not in ['PadError', 'UnusedPadError']
+        e for e in raw_errors
+        if "pad" not in (e.get("message", "") or "").lower()
     ]
 
     if fatal_errors:
@@ -73,14 +74,16 @@ async def execute_query(
             status_code=400,
             details={
                 "error_count": len(fatal_errors),
-                "errors": [str(e) for e in fatal_errors[:5]]
+                "errors": [e.get("message", "") for e in fatal_errors[:5]]
             }
         )
 
     if engine == "beanquery":
+        # BQL requires full entries in memory — transient parse
+        from app.core.ledger_loader import load_ledger_checked
         beanquery_service = BeanqueryService()
-        entries = beancount_manager.cache.get_entries()
-        options = beancount_manager.cache.get_cached_data().options
+        config = config_manager.get_config()
+        entries, _, options = load_ledger_checked(config.ledger_file)
 
         try:
             result = await asyncio.wait_for(

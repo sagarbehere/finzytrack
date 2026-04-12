@@ -230,8 +230,9 @@ class ConfigManager:
         # meaningless when switching between different ledger files —
         # the new file may be older than the existing SQLite DB.
         try:
-            entries = self._ledger_manager.cache.get_entries()
-            await self._sqlite_sync_manager.force_export(entries)
+            from app.core.ledger_loader import load_ledger_checked
+            entries, errors, options = load_ledger_checked(new_ledger_file)
+            await self._sqlite_sync_manager.exporter.export_full(entries, errors, options)
         except Exception as e:
             logger.error(f"Failed to parse new ledger after switch: {e}", exc_info=True)
             raise APIError(
