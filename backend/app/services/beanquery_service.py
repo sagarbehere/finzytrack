@@ -144,13 +144,13 @@ class BeanqueryService:
             # Sum all positions in the inventory (handles multiple currencies)
             total = 0.0
             for pos in value:
-                if hasattr(pos, 'units') and pos.units and pos.units.number is not None:
+                if hasattr(pos, 'units') and pos.units is not None and pos.units.number is not None:
                     total += float(pos.units.number)
             return total
         elif isinstance(value, Amount):
             return float(value.number) if value.number is not None else 0
         elif isinstance(value, Position):
-            return float(value.units.number) if hasattr(value, 'units') and value.units and value.units.number is not None else 0
+            return float(value.units.number) if hasattr(value, 'units') and value.units is not None and value.units.number is not None else 0
         elif hasattr(value, '_asdict'):  # Named tuples
             return str(value)
         elif hasattr(value, '__dict__'):  # Other objects with attributes

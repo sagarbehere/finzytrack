@@ -72,7 +72,7 @@ class BeancountEngine:
 
         balance: defaultdict[str, Decimal] = defaultdict(Decimal)
         for posting in transaction.postings:
-            if posting.units and posting.units.number is not None:
+            if posting.units is not None and posting.units.number is not None:
                 balance[posting.units.currency] += posting.units.number
 
         for currency, amount in balance.items():
@@ -216,7 +216,7 @@ class BeancountEngine:
 
         amount_str = "0"
         for posting in postings:
-            if posting.account == source_account and posting.units:
+            if posting.account == source_account and posting.units is not None:
                 amount_str = f"{posting.units.number} {posting.units.currency}"
                 break
 
@@ -532,7 +532,7 @@ class BeancountEngine:
 
         amount_str = "0"
         for posting in txn.postings:
-            if posting.account == source_account and posting.units:
+            if posting.account == source_account and posting.units is not None:
                 amount_str = f"{posting.units.number} {posting.units.currency}"
                 break
 

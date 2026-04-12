@@ -499,7 +499,7 @@ class SQLiteExporter:
 
                 cost_amount = None
                 cost_currency = None
-                if posting.cost:
+                if posting.cost is not None:
                     cost_number = getattr(posting.cost, 'number', None)
                     if cost_number is not None:
                         cost_amount = self._decimal_to_float(cost_number)
@@ -507,7 +507,7 @@ class SQLiteExporter:
 
                 price_amount = None
                 price_currency = None
-                if posting.price:
+                if posting.price is not None:
                     price_amount = self._decimal_to_float(posting.price.number)
                     price_currency = posting.price.currency
 
