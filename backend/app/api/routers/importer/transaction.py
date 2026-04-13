@@ -27,6 +27,7 @@ from app.services.categorizer import initialize_classifier, categorize_transacti
 from app.services.ai_categorizer import categorize_transactions_ai, AICategorizeError
 from app.services.duplicate_detector import find_duplicate
 from app import error_codes as ec
+from app.helpers.transaction_validation import validate_postings
 
 logger = logging.getLogger(__name__)
 
@@ -237,86 +238,18 @@ async def commit_transactions(
     # Validated Beancount transaction objects to append
     validated_transactions = []
 
+    # Fetch account names once for the entire batch
+    account_names = sqlite_reader.get_account_names()
+
     # Process each transaction
     for commit_txn in request.transactions:
-        # Validate account names
-        for posting in commit_txn.postings:
-            if not beancount_manager.validate_account_format(posting.account):
-                raise APIError(
-                    message=f"Invalid account format: {posting.account}",
-                    code=ec.INVALID_ACCOUNT_FORMAT,
-                    status_code=422,
-                    details={"account": posting.account, "date": str(commit_txn.date)}
-                )
-
-            if posting.account not in sqlite_reader.get_account_names():
-                raise APIError(
-                    message=f"Account does not exist in ledger: {posting.account}",
-                    code=ec.ACCOUNT_NOT_FOUND,
-                    status_code=422,
-                    details={
-                        "account": posting.account,
-                        "date": str(commit_txn.date),
-                        "suggestion": "Create the account first using the Accounts page"
-                    }
-                )
-
-        # Validate cost and price fields for each posting
-        for posting in commit_txn.postings:
-            # Validate cost completeness (treat 0 as empty)
-            cost_amount_is_nonzero = posting.cost_amount is not None and Decimal(str(posting.cost_amount)) != 0
-            if cost_amount_is_nonzero:
-                if posting.cost_currency is None:
-                    raise APIError(
-                        message="Cost amount specified but cost currency missing",
-                        code=ec.INVALID_COST,
-                        status_code=422,
-                        details={
-                            "account": posting.account,
-                            "date": str(commit_txn.date),
-                            "cost_amount": str(posting.cost_amount)
-                        }
-                    )
-            elif posting.cost_currency is not None:
-                raise APIError(
-                    message="Cost currency specified but cost amount missing or zero",
-                    code=ec.INVALID_COST,
-                    status_code=422,
-                    details={"account": posting.account, "date": str(commit_txn.date)}
-                )
-
-            # Validate price completeness (treat 0 as empty)
-            price_amount_is_nonzero = posting.price_amount is not None and Decimal(str(posting.price_amount)) != 0
-            if price_amount_is_nonzero:
-                if posting.price_currency is None or posting.price_type is None:
-                    raise APIError(
-                        message="Price amount specified but price currency or type missing",
-                        code=ec.INVALID_PRICE,
-                        status_code=422,
-                        details={
-                            "account": posting.account,
-                            "date": str(commit_txn.date),
-                            "price_amount": str(posting.price_amount),
-                            "price_currency": posting.price_currency,
-                            "price_type": posting.price_type
-                        }
-                    )
-            elif posting.price_currency is not None or posting.price_type is not None:
-                raise APIError(
-                    message="Price currency or type specified but price amount missing or zero",
-                    code=ec.INVALID_PRICE,
-                    status_code=422,
-                    details={"account": posting.account, "date": str(commit_txn.date)}
-                )
-
-            # Validate price type
-            if posting.price_type is not None and posting.price_type not in ['@', '@@']:
-                raise APIError(
-                    message=f"Invalid price type: {posting.price_type} (must be '@' or '@@')",
-                    code=ec.INVALID_PRICE_TYPE,
-                    status_code=422,
-                    details={"account": posting.account, "date": str(commit_txn.date)}
-                )
+        # Validate account format/existence and cost/price field completeness
+        validate_postings(
+            commit_txn.postings,
+            txn_date=str(commit_txn.date),
+            beancount_manager=beancount_manager,
+            account_names=account_names,
+        )
 
         # Create Beancount transaction object for validation
         try:

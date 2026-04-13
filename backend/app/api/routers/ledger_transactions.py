@@ -15,10 +15,12 @@ from app.schemas.transaction_delete_schemas import (
     DeleteTransactionRequest,
     DeleteTransactionResponse,
 )
-from app.dependencies import get_beancount_manager
+from app.dependencies import get_beancount_manager, get_sqlite_reader
 from app.core.beancount_manager import BeancountManager
+from app.services.sqlite_reader import SqliteReader
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
+from app.helpers.transaction_validation import validate_postings
 from app import error_codes as ec
 from beancount.core.data import Transaction, Posting
 from beancount.core.amount import Amount
@@ -37,7 +39,8 @@ router = APIRouter()
 )
 async def update_ledger_transactions(
     request: UpdateTransactionRequest = Body(...),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+    beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
 ):
     """
     Update existing transactions in the ledger.
@@ -62,10 +65,21 @@ async def update_ledger_transactions(
 
         logger.info(f"Updating {len(transactions_to_update)} transactions")
 
+        # Fetch account names once for the entire batch
+        account_names = sqlite_reader.get_account_names()
+
         # Step 1: Validate all transactions
         validated_transactions = []
         for update_txn in transactions_to_update:
             try:
+                # Validate account format/existence and cost/price field completeness
+                validate_postings(
+                    update_txn.postings,
+                    txn_date=str(update_txn.date),
+                    beancount_manager=beancount_manager,
+                    account_names=account_names,
+                )
+
                 # Convert to Beancount Transaction object
                 beancount_txn = _convert_to_beancount_transaction(update_txn)
 
