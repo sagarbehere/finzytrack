@@ -399,8 +399,11 @@ function validate(): boolean {
   if (!formData.name.trim()) {
     errors.name = 'Account name is required'
     valid = false
+  } else if (/\s/.test(formData.name)) {
+    errors.name = 'Account name cannot contain spaces. Use colons to separate segments (e.g., Assets:BankOfAmerica)'
+    valid = false
   } else if (!/^[A-Z][A-Za-z0-9\-_]*(?::[A-Z][A-Za-z0-9\-_]*)+$/.test(formData.name)) {
-    errors.name = 'Invalid account format. Must start with a type (Assets, Liabilities, etc.)'
+    errors.name = 'Invalid format. Use Type:Category:Name with each segment starting uppercase (e.g., Assets:Bank:Checking)'
     valid = false
   }
 
