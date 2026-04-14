@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { LedgerService } from '@/services/generated-api'
 import type { DeleteTransactionRequest } from '@/services/generated-api'
+import { useAccounts } from '@/composables/useAccounts'
 
 export interface DeleteTransactionResult {
   success: boolean
@@ -36,6 +37,9 @@ export function useTransactionDeleter() {
       if (!response.success || !response.data) {
         throw new Error('Delete failed: No data returned')
       }
+
+      // Invalidate accounts cache so balances reflect the deleted transactions
+      useAccounts().invalidateCache()
 
       return {
         success: true,

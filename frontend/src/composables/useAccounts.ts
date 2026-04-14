@@ -218,6 +218,7 @@ const fetchBalanceDirectives = async (accountName: string): Promise<BalanceDirec
 const addBalanceDirective = async (accountName: string, request: BalanceDirectiveCreateRequest): Promise<void> => {
   try {
     await AccountsService.createBalanceDirective(accountName, request)
+    invalidateCache()
   } catch (err) {
     errorHandler.display(err)
     throw err
@@ -227,6 +228,7 @@ const addBalanceDirective = async (accountName: string, request: BalanceDirectiv
 const updateBalanceDirective = async (accountName: string, request: BalanceDirectiveUpdateRequest): Promise<void> => {
   try {
     await AccountsService.updateBalanceDirective(accountName, request)
+    invalidateCache()
   } catch (err) {
     errorHandler.display(err)
     throw err
@@ -242,6 +244,7 @@ const deleteBalanceDirective = async (
 ): Promise<void> => {
   try {
     await AccountsService.deleteBalanceDirective(accountName, date, currency, amount, deletePad)
+    invalidateCache()
   } catch (err) {
     errorHandler.display(err)
     throw err

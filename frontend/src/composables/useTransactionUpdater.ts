@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import type { TransactionViewModel } from '@/types/transactions'
 import { LedgerService } from '@/services/generated-api'
 import type { UpdateTransactionRequest } from '@/services/generated-api'
+import { useAccounts } from '@/composables/useAccounts'
 
 interface UpdateTransactionResult {
   success: boolean
@@ -92,6 +93,9 @@ export function useTransactionUpdater() {
       if (!response.success || !response.data) {
         throw new Error('Update failed: No data returned')
       }
+
+      // Invalidate accounts cache so balances reflect the updated transactions
+      useAccounts().invalidateCache()
 
       return {
         success: true,

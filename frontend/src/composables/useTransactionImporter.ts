@@ -7,6 +7,7 @@
 import { ref } from 'vue'
 import { ImportService } from '@/services/generated-api'
 import { errorHandler } from '@/utils/ErrorHandler'
+import { useAccounts } from '@/composables/useAccounts'
 import type {
   CategorizedTransactionResult,
   CategorizationStats,
@@ -193,6 +194,9 @@ export function useTransactionImporter() {
       if (!response.data) {
         throw new Error('No data received from commit endpoint')
       }
+
+      // Invalidate accounts cache so balances reflect the new transactions
+      useAccounts().invalidateCache()
 
       return {
         success: response.data.success,
