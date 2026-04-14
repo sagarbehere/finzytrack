@@ -149,7 +149,7 @@ async def categorize_transactions(
                 if raw_txn.narration:
                     description_parts.append(raw_txn.narration)
                 description = " ".join(description_parts)
-                suggested_category, confidence = categorize_transaction(description, classifier)
+                suggested_category, confidence = categorize_transaction(description, classifier, default_account)
                 categorization_map[raw_txn.id] = (suggested_category, confidence)
         else:
             # Classifier has insufficient data — use default account

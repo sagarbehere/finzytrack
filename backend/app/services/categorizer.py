@@ -135,13 +135,14 @@ def train_classifier(training_data: List[Tuple[str, str]]) -> Optional[Pipeline]
         raise CategorizerError(f"Failed to train classifier: {e}")
 
 
-def categorize_transaction(text: str, classifier: Pipeline) -> Tuple[str, float]:
+def categorize_transaction(text: str, classifier: Pipeline, default_account: str = "Expenses:Unknown") -> Tuple[str, float]:
     """
     Predict category for a transaction using trained classifier.
 
     Args:
         text: Transaction description (payee + memo)
         classifier: Trained sklearn Pipeline
+        default_account: Account to use when prediction is not possible
 
     Returns:
         Tuple of (predicted_category, confidence_score)
@@ -154,7 +155,7 @@ def categorize_transaction(text: str, classifier: Pipeline) -> Tuple[str, float]
 
     if not processed_text:
         # Return default with zero confidence for empty text
-        return "Expenses:Unknown", 0.0
+        return default_account, 0.0
 
     try:
         # Predict category
@@ -169,7 +170,7 @@ def categorize_transaction(text: str, classifier: Pipeline) -> Tuple[str, float]
 
     except Exception as e:
         logger.error(f"Categorization failed: {e}")
-        return "Expenses:Unknown", 0.0
+        return default_account, 0.0
 
 
 def initialize_classifier(training_data: List[Tuple[str, str]], ml_enabled: bool) -> Tuple[Optional[Pipeline], Optional[str]]:
