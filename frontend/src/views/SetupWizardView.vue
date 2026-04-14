@@ -268,7 +268,7 @@
 
               <p class="text-sm text-gray-500 dark:text-gray-400">
                 A capable model with tool-calling support, 128k+ context, and 32B+ active parameters is recommended.
-                <a href="https://finzytrack.app/docs/ai-setup" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 underline underline-offset-2">Learn more</a>.
+                <a href="https://docs.finzytrack.com/quick-start/#configuring-ai" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 underline underline-offset-2">Learn more</a>.
               </p>
             </template>
           </div>

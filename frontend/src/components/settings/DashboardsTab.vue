@@ -18,7 +18,7 @@
 
     <p class="mb-4 text-sm text-gray-500 dark:text-gray-400">
       Manage dashboard and widget recipe files.
-      <a href="https://finzytrack.app/docs/recipes" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300">View documentation</a>
+      <a href="https://docs.finzytrack.com/reference/dashboard-recipes/" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300">View documentation</a>
     </p>
 
     <!-- Loading state -->
@@ -35,7 +35,7 @@
       >
         <span>
           No {{ recipeTypeLabel }} recipes found.
-          <a href="https://finzytrack.app/docs/recipes" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 hover:text-yellow-900 dark:hover:text-yellow-100">
+          <a href="https://docs.finzytrack.com/reference/dashboard-recipes/" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 hover:text-yellow-900 dark:hover:text-yellow-100">
             Learn how to create recipes
           </a>.
         </span>

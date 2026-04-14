@@ -66,7 +66,7 @@
       @reset="resetLlm"
     >
       <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">
-        <a href="https://finzytrack.app/docs/ai-data-sharing" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 underline underline-offset-2">What data is shared with the AI model?</a>
+        <a href="https://docs.finzytrack.com/reference/ai-data-sharing/" target="_blank" rel="noopener noreferrer" class="text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 underline underline-offset-2">What data is shared with the AI model?</a>
       </p>
 
       <!-- Finzytrack AI toggle -->

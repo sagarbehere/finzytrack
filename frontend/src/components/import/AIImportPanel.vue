@@ -5,7 +5,7 @@
       <p class="text-sm font-medium text-amber-800 dark:text-amber-300">AI is not configured.</p>
       <p class="text-sm text-amber-700 dark:text-amber-400">
         Set a model under <strong>AI</strong> in <router-link to="/settings" class="underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200">Settings</router-link>.
-        <a href="https://finzytrack.app/docs/ai-setup" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200">Learn more</a>.
+        <a href="https://docs.finzytrack.com/quick-start/#configuring-ai" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200">Learn more</a>.
       </p>
     </div>
 
@@ -56,7 +56,7 @@
           </p>
           <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
             AI can make mistakes — review output carefully.
-            <a href="https://finzytrack.app/docs/ai-data-sharing" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">Data shared with AI</a>
+            <a href="https://docs.finzytrack.com/reference/ai-data-sharing/" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">Data shared with AI</a>
           </p>
         </div>
       </div>

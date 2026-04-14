@@ -32,7 +32,7 @@
       </label>
       <p class="text-xs text-gray-400 dark:text-gray-500 mb-1">
         Describe a simple query in plain English and AI will generate the {{ queryLanguage === 'sqlite' ? 'SQL' : 'BQL' }}. For multi-step analysis or follow-up questions, use the <router-link to="/assistant" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">AI Assistant</router-link>.
-        <a href="https://finzytrack.app/docs/ai-data-sharing" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">Data shared with AI</a>
+        <a href="https://docs.finzytrack.com/reference/ai-data-sharing/" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">Data shared with AI</a>
       </p>
       <p v-if="!config?.ai?.llm?.is_configured" class="text-xs text-amber-600 dark:text-amber-400 mb-2">
         AI not configured. Set a model under Settings → AI to enable query generation.
@@ -75,12 +75,12 @@
       <p class="mt-0.5 mb-1.5 text-xs text-gray-500 dark:text-gray-400">
         <template v-if="queryLanguage === 'sqlite'">
           Write an SQL query against your ledger data. See the
-          <a href="https://finzytrack.app/docs/schema" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">database schema</a>
+          <a href="https://docs.finzytrack.com/reference/querying-data/" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">database schema</a>
           for available tables and columns.
         </template>
         <template v-else>
           Write a BQL query against your ledger. See the
-          <a href="https://finzytrack.app/docs/bql" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">BQL reference</a>
+          <a href="https://docs.finzytrack.com/reference/querying-data/" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">BQL reference</a>
           for syntax and available fields.
         </template>
       </p>

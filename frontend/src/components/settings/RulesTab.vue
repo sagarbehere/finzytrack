@@ -322,10 +322,10 @@ const ruleTypeLabel = computed(() => {
 
 const docsUrl = computed(() => {
   const map: Record<RuleTypeId, string> = {
-    csv: 'https://finzytrack.app/docs/csv-rules',
-    xls: 'https://finzytrack.app/docs/xls-rules',
-    email: 'https://finzytrack.app/docs/email-rules',
-    ofx: 'https://finzytrack.app/docs/ofx-rules',
+    csv: 'https://docs.finzytrack.com/reference/file-import-rules/',
+    xls: 'https://docs.finzytrack.com/reference/file-import-rules/',
+    email: 'https://docs.finzytrack.com/reference/email-import-rules/',
+    ofx: 'https://docs.finzytrack.com/views/import/#ofx',
   }
   return map[ruleType.value]
 })
