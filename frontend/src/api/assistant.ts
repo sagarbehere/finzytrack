@@ -12,6 +12,11 @@ export interface AttachedFile {
   content_base64: string
 }
 
+export interface SseThinkingEvent {
+  type: 'thinking'
+  content: string
+}
+
 export interface SseTokenEvent {
   type: 'token'
   content: string
@@ -21,6 +26,7 @@ export interface SseToolStartEvent {
   type: 'tool_start'
   tool: string
   message: string
+  args?: Record<string, unknown>  // Tool call arguments
 }
 
 export interface SseToolResultEvent {
@@ -28,6 +34,7 @@ export interface SseToolResultEvent {
   tool: string
   success: boolean
   message: string
+  data?: Record<string, unknown>   // Full tool result data for details panel
   recipe?: Record<string, unknown>  // Attached by preview_recipe tool
 }
 
@@ -49,6 +56,7 @@ export interface SseValidationWarningEvent {
 }
 
 export type SseEvent =
+  | SseThinkingEvent
   | SseTokenEvent
   | SseToolStartEvent
   | SseToolResultEvent

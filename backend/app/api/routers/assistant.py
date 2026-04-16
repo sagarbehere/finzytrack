@@ -6,6 +6,7 @@ runs an agentic tool-use loop against the configured LLM, and streams the
 response back as server-sent events (SSE).
 
 SSE event format (one JSON object per event, terminated by \\n\\n):
+  {"type": "thinking",    "content": "..."}        — model reasoning chunk
   {"type": "token",       "content": "..."}        — text chunk
   {"type": "tool_start",  "tool": "...", "message": "..."}  — tool starting
   {"type": "tool_result", "tool": "...", "success": bool, "message": "..."}
@@ -25,6 +26,7 @@ from pydantic import BaseModel
 
 from app.ai.client import (
     DoneEvent,
+    ThinkingEvent,
     ToolCallEvent,
     TokenEvent,
     build_assistant_message,
@@ -239,7 +241,9 @@ async def _run_agent_loop(
         tool_calls_this_turn: list[ToolCallEvent] = []
 
         async for event in stream_chat(llm_config, messages, tool_schemas):
-            if isinstance(event, TokenEvent):
+            if isinstance(event, ThinkingEvent):
+                yield {"type": "thinking", "content": event.content}
+            elif isinstance(event, TokenEvent):
                 accumulated_text += event.content
                 yield {"type": "token", "content": event.content}
             elif isinstance(event, ToolCallEvent):
@@ -276,31 +280,39 @@ async def _run_agent_loop(
 
         # Execute each tool call and add results
         for tc in tool_calls_this_turn:
+            try:
+                args = json.loads(tc.arguments) if tc.arguments else {}
+            except json.JSONDecodeError as e:
+                args = {}
+
             yield {
                 "type": "tool_start",
                 "tool": tc.name,
                 "message": _TOOL_MESSAGES.get(tc.name, f"Running {tc.name}..."),
+                "args": args,
             }
 
-            try:
-                args = json.loads(tc.arguments) if tc.arguments else {}
-            except json.JSONDecodeError as e:
-                result = {
-                    "success": False,
-                    "error": (
-                        f"Your tool call had invalid JSON arguments (parse error: {e}). "
-                        "Please try again with valid JSON. Keep the recipe simple — "
-                        "use fewer widgets and shorter queries."
-                    ),
-                }
-                yield {
-                    "type": "tool_result",
-                    "tool": tc.name,
-                    "success": False,
-                    "message": f"Invalid JSON in tool arguments: {e}",
-                }
-                messages.append(build_tool_result_message(tc.id, result))
-                continue
+            if not args and tc.arguments:
+                # JSON parse failed above — re-parse to get the error
+                try:
+                    json.loads(tc.arguments)
+                except json.JSONDecodeError as e:
+                    result = {
+                        "success": False,
+                        "error": (
+                            f"Your tool call had invalid JSON arguments (parse error: {e}). "
+                            "Please try again with valid JSON. Keep the recipe simple — "
+                            "use fewer widgets and shorter queries."
+                        ),
+                    }
+                    yield {
+                        "type": "tool_result",
+                        "tool": tc.name,
+                        "success": False,
+                        "message": f"Invalid JSON in tool arguments: {e}",
+                    }
+                    messages.append(build_tool_result_message(tc.id, result))
+                    continue
 
             result = await registry.execute(tc.name, args)
 
@@ -376,11 +388,20 @@ async def _run_agent_loop(
             else:
                 ui_message = result.get("error", "Unknown error")
 
+            # Build the data payload for the frontend details panel.
+            # Exclude 'success' (already a top-level field) and very large
+            # payloads like recipe schemas to keep SSE events manageable.
+            result_data = {k: v for k, v in result.items() if k != "success"}
+            if tc.name == "get_recipe_schema":
+                # Schema text is huge; the frontend doesn't need it for display
+                result_data.pop("schema", None)
+
             tool_result_event: dict = {
                 "type": "tool_result",
                 "tool": tc.name,
                 "success": success,
                 "message": ui_message,
+                "data": result_data,
             }
             # Attach recipe JSON for preview_recipe so the frontend can render it
             if tc.name == "preview_recipe" and success and "recipe" in result:

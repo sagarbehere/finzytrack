@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { LedgerValidationError } from './LedgerValidationError';
 /**
- * Current ledger parse errors from the beancount cache.
+ * Current ledger parse errors.
  */
 export type LedgerErrorsResponse = {
     error_count: number;

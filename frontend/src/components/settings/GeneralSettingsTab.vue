@@ -210,6 +210,18 @@
           <input v-model.number="llmFields.timeout_secs" type="number" min="10" max="600" step="10" :class="inputClass" />
         </div>
       </div>
+
+      <!-- Show Thinking toggle (only for bring-your-own — Finzytrack AI controls this via proxy config) -->
+      <div v-if="!llmFields.finzytrack_ai" class="flex items-center justify-between">
+        <div>
+          <span class="text-sm font-medium text-gray-900 dark:text-white">Show Thinking</span>
+          <p class="text-sm text-gray-500 dark:text-gray-400">Stream the model's internal reasoning in the AI Assistant. Requires a model that supports extended thinking.</p>
+        </div>
+        <div class="group relative inline-flex w-11 shrink-0 rounded-full bg-gray-200 p-0.5 inset-ring inset-ring-gray-900/5 outline-offset-2 outline-indigo-600 transition-colors duration-200 ease-in-out has-checked:bg-indigo-600 has-focus-visible:outline-2 dark:bg-white/5 dark:inset-ring-white/10 dark:outline-indigo-500 dark:has-checked:bg-indigo-500">
+          <span class="size-5 rounded-full bg-white shadow-xs ring-1 ring-gray-900/5 transition-transform duration-200 ease-in-out group-has-checked:translate-x-5"></span>
+          <input type="checkbox" v-model="llmFields.show_thinking" class="absolute inset-0 size-full appearance-none focus:outline-hidden" aria-label="Show Thinking" />
+        </div>
+      </div>
     </SettingsSection>
 
     <!-- ── Categorization ─────────────────────────────────────────────────── -->
@@ -616,6 +628,7 @@ const llmFields = reactive({
   max_tokens: config.value?.ai?.llm?.max_tokens ?? 0,
   max_tool_rounds: config.value?.ai?.llm?.max_tool_rounds ?? 12,
   timeout_secs: config.value?.ai?.llm?.timeout_secs ?? 120,
+  show_thinking: config.value?.ai?.llm?.show_thinking ?? false,
 })
 const llmSaving = ref(false)
 const llmError = ref('')
@@ -631,7 +644,8 @@ const llmIsDirty = computed(() =>
   llmFields.temperature !== (config.value?.ai?.llm?.temperature ?? 0.1) ||
   llmFields.max_tokens !== (config.value?.ai?.llm?.max_tokens ?? 0) ||
   llmFields.max_tool_rounds !== (config.value?.ai?.llm?.max_tool_rounds ?? 12) ||
-  llmFields.timeout_secs !== (config.value?.ai?.llm?.timeout_secs ?? 120)
+  llmFields.timeout_secs !== (config.value?.ai?.llm?.timeout_secs ?? 120) ||
+  llmFields.show_thinking !== (config.value?.ai?.llm?.show_thinking ?? false)
 )
 
 function initLlmFields() {
@@ -646,6 +660,7 @@ function initLlmFields() {
   llmFields.max_tokens = config.value?.ai?.llm?.max_tokens ?? 0
   llmFields.max_tool_rounds = config.value?.ai?.llm?.max_tool_rounds ?? 12
   llmFields.timeout_secs = config.value?.ai?.llm?.timeout_secs ?? 120
+  llmFields.show_thinking = config.value?.ai?.llm?.show_thinking ?? false
 }
 
 async function saveLlm() {

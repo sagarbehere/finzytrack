@@ -15,9 +15,5 @@ export type CategorizationConfig = {
      * Categorization engine: 'classifier' (scikit-learn) or 'ai' (requires ai.llm to be configured)
      */
     engine?: CategorizationEngine;
-    /**
-     * Path to training data file (used when engine=local)
-     */
-    training_data_file?: (string | null);
 };
 

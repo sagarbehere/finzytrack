@@ -40,6 +40,11 @@ def _resolve_anthropic_max_tokens(configured: int) -> int:
 # ── Event types ──────────────────────────────────────────────────────────────
 
 @dataclass
+class ThinkingEvent:
+    content: str
+
+
+@dataclass
 class TokenEvent:
     content: str
 
@@ -56,7 +61,7 @@ class DoneEvent:
     pass
 
 
-ChatEvent = TokenEvent | ToolCallEvent | DoneEvent
+ChatEvent = ThinkingEvent | TokenEvent | ToolCallEvent | DoneEvent
 
 
 # ── Finzytrack AI config resolution ──────────────────────────────────────────
@@ -127,6 +132,8 @@ async def resolve_config(config: LLMConfig) -> LLMConfig:
         updates["max_tool_rounds"] = proxy_cfg["max_tool_rounds"]
     if "timeout_secs" in proxy_cfg:
         updates["timeout_secs"] = proxy_cfg["timeout_secs"]
+    if "show_thinking" in proxy_cfg:
+        updates["show_thinking"] = proxy_cfg["show_thinking"]
 
     return config.model_copy(update=updates)
 
@@ -220,6 +227,13 @@ async def _stream_openai(
         if delta.content:
             yield TokenEvent(content=delta.content)
 
+        # Forward reasoning/thinking from OpenAI-compatible models (e.g. DeepSeek-R1)
+        # that expose it via a `reasoning_content` field on the delta.
+        if config.show_thinking:
+            reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning:
+                yield ThinkingEvent(content=reasoning)
+
         if delta.tool_calls:
             for tc in delta.tool_calls:
                 idx = tc.index
@@ -267,13 +281,26 @@ async def _stream_anthropic(
         else:
             anthropic_messages.append(_to_anthropic_message(msg))
 
+    max_tokens = _resolve_anthropic_max_tokens(config.max_tokens)
     call_kwargs = dict(
         model=config.model,
-        max_tokens=_resolve_anthropic_max_tokens(config.max_tokens),
+        max_tokens=max_tokens,
         messages=anthropic_messages,
-        temperature=config.temperature,
         stream=True,
     )
+
+    # Extended thinking: enable when requested, set temperature to 1 (required
+    # by Anthropic), and allocate a thinking budget from the max_tokens allowance.
+    if config.show_thinking:
+        thinking_budget = max(1024, max_tokens - 1024)
+        call_kwargs["thinking"] = {
+            "type": "enabled",
+            "budget_tokens": thinking_budget,
+        }
+        call_kwargs["temperature"] = 1
+    else:
+        call_kwargs["temperature"] = config.temperature
+
     if system_content:
         call_kwargs["system"] = system_content
     if tools:
@@ -297,6 +324,8 @@ async def _stream_anthropic(
                 delta = event.delta
                 if delta.type == "text_delta":
                     yield TokenEvent(content=delta.text)
+                elif delta.type == "thinking_delta":
+                    yield ThinkingEvent(content=delta.thinking)
                 elif delta.type == "input_json_delta" and current_tool is not None:
                     current_tool_input_buf += delta.partial_json
 

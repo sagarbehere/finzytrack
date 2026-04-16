@@ -18,7 +18,7 @@ import { request as __request } from '../core/request';
 export class LedgerService {
     /**
      * Export Ledger
-     * Export ledger to SQLite database.
+     * Export ledger to SQLite database (full export — all tables).
      *
      * Examples:
      * POST /api/ledger/export
@@ -154,7 +154,7 @@ export class LedgerService {
     }
     /**
      * Get Ledger Errors
-     * Return current ledger parse errors from the cache.
+     * Return current ledger parse errors from SQLite.
      *
      * This is a lightweight read — no re-parsing occurs.
      * @returns ApiResponse_LedgerErrorsResponse_ Successful Response

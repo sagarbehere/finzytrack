@@ -110,29 +110,60 @@
           <!-- Assistant message -->
           <div v-else class="flex justify-start">
             <div class="max-w-[85%] space-y-2">
-              <!-- Tool call badges -->
+              <!-- Thinking / reasoning (collapsed by default) -->
+              <details v-if="msg.thinking" class="group rounded-lg bg-gray-50 dark:bg-white/[0.03] ring-1 ring-gray-200 dark:ring-white/10">
+                <summary class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 select-none hover:text-gray-700 dark:hover:text-gray-300">
+                  <svg class="h-3 w-3 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                  </svg>
+                  Thinking
+                </summary>
+                <div class="px-3 pb-2 text-xs text-gray-500 dark:text-gray-400 whitespace-pre-wrap max-h-64 overflow-y-auto">{{ msg.thinking }}</div>
+              </details>
+
+              <!-- Tool calls: badge + collapsible details -->
               <template v-if="msg.toolEvents && msg.toolEvents.length">
-                <div
-                  v-for="(te, ti) in msg.toolEvents"
-                  :key="ti"
-                  class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
-                  :class="te.done
-                    ? te.success
-                      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                      : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                    : 'bg-gray-100 text-gray-600 dark:bg-white/5 dark:text-gray-300 animate-pulse'"
-                >
-                  <svg v-if="!te.done" class="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                  </svg>
-                  <svg v-else-if="te.success" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                  </svg>
-                  <svg v-else class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                  {{ te.message }}
+                <div v-for="(te, ti) in msg.toolEvents" :key="ti" class="space-y-1">
+                  <!-- Status badge -->
+                  <div
+                    class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
+                    :class="te.done
+                      ? te.success
+                        ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                        : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                      : 'bg-gray-100 text-gray-600 dark:bg-white/5 dark:text-gray-300 animate-pulse'"
+                  >
+                    <svg v-if="!te.done" class="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                    </svg>
+                    <svg v-else-if="te.success" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                    </svg>
+                    <svg v-else class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    {{ te.message }}
+                  </div>
+                  <!-- Collapsible tool details -->
+                  <details v-if="te.done && (te.args || te.data)" class="group rounded-lg bg-gray-50 dark:bg-white/[0.03] ring-1 ring-gray-200 dark:ring-white/10">
+                    <summary class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 select-none hover:text-gray-700 dark:hover:text-gray-300">
+                      <svg class="h-3 w-3 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                      </svg>
+                      {{ te.tool }} details
+                    </summary>
+                    <div class="px-3 pb-2 space-y-2 max-h-72 overflow-y-auto">
+                      <div v-if="te.args && Object.keys(te.args).length" class="text-xs">
+                        <span class="font-medium text-gray-600 dark:text-gray-300">Arguments</span>
+                        <pre class="mt-1 rounded bg-gray-200 dark:bg-gray-800 px-2 py-1.5 text-[11px] text-gray-700 dark:text-gray-300 overflow-x-auto whitespace-pre-wrap">{{ formatToolData(te.args) }}</pre>
+                      </div>
+                      <div v-if="te.data && Object.keys(te.data).length" class="text-xs">
+                        <span class="font-medium text-gray-600 dark:text-gray-300">Result</span>
+                        <pre class="mt-1 rounded bg-gray-200 dark:bg-gray-800 px-2 py-1.5 text-[11px] text-gray-700 dark:text-gray-300 overflow-x-auto whitespace-pre-wrap">{{ formatToolData(te.data) }}</pre>
+                      </div>
+                    </div>
+                  </details>
                 </div>
               </template>
 
@@ -531,6 +562,8 @@ interface ToolEvent {
   message: string
   done: boolean
   success: boolean
+  args?: Record<string, unknown>   // tool call arguments
+  data?: Record<string, unknown>   // tool result data
 }
 
 interface FileSheet {
@@ -549,6 +582,7 @@ interface ValidationWarning {
 interface DisplayMessage {
   role: 'user' | 'assistant'
   content: string
+  thinking?: string           // model's internal reasoning (collapsed by default)
   fileName?: string           // for user messages with an attachment
   fileSheets?: FileSheet[]    // parsed preview sheets — lets user re-open preview by clicking the badge
   toolEvents?: ToolEvent[]    // for assistant messages
@@ -800,7 +834,11 @@ async function sendMessage() {
     const ctx: Record<string, string> = { page: 'assistant', mode: sessionMode.value }
     if (sessionFileType.value) ctx.file_type = sessionFileType.value
     for await (const event of streamAssistantChat(apiMessages, file, ctx, abortController.signal)) {
-      if (event.type === 'token') {
+      if (event.type === 'thinking') {
+        if (!assistantMsg.thinking) assistantMsg.thinking = ''
+        assistantMsg.thinking += event.content
+        scrollToBottom()
+      } else if (event.type === 'token') {
         assistantMsg.content += event.content
         scrollToBottom()
       } else if (event.type === 'tool_start') {
@@ -809,6 +847,7 @@ async function sendMessage() {
           message: event.message,
           done: false,
           success: true,
+          args: event.args,
         })
         scrollToBottom()
       } else if (event.type === 'tool_result') {
@@ -817,6 +856,7 @@ async function sendMessage() {
           te.done = true
           te.success = event.success
           te.message = event.message
+          te.data = event.data
         }
         // Handle recipe preview — show live dashboard in sidebar
         if (event.tool === 'preview_recipe' && event.success && event.recipe) {
@@ -1207,5 +1247,9 @@ function renderMarkdown(text: string): string {
   flushText()
 
   return segments.join('')
+}
+
+function formatToolData(data: Record<string, unknown>): string {
+  return JSON.stringify(data, null, 2)
 }
 </script>
