@@ -68,18 +68,12 @@
           "tooltip": {
             "trigger": "item"
           },
-          "legend": {
-            "type": "scroll",
-            "orient": "horizontal",
-            "bottom": 0,
-            "left": "center",
-            "textStyle": { "fontSize": 11 }
-          },
+          "legend": { "show": false },
           "series": [
             {
               "type": "pie",
               "radius": ["35%", "65%"],
-              "center": ["50%", "42%"],
+              "center": ["50%", "50%"],
               "encode": { "itemName": "name", "value": "value" },
               "label": { "show": true, "formatter": "{b}", "minShowLabelAngle": 15 },
               "labelLine": { "show": true, "length": 8, "length2": 8 },
@@ -118,18 +112,12 @@
           "tooltip": {
             "trigger": "item"
           },
-          "legend": {
-            "type": "scroll",
-            "orient": "horizontal",
-            "bottom": 0,
-            "left": "center",
-            "textStyle": { "fontSize": 11 }
-          },
+          "legend": { "show": false },
           "series": [
             {
               "type": "pie",
               "radius": ["35%", "65%"],
-              "center": ["50%", "42%"],
+              "center": ["50%", "50%"],
               "encode": { "itemName": "name", "value": "value" },
               "label": { "show": true, "formatter": "{b}", "minShowLabelAngle": 15 },
               "labelLine": { "show": true, "length": 8, "length2": 8 },
