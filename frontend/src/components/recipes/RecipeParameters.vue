@@ -71,6 +71,7 @@ import { ChevronUpDownIcon } from '@heroicons/vue/16/solid'
 import { CheckIcon } from '@heroicons/vue/20/solid'
 import type { RecipeParameter, RecipeParameterOption } from '@/types/recipes'
 import { useCommodities } from '@/composables/useCommodities'
+import { useAvailableYears } from '@/composables/useAvailableYears'
 
 interface Props {
   parameters: RecipeParameter[]
@@ -87,9 +88,14 @@ const emit = defineEmits<Emits>()
 const { commodityDetails, fetchCommodities } = useCommodities()
 const dynamicCurrencyOptions = ref<RecipeParameterOption[]>([])
 
+const { years: dynamicYearOptions, fetchYears } = useAvailableYears()
+
 function getOptions(param: RecipeParameter): RecipeParameterOption[] {
   if (param.optionsFrom === 'currencies') {
     return dynamicCurrencyOptions.value
+  }
+  if (param.optionsFrom === 'years') {
+    return dynamicYearOptions.value
   }
   return param.options || []
 }
@@ -109,11 +115,24 @@ function updateParam(name: string, value: string | number) {
 
 onMounted(async () => {
   const hasDynamicCurrencies = props.parameters.some((p) => p.optionsFrom === 'currencies')
+  const hasDynamicYears = props.parameters.some((p) => p.optionsFrom === 'years')
+
+  const fetches: Promise<void>[] = []
+
   if (hasDynamicCurrencies) {
-    await fetchCommodities()
-    dynamicCurrencyOptions.value = commodityDetails.value
-      .filter((c) => c.type === 'Currency' || c.type === null || c.type === undefined)
-      .map((c) => ({ value: c.code, label: c.code }))
+    fetches.push(
+      fetchCommodities().then(() => {
+        dynamicCurrencyOptions.value = commodityDetails.value
+          .filter((c) => c.type === 'Currency' || c.type === null || c.type === undefined)
+          .map((c) => ({ value: c.code, label: c.code }))
+      }),
+    )
   }
+
+  if (hasDynamicYears) {
+    fetches.push(fetchYears())
+  }
+
+  await Promise.all(fetches)
 })
 </script>

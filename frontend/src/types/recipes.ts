@@ -25,7 +25,7 @@ export interface RecipeParameter {
   type: RecipeParameterType
   default: string | number
   options?: RecipeParameterOption[] // For select type
-  optionsFrom?: 'currencies' // Dynamic option source
+  optionsFrom?: 'currencies' | 'years' // Dynamic option source
   min?: number // For number type
   max?: number // For number type
 }

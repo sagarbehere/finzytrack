@@ -139,8 +139,9 @@ Example dashboard referencing saved widgets:
 - Always test SQL with `execute_query` (LIMIT 5) before building the recipe.
 - Always call `preview_recipe` before `write_recipe`.
 - When saving, do NOT re-pass the content — just pass the filename.
-- Use parameters with generators (`$gen`) for year/month selectors instead of hardcoded values.
+- Use `optionsFrom: "years"` for year selectors (dynamically populates from ledger data).
 - Use `optionsFrom: "currencies"` for currency selectors.
+- Use generators (`$gen`) for month selectors and default values instead of hardcoded values.
 - Use meaningful IDs (e.g. `"monthly-food-spending"`, not `"chart-1"`).
 - **Add click-through links where possible.** Charts, KPIs, and tables should have `clickLink`
   or `seriesClickLinks` that navigate to the transactions view with appropriate filters (account,

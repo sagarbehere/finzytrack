@@ -75,7 +75,7 @@ query via `:paramName` placeholders.
     "label": "Year",
     "type": "select",
     "default": { "$gen": "currentYear" },
-    "options": { "$gen": "yearRange", "count": 6 }
+    "optionsFrom": "years"
   },
   {
     "name": "currency",
@@ -97,6 +97,7 @@ query via `:paramName` placeholders.
 
 - `type`: `"select"`, `"number"`, or `"date"`
 - `optionsFrom: "currencies"` — dynamically populates from the user's ledger currencies
+- `optionsFrom: "years"` — dynamically populates from years present in the ledger data
 - Dashboard-level parameters cascade to all widgets. Widget-level parameters override dashboard ones.
 - In the query, reference as `:year`, `:currency`, `:limit`, etc.
 
@@ -108,7 +109,6 @@ Use generators for dynamic default values and option lists:
 |-----------|--------|---------------|
 | `currentYear` | Current year number | `{ "$gen": "currentYear" }` |
 | `currentMonth` | Current month (1-12) | `{ "$gen": "currentMonth" }` |
-| `yearRange` | Array of year options | `{ "$gen": "yearRange", "count": 5 }` |
 | `monthOptions` | Array of month options (Jan-Dec) | `{ "$gen": "monthOptions" }` |
 | `quarterOptions` | Array of quarter options | `{ "$gen": "quarterOptions" }` |
 | `today` | Today's date string | `{ "$gen": "today" }` |
@@ -347,7 +347,7 @@ For a user request like "show me a bar chart of my top 10 expense categories":
       "label": "Year",
       "type": "select",
       "default": { "$gen": "currentYear" },
-      "options": { "$gen": "yearRange", "count": 5 }
+      "optionsFrom": "years"
     },
     {
       "name": "currency",

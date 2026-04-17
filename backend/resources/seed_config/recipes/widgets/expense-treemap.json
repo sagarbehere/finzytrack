@@ -9,7 +9,7 @@
       "label": "Year",
       "type": "select",
       "default": { "$gen": "currentYear" },
-      "options": { "$gen": "yearRange", "count": 5 }
+      "optionsFrom": "years"
     },
     {
       "name": "month",

@@ -8,7 +8,7 @@
       "label": "Year",
       "type": "select",
       "default": { "$gen": "currentYear" },
-      "options": { "$gen": "yearRange", "count": 6 }
+      "optionsFrom": "years"
     }
   ],
   "layout": {
