@@ -753,6 +753,172 @@ def gen_inr_car(dt):
         ("Expenses:Car", amt, "INR"),
     ], source_account=acct)
 
+# --- Generators for previously-empty accounts ---
+
+def gen_ibond_purchase(dt):
+    amt = round(random.choice([5000, 10000]), 2)
+    return txn(dt, "TreasuryDirect", "I-Bond purchase", [
+        ("Assets:Investments:Bonds:TreasuryDirect:IBonds", amt, "USD"),
+        ("Assets:Liquid:Checking:WestCoastBank", -amt, "USD"),
+    ], source_account="Assets:Investments:Bonds:TreasuryDirect:IBonds")
+
+def gen_nationalbank_savings_transfer(dt):
+    """Transfer from NRO to NationalBank Savings."""
+    amt = round(random.uniform(20000, 80000), 0)
+    return txn(dt, f"UPI/P2A/{random.randint(100000000000,999999999999)}/Self", "Transfer to NationalBank Savings", [
+        ("Assets:Liquid:Savings:PinnacleBank:NRO", -amt, "INR"),
+        ("Assets:Liquid:Savings:NationalBank", amt, "INR"),
+    ], source_account="Assets:Liquid:Savings:NationalBank")
+
+def gen_nationalbank_savings_interest(dt):
+    amt = round(random.uniform(100, 2000), 0)
+    return txn(dt, "Interest Paid", "", [
+        ("Assets:Liquid:Savings:NationalBank", amt, "INR"),
+        ("Income:Interest:Savings:NationalBank", -amt, "INR"),
+    ], source_account="Assets:Liquid:Savings:NationalBank")
+
+def gen_receivable_work(dt):
+    """Expense reimbursement from employer."""
+    amt = round(random.uniform(200, 1500), 2)
+    return [
+        txn(dt, "Globex Corporation", "Expense reimbursement pending", [
+            ("Assets:Receivable:Work", amt, "USD"),
+            ("Expenses:Travel", -amt, "USD"),
+        ], source_account="Assets:Receivable:Work"),
+        txn(dt + timedelta(days=random.randint(5, 15)), "Globex Corporation", "Expense reimbursement received", [
+            ("Assets:Liquid:Checking:WestCoastBank", amt, "USD"),
+            ("Assets:Receivable:Work", -amt, "USD"),
+        ], source_account="Assets:Liquid:Checking:WestCoastBank"),
+    ]
+
+def gen_receivable_personal(dt):
+    """Personal loan to/from a friend."""
+    amt = round(random.uniform(50, 500), 2)
+    return [
+        txn(dt, "Personal loan", "Lent to friend", [
+            ("Assets:Receivable:Personal", amt, "USD"),
+            ("Assets:Liquid:Checking:WestCoastBank", -amt, "USD"),
+        ], source_account="Assets:Receivable:Personal"),
+        txn(dt + timedelta(days=random.randint(10, 45)), "Personal loan", "Repaid by friend", [
+            ("Assets:Liquid:Checking:WestCoastBank", amt, "USD"),
+            ("Assets:Receivable:Personal", -amt, "USD"),
+        ], source_account="Assets:Liquid:Checking:WestCoastBank"),
+    ]
+
+def gen_hobbies(dt):
+    items = [
+        ("Michaels", "Art supplies"),
+        ("REI", "Camping gear"),
+        ("Guitar Center", "Guitar strings"),
+        ("Blick Art Materials", "Painting supplies"),
+        ("Joann Stores", "Craft supplies"),
+    ]
+    store, narr = random.choice(items)
+    amt = round(random.uniform(15, 120), 2)
+    cc = random.choice(USD_CC)
+    return txn(dt, store, narr, [
+        (cc, -amt, "USD"),
+        ("Expenses:Hobbies", amt, "USD"),
+    ], source_account=cc)
+
+def gen_miscellaneous(dt):
+    items = [
+        ("USPS", "Postage"),
+        ("UPS Store", "Shipping"),
+        ("DMV", "Registration renewal"),
+        ("Locksmith", "Key copy"),
+        ("Dry Cleaners", "Dry cleaning"),
+    ]
+    store, narr = random.choice(items)
+    amt = round(random.uniform(5, 80), 2)
+    cc = random.choice(USD_CC)
+    return txn(dt, store, narr, [
+        (cc, -amt, "USD"),
+        ("Expenses:Miscellaneous", amt, "USD"),
+    ], source_account=cc)
+
+def gen_school(dt):
+    items = [
+        ("Coursera", "Online course"),
+        ("Udemy", "Programming course"),
+        ("O'Reilly Media", "Book subscription"),
+        ("Community College", "Evening class"),
+    ]
+    store, narr = random.choice(items)
+    amt = round(random.uniform(12, 200), 2)
+    cc = random.choice(USD_CC)
+    return txn(dt, store, narr, [
+        (cc, -amt, "USD"),
+        ("Expenses:School", amt, "USD"),
+    ], source_account=cc)
+
+def gen_cc_fee(dt):
+    cc = random.choice(USD_CC)
+    amt = round(random.uniform(25, 95), 2)
+    return txn(dt, f"{cc.split(':')[-1]} Annual Fee", "Credit card annual fee", [
+        (cc, -amt, "USD"),
+        ("Expenses:Fees:CreditCard", amt, "USD"),
+    ], source_account=cc)
+
+def gen_atm_fee(dt):
+    amt = round(random.uniform(2, 5), 2)
+    return txn(dt, "ATM Fee", "Out-of-network ATM withdrawal fee", [
+        ("Assets:Liquid:Checking:WestCoastBank", -amt, "USD"),
+        ("Expenses:Fees:ATM", amt, "USD"),
+    ], source_account="Assets:Liquid:Checking:WestCoastBank")
+
+def gen_cc_rewards(dt):
+    amt = round(random.uniform(25, 150), 2)
+    cc = random.choice(USD_CC)
+    return txn(dt, f"{cc.split(':')[-1]} Rewards", "Statement credit rewards", [
+        (cc, amt, "USD"),
+        ("Income:Rewards", -amt, "USD"),
+    ], source_account=cc)
+
+def gen_valleycu_checking_interest(dt):
+    amt = round(random.uniform(0.05, 2.00), 2)
+    return txn(dt, "Interest Earned", "", [
+        ("Assets:Liquid:Checking:ValleyCU", amt, "USD"),
+        ("Income:Interest:Checking:ValleyCU", -amt, "USD"),
+    ], source_account="Assets:Liquid:Checking:ValleyCU")
+
+def gen_capitalfirst_purchase(dt):
+    """Occasional purchase on CapitalFirst card."""
+    items = [
+        ("Costco", "Bulk shopping"),
+        ("Home Depot", "Home improvement"),
+        ("Lowe's", "Hardware"),
+        ("Sam's Club", "Warehouse shopping"),
+    ]
+    store, narr = random.choice(items)
+    amt = round(random.uniform(50, 300), 2)
+    return txn(dt, store, narr, [
+        ("Liabilities:CreditCards:CapitalFirst", -amt, "USD"),
+        ("Expenses:HouseholdItems", amt, "USD"),
+    ], source_account="Liabilities:CreditCards:CapitalFirst")
+
+def gen_westcoastbank_cc_purchase(dt):
+    """Occasional purchase on WestCoastBank card."""
+    items = [
+        ("Amazon", "Online order"),
+        ("Walmart", "Shopping"),
+        ("Target", "Household items"),
+    ]
+    store, narr = random.choice(items)
+    amt = round(random.uniform(20, 150), 2)
+    return txn(dt, store, narr, [
+        ("Liabilities:CreditCards:WestCoastBank", -amt, "USD"),
+        ("Expenses:HouseholdItems", amt, "USD"),
+    ], source_account="Liabilities:CreditCards:WestCoastBank")
+
+def gen_unknown_expense(dt):
+    amt = round(random.uniform(5, 50), 2)
+    cc = random.choice(USD_CC)
+    return txn(dt, "Unrecognized Merchant", "Uncategorized", [
+        (cc, -amt, "USD"),
+        ("Expenses:Unknown", amt, "USD"),
+    ], source_account=cc)
+
 # --- Main generation ---
 
 def generate():
@@ -894,6 +1060,56 @@ def generate():
         if weekday in (1, 3) and random.random() < 0.15:
             all_txns.append((current, gen_parking(current)))
 
+        # Hobbies monthly-ish
+        if day == 20 and random.random() < 0.25:
+            all_txns.append((current, gen_hobbies(current)))
+
+        # Miscellaneous bimonthly-ish
+        if day == 14 and random.random() < 0.2:
+            all_txns.append((current, gen_miscellaneous(current)))
+
+        # School/education quarterly
+        if day == 5 and month in (1, 4, 7, 10) and random.random() < 0.6:
+            all_txns.append((current, gen_school(current)))
+
+        # Unknown/uncategorized expenses occasionally
+        if day == 17 and random.random() < 0.08:
+            all_txns.append((current, gen_unknown_expense(current)))
+
+        # ATM fees occasionally
+        if day == 25 and random.random() < 0.1:
+            all_txns.append((current, gen_atm_fee(current)))
+
+        # Credit card annual fees yearly
+        if day == 1 and month == 2:
+            all_txns.append((current, gen_cc_fee(current)))
+
+        # Credit card rewards quarterly
+        if day == 15 and month in (3, 6, 9, 12):
+            all_txns.append((current, gen_cc_rewards(current)))
+
+        # ValleyCU checking interest monthly
+        if day == 28:
+            all_txns.append((current, gen_valleycu_checking_interest(current)))
+
+        # CapitalFirst card purchases monthly
+        if day == 12 and random.random() < 0.4:
+            all_txns.append((current, gen_capitalfirst_purchase(current)))
+
+        # WestCoastBank card purchases monthly
+        if day == 18 and random.random() < 0.35:
+            all_txns.append((current, gen_westcoastbank_cc_purchase(current)))
+
+        # Work expense reimbursements quarterly
+        if day == 10 and month in (2, 5, 8, 11) and random.random() < 0.5:
+            for t in gen_receivable_work(current):
+                all_txns.append((current, t))
+
+        # Personal receivables twice a year
+        if day == 1 and month in (3, 9) and random.random() < 0.6:
+            for t in gen_receivable_personal(current):
+                all_txns.append((current, t))
+
         # --- INR transactions ---
         # More sparse before 2026, richer in 2026
 
@@ -914,7 +1130,7 @@ def generate():
                 all_txns.append((current, gen_inr_household(current)))
             if day == 10 and random.random() < 0.3:
                 all_txns.append((current, gen_inr_entertainment(current)))
-            if day == 20 and random.random() < 0.2:
+            if day == 20:
                 all_txns.append((current, gen_inr_car(current)))
         elif random.random() < 0.02:
             # Occasional INR transaction in earlier years
@@ -941,6 +1157,15 @@ def generate():
         if day == 1 and year >= 2020:
             all_txns.append((current, gen_term_deposit_interest(current)))
 
+        # NationalBank savings (2026, after open on 2026-03-06)
+        if year == 2026 and month >= 3 and not (month == 3 and day <= 6):
+            # Transfer from NRO to NationalBank Savings monthly
+            if day == 8:
+                all_txns.append((current, gen_nationalbank_savings_transfer(current)))
+            # Interest monthly
+            if day == 28:
+                all_txns.append((current, gen_nationalbank_savings_interest(current)))
+
         # Business income/expenses (2026 only, after NationalBank opens 2026-03-06)
         if year == 2026 and month >= 3 and not (month == 3 and day <= 6):
             if day == 7:
@@ -966,6 +1191,10 @@ def generate():
     all_txns.append((date(2024, 8, 14), gen_term_deposit_purchase(
         date(2024, 8, 14), "Assets:Investments:TermDeposits:ValleyCU:CD4",
         100000.00, "Assets:Liquid:Savings:ValleyCU")))
+
+    # I-Bond purchases (annual, 2020-2024)
+    for yr in range(2020, 2025):
+        all_txns.append((date(yr, 4, 15), gen_ibond_purchase(date(yr, 4, 15))))
 
     # INR fixed deposits — NRE-FD opens 2026-01-29, NRO-FD opens 2026-02-03
     all_txns.append((date(2026, 2, 1), txn(date(2026, 2, 1), "Fixed Deposit", "FD at PinnacleBank", [
