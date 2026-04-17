@@ -57,6 +57,7 @@ export function buildTree(accounts: AccountDetails[]): AccountTreeNode[] {
       aggregatedBalances,
       notes: account.metadata?.description || null,
       currencyBadges: account.currencies.map(c => c.currency),
+      declaredCurrencies: account.declared_currencies ?? [],
       metadata,
     }
 
@@ -88,6 +89,7 @@ export function buildTree(accounts: AccountDetails[]): AccountTreeNode[] {
           aggregatedBalances: [],
           notes: null,
           currencyBadges: [],
+          declaredCurrencies: [],
           metadata: {},
         }
         nodeMap.set(parentPath, virtualNode)

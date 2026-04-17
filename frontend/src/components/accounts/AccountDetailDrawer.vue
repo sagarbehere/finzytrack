@@ -79,10 +79,11 @@
                           <dt class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Currencies</dt>
                           <dd class="flex flex-wrap gap-1">
                             <span
-                              v-for="c in account.currencyBadges"
+                              v-for="c in account.declaredCurrencies"
                               :key="c"
                               class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-400/10 dark:text-gray-400"
                             >{{ c }}</span>
+                            <span v-if="account.declaredCurrencies.length === 0" class="text-sm text-gray-400 dark:text-gray-500">Any</span>
                           </dd>
                         </div>
                       </dl>

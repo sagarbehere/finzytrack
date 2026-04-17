@@ -24,6 +24,10 @@ export type AccountDetails = {
      */
     currencies: Array<AccountCurrencyData>;
     /**
+     * Currencies declared on the open directive
+     */
+    declared_currencies?: Array<string>;
+    /**
      * Arbitrary account metadata
      */
     metadata?: Record<string, any>;

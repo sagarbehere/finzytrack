@@ -127,6 +127,7 @@ class SqliteReader:
             result = []
             for row in acct_rows:
                 metadata = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+                declared = json.loads(row["currencies_json"]) if row["currencies_json"] else []
                 result.append(AccountDetails(
                     name=row["name"],
                     open_date=date.fromisoformat(row["open_date"]),
@@ -135,6 +136,7 @@ class SqliteReader:
                         if row["close_date"] else None
                     ),
                     currencies=balances_by_acct.get(row["name"], []),
+                    declared_currencies=declared,
                     metadata=metadata,
                 ))
             return result
@@ -261,6 +263,7 @@ class SqliteReader:
             result = []
             for row in acct_rows:
                 metadata = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+                declared = json.loads(row["currencies_json"]) if row["currencies_json"] else []
                 result.append(AccountDetails(
                     name=row["name"],
                     open_date=date.fromisoformat(row["open_date"]),
@@ -269,6 +272,7 @@ class SqliteReader:
                         if row["close_date"] else None
                     ),
                     currencies=balances_by_acct.get(row["name"], []),
+                    declared_currencies=declared,
                     metadata=metadata,
                 ))
             return result

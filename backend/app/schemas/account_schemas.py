@@ -18,6 +18,7 @@ class AccountDetails(BaseModel):
     open_date: date = Field(..., description="Date account was opened")
     close_date: Optional[date] = Field(None, description="Date account was closed (null if open)")
     currencies: List[AccountCurrencyData] = Field(..., description="Per-currency transaction data")
+    declared_currencies: List[str] = Field(default_factory=list, description="Currencies declared on the open directive")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Arbitrary account metadata")
 
 class AccountCreateRequest(BaseModel):
