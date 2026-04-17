@@ -60,7 +60,7 @@
           "optionsFrom": "currencies"
         }
       ],
-      "query": "SELECT REPLACE(account, 'Assets:', '') AS name, account, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Assets' AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC",
+      "query": "SELECT CASE WHEN account LIKE 'Assets:Liquid:%' THEN REPLACE(account, 'Assets:Liquid:', '') WHEN account LIKE 'Assets:Investments:%' THEN REPLACE(account, 'Assets:Investments:', '') ELSE REPLACE(account, 'Assets:', '') END AS name, account, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Assets' AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC",
       "visualization": {
         "type": "chart",
         "chartType": "pie",
@@ -68,12 +68,23 @@
           "tooltip": {
             "trigger": "item"
           },
+          "legend": {
+            "type": "scroll",
+            "orient": "horizontal",
+            "bottom": 0,
+            "left": "center",
+            "textStyle": { "fontSize": 11 }
+          },
           "series": [
             {
               "type": "pie",
-              "radius": ["30%", "60%"],
+              "radius": ["30%", "55%"],
+              "center": ["50%", "42%"],
               "encode": { "itemName": "name", "value": "value" },
-              "label": { "show": true, "formatter": "{b}: {d}%" }
+              "label": { "show": false },
+              "emphasis": {
+                "label": { "show": true, "fontWeight": "bold", "formatter": "{b}: {d}%" }
+              }
             }
           ]
         },
@@ -106,12 +117,23 @@
           "tooltip": {
             "trigger": "item"
           },
+          "legend": {
+            "type": "scroll",
+            "orient": "horizontal",
+            "bottom": 0,
+            "left": "center",
+            "textStyle": { "fontSize": 11 }
+          },
           "series": [
             {
               "type": "pie",
-              "radius": ["30%", "60%"],
+              "radius": ["30%", "55%"],
+              "center": ["50%", "42%"],
               "encode": { "itemName": "name", "value": "value" },
-              "label": { "show": true, "formatter": "{b}: {d}%" }
+              "label": { "show": false },
+              "emphasis": {
+                "label": { "show": true, "fontWeight": "bold", "formatter": "{b}: {d}%" }
+              }
             }
           ]
         },
