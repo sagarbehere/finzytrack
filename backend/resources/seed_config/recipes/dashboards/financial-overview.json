@@ -78,12 +78,13 @@
           "series": [
             {
               "type": "pie",
-              "radius": ["30%", "55%"],
+              "radius": ["35%", "65%"],
               "center": ["50%", "42%"],
               "encode": { "itemName": "name", "value": "value" },
-              "label": { "show": false },
+              "label": { "show": true, "formatter": "{b}", "minShowLabelAngle": 15 },
+              "labelLine": { "show": true, "length": 8, "length2": 8 },
               "emphasis": {
-                "label": { "show": true, "fontWeight": "bold", "formatter": "{b}: {d}%" }
+                "label": { "show": true, "fontWeight": "bold", "formatter": "{b}\n{d}%" }
               }
             }
           ]
@@ -127,12 +128,13 @@
           "series": [
             {
               "type": "pie",
-              "radius": ["30%", "55%"],
+              "radius": ["35%", "65%"],
               "center": ["50%", "42%"],
               "encode": { "itemName": "name", "value": "value" },
-              "label": { "show": false },
+              "label": { "show": true, "formatter": "{b}", "minShowLabelAngle": 15 },
+              "labelLine": { "show": true, "length": 8, "length2": 8 },
               "emphasis": {
-                "label": { "show": true, "fontWeight": "bold", "formatter": "{b}: {d}%" }
+                "label": { "show": true, "fontWeight": "bold", "formatter": "{b}\n{d}%" }
               }
             }
           ]
