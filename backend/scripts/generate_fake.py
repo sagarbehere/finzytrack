@@ -16,7 +16,11 @@ def fake_hash():
     return hashlib.sha256(uuid.uuid4().bytes).hexdigest()
 
 def txn(dt, payee, narration, postings, source_account=None, external_id=None):
-    """Generate a transaction string."""
+    """Generate a transaction string.
+
+    Each posting is a tuple: (account, amount, currency)
+    or with total price:      (account, amount, currency, total_price_amt, total_price_ccy)
+    """
     lines = []
     lines.append(f'{dt} * "{payee}" "{narration}"')
     lines.append(f'  id: "{fake_id()}"')
@@ -26,9 +30,12 @@ def txn(dt, payee, narration, postings, source_account=None, external_id=None):
     if external_id:
         lines.append(f'  external_id: "{external_id}"')
         lines.append(f'  external_id_type: "OFX"')
-    for acct, amt, ccy in postings:
-        sign = "" if amt >= 0 else ""
-        lines.append(f'  {acct:<55s} {amt:.2f} {ccy}')
+    for posting in postings:
+        acct, amt, ccy = posting[0], posting[1], posting[2]
+        price_str = ""
+        if len(posting) >= 5:
+            price_str = f" @@ {posting[3]:.2f} {posting[4]}"
+        lines.append(f'  {acct:<55s} {amt:.2f} {ccy}{price_str}')
     return "\n".join(lines)
 
 # --- Account definitions ---
@@ -390,10 +397,22 @@ def gen_health_insurance(dt):
     return txns
 
 def gen_cc_payment(dt):
-    """Credit card bill payment."""
-    cc = random.choice(USD_CC)
+    """Credit card bill payment — weighted by card usage."""
+    # Main cards get most payments; secondary cards get occasional smaller payments
+    all_cc = [
+        ("Liabilities:CreditCards:Citi:DoubleCash", 0.4, (800, 2500)),
+        ("Liabilities:CreditCards:Amex:GoldRewards", 0.4, (800, 2500)),
+        ("Liabilities:CreditCards:CapitalFirst", 0.1, (200, 600)),
+        ("Liabilities:CreditCards:WestCoastBank", 0.1, (100, 400)),
+    ]
+    r = random.random()
+    cumulative = 0
+    for cc, weight, (lo, hi) in all_cc:
+        cumulative += weight
+        if r < cumulative:
+            break
     acct = random.choice(USD_CHECKING)
-    amt = round(random.uniform(800, 2500), 2)
+    amt = round(random.uniform(lo, hi), 2)
     return txn(dt, f"Payment to {cc.split(':')[-1]}", "Credit card payment", [
         (cc, amt, "USD"),
         (acct, -amt, "USD"),
@@ -460,12 +479,21 @@ def gen_savings_to_checking_transfer(dt):
     ], source_account="Assets:Liquid:Checking:ValleyCU")
 
 def gen_inr_inward_remittance(dt):
-    """Wire transfer from US to India NRO account."""
-    amt = round(random.uniform(50000, 200000), 0)
-    return txn(dt, f"SWIFT/INWARD/{random.randint(10000000,99999999)}", "Inward remittance from US", [
-        ("Assets:Liquid:Savings:PinnacleBank:NRO", amt, "INR"),
-        ("Income:Other", -amt, "INR"),
+    """Wire transfer from US to India NRO account — two-leg cross-currency transfer."""
+    inr_amt = round(random.uniform(50000, 200000), 0)
+    # Approximate exchange rate (varies by year)
+    rate = random.uniform(78, 86)
+    usd_amt = round(inr_amt / rate, 2)
+    ref = random.randint(10000000, 99999999)
+    leg1 = txn(dt, f"Wire transfer to India #{ref}", "Send remittance to NRO", [
+        ("Assets:Liquid:Checking:WestCoastBank", -usd_amt, "USD"),
+        ("Assets:Transfer", usd_amt, "USD"),
+    ], source_account="Assets:Liquid:Checking:WestCoastBank")
+    leg2 = txn(dt + timedelta(days=2), f"SWIFT/INWARD/{ref}", "Remittance received in NRO", [
+        ("Assets:Transfer", -usd_amt, "USD"),
+        ("Assets:Liquid:Savings:PinnacleBank:NRO", inr_amt, "INR", usd_amt, "USD"),
     ], source_account="Assets:Liquid:Savings:PinnacleBank:NRO")
+    return [leg1, leg2]
 
 def gen_gadget(dt):
     items = [
@@ -582,7 +610,7 @@ def gen_car_lease(dt):
     ], source_account="Assets:Liquid:Checking:WestCoastBank")
 
 def gen_house_cleaning(dt):
-    amt = 150.00
+    amt = round(random.uniform(140, 175), 2)
     return txn(dt, "Maria's Cleaning Service", "House cleaning", [
         ("Assets:Liquid:Checking:WestCoastBank", -amt, "USD"),
         ("Expenses:HouseCleaning", amt, "USD"),
@@ -778,12 +806,12 @@ def gen_nationalbank_savings_interest(dt):
     ], source_account="Assets:Liquid:Savings:NationalBank")
 
 def gen_receivable_work(dt):
-    """Expense reimbursement from employer."""
+    """Expense reimbursement from employer — pending then received."""
     amt = round(random.uniform(200, 1500), 2)
     return [
         txn(dt, "Globex Corporation", "Expense reimbursement pending", [
             ("Assets:Receivable:Work", amt, "USD"),
-            ("Expenses:Travel", -amt, "USD"),
+            ("Income:Other", -amt, "USD"),
         ], source_account="Assets:Receivable:Work"),
         txn(dt + timedelta(days=random.randint(5, 15)), "Globex Corporation", "Expense reimbursement received", [
             ("Assets:Liquid:Checking:WestCoastBank", amt, "USD"),
@@ -1000,7 +1028,8 @@ def generate():
 
         # Inward remittance to NRO (quarterly, to fund INR expenses)
         if day == 1 and month in (1, 4, 7, 10) and year >= 2019:
-            all_txns.append((current, gen_inr_inward_remittance(current)))
+            for t in gen_inr_inward_remittance(current):
+                all_txns.append((current, t))
 
         # Groceries 2-3 times per week
         if weekday in (0, 3, 6):  # Mon, Thu, Sun
