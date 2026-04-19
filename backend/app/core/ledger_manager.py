@@ -121,13 +121,15 @@ class LedgerManager:
 
         This replaces the old pattern of write → cache invalidation → debounced export.
         The export happens inline so that reads immediately reflect the write.
+
+        Always re-parses after writing to get fresh errors/options, because the
+        write may have resolved or introduced validation errors (e.g. changing an
+        account open date can fix "inactive account" errors).
         """
         self._write_entries(entries)
 
         if self._sqlite_exporter:
-            # If errors/options weren't passed, re-parse to get them
-            if errors is None or options is None:
-                _, errors, options = self._parse_ledger()
+            entries, errors, options = self._parse_ledger()
             try:
                 self._sqlite_exporter._export_full_to_sqlite(entries, errors, options)
             except Exception as e:

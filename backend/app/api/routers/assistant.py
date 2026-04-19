@@ -412,7 +412,14 @@ async def _run_agent_loop(
             messages.append(build_tool_result_message(tc.id, result))
 
     # Fell through — hit iteration limit
-    yield {"type": "error", "message": "Reached maximum tool-call iterations. Please try again."}
+    yield {
+        "type": "error",
+        "message": (
+            "I used all available tool calls without reaching a final answer. "
+            "This usually means the question requires data that isn't in the database. "
+            "Please try a simpler or more specific question."
+        ),
+    }
     yield {"type": "done"}
 
 
