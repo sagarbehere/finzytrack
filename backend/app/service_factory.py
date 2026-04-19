@@ -170,13 +170,17 @@ def create_user_services(config: Config, user_id: str = "local") -> UserServices
 
 
 async def startup_user_services(services: UserServices, config: Config) -> None:
-    """Run async post-creation setup (e.g. SQLite export on startup)."""
-    if config.setup_complete and services.db_sync_manager._needs_export():
+    """Run async post-creation setup (e.g. SQLite export on startup).
+
+    Always re-exports on startup to guarantee the SQLite database reflects
+    the current ledger state, including fresh parsing errors.
+    """
+    if config.setup_complete:
         try:
             from beancount import loader
             entries, errors, options = loader.load_file(config.ledger_file)
             await services.sqlite_exporter.export_full(entries, errors, options)
-            logger.info("SQLite full-exported on startup for user services")
+            logger.info("SQLite full-exported on startup")
         except Exception as e:
             logger.error("Failed to export SQLite on startup: %s", e)
 
