@@ -124,10 +124,11 @@ const emit = defineEmits<Emits>()
 const deleteTransactions = ref(true)
 const isDeleting = ref(false)
 
-// Reset checkbox when modal opens
+// Reset state when modal opens
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
     deleteTransactions.value = true
+    isDeleting.value = false
   }
 })
 
