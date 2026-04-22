@@ -553,14 +553,11 @@ const handleCellKeydown = (event: KeyboardEvent, cell: any, rowData: any) => {
   const isDropdownColumn = ['account', 'currency', 'cost_currency', 'price_currency', 'price_type'].includes(cell.column.id)
 
   if (isDropdownColumn) {
-    const tableCell = target.closest('td')
-    if (tableCell) {
-      const optionsList = tableCell.querySelector('ul')
-      const isDropdownOpen = optionsList !== null
+    // ComboboxOptions is teleported to <body>, so check the document for a HeadlessUI listbox
+    const isDropdownOpen = document.querySelector('[role="listbox"]') !== null
 
-      if (isDropdownOpen && ['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(event.key) && !event.altKey) {
-        return
-      }
+    if (isDropdownOpen && ['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(event.key) && !event.altKey) {
+      return
     }
   }
 
