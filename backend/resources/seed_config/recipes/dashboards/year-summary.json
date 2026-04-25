@@ -1,7 +1,7 @@
 {
   "id": "year-summary",
   "title": "Year Summary",
-  "description": "Annual financial summary with income, expenses, taxes, and savings breakdown",
+  "description": "Annual financial summary with income, expenses, and savings breakdown",
   "parameters": [
     {
       "name": "year",
