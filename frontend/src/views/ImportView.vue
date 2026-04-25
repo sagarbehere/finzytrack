@@ -201,7 +201,7 @@
       </div>
       
       <!-- Button below the table -->
-      <div class="flex justify-end mt-4">
+      <div class="flex justify-end mt-4 mb-4">
         <button
           @click="registerTransactions"
           :disabled="isLoading"
