@@ -1,6 +1,6 @@
 # Finzytrack
 
-Open-source personal finance application built on [Beancount](https://beancount.github.io/) double-entry bookkeeping. Import statements from a wide variety of sources, explore your finances through customizable dashboards, and optionally let AI help you along the way — all while keeping full ownership of your data in a plain-text ledger file.
+Open-source personal finance software for people who want to understand their finances without giving up privacy or control. Built on [Beancount](https://beancount.github.io/) double-entry bookkeeping — your data lives in a plain-text ledger file on your machine, readable by any text editor, with no lock-in. AI is entirely optional and works with any model you choose.
 
 <!-- TODO: Replace with actual screenshots -->
 ![Financial Overview Dashboard](docs/screenshots/dashboard.png)
@@ -12,7 +12,8 @@ Open-source personal finance application built on [Beancount](https://beancount.
 ## Features
 
 - **Double-entry bookkeeping** — built on Beancount, the powerful plain-text accounting system
-- **Import a wide variety of statements** — rule-based importers for OFX, CSV, XLS files, or directly from email
+- **Import a wide variety of statements** — rule-based importers for OFX, CSV, XLS files, PDF statements, or directly from email
+- **Find any transaction, instantly** — global search across your full history, with advanced filtering by date, amount, account, and more
 - **Customizable dashboards** — KPI cards, charts, tables, and pivot tables in configurable grid layouts
 - **Auto-categorization** — train on your past transactions or use AI assistance
 - **Powerful querying** — SQL and BQL queries against your financial data
