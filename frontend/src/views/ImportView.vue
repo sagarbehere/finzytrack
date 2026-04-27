@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="pb-4">
     <div class="mb-6">
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Import Financial Data</h1>
       <p class="mt-1 text-gray-600 dark:text-gray-400">
@@ -201,7 +201,7 @@
       </div>
       
       <!-- Button below the table -->
-      <div class="flex justify-end mt-4 mb-4">
+      <div class="flex justify-end mt-4">
         <button
           @click="registerTransactions"
           :disabled="isLoading"
