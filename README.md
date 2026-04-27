@@ -2,12 +2,15 @@
 
 Open-source personal finance software for people who want to understand their finances without giving up privacy or control. Built on [Beancount](https://beancount.github.io/) double-entry bookkeeping — your data lives in a plain-text ledger file on your machine, readable by any text editor, with no lock-in. AI is entirely optional and works with any model you choose.
 
-<!-- TODO: Replace with actual screenshots -->
-![Financial Overview Dashboard](docs/screenshots/dashboard.png)
-*Customizable dashboards with KPI cards, charts, and interactive widgets*
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="screenshots/financial-overview-dashboard-dark.png">
+  <img src="screenshots/financial-overview-dashboard-light.png" alt="Finzytrack Financial Overview dashboard">
+</picture>
 
-![Import & Transaction Review](docs/screenshots/import.png)
-*Import statements from OFX, CSV, XLS, email, or AI-assisted parsing, then review and categorize*
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="screenshots/transactions-dark.png">
+  <img src="screenshots/transactions-light.png" alt="Finzytrack Transactions view">
+</picture>
 
 ## Features
 
