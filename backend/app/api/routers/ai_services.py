@@ -262,6 +262,19 @@ def _build_sql_prompt() -> str:
     )
 
 
+def _build_bql_prompt() -> str:
+    """Build system prompt for BQL query generation."""
+    template = _load_prompt("bql_assistant.md")
+    now = date.today()
+    year = now.year
+    return (
+        template
+        .replace("{{TODAY}}", now.isoformat())
+        .replace("{{YEAR}}", str(year))
+        .replace("{{LAST_YEAR}}", str(year - 1))
+    )
+
+
 @router.post(
     "/ai/generate-query",
     response_model=ApiResponse[GenerateQueryData],
@@ -274,7 +287,7 @@ async def generate_query(
     llm = _get_llm_config(config_manager)
 
     if body.language == "beanquery":
-        system_prompt = _load_prompt("bql_assistant.md")
+        system_prompt = _build_bql_prompt()
     else:
         system_prompt = _build_sql_prompt()
 
