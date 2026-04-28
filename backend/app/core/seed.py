@@ -12,6 +12,24 @@ _SEED_DATA_DIR_FROZEN = Path(getattr(sys, '_MEIPASS', '')) / "backend" / "seed_d
 SEED_DATA_DIR = _SEED_DATA_DIR_FROZEN if getattr(sys, 'frozen', False) else _SEED_DATA_DIR_DEV
 
 
+def copy_fake_ledger(data_dir: Path) -> None:
+    """Copy fake.beancount from seed data into data_dir/ledgers/.
+
+    Called during setup when the user hasn't chosen demo mode (so
+    seed_data_with_currency won't run), but we still want the fake ledger
+    available for troubleshooting.
+    """
+    logger = logging.getLogger(__name__)
+    src = SEED_DATA_DIR / "ledgers" / "fake.beancount"
+    if not src.exists():
+        logger.warning(f"Fake ledger template not found: {src}")
+        return
+    dest_dir = data_dir / "ledgers"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest_dir / "fake.beancount")
+    logger.info(f"Copied fake ledger → {dest_dir / 'fake.beancount'}")
+
+
 def seed_data_with_currency(data_dir: Path, currency: str) -> None:
     """Copy seed data template to data/, substituting {default_currency}.
 

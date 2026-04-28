@@ -110,6 +110,19 @@
 
             <label
               class="flex items-start gap-3 rounded-lg border p-4 cursor-pointer transition-colors"
+              :class="ledgerMode === 'demo' ? 'border-indigo-600 bg-indigo-50 dark:border-indigo-500 dark:bg-indigo-900/20' : 'border-gray-200 dark:border-white/10 hover:border-gray-300 dark:hover:border-white/20'"
+            >
+              <input type="radio" v-model="ledgerMode" value="demo" class="mt-0.5 text-indigo-600 focus:ring-indigo-600" />
+              <div>
+                <span class="text-sm font-medium text-gray-900 dark:text-white">Use demo data</span>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  Load a sample ledger with realistic transactions so you can explore the app without entering your own data.
+                </p>
+              </div>
+            </label>
+
+            <label
+              class="flex items-start gap-3 rounded-lg border p-4 cursor-pointer transition-colors"
               :class="ledgerMode === 'existing' ? 'border-indigo-600 bg-indigo-50 dark:border-indigo-500 dark:bg-indigo-900/20' : 'border-gray-200 dark:border-white/10 hover:border-gray-300 dark:hover:border-white/20'"
             >
               <input type="radio" v-model="ledgerMode" value="existing" class="mt-0.5 text-indigo-600 focus:ring-indigo-600" />
@@ -199,7 +212,7 @@
               </div>
             </Listbox>
 
-            <!-- Finzytrack AI: token only -->
+            <!-- Finzytrack AI: token only (re-enable when Finzytrack AI is launched)
             <div v-if="aiMode === 'finzytrack'">
               <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Finzytrack AI Token</label>
               <input
@@ -209,6 +222,7 @@
                 class="mt-1 block w-full rounded-md bg-white py-1.5 px-3 text-base text-gray-900 outline outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
               />
             </div>
+            -->
 
             <!-- Bring your own: provider, url, key, model -->
             <template v-if="aiMode === 'custom'">
@@ -433,7 +447,7 @@ const customCurrencyOption = computed(() => {
 })
 
 // Step 2: Ledger
-const ledgerMode = ref<'fresh' | 'existing'>('fresh')
+const ledgerMode = ref<'fresh' | 'demo' | 'existing'>('fresh')
 const existingLedgerPath = ref('')
 const showFilePicker = ref(false)
 
@@ -445,7 +459,7 @@ const handleFileSelect = (path: string) => {
 // Step 3: AI
 const AI_MODES = [
   { value: 'none', label: 'Skip for now', description: 'You can configure AI later in Settings.' },
-  { value: 'finzytrack', label: 'Use Finzytrack AI', description: 'AI features work out of the box. Just enter your token.' },
+  // { value: 'finzytrack', label: 'Use Finzytrack AI', description: 'AI features work out of the box. Just enter your token.' },
   { value: 'custom', label: 'Bring your own model', description: 'Use your own API key and model (local or cloud).' },
 ]
 const AI_PROVIDERS = [

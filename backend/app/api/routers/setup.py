@@ -23,7 +23,7 @@ from app.core.backup_manager import BackupManager
 from app.dependencies import get_config_manager, get_backup_manager, get_user_services
 from app.middleware.auth import get_user_context
 from app.user_services import UserServices
-from app.core.seed import seed_data_with_currency
+from app.core.seed import copy_fake_ledger, seed_data_with_currency
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +93,15 @@ async def complete_setup(
     }
 
     # --- Ledger creation ---
+    if request.ledger_mode not in ("fresh", "demo", "existing"):
+        raise APIError(
+            f"Invalid ledger_mode: {request.ledger_mode!r}. Must be 'fresh', 'demo', or 'existing'.",
+            "VALIDATION_ERROR",
+            status_code=422,
+        )
+
+    data_dir = config.root_dir / 'data'
+
     if request.ledger_mode == "existing":
         if not request.existing_ledger_path:
             raise APIError(
@@ -113,9 +122,17 @@ async def complete_setup(
         # Use the existing file in-place (no copy) and ensure backup dir exists
         Path(config.backup_dir).mkdir(parents=True, exist_ok=True)
         patch["ledger_file"] = str(src)
+        # Always copy fake ledger so it's available for troubleshooting
+        copy_fake_ledger(data_dir)
+    elif request.ledger_mode == "demo":
+        # Seed full data directory (creates backups/ dir, copies all ledger
+        # templates including fake.beancount), then point to the fake ledger.
+        seed_data_with_currency(data_dir, currency)
+        patch["ledger_file"] = "./data/ledgers/fake.beancount"
     else:
         # Fresh start — seed data directory with currency substitution
-        seed_data_with_currency(config.root_dir / 'data', currency)
+        # (also copies fake.beancount into data/ledgers/ automatically)
+        seed_data_with_currency(data_dir, currency)
 
     # AI config (if provided)
     if request.ai_config:
