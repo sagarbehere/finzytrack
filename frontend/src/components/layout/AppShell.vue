@@ -298,7 +298,7 @@
       </div>
 
       <!-- Main content -->
-      <main class="flex-1 min-h-0 overflow-auto py-8 min-w-0">
+      <main class="flex-1 min-h-0 overflow-auto pt-8 min-w-0">
         <!-- Ledger error banner -->
         <div
           v-if="ledgerErrorCount > 0 && !ledgerDismissed"
@@ -329,7 +329,7 @@
           </div>
         </div>
 
-        <div class="px-4 sm:px-6 lg:px-8 min-w-0 h-full">
+        <div class="px-4 sm:px-6 lg:px-8 pb-8 min-w-0 min-h-full">
           <slot />
         </div>
       </main>
