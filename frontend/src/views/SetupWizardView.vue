@@ -319,14 +319,21 @@
           <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">
             Your ledger is ready with <strong>{{ currency }}</strong> as the default currency.
           </p>
-          <p v-if="aiMode === 'finzytrack'" class="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            Finzytrack AI has been configured.
-          </p>
-          <p v-else-if="aiMode === 'custom' && aiModel" class="mt-1 text-sm text-gray-600 dark:text-gray-400">
+          <p v-if="aiMode === 'custom' && aiModel" class="mt-1 text-sm text-gray-600 dark:text-gray-400">
             AI model <strong>{{ aiModel }}</strong> has been configured.
           </p>
 
-          <div class="mt-6 space-y-2 text-left bg-gray-50 dark:bg-gray-800 rounded-lg p-4 text-sm text-gray-600 dark:text-gray-400">
+          <!-- Next steps: demo -->
+          <div v-if="ledgerMode === 'demo'" class="mt-6 space-y-2 text-left bg-gray-50 dark:bg-gray-800 rounded-lg p-4 text-sm text-gray-600 dark:text-gray-400">
+            <p class="font-medium text-gray-900 dark:text-white">Next steps</p>
+            <ul class="list-disc list-inside space-y-1">
+              <li>Explore the dashboard, reports, and charts using the sample data.</li>
+              <li>When you're ready to use your own data, go to <strong>Settings</strong> and change the ledger file — point to an existing Beancount file, or switch to <code class="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">one.beancount</code> for a clean slate.</li>
+            </ul>
+          </div>
+
+          <!-- Next steps: fresh / existing -->
+          <div v-else class="mt-6 space-y-2 text-left bg-gray-50 dark:bg-gray-800 rounded-lg p-4 text-sm text-gray-600 dark:text-gray-400">
             <p class="font-medium text-gray-900 dark:text-white">Next steps</p>
             <ul class="list-disc list-inside space-y-1">
               <li>Go to <strong>Accounts</strong> and review/adjust accounts.</li>
@@ -336,10 +343,10 @@
 
           <div class="mt-8 flex justify-center">
             <button
-              @click="goTo('/accounts?expanded=1')"
+              @click="goTo(ledgerMode === 'demo' ? '/dashboard' : '/accounts?expanded=1')"
               class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400"
             >
-              Go to Accounts
+              {{ ledgerMode === 'demo' ? 'Go to Dashboard' : 'Go to Accounts' }}
             </button>
           </div>
         </div>
