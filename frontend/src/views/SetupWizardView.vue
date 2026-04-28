@@ -337,7 +337,7 @@
             <p class="font-medium text-gray-900 dark:text-white">Next steps</p>
             <ul class="list-disc list-inside space-y-1">
               <li>Go to <strong>Accounts</strong> and review/adjust accounts.</li>
-              <li>Go to <strong>Import</strong> and import account statements.</li>
+              <li>Check out <strong>Settings → Import Rules</strong> for example CSV, XLS, and email import rules — a useful starting point for writing rules for your own bank statements.</li>
             </ul>
           </div>
 
