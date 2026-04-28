@@ -51,6 +51,12 @@ npm install
 
 See [Building from Source](https://docs.finzytrack.com/development/building/) for full development instructions.
 
+## Contributing
+
+Bug reports and feature requests are very welcome — please open a GitHub issue and I'll do my best to address them.
+
+**I'm not currently accepting pull requests.** This is a personal side project, and I can't commit to the kind of timely, thoughtful code review that contributors deserve. I'd rather be upfront about that than leave patches sitting unreviewed for weeks. If you've found a bug or have an idea, please open an issue and I'll pick it up when I can.
+
 ## License
 
 This project is licensed under the [GNU General Public License v2.0](LICENSE).
