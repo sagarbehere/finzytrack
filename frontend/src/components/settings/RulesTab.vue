@@ -18,7 +18,8 @@
 
     <p class="mb-4 text-sm text-gray-500 dark:text-gray-400">
       Manage import rule files for each format.
-      <a :href="docsUrl" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300">View documentation</a>
+      <a :href="docsUrl" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300">View documentation</a>.
+      <template v-if="ruleType !== 'ofx'"> To rename a rule file, create a new one and delete the old.</template>
     </p>
 
     <!-- Loading state -->
