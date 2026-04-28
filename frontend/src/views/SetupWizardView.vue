@@ -327,8 +327,8 @@
           <div v-if="ledgerMode === 'demo'" class="mt-6 space-y-2 text-left bg-gray-50 dark:bg-gray-800 rounded-lg p-4 text-sm text-gray-600 dark:text-gray-400">
             <p class="font-medium text-gray-900 dark:text-white">Next steps</p>
             <ul class="list-disc list-inside space-y-1">
-              <li>Explore the dashboard, reports, and charts using the sample data.</li>
-              <li>When you're ready to use your own data, go to <strong>Settings</strong> and change the ledger file — point to an existing Beancount file, or switch to <code class="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">one.beancount</code> for a clean slate.</li>
+              <li>Explore the app using the sample data.</li>
+              <li>When you're ready to use your own data, go to <strong>Settings</strong> and change the ledger file. You can point to an existing Beancount file (must be self-contained — no <code class="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">include</code> directives), or switch to <code class="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">one.beancount</code> for a fresh start with sample accounts to review and adjust.</li>
             </ul>
           </div>
 
