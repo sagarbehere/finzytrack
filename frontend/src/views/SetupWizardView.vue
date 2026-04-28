@@ -329,6 +329,7 @@
             <ul class="list-disc list-inside space-y-1">
               <li>Explore the app using the sample data.</li>
               <li>When you're ready to use your own data, go to <strong>Settings</strong> and change the ledger file. You can point to an existing Beancount file (must be self-contained — no <code class="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">include</code> directives), or switch to <code class="font-mono bg-gray-100 dark:bg-gray-700 px-1 rounded">one.beancount</code> for a fresh start with sample accounts to review and adjust.</li>
+              <li>When you're ready to import your own statements, check out <strong>Settings → Import Rules</strong> for example CSV, XLS, and email import rules — a useful starting point for writing rules for your own bank statements.</li>
             </ul>
           </div>
 
