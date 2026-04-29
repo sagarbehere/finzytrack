@@ -32,15 +32,27 @@ see this table and refer to specific rows and columns by number.
    - Currency: state your inference (e.g. "INR based on the bank") and ask if correct
    - Filename: suggest a slug-style name (e.g. `icici-savings.yaml`)
 
-3. **Wait for the user's response.** They may say "all good" or correct specific items.
-   Ask a follow-up only if something is genuinely unclear.
+3. **Wait for the user's response.** They may say "all good", correct specific items, or
+   ask a clarifying question. Ask a follow-up only if something is genuinely unclear.
 
-4. **Show the complete YAML** in a code block.
+   **If the user corrected one or more values**, you MUST go back to step 2 and present
+   the *complete updated* checklist with the corrections applied, then wait for the user's
+   response again. Do not treat a partial correction as consent to save — phrases like
+   *"X should be 4, the rest looks good"* confirm only the items the user did not change;
+   the corrections themselves still require a fresh round of confirmation.
+
+   The only signals that count as full consent to save are unambiguous statements like
+   "save it", "looks good, save", "yes, save", or "go ahead and save". If you are unsure,
+   ask. It is always better to confirm one extra time than to save a rule the user did
+   not approve.
+
+4. **Show the complete YAML** in a code block (only after the user has fully confirmed).
 
 5. **Save the file** using the correct tool for the file type. **Only call the write tool
-   after the user has confirmed the checklist** — even if the user's original message says
-   "save it" or "create it", treat that as the request to start this workflow, not as
-   permission to skip steps 2–4.
+   after the user has explicitly confirmed the final state of the checklist** — even if the
+   user's original message says "save it" or "create it", treat that as the request to start
+   this workflow, not as permission to skip steps 2–4. Each corrective edit by the user
+   triggers another round of step 2 and step 3 before any save.
    - CSV/TSV file → `write_csv_rule`
    - XLS/XLSX file → `write_xls_rule` (**never** `write_csv_rule`)
 
