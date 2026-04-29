@@ -162,6 +162,7 @@ import { useTransactionDeleter } from '@/composables/useTransactionDeleter'
 import { useToast } from '@/composables/useNotifications'
 import { useTransactionStore } from '@/composables/useTransactionStore'
 import { buildTanStackColumns, type TransactionColumnDef, type TableRowData } from '@/composables/useTransactionColumns'
+import { flattenTransactionRows } from '@/utils/flattenTransactionRows'
 import type { TransactionViewModel, ImportContext, LedgerContext } from '@/types/transactions'
 import type { Cell } from '@tanstack/vue-table'
 
@@ -330,29 +331,13 @@ const filteredTransactions = computed(() => {
   })
 })
 
-// Flatten transactions into table rows
-const currentPageTransactions = computed(() => {
-  const result: TableRowData[] = []
-  let transactionCounter = 0
-
-  for (const transaction of filteredTransactions.value) {
-    transactionCounter++
-    const postings = transaction.postings
-
-    const transactionRows = postings.map((posting, index) => ({
-      ...posting,
-      transaction,
-      postingIndex: index,
-      isFirstPosting: index === 0,
-      isLastPosting: index === postings.length - 1,
-      transactionIndex: transactionCounter,
-    }))
-
-    result.push(...transactionRows)
-  }
-
-  return result
-})
+// Flatten transactions into table rows. Cache is keyed by tx identity:
+// the store mutates only the changed transaction's reference, so rows for
+// untouched transactions are reused — keystrokes only rebuild the edited tx.
+const rowCache = new Map<TransactionViewModel, TableRowData[]>()
+const currentPageTransactions = computed(() =>
+  flattenTransactionRows(filteredTransactions.value, rowCache),
+)
 
 // Helper functions for cell styling
 const getEditableInputClasses = (extraClasses = '') => {
@@ -502,11 +487,7 @@ const columns = computed(() => {
     enableResizing: actionsConfig?.resizable || false,
   }))
 
-  // Filter columns based on visibility settings
-  return factoryColumns.filter(column => {
-    const columnId = column.id
-    return columnId && columnVisibility.value[columnId] === true
-  })
+  return factoryColumns
 })
 
 // Styling helpers
@@ -675,6 +656,7 @@ const table = useVueTable({
   get columns() { return columns.value },
   state: {
     get columnSizing() { return columnSizing.value },
+    get columnVisibility() { return columnVisibility.value },
   },
   onColumnSizingChange: (updater) => {
     const newSizing = typeof updater === 'function' ? updater(columnSizing.value) : updater
@@ -683,9 +665,14 @@ const table = useVueTable({
       setColumnWidth(columnId, newSizing[columnId])
     })
   },
+  onColumnVisibilityChange: (updater) => {
+    const next = typeof updater === 'function' ? updater(columnVisibility.value) : updater
+    columnVisibility.value = next
+  },
   enableColumnResizing: true,
   columnResizeMode: 'onChange',
   getCoreRowModel: getCoreRowModel(),
+  getRowId: (row) => `${row.transaction.id}::${row.postingIndex}`,
 })
 
 const onGlobalFilterChange = (e: Event) => {
@@ -738,6 +725,10 @@ defineExpose({
   },
   scrollToTable,
   setNewEditBaseline: store.setEditBaseline,
+  markAllSavedAndRebaseline: () => {
+    store.markAllSavedAndRebaseline()
+    emitAndGuard()
+  },
   reinitializeBaselines: store.reinitializeBaselines,
   addToBaselines: store.addToBaselines,
   clearState: () => {

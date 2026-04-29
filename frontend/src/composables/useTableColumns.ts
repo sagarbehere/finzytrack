@@ -86,7 +86,13 @@ export function useTableColumns() {
 
   // Methods
   const toggleColumnVisibility = (columnId: string) => {
-    columnVisibility.value[columnId] = !columnVisibility.value[columnId]
+    // Replace the object reference (not mutate in place) so TanStack's
+    // internal memoization invalidates the visible-cell path. Otherwise
+    // headers update via Vue reactivity but cells stay stale.
+    columnVisibility.value = {
+      ...columnVisibility.value,
+      [columnId]: !columnVisibility.value[columnId],
+    }
   }
 
   const setColumnWidth = (columnId: string, width: number) => {

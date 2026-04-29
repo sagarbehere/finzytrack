@@ -833,6 +833,16 @@
       const result = await performCommit(transactionViewModels.value)
 
       if (result.success) {
+        // Show success first so it paints before the (potentially expensive)
+        // teardown of ~N live editable rows. Previously the table cells went
+        // read-only via :editable="!isLoading" during commit, making the
+        // teardown cheap; now that the table stays editable, unmounting
+        // those rows synchronously before the toast added perceptible
+        // click-to-notification latency.
+        showSuccessToast('Transactions Committed', `Successfully committed ${result.count} transactions`)
+
+        await nextTick()
+
         // Clear state
         transactionViewModels.value = []
         importContext.value.clear()
@@ -840,9 +850,6 @@
 
         // Reset all importer components by incrementing the key
         importerKey.value++
-
-        // Show success message
-        showSuccessToast('Transactions Committed', `Successfully committed ${result.count} transactions`)
 
         // Check for ledger errors introduced by the import
         checkLedgerErrors()

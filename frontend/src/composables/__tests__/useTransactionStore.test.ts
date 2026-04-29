@@ -349,3 +349,126 @@ describe('baseline management', () => {
     expect(store.transactions.value).toEqual([])
   })
 })
+
+describe('notifyChange identity guarantees', () => {
+  function setupTwo() {
+    const input = ref([
+      makeTx({ id: 'tx-1', payee: 'One', postings: [
+        { account: 'Expenses:A', amount: 10, currency: 'USD' },
+        { account: 'Assets:Bank', amount: -10, currency: 'USD' },
+      ]}),
+      makeTx({ id: 'tx-2', payee: 'Two', postings: [
+        { account: 'Expenses:B', amount: 20, currency: 'USD' },
+        { account: 'Assets:Bank', amount: -20, currency: 'USD' },
+      ]}),
+    ])
+    return useTransactionStore(input)
+  }
+
+  it('changed transaction gets a new top-level reference', () => {
+    const store = setupTwo()
+    const before = store.transactions.value[0]
+    store.updateField('tx-1', 'payee', 'Changed')
+    expect(store.transactions.value[0]).not.toBe(before)
+  })
+
+  it('changed transaction preserves id and all unmodified field values', () => {
+    const store = setupTwo()
+    const before = store.transactions.value[0]
+    const beforeId = before.id
+    const beforeDate = before.date
+    store.updateField('tx-1', 'payee', 'Changed')
+    const after = store.transactions.value[0]
+    expect(after.id).toBe(beforeId)
+    expect(after.id).toBe('tx-1')
+    expect(after.date).toBe(beforeDate)
+    expect(after.payee).toBe('Changed')
+  })
+
+  it('untouched transactions keep their reference', () => {
+    const store = setupTwo()
+    const tx2Before = store.transactions.value[1]
+    store.updateField('tx-1', 'payee', 'Changed')
+    expect(store.transactions.value[1]).toBe(tx2Before)
+  })
+
+  it('addPosting produces a new top-level reference for the touched tx only', () => {
+    const store = setupTwo()
+    const tx1Before = store.transactions.value[0]
+    const tx2Before = store.transactions.value[1]
+    store.addPosting('tx-1')
+    expect(store.transactions.value[0]).not.toBe(tx1Before)
+    expect(store.transactions.value[1]).toBe(tx2Before)
+  })
+
+  it('removePosting produces a new top-level reference for the touched tx only', () => {
+    const store = setupTwo()
+    const tx1Before = store.transactions.value[0]
+    const tx2Before = store.transactions.value[1]
+    store.removePosting('tx-1', 1)
+    expect(store.transactions.value[0]).not.toBe(tx1Before)
+    expect(store.transactions.value[1]).toBe(tx2Before)
+  })
+
+  it('shallow clone does not deep-copy nested objects (perf invariant)', () => {
+    const store = setupTwo()
+    const postingsBefore = store.transactions.value[0].postings
+    const internalBefore = store.transactions.value[0].internal
+    store.updateField('tx-1', 'payee', 'Changed')
+    expect(store.transactions.value[0].postings).toBe(postingsBefore)
+    expect(store.transactions.value[0].internal).toBe(internalBefore)
+  })
+})
+
+describe('markAllSavedAndRebaseline', () => {
+  function setupModified() {
+    const input = ref([
+      makeTx({ id: 'tx-1', payee: 'A' }),
+      makeTx({ id: 'tx-2', payee: 'B' }),
+    ])
+    const store = useTransactionStore(input)
+    store.updateField('tx-1', 'payee', 'A-edited')
+    store.updateField('tx-2', 'payee', 'B-edited')
+    return store
+  }
+
+  it('clears isModified on every transaction', () => {
+    const store = setupModified()
+    expect(store.transactions.value[0].internal.isModified).toBe(true)
+    expect(store.transactions.value[1].internal.isModified).toBe(true)
+    store.markAllSavedAndRebaseline()
+    expect(store.transactions.value[0].internal.isModified).toBe(false)
+    expect(store.transactions.value[1].internal.isModified).toBe(false)
+  })
+
+  it('preserves all field values including ids', () => {
+    const store = setupModified()
+    store.markAllSavedAndRebaseline()
+    expect(store.transactions.value[0].id).toBe('tx-1')
+    expect(store.transactions.value[0].payee).toBe('A-edited')
+    expect(store.transactions.value[1].id).toBe('tx-2')
+    expect(store.transactions.value[1].payee).toBe('B-edited')
+  })
+
+  it('rebaselines so subsequent updateField with the saved value is not flagged', () => {
+    const store = setupModified()
+    store.markAllSavedAndRebaseline()
+    // Re-applying the same value should not flag the tx as modified
+    store.updateField('tx-1', 'payee', 'A-edited')
+    expect(store.transactions.value[0].internal.isModified).toBe(false)
+  })
+
+  it('flags tx as modified again only when changed away from new baseline', () => {
+    const store = setupModified()
+    store.markAllSavedAndRebaseline()
+    store.updateField('tx-1', 'payee', 'A-different')
+    expect(store.transactions.value[0].internal.isModified).toBe(true)
+  })
+
+  it('produces a single new top-level array reference', () => {
+    const store = setupModified()
+    const before = store.transactions.value
+    store.markAllSavedAndRebaseline()
+    expect(store.transactions.value).not.toBe(before)
+  })
+})

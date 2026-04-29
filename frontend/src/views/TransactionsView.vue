@@ -247,15 +247,10 @@ async function handleSaveChanges() {
     const result = await updateTransactions(modifiedTransactions)
 
     if (result.success) {
-      // Mark all as saved (reset isModified flags)
-      transactions.value.forEach(t => {
-        t.internal.isModified = false
-      })
-
-      // Update baseline in table
-      if (transactionTableRef.value && typeof transactionTableRef.value.setNewEditBaseline === 'function') {
-        transactionTableRef.value.setNewEditBaseline()
-      }
+      // Single-shot rebaseline: clears isModified on every tx and resets
+      // the edit baseline via one array reassignment. Replaces a forEach
+      // + per-tx refresh loop that produced ~2N reactive triggers.
+      transactionTableRef.value?.markAllSavedAndRebaseline()
 
       // Show success notification
       toast.success(

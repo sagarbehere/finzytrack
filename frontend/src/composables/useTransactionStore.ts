@@ -40,11 +40,19 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
     transactions.value = deepCopy(newVal)
   }
 
-  // After in-place mutation, create a new array reference so downstream
-  // computeds re-evaluate and TanStack re-renders affected cells.
-  // This is a shallow clone — cheap, same objects, just a new array.
-  function notifyChange(): void {
-    transactions.value = [...transactions.value]
+  // After in-place mutation, replace the changed transaction's slot with a
+  // shallow clone so downstream consumers can detect *which* transaction
+  // changed via reference comparison. Untouched transactions keep identity.
+  // The shallow clone preserves id and all field values verbatim.
+  function notifyChange(tx: TransactionViewModel): void {
+    const i = transactions.value.indexOf(tx)
+    if (i === -1) {
+      transactions.value = [...transactions.value]
+      return
+    }
+    const next = [...transactions.value]
+    next[i] = { ...tx }
+    transactions.value = next
   }
 
   function refreshModifiedFlag(tx: TransactionViewModel): void {
@@ -62,7 +70,7 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
       tx.tags = parts.filter(p => p.startsWith('#')).map(p => p.substring(1))
       tx.links = parts.filter(p => p.startsWith('^')).map(p => p.substring(1))
       refreshModifiedFlag(tx)
-      notifyChange()
+      notifyChange(tx)
       return
     }
 
@@ -76,7 +84,7 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
         tx.meta['source_account'] = value as string
       }
       refreshModifiedFlag(tx)
-      notifyChange()
+      notifyChange(tx)
       return
     }
 
@@ -93,14 +101,14 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
         posting.cost.date = tx.date
       }
       refreshModifiedFlag(tx)
-      notifyChange()
+      notifyChange(tx)
       return
     }
 
     // General case: set by path
     setByPath(tx as unknown as Record<string, any>, path, value)
     refreshModifiedFlag(tx)
-    notifyChange()
+    notifyChange(tx)
   }
 
   function addPosting(txId: string): void {
@@ -115,7 +123,7 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
       meta: undefined,
     })
     refreshModifiedFlag(tx)
-    notifyChange()
+    notifyChange(tx)
   }
 
   function removePosting(txId: string, postingIndex: number): void {
@@ -123,7 +131,7 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
     if (!tx || tx.postings.length <= 1) return
     tx.postings.splice(postingIndex, 1)
     refreshModifiedFlag(tx)
-    notifyChange()
+    notifyChange(tx)
   }
 
   function removeTransaction(txId: string): void {
@@ -144,6 +152,20 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
     for (const tx of transactions.value) {
       refreshModifiedFlag(tx)
     }
+  }
+
+  // Post-save: clear isModified on every tx and rebaseline in one shot.
+  // A single array reassignment notifies reactive consumers once instead
+  // of firing ~2N per-property triggers (forEach setting isModified +
+  // refreshModifiedFlag loop), which dominates click-to-toast latency
+  // on large result sets.
+  function markAllSavedAndRebaseline(): void {
+    const next = transactions.value.map(tx => ({
+      ...tx,
+      internal: { ...tx.internal, isModified: false },
+    }))
+    transactions.value = next
+    editBaseline.value = deepCopy(next)
   }
 
   function reinitializeBaselines(): void {
@@ -174,6 +196,7 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
     removeTransaction,
     resetToImported,
     setEditBaseline,
+    markAllSavedAndRebaseline,
     reinitializeBaselines,
     addToBaselines,
     clearState,
