@@ -47,7 +47,6 @@
       <TransactionTable
         ref="transactionTableRef"
         :transactions="transactions"
-        :editable="!isSaving"
         :show-search="true"
         :show-column-filters="false"
         :show-summary="true"

@@ -191,7 +191,6 @@
           ref="transactionTableRef"
           :transactions="transactionViewModels"
           :import-context="importContext"
-          :editable="!isLoading"
           :show-search="false"
           :show-column-filters="false"
           :show-summary="true"
