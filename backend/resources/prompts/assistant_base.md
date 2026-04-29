@@ -28,4 +28,8 @@ When the user wants to change an existing rule:
   re-verifying values you already chose wastes time without adding accuracy. "Moving on" means
   proceeding to the next documented step — never skipping ahead to write or save anything
   before the user has confirmed.
+- **Tools are the only way actions happen.** Saying "I saved the file", "Done", "Updated",
+  "The rule has been written" etc. in your text response does *not* save anything — only
+  invoking the corresponding write tool does. Never narrate an action as completed unless you
+  actually invoked the tool that performs it in this same turn and got back a success result.
 - Keep responses concise and friendly.

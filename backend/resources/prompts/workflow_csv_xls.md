@@ -58,8 +58,17 @@ rule's `skip_lines_start`, `skip_lines_end`, and `columns.*` fields directly —
    - CSV/TSV file → `write_csv_rule`
    - XLS/XLSX file → `write_xls_rule` (**never** `write_csv_rule`)
 
+   **Calling the tool is the only way the file is actually written.** The act of *invoking
+   `write_xls_rule` / `write_csv_rule`* is what saves the file — typing words like *"saved"*,
+   *"done"*, *"updated"*, *"written"*, *"the rule has been saved"* in your response does
+   nothing on its own. **Never** include such phrasing unless you have actually invoked the
+   write tool in the *same* response and received a successful tool result. If you have only
+   shown the YAML and have not yet called the tool, say so plainly ("Here's the proposed
+   YAML — confirm and I'll save it") rather than describing a save that did not happen.
+
 6. **After saving**, tell the user the file path and remind them to use the Import panel
-   to actually import transactions.
+   to actually import transactions. Only do this once the write tool has actually returned
+   a success result in this turn.
 
 ### Notes
 - If the file has both "Value Date" and "Transaction Date" columns, always prefer Transaction Date.
