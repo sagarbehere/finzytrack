@@ -21,9 +21,12 @@ const mockColumnConfig = {
   setColumnWidth: vi.fn(),
 }
 
-function makeOptions(overrides: Partial<BuildColumnsOptions> = {}): BuildColumnsOptions {
+function makeOptions(
+  overrides: Partial<Omit<BuildColumnsOptions, 'editable'>> & { editable?: boolean | (() => boolean) } = {},
+): BuildColumnsOptions {
+  const { editable = true, ...rest } = overrides
   return {
-    editable: true,
+    editable: typeof editable === 'function' ? editable : () => editable,
     updateField: vi.fn(),
     numericInputProps: vi.fn((_txId, _postIdx, _field, currentValue, _updateFn, extraClasses = '') => ({
       type: 'text',
@@ -38,7 +41,7 @@ function makeOptions(overrides: Partial<BuildColumnsOptions> = {}): BuildColumns
     getDisplayClasses: vi.fn(() => 'display-text'),
     getAmountColorClass: vi.fn(() => ''),
     columnConfig: mockColumnConfig as any,
-    ...overrides,
+    ...rest,
   }
 }
 

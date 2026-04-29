@@ -257,6 +257,7 @@ const handleAddPosting = (txId: string) => {
 
 const handleRemovePosting = (txId: string, postingIndex: number) => {
   store.removePosting(txId, postingIndex)
+  clearRawAmountsForTx(txId)
   emitAndGuard()
 }
 
@@ -264,7 +265,19 @@ const handleRemovePosting = (txId: string, postingIndex: number) => {
 const globalFilter = ref('')
 
 // Track raw input strings for numeric fields to preserve trailing dots/zeros during editing.
+// Keyed by `${txId}-${postingIdx}-${field}`. Posting indices shift when a posting is
+// spliced out, so we clear all of a tx's keys whenever its postings change shape or
+// the tx is removed — otherwise a stale entry from one posting can latch onto another.
 const rawAmountStrings = ref<Record<string, string>>({})
+
+const clearRawAmountsForTx = (txId: string) => {
+  const prefix = `${txId}-`
+  const next: Record<string, string> = {}
+  for (const key in rawAmountStrings.value) {
+    if (!key.startsWith(prefix)) next[key] = rawAmountStrings.value[key]
+  }
+  rawAmountStrings.value = next
+}
 
 const numericInputProps = (
   txId: string, postingIdx: number, field: string,
@@ -399,7 +412,7 @@ const shouldSkipCell = (cell: Cell<any, any>) => {
 // Build columns from definitions
 const columns = computed(() => {
   const factoryColumns = buildTanStackColumns(COLUMN_DEFS, {
-    editable: props.editable ?? true,
+    editable: () => props.editable ?? true,
     updateField: handleUpdateField,
     numericInputProps,
     getImportContext,
@@ -490,41 +503,40 @@ const columns = computed(() => {
   return factoryColumns
 })
 
-// Styling helpers
-const getTransactionRowClasses = (rowData: any) => {
-  const classes = []
-  if (rowData.isFirstPosting) {
-    classes.push('border-t-2', 'border-t-indigo-200', 'dark:border-t-indigo-800')
-  }
-  if (rowData.isLastPosting) {
-    classes.push('border-b-2', 'border-b-indigo-200', 'dark:border-b-indigo-800')
-  }
-  return classes
+// Styling helpers — precompute static class strings per (column, row-shape)
+// to avoid per-cell array allocations on every render.
+const ROW_TOP = 'border-t-2 border-t-indigo-200 dark:border-t-indigo-800'
+const ROW_BOTTOM = 'border-b-2 border-b-indigo-200 dark:border-b-indigo-800'
+const ROW_TOP_BOTTOM = `${ROW_TOP} ${ROW_BOTTOM}`
+
+const getTransactionRowClasses = (rowData: any): string => {
+  if (rowData.isFirstPosting && rowData.isLastPosting) return ROW_TOP_BOTTOM
+  if (rowData.isFirstPosting) return ROW_TOP
+  if (rowData.isLastPosting) return ROW_BOTTOM
+  return ''
 }
 
-const getCellClasses = (cell: Cell<any, any>) => {
-  const classes = [
-    'px-3', 'py-2', 'text-sm', 'overflow-hidden',
-    'border-r', 'border-b', 'border-gray-200', 'dark:border-white/10',
-    'last:border-r-0'
-  ]
+const CELL_BASE = 'px-3 py-2 text-sm overflow-hidden border-r border-b border-gray-200 dark:border-white/10 last:border-r-0'
+const RIGHT_ALIGNED_COLS = new Set(['amount', 'cost_amount', 'price_amount'])
+const CENTER_ALIGNED_COLS = new Set(['actions'])
+const cellBaseByColumn = new Map<string, string>()
+for (const def of COLUMN_DEFS) {
+  let cls = CELL_BASE
+  if (RIGHT_ALIGNED_COLS.has(def.id)) cls += ' text-right'
+  if (CENTER_ALIGNED_COLS.has(def.id)) cls += ' text-center'
+  cellBaseByColumn.set(def.id, cls)
+}
+cellBaseByColumn.set('actions', `${CELL_BASE} text-center`)
 
-  if (['amount', 'cost_amount', 'price_amount'].includes(cell.column.id)) {
-    classes.push('text-right')
+const getCellClasses = (cell: Cell<any, any>): string => {
+  const id = cell.column.id
+  let cls = cellBaseByColumn.get(id) ?? CELL_BASE
+  const rowspan = getRowSpan(cell)
+  if (rowspan > 1) {
+    cls += ' align-top'
+    if (id === 'index') cls += ' bg-gray-50 dark:bg-gray-800/50'
   }
-  if (['actions'].includes(cell.column.id)) {
-    classes.push('text-center')
-  }
-
-  if (getRowSpan(cell) > 1) {
-    classes.push('align-top')
-  }
-
-  if (cell.column.id === 'index' && getRowSpan(cell) > 1) {
-    classes.push('bg-gray-50', 'dark:bg-gray-800/50')
-  }
-
-  return classes
+  return cls
 }
 
 // Keyboard navigation
@@ -634,6 +646,7 @@ This action will immediately update the ledger and cannot be undone.`
     }
 
     store.removeTransaction(transaction.id)
+    clearRawAmountsForTx(transaction.id)
     emitAndGuard()
 
     if (!isImportContext) {
@@ -689,33 +702,31 @@ const scrollToTable = () => {
   })
 }
 
-onMounted(() => {
-  const handleGlobalKeydown = (event: KeyboardEvent) => {
-    if (event.key === 'F2') {
-      if (filteredTransactions.value.length > 0) {
-        const firstTransaction = filteredTransactions.value[0]
-        const visibleEditableColumns = ['date', 'flag', 'payee', 'narration', 'tags_links', 'account', 'amount', 'currency', 'actions']
-          .filter(col => columnVisibility.value[col] === true)
+const handleGlobalKeydown = (event: KeyboardEvent) => {
+  if (event.key !== 'F2') return
+  if (filteredTransactions.value.length === 0) return
 
-        if (firstTransaction && visibleEditableColumns.length > 0) {
-          const firstColumn = visibleEditableColumns[0]
-          const initialPosition = {
-            rowIndex: 0,
-            columnId: firstColumn,
-            postingIndex: ['account', 'amount', 'currency', 'actions'].includes(firstColumn) ? 0 : undefined
-          }
-          setCellFocus(initialPosition)
-          event.preventDefault()
-        }
-      }
-    }
-  }
+  const firstTransaction = filteredTransactions.value[0]
+  const visibleEditableColumns = ['date', 'flag', 'payee', 'narration', 'tags_links', 'account', 'amount', 'currency', 'actions']
+    .filter(col => columnVisibility.value[col] === true)
 
-  document.addEventListener('keydown', handleGlobalKeydown)
+  if (!firstTransaction || visibleEditableColumns.length === 0) return
 
-  onUnmounted(() => {
-    document.removeEventListener('keydown', handleGlobalKeydown)
+  const firstColumn = visibleEditableColumns[0]
+  setCellFocus({
+    rowIndex: 0,
+    columnId: firstColumn,
+    postingIndex: ['account', 'amount', 'currency', 'actions'].includes(firstColumn) ? 0 : undefined,
   })
+  event.preventDefault()
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', handleGlobalKeydown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleGlobalKeydown)
 })
 
 defineExpose({

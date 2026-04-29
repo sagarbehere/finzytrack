@@ -43,7 +43,10 @@ function resolveStorePath(field: string, postingIndex: number): string {
 }
 
 export interface BuildColumnsOptions {
-  editable: boolean
+  // Read at cell-render time (not at column-build time) so the columns
+  // computed doesn't need to depend on editable. Toggling editable
+  // re-renders cells without rebuilding the column array or render closures.
+  editable: () => boolean
   updateField: (txId: string, path: string, value: unknown) => void
   numericInputProps: (
     txId: string, postingIdx: number, field: string,
@@ -103,7 +106,7 @@ export function buildTanStackColumns(
 
         case 'text': {
           const storePath = resolveStorePath(def.field!, postingIndex)
-          if (editable) {
+          if (editable()) {
             return h('input', {
               type: 'text',
               value: getValue() ?? '',
@@ -118,7 +121,7 @@ export function buildTanStackColumns(
 
         case 'textarea': {
           const storePath = resolveStorePath(def.field!, postingIndex)
-          if (editable) {
+          if (editable()) {
             return h('textarea', {
               value: getValue() || '',
               onInput: (e: any) => updateField(tx.id, storePath, e.target.value),
@@ -134,7 +137,7 @@ export function buildTanStackColumns(
 
         case 'date': {
           const storePath = resolveStorePath(def.field!, postingIndex)
-          if (editable) {
+          if (editable()) {
             return h('input', {
               type: 'date',
               value: getValue() || '',
@@ -150,7 +153,7 @@ export function buildTanStackColumns(
           const value = getValue()
           const amountColorClass = def.colorize ? getAmountColorClass(value) : ''
 
-          if (editable) {
+          if (editable()) {
             const storePath = resolveStorePath(def.field!, postingIndex)
             return h('input', numericInputProps(
               tx.id, postingIndex, def.id,
@@ -169,7 +172,7 @@ export function buildTanStackColumns(
 
         case 'dropdown': {
           const storePath = resolveStorePath(def.field!, postingIndex)
-          if (editable && def.component) {
+          if (editable() && def.component) {
             return h(def.component, {
               modelValue: getValue() || '',
               'onUpdate:modelValue': (value: string) => updateField(tx.id, storePath, value),
@@ -182,7 +185,7 @@ export function buildTanStackColumns(
         }
 
         case 'tags': {
-          if (editable) {
+          if (editable()) {
             return h('input', {
               type: 'text',
               value: getValue() ?? '',
