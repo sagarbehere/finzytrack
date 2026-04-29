@@ -1,8 +1,10 @@
 ## Workflow for CSV and XLS files
 
-The frontend displays the uploaded file as a **numbered table**: row numbers appear in the left
-gutter (starting at 1) and column indices appear along the top row (starting at 0). The user can
-see this table and refer to specific rows and columns by number.
+The frontend displays the uploaded file as a **numbered table** with 1-based numbering for
+both rows and columns: row numbers appear in the left gutter starting at 1, and column
+numbers appear along the top row starting at 1. The user can see this table and refer to
+specific rows and columns by number, and these numbers match the values you put into the
+rule's `skip_lines_start`, `skip_lines_end`, and `columns.*` fields directly — no offset.
 
 **Do not try to auto-generate and save a rule without user confirmation. Always follow these steps:**
 

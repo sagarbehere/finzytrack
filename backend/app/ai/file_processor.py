@@ -157,19 +157,24 @@ def _csv_parse_hint(lines: list[str]) -> str:
     skip_start = len(header_lines)
 
     n_transactions = len(data_lines)
+    last_tx_row = skip_start + n_transactions  # 1-based row number of the last transaction
     # Count only non-blank footer rows for the skip_lines_end hint.
     # Blank rows at the end are harmless — the date filter skips them — so they
     # should not inflate the recommended count.
     non_blank_footer = [line for line in footer_lines if line.strip()]
     footer_note = (
-        f" Heuristic guess for skip_lines_end: {len(non_blank_footer)} ({len(non_blank_footer)} trailing footer rows detected)."
+        f" Heuristic guess for skip_lines_end: {len(non_blank_footer)}"
+        f" (last transaction at row {last_tx_row} (1-based); {len(non_blank_footer)} trailing non-blank footer rows detected)."
         if non_blank_footer else ""
     )
     col_hint = _col_header_hint(header_lines[-1] if header_lines else "")
 
+    col_header_row = skip_start  # 1-based row number of the column-header row
+    first_tx_row = skip_start + 1  # 1-based row number of the first transaction
     return (
         f"[Parse hint (best-effort guess from a heuristic — verify against the column header row visible below):"
-        f" skip_lines_start ≈ {skip_start} ({len(header_lines)} rows above the first transaction, including the column-header row)."
+        f" skip_lines_start ≈ {skip_start} (column-header row appears to be row {col_header_row} (1-based);"
+        f" first transaction at row {first_tx_row})."
         f" Apparent transaction rows: {n_transactions}.{footer_note}"
         f"{col_hint}]"
     )
@@ -362,6 +367,7 @@ def _xls_parse_hint(rows: list[str]) -> str:
     skip_start = len(header_lines)
 
     n_transactions = len(data_lines)
+    last_tx_row = skip_start + n_transactions  # 1-based row number of the last transaction
     # XLS: count ALL trailing rows (blank + non-blank). The XLS parser slices
     # the row array via dataRows.slice(0, -skipEnd), which counts every row
     # including blanks — so the hint must match that semantics. (Earlier
@@ -369,18 +375,27 @@ def _xls_parse_hint(rows: list[str]) -> str:
     # the footer contained blank rows.)
     if footer_lines:
         non_blank_footer = sum(1 for line in footer_lines if line.strip())
+        first_footer_row = last_tx_row + 1
+        last_footer_row = last_tx_row + len(footer_lines)
         footer_note = (
             f" Heuristic guess for skip_lines_end: {len(footer_lines)}"
-            f" ({len(footer_lines)} trailing rows detected, of which {non_blank_footer} are non-blank — XLS footer rows may contain"
+            f" (last transaction at row {last_tx_row} (1-based); footer is rows {first_footer_row}–{last_footer_row},"
+            f" {len(footer_lines)} rows of which {non_blank_footer} are non-blank — XLS footer rows may contain"
             f" numeric data that would be imported as fake transactions; set skip_lines_end explicitly)."
         )
     else:
-        footer_note = " Heuristic guess for skip_lines_end: 0 (no trailing footer rows detected; verify by checking the last rows of the file)."
+        footer_note = (
+            f" Heuristic guess for skip_lines_end: 0 (last transaction at row {last_tx_row} (1-based);"
+            f" no trailing footer rows detected; verify by checking the last rows of the file)."
+        )
     col_hint = _col_header_hint(header_lines[-1] if header_lines else "", delimiter="\t")
 
+    col_header_row = skip_start
+    first_tx_row = skip_start + 1
     return (
         f"[Parse hint (best-effort guess from a heuristic — verify against the column header row visible below):"
-        f" skip_lines_start ≈ {skip_start} ({len(header_lines)} rows above the first transaction, including the column-header row)."
+        f" skip_lines_start ≈ {skip_start} (column-header row appears to be row {col_header_row} (1-based);"
+        f" first transaction at row {first_tx_row})."
         f" Apparent transaction rows: {n_transactions}.{footer_note}"
         f"{col_hint}]"
     )
