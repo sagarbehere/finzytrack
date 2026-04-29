@@ -275,13 +275,38 @@
               <!-- Validation result (shown after rule is saved) -->
               <div v-if="msg.validationNote" class="space-y-2">
 
-                <!-- Status line -->
+                <!-- Success: simple inline status -->
                 <div
-                  class="rounded-lg px-3 py-2 text-xs font-medium"
-                  :class="msg.validationNote.startsWith('✓')
-                    ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400'
-                    : 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400'"
+                  v-if="msg.validationNote.startsWith('✓')"
+                  class="rounded-lg px-3 py-2 text-xs font-medium bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
                 >{{ msg.validationNote }}</div>
+
+                <!-- Failure: prominent alert with heading, icon, and action button -->
+                <div
+                  v-else
+                  class="rounded-lg p-3 ring-1"
+                  :class="isCriticalValidationFailure(msg.validationNote)
+                    ? 'bg-red-50 ring-red-300 text-red-700 dark:bg-red-900/20 dark:ring-red-500/30 dark:text-red-300'
+                    : 'bg-amber-50 ring-amber-300 text-amber-800 dark:bg-amber-900/20 dark:ring-amber-500/30 dark:text-amber-300'"
+                >
+                  <div class="flex items-start gap-2">
+                    <svg class="h-5 w-5 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.008v.008H12v-.008Z" />
+                    </svg>
+                    <div class="flex-1 space-y-2">
+                      <div class="text-xs font-bold">
+                        {{ isCriticalValidationFailure(msg.validationNote) ? 'Rule may be broken' : 'Rule may be incorrect' }}
+                      </div>
+                      <div class="text-xs">{{ msg.validationNote }}</div>
+                      <button
+                        type="button"
+                        :disabled="streaming"
+                        @click="askAssistantToFix(msg.validationNote)"
+                        class="rounded px-2.5 py-1 text-xs font-medium bg-white/60 dark:bg-white/5 ring-1 ring-current/30 hover:bg-white dark:hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >Ask assistant to fix</button>
+                    </div>
+                  </div>
+                </div>
 
                 <!-- Parsed transactions table -->
                 <div
@@ -1098,6 +1123,24 @@ function formatValidationNote(count: number, filename: string, first?: string, l
 
 const MAX_VALIDATION_ROWS = 15
 const MAX_RAW_LINES = 60
+
+/** True for the most severe validation outcome ("found 0 transactions"). */
+function isCriticalValidationFailure(note: string): boolean {
+  return /found 0 transaction/i.test(note)
+}
+
+/**
+ * Pre-fill the chat input with a fix request based on the validation note,
+ * then submit it. Lets the user one-click their way to a retry without
+ * having to type the failure summary themselves.
+ */
+function askAssistantToFix(note: string) {
+  if (streaming.value) return
+  inputText.value = isCriticalValidationFailure(note)
+    ? "The saved rule found 0 transactions. Please review the rule, identify what's wrong (skip counts, date format, column indices), and save a corrected version."
+    : "The saved rule's transaction count doesn't match what's expected. Please review and fix the rule, then save again."
+  void sendMessage()
+}
 
 function validationRows(txs: CsvParsedTransaction[]): CsvParsedTransaction[] {
   return txs.slice(0, MAX_VALIDATION_ROWS)

@@ -16,8 +16,8 @@ see this table and refer to specific rows and columns by number.
      based on the column header names. State each mapping once.
    - **Do not analyze individual transaction values.** They are irrelevant to rule generation —
      the rule only needs the column structure, not the contents.
-   - After mapping columns, your **next action MUST be to call `list_accounts`**. Do not
-     re-derive what you've already decided.
+   - Once you've identified the column structure, **do not re-derive or re-verify** your
+     conclusions. Proceed directly to step 2 (present the confirmation checklist).
 
 2. **Present a confirmation checklist.** Show all your guesses at once in a single numbered list.
    Tell the user to confirm each item or give the correct value. Include:
@@ -37,7 +37,10 @@ see this table and refer to specific rows and columns by number.
 
 4. **Show the complete YAML** in a code block.
 
-5. **Save the file** using the correct tool for the file type:
+5. **Save the file** using the correct tool for the file type. **Only call the write tool
+   after the user has confirmed the checklist** — even if the user's original message says
+   "save it" or "create it", treat that as the request to start this workflow, not as
+   permission to skip steps 2–4.
    - CSV/TSV file → `write_csv_rule`
    - XLS/XLSX file → `write_xls_rule` (**never** `write_csv_rule`)
 
