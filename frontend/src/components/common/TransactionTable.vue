@@ -861,7 +861,7 @@ thead {
 }
 
 .dark thead {
-  background-color: rgba(31, 41, 55, 0.5); /* Match dark:bg-gray-800/50 */
+  background-color: rgb(31, 41, 55); /* gray-800, opaque so scrolling body content doesn't bleed through sticky header */
 }
 
 th {
@@ -963,7 +963,7 @@ td[data-column-id="status"] {
 }
 
 .dark th[data-column-id="status"] {
-  background-color: rgba(31, 41, 55, 0.5); /* dark:bg-gray-800/50 */
+  background-color: rgb(31, 41, 55); /* gray-800, opaque (sticky header) */
 }
 
 .dark td[data-column-id="status"] {
@@ -1000,7 +1000,7 @@ td[data-column-id="index"] {
 }
 
 .dark th[data-column-id="index"] {
-  background-color: rgba(31, 41, 55, 0.5); /* dark:bg-gray-800/50 */
+  background-color: rgb(31, 41, 55); /* gray-800, opaque (sticky header) */
 }
 
 .dark td[data-column-id="index"] {
