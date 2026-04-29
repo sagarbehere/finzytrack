@@ -110,15 +110,44 @@
           <!-- Assistant message -->
           <div v-else class="flex justify-start">
             <div class="max-w-[85%] space-y-2">
-              <!-- Thinking / reasoning (collapsed by default) -->
-              <details v-if="msg.thinking" class="group rounded-lg bg-gray-50 dark:bg-white/[0.03] ring-1 ring-gray-200 dark:ring-white/10">
+              <!-- Reasoning: auto-expanded while streaming, auto-collapsed on completion. -->
+              <details v-if="msg.thinking" :open="msg.streaming" class="group rounded-lg bg-gray-50 dark:bg-white/[0.03] ring-1 ring-gray-200 dark:ring-white/10">
                 <summary class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400 select-none hover:text-gray-700 dark:hover:text-gray-300">
                   <svg class="h-3 w-3 transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
                   </svg>
-                  Thinking
+                  <span>
+                    <span class="font-semibold">{{ msg.streaming ? 'Model is reasoning' : 'Reasoning' }}</span>
+                    <span class="ml-1 font-normal italic text-gray-400 dark:text-gray-500">
+                      <template v-if="msg.streaming">(internal — the answer will follow)</template>
+                      <template v-else>· {{ msg.thinking.length.toLocaleString() }} chars</template>
+                    </span>
+                    <span v-if="msg.streaming" class="ml-1 font-normal text-gray-400 dark:text-gray-500">
+                      · {{ msg.thinking.length.toLocaleString() }} chars
+                    </span>
+                  </span>
+                  <a
+                    :href="REASONING_DOCS_URL"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="ml-auto inline-flex h-4 w-4 items-center justify-center rounded-full ring-1 ring-gray-300 dark:ring-white/20 text-[10px] text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:ring-indigo-300 dark:hover:ring-indigo-400/40"
+                    title="What is this? Learn about reasoning models"
+                    @click.stop
+                  >?</a>
                 </summary>
-                <div class="px-3 pb-2 text-xs text-gray-500 dark:text-gray-400 whitespace-pre-wrap max-h-64 overflow-y-auto">{{ msg.thinking }}</div>
+                <div class="px-3 pb-2 text-xs text-gray-500 dark:text-gray-400 whitespace-pre-wrap max-h-64 overflow-y-auto">
+                  <template v-if="msg.streaming">
+                    <template v-if="msg.thinkingSnippet">
+                      <div class="not-italic text-gray-400 dark:text-gray-500 mb-1">First {{ THINKING_SNIPPET_CHARS }} chars of reasoning:</div>
+                      <div>{{ msg.thinkingSnippet }}</div>
+                      <div class="not-italic text-gray-400 dark:text-gray-500 mt-2">… (full reasoning will appear here when the model finishes)</div>
+                    </template>
+                    <template v-else>
+                      <span class="text-gray-400 dark:text-gray-500">Reasoning is just starting…</span>
+                    </template>
+                  </template>
+                  <template v-else>{{ msg.thinking }}</template>
+                </div>
               </details>
 
               <!-- Tool calls: badge + collapsible details -->
@@ -579,10 +608,21 @@ interface ValidationWarning {
   expanded?: boolean
 }
 
+// Public docs page explaining reasoning-model behavior. Must match
+// _REASONING_DOCS_URL in backend/app/api/routers/assistant.py.
+const REASONING_DOCS_URL = 'https://docs.finzytrack.com/reference/reasoning-models'
+
+// While a reasoning block is streaming we render only the live char counter
+// and a one-shot snippet captured from the first ~500 chars. This keeps the
+// DOM tiny so the JS thread stays responsive even when reasoning runs to
+// hundreds of thousands of chars. The full text is rendered once at the end.
+const THINKING_SNIPPET_CHARS = 500
+
 interface DisplayMessage {
   role: 'user' | 'assistant'
   content: string
-  thinking?: string           // model's internal reasoning (collapsed by default)
+  thinking?: string           // full model reasoning — rendered after streaming ends
+  thinkingSnippet?: string    // first ~500 chars, captured once, shown during streaming
   fileName?: string           // for user messages with an attachment
   fileSheets?: FileSheet[]    // parsed preview sheets — lets user re-open preview by clicking the badge
   toolEvents?: ToolEvent[]    // for assistant messages
@@ -835,9 +875,19 @@ async function sendMessage() {
     if (sessionFileType.value) ctx.file_type = sessionFileType.value
     for await (const event of streamAssistantChat(apiMessages, file, ctx, abortController.signal)) {
       if (event.type === 'thinking') {
-        if (!assistantMsg.thinking) assistantMsg.thinking = ''
-        assistantMsg.thinking += event.content
-        scrollToBottom()
+        // Vue 3 reactivity quirk: properties added to a plain object after it
+        // has been pushed into a ref array don't trigger updates when mutated
+        // via the local raw reference. Mutate through messages.value[idx] (the
+        // proxy) so re-renders fire. Same pattern used for validationNote etc.
+        const m = messages.value[messages.value.length - 1]
+        if (!m.thinking) m.thinking = ''
+        m.thinking += event.content
+        if (
+          !m.thinkingSnippet
+          && m.thinking.length >= THINKING_SNIPPET_CHARS
+        ) {
+          m.thinkingSnippet = m.thinking.slice(0, THINKING_SNIPPET_CHARS)
+        }
       } else if (event.type === 'token') {
         assistantMsg.content += event.content
         scrollToBottom()
@@ -895,7 +945,8 @@ async function sendMessage() {
         })
         scrollToBottom()
       } else if (event.type === 'error') {
-        assistantMsg.content += `\n\n**Error:** ${event.message}`
+        const link = event.docs_url ? ` [Learn more](${event.docs_url})` : ''
+        assistantMsg.content += `\n\n**Error:** ${event.message}${link}`
         scrollToBottom()
       } else if (event.type === 'done') {
         break
@@ -1207,6 +1258,10 @@ function _renderInlineText(text: string): string {
     )
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(
+      /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:underline dark:text-indigo-400">$1</a>',
+    )
     .replace(/\n\n/g, '</p><p class="mt-2">')
     .replace(/\n/g, '<br/>')
     .replace(/^/, '<p>')

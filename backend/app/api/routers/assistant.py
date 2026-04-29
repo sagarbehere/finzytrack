@@ -108,6 +108,9 @@ _CSV_EXTENSIONS  = {".csv", ".tsv", ".txt"}
 _XLS_EXTENSIONS  = {".xls", ".xlsx", ".xlsm", ".xlsb"}
 _EML_EXTENSIONS  = {".eml"}
 
+# Public docs explaining reasoning-model behavior, surfaced from error events.
+_REASONING_DOCS_URL = "https://docs.finzytrack.com/reference/reasoning-models"
+
 
 def _detect_file_type(filename: str) -> str | None:
     ext = Path(filename).suffix.lower()
@@ -239,6 +242,8 @@ async def _run_agent_loop(
 
         accumulated_text = ""
         tool_calls_this_turn: list[ToolCallEvent] = []
+        finish_reason: str | None = None
+        reasoning_chars = 0
 
         async for event in stream_chat(llm_config, messages, tool_schemas):
             if isinstance(event, ThinkingEvent):
@@ -249,12 +254,37 @@ async def _run_agent_loop(
             elif isinstance(event, ToolCallEvent):
                 tool_calls_this_turn.append(event)
             elif isinstance(event, DoneEvent):
+                finish_reason = event.finish_reason
+                reasoning_chars = event.reasoning_chars
                 break
 
         if not tool_calls_this_turn:
             # Normal exit — model finished with text, no more tool calls
             if not accumulated_text.strip():
-                yield {"type": "error", "message": "The model returned an empty response. Please try again."}
+                # Diagnose: reasoning model that exhausted its budget on
+                # thinking and never produced visible output.
+                error_event: dict = {"type": "error"}
+                if finish_reason == "length" and reasoning_chars > 0:
+                    error_event["message"] = (
+                        "The model used its entire token budget on internal reasoning "
+                        f"({reasoning_chars:,} chars) and never produced an answer. "
+                        "Try a non-reasoning model or raise max_tokens in Settings → AI."
+                    )
+                    error_event["docs_url"] = _REASONING_DOCS_URL
+                elif finish_reason == "length":
+                    error_event["message"] = (
+                        "The model hit its max_tokens limit before producing an answer. "
+                        "Raise max_tokens in Settings → AI."
+                    )
+                elif reasoning_chars > 0:
+                    error_event["message"] = (
+                        f"The model produced only internal reasoning ({reasoning_chars:,} chars) "
+                        "and no visible answer. Try a different model."
+                    )
+                    error_event["docs_url"] = _REASONING_DOCS_URL
+                else:
+                    error_event["message"] = "The model returned an empty response. Please try again."
+                yield error_event
                 yield {"type": "done"}
                 return
 
@@ -451,6 +481,16 @@ async def assistant_chat(
     file_type: str | None = None
     if body.file:
         file_type = _detect_file_type(body.file.name)
+        if file_type is None:
+            ext = Path(body.file.name).suffix.lower() or "(none)"
+            msg = (
+                f"Unsupported file type '{ext}'. "
+                "Upload a CSV/TSV/TXT, XLS/XLSX/XLSM/XLSB, or .eml file."
+            )
+            async def _unsupported(message=msg):
+                yield f"data: {json.dumps({'type': 'error', 'message': message})}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return StreamingResponse(_unsupported(), media_type="text/event-stream")
         try:
             file_bytes = base64.b64decode(body.file.content_base64)
             file_text, file_warning = process_file(file_bytes, body.file.name)
@@ -484,8 +524,8 @@ async def assistant_chat(
         # as a clean SSE error event rather than a 500 HTTP response.
         try:
             system_prompt = build_system_prompt(context)
-        except FileNotFoundError as e:
-            logger.error(f"Assistant prompt file missing: {e}")
+        except (FileNotFoundError, ValueError) as e:
+            logger.error(f"Assistant prompt build failed: {e}")
             yield f"data: {json.dumps({'type': 'error', 'message': f'Server configuration error: {e}'})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
             return

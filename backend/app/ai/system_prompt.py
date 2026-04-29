@@ -2,17 +2,19 @@
 System prompt builder for the Finzytrack AI assistant.
 
 Prompt content lives in backend/resources/prompts/ as plain Markdown files:
-  assistant_base.md      — role, workflow, instructions (setup mode)
-  assistant_analyst.md   — role, workflow, instructions (analyst mode)
-  schema_csv.md          — CSV rule schema + example
-  schema_xls.md          — XLS rule schema + example
-  schema_email.md        — email rule schema + example
-  schema_postings.md             — postings table schema + sign conventions
-  schema_recipe_dashboard.md    — dashboard recipe JSON schema (loaded on demand via tool)
+  assistant_base.md       — generic role + cross-cutting instructions (setup mode)
+  workflow_csv_xls.md     — checklist workflow for CSV/TSV/XLS/XLSX uploads
+  workflow_email.md       — checklist workflow for .eml uploads
+  assistant_analyst.md    — role, workflow, instructions (analyst mode)
+  schema_csv.md           — CSV rule schema + example
+  schema_xls.md           — XLS rule schema + example
+  schema_email.md         — email rule schema + example
+  schema_postings.md      — postings table schema + sign conventions
+  schema_recipe_dashboard.md — dashboard recipe JSON schema (loaded on demand via tool)
 
 Mode routing:
-  - file_type is set   → setup mode (assistant_base.md + relevant schema)
-  - no file_type        → analyst mode (analyst + postings schema)
+  - file_type is set → setup mode (assistant_base + workflow_<type> + schema_<type>)
+  - no file_type     → analyst mode (analyst + postings schema)
 """
 
 from functools import lru_cache
@@ -24,6 +26,12 @@ _SCHEMA_FILES = {
     "csv":   "schema_csv.md",
     "xls":   "schema_xls.md",
     "email": "schema_email.md",
+}
+
+_WORKFLOW_FILES = {
+    "csv":   "workflow_csv_xls.md",
+    "xls":   "workflow_csv_xls.md",
+    "email": "workflow_email.md",
 }
 
 
@@ -54,13 +62,18 @@ def build_system_prompt(context: dict) -> str:
     file_type = context.get("file_type")
 
     if file_type:
-        # Setup mode — rule creation
-        parts = [_load("assistant_base.md")]
-        if file_type in _SCHEMA_FILES:
-            parts.append(_load(_SCHEMA_FILES[file_type]))
-        else:
-            for filename in _SCHEMA_FILES.values():
-                parts.append(_load(filename))
+        # Setup mode — rule creation. Include only the workflow + schema for the
+        # specific file type to keep the prompt focused and the input small.
+        if file_type not in _WORKFLOW_FILES:
+            raise ValueError(
+                f"Unknown file_type '{file_type}'. Expected one of: "
+                f"{sorted(_WORKFLOW_FILES)}."
+            )
+        parts = [
+            _load("assistant_base.md"),
+            _load(_WORKFLOW_FILES[file_type]),
+            _load(_SCHEMA_FILES[file_type]),
+        ]
     else:
         # Analyst mode — financial questions + recipe generation
         # Recipe schema is loaded on demand via get_recipe_schema tool,

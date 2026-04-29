@@ -41,6 +41,7 @@ export interface SseToolResultEvent {
 export interface SseErrorEvent {
   type: 'error'
   message: string
+  docs_url?: string
 }
 
 export interface SseDoneEvent {

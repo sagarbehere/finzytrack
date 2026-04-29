@@ -58,7 +58,8 @@ class ToolCallEvent:
 
 @dataclass
 class DoneEvent:
-    pass
+    finish_reason: str | None = None
+    reasoning_chars: int = 0
 
 
 ChatEvent = ThinkingEvent | TokenEvent | ToolCallEvent | DoneEvent
@@ -132,8 +133,6 @@ async def resolve_config(config: LLMConfig) -> LLMConfig:
         updates["max_tool_rounds"] = proxy_cfg["max_tool_rounds"]
     if "timeout_secs" in proxy_cfg:
         updates["timeout_secs"] = proxy_cfg["timeout_secs"]
-    if "show_thinking" in proxy_cfg:
-        updates["show_thinking"] = proxy_cfg["show_thinking"]
 
     return config.model_copy(update=updates)
 
@@ -180,6 +179,7 @@ async def _stream_openai(
     messages: list[dict],
     tools: list[dict],
 ) -> AsyncIterator[ChatEvent]:
+    import httpx
     from openai import AsyncOpenAI
 
     kwargs = {"api_key": config.api_key.get_secret_value() or "not-needed"}
@@ -189,6 +189,15 @@ async def _stream_openai(
         if not base.endswith("/v1"):
             base = base + "/v1"
         kwargs["base_url"] = base
+
+    # Idle/read timeout — when streaming, this aborts if no bytes arrive for
+    # `timeout_secs` (default 120). Without this, a stuck upstream hangs forever.
+    kwargs["timeout"] = httpx.Timeout(
+        connect=10.0,
+        read=float(config.timeout_secs),
+        write=30.0,
+        pool=10.0,
+    )
 
     client = AsyncOpenAI(**kwargs)
 
@@ -217,22 +226,50 @@ async def _stream_openai(
 
     # Accumulate streamed tool-call deltas keyed by index
     tool_call_accum: dict[int, dict] = {}
+    content_chars = 0
+    reasoning_chars = 0
+    finish_reason: str | None = None
+    # Diagnostic: log first-chunk arrival to detect provider-side buffering.
+    import time as _time
+    stream_start = _time.monotonic()
+    first_chunk_logged = False
+    first_reasoning_logged = False
+    last_progress_log = stream_start
 
     stream = await client.chat.completions.create(**call_kwargs)
     async for chunk in stream:
+        now = _time.monotonic()
+        if not first_chunk_logged:
+            logger.debug("OpenAI first chunk after %.2fs", now - stream_start)
+            first_chunk_logged = True
         if not chunk.choices:
             continue
-        delta = chunk.choices[0].delta
+        choice = chunk.choices[0]
+        if choice.finish_reason:
+            finish_reason = choice.finish_reason
+        delta = choice.delta
 
         if delta.content:
+            content_chars += len(delta.content)
             yield TokenEvent(content=delta.content)
 
         # Forward reasoning/thinking from OpenAI-compatible models (e.g. DeepSeek-R1)
-        # that expose it via a `reasoning_content` field on the delta.
-        if config.show_thinking:
-            reasoning = getattr(delta, "reasoning_content", None)
-            if reasoning:
-                yield ThinkingEvent(content=reasoning)
+        # that expose it via a `reasoning_content` field on the delta. Always
+        # surfaced — the UI is what users rely on to see what the model is doing.
+        reasoning = getattr(delta, "reasoning_content", None)
+        if reasoning:
+            reasoning_chars += len(reasoning)
+            if not first_reasoning_logged:
+                logger.debug("OpenAI first reasoning chunk after %.2fs", now - stream_start)
+                first_reasoning_logged = True
+            # Periodic progress log to confirm chunks arrive over time.
+            if now - last_progress_log >= 5.0:
+                logger.debug(
+                    "OpenAI streaming progress: %.1fs elapsed, reasoning=%d chars, content=%d chars",
+                    now - stream_start, reasoning_chars, content_chars,
+                )
+                last_progress_log = now
+            yield ThinkingEvent(content=reasoning)
 
         if delta.tool_calls:
             for tc in delta.tool_calls:
@@ -247,6 +284,13 @@ async def _stream_openai(
                 if tc.function and tc.function.arguments:
                     acc["arguments"] += tc.function.arguments
 
+    logger.debug(
+        "OpenAI stream finished: finish_reason=%s, content=%d chars, reasoning=%d chars, tool_calls=%d",
+        finish_reason,
+        content_chars,
+        reasoning_chars,
+        len(tool_call_accum),
+    )
     # Emit completed tool calls
     if tool_call_accum:
         logger.debug("Tool calls received: %s", [acc["name"] for acc in tool_call_accum.values()])
@@ -255,7 +299,7 @@ async def _stream_openai(
     for acc in tool_call_accum.values():
         yield ToolCallEvent(id=acc["id"], name=acc["name"], arguments=acc["arguments"])
 
-    yield DoneEvent()
+    yield DoneEvent(finish_reason=finish_reason, reasoning_chars=reasoning_chars)
 
 
 # ── Anthropic streaming ───────────────────────────────────────────────────────
@@ -286,20 +330,9 @@ async def _stream_anthropic(
         model=config.model,
         max_tokens=max_tokens,
         messages=anthropic_messages,
+        temperature=config.temperature,
         stream=True,
     )
-
-    # Extended thinking: enable when requested, set temperature to 1 (required
-    # by Anthropic), and allocate a thinking budget from the max_tokens allowance.
-    if config.show_thinking:
-        thinking_budget = max(1024, max_tokens - 1024)
-        call_kwargs["thinking"] = {
-            "type": "enabled",
-            "budget_tokens": thinking_budget,
-        }
-        call_kwargs["temperature"] = 1
-    else:
-        call_kwargs["temperature"] = config.temperature
 
     if system_content:
         call_kwargs["system"] = system_content

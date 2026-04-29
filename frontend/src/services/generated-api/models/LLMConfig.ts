@@ -51,10 +51,6 @@ export type LLMConfig = {
      */
     timeout_secs?: number;
     /**
-     * Stream the model's internal reasoning/thinking to the UI. Requires a model that supports extended thinking.
-     */
-    show_thinking?: boolean;
-    /**
      * True if AI is usable — either via Finzytrack AI or a bring-your-own model.
      */
     readonly is_configured: boolean;
