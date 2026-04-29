@@ -139,8 +139,9 @@ def _csv_parse_hint(lines: list[str]) -> str:
     """
     Compute a parse hint to prepend to the file content sent to the AI.
 
-    Tells the AI the recommended skip_lines_start and skip_lines_end values
-    based on the detected file structure, so it doesn't need to count manually.
+    The hint is a best-effort guess from a heuristic and may be wrong on
+    files with unusual layouts. The AI is instructed to cross-check it
+    against the column-header row visible in the file content.
 
     For CSV: the parser counts ALL lines (including blank ones) when applying
     skip_lines_start, so the count includes every line in the header section.
@@ -149,26 +150,27 @@ def _csv_parse_hint(lines: list[str]) -> str:
     if not data_lines:
         return ""
 
-    # The parser counts all lines (blank and non-blank) for skip_lines_start.
-    # +1 for the column header row (data_lines[0]), which must also be skipped.
-    skip_start = len(header_lines) + 1
+    # `header_lines` already includes the column-header row (the last entry,
+    # since the column header is not a transaction row and is excluded from
+    # data_lines). skip_lines_start = the count of all rows up to and
+    # including the column header.
+    skip_start = len(header_lines)
 
-    n_transactions = len(data_lines) - 1  # subtract the column header row
+    n_transactions = len(data_lines)
     # Count only non-blank footer rows for the skip_lines_end hint.
     # Blank rows at the end are harmless — the date filter skips them — so they
     # should not inflate the recommended count.
     non_blank_footer = [line for line in footer_lines if line.strip()]
     footer_note = (
-        f" {len(non_blank_footer)} trailing footer rows detected — set skip_lines_end: {len(non_blank_footer)}."
+        f" Heuristic guess for skip_lines_end: {len(non_blank_footer)} ({len(non_blank_footer)} trailing footer rows detected)."
         if non_blank_footer else ""
     )
-    col_hint = _col_header_hint(data_lines[0])
+    col_hint = _col_header_hint(header_lines[-1] if header_lines else "")
 
     return (
-        f"[Parse hint: recommended skip_lines_start: {skip_start}"
-        f" ({len(header_lines)} metadata lines + 1 column header row)."
-        f" Apparent transaction rows: {n_transactions}."
-        f" Recommended skip_lines_end: {len(non_blank_footer)}.{footer_note}"
+        f"[Parse hint (best-effort guess from a heuristic — verify against the column header row visible below):"
+        f" skip_lines_start ≈ {skip_start} ({len(header_lines)} rows above the first transaction, including the column-header row)."
+        f" Apparent transaction rows: {n_transactions}.{footer_note}"
         f"{col_hint}]"
     )
 
@@ -177,51 +179,118 @@ def _split_csv_lines(lines: list[str], delimiter: str = ",") -> tuple[list[str],
     """
     Split lines into (footer_lines, data_lines, header_lines).
 
-    Heuristic (only applied to large files):
-    - Detect the maximum field count across all non-empty rows
-    - "Data rows" are rows whose field count >= max_count * 0.6
-    - Header rows: consecutive rows at the start that are NOT data rows
-    - Footer rows: consecutive rows at the end that are NOT data rows
+    Strategy: transaction rows almost always form a contiguous block of
+    rows with similar shape (same field count for CSV, similar non-empty
+    cell count for XLS). We find that block, then carve off any column-
+    header row at the top of it.
 
-    Using max_count (rather than modal count) ensures that footer/legend rows
-    with fewer fields than transactions don't lower the threshold and get
-    misclassified as data.
+    Returned convention:
+      - `data_lines` contains transaction rows only.
+      - `header_lines` includes everything before the first transaction,
+        including the column-header row (its last entry).
+      - Callers that need the column-header text should read `header_lines[-1]`.
+
+    Field counting differs by format:
+      - CSV: the total number of delimiter-separated fields. Empty fields
+        between commas still count, so `,,UPI/Foo,500.00` and
+        `REF123,UPI/Foo,500.00` both have 4 fields and group together.
+      - XLS: the count of *non-empty* cells. pandas pads every row to the
+        sheet's max width, so total cell count is uniform and useless;
+        non-empty count is what discriminates transactions from metadata.
+
+    Block detection allows adjacent rows to differ by ≤1 field, so
+    transactions with optional fields (e.g. NEFT with a reference number
+    vs UPI with the reference column blank) still cluster into one block.
+
+    Edge case: files with no clear block (single-transaction files, very
+    short files) fall back to a row-by-row classifier requiring
+    field_count ≥ 0.75×max_count and at least one pure-decimal field.
+
+    The whole heuristic is best-effort. The result is fed to the AI as a
+    *hint*; the AI is told to cross-check against the actual file content.
     """
     import csv
 
     def field_count(line: str) -> int:
         try:
             if delimiter == "\t":
-                # For XLS, pandas fills every cell so all rows have the same
-                # total column count regardless of content. Count non-empty
-                # cells instead so metadata/blank rows score lower than data rows.
+                # XLS: count non-empty cells (pandas pads, so total is uniform).
                 return sum(1 for f in line.split("\t") if f.strip())
+            # CSV: total fields including empty ones. Empty cells between
+            # commas still count, which keeps transactions with optional
+            # fields (e.g. blank memo) in the same block as fully-populated ones.
             return len(next(csv.reader([line], delimiter=delimiter)))
         except Exception:
             return 0
 
+    def has_decimal(line: str) -> bool:
+        """True if any field parses as a pure decimal (not a date, not text)."""
+        try:
+            if delimiter == "\t":
+                fields = line.split("\t")
+            else:
+                fields = next(csv.reader([line], delimiter=delimiter))
+        except Exception:
+            return False
+        for raw in fields:
+            f = raw.strip().replace(",", "").replace(" ", "")
+            if not f:
+                continue
+            # Skip date-like and time-like fields (contain / or -).
+            if "/" in f or "-" in f:
+                continue
+            try:
+                float(f)
+                return True
+            except ValueError:
+                continue
+        return False
+
+    if not lines:
+        return [], [], []
+
     counts = [field_count(line) for line in lines]
 
+    # ── Primary strategy: find the longest contiguous block of rows with
+    #    similar field counts (≥ 3, with ±1 tolerance between adjacent rows).
+    block_start, block_end = _find_data_block(counts)
+
+    if block_start is not None:
+        # Within the block, walk forward to find the first row containing a
+        # pure decimal — that's the first transaction. Everything before it
+        # inside the block is column-header rows (text labels with no decimals).
+        block_data_start = block_end + 1  # default: no decimals found
+        for i in range(block_start, block_end + 1):
+            if has_decimal(lines[i]):
+                block_data_start = i
+                break
+
+        if block_data_start <= block_end:
+            header_lines = lines[:block_data_start]
+            data_lines = lines[block_data_start:block_end + 1]
+            footer_lines = lines[block_end + 1:]
+            return footer_lines, data_lines, header_lines
+        # Block had no decimals at all → fall through to the threshold heuristic.
+
+    # ── Fallback strategy: row-by-row classification for short/single-row files.
     non_zero = [c for c in counts if c > 0]
     if not non_zero:
         return [], lines, []
 
     max_count = max(non_zero)
-    # Minimum threshold of 2: single-column rows are almost never transaction
-    # data in financial CSVs — they're metadata, footnotes, or legend entries.
-    threshold = max(2, int(max_count * 0.6))
+    threshold = max(3, int(max_count * 0.75))
 
-    is_data = [c >= threshold for c in counts]
+    is_data = [c >= threshold and has_decimal(line) for c, line in zip(counts, lines)]
 
-    # Find first and last data row indices
     first_data = next((i for i, d in enumerate(is_data) if d), None)
-    last_data = next((i for i, d in enumerate(reversed(is_data)) if d), None)
-
     if first_data is None:
         return [], [], lines
 
-    last_data_idx = len(lines) - 1 - last_data
+    last_data_rev = next((i for i, d in enumerate(reversed(is_data)) if d), None)
+    last_data_idx = len(lines) - 1 - last_data_rev
 
+    # In the fallback path, treat the row immediately before the first
+    # transaction as the column-header row (typical of well-formed files).
     header_lines = lines[:first_data]
     footer_lines = lines[last_data_idx + 1:]
     data_lines = lines[first_data:last_data_idx + 1]
@@ -229,9 +298,56 @@ def _split_csv_lines(lines: list[str], delimiter: str = ",") -> tuple[list[str],
     return footer_lines, data_lines, header_lines
 
 
+def _find_data_block(field_counts: list[int]) -> tuple[int | None, int | None]:
+    """
+    Find the longest contiguous run of rows whose field counts are all ≥ 3
+    and where each adjacent pair differs by at most 1.
+
+    The ±1 tolerance lets transactions with optional fields (e.g. UPI with
+    blank memo vs NEFT with populated reference) stay in the same block.
+
+    Tiebreak: among runs of equal length, prefer the one with the higher
+    average field count.
+
+    Returns `(start, end)` inclusive, or `(None, None)` if no run of
+    length ≥ 2 qualifies.
+    """
+    n = len(field_counts)
+    if n == 0:
+        return None, None
+
+    best_start: int | None = None
+    best_end: int | None = None
+    best_score: tuple[int, float] = (0, 0.0)
+
+    i = 0
+    while i < n:
+        if field_counts[i] < 3:
+            i += 1
+            continue
+        j = i + 1
+        while j < n and field_counts[j] >= 3 and abs(field_counts[j] - field_counts[j - 1]) <= 1:
+            j += 1
+        run_len = j - i
+        if run_len >= 2:
+            avg_fc = sum(field_counts[i:j]) / run_len
+            score = (run_len, avg_fc)
+            if score > best_score:
+                best_score = score
+                best_start = i
+                best_end = j - 1
+        i = j if j > i else i + 1
+
+    return best_start, best_end
+
+
 def _xls_parse_hint(rows: list[str]) -> str:
     """
     Compute a parse hint for an XLS sheet.
+
+    The hint is a best-effort guess from a heuristic and may be wrong on
+    sheets with unusual layouts. The AI is instructed to cross-check it
+    against the column-header row visible in the file content.
 
     For XLS: the XLSX library does NOT strip blank rows before applying
     skip_lines_start, so the count includes ALL rows (blank or not).
@@ -241,24 +357,25 @@ def _xls_parse_hint(rows: list[str]) -> str:
         return ""
 
     # XLSX library preserves all rows (including blank), so skip_lines_start
-    # counts all rows — not just non-blank ones.
-    skip_start = len(header_lines) + 1  # +1 for column header row (data_lines[0])
+    # counts all rows — not just non-blank ones. With the new convention,
+    # `header_lines` already includes the column-header row as its last entry.
+    skip_start = len(header_lines)
 
-    n_transactions = len(data_lines) - 1
+    n_transactions = len(data_lines)
     non_blank_footer = [line for line in footer_lines if line.strip()]
     if non_blank_footer:
         footer_note = (
-            f" Recommended skip_lines_end: {len(non_blank_footer)}"
+            f" Heuristic guess for skip_lines_end: {len(non_blank_footer)}"
             f" ({len(non_blank_footer)} trailing rows detected — XLS footer rows may contain"
             f" numeric data that would be imported as fake transactions; set skip_lines_end explicitly)."
         )
     else:
-        footer_note = " Recommended skip_lines_end: 0 (no trailing footer rows detected; verify by checking the last rows of the file)."
-    col_hint = _col_header_hint(data_lines[0], delimiter="\t")
+        footer_note = " Heuristic guess for skip_lines_end: 0 (no trailing footer rows detected; verify by checking the last rows of the file)."
+    col_hint = _col_header_hint(header_lines[-1] if header_lines else "", delimiter="\t")
 
     return (
-        f"[Parse hint: recommended skip_lines_start: {skip_start}"
-        f" ({len(header_lines)} header rows including blanks + 1 column header row)."
+        f"[Parse hint (best-effort guess from a heuristic — verify against the column header row visible below):"
+        f" skip_lines_start ≈ {skip_start} ({len(header_lines)} rows above the first transaction, including the column-header row)."
         f" Apparent transaction rows: {n_transactions}.{footer_note}"
         f"{col_hint}]"
     )

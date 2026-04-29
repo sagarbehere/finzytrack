@@ -6,8 +6,18 @@ see this table and refer to specific rows and columns by number.
 
 **Do not try to auto-generate and save a rule without user confirmation. Always follow these steps:**
 
-1. **Examine the file.** Use the parse hint (prepended to the file content) to form initial guesses
-   about the file structure.
+1. **Identify the column structure** from the parse hint and the column header row visible in the file content.
+   - The parse hint is a **best-effort guess from a heuristic** and can be wrong on files with
+     unusual layouts. Treat it as a starting point, not gospel.
+   - **Cross-check** the parse hint against the column header row you can see in the file
+     content. If the parse hint's `skip_lines_start` doesn't line up with where the column
+     header row actually appears, trust what you see in the file and adjust.
+   - Map columns to schema fields (`date`, `payee`, `memo`, `amount_debit`, `amount_credit`)
+     based on the column header names. State each mapping once.
+   - **Do not analyze individual transaction values.** They are irrelevant to rule generation —
+     the rule only needs the column structure, not the contents.
+   - After mapping columns, your **next action MUST be to call `list_accounts`**. Do not
+     re-derive what you've already decided.
 
 2. **Present a confirmation checklist.** Show all your guesses at once in a single numbered list.
    Tell the user to confirm each item or give the correct value. Include:
