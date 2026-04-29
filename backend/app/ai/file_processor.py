@@ -362,11 +362,16 @@ def _xls_parse_hint(rows: list[str]) -> str:
     skip_start = len(header_lines)
 
     n_transactions = len(data_lines)
-    non_blank_footer = [line for line in footer_lines if line.strip()]
-    if non_blank_footer:
+    # XLS: count ALL trailing rows (blank + non-blank). The XLS parser slices
+    # the row array via dataRows.slice(0, -skipEnd), which counts every row
+    # including blanks — so the hint must match that semantics. (Earlier
+    # versions counted non-blank only, producing an off-by-N error whenever
+    # the footer contained blank rows.)
+    if footer_lines:
+        non_blank_footer = sum(1 for line in footer_lines if line.strip())
         footer_note = (
-            f" Heuristic guess for skip_lines_end: {len(non_blank_footer)}"
-            f" ({len(non_blank_footer)} trailing rows detected — XLS footer rows may contain"
+            f" Heuristic guess for skip_lines_end: {len(footer_lines)}"
+            f" ({len(footer_lines)} trailing rows detected, of which {non_blank_footer} are non-blank — XLS footer rows may contain"
             f" numeric data that would be imported as fake transactions; set skip_lines_end explicitly)."
         )
     else:
