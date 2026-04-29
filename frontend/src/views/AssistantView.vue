@@ -1103,7 +1103,12 @@ async function validateSavedRule(
     }
   } catch (err) {
     console.error('[validation] error:', err)
-    return empty
+    const msg = err instanceof Error ? err.message : String(err)
+    return {
+      note: `⚠ Rule was saved but could not be validated against ${file.name}: ${msg}. The rule may be incorrect.`,
+      transactions: [],
+      rawContent: '',
+    }
   }
 }
 
@@ -1124,9 +1129,9 @@ function formatValidationNote(count: number, filename: string, first?: string, l
 const MAX_VALIDATION_ROWS = 15
 const MAX_RAW_LINES = 60
 
-/** True for the most severe validation outcome ("found 0 transactions"). */
+/** True for the most severe validation outcomes (parse error, 0 transactions). */
 function isCriticalValidationFailure(note: string): boolean {
-  return /found 0 transaction/i.test(note)
+  return /found 0 transaction|could not be validated/i.test(note)
 }
 
 /**

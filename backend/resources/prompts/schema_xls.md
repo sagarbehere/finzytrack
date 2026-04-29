@@ -28,6 +28,11 @@ default_currency: "USD"                 # (required) — infer from bank's count
 
 ### Key rules
 - Use `sheet_name` rather than `sheet_index` when the bank may add/reorder sheets in future exports.
+- **Use the actual sheet name from the parse hint output** — the file content sent to you is
+  preceded by a line like `=== Sheet: OpTransactionHistory ===`, and `OpTransactionHistory`
+  is what goes into `sheet_name`. **Do not copy the placeholder value from the example
+  below** — every bank's sheet name is different, and using the wrong name will fail with
+  "Sheet not found" at parse time.
 - Date cells that Excel stores as actual date objects are handled automatically regardless of `date_format`.
   Set `date_format` only for cells that contain the date as a plain string.
 - `skip_lines_start` and `skip_lines_end` refer to rows within the selected sheet, not the whole file.
@@ -54,7 +59,11 @@ default_currency: "USD"                 # (required) — infer from bank's count
 
 ```yaml
 name: "ICICI Bank Savings"
-sheet_name: "Statement"     # prefer sheet_name over sheet_index when the name is known
+sheet_name: "OpTransactionHistory"   # ALWAYS read this from the `=== Sheet: ... ===`
+                                      # line in the parse hint output — every bank uses a
+                                      # different sheet name. The value here is the real
+                                      # name for one ICICI export; do not copy verbatim
+                                      # for other banks or other ICICI exports.
 skip_lines_start: 13
 skip_lines_end: 28
 date_format: "%d/%m/%Y"
