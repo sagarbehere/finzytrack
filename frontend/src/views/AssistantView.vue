@@ -1008,6 +1008,15 @@ async function sendMessage() {
       lastMsg.validationEmailFields = emailFields
     }
     scrollToBottom()
+  } else if (!effectiveTool && looksLikeFakeSaveClaim(assistantMsg.content)) {
+    // Fake-save detection: the assistant's text claims a save happened, but no
+    // write tool was actually invoked in this turn. Without this check, the
+    // user has no signal that the file was not actually written.
+    const lastMsg = messages.value[messages.value.length - 1]
+    if (lastMsg) {
+      lastMsg.validationNote = '⚠ The assistant claimed to save the rule, but the write tool was never invoked — the rule was NOT saved. Use the button below to ask the assistant to actually save it.'
+    }
+    scrollToBottom()
   }
 }
 
@@ -1129,9 +1138,31 @@ function formatValidationNote(count: number, filename: string, first?: string, l
 const MAX_VALIDATION_ROWS = 15
 const MAX_RAW_LINES = 60
 
-/** True for the most severe validation outcomes (parse error, 0 transactions). */
+/** True for the most severe validation outcomes (parse error, 0 transactions, fake save). */
 function isCriticalValidationFailure(note: string): boolean {
-  return /found 0 transaction|could not be validated/i.test(note)
+  return /found 0 transaction|could not be validated|was NOT saved/i.test(note)
+}
+
+/**
+ * True when the assistant's text claims a completed save but no write tool was invoked.
+ * Patterns are conservative — designed to fire on unambiguous past-tense / completion
+ * claims and to NOT fire on future-tense or hypothetical save mentions like "I'll save",
+ * "click save", or "before I save".
+ */
+function looksLikeFakeSaveClaim(content: string): boolean {
+  const patterns = [
+    // "the rule has been saved/updated/written"
+    /\b(rule|file|configuration|yaml)\s+(has\s+been|have\s+been|was|is)\s+(saved|written|updated|created|stored)\b/i,
+    // "I've saved" / "I have saved"
+    /\bI\s*'?\s*(ve|have)\s+(saved|written|updated|created|stored)\b/i,
+    // "successfully saved/updated"
+    /\b(successfully|already)\s+(saved|written|updated|created)\b/i,
+    // "Saving:Done!" or "Saving... done!"
+    /\b(saving|writing|updating)[^.]*[:.\s]\s*done!?/i,
+    // "Done. The rule..."
+    /\bdone!?\.?\s+(the|your)\s+(rule|file|configuration)/i,
+  ]
+  return patterns.some(p => p.test(content))
 }
 
 /**
@@ -1141,9 +1172,13 @@ function isCriticalValidationFailure(note: string): boolean {
  */
 function askAssistantToFix(note: string) {
   if (streaming.value) return
-  inputText.value = isCriticalValidationFailure(note)
-    ? "The saved rule found 0 transactions. Please review the rule, identify what's wrong (skip counts, date format, column indices), and save a corrected version."
-    : "The saved rule's transaction count doesn't match what's expected. Please review and fix the rule, then save again."
+  if (/was NOT saved/i.test(note)) {
+    inputText.value = "You claimed to save the rule, but the write tool was never invoked and the file was not actually saved. Please call the appropriate write tool now to save the rule."
+  } else if (isCriticalValidationFailure(note)) {
+    inputText.value = "The saved rule failed validation (0 transactions or a parser error). Please review the rule, identify what's wrong (sheet name, skip counts, date format, column indices), and save a corrected version."
+  } else {
+    inputText.value = "The saved rule's transaction count doesn't match what's expected. Please review and fix the rule, then save again."
+  }
   void sendMessage()
 }
 
