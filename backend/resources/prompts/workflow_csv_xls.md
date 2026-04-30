@@ -23,6 +23,10 @@ rule's `skip_lines_start`, `skip_lines_end`, and `columns.*` fields directly —
 
 2. **Present a confirmation checklist.** Show all your guesses at once in a single numbered list.
    Tell the user to confirm each item or give the correct value. Include:
+   - **Sheet (XLS/XLSX only):** "Sheet 'OpTransactionHistory' — correct?" Use the exact sheet
+     name from the `=== Sheet: <name> ===` line in the parse hint, and put it in `sheet_name`
+     (not `sheet_index`). If the workbook has more than one sheet, list the other sheet names
+     too so the user can pick a different one. Skip this item entirely for CSV/TSV files.
    - Header row: "Row N contains the column headers — correct?"
    - Date column: "Column X ('Name') — correct?"
    - Date format: "Format looks like `%d/%m/%Y` (e.g. '01/03/2026') — correct?"
