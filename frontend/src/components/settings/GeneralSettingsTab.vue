@@ -211,6 +211,38 @@
         </div>
       </div>
 
+      <!-- Advanced disclosure (only for bring-your-own) -->
+      <details v-if="!llmFields.finzytrack_ai" class="mt-2">
+        <summary class="cursor-pointer text-sm font-medium text-gray-900 dark:text-white select-none">
+          Advanced
+        </summary>
+        <div class="mt-3">
+          <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Extra request body (JSON)</label>
+          <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
+            Provider-specific request parameters merged into every chat call. Use this to pass
+            options Finzytrack does not expose as first-class fields, e.g.
+            <code class="font-mono">{"chat_template_kwargs": {"enable_thinking": false}}</code>
+            for vLLM-hosted reasoning models. Must be a JSON object. Stored in plaintext in
+            <code class="font-mono">config.yaml</code> — do not paste secrets you wouldn't store
+            on disk. Keys we manage internally (<code class="font-mono">model</code>,
+            <code class="font-mono">messages</code>, <code class="font-mono">stream</code>,
+            <code class="font-mono">tools</code>, <code class="font-mono">tool_choice</code>,
+            <code class="font-mono">system</code>, <code class="font-mono">temperature</code>,
+            <code class="font-mono">max_tokens</code>) are silently ignored at request time.
+          </p>
+          <textarea
+            v-model="llmFields.extra_request_body_text"
+            rows="6"
+            spellcheck="false"
+            :class="[inputClass, 'font-mono', llmAdvancedError ? 'outline-red-500 dark:outline-red-500' : '']"
+            placeholder='{ "top_p": 0.9 }'
+          ></textarea>
+          <p v-if="llmAdvancedError" class="mt-1 text-xs text-red-600 dark:text-red-400">
+            {{ llmAdvancedError }}
+          </p>
+        </div>
+      </details>
+
     </SettingsSection>
 
     <!-- ── Categorization ─────────────────────────────────────────────────── -->
@@ -605,6 +637,27 @@ function resetAccounts() { initAccountsFields(); accountsError.value = '' }
 
 // ─── LLM section ──────────────────────────────────────────────────────────────
 
+function formatExtraRequestBody(obj: Record<string, any> | null | undefined): string {
+  if (!obj || Object.keys(obj).length === 0) return ''
+  return JSON.stringify(obj, null, 2)
+}
+
+function parseExtraRequestBody(raw: string): { value: Record<string, any> | null; error: string | null } {
+  const trimmed = raw.trim()
+  if (!trimmed) return { value: null, error: null }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch (e) {
+    return { value: null, error: `Invalid JSON: ${(e as Error).message}` }
+  }
+  if (parsed === null) return { value: null, error: null }
+  if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { value: null, error: 'Must be a JSON object (not an array or primitive).' }
+  }
+  return { value: parsed as Record<string, any>, error: null }
+}
+
 const llmFields = reactive({
   finzytrack_ai: config.value?.ai?.llm?.finzytrack_ai ?? false,
   finzytrack_ai_token: config.value?.ai?.llm?.finzytrack_ai_token ?? '',
@@ -617,9 +670,11 @@ const llmFields = reactive({
   max_tokens: config.value?.ai?.llm?.max_tokens ?? 0,
   max_tool_rounds: config.value?.ai?.llm?.max_tool_rounds ?? 12,
   timeout_secs: config.value?.ai?.llm?.timeout_secs ?? 120,
+  extra_request_body_text: formatExtraRequestBody(config.value?.ai?.llm?.extra_request_body),
 })
 const llmSaving = ref(false)
 const llmError = ref('')
+const llmAdvancedError = ref('')
 
 const llmIsDirty = computed(() =>
   llmFields.finzytrack_ai !== (config.value?.ai?.llm?.finzytrack_ai ?? false) ||
@@ -632,7 +687,8 @@ const llmIsDirty = computed(() =>
   llmFields.temperature !== (config.value?.ai?.llm?.temperature ?? 0.1) ||
   llmFields.max_tokens !== (config.value?.ai?.llm?.max_tokens ?? 0) ||
   llmFields.max_tool_rounds !== (config.value?.ai?.llm?.max_tool_rounds ?? 12) ||
-  llmFields.timeout_secs !== (config.value?.ai?.llm?.timeout_secs ?? 120)
+  llmFields.timeout_secs !== (config.value?.ai?.llm?.timeout_secs ?? 120) ||
+  llmFields.extra_request_body_text !== formatExtraRequestBody(config.value?.ai?.llm?.extra_request_body)
 )
 
 function initLlmFields() {
@@ -647,13 +703,26 @@ function initLlmFields() {
   llmFields.max_tokens = config.value?.ai?.llm?.max_tokens ?? 0
   llmFields.max_tool_rounds = config.value?.ai?.llm?.max_tool_rounds ?? 12
   llmFields.timeout_secs = config.value?.ai?.llm?.timeout_secs ?? 120
+  llmFields.extra_request_body_text = formatExtraRequestBody(config.value?.ai?.llm?.extra_request_body)
+  llmAdvancedError.value = ''
 }
 
 async function saveLlm() {
+  // Parse the Advanced "extra request body" textarea before submitting; abort save on error.
+  const { value: extraParsed, error: extraErr } = parseExtraRequestBody(llmFields.extra_request_body_text)
+  if (extraErr) {
+    llmAdvancedError.value = extraErr
+    llmError.value = 'Fix the Advanced field before saving.'
+    return
+  }
+  llmAdvancedError.value = ''
+  // Pretty-print canonicalised value back into the textarea so reload shows the same thing.
+  llmFields.extra_request_body_text = formatExtraRequestBody(extraParsed)
+
   // Omit secret fields when they are the redacted placeholder or empty —
   // sending them back would overwrite the real value with the mask string.
-  const { api_key, finzytrack_ai_token, ...rest } = llmFields
-  const llmPatch: Record<string, unknown> = { ...rest }
+  const { api_key, finzytrack_ai_token, extra_request_body_text: _omit, ...rest } = llmFields
+  const llmPatch: Record<string, unknown> = { ...rest, extra_request_body: extraParsed }
   const isRealKey = api_key && !/^\*+$/.test(api_key)
   if (isRealKey) llmPatch.api_key = api_key
   const isRealToken = finzytrack_ai_token && !/^\*+$/.test(finzytrack_ai_token)

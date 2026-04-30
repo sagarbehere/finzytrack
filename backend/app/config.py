@@ -118,6 +118,17 @@ class LLMConfig(BaseModel):
     max_tool_rounds: int = Field(default=12, ge=1, le=50, description="Maximum tool-call round-trips per user message in the AI assistant.")
     timeout_secs: int = Field(default=120, ge=10, le=600, description="Timeout in seconds for LLM API requests.")
 
+    # ── Advanced: provider-specific request parameters ─────────────────
+    extra_request_body: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Advanced: provider-specific request parameters to merge into every chat call. "
+            "Bring-your-own only — ignored when finzytrack_ai is enabled. "
+            "Routed to OpenAI SDK's extra_body or merged into Anthropic SDK's call kwargs "
+            "depending on the active provider. Stored in plaintext in config.yaml."
+        ),
+    )
+
 
 class AIConfig(BaseModel):
     """AI and machine learning settings."""

@@ -22,6 +22,52 @@ _ANTHROPIC_MAX_TOKENS_DEFAULT = 8192
 _anthropic_max_tokens_warned = False
 
 
+# Keys we manage ourselves and refuse to let users override via extra_request_body.
+# `temperature` and `max_tokens` are first-class fields in Settings; including them
+# here prevents the foot-gun of "I changed temperature in Settings but the extras
+# field still wins."
+_PROTECTED_REQUEST_KEYS = frozenset({
+    "model",
+    "messages",
+    "stream",
+    "tools",
+    "tool_choice",
+    "system",
+    "temperature",
+    "max_tokens",
+})
+
+
+def _filter_protected_keys(extras: dict) -> dict:
+    """Strip keys we manage ourselves; warn once per call about anything dropped."""
+    out: dict = {}
+    dropped: list[str] = []
+    for k, v in extras.items():
+        if k in _PROTECTED_REQUEST_KEYS:
+            dropped.append(k)
+            continue
+        out[k] = v
+    if dropped:
+        logger.warning(
+            "Ignoring protected keys in extra_request_body: %s. "
+            "These are managed by the assistant and cannot be overridden.",
+            sorted(dropped),
+        )
+    return out
+
+
+def _resolve_extra_request_body(config: LLMConfig) -> dict:
+    """Return user-supplied request extras filtered of protected keys.
+
+    Returns an empty dict when no extras are set, when finzytrack_ai is enabled
+    (managed users should never need provider-specific knobs), or when every key
+    was protected.
+    """
+    if not config.extra_request_body or config.finzytrack_ai:
+        return {}
+    return _filter_protected_keys(config.extra_request_body)
+
+
 def _resolve_anthropic_max_tokens(configured: int) -> int:
     """Anthropic requires max_tokens. Warn once and fall back if not set."""
     global _anthropic_max_tokens_warned
@@ -213,6 +259,10 @@ async def _stream_openai(
         call_kwargs["tools"] = tools
         call_kwargs["tool_choice"] = "auto"
 
+    extras = _resolve_extra_request_body(config)
+    if extras:
+        call_kwargs["extra_body"] = extras
+
     # Debug: log the request payload (tools + message count, not full content)
     logger.debug(
         "OpenAI request: model=%s, messages=%d, tools=%s, max_tokens=%s",
@@ -338,6 +388,10 @@ async def _stream_anthropic(
         call_kwargs["system"] = system_content
     if tools:
         call_kwargs["tools"] = tools
+
+    extras = _resolve_extra_request_body(config)
+    if extras:
+        call_kwargs.update(extras)
 
     tool_calls: list[dict] = []
     current_tool: dict | None = None

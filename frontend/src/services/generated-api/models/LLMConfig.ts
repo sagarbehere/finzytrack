@@ -51,6 +51,10 @@ export type LLMConfig = {
      */
     timeout_secs?: number;
     /**
+     * Advanced: provider-specific request parameters to merge into every chat call. Bring-your-own only — ignored when finzytrack_ai is enabled. Routed to OpenAI SDK's extra_body or merged into Anthropic SDK's call kwargs depending on the active provider. Stored in plaintext in config.yaml.
+     */
+    extra_request_body?: (Record<string, any> | null);
+    /**
      * True if AI is usable — either via Finzytrack AI or a bring-your-own model.
      */
     readonly is_configured: boolean;
