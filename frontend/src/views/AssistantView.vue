@@ -892,7 +892,7 @@ async function sendMessage() {
 
   // Track whether a rule was saved this turn so we can validate after streaming
   // These local vars capture what happened this turn; persistent refs are the fallback
-  let savedRuleTool: 'write_csv_rule' | 'write_xls_rule' | 'write_email_rule' | null = null
+  let savedRuleTool: 'write_csv_rule' | 'write_xls_rule' | 'write_email_rule' | 'write_recipe' | null = null
   let savedRuleFilename: string | null = null
 
   try {
@@ -943,17 +943,30 @@ async function sendMessage() {
             console.error('[preview] failed to resolve recipe generators:', err)
           }
         }
-        // Track write tool calls for post-stream validation.
-        // Track write tool calls for post-stream validation.
-        if (event.tool === 'write_csv_rule' || event.tool === 'write_xls_rule' || event.tool === 'write_email_rule') {
+        // Track write tool calls so the post-stream fake-save guard can tell
+        // a real save from a hallucinated one. Recipes (write_recipe) are
+        // tracked here too even though they aren't validated against a sent
+        // file — without this entry the heuristic mis-flags every dashboard
+        // save as a fake.
+        if (
+          event.tool === 'write_csv_rule'
+          || event.tool === 'write_xls_rule'
+          || event.tool === 'write_email_rule'
+          || event.tool === 'write_recipe'
+        ) {
           savedRuleTool = event.tool
           const match = event.message.match(/`([^`]+)`/)
           if (match) {
             savedRuleFilename = match[1].split('/').pop() ?? null
           }
           // Only update persistent refs on success so subsequent turns still have
-          // a valid fallback even if a later write attempt fails.
-          if (event.success && savedRuleFilename) {
+          // a valid fallback even if a later write attempt fails. Skip recipes:
+          // they don't drive the rule-vs-file validation flow.
+          if (
+            event.success
+            && savedRuleFilename
+            && savedRuleTool !== 'write_recipe'
+          ) {
             lastSavedRuleTool.value = savedRuleTool
             lastSavedRuleFilename.value = savedRuleFilename
           }
@@ -998,8 +1011,11 @@ async function sendMessage() {
   // Fall back to the last known filename if the regex didn't match the message.
   const effectiveTool = savedRuleTool
   const effectiveFilename = savedRuleFilename ?? lastSavedRuleFilename.value
-  if (effectiveTool && effectiveFilename && sentFile.value) {
-    const { note, transactions, rawContent, emailFields } = await validateSavedRule(effectiveTool, effectiveFilename, sentFile.value, sentExpectedCount.value)
+  // Only the three rule-writing tools drive file validation; write_recipe is
+  // tracked above so the fake-save guard skips, but it has no file to validate.
+  const ruleTool = effectiveTool && effectiveTool !== 'write_recipe' ? effectiveTool : null
+  if (ruleTool && effectiveFilename && sentFile.value) {
+    const { note, transactions, rawContent, emailFields } = await validateSavedRule(ruleTool, effectiveFilename, sentFile.value, sentExpectedCount.value)
     const lastMsg = messages.value[messages.value.length - 1]
     if (lastMsg) {
       lastMsg.validationNote = note
