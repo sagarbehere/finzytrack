@@ -44,9 +44,13 @@ default_currency: "USD"                 # (required) — infer from bank's count
   have **20+ footer rows**. You must count them explicitly. Use the parse hint's
   "trailing rows detected" count as a starting point, then verify against the last rows visible in
   the file. When in doubt, err on the side of skipping more footer rows.
-- **`skip_lines_start` counting:** count every row from the top of the sheet through and including
-  the column header row. Blank rows count. Use the file preview's left gutter row number for the
-  column header row as the value of `skip_lines_start`.
+- **`skip_lines_start` counting:** the value is **(first transaction row − 1)**. Use the file
+  preview's left gutter to find the row of the first real transaction; everything above it is
+  skipped. Blank rows count. This usually equals the column header row number, but **only when
+  transactions begin immediately after the headers**. If the file has any superfluous rows
+  between the headers and the first transaction (blank separators, sub-headers, totals,
+  "Statement period" lines, etc.), `skip_lines_start` is greater than the header row number.
+  Always derive it from the first transaction row, not from the header row.
 - **`payee` vs `narration`:** a column named "Transaction Remarks", "Remarks", "Description",
   "Particulars", or similar free-text description should be mapped to `payee`, not `narration`.
   Use `narration` only when there is a second, distinct description column alongside a payee column.

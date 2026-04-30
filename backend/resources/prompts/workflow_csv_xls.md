@@ -27,7 +27,12 @@ rule's `skip_lines_start`, `skip_lines_end`, and `columns.*` fields directly —
      name from the `=== Sheet: <name> ===` line in the parse hint, and put it in `sheet_name`
      (not `sheet_index`). If the workbook has more than one sheet, list the other sheet names
      too so the user can pick a different one. Skip this item entirely for CSV/TSV files.
-   - Header row: "Row N contains the column headers — correct?"
+   - Top of file: "Headers on row M, first transaction on row N, so N−1 rows skipped at the
+     top — correct?" Substitute the actual numbers (e.g. *"Headers on row 7, first transaction
+     on row 9, so 8 rows skipped at the top"*). Show the arithmetic so the user can spot
+     superfluous rows between the header and the first transaction — `skip_lines_start` is
+     **(first transaction row − 1)**, not the header row number. The two are equal only when
+     transactions begin immediately after the headers.
    - Date column: "Column X ('Name') — correct?"
    - Date format: "Format looks like `%d/%m/%Y` (e.g. '01/03/2026') — correct?"
    - Amounts: "Separate debit (col X) and credit (col Y) columns — correct?" or "Single amount column at col X — correct?"
