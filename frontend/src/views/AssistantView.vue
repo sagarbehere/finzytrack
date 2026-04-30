@@ -596,7 +596,7 @@ defineOptions({ name: 'AssistantView' })
 import { RouterLink } from 'vue-router'
 import { streamAssistantChat, readFileAsBase64 } from '@/api/assistant'
 import type { AttachedFile, ChatMessage } from '@/api/assistant'
-import { ImportService } from '@/services/generated-api'
+import { ImportService, RecipesService } from '@/services/generated-api'
 import type { TrialExtractedField } from '@/services/generated-api'
 import { useConfig } from '@/composables/useConfig'
 import { parseCsvContent, extractCsvRows } from '@/composables/useCsvParser'
@@ -894,6 +894,11 @@ async function sendMessage() {
   // These local vars capture what happened this turn; persistent refs are the fallback
   let savedRuleTool: 'write_csv_rule' | 'write_xls_rule' | 'write_email_rule' | 'write_recipe' | null = null
   let savedRuleFilename: string | null = null
+  // Relative recipe path (e.g. "dashboards/year-overview.json") captured from
+  // write_recipe's manifest_entry field. Needed for the post-stream disk check
+  // because savedRuleFilename is stripped to a basename and loses the
+  // dashboards/ vs widgets/ subdir.
+  let savedRecipePath: string | null = null
 
   try {
     const ctx: Record<string, string> = { page: 'assistant', mode: sessionMode.value }
@@ -958,6 +963,15 @@ async function sendMessage() {
           const match = event.message.match(/`([^`]+)`/)
           if (match) {
             savedRuleFilename = match[1].split('/').pop() ?? null
+          }
+          // Recipe writes ship the relative path (e.g. "dashboards/foo.json")
+          // in the structured payload — capture it for the post-stream disk
+          // verification. Other write tools don't expose a comparable field.
+          if (event.tool === 'write_recipe' && event.success) {
+            const entry = event.data?.manifest_entry
+            if (typeof entry === 'string' && entry.length > 0) {
+              savedRecipePath = entry
+            }
           }
           // Only update persistent refs on success so subsequent turns still have
           // a valid fallback even if a later write attempt fails. Skip recipes:
@@ -1033,6 +1047,21 @@ async function sendMessage() {
       lastMsg.validationNote = '⚠ The assistant claimed to save the rule, but the write tool was never invoked — the rule was NOT saved. Use the button below to ask the assistant to actually save it.'
     }
     scrollToBottom()
+  } else if (effectiveTool === 'write_recipe' && savedRecipePath) {
+    // Disk verification for recipe saves. The write_recipe tool reported
+    // success, but we still cross-check that the file is actually retrievable
+    // — if the manifest update or the persistence step failed silently, this
+    // is the only signal the user gets.
+    try {
+      await RecipesService.getRecipeFileApiRecipesFilePathGet(savedRecipePath)
+    } catch (err) {
+      console.error('[validation] recipe disk check failed:', err)
+      const lastMsg = messages.value[messages.value.length - 1]
+      if (lastMsg) {
+        lastMsg.validationNote = `⚠ The assistant reported saving \`${savedRecipePath}\`, but the file could not be loaded back from disk — the recipe may not have been written correctly. Use the button below to ask the assistant to retry.`
+      }
+      scrollToBottom()
+    }
   }
 }
 
@@ -1154,9 +1183,9 @@ function formatValidationNote(count: number, filename: string, first?: string, l
 const MAX_VALIDATION_ROWS = 15
 const MAX_RAW_LINES = 60
 
-/** True for the most severe validation outcomes (parse error, 0 transactions, fake save). */
+/** True for the most severe validation outcomes (parse error, 0 transactions, fake save, recipe missing on disk). */
 function isCriticalValidationFailure(note: string): boolean {
-  return /found 0 transaction|could not be validated|was NOT saved/i.test(note)
+  return /found 0 transaction|could not be validated|could not be loaded back from disk|was NOT saved/i.test(note)
 }
 
 /**
@@ -1190,6 +1219,8 @@ function askAssistantToFix(note: string) {
   if (streaming.value) return
   if (/was NOT saved/i.test(note)) {
     inputText.value = "You claimed to save the rule, but the write tool was never invoked and the file was not actually saved. Please call the appropriate write tool now to save the rule."
+  } else if (/could not be loaded back from disk/i.test(note)) {
+    inputText.value = "The recipe was reported as saved but the file is not retrievable from disk. Please call write_recipe again with the same content to save it properly."
   } else if (isCriticalValidationFailure(note)) {
     inputText.value = "The saved rule failed validation (0 transactions or a parser error). Please review the rule, identify what's wrong (sheet name, skip counts, date format, column indices), and save a corrected version."
   } else {
