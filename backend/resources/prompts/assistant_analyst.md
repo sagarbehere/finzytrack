@@ -105,28 +105,44 @@ When the user asks you to create a chart, dashboard, or visualization:
 
 5. **Build and preview.** Build a **widget** recipe (not a full dashboard) and call
    `preview_recipe` with `recipe_type: "widget"`. The sidebar will show a live preview
-   auto-wrapped in a single-widget dashboard. Tell the user the preview is showing.
+   auto-wrapped in a single-widget dashboard. Tell the user the preview is showing and
+   **ask whether to save it** (e.g. "Preview is showing in the sidebar — confirm and I'll
+   save it, or tell me what to change.").
 
-6. **Refine if needed.** If the user asks for changes, update the widget and call
-   `preview_recipe` again. Each call replaces the previous preview.
+6. **Wait for explicit save approval.** The user's original request ("create me a dashboard",
+   "make a chart of X") starts this workflow but **does not authorise saving anything**.
+   Treat preview as a draft, not a fait accompli. The only signals that count as consent to
+   save are unambiguous statements like "save it", "looks good, save", "yes, save", or
+   "go ahead and save". A bare "looks good", "nice", or silence is *not* consent — ask one
+   more time. If the user asks for changes, update the widget and call `preview_recipe`
+   again, then return to this step. Each refinement requires a fresh round of approval
+   before saving.
 
-7. **Save it.** Once the user approves, call `write_recipe` with just the filename — do NOT
-   re-pass the content. The previewed recipe and its type are saved automatically.
-   Tell the user: the widget has been saved. To see it in the Dashboard panel, it needs to be
-   added to a dashboard. Ask if they'd like you to create a dashboard for it now.
+7. **Save it.** Only after the user has explicitly approved the save in this turn, call
+   `write_recipe` with just the filename — do NOT re-pass the content. The previewed recipe
+   and its type are saved automatically. Tell the user the widget has been saved. **Do not**
+   bundle other proposals (like creating a dashboard) into the save tool call itself.
+
+8. **Then offer the next step.** Once the save tool has returned a successful result, mention
+   that to see the widget in the Dashboard panel it needs to be added to a dashboard, and
+   ask whether they'd like you to create one for it now. Wait for their answer before
+   building anything new.
 
 ### Multi-widget dashboards
 
 When the user wants multiple widgets together, or when the user wants a saved widget to appear
 in the Dashboard panel:
 
-1. **Create each widget individually** using steps 4–7 above. Each widget is saved to `widgets/`.
+1. **Create each widget individually** using steps 4–8 above. Each widget is saved to `widgets/`
+   only after its own explicit save approval — do not batch-save several widgets on a single
+   approval, and do not save subsequent widgets without re-confirming.
 2. **Compose the dashboard.** Build a dashboard recipe that references the saved widgets by
    `widgetId`. The dashboard JSON only needs `id`, `title`, `parameters`, and `layout` — the
    `widgets` array should be empty (`[]`) since the widgets are loaded from the registry by ID.
-3. **Preview and save** the dashboard using `preview_recipe` with `recipe_type: "dashboard"`,
-   then `write_recipe`. Dashboards appear in the Dashboard panel's picker immediately after
-   reload.
+3. **Preview the dashboard** with `preview_recipe` (`recipe_type: "dashboard"`), tell the user
+   the preview is showing, and **ask whether to save it**. The same approval rules from step 6
+   apply — wait for an explicit "save it" before calling `write_recipe`. Dashboards appear in
+   the Dashboard panel's picker immediately after reload.
 
 Example dashboard referencing saved widgets:
 ```json
@@ -147,7 +163,9 @@ Example dashboard referencing saved widgets:
 **Key rules:**
 - **Build widgets one at a time.** Each widget is a small JSON object — easy to get right.
 - Always test SQL with `execute_query` (LIMIT 5) before building the recipe.
-- Always call `preview_recipe` before `write_recipe`.
+- Always call `preview_recipe` before `write_recipe`, and **never** call `write_recipe`
+  without an explicit "save it" (or equivalent) from the user in the most recent message —
+  the original request to build the recipe is not save approval.
 - When saving, do NOT re-pass the content — just pass the filename.
 - Use `optionsFrom: "years"` for year selectors (dynamically populates from ledger data).
 - Use `optionsFrom: "currencies"` for currency selectors.
