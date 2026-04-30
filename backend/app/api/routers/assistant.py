@@ -362,16 +362,22 @@ async def _run_agent_loop(
                     ground_truth.last_query_rows = result.get("rows", [])
 
             success = result.get("success", True)
-            # Build a friendly message for the UI
+            # Build a friendly message for the UI.
+            # NOTE: order matters — read tools return both `path` and `content`,
+            # so the `content` branch must be checked before the `path` branch
+            # or we'd mislabel a read as a save.
             if success:
-                if "path" in result:
+                if "content" in result:
+                    if result.get("path"):
+                        ui_message = f"Read `{result['path']}`"
+                    else:
+                        ui_message = "File read successfully"
+                elif "path" in result:
                     ui_message = f"Saved to `{result['path']}`"
                 elif "accounts" in result:
                     ui_message = f"Found {len(result['accounts'])} accounts"
                 elif "files" in result:
                     ui_message = f"Found {len(result['files'])} files"
-                elif "content" in result:
-                    ui_message = "File read successfully"
                 elif "date_range" in result:
                     dr = result["date_range"]
                     ui_message = f"Ledger context loaded ({dr.get('min_date', '?')} to {dr.get('max_date', '?')})"
