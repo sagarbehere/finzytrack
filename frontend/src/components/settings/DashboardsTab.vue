@@ -18,7 +18,8 @@
 
     <p class="mb-4 text-sm text-gray-500 dark:text-gray-400">
       Manage dashboard and widget recipe files.
-      <a href="https://docs.finzytrack.com/reference/dashboard-recipes/" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300">View documentation</a>
+      <a href="https://docs.finzytrack.com/reference/dashboard-recipes/" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300">View documentation</a>.
+      To rename a recipe file, create a new one and delete the old.
     </p>
 
     <!-- Loading state -->
