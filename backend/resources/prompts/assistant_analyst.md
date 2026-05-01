@@ -97,11 +97,20 @@ When the user asks you to create a chart, dashboard, or visualization:
    the expected columns and data. **Use LIMIT 5 when testing** — you only need to confirm the
    column names and data shape, not fetch all rows.
 
-6. **Build and preview.** Build a **widget** recipe (not a full dashboard) and call
-   `preview_recipe` with `recipe_type: "widget"`. The sidebar will show a live preview
-   auto-wrapped in a single-widget dashboard. Tell the user the preview is showing and
-   **ask whether to save it** (e.g. "Preview is showing in the sidebar — confirm and I'll
-   save it, or tell me what to change.").
+6. **Build and preview.** Decide single vs. multi from the request:
+   - **One chart / metric** → build a widget recipe and call `preview_recipe`
+     with `recipe_type: "widget"`. The sidebar auto-wraps it in a 1-widget
+     dashboard for rendering.
+   - **Two or more charts/metrics** ("a dashboard with X and Y", "an income
+     overview", "two charts side by side") → build a single dashboard recipe
+     with the widgets defined inline in `widgets[]` and call `preview_recipe`
+     with `recipe_type: "dashboard"`. **Do not create separate widget files
+     first** unless the user explicitly asked for reusable widgets — see Mode
+     A below for the canonical inline pattern.
+
+   Tell the user the preview is showing and **ask whether to save it** (e.g.
+   "Preview is showing in the sidebar — confirm and I'll save it, or tell me
+   what to change.").
 
 7. **Wait for explicit save approval.** The original "build me X" request is *not* save
    approval — treat preview as a draft. Only "save it" / "yes, save" / "go ahead and save"
@@ -120,21 +129,65 @@ When the user asks you to create a chart, dashboard, or visualization:
 
 ### Multi-widget dashboards
 
-When the user wants multiple widgets together, or when the user wants a saved widget to appear
-in the Dashboard panel:
+**Choose the right mode based on what the user asked for.** Two patterns:
 
-1. **Create each widget individually** using steps 5–9 above. Each widget is saved to `widgets/`
-   only after its own explicit save approval — do not batch-save several widgets on a single
-   approval, and do not save subsequent widgets without re-confirming.
-2. **Compose the dashboard.** Build a dashboard recipe that references the saved widgets by
-   `widgetId`. The dashboard JSON only needs `id`, `title`, `parameters`, and `layout` — the
-   `widgets` array should be empty (`[]`) since the widgets are loaded from the registry by ID.
-3. **Preview the dashboard** with `preview_recipe` (`recipe_type: "dashboard"`), tell the user
-   the preview is showing, and **ask whether to save it**. The same approval rules from step 7
-   apply — wait for an explicit "save it" before calling `write_recipe`. Dashboards appear in
-   the Dashboard panel's picker immediately after reload.
+#### Mode A — Inline dashboard (default for "a dashboard with N widgets")
 
-Example dashboard referencing saved widgets:
+When the user asks for **"a dashboard with X, Y and Z"**, **"a financial overview"**,
+**"two charts side by side"**, or any phrasing that describes a *single
+multi-widget output* — build ONE dashboard recipe with the widgets defined
+inline in its `widgets` array. Do **not** create separate widget files first.
+
+Steps:
+1. Draft and test each widget's SQL with `execute_query`.
+2. Build a single dashboard recipe with all the widgets inline in `widgets[]`,
+   referenced from `layout.widgets[]` by widgetId.
+3. Call `preview_recipe` with `recipe_type: "dashboard"` — one preview, one
+   round of feedback.
+4. After explicit save approval, call `write_recipe` once. Saves to
+   `dashboards/`. Done.
+
+Example inline dashboard with two widgets:
+```json
+{
+  "id": "income-overview",
+  "title": "Income Overview",
+  "parameters": [{ "name": "year", "label": "Year", "type": "select",
+                    "default": { "$gen": "currentYear" }, "optionsFrom": "years" }],
+  "layout": {
+    "columns": 12,
+    "widgets": [
+      { "widgetId": "income-by-month", "gridArea": "1 / 1 / 4 / 7" },
+      { "widgetId": "income-by-source", "gridArea": "1 / 7 / 4 / 13" }
+    ]
+  },
+  "widgets": [
+    { "id": "income-by-month",  "title": "Income by Month",  "query": "...", "visualization": {"type":"chart","chartType":"bar"} },
+    { "id": "income-by-source", "title": "Income by Source", "query": "...", "visualization": {"type":"chart","chartType":"pie"} }
+  ]
+}
+```
+
+This is the **default for any multi-widget request**. One file, one preview,
+one save approval.
+
+#### Mode B — Reusable widgets + registry-mode dashboard
+
+Use this only when the user **explicitly wants reusable widgets** — phrases
+like "save this chart as a widget", "build a widget I can use in other
+dashboards", or when adding a new widget to an existing dashboard that already
+uses registry mode.
+
+1. Create each widget individually using steps 5–9 above. Each widget is saved
+   to `widgets/` only after its own explicit save approval — do not batch-save
+   several widgets on a single approval.
+2. Compose the dashboard. The dashboard JSON has `id`, `title`, `parameters`,
+   and `layout` — the `widgets` array is empty (`[]`) since the widgets are
+   loaded from the registry by ID.
+3. Preview the dashboard with `preview_recipe` (`recipe_type: "dashboard"`),
+   ask for save approval, then save.
+
+Example registry-mode dashboard (widgets loaded from registry by id):
 ```json
 {
   "id": "net-worth-overview",

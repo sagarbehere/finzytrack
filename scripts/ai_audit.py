@@ -93,6 +93,14 @@ def main() -> int:
 
     if args.raw:
         for rec in load_records(args.path, since, tool):
+            # Add a local-time annotation alongside the UTC ts so eyeballed
+            # output matches wall-clock without losing the original record.
+            ts_utc = rec.get("ts")
+            if isinstance(ts_utc, str):
+                try:
+                    rec = {**rec, "ts_local": datetime.fromisoformat(ts_utc).astimezone().isoformat()}
+                except ValueError:
+                    pass
             print(json.dumps(rec, ensure_ascii=False))
         return 0
 

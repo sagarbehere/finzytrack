@@ -149,6 +149,11 @@ function getHelpText(): string | undefined {
 // Re-execute when parameters change
 watch(mergedParameters, () => executeQuery(), { deep: true })
 
+// Re-execute when the recipe itself changes (e.g. AI assistant re-previews
+// after edits — same widgetId, new query/visualization). Without this watcher
+// Vue reuses the keyed instance and the panel keeps showing stale data.
+watch(() => props.recipe, () => executeQuery(), { deep: true })
+
 // Persist widget-level parameter selections when they change
 watch(localParameters, (newParams) => {
   if (!props.recipe.id || !props.recipe.parameters?.length) return
