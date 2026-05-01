@@ -410,8 +410,8 @@
     {
       "id": "gallery-sankey",
       "title": "Money Flow: Income → Expenses (Sankey)",
-      "helpText": "Sankey shows flow between source and target categories with link width proportional to value. Query MUST return columns named 'source', 'target', and 'value' — the runtime derives unique nodes and uses rows directly as links. Override column names via series.sourceField / targetField / valueField if needed. Filter out value <= 0 in SQL — sankey can't show zero or negative flows. ClickLinks: clicking a *link* exposes {{data.source}}/{{data.target}}/{{data.value}}; clicking a *node* exposes {{data.name}}. The gallery filters by target on link clicks; node clicks get an empty filter (you can navigate from a link instead).",
-      "query": "SELECT REPLACE(account, 'Income:', '') AS source, 'Total Income' AS target, ROUND(SUM(-amount), 2) AS value FROM postings WHERE account_type = 'Income' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 UNION ALL SELECT 'Total Income' AS source, REPLACE(account, 'Expenses:', '') AS target, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0",
+      "helpText": "Sankey shows flow between source and target categories with link width proportional to value. Query MUST return 'source', 'target', and 'value' — the runtime derives unique nodes and uses rows directly as links. Any extra columns flow through to click-link templates. Important: when source/target are *display labels* (e.g. 'Total Income' as a synthetic intermediate, or short names with the account prefix stripped), include an extra column like 'realAccount' carrying the underlying account path so clickLinks filter correctly. The gallery filters by {{data.realAccount}} — works on any link regardless of which side. Filter out value <= 0 in SQL — sankey can't show zero or negative flows. Node clicks (clicking the rectangles, not the flows) yield {{data.name}} and have no extra columns.",
+      "query": "SELECT REPLACE(account, 'Income:', '') AS source, 'Total Income' AS target, ROUND(SUM(-amount), 2) AS value, account AS realAccount FROM postings WHERE account_type = 'Income' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 UNION ALL SELECT 'Total Income' AS source, REPLACE(account, 'Expenses:', '') AS target, ROUND(SUM(amount), 2) AS value, account AS realAccount FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0",
       "visualization": {
         "type": "chart",
         "chartType": "sankey",
@@ -433,7 +433,7 @@
         },
         "clickLink": {
           "name": "transactions",
-          "query": { "accountContains": "{{data.target}}" }
+          "query": { "accountContains": "{{data.realAccount}}" }
         }
       }
     },

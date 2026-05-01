@@ -344,13 +344,17 @@ function injectSeriesData(series: EChartsOption['series']): EChartsOption['serie
     }
 
     if (t === 'sankey') {
-      // Build {nodes, links} from {source, target, value} rows. Nodes are
-      // unique source/target names; links are the rows themselves.
+      // Build {nodes, links} from {source, target, value, ...extra} rows.
+      // Nodes are unique source/target names; each link spreads the full
+      // row so click-link templates can resolve {{data.<anyOriginalColumn>}}
+      // — important for sankey because source/target are display labels and
+      // the recipe usually wants to filter by an underlying real account
+      // exposed via an extra column.
       const sourceField = (s as { sourceField?: string }).sourceField || 'source'
       const targetField = (s as { targetField?: string }).targetField || 'target'
       const valueField = (s as { valueField?: string }).valueField || 'value'
       const nodeNames = new Set<string>()
-      const links: Array<{ source: string; target: string; value: number }> = []
+      const links: Row[] = []
       for (const r of rows) {
         const src = String(r[sourceField] ?? '')
         const tgt = String(r[targetField] ?? '')
@@ -358,7 +362,7 @@ function injectSeriesData(series: EChartsOption['series']): EChartsOption['serie
         if (!src || !tgt || !isFinite(v) || v <= 0) continue
         nodeNames.add(src)
         nodeNames.add(tgt)
-        links.push({ source: src, target: tgt, value: v })
+        links.push({ ...r, source: src, target: tgt, value: v })
       }
       const nodes = Array.from(nodeNames).map((name) => ({ name }))
       return { ...s, data: nodes, links } as typeof s
