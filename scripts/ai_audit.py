@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PATH = ROOT / "backend" / "data" / "ai_diagnostics.jsonl"
+DEFAULT_PATH = ROOT / "backend" / "logs" / "ai_diagnostics.jsonl"
 
 
 def parse_since(spec: str) -> datetime | None:

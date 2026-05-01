@@ -1,7 +1,8 @@
 """Append-only audit log for AI assistant validation failures.
 
 Every time a tool returns validation errors to the model, a single JSONL line
-is appended to ``./data/ai_diagnostics.jsonl`` recording:
+is appended to ``./logs/ai_diagnostics.jsonl`` (alongside the main app log)
+recording:
 
   - timestamp (ISO 8601)
   - tool name
@@ -29,7 +30,7 @@ from typing import Iterable
 
 logger = logging.getLogger(__name__)
 
-DIAGNOSTICS_PATH = Path("./data/ai_diagnostics.jsonl")
+DIAGNOSTICS_PATH = Path("./logs/ai_diagnostics.jsonl")
 DIAGNOSTICS_MAX_BYTES = 5 * 1024 * 1024   # 5 MB — same default as the main log
 DIAGNOSTICS_BACKUPS = 3                   # keep .1 .2 .3 then drop the oldest
 _HINT_RE = re.compile(r"Hint:\s*(.+?)(?:\.\s*$|$)")
