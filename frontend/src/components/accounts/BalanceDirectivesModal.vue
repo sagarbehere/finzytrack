@@ -37,7 +37,7 @@
                 <button
                   v-if="!showAddForm"
                   type="button"
-                  @click="showAddForm = true"
+                  @click="openAddForm"
                   class="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-600"
                 >
                   <PlusIcon class="h-4 w-4" />
@@ -72,10 +72,18 @@
                     <CommodityDropdown
                       v-model="addForm.currency"
                       placeholder="e.g. USD"
-                      :allow-custom="true"
+                      :allow-custom="!hasDeclaredCurrencies"
+                      :include-pattern="declaredCurrencyPattern"
                     />
                   </div>
                 </div>
+                <p
+                  v-if="addCurrencyWarning"
+                  class="mt-2 text-xs text-amber-700 dark:text-amber-400"
+                >
+                  <ExclamationTriangleIcon class="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
+                  {{ addCurrencyWarning }}
+                </p>
                 <div class="mt-3">
                   <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
                     <input v-model="addForm.includePad" type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:outline-indigo-600 dark:border-white/10 dark:bg-white/5" />
@@ -231,10 +239,18 @@
                     <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Currency</label>
                     <CommodityDropdown
                       v-model="editForm.newCurrency"
-                      :allow-custom="true"
+                      :allow-custom="!hasDeclaredCurrencies"
+                      :include-pattern="declaredCurrencyPattern"
                     />
                   </div>
                 </div>
+                <p
+                  v-if="editCurrencyWarning"
+                  class="mt-2 text-xs text-amber-700 dark:text-amber-400"
+                >
+                  <ExclamationTriangleIcon class="inline h-3.5 w-3.5 mr-1 -mt-0.5" />
+                  {{ editCurrencyWarning }}
+                </p>
                 <div class="mt-3">
                   <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
                     <input v-model="editForm.includePad" type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:outline-indigo-600 dark:border-white/10 dark:bg-white/5" />
@@ -381,6 +397,37 @@ const expandedErrorIndex = ref<number | null>(null)
 const deleteConfirmIndex = ref<number | null>(null)
 const deleteAlsoPad = ref(true)
 
+// Currency hints derived from the account
+const declaredCurrencies = computed<string[]>(() => props.account?.declaredCurrencies ?? [])
+const postingCurrencies = computed<string[]>(() => props.account?.currencyBadges ?? [])
+const hasDeclaredCurrencies = computed(() => declaredCurrencies.value.length > 0)
+
+// Restrict the dropdown when the open directive constrains the account.
+// `includePattern` accepts a regex; we anchor it to whole-token matches.
+const declaredCurrencyPattern = computed<RegExp | undefined>(() => {
+  if (!hasDeclaredCurrencies.value) return undefined
+  const escaped = declaredCurrencies.value.map(c => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  return new RegExp(`^(${escaped.join('|')})$`)
+})
+
+const defaultCurrency = computed<string>(() => {
+  return declaredCurrencies.value[0] ?? postingCurrencies.value[0] ?? ''
+})
+
+function currencyWarning(picked: string): string {
+  if (!picked) return ''
+  // Constrained accounts use dropdown restriction, so no need to warn here.
+  if (hasDeclaredCurrencies.value) return ''
+  if (postingCurrencies.value.length === 0) return ''
+  if (postingCurrencies.value.includes(picked)) return ''
+  return `Account has no postings in ${picked}. Existing currencies: ${postingCurrencies.value.join(', ')}. The balance assertion will likely fail.`
+}
+
+const addCurrencyWarning = computed(() => currencyWarning(addForm.value.currency))
+const editCurrencyWarning = computed(() =>
+  editingIndex.value === null ? '' : currencyWarning(editForm.value.newCurrency)
+)
+
 // Validations
 const isAddFormValid = computed(() => {
   if (!addForm.value.date || !addForm.value.currency || addForm.value.amount === null) return false
@@ -420,7 +467,24 @@ async function loadDirectives() {
 }
 
 function resetAddForm() {
-  addForm.value = { date: '', amount: 0, currency: '', includePad: false, padSourceAccount: '' }
+  addForm.value = {
+    date: '',
+    amount: 0,
+    currency: defaultCurrency.value,
+    includePad: false,
+    padSourceAccount: '',
+  }
+}
+
+// Re-seed the currency once the account (and therefore its declared currencies)
+// is available, in case resetAddForm ran before defaults were known.
+watch(defaultCurrency, (next) => {
+  if (showAddForm.value && !addForm.value.currency) addForm.value.currency = next
+})
+
+function openAddForm() {
+  resetAddForm()
+  showAddForm.value = true
 }
 
 function cancelAdd() {
