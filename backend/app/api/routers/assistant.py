@@ -78,7 +78,7 @@ router = APIRouter()
 MAX_TOOL_ROUNDS_DEFAULT = 12  # fallback if not in config
 
 
-@router.get("/api/ai/diagnostics")
+@router.get("/ai/diagnostics")
 async def ai_diagnostics():
     """Report whether every file the AI assistant depends on is on disk.
 
