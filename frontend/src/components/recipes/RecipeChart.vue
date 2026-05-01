@@ -331,10 +331,16 @@ function injectSeriesData(series: EChartsOption['series']): EChartsOption['serie
     const rows = props.data as Row[]
 
     if (t === 'heatmap') {
-      // ECharts heatmap-on-calendar wants [date, value] arrays.
+      // ECharts heatmap-on-calendar wants `value: [date, number]`. We use the
+      // *object* form (rather than a bare 2-tuple) so click-link templates
+      // can resolve {{data.date}} / {{data.<originalField>}} on click — the
+      // bare-tuple form would force templates to use {{data.0}}.
       const dateField = (s as { dateField?: string }).dateField || 'date'
       const valueField = (s as { valueField?: string }).valueField || 'value'
-      return { ...s, data: rows.map((r) => [r[dateField], r[valueField]]) } as typeof s
+      return {
+        ...s,
+        data: rows.map((r) => ({ ...r, value: [r[dateField], r[valueField]] })),
+      } as typeof s
     }
 
     if (t === 'sankey') {
@@ -632,10 +638,16 @@ function initChart() {
 
   // Emit click events for series elements
   instance.on('click', (params) => {
-    // For treemap, params.value is a number (the node value), not the data object.
-    // Prefer params.data when params.value is not an object.
-    const value = params.value
-    const data = (typeof value === 'object' && value !== null ? value : params.data) as Record<string, unknown>
+    // Prefer params.data — it's the row object as the recipe expects (with
+    // the original SQL columns accessible to click-link templates). Fall
+    // back to params.value only when data isn't a usable object (e.g.
+    // treemap: params.data is the node object, but for some chart types
+    // ECharts only populates value).
+    const data = (typeof params.data === 'object' && params.data !== null && !Array.isArray(params.data)
+      ? params.data
+      : (typeof params.value === 'object' && params.value !== null && !Array.isArray(params.value)
+        ? params.value
+        : params.data)) as Record<string, unknown> | undefined
     if (data) {
       emit('seriesClick', {
         seriesName: params.seriesName as string,

@@ -292,7 +292,7 @@
     {
       "id": "gallery-funnel",
       "title": "Income → Expenses → Savings (Funnel)",
-      "helpText": "Funnel chart shows ranked stages, larger at top, narrowing down. Query MUST return columns named 'name' (stage label) and 'value' (stage size). Like pie/treemap, the runtime injects rows into series[0].data — do NOT use encode. Use HAVING value > 0 (negatives don't make sense for stages). Good for budget/savings allocation.",
+      "helpText": "Funnel chart shows ranked stages, larger at top, narrowing down. Query MUST return columns named 'name' (stage label) and 'value' (stage size). Like pie/treemap, the runtime injects rows into series[0].data — do NOT use encode. Use HAVING value > 0 (negatives don't make sense for stages). Good for budget/savings allocation. Add a clickLink with `{{data.name}}` when stages map to real account categories; skip clickLink when stages are computed values (like 'After Expenses') that don't match a filterable name.",
       "query": "WITH totals AS (SELECT SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) AS income, SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END) AS expenses FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses')) SELECT 'Income' AS name, income AS value FROM totals UNION ALL SELECT 'After Expenses', income - expenses FROM totals UNION ALL SELECT 'Net Savings', CASE WHEN income - expenses > 0 THEN income - expenses ELSE 0 END FROM totals",
       "visualization": {
         "type": "chart",
@@ -359,7 +359,7 @@
     {
       "id": "gallery-calendar",
       "title": "Daily Spending (Calendar Heatmap)",
-      "helpText": "Calendar heatmap shows one cell per day across a year. Query MUST return columns named 'date' (YYYY-MM-DD) and 'value' (numeric). The runtime projects rows to [date, value] pairs and auto-injects a tooltip formatter that shows DATE + currency-formatted value. The chart needs a top-level `calendar` option (`range` is auto-derived from data if you don't set it) and a `visualMap` for the colour scale. Always set legend:{show:false} — the global legend swatch is cosmetic and clashes with the visualMap colour ramp.",
+      "helpText": "Calendar heatmap shows one cell per day across a year. Query MUST return columns named 'date' (YYYY-MM-DD) and 'value' (numeric). The runtime projects rows to ECharts heatmap data and auto-injects a tooltip formatter that shows DATE + currency-formatted value. The chart needs a top-level `calendar` option (`range` is auto-derived from data if you don't set it) and a `visualMap` for the colour scale. Always set legend:{show:false} — the global legend swatch is cosmetic and clashes with the visualMap colour ramp. ClickLinks work — the runtime exposes the original row's columns to template variables, so {{data.date}} resolves to the cell's date.",
       "query": "SELECT transaction_date AS date, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency AND amount > 0 GROUP BY transaction_date ORDER BY transaction_date",
       "visualization": {
         "type": "chart",
@@ -396,13 +396,21 @@
               "name": "Daily Spending"
             }
           ]
+        },
+        "clickLink": {
+          "name": "transactions",
+          "query": {
+            "accountContains": "Expenses",
+            "dateFrom": "{{data.date}}",
+            "dateTo": "{{data.date}}"
+          }
         }
       }
     },
     {
       "id": "gallery-sankey",
       "title": "Money Flow: Income → Expenses (Sankey)",
-      "helpText": "Sankey shows flow between source and target categories with link width proportional to value. Query MUST return columns named 'source', 'target', and 'value' — the runtime derives unique nodes and uses rows directly as links. Override column names via series.sourceField / targetField / valueField if needed. Filter out value <= 0 in SQL — sankey can't show zero or negative flows.",
+      "helpText": "Sankey shows flow between source and target categories with link width proportional to value. Query MUST return columns named 'source', 'target', and 'value' — the runtime derives unique nodes and uses rows directly as links. Override column names via series.sourceField / targetField / valueField if needed. Filter out value <= 0 in SQL — sankey can't show zero or negative flows. ClickLinks: clicking a *link* exposes {{data.source}}/{{data.target}}/{{data.value}}; clicking a *node* exposes {{data.name}}. The gallery filters by target on link clicks; node clicks get an empty filter (you can navigate from a link instead).",
       "query": "SELECT REPLACE(account, 'Income:', '') AS source, 'Total Income' AS target, ROUND(SUM(-amount), 2) AS value FROM postings WHERE account_type = 'Income' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 UNION ALL SELECT 'Total Income' AS source, REPLACE(account, 'Expenses:', '') AS target, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0",
       "visualization": {
         "type": "chart",
@@ -422,13 +430,17 @@
               "emphasis": { "focus": "adjacency" }
             }
           ]
+        },
+        "clickLink": {
+          "name": "transactions",
+          "query": { "accountContains": "{{data.target}}" }
         }
       }
     },
     {
       "id": "gallery-radar",
       "title": "Spending Profile by Category (Radar)",
-      "helpText": "Radar compares values across multiple dimensions on a single shape. Query returns one row per dimension with columns 'category' (axis label) and 'value' (axis value). The runtime auto-builds the radar.indicator from the categories, scaled to 1.2× the max value. Override via series.indicatorMaxRatio. The recipe can supply a partial top-level `radar:` config to style the axes (axisName, splitLine, splitArea); the runtime merges with the derived indicator. Best for 4-8 dimensions; fewer feels sparse, more becomes hard to read.",
+      "helpText": "Radar compares values across multiple dimensions on a single shape. Query returns one row per dimension with columns 'category' (axis label) and 'value' (axis value). The runtime auto-builds the radar.indicator from the categories, scaled to 1.2× the max value. Override via series.indicatorMaxRatio. The recipe can supply a partial top-level `radar:` config to style the axes (axisName, splitLine, splitArea); the runtime merges with the derived indicator. Best for 4-8 dimensions; fewer feels sparse, more becomes hard to read. **No clickLink** — ECharts radar emits clicks at the subject (the whole row) level rather than the dimension level, so per-axis navigation isn't reliably expressible.",
       "query": "SELECT REPLACE(account, 'Expenses:', '') AS category, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC LIMIT 6",
       "visualization": {
         "type": "chart",
@@ -461,7 +473,7 @@
     {
       "id": "gallery-sunburst",
       "title": "Hierarchical Expenses (Sunburst)",
-      "helpText": "Sunburst shows nested hierarchies as concentric rings. Query returns rows with 'account' (colon-separated path like 'Expenses:Food:Restaurants') and 'value'. The runtime splits paths and builds the nested tree automatically — outer rings are deeper levels. Use when categories naturally nest (account hierarchies, time periods); prefer treemap for flat distributions.",
+      "helpText": "Sunburst shows nested hierarchies as concentric rings. Query returns rows with 'account' (colon-separated path like 'Expenses:Food:Restaurants') and 'value'. The runtime splits paths and builds the nested tree automatically — outer rings are deeper levels. Use when categories naturally nest (account hierarchies, time periods); prefer treemap for flat distributions. **No clickLink** — ECharts sunburst uses clicks for drill-down/zoom navigation; adding a clickLink would conflict with that built-in interaction.",
       "query": "SELECT account, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC",
       "visualization": {
         "type": "chart",
