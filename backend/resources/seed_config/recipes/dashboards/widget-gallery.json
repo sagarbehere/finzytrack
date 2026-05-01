@@ -98,15 +98,16 @@
     {
       "id": "gallery-line",
       "title": "Income Trend (Line)",
-      "helpText": "Line chart. Identical to bar except chartType:'line' and series[].type:'line'. Add 'smooth':true for curved lines, 'symbol':'circle' to mark each point.",
-      "query": "SELECT year_month, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, ROUND(SUM(-amount), 2) AS income FROM postings WHERE account_type = 'Income' AND year = :year AND currency = :currency GROUP BY year_month ORDER BY year_month",
+      "helpText": "Line chart. Identical to bar except chartType:'line' and series[].type:'line'. Add 'smooth':true for curved lines, 'symbol':'circle' to mark each point. For single-series charts, set legend:{show:false} so ECharts doesn't add a redundant series-name strip below.",
+      "query": "SELECT year_month, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, ROUND(SUM(-amount), 2) AS income FROM postings WHERE account_type = 'Income' AND year = :year AND currency = :currency GROUP BY year_month ORDER BY year_month",
       "visualization": {
         "type": "chart",
         "chartType": "line",
         "yAxisLabelFormat": "compact",
         "options": {
           "tooltip": { "trigger": "axis" },
-          "grid": { "top": 30, "bottom": 30, "left": 50, "right": 20 },
+          "legend": { "show": false },
+          "grid": { "top": 16, "bottom": 24, "left": 50, "right": 20 },
           "xAxis": { "type": "category" },
           "yAxis": { "type": "value", "splitLine": { "lineStyle": { "type": "dashed", "opacity": 0.6 } } },
           "series": [
@@ -121,21 +122,30 @@
               "lineStyle": { "width": 2 }
             }
           ]
+        },
+        "clickLink": {
+          "name": "transactions",
+          "query": {
+            "accountContains": "Income",
+            "dateFrom": "{{data.dateFrom}}",
+            "dateTo": "{{data.dateTo}}"
+          }
         }
       }
     },
     {
       "id": "gallery-area",
       "title": "Cumulative Net Cash Flow (Area)",
-      "helpText": "Area chart. Set chartType:'area' but the series.type stays 'line' — area is just a line series with an 'areaStyle':{} object. Combine with smooth:true for a flowing fill. Good for cumulative / running-total visuals.",
-      "query": "WITH monthly AS (SELECT year_month, SUM(CASE WHEN account_type = 'Income' THEN -amount WHEN account_type = 'Expenses' THEN -amount ELSE 0 END) AS delta FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses') GROUP BY year_month) SELECT year_month, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, ROUND(SUM(delta) OVER (ORDER BY year_month), 2) AS net FROM monthly ORDER BY year_month",
+      "helpText": "Area chart. Set chartType:'area' but the series.type stays 'line' — area is just a line series with an 'areaStyle':{} object. Combine with smooth:true for a flowing fill. Good for cumulative / running-total visuals. Suppress the default legend on single-series charts.",
+      "query": "WITH monthly AS (SELECT year_month, SUM(CASE WHEN account_type = 'Income' THEN -amount WHEN account_type = 'Expenses' THEN -amount ELSE 0 END) AS delta FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses') GROUP BY year_month) SELECT year_month, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, ROUND(SUM(delta) OVER (ORDER BY year_month), 2) AS net FROM monthly ORDER BY year_month",
       "visualization": {
         "type": "chart",
         "chartType": "area",
         "yAxisLabelFormat": "compact",
         "options": {
           "tooltip": { "trigger": "axis" },
-          "grid": { "top": 30, "bottom": 30, "left": 50, "right": 20 },
+          "legend": { "show": false },
+          "grid": { "top": 16, "bottom": 24, "left": 50, "right": 20 },
           "xAxis": { "type": "category" },
           "yAxis": { "type": "value", "splitLine": { "lineStyle": { "type": "dashed", "opacity": 0.6 } } },
           "series": [
@@ -144,11 +154,18 @@
               "type": "line",
               "smooth": true,
               "encode": { "x": "month_label", "y": "net" },
-              "itemStyle": { "color": "#7B83AD" },
+              "itemStyle": { "color": "#6366f1" },
               "areaStyle": { "opacity": 0.3 },
               "lineStyle": { "width": 2 }
             }
           ]
+        },
+        "clickLink": {
+          "name": "transactions",
+          "query": {
+            "dateFrom": "{{data.dateFrom}}",
+            "dateTo": "{{data.dateTo}}"
+          }
         }
       }
     },
@@ -186,7 +203,7 @@
     {
       "id": "gallery-scatter",
       "title": "Expense Distribution (Scatter)",
-      "helpText": "Each row in the result is one point. encode:{x,y} maps columns to coordinates; symbolSize can also be encoded for variable-size points. Useful for distributions and outlier-spotting.",
+      "helpText": "Each row in the result is one point. encode:{x,y} maps columns to coordinates; symbolSize can also be encoded for variable-size points. Useful for distributions and outlier-spotting. Suppress the legend on single-series scatters.",
       "query": "SELECT transaction_date, ROUND(amount, 2) AS amount, account FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency AND amount > 0 ORDER BY transaction_date",
       "visualization": {
         "type": "chart",
@@ -194,7 +211,8 @@
         "yAxisLabelFormat": "compact",
         "options": {
           "tooltip": { "trigger": "item" },
-          "grid": { "top": 30, "bottom": 30, "left": 50, "right": 20 },
+          "legend": { "show": false },
+          "grid": { "top": 16, "bottom": 24, "left": 50, "right": 20 },
           "xAxis": { "type": "time" },
           "yAxis": { "type": "value", "splitLine": { "lineStyle": { "type": "dashed", "opacity": 0.6 } } },
           "series": [
@@ -206,6 +224,14 @@
               "itemStyle": { "color": "#E8A951", "opacity": 0.7 }
             }
           ]
+        },
+        "clickLink": {
+          "name": "transactions",
+          "query": {
+            "accountContains": "{{data.account}}",
+            "dateFrom": "{{data.transaction_date}}",
+            "dateTo": "{{data.transaction_date}}"
+          }
         }
       }
     },
@@ -333,13 +359,14 @@
     {
       "id": "gallery-calendar",
       "title": "Daily Spending (Calendar Heatmap)",
-      "helpText": "Calendar heatmap shows one cell per day across a year. Query MUST return columns named 'date' (YYYY-MM-DD) and 'value' (numeric). The runtime projects rows to [date, value] pairs. The chart needs a top-level `calendar` option specifying the year `range`, and a `visualMap` for the colour scale. Use chartType:'calendar', series.type:'heatmap', series.coordinateSystem:'calendar'.",
+      "helpText": "Calendar heatmap shows one cell per day across a year. Query MUST return columns named 'date' (YYYY-MM-DD) and 'value' (numeric). The runtime projects rows to [date, value] pairs and auto-injects a tooltip formatter that shows DATE + currency-formatted value. The chart needs a top-level `calendar` option (`range` is auto-derived from data if you don't set it) and a `visualMap` for the colour scale. Always set legend:{show:false} — the global legend swatch is cosmetic and clashes with the visualMap colour ramp.",
       "query": "SELECT transaction_date AS date, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency AND amount > 0 GROUP BY transaction_date ORDER BY transaction_date",
       "visualization": {
         "type": "chart",
         "chartType": "calendar",
         "options": {
           "tooltip": { "trigger": "item" },
+          "legend": { "show": false },
           "visualMap": {
             "show": true,
             "min": 0,
@@ -401,7 +428,7 @@
     {
       "id": "gallery-radar",
       "title": "Spending Profile by Category (Radar)",
-      "helpText": "Radar compares values across multiple dimensions on a single shape. Query returns one row per dimension with columns 'category' (axis label) and 'value' (axis value). The runtime auto-builds the radar.indicator from the categories, scaled to 1.2× the max value. Override via series.indicatorMaxRatio. Best for 4-8 dimensions; fewer feels sparse, more becomes hard to read.",
+      "helpText": "Radar compares values across multiple dimensions on a single shape. Query returns one row per dimension with columns 'category' (axis label) and 'value' (axis value). The runtime auto-builds the radar.indicator from the categories, scaled to 1.2× the max value. Override via series.indicatorMaxRatio. The recipe can supply a partial top-level `radar:` config to style the axes (axisName, splitLine, splitArea); the runtime merges with the derived indicator. Best for 4-8 dimensions; fewer feels sparse, more becomes hard to read.",
       "query": "SELECT REPLACE(account, 'Expenses:', '') AS category, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC LIMIT 6",
       "visualization": {
         "type": "chart",
@@ -409,12 +436,22 @@
         "options": {
           "tooltip": { "trigger": "item" },
           "legend": { "show": false },
+          "radar": {
+            "shape": "polygon",
+            "splitNumber": 4,
+            "axisName": { "color": "#9ca3af", "fontSize": 11 },
+            "splitLine": { "lineStyle": { "color": "rgba(156,163,175,0.2)" } },
+            "splitArea": { "show": false },
+            "axisLine": { "lineStyle": { "color": "rgba(156,163,175,0.3)" } }
+          },
           "series": [
             {
               "type": "radar",
-              "areaStyle": { "opacity": 0.3 },
-              "lineStyle": { "width": 2 },
-              "itemStyle": { "color": "#7B83AD" },
+              "areaStyle": { "opacity": 0.4, "color": "#6366f1" },
+              "lineStyle": { "width": 2, "color": "#6366f1" },
+              "itemStyle": { "color": "#818cf8" },
+              "symbol": "circle",
+              "symbolSize": 6,
               "label": { "show": false }
             }
           ]

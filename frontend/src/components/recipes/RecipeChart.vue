@@ -472,6 +472,22 @@ const finalOptions = computed<EChartsOption>(() => {
             }) as any,
           }
         : {}),
+      // Heatmap-on-calendar tooltip: params.value is [date, value]. Without a
+      // formatter, ECharts default hides the date — only the number is shown,
+      // which is unhelpful for a calendar view.
+      ...(_firstSeriesType() === 'heatmap'
+        ? {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            formatter: ((params: any) => {
+              const v = params.value
+              if (!Array.isArray(v) || v.length < 2) return String(params.value ?? '')
+              const date = String(v[0] ?? '')
+              const num = Number(v[1] ?? 0)
+              const formatted = props.currency ? formatAmount(num, props.currency) : num.toLocaleString()
+              return `${date}<br/><b>${formatted}</b>`
+            }) as any,
+          }
+        : {}),
       // For axis-trigger charts (bar, line), use valueFormatter to round/format values.
       // This avoids floating-point noise like 52021.060000000005 in tooltips.
       ...(props.currency && !treemap && !pie
@@ -511,11 +527,19 @@ const finalOptions = computed<EChartsOption>(() => {
     }
   }
 
-  // Apply the runtime-derived radar config if the recipe didn't supply one.
-  // Recipe-supplied radar config wins so users can customise the indicator
-  // (e.g. set custom `max` values per axis or re-order the axes).
-  if (radarConfig && !(result as { radar?: unknown }).radar) {
-    ;(result as Record<string, unknown>).radar = radarConfig
+  // Merge runtime-derived radar config with anything the recipe supplied.
+  // Recipe-provided fields (e.g. axisName styling, splitArea, custom indicator
+  // overrides) win; the runtime fills in `indicator` if the recipe didn't
+  // compute one itself. This lets a recipe style the axes without losing the
+  // auto-derived dimension list.
+  if (radarConfig) {
+    const derived = radarConfig as { indicator: Array<{ name: string; max: number }> }
+    const existing = ((result as { radar?: unknown }).radar as Record<string, unknown> | undefined) || {}
+    ;(result as Record<string, unknown>).radar = {
+      ...derived,
+      ...existing,
+      indicator: existing.indicator ?? derived.indicator,
+    }
   }
 
   // For calendar-coordinate heatmaps, derive `calendar.range` from the data's
