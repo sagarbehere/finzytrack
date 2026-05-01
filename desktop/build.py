@@ -47,6 +47,23 @@ def clean():
             shutil.rmtree(d)
 
 
+def sync_ai_resources():
+    """Copy AI reference / schema files from frontend/ into backend/resources/.
+
+    Must run before both the frontend and PyInstaller steps: the frontend
+    needs `recipes.generated.ts` (regenerated below), and PyInstaller bundles
+    `backend/resources/ai_reference/` and `backend/resources/schemas/`.
+    """
+    print('==> Syncing AI reference files...')
+    run([sys.executable, str(ROOT_DIR / 'scripts' / 'sync_ai_reference.py')])
+
+    print('==> Regenerating recipe schema appendix...')
+    run([sys.executable, str(ROOT_DIR / 'scripts' / 'generate_recipe_schema_doc.py')])
+
+    print('==> Regenerating TS types from recipe.schema.json...')
+    run(['npm', 'run', 'generate-recipe-types'], cwd=str(FRONTEND_DIR))
+
+
 def build_frontend():
     print('==> Building Vue frontend...')
     run(['npm', 'run', 'build'], cwd=str(FRONTEND_DIR))
@@ -161,6 +178,11 @@ def main():
 
     if args.clean:
         clean()
+
+    # AI reference sync + schema-driven codegen must happen before the frontend
+    # build (which compiles recipes.generated.ts) and before PyInstaller (which
+    # bundles backend/resources/ai_reference and backend/resources/schemas).
+    sync_ai_resources()
 
     if not args.skip_frontend:
         build_frontend()

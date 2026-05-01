@@ -7,9 +7,12 @@ name: string          # Human-readable rule name (required)
 separator: ","        # Column separator; use "\t" for TSV (default: ",")
 encoding: "utf-8"     # File encoding (default: "utf-8")
 skip_lines_start: 0   # Lines to skip at the START of the file (including blank lines).
-                      # Count every line from the top of the file through the column
-                      # header row — the number you see in the file preview's left gutter
-                      # next to the column header row is exactly this value.
+                      # Value is (first transaction row − 1). Use the file preview's left
+                      # gutter to find the row of the first real transaction; everything
+                      # above it is skipped. This equals the column header row number ONLY
+                      # when transactions begin immediately after the headers — if there
+                      # are blank separators, sub-headers, or "Statement period" lines
+                      # between the header and the first transaction, the value is larger.
 skip_lines_end: 0     # Lines to skip at the END of the file.
                       # Set this to the actual number of footer rows visible in the
                       # file preview (disclaimers, legends, totals, blank trailing
@@ -40,9 +43,13 @@ default_currency: "INR"                  # (required) ISO currency code — infe
 - Use `amount` when there is a single signed amount column (negative = debit, positive = credit,
   or set `negate_amounts: true` if the signs are inverted).
 - Use `amount_debit` + `amount_credit` when the file has separate columns for debit and credit.
-- **Counting `skip_lines_start`:** count every line from the top of the file through and including
-  the column header row. Blank lines count. The file preview's left gutter shows the line number
-  of each row — use that number for the column header row as the value of `skip_lines_start`.
+- **Counting `skip_lines_start`:** the value is **(first transaction row − 1)**. Use the file
+  preview's left gutter to find the row of the first real transaction; everything above it is
+  skipped. Blank rows count. This usually equals the column header row number, but **only when
+  transactions begin immediately after the headers**. If the file has any superfluous rows
+  between the headers and the first transaction (blank separators, sub-headers, totals,
+  "Statement period" lines, etc.), `skip_lines_start` is greater than the header row number.
+  Always derive it from the first transaction row, not from the header row.
 - **`skip_lines_end`** should be set to the actual number of footer rows at the end of the file —
   count everything after the last transaction row (disclaimers, legends, blank lines, totals).
   Use the right gutter of the file preview, which counts rows from the bottom, to determine this.
@@ -65,7 +72,7 @@ default_currency: "INR"                  # (required) ISO currency code — infe
 name: "Axis Bank NRE Savings"
 separator: ","
 encoding: "utf-8"
-skip_lines_start: 17   # 16 metadata/header lines + 1 column header row
+skip_lines_start: 17   # first transaction is on row 18; everything above is skipped
 skip_lines_end: 0
 date_format: "%d-%m-%Y"
 decimal_separator: "."

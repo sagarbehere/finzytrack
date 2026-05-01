@@ -103,7 +103,11 @@ function initializeParameters() {
   const params: Record<string, string | number> = {}
   if (props.dashboard.parameters) {
     for (const param of props.dashboard.parameters) {
-      params[param.name] = param.default
+      // `default` is typed as `string | number | { $gen, ... }` per the JSON
+      // schema, but resolveGenerators (run by useRecipeLoader on every JSON
+      // recipe before it reaches this component) replaces $gen objects with
+      // their scalar results, so by this point the value is always a scalar.
+      params[param.name] = param.default as string | number
     }
   }
   // Override defaults with initial parameters (e.g., from URL query params)

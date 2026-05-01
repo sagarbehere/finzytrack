@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
+from app.ai.diagnostics import record_validation_failure
 from app.ai.tools.base import BaseTool
 from app.email_import.rule_schemas import ExtractionFieldDef
 
@@ -16,6 +17,17 @@ def _apply_cleanup(value: str, cleanup: str | None) -> str:
     if cleanup == "strip_whitespace":
         return value.strip()
     return value
+
+
+def _sample_snippet(text: str, max_chars: int = 240) -> str:
+    """Return a short, single-line snippet of text for diagnostic messages."""
+    if not text:
+        return ""
+    # Collapse whitespace so the snippet is one readable line
+    flat = " ".join(text.split())
+    if len(flat) <= max_chars:
+        return flat
+    return flat[:max_chars] + "..."
 
 
 def _test_one_field(
@@ -51,13 +63,18 @@ def _test_one_field(
         if num_groups != 1:
             return {
                 "matched": False,
+                "pattern_used": field_def.pattern,
                 "error": (
                     f"Pattern has {num_groups} capture group(s) — exactly 1 required. "
                     f"Wrap the value you want to extract in parentheses: (...)"
                 ),
             }
     except re.error as e:
-        return {"matched": False, "error": f"Invalid regex: {e}"}
+        return {
+            "matched": False,
+            "pattern_used": field_def.pattern,
+            "error": f"Invalid regex: {e}",
+        }
 
     text = subject if field_def.source == "subject" else body
     flags = re.DOTALL if field_def.multiline else 0
@@ -65,7 +82,19 @@ def _test_one_field(
     compiled = re.compile(field_def.pattern, re.IGNORECASE | flags)
     m = compiled.search(text)
     if not m:
-        return {"matched": False, "error": f"Pattern did not match in {field_def.source}"}
+        return {
+            "matched": False,
+            "pattern_used": field_def.pattern,
+            "source": field_def.source,
+            "sample_text": _sample_snippet(text),
+            "error": (
+                f"Pattern did not match anywhere in the {field_def.source}. "
+                f"Inspect 'sample_text' to see what was searched and adjust the pattern. "
+                f"Common causes: literal text in the email differs from the pattern (case, "
+                f"whitespace, currency symbol), or the pattern requires DOTALL — set "
+                f"multiline=true to let . match newlines."
+            ),
+        }
 
     raw_value = m.group(1)
     cleaned = _apply_cleanup(raw_value, field_def.cleanup)
@@ -78,6 +107,7 @@ def _test_one_field(
             return {
                 "matched": True,
                 "raw": raw_value,
+                "pattern_used": field_def.pattern,
                 "error": f"Extracted '{cleaned}' but cannot convert to float — check cleanup or pattern",
             }
     elif field_def.type == "integer":
@@ -87,6 +117,7 @@ def _test_one_field(
             return {
                 "matched": True,
                 "raw": raw_value,
+                "pattern_used": field_def.pattern,
                 "error": f"Extracted '{cleaned}' but cannot convert to integer",
             }
     elif field_def.type == "datetime":
@@ -94,6 +125,7 @@ def _test_one_field(
             return {
                 "matched": True,
                 "raw": raw_value,
+                "pattern_used": field_def.pattern,
                 "error": "datetime field requires a 'format' key (strptime format string)",
             }
         try:
@@ -103,12 +135,13 @@ def _test_one_field(
             return {
                 "matched": True,
                 "raw": raw_value,
+                "pattern_used": field_def.pattern,
                 "error": f"Extracted '{cleaned}' but cannot parse as datetime with format '{field_def.format}': {e}",
             }
     else:
         display_value = cleaned
 
-    result: dict = {"matched": True, "value": display_value}
+    result: dict = {"matched": True, "value": display_value, "pattern_used": field_def.pattern}
     if raw_value != display_value:
         result["raw"] = raw_value
     return result
@@ -238,6 +271,17 @@ class TestEmailExtractionTool(BaseTool):
         # success=False when any required field or filter fails — this turns the UI badge red
         all_ok = len(failed) == 0 and len(filter_failures) == 0
         has_required_failure = len(required_failures) > 0 or len(filter_failures) > 0
+
+        if has_required_failure:
+            # Synthesise one error string per failing field/filter for the audit log
+            audit_errors = []
+            for fname in required_failures:
+                err = (fields.get(fname) or {}).get("error") or "did not match"
+                audit_errors.append(f"fields.{fname}: {err}")
+            for fkey in filter_failures:
+                err = (filters.get(fkey) or {}).get("error") or "did not match"
+                audit_errors.append(f"filters.{fkey}: {err}")
+            record_validation_failure("test_email_extraction", audit_errors)
 
         return {
             "success": not has_required_failure,

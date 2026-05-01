@@ -5,6 +5,10 @@ ignore
 # User's active config (personal rules, recipes, API keys) — seeded from resources/seed_config/
 backend/config/
 
+# AI reference files and JSON Schemas — synced from frontend/src/ by scripts/sync_ai_reference.py
+backend/resources/ai_reference/
+backend/resources/schemas/
+
 __pycache__/
 *.pyc
 *.pyo

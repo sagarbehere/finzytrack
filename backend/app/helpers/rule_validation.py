@@ -4,10 +4,33 @@ import io
 from pathlib import Path
 from typing import Type
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from ruamel.yaml import YAML
 
 from app.exceptions import APIError
+
+
+def format_pydantic_errors(exc: ValidationError) -> list[str]:
+    """Convert a ValidationError into one human-readable string per problem.
+
+    Each line names the offending field path, the problem, and (when available)
+    the input value the user supplied — enough information for an AI assistant
+    to identify and fix the mistake without re-reading the schema.
+    """
+    lines: list[str] = []
+    for err in exc.errors():
+        loc = ".".join(str(p) for p in err["loc"]) if err.get("loc") else "(root)"
+        msg = err.get("msg", "invalid")
+        input_value = err.get("input", None)
+        if input_value is None or (isinstance(input_value, str) and not input_value):
+            lines.append(f"{loc}: {msg}")
+        else:
+            # Truncate long inputs so the message stays readable
+            shown = input_value
+            if isinstance(shown, str) and len(shown) > 60:
+                shown = shown[:57] + "..."
+            lines.append(f"{loc}: {msg} (got {shown!r})")
+    return lines
 
 
 def parse_yaml(content: str) -> dict:

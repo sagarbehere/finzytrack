@@ -51,7 +51,10 @@ from app.ai.tools.list_recipes import ListRecipesTool
 from app.ai.tools.read_recipe import ReadRecipeTool
 from app.ai.tools.get_recipe_schema import GetRecipeSchemaTool
 from app.ai.tools.preview_recipe import PreviewRecipeTool
+from app.ai.reference import get_readiness
+from app.ai.tools.read_reference import ReadReferenceTool
 from app.ai.tools.write_recipe import WriteRecipeTool
+from app.helpers.response_helpers import success_json_response
 from app.core.backup_manager import BackupManager
 from app.core.beancount_manager import BeancountManager
 from app.core.config_manager import ConfigManager
@@ -73,6 +76,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_TOOL_ROUNDS_DEFAULT = 12  # fallback if not in config
+
+
+@router.get("/api/ai/diagnostics")
+async def ai_diagnostics():
+    """Report whether every file the AI assistant depends on is on disk.
+
+    A standalone health-check the user (or a script) can hit to verify that
+    `scripts/sync_ai_reference.py` was run and the bundle is intact. This
+    prevents 'silent failure' where the assistant believes it has access to
+    reference files / schemas that aren't actually present.
+    """
+    return success_json_response(get_readiness())
 
 
 def _log_context_size(messages: list[dict], tool_schemas: list[dict], iteration: int) -> None:
@@ -208,6 +223,7 @@ def _build_registry(
             registry.register(ReadRecipeTool(recipes_dir))
             registry.register(PreviewRecipeTool(sqlite_path))
             registry.register(WriteRecipeTool(recipes_dir, sqlite_path, backup_manager))
+            registry.register(ReadReferenceTool())
 
     return registry
 

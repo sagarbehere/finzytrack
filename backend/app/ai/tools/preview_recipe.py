@@ -10,6 +10,7 @@ it without the LLM needing to re-output the entire JSON.
 
 import logging
 
+from app.ai.diagnostics import record_validation_failure
 from app.ai.tools.base import BaseTool
 from app.ai.tools.write_recipe import _dry_run_queries
 from app.helpers.recipe_validation import (
@@ -108,6 +109,7 @@ class PreviewRecipeTool(BaseTool):
             # Validate as a widget
             errors = _validate_widget(content, "(root)")
             if errors:
+                record_validation_failure("preview_recipe", errors, recipe_id=content.get("id"))
                 return {
                     "success": False,
                     "error": "Widget validation failed",
@@ -119,6 +121,7 @@ class PreviewRecipeTool(BaseTool):
                 {"widgets": [content]}, self._sqlite_path
             )
             if sql_errors:
+                record_validation_failure("preview_recipe.sql", sql_errors, recipe_id=content.get("id"))
                 return {
                     "success": False,
                     "error": "SQL query validation failed",
@@ -140,6 +143,7 @@ class PreviewRecipeTool(BaseTool):
             # Validate as a dashboard
             errors = _validate_dashboard(content)
             if errors:
+                record_validation_failure("preview_recipe", errors, recipe_id=content.get("id"))
                 return {
                     "success": False,
                     "error": "Dashboard validation failed",
@@ -148,6 +152,7 @@ class PreviewRecipeTool(BaseTool):
 
             sql_errors = _dry_run_queries(content, self._sqlite_path)
             if sql_errors:
+                record_validation_failure("preview_recipe.sql", sql_errors, recipe_id=content.get("id"))
                 return {
                     "success": False,
                     "error": "SQL query validation failed",

@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://finzytrack.app/schemas/recipe.schema.json",
+  "title": "FinzyTrack Recipe",
+  "description": "JSON shape of a dashboard or widget recipe authored by the AI assistant or by a user. Source of truth for both validation and the prompt-doc appendix. Function-typed fields (transform, getValueLink, etc.) on the runtime TypeScript types are deliberately excluded — only serialisable fields appear here.",
+  "$defs": {
+    "ValueFormat": {
+      "type": "string",
+      "enum": [
+        "currency",
+        "percent",
+        "number",
+        "compact",
+        "signedCurrency",
+        "date",
+        "dateShort",
+        "accountName",
+        "accountName2"
+      ],
+      "description": "Predefined value formatter applied at render time."
+    },
+    "ChartType": {
+      "type": "string",
+      "enum": ["bar", "line", "pie", "area", "scatter", "treemap"]
+    },
+    "RecipeParameter": {
+      "type": "object",
+      "required": ["name", "label", "type"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "SQL placeholder name (referenced as :name in queries)." },
+        "label": { "type": "string", "minLength": 1, "description": "Human-readable label shown in the parameter UI." },
+        "type": { "type": "string", "enum": ["date", "select", "number"] },
+        "default": {
+          "description": "Default value, or a generator object {\"$gen\": \"name\"} resolved at runtime.",
+          "oneOf": [
+            { "type": "string" },
+            { "type": "number" },
+            {
+              "type": "object",
+              "required": ["$gen"],
+              "properties": { "$gen": { "type": "string" } }
+            }
+          ]
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["value", "label"],
+            "properties": {
+              "value": { "type": ["string", "number"] },
+              "label": { "type": "string" }
+            }
+          }
+        },
+        "optionsFrom": {
+          "type": "string",
+          "enum": ["currencies", "years"],
+          "description": "Populate options dynamically from the user's ledger."
+        },
+        "min": { "type": "number" },
+        "max": { "type": "number" }
+      }
+    },
+    "JsonValueLinkConfig": {
+      "type": "object",
+      "required": ["name", "query"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Vue route name, e.g. 'transactions'." },
+        "query": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Template strings interpolated with {{data.field}}, {{row.label}}, {{parameters.x}}, {{dateFrom}}, {{dateTo}}."
+        }
+      }
+    },
+    "JsonKPIVisualization": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "kpi" },
+        "icon": { "type": "string", "description": "Single character (↑ ↓ $ % # or any Unicode)." },
+        "iconColor": { "type": "string", "enum": ["blue", "green", "red", "purple", "amber"] },
+        "valueField": { "type": "string", "description": "Column to read the value from (default: 'value')." },
+        "format": { "$ref": "#/$defs/ValueFormat" },
+        "showTrend": { "type": "boolean" },
+        "trendField": { "type": "string" },
+        "multiCurrency": { "type": "boolean", "description": "Group amounts by currency. Query must return currency and amount columns." },
+        "amountField": { "type": "string" },
+        "currencyField": { "type": "string" },
+        "clickLink": { "$ref": "#/$defs/JsonValueLinkConfig" }
+      }
+    },
+    "JsonChartVisualization": {
+      "type": "object",
+      "required": ["type", "chartType"],
+      "properties": {
+        "type": { "const": "chart" },
+        "chartType": { "$ref": "#/$defs/ChartType" },
+        "options": { "type": "object", "description": "ECharts options object." },
+        "clickLink": { "$ref": "#/$defs/JsonValueLinkConfig" },
+        "seriesClickLinks": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              { "$ref": "#/$defs/JsonValueLinkConfig" },
+              { "type": "null" }
+            ]
+          },
+          "description": "Per-series click links keyed by series name. Set to null to disable for that series."
+        },
+        "seriesLabelFormat": { "$ref": "#/$defs/ValueFormat" },
+        "yAxisLabelFormat": { "$ref": "#/$defs/ValueFormat" },
+        "xAxisLabelFormat": { "$ref": "#/$defs/ValueFormat" }
+      }
+    },
+    "JsonTableColumn": {
+      "type": "object",
+      "required": ["key", "label"],
+      "properties": {
+        "key": { "type": "string" },
+        "label": { "type": "string" },
+        "format": { "$ref": "#/$defs/ValueFormat" },
+        "align": { "type": "string", "enum": ["left", "center", "right"] },
+        "link": { "$ref": "#/$defs/JsonValueLinkConfig" }
+      }
+    },
+    "JsonTableVisualization": {
+      "type": "object",
+      "required": ["type", "columns"],
+      "properties": {
+        "type": { "const": "table" },
+        "columns": { "type": "array", "items": { "$ref": "#/$defs/JsonTableColumn" } }
+      }
+    },
+    "JsonPivotVisualization": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "pivot" },
+        "rowHeader": { "type": "string", "description": "Label for the row header column (default: 'Account')." },
+        "format": { "$ref": "#/$defs/ValueFormat" },
+        "showRowTotals": { "type": "boolean" },
+        "showColumnTotals": { "type": "boolean" },
+        "valueLink": { "$ref": "#/$defs/JsonValueLinkConfig" }
+      }
+    },
+    "JsonRecipeVisualization": {
+      "oneOf": [
+        { "$ref": "#/$defs/JsonChartVisualization" },
+        { "$ref": "#/$defs/JsonKPIVisualization" },
+        { "$ref": "#/$defs/JsonTableVisualization" },
+        { "$ref": "#/$defs/JsonPivotVisualization" }
+      ]
+    },
+    "TransformConfig": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["sortBy", "limit", "pluck", "pivot"] },
+        "field": { "type": "string", "minLength": 1, "description": "For sortBy or pluck." },
+        "order": { "type": "string", "enum": ["asc", "desc"] },
+        "count": { "type": "number", "minimum": 1, "description": "For limit transform." },
+        "rowField": { "type": "string", "minLength": 1, "description": "For pivot — column whose values become row labels." },
+        "columnField": { "type": "string", "minLength": 1, "description": "For pivot — column whose values become column headers." },
+        "valueField": { "type": "string", "minLength": 1, "description": "For pivot — column containing cell values." },
+        "formatColumn": { "type": "string", "enum": ["monthYear", "yearMonth"] },
+        "sortRowsBy": { "type": "string", "enum": ["total_desc", "total_asc", "label_asc", "label_desc"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "pluck" } } },
+          "then": { "required": ["field"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "pivot" } } },
+          "then": { "required": ["rowField", "columnField", "valueField"] }
+        }
+      ]
+    },
+    "Transform": {
+      "oneOf": [
+        { "type": "string", "enum": ["none", "firstRow", "firstValue"] },
+        { "$ref": "#/$defs/TransformConfig" }
+      ]
+    },
+    "WidgetLayout": {
+      "type": "object",
+      "required": ["widgetId", "gridArea"],
+      "properties": {
+        "widgetId": { "type": "string", "minLength": 1 },
+        "gridArea": {
+          "type": "string",
+          "minLength": 1,
+          "description": "CSS grid-area: 'row-start / col-start / row-end / col-end' (1-based, e.g. '1 / 1 / 2 / 4')."
+        }
+      }
+    },
+    "RecipeId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+      "description": "Lowercase letters, numbers, and hyphens. Must start and end alphanumeric (e.g. 'my-dashboard-name')."
+    },
+    "JsonWidgetRecipe": {
+      "type": "object",
+      "required": ["id", "title", "query", "visualization"],
+      "properties": {
+        "id": { "$ref": "#/$defs/RecipeId" },
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "helpText": { "type": "string", "description": "Tooltip shown as ⓘ icon." },
+        "parameters": { "type": "array", "items": { "$ref": "#/$defs/RecipeParameter" } },
+        "dbType": { "type": "string", "enum": ["sqlite", "beanquery"], "description": "Query engine override (defaults to dashboard/view setting)." },
+        "query": { "type": "string", "minLength": 1, "description": "SQL SELECT (SQLite). Use :paramName for parameter placeholders." },
+        "transform": { "$ref": "#/$defs/Transform" },
+        "visualization": { "$ref": "#/$defs/JsonRecipeVisualization" }
+      }
+    },
+    "JsonDashboardRecipe": {
+      "type": "object",
+      "required": ["id", "title", "layout", "widgets"],
+      "properties": {
+        "id": { "$ref": "#/$defs/RecipeId" },
+        "title": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "parameters": { "type": "array", "items": { "$ref": "#/$defs/RecipeParameter" } },
+        "layout": {
+          "type": "object",
+          "required": ["columns", "widgets"],
+          "properties": {
+            "columns": { "type": "integer", "description": "Total columns in the grid (12 typical)." },
+            "gap": { "type": "string", "description": "CSS gap, e.g. '1.5rem'." },
+            "rowHeight": { "type": "string", "description": "CSS row height, e.g. '140px' or '200px'." },
+            "widgets": { "type": "array", "items": { "$ref": "#/$defs/WidgetLayout" } }
+          }
+        },
+        "widgets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/JsonWidgetRecipe" },
+          "description": "Inline widget definitions. Empty [] when widgets are loaded by widgetId from the registry."
+        }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/JsonWidgetRecipe" },
+    { "$ref": "#/$defs/JsonDashboardRecipe" }
+  ]
+}

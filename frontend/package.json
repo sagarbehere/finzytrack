@@ -4,6 +4,8 @@
   "description": "Finzytrack Frontend - Privacy-focused personal finance application",
   "type": "module",
   "scripts": {
+    "predev": "npm run generate-recipe-types",
+    "prebuild": "npm run generate-recipe-types",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
@@ -11,7 +13,8 @@
     "format": "prettier --write src/",
     "test": "vitest",
     "test:run": "vitest run",
-    "generate-api": "npx openapi-typescript-codegen --input http://localhost:8001/openapi.json --output ./src/services/generated-api"
+    "generate-api": "npx openapi-typescript-codegen --input http://localhost:8001/openapi.json --output ./src/services/generated-api",
+    "generate-recipe-types": "json2ts -i src/types/recipe.schema.json -o src/types/recipes.generated.ts --bannerComment '/* Auto-generated from recipe.schema.json — do not edit by hand. Regenerate via npm run generate-recipe-types. */'"
   },
   "dependencies": {
     "@headlessui/vue": "^1.7.22",
@@ -45,6 +48,7 @@
     "eslint": "^8.57.0",
     "eslint-plugin-vue": "^9.27.0",
     "happy-dom": "^20.8.9",
+    "json-schema-to-typescript": "^15.0.4",
     "openapi-typescript-codegen": "^0.29.0",
     "prettier": "^3.3.0",
     "stream-browserify": "^3.0.0",

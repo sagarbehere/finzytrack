@@ -22,6 +22,7 @@ anthropic>=0.86.0
 pdfplumber>=0.11.0  # PDF text extraction for non-Anthropic LLM providers
 python-multipart>=0.0.18  # required by FastAPI for File/Form uploads
 python-dotenv>=1.2.2
+jsonschema>=4.20.0  # validates recipe.schema.json against AI-authored recipes
 
 
 beanquery>=0.2.0

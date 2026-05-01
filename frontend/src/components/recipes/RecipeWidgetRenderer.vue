@@ -14,7 +14,7 @@
   <!-- Chart -->
   <RecipeChart
     v-else-if="recipe.visualization.type === 'chart'"
-    :chartOptions="recipe.visualization.options"
+    :chartOptions="recipe.visualization.options ?? {}"
     :data="Array.isArray(data) ? data : []"
     :clickable="hasChartClickHandler()"
     :currency="currencyParam"
@@ -179,7 +179,7 @@ function getKPIFormatFunction(): ((value: number) => string) | undefined {
 
   // TypeScript recipe with formatValue function
   if ('formatValue' in viz && typeof viz.formatValue === 'function') {
-    return viz.formatValue
+    return viz.formatValue as (value: number) => string
   }
 
   // JSON recipe with format string
@@ -300,7 +300,7 @@ function getPivotValueFormat(): ((value: number) => string) | undefined {
 
   // TypeScript recipe with valueFormat function
   if ('valueFormat' in viz && typeof viz.valueFormat === 'function') {
-    return viz.valueFormat
+    return viz.valueFormat as (value: number) => string
   }
 
   // JSON recipe with format string

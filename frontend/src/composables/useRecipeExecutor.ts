@@ -227,7 +227,11 @@ export function useRecipeExecutor() {
     const params: Record<string, string | number> = {}
     if (recipe.parameters) {
       for (const param of recipe.parameters) {
-        params[param.name] = param.default
+        // `default` is typed as `string | number | { $gen, ... }` per the JSON
+        // schema, but resolveGenerators (called by useRecipeLoader before the
+        // recipe reaches us) replaces every `$gen` object with its scalar
+        // result, so by this point the value is always a string or number.
+        params[param.name] = param.default as string | number
       }
     }
     return params

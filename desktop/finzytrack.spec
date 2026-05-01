@@ -52,6 +52,10 @@ a = Analysis(
         (str(BACKEND / 'app' / 'templates'), 'app/templates'),
         # AI prompt templates
         (str(BACKEND / 'resources' / 'prompts'), 'resources/prompts'),
+        # AI reference source files (synced from frontend/ by scripts/sync_ai_reference.py)
+        (str(BACKEND / 'resources' / 'ai_reference'), 'resources/ai_reference'),
+        # JSON Schemas — recipe_validation.py reads recipe.schema.json from here at runtime
+        (str(BACKEND / 'resources' / 'schemas'), 'resources/schemas'),
         # Frontend built assets
         (str(FRONTEND_DIST), 'frontend_dist'),
         # beancount VERSION file (read at import time)

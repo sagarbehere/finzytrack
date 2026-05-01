@@ -305,7 +305,6 @@ Available for `seriesLabelFormat`, `yAxisLabelFormat`, `xAxisLabelFormat`, and K
 |--------|--------|---------|
 | `"currency"` | $14,200 | Dollar amounts |
 | `"compact"` | 14.2k | Large numbers |
-| `"compactCurrency"` | $14.2k | Large currency amounts |
 | `"number"` | 14,200 | Plain numbers |
 | `"percent"` | 42% | Percentages |
 | `"accountName"` | Groceries | Last segment of account path |
@@ -332,81 +331,162 @@ Make values clickable to navigate to the transactions view with filters.
 ```
 Set a series to `null` to explicitly disable click-through for that series.
 
-### Complete single-widget dashboard example
+### Full examples
 
-For a user request like "show me a bar chart of my top 10 expense categories":
+For a complete reference combining structure, parameters, SQL, and click-through links,
+call `read_recipe` on an existing widget or dashboard (see `list_recipes`). Examples like
+`year-summary` and `month-summary` cover the common multi-widget patterns: KPI row →
+full-width chart → pivot table.
 
-```json
-{
-  "id": "top-expenses-bar",
-  "title": "Top Expense Categories",
-  "description": "Bar chart showing highest expense categories",
-  "parameters": [
-    {
-      "name": "year",
-      "label": "Year",
-      "type": "select",
-      "default": { "$gen": "currentYear" },
-      "optionsFrom": "years"
-    },
-    {
-      "name": "currency",
-      "label": "Currency",
-      "type": "select",
-      "default": { "$gen": "defaultCurrency" },
-      "optionsFrom": "currencies"
-    }
-  ],
-  "layout": {
-    "columns": 6,
-    "gap": "1.5rem",
-    "rowHeight": "200px",
-    "widgets": [
-      { "widgetId": "top-expenses-chart", "gridArea": "1 / 1 / 4 / 7" }
-    ]
-  },
-  "widgets": [
-    {
-      "id": "top-expenses-chart",
-      "title": "Top 10 Expense Categories",
-      "query": "SELECT REPLACE(account, 'Expenses:', '') AS name, account, SUM(amount) AS total FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING total > 0 ORDER BY total DESC LIMIT 10",
-      "visualization": {
-        "type": "chart",
-        "chartType": "bar",
-        "seriesLabelFormat": "currency",
-        "xAxisLabelFormat": "compact",
-        "yAxisLabelFormat": "accountName",
-        "options": {
-          "grid": { "left": 120, "right": 24, "top": 16, "bottom": 16 },
-          "xAxis": { "type": "value" },
-          "yAxis": { "type": "category", "axisLabel": { "width": 100, "overflow": "truncate" } },
-          "series": [
-            {
-              "name": "Amount",
-              "type": "bar",
-              "encode": { "x": "total", "y": "name" },
-              "itemStyle": { "color": "#6366f1" },
-              "label": { "show": true, "position": "right" }
-            }
-          ]
-        },
-        "clickLink": {
-          "name": "transactions",
-          "query": {
-            "accountContains": "{{data.account}}",
-            "dateFrom": "{{parameters.year}}-01-01",
-            "dateTo": "{{parameters.year}}-12-31"
-          }
-        }
-      }
-    }
-  ]
-}
-```
+<!-- BEGIN AUTO-GENERATED FROM recipe.schema.json — do not edit by hand -->
 
-### Multi-widget dashboard example
+### Type reference (generated from `recipe.schema.json`)
 
-For "show me a monthly overview with income, expenses, and a spending breakdown":
+The following section is generated from the authoritative JSON Schema. Use it as the ground truth when the prose above is unclear. The top-level recipe must match either `JsonWidgetRecipe` or `JsonDashboardRecipe`.
 
-Use 12-column grid. Row 1: KPI cards (3 cols each). Rows 2-4: full-width chart. Rows 5-8: pivot.
-See the existing `year-summary` or `month-summary` dashboards via `read_recipe` for reference.
+#### `JsonDashboardRecipe`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | `RecipeId` | yes |  |
+| `title` | `string` | yes |  |
+| `description` | `string` | — |  |
+| `parameters` | `RecipeParameter[]` | — |  |
+| `layout` | `object` | yes |  |
+| `widgets` | `JsonWidgetRecipe[]` | yes | Inline widget definitions. Empty [] when widgets are loaded by widgetId from the registry. |
+
+#### `JsonWidgetRecipe`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | `RecipeId` | yes |  |
+| `title` | `string` | yes |  |
+| `description` | `string` | — |  |
+| `helpText` | `string` | — | Tooltip shown as ⓘ icon. |
+| `parameters` | `RecipeParameter[]` | — |  |
+| `dbType` | `'sqlite' | 'beanquery'` | — | Query engine override (defaults to dashboard/view setting). |
+| `query` | `string` | yes | SQL SELECT (SQLite). Use :paramName for parameter placeholders. |
+| `transform` | `Transform` | — |  |
+| `visualization` | `JsonRecipeVisualization` | yes |  |
+
+#### `ChartType`
+
+Type: `'bar' | 'line' | 'pie' | 'area' | 'scatter' | 'treemap'`
+
+#### `JsonChartVisualization`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `'chart'` | yes |  |
+| `chartType` | `ChartType` | yes |  |
+| `options` | `object` | — | ECharts options object. |
+| `clickLink` | `JsonValueLinkConfig` | — |  |
+| `seriesClickLinks` | `Record<string, JsonValueLinkConfig | null>` | — | Per-series click links keyed by series name. Set to null to disable for that series. |
+| `seriesLabelFormat` | `ValueFormat` | — |  |
+| `yAxisLabelFormat` | `ValueFormat` | — |  |
+| `xAxisLabelFormat` | `ValueFormat` | — |  |
+
+#### `JsonKPIVisualization`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `'kpi'` | yes |  |
+| `icon` | `string` | — | Single character (↑ ↓ $ % # or any Unicode). |
+| `iconColor` | `'blue' | 'green' | 'red' | 'purple' | 'amber'` | — |  |
+| `valueField` | `string` | — | Column to read the value from (default: 'value'). |
+| `format` | `ValueFormat` | — |  |
+| `showTrend` | `boolean` | — |  |
+| `trendField` | `string` | — |  |
+| `multiCurrency` | `boolean` | — | Group amounts by currency. Query must return currency and amount columns. |
+| `amountField` | `string` | — |  |
+| `currencyField` | `string` | — |  |
+| `clickLink` | `JsonValueLinkConfig` | — |  |
+
+#### `JsonPivotVisualization`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `'pivot'` | yes |  |
+| `rowHeader` | `string` | — | Label for the row header column (default: 'Account'). |
+| `format` | `ValueFormat` | — |  |
+| `showRowTotals` | `boolean` | — |  |
+| `showColumnTotals` | `boolean` | — |  |
+| `valueLink` | `JsonValueLinkConfig` | — |  |
+
+#### `JsonRecipeVisualization`
+
+Type: `JsonChartVisualization | JsonKPIVisualization | JsonTableVisualization | JsonPivotVisualization`
+
+#### `JsonTableColumn`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `key` | `string` | yes |  |
+| `label` | `string` | yes |  |
+| `format` | `ValueFormat` | — |  |
+| `align` | `'left' | 'center' | 'right'` | — |  |
+| `link` | `JsonValueLinkConfig` | — |  |
+
+#### `JsonTableVisualization`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `'table'` | yes |  |
+| `columns` | `JsonTableColumn[]` | yes |  |
+
+#### `JsonValueLinkConfig`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | `string` | yes | Vue route name, e.g. 'transactions'. |
+| `query` | `Record<string, string>` | yes | Template strings interpolated with {{data.field}}, {{row.label}}, {{parameters.x}}, {{dateFrom}}, {{dateTo}}. |
+
+#### `RecipeId`
+Lowercase letters, numbers, and hyphens. Must start and end alphanumeric (e.g. 'my-dashboard-name').
+
+Type: `string`
+
+#### `RecipeParameter`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | `string` | yes | SQL placeholder name (referenced as :name in queries). |
+| `label` | `string` | yes | Human-readable label shown in the parameter UI. |
+| `type` | `'date' | 'select' | 'number'` | yes |  |
+| `default` | `string | number | object` | — | Default value, or a generator object {"$gen": "name"} resolved at runtime. |
+| `options` | `object[]` | — |  |
+| `optionsFrom` | `'currencies' | 'years'` | — | Populate options dynamically from the user's ledger. |
+| `min` | `number` | — |  |
+| `max` | `number` | — |  |
+
+#### `Transform`
+
+Type: `'none' | 'firstRow' | 'firstValue' | TransformConfig`
+
+#### `TransformConfig`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `'sortBy' | 'limit' | 'pluck' | 'pivot'` | yes |  |
+| `field` | `string` | — | For sortBy or pluck. |
+| `order` | `'asc' | 'desc'` | — |  |
+| `count` | `number` | — | For limit transform. |
+| `rowField` | `string` | — | For pivot — column whose values become row labels. |
+| `columnField` | `string` | — | For pivot — column whose values become column headers. |
+| `valueField` | `string` | — | For pivot — column containing cell values. |
+| `formatColumn` | `'monthYear' | 'yearMonth'` | — |  |
+| `sortRowsBy` | `'total_desc' | 'total_asc' | 'label_asc' | 'label_desc'` | — |  |
+
+#### `ValueFormat`
+Predefined value formatter applied at render time.
+
+Type: `'currency' | 'percent' | 'number' | 'compact' | 'signedCurrency' | 'date' | 'dateShort' | 'accountName' | 'accountName2'`
+
+#### `WidgetLayout`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `widgetId` | `string` | yes |  |
+| `gridArea` | `string` | yes | CSS grid-area: 'row-start / col-start / row-end / col-end' (1-based, e.g. '1 / 1 / 2 / 4'). |
+
+<!-- END AUTO-GENERATED -->

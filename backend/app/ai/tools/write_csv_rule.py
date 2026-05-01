@@ -2,10 +2,13 @@ import io
 import logging
 from pathlib import Path
 
+from pydantic import ValidationError
 from ruamel.yaml import YAML
 
+from app.ai.diagnostics import record_validation_failure
 from app.ai.tools.base import BaseTool
 from app.core.backup_manager import BackupManager
+from app.helpers.rule_validation import format_pydantic_errors
 from app.schemas.csv_schemas import CsvRule
 
 logger = logging.getLogger(__name__)
@@ -80,6 +83,14 @@ class WriteCsvRuleTool(BaseTool):
         # Validate against CSV schema
         try:
             CsvRule.model_validate(data)
+        except ValidationError as e:
+            errors = format_pydantic_errors(e)
+            record_validation_failure("write_csv_rule", errors, filename=filename)
+            return {
+                "success": False,
+                "error": "CSV rule validation failed",
+                "validation_errors": errors,
+            }
         except Exception as e:
             return {"success": False, "error": f"Validation failed: {e}"}
 

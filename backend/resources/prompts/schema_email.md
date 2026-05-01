@@ -98,20 +98,6 @@ transaction_types:          # One entry per distinct email format from this bank
   original email. The tool re-runs all extraction patterns against the email before saving and
   will reject the rule if any required field fails to match. This is a safety net — do not skip it.
 
-### Confirmation checklist — show values, not regex
-
-Always call `test_email_extraction` before presenting the checklist. Show users the values
-extracted from their email, not the underlying patterns:
-
-**Do this:**
-> 3. Amount: ₹1,234.56 — correct?
-
-**Not this:**
-> 3. Amount pattern: `Amount Debited:\s+INR ([\d,]+\.\d+)` — correct?
-
-If the user says a value is wrong, locate the correct value in the email, update the pattern,
-retest with `test_email_extraction`, and show the corrected value before asking again.
-
 ### Example 1 — Separate debit and credit transaction types (most common)
 
 Banks typically send different email formats for debits vs credits. Create one `transaction_types`
@@ -205,40 +191,20 @@ transaction_types:
 
 ### Example 2 — Field-based amount sign (single email format for both debits and credits)
 
-Some banks send one email format with a "Debit"/"Credit" label. Use field-based `amount_sign`
-to determine the sign from an extracted field:
+Some banks send one email format with a "Debit"/"Credit" label. Extract that label as a field
+and point `amount_sign.field` at it instead of using `"fixed"`:
 
 ```yaml
-transaction_types:
-  - name: "transaction_alert"
-    description: "Combined debit/credit alert"
-    email_filter:
-      subject_regex: "Transaction alert"
-    extraction:
-      amount:
-        pattern: 'Amount: \$([\d,]+\.\d{2})'
-        type: "float"
-        source: "body"
-        cleanup: "remove_commas"
-      txn_type:
-        pattern: 'Type: (Debit|Credit)'
-        type: "string"
-        source: "body"
-      timestamp:
-        pattern: 'Date: (\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2})'
-        type: "datetime"
-        source: "body"
-        format: "%m/%d/%Y %H:%M:%S"
-        timezone: "+05:30"
-    mapping:
-      amount: "amount"
-      txn_type: "narration"
-      timestamp: "date"
-    amount_sign:
-      field: "txn_type"            # use the extracted field value to determine sign
-      negative_values: ["Debit"]
-      positive_values: ["Credit"]
-    error_handling:
-      required_fields: ["amount", "timestamp", "txn_type"]
-      partial_match_allowed: true
+extraction:
+  txn_type:
+    pattern: 'Type: (Debit|Credit)'
+    type: "string"
+    source: "body"
+amount_sign:
+  field: "txn_type"
+  negative_values: ["Debit"]
+  positive_values: ["Credit"]
 ```
+
+The rest of the rule (envelope, other extractions, mapping, `error_handling`) is identical
+to Example 1.

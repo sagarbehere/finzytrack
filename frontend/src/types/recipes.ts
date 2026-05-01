@@ -3,7 +3,25 @@
  *
  * Recipes define data-driven dashboard widgets and layouts.
  * Each widget contains: SQL query, transform function, and visualization config.
+ *
+ * The JSON-recipe types (Json*Recipe, Json*Visualization, Transform,
+ * RecipeParameter, WidgetLayout, ChartType, ValueFormat, RecipeId) are
+ * generated from recipe.schema.json — see recipes.generated.ts. This file
+ * holds only the runtime/code-defined types (function-typed fields, Hybrid
+ * registries, the runtime SUPPORTED_CHART_TYPES const, etc.) and re-exports
+ * the generated names for consumers.
  */
+
+import type {
+  ChartType,
+  JsonDashboardRecipe,
+  JsonValueLinkConfig,
+  JsonWidgetRecipe,
+  RecipeParameter,
+  Transform,
+  ValueFormat,
+  WidgetLayout,
+} from './recipes.generated'
 
 // Multi-currency KPI values
 export interface CurrencyAmount {
@@ -11,7 +29,9 @@ export interface CurrencyAmount {
   currency: string
 }
 
-// Parameter types for recipe inputs
+// Parameter helper types referenced only by the runtime ChartVisualization /
+// WidgetRecipe types defined later in this file. The richer RecipeParameter is
+// generated from recipe.schema.json and re-exported below.
 export type RecipeParameterType = 'date' | 'select' | 'number'
 
 export interface RecipeParameterOption {
@@ -19,23 +39,12 @@ export interface RecipeParameterOption {
   label: string
 }
 
-export interface RecipeParameter {
-  name: string
-  label: string
-  type: RecipeParameterType
-  default: string | number
-  options?: RecipeParameterOption[] // For select type
-  optionsFrom?: 'currencies' | 'years' // Dynamic option source
-  min?: number // For number type
-  max?: number // For number type
-}
-
 // Visualization types
 export type VisualizationType = 'chart' | 'kpi' | 'table' | 'pivot'
-// Define as const array so it's available at runtime (e.g. for the Analysis chart picker).
-// Adding a new entry here automatically extends the ChartType union AND makes it selectable.
+// Runtime const array of chart types (used by the Analysis chart picker etc.).
+// The corresponding `ChartType` *type* is generated from recipe.schema.json
+// and re-exported below; both must list the same values.
 export const SUPPORTED_CHART_TYPES = ['bar', 'line', 'pie', 'area', 'scatter', 'treemap'] as const
-export type ChartType = (typeof SUPPORTED_CHART_TYPES)[number]
 
 /**
  * Context passed to getSeriesClickLink for chart click handling
@@ -223,11 +232,7 @@ export interface WidgetRecipe {
   visualization: RecipeVisualization
 }
 
-// Dashboard Layout
-export interface WidgetLayout {
-  widgetId: string
-  gridArea: string // CSS grid-area: "row-start / col-start / row-end / col-end"
-}
+// (WidgetLayout is generated from recipe.schema.json and re-exported below.)
 
 export interface DashboardRecipe {
   id: string
@@ -258,23 +263,22 @@ export interface RecipeExecutionResult {
 
 // ============================================================================
 // JSON Recipe Types (for user-defined recipes loaded at runtime)
+//
+// JSON-recipe types — including JsonWidgetRecipe, JsonDashboardRecipe, the
+// JSON visualization variants, RecipeParameter, TransformConfig, ChartType,
+// ValueFormat, WidgetLayout, and RecipeId — are GENERATED from
+// recipe.schema.json. They live in recipes.generated.ts and are re-exported
+// at the bottom of this file. Do not duplicate them here.
+//
+// Hand-written types in this file (CurrencyAmount, the runtime
+// {Chart,KPI,Table,Pivot}Visualization with function fields, WidgetRecipe,
+// DashboardRecipe, etc.) cover code-defined recipes and runtime helpers.
 // ============================================================================
 
 /**
- * Predefined format types for values (replaces custom format functions)
- *
- * Basic formats:
- * - 'currency': Format as USD currency ($1,234)
- * - 'percent': Format as percentage (12.5%)
- * - 'number': Format with thousands separator (1,234)
- * - 'compact': Abbreviate large numbers (1.5M, 12.3k)
- *
- * Specialized formats:
- * - 'signedCurrency': Currency with explicit +/- sign (+$1,234 or -$500)
- * - 'date': Format ISO date as readable (Jan 15, 2025)
- * - 'dateShort': Short date format (1/15/25)
- * - 'accountName': Extract last segment of account path (Expenses:Food:Groceries → Groceries)
- * - 'accountName2': Extract last 2 segments (Expenses:Food:Groceries → Food:Groceries)
+ * Runtime list of value-format identifiers, kept here as a const array because
+ * `json-schema-to-typescript` only emits the `ValueFormat` *type* — not a
+ * runtime value to enumerate. Must match the enum in recipe.schema.json.
  */
 export const VALID_VALUE_FORMATS = [
   'currency',
@@ -288,8 +292,6 @@ export const VALID_VALUE_FORMATS = [
   'accountName2',
 ] as const
 
-export type ValueFormat = (typeof VALID_VALUE_FORMATS)[number]
-
 /**
  * Simple transform types (no configuration needed)
  * - 'none': Pass through rows as-is
@@ -298,150 +300,47 @@ export type ValueFormat = (typeof VALID_VALUE_FORMATS)[number]
  */
 export type SimpleTransformType = 'none' | 'firstRow' | 'firstValue'
 
-/**
- * Transform configuration object for transforms that need parameters
- */
-export interface TransformConfig {
-  type: 'sortBy' | 'limit' | 'pluck' | 'pivot'
-  field?: string // For sortBy, pluck
-  order?: 'asc' | 'desc' // For sortBy
-  count?: number // For limit
-  // Pivot-specific fields:
-  rowField?: string // Column used as row labels (default: first non-column/value column)
-  columnField?: string // Column whose values become column headers
-  valueField?: string // Column containing cell values
-  /**
-   * Format column header strings derived from columnField values.
-   * - 'monthYear': "2025-01" → "January 2025"
-   * - 'yearMonth': keep as-is (YYYY-MM), useful for compact display
-   */
-  formatColumn?: 'monthYear' | 'yearMonth'
-  /**
-   * How to sort pivot rows.
-   * - 'total_desc' (default): highest row total first
-   * - 'total_asc': lowest row total first
-   * - 'label_asc': alphabetical by row label
-   * - 'label_desc': reverse alphabetical
-   */
-  sortRowsBy?: 'total_desc' | 'total_asc' | 'label_asc' | 'label_desc'
-}
+// Re-export the JSON-recipe types generated from recipe.schema.json.
+// This is the single source of truth for the JSON shape; consumer code keeps
+// importing from '@/types/recipes' transparently.
+export type {
+  ChartType,
+  JsonChartVisualization,
+  JsonDashboardRecipe,
+  JsonKPIVisualization,
+  JsonPivotVisualization,
+  JsonRecipeVisualization,
+  JsonTableColumn,
+  JsonTableVisualization,
+  JsonValueLinkConfig,
+  JsonWidgetRecipe,
+  RecipeId,
+  RecipeParameter,
+  Transform,
+  TransformConfig,
+  ValueFormat,
+  WidgetLayout,
+} from './recipes.generated'
+
+import type { Transform as _Transform, JsonWidgetRecipe as _JsonWidgetRecipe, JsonDashboardRecipe as _JsonDashboardRecipe } from './recipes.generated'
+
+/** Backwards-compat alias for the union. */
+export type TransformType = _Transform
 
 /**
- * Transform can be a simple string type or a config object
- */
-export type TransformType = SimpleTransformType | TransformConfig
-
-/**
- * JSON-compatible KPI visualization (no functions)
- */
-export interface JsonKPIVisualization {
-  type: 'kpi'
-  icon?: string
-  iconColor?: 'blue' | 'green' | 'red' | 'purple' | 'amber'
-  valueField?: string // Field name to extract value from (default: 'value')
-  format?: ValueFormat // Predefined format (default: 'number')
-  showTrend?: boolean
-  trendField?: string
-  multiCurrency?: boolean
-  amountField?: string // Field name for amount (default: 'amount')
-  currencyField?: string // Field name for currency code (default: 'currency')
-  clickLink?: JsonValueLinkConfig
-}
-
-/**
- * JSON-compatible link configuration using template strings.
- * Template variables: {{row.fieldName}}, {{column}}, {{value}}, etc.
- */
-export interface JsonValueLinkConfig {
-  name: string // Route name (e.g., 'transactions')
-  query: Record<string, string> // Template strings for query params
-}
-
-/**
- * JSON-compatible table column (no functions)
- */
-export interface JsonTableColumn {
-  key: string
-  label: string
-  format?: ValueFormat // Predefined format instead of function
-  align?: 'left' | 'center' | 'right'
-  link?: JsonValueLinkConfig // Template-based link
-}
-
-/**
- * JSON-compatible table visualization
- */
-export interface JsonTableVisualization {
-  type: 'table'
-  columns: JsonTableColumn[]
-}
-
-/**
- * JSON-compatible pivot visualization
- */
-export interface JsonPivotVisualization {
-  type: 'pivot'
-  rowHeader?: string
-  format?: ValueFormat // Predefined format for cell values
-  showRowTotals?: boolean
-  showColumnTotals?: boolean
-  valueLink?: JsonValueLinkConfig // Template-based link for cell values
-}
-
-/**
- * JSON-compatible visualization (chart options are already JSON-safe)
- */
-export type JsonRecipeVisualization =
-  | ChartVisualization
-  | JsonKPIVisualization
-  | JsonTableVisualization
-  | JsonPivotVisualization
-
-/**
- * JSON Widget Recipe - can be loaded from JSON files at runtime
- * No functions, only serializable data
- */
-export interface JsonWidgetRecipe {
-  id: string
-  title: string
-  description?: string
-  helpText?: string // Shown as ⓘ tooltip in the widget header
-  parameters?: RecipeParameter[]
-  dbType?: QueryEngineType // Query engine for this widget (defaults to dashboard/view setting)
-  query: string
-  transform?: TransformType // Predefined transform instead of function
-  visualization: JsonRecipeVisualization
-}
-
-/**
- * JSON Dashboard Recipe - can be loaded from JSON files at runtime
- */
-export interface JsonDashboardRecipe {
-  id: string
-  title: string
-  description?: string
-  parameters?: RecipeParameter[]
-  layout: {
-    columns: number
-    gap?: string
-    rowHeight?: string
-    widgets: WidgetLayout[]
-  }
-  widgets: JsonWidgetRecipe[]
-}
-
-/**
- * Manifest file structure for user recipes
+ * Manifest file structure for user recipes (path lists). Not in the JSON
+ * recipe schema because it's not a recipe — it indexes recipes.
  */
 export interface RecipeManifest {
-  widgets: string[] // List of widget JSON file paths
-  dashboards: string[] // List of dashboard JSON file paths
+  widgets: string[]
+  dashboards: string[]
 }
 
 /**
- * Combined registry that can hold both TypeScript and JSON recipes
+ * Combined registry that can hold both TypeScript code-defined recipes and
+ * JSON recipes loaded at runtime.
  */
 export interface HybridRecipeRegistry {
-  widgets: Record<string, WidgetRecipe | JsonWidgetRecipe>
-  dashboards: Record<string, DashboardRecipe | JsonDashboardRecipe>
+  widgets: Record<string, WidgetRecipe | _JsonWidgetRecipe>
+  dashboards: Record<string, DashboardRecipe | _JsonDashboardRecipe>
 }

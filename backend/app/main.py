@@ -130,6 +130,17 @@ def create_app(
         if mode == AppMode.DESKTOP:
             await startup_user_services(services, config)
 
+        # AI assistant readiness:
+        #   - In dev mode, auto-sync from frontend/ if any file is missing so a
+        #     fresh clone works without remembering to run the sync script.
+        #   - In frozen mode, autosync_dev is a no-op (the bundle ships
+        #     pre-synced copies; source files don't exist at runtime).
+        # Either way, log the final readiness state so missed sync steps show
+        # up as a WARNING instead of silently breaking the assistant later.
+        from app.ai.reference import autosync_dev, log_readiness
+        autosync_dev()
+        log_readiness()
+
         logger.info("Application startup complete")
         yield
 

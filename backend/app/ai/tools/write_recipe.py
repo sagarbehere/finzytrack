@@ -24,6 +24,37 @@ from app.helpers.recipe_validation import (
 logger = logging.getLogger(__name__)
 
 
+_NO_COLUMN_RE = re.compile(r"no such column: (\S+)", re.IGNORECASE)
+_NO_TABLE_RE = re.compile(r"no such table: (\S+)", re.IGNORECASE)
+
+
+def _sql_error_hint(message: str) -> str | None:
+    """Return a one-line hint for common SQL errors, or None if nothing to add."""
+    m = _NO_COLUMN_RE.search(message)
+    if m:
+        col = m.group(1)
+        return (
+            f"column '{col}' is not in the postings table. Check the postings schema "
+            f"(transaction_date, transaction_payee, account, account_type, amount, "
+            f"currency, year, year_month, quarter, …). For other tables run "
+            f"`PRAGMA table_info(<table>)` via execute_query."
+        )
+    m = _NO_TABLE_RE.search(message)
+    if m:
+        return (
+            f"table '{m.group(1)}' does not exist. Standard tables: postings, accounts, "
+            f"account_balances, commodities, prices, lots, balance_assertions. "
+            f"Run `SELECT name FROM sqlite_master WHERE type='table'` to list them."
+        )
+    if "syntax error" in message.lower() and ":" in message:
+        return (
+            "syntax error near a colon — placeholders like ':year' are valid in the "
+            "stored query but the dry-run substitutes them with '__dry_run__'. If the "
+            "real query relies on numeric placeholders, cast them: CAST(:year AS INTEGER)."
+        )
+    return None
+
+
 def _dry_run_queries(dashboard: dict, sqlite_path: str | None) -> list[str]:
     """Execute each widget's SQL query to check for errors. Returns list of errors."""
     if not sqlite_path:
@@ -50,12 +81,14 @@ def _dry_run_queries(dashboard: dict, sqlite_path: str | None) -> list[str]:
             # Use LIMIT 0 wrapper to avoid actually fetching data
             con.execute(f"SELECT * FROM ({dry_query}) LIMIT 0")
             con.close()
-        except sqlite3.OperationalError as e:
+        except (sqlite3.OperationalError, Exception) as e:
             wid = w.get("id", f"index {i}")
-            errors.append(f"widgets[{i}] ('{wid}'): SQL error — {e}")
-        except Exception as e:
-            wid = w.get("id", f"index {i}")
-            errors.append(f"widgets[{i}] ('{wid}'): query validation failed — {e}")
+            kind = "SQL error" if isinstance(e, sqlite3.OperationalError) else "query validation failed"
+            msg = f"widgets[{i}] ('{wid}'): {kind} — {e}"
+            hint = _sql_error_hint(str(e))
+            if hint:
+                msg += f". Hint: {hint}"
+            errors.append(msg)
 
     return errors
 
