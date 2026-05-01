@@ -160,3 +160,24 @@ Example dashboard referencing saved widgets:
   date range, etc.). Include extra columns in the SQL query (like `account`, `dateFrom`, `dateTo`)
   to use as template variables in the link, even if they aren't displayed in the chart.
 - When calling `write_recipe`, pass only the filename — do NOT re-pass the content.
+
+### Common pitfalls and how to fix them
+
+- **Tooltip shows literal `[object Object]`.** The chart's
+  `visualization.options.tooltip.formatter` is a string template containing
+  `{c}` (or similar). ECharts substitutes `{c}` with the row object on
+  dataset-driven charts. Fix: remove the `formatter` from the tooltip entirely
+  and use only `{ "trigger": "axis" }` (or `"item"` for pie/treemap). The
+  runtime auto-formats values with the widget's currency. Apply the same fix
+  any time the user reports `[object Object]` anywhere in a chart tooltip.
+
+- **Validation fails repeatedly with the same field path.** Read the
+  `reference_shape` returned alongside `validation_errors` — it's a minimal
+  valid example for the recipe type. Compare your draft to it field-by-field
+  and copy the missing pieces verbatim before retrying. Do not iterate more
+  than 3 times on the same recipe; if you can't reach a valid shape, ask the
+  user for clarification.
+
+- **Layout entry says `widgetId: required`.** You probably wrote `id` instead
+  of `widgetId` in a `layout.widgets[i]` entry. The validator will tell you
+  this in the hint.

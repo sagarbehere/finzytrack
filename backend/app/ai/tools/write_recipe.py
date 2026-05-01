@@ -16,6 +16,7 @@ from pathlib import Path
 from app.ai.tools.base import BaseTool
 from app.core.backup_manager import BackupManager
 from app.helpers.recipe_validation import (
+    reference_shape as _reference_shape,
     validate_dashboard as _validate_dashboard,
     validate_id as _validate_id,
     validate_widget as _validate_widget,
@@ -198,10 +199,12 @@ class WriteRecipeTool(BaseTool):
             errors.extend(_validate_id(recipe_id))
 
         if errors:
+            ref_def = "JsonWidgetRecipe" if recipe_type == "widget" else "JsonDashboardRecipe"
             return {
                 "success": False,
                 "error": f"{'Widget' if recipe_type == 'widget' else 'Dashboard'} validation failed",
                 "validation_errors": errors,
+                "reference_shape": _reference_shape(ref_def),
             }
 
         # ── 2. SQL dry-run ──────────────────────────────────────────────

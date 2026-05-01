@@ -297,6 +297,29 @@ Requires a pivot transform on the widget:
 }
 ```
 
+### Tooltips — keep them simple
+
+Charts use ECharts internally. The runtime injects a **currency-aware tooltip
+formatter** automatically when you set the trigger and nothing else. So:
+
+```json
+"tooltip": { "trigger": "axis" }      // bar, line — runtime formats values
+"tooltip": { "trigger": "item" }      // pie, treemap — runtime formats values
+```
+
+**Never put a string template in `tooltip.formatter`.** Specifically:
+
+- `"formatter": "{c}"`, `"formatter": "{b}: {c}"`, etc. **break** on dataset-
+  driven charts (which is how all our recipes work). ECharts substitutes `{c}`
+  with the row object instead of the value, so the tooltip shows the literal
+  string `[object Object]`.
+- The runtime defensively strips such formatters and logs a warning, but the
+  validator will also reject the recipe — so don't generate them.
+
+If a series label needs a template (`"label": { "formatter": "{b}" }`) that's
+fine — series labels work differently and `{b}` (data name) is safe there.
+The risk is *only* in `tooltip.formatter`.
+
 ### Format strings
 
 Available for `seriesLabelFormat`, `yAxisLabelFormat`, `xAxisLabelFormat`, and KPI `format`:

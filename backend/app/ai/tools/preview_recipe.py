@@ -14,6 +14,7 @@ from app.ai.diagnostics import record_validation_failure
 from app.ai.tools.base import BaseTool
 from app.ai.tools.write_recipe import _dry_run_queries
 from app.helpers.recipe_validation import (
+    reference_shape as _reference_shape,
     validate_dashboard as _validate_dashboard,
     validate_id as _validate_id,
     validate_widget as _validate_widget,
@@ -114,6 +115,7 @@ class PreviewRecipeTool(BaseTool):
                     "success": False,
                     "error": "Widget validation failed",
                     "validation_errors": errors,
+                    "reference_shape": _reference_shape("JsonWidgetRecipe"),
                 }
 
             # SQL dry-run for the single widget
@@ -148,6 +150,7 @@ class PreviewRecipeTool(BaseTool):
                     "success": False,
                     "error": "Dashboard validation failed",
                     "validation_errors": errors,
+                    "reference_shape": _reference_shape("JsonDashboardRecipe"),
                 }
 
             sql_errors = _dry_run_queries(content, self._sqlite_path)

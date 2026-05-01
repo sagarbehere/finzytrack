@@ -100,6 +100,101 @@ def _expand_ref(node: dict) -> dict:
     return _resolve_ref(node["$ref"]) if "$ref" in node else node
 
 
+# Hand-curated placeholder values for common field names. The example
+# generator falls back to a generic placeholder when a name isn't here.
+_FIELD_PLACEHOLDERS: dict[str, str] = {
+    "id": "my-recipe-id",
+    "widgetId": "my-widget-id",
+    "title": "My Title",
+    "description": "Brief description",
+    "name": "year",
+    "label": "Year",
+    "query": "SELECT account, SUM(amount) AS value FROM postings WHERE year = :year GROUP BY account",
+    "gridArea": "1 / 1 / 2 / 4",
+    "rowField": "account",
+    "columnField": "year_month",
+    "valueField": "amount",
+    "field": "total",
+    "formatColumn": "monthYear",
+}
+
+
+_DESC_EG_RE = re.compile(r"e\.g\.\s*['\"]([^'\"]+)['\"]", re.IGNORECASE)
+
+
+def _description_example(desc: str | None) -> str | None:
+    """Extract an example value from a JSON Schema description, e.g. parse
+    "Vue route name, e.g. 'transactions'." → "transactions". Lets the schema
+    author control example values without a separate registry.
+    """
+    if not desc:
+        return None
+    m = _DESC_EG_RE.search(desc)
+    return m.group(1) if m else None
+
+
+def _example_for(node: dict, field_name: str = "", _depth: int = 0) -> object:
+    """Generate a minimal-valid example value for a schema node.
+
+    Walks $ref, oneOf (picks first branch), enum (picks first), const, etc.
+    Strings prefer (in order): an "e.g. 'X'" hint in the description, the
+    field-name placeholder map, then a generic ellipsis.
+    Capped at depth 6 to avoid pathological recursion.
+    """
+    if _depth > 6:
+        return "..."
+
+    node = _expand_ref(node)
+    if "const" in node:
+        return node["const"]
+    if isinstance(node.get("enum"), list) and node["enum"]:
+        return node["enum"][0]
+    if "oneOf" in node and node["oneOf"]:
+        return _example_for(node["oneOf"][0], field_name, _depth + 1)
+    if "anyOf" in node and node["anyOf"]:
+        return _example_for(node["anyOf"][0], field_name, _depth + 1)
+
+    t = node.get("type")
+    if t == "string":
+        from_desc = _description_example(node.get("description"))
+        if from_desc:
+            return from_desc
+        return _FIELD_PLACEHOLDERS.get(field_name, "...")
+    if t == "integer":
+        return _FIELD_PLACEHOLDERS_INT.get(field_name, 1)
+    if t == "number":
+        return _FIELD_PLACEHOLDERS_INT.get(field_name, 1)
+    if t == "boolean":
+        return False
+    if t == "array":
+        items = node.get("items") or {}
+        return [_example_for(items, field_name, _depth + 1)]
+    if t == "object":
+        out: dict[str, object] = {}
+        required = set(node.get("required") or [])
+        for prop, sub in (node.get("properties") or {}).items():
+            if prop in required:
+                out[prop] = _example_for(sub, prop, _depth + 1)
+        return out
+    if isinstance(t, list):
+        for opt in t:
+            return _example_for({"type": opt}, field_name, _depth + 1)
+    return "..."
+
+
+_FIELD_PLACEHOLDERS_INT: dict[str, int] = {
+    "columns": 12,
+    "count": 10,
+    "min": 0,
+    "max": 100,
+}
+
+
+def _format_example(value: object) -> str:
+    """Compact one-line JSON-ish representation suitable for inline error messages."""
+    return json.dumps(value, ensure_ascii=False, separators=(",", ": "))
+
+
 def _required_shape_hint(parent_schema: dict, prop: str) -> str | None:
     """For a required field that's missing, look up its expected shape from the schema."""
     props = (parent_schema.get("properties") or {})
@@ -109,26 +204,60 @@ def _required_shape_hint(parent_schema: dict, prop: str) -> str | None:
     sub = _expand_ref(sub)
     desc = sub.get("description", "").strip()
     type_str = sub.get("type", "")
+    example_value = _example_for(sub, prop)
+    example_str = _format_example(example_value)
+
+    def with_example(base: str) -> str:
+        # Include the JSON example only when it adds information beyond the
+        # type description. Skip for tiny scalars where it's redundant.
+        if isinstance(example_value, (str, int, float, bool)):
+            return f"{base}. Example: {example_str}"
+        if isinstance(example_value, (list, dict)) and example_value:
+            return f"{base}. Example: {example_str}"
+        return base
+
     if isinstance(sub.get("enum"), list):
-        return f"one of {sub['enum']}" + (f" — {desc}" if desc else "")
+        return with_example(f"one of {sub['enum']}" + (f" — {desc}" if desc else ""))
     if type_str == "string" and sub.get("minLength"):
-        return "a non-empty string" + (f" ({desc})" if desc else "")
+        return with_example("a non-empty string" + (f" ({desc})" if desc else ""))
     if type_str == "object":
-        # If the object schema declares its own required fields, list them so the
-        # message tells the model what shape to construct.
         inner_required = sub.get("required") or []
         if inner_required:
             shape = f"an object with required fields {sorted(inner_required)}"
-            return f"{shape} ({desc})" if desc else shape
-        return f"an object ({desc})" if desc else "an object"
+            return with_example(f"{shape} ({desc})" if desc else shape)
+        return with_example(f"an object ({desc})" if desc else "an object")
     if type_str == "array":
         items = _expand_ref(sub.get("items") or {})
         item_desc = items.get("description") or items.get("type") or "items"
         base = f"an array of {item_desc}"
-        return f"{base} ({desc})" if desc else base
+        return with_example(f"{base} ({desc})" if desc else base)
     if type_str:
-        return f"a {type_str} ({desc})" if desc else f"a {type_str}"
+        return with_example(f"a {type_str} ({desc})" if desc else f"a {type_str}")
     return desc or None
+
+
+# Common AI-author confusions: when a required key is missing AND a similarly-
+# named key is present, suggest the rename. Keyed by the missing key.
+_LIKELY_TYPOS: dict[str, list[str]] = {
+    "widgetId": ["id", "widget_id", "widget-id", "widgetID"],
+    "valueField": ["value", "valueColumn", "valueCol"],
+    "rowField": ["row", "rowColumn", "rows"],
+    "columnField": ["column", "columnColumn", "columns"],
+    "chartType": ["chart_type", "type"],
+    "gridArea": ["grid_area", "area", "grid"],
+}
+
+
+def _typo_hint(missing_key: str, parent_obj: object) -> str | None:
+    """If a required key is missing AND the parent object contains a likely-typo
+    sibling, suggest the rename. Helps weaker models recover from naming slips."""
+    if not isinstance(parent_obj, dict):
+        return None
+    candidates = _LIKELY_TYPOS.get(missing_key, [])
+    for c in candidates:
+        if c in parent_obj:
+            return f"the parent object has a '{c}' field — rename it to '{missing_key}'"
+    return None
 
 
 def _hint_for(field: str, err: ValidationError) -> str | None:
@@ -207,7 +336,14 @@ def _format_error(prefix: str, err: ValidationError) -> str:
         parent_schema = _expand_ref(parent_schema)
         shape = _required_shape_hint(parent_schema, missing)
         path = f"{field}.{missing}" if field else missing
-        return f"{path}: required, must be {shape}" if shape else f"{path}: required"
+        msg = f"{path}: required, must be {shape}" if shape else f"{path}: required"
+        # Typo detection: if the parent object has a similar-named field, hint
+        # at the rename. err.instance is the parent object whose required key
+        # is missing.
+        typo = _typo_hint(missing, err.instance)
+        if typo:
+            msg += f". Hint: {typo}"
+        return msg
 
     if v == "type":
         expected = err.validator_value
@@ -320,7 +456,9 @@ def validate_widget(widget, prefix: str) -> list[str]:
     """Validate a single widget recipe. Returns a list of error strings."""
     if not isinstance(widget, dict):
         return [f"{prefix}: must be a JSON object, {_describe(widget)}"]
-    return _validate_against("JsonWidgetRecipe", widget, prefix)
+    errors = _validate_against("JsonWidgetRecipe", widget, prefix)
+    _check_risky_tooltip_formatters(widget, errors)
+    return errors
 
 
 def validate_visualization(viz, prefix: str) -> list[str]:
@@ -328,6 +466,45 @@ def validate_visualization(viz, prefix: str) -> list[str]:
     if not isinstance(viz, dict):
         return [f"{prefix}: must be an object with at minimum a 'type' field, {_describe(viz)}"]
     return _validate_against("JsonRecipeVisualization", viz, prefix)
+
+
+_RISKY_TOOLTIP_RE = re.compile(r"\{c\b")
+
+
+def _check_risky_tooltip_formatters(content: dict, errors: list[str]) -> None:
+    """Walk a recipe and emit warnings for chart visualizations whose tooltip
+    has a string formatter containing {c}. ECharts substitutes {c} with the
+    full data value, which on dataset-driven charts is the row object and
+    renders as the string '[object Object]'. The runtime strips this defensively
+    but flagging it at validation time lets the AI fix the recipe at the source.
+
+    Mutates ``errors`` in place by appending one entry per offending widget.
+    """
+    widgets = content.get("widgets") if isinstance(content, dict) else None
+    if not isinstance(widgets, list):
+        # Maybe content IS a single widget
+        widgets = [content] if isinstance(content, dict) else []
+
+    for i, w in enumerate(widgets):
+        if not isinstance(w, dict):
+            continue
+        viz = w.get("visualization")
+        if not isinstance(viz, dict) or viz.get("type") != "chart":
+            continue
+        tooltip = (viz.get("options") or {}).get("tooltip")
+        if not isinstance(tooltip, dict):
+            continue
+        formatter = tooltip.get("formatter")
+        if isinstance(formatter, str) and _RISKY_TOOLTIP_RE.search(formatter):
+            wid = w.get("id", f"index {i}")
+            errors.append(
+                f"widgets[{i}] ('{wid}').visualization.options.tooltip.formatter: "
+                f"string formatter '{formatter}' contains {{c}}, which resolves "
+                f"to the row object on dataset-driven charts and renders as "
+                f"'[object Object]'. Remove the formatter and use only "
+                f"`tooltip: {{\"trigger\": \"axis\"}}` (or \"item\" for pie/treemap) "
+                f"— the runtime auto-formats values with the widget's currency."
+            )
 
 
 def validate_transform(transform, prefix: str) -> list[str]:
@@ -386,7 +563,25 @@ def validate_dashboard(dashboard) -> list[str]:
                             f"leave 'widgets: []' and ensure the widgetId matches a registered widget."
                         )
 
+    _check_risky_tooltip_formatters(dashboard, errors)
     return errors
+
+
+def reference_shape(definition_name: str) -> dict:
+    """Return a minimal valid example for a top-level type, suitable for
+    inclusion in a tool's error response so a weaker model has a concrete
+    target to converge on rather than reasoning purely from field paths.
+
+    Example: reference_shape("JsonWidgetRecipe") returns a dict like
+    {"id": "my-recipe-id", "title": "My Title", "query": "SELECT ...",
+     "visualization": {"type": "chart", "chartType": "bar"}}.
+    """
+    schema = _load_schema()
+    target = schema.get("$defs", {}).get(definition_name)
+    if not target:
+        return {}
+    result = _example_for(target)
+    return result if isinstance(result, dict) else {}
 
 
 def validate_id(recipe_id: str) -> list[str]:

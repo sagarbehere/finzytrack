@@ -125,6 +125,32 @@ function isPieChart(): boolean {
   return series.every((s) => typeof s === 'object' && s !== null && (s as { type?: string }).type === 'pie')
 }
 
+// Strip risky string-template formatters from a user-supplied tooltip config.
+// ECharts replaces `{c}` with the data value, but on dataset-driven charts
+// (which is how all our recipes use ECharts) `{c}` resolves to the *row
+// object*, rendering as the literal string "[object Object]". The runtime's
+// own valueFormatter / function-based formatter (set above) already handles
+// this correctly, so the safest move is to drop the user-supplied string
+// formatter when it contains `{c}` and let the runtime's default win.
+//
+// Function formatters from user code are kept as-is.
+function sanitizeUserTooltip(tooltip: Record<string, unknown>): Record<string, unknown> {
+  const f = tooltip.formatter
+  if (typeof f === 'string' && /\{c\b/.test(f)) {
+    const { formatter: _stripped, ...rest } = tooltip
+    void _stripped
+    console.warn(
+      '[RecipeChart] Removed unsafe tooltip.formatter string containing {c} ' +
+      `(was "${f}"). Dataset-driven charts must not use {c} — it resolves to ` +
+      'the row object and renders as "[object Object]". Use only ' +
+      '{trigger: "axis"|"item"} and let the runtime format values, or pass a ' +
+      'function-typed formatter.'
+    )
+    return rest
+  }
+  return tooltip
+}
+
 // Build a formatter function from a ValueFormat string, using the widget's currency for locale-aware formatting
 function buildFormatter(format: ValueFormat): (value: unknown) => string {
   const formats = getFormats(props.currency)
@@ -274,7 +300,7 @@ const finalOptions = computed<EChartsOption>(() => {
             }) as any,
           }
         : {}),
-      ...((props.chartOptions.tooltip as object) || {}),
+      ...sanitizeUserTooltip((props.chartOptions.tooltip as Record<string, unknown>) || {}),
     },
     legend: {
       textStyle: { color: textColor },
