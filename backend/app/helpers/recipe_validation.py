@@ -53,7 +53,7 @@ def _validator_for(definition_name: str) -> Draft202012Validator:
 # ── Constants surfaced for backwards compat (some callers / tests import these) ──
 
 VALID_VIZ_TYPES = {"kpi", "chart", "table", "pivot"}
-SUPPORTED_CHART_TYPES = {"bar", "line", "pie", "area", "scatter", "treemap"}
+SUPPORTED_CHART_TYPES = {"bar", "line", "pie", "area", "scatter", "treemap", "funnel", "gauge", "calendar"}
 VALID_PARAM_TYPES = {"date", "select", "number"}
 VALID_SIMPLE_TRANSFORMS = {"none", "firstRow", "firstValue"}
 VALID_TRANSFORM_TYPES = {"sortBy", "limit", "pluck", "pivot"}

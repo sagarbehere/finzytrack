@@ -21,7 +21,7 @@
     },
     "ChartType": {
       "type": "string",
-      "enum": ["bar", "line", "pie", "area", "scatter", "treemap"]
+      "enum": ["bar", "line", "pie", "area", "scatter", "treemap", "funnel", "gauge", "calendar"]
     },
     "RecipeParameter": {
       "type": "object",

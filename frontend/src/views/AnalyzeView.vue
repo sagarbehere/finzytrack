@@ -322,7 +322,9 @@
   import { useToast } from '@/composables/useNotifications'
   import { useConfig } from '@/composables/useConfig'
   import RecipeChart from '@/components/recipes/RecipeChart.vue'
-  import { SUPPORTED_CHART_TYPES, type ChartType } from '@/types/recipes'
+  // (ChartType / SUPPORTED_CHART_TYPES are recipe-system constants — AnalyzeView
+  // uses its own narrower union below since not every recipe-supported chart
+  // type maps onto an x/y column selection.)
   import type { EChartsOption } from 'echarts'
 
   const toast = useToast()
@@ -359,7 +361,7 @@
   ]
 
   /** Classes for the chart type selector buttons */
-  const chartTypeClasses = (ct: ChartType) => [
+  const chartTypeClasses = (ct: AnalyzeChartType) => [
     'px-3 py-1.5 text-xs rounded-md font-medium capitalize',
     chartType.value === ct
       ? 'bg-indigo-600 text-white'
@@ -380,8 +382,16 @@
   const activeTab = ref<'table' | 'chart'>('table')
 
   // --- Chart config state ---
-  const chartTypes = SUPPORTED_CHART_TYPES
-  const chartType = ref<ChartType>('bar')
+  // AnalyzeView's UI constructs charts from x/y column selections, which only
+  // makes sense for cartesian and dataset-driven types. Funnel, gauge, calendar
+  // need data shapes the UI doesn't ask the user about, so they're excluded
+  // here even though they're valid in SUPPORTED_CHART_TYPES (= the recipe
+  // system as a whole). To enable them in AnalyzeView, the UI would need new
+  // form fields for their respective parameters.
+  const ANALYZE_SUPPORTED = ['bar', 'line', 'pie', 'area', 'scatter', 'treemap'] as const
+  type AnalyzeChartType = (typeof ANALYZE_SUPPORTED)[number]
+  const chartTypes = ANALYZE_SUPPORTED
+  const chartType = ref<AnalyzeChartType>('bar')
   const chartXColumn = ref('')
   const chartYColumns = ref<string[]>([])
   const chartYColumnSingle = ref('')

@@ -5,14 +5,24 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts/core'
-import { BarChart, LineChart, PieChart, ScatterChart, TreemapChart } from 'echarts/charts'
-import { VisualMapComponent } from 'echarts/components'
+import {
+  BarChart,
+  LineChart,
+  PieChart,
+  ScatterChart,
+  TreemapChart,
+  FunnelChart,
+  GaugeChart,
+  HeatmapChart,
+} from 'echarts/charts'
 import {
   TitleComponent,
   TooltipComponent,
   LegendComponent,
   GridComponent,
   DatasetComponent,
+  VisualMapComponent,
+  CalendarComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { EChartsOption } from 'echarts'
@@ -28,12 +38,16 @@ echarts.use([
   PieChart,
   ScatterChart,
   TreemapChart,
+  FunnelChart,
+  GaugeChart,
+  HeatmapChart,
   TitleComponent,
   TooltipComponent,
   LegendComponent,
   GridComponent,
   DatasetComponent,
   VisualMapComponent,
+  CalendarComponent,
   CanvasRenderer,
 ])
 
@@ -111,18 +125,42 @@ function applySeriesLabelStyles(
   return series
 }
 
-// Detect if any series is a treemap (treemap doesn't support dataset.source)
-function isTreemapChart(): boolean {
+// Series types that don't use ECharts dataset.source — runtime injects rows
+// directly into series[0].data instead. Treemap rejects encode entirely;
+// funnel/gauge/heatmap each have their own per-row shape (name+value, single
+// value, or [date, value] tuples). Add a series type here when introducing a
+// new chart type that doesn't read from dataset.source.
+const DATA_INJECTED_TYPES = new Set(['treemap', 'funnel', 'gauge', 'heatmap'])
+
+// Series types that don't use cartesian xAxis/yAxis. These also skip the
+// default grid/axis configuration the runtime adds for bar/line charts.
+const NON_CARTESIAN_TYPES = new Set(['pie', 'treemap', 'funnel', 'gauge', 'heatmap'])
+
+function _firstSeriesType(): string | undefined {
   const series = props.chartOptions.series
-  if (!Array.isArray(series)) return false
-  return series.some((s) => typeof s === 'object' && s !== null && (s as { type?: string }).type === 'treemap')
+  if (!Array.isArray(series) || series.length === 0) return undefined
+  const s = series[0]
+  return typeof s === 'object' && s !== null ? (s as { type?: string }).type : undefined
 }
 
-// Detect if all series are pie charts (pie charts don't use axes)
+function isTreemapChart(): boolean {
+  return _firstSeriesType() === 'treemap'
+}
+
 function isPieChart(): boolean {
   const series = props.chartOptions.series
   if (!Array.isArray(series)) return false
   return series.every((s) => typeof s === 'object' && s !== null && (s as { type?: string }).type === 'pie')
+}
+
+function needsDataInjection(): boolean {
+  const t = _firstSeriesType()
+  return !!t && DATA_INJECTED_TYPES.has(t)
+}
+
+function needsCartesianAxes(): boolean {
+  const t = _firstSeriesType()
+  return !!t && !NON_CARTESIAN_TYPES.has(t)
 }
 
 // Strip risky string-template formatters from a user-supplied tooltip config.
@@ -222,13 +260,29 @@ function applyAxisLabelFormat(
   }
 }
 
-// Inject data into treemap series
-function injectTreemapData(series: EChartsOption['series']): EChartsOption['series'] {
+// Inject query rows into the first matching series for chart types that
+// don't read from dataset.source (treemap, funnel, gauge, heatmap).
+// `heatmap` is special-cased: ECharts wants [date, value] arrays whereas
+// our queries return objects, so we project before injection.
+function injectSeriesData(series: EChartsOption['series']): EChartsOption['series'] {
   if (!Array.isArray(series)) return series
   return series.map((s) => {
     if (typeof s !== 'object' || s === null) return s
-    if ((s as { type?: string }).type !== 'treemap') return s
-    return { ...s, data: props.data } as typeof s
+    const t = (s as { type?: string }).type
+    if (!t || !DATA_INJECTED_TYPES.has(t)) return s
+    let injected: unknown = props.data
+    if (t === 'heatmap' && Array.isArray(props.data)) {
+      // Project objects → [date, value] pairs. Recipes set the column names
+      // they want via `dateField`/`valueField` on the series, defaulting to
+      // 'date' and 'value'.
+      const dateField = (s as { dateField?: string }).dateField || 'date'
+      const valueField = (s as { valueField?: string }).valueField || 'value'
+      injected = (props.data as Record<string, unknown>[]).map((row) => [
+        row[dateField],
+        row[valueField],
+      ])
+    }
+    return { ...s, data: injected } as typeof s
   })
 }
 
@@ -239,13 +293,14 @@ const finalOptions = computed<EChartsOption>(() => {
   const axisLineColor = dark ? '#4b5563' : '#d1d5db'
   const treemap = isTreemapChart()
   const pie = isPieChart()
-  const needsAxes = !treemap && !pie
+  const needsAxes = needsCartesianAxes()
+  const injectData = needsDataInjection()
 
   let styledSeries = applySeriesLabelStyles(props.chartOptions.series, dark, textColor)
   if (props.seriesLabelFormat) {
     styledSeries = applySeriesLabelFormat(styledSeries, props.seriesLabelFormat)
   }
-  const finalSeries = treemap ? injectTreemapData(styledSeries) : styledSeries
+  const finalSeries = injectData ? injectSeriesData(styledSeries) : styledSeries
 
   const result: EChartsOption = {
     backgroundColor: 'transparent',
@@ -257,7 +312,9 @@ const finalOptions = computed<EChartsOption>(() => {
       ...((props.chartOptions.title as object) || {}),
     },
     tooltip: {
-      trigger: treemap ? 'item' : 'axis',
+      // 'item' for non-cartesian types (per-element tooltip); 'axis' for
+      // cartesian charts (bar/line/scatter — tooltip aligned to the x-axis).
+      trigger: needsAxes ? 'axis' : 'item',
       confine: true,
       backgroundColor: dark ? '#1f2937' : '#ffffff',
       borderColor: dark ? '#374151' : '#e5e7eb',
@@ -307,6 +364,37 @@ const finalOptions = computed<EChartsOption>(() => {
       ...((props.chartOptions.legend as object) || {}),
     },
     series: finalSeries,
+  }
+
+  // Pass through chart-type-specific top-level options that the runtime
+  // doesn't intercept. `calendar` is required for heatmap-on-calendar,
+  // `visualMap` configures color scales (used by heatmap and others).
+  const passthroughKeys = ['calendar', 'visualMap', 'radar', 'graphic'] as const
+  for (const key of passthroughKeys) {
+    const v = (props.chartOptions as Record<string, unknown>)[key]
+    if (v !== undefined) {
+      ;(result as Record<string, unknown>)[key] = v
+    }
+  }
+
+  // For calendar-coordinate heatmaps, derive `calendar.range` from the data's
+  // date column when the recipe didn't set a literal range (ECharts requires
+  // an explicit range — recipes can't compute this via the SQL parameter
+  // system because :year only substitutes inside SQL, not chart options).
+  if (
+    _firstSeriesType() === 'heatmap' &&
+    Array.isArray(props.data) && props.data.length > 0
+  ) {
+    const cal = (result as { calendar?: Record<string, unknown> }).calendar
+    if (cal && (cal.range === undefined || typeof cal.range === 'string' && cal.range.startsWith(':'))) {
+      const dates = (props.data as Record<string, unknown>[])
+        .map((r) => r.date)
+        .filter((d): d is string => typeof d === 'string')
+        .sort()
+      if (dates.length > 0) {
+        cal.range = [dates[0], dates[dates.length - 1]]
+      }
+    }
   }
 
   // Only include axis/grid for charts that use cartesian coordinates

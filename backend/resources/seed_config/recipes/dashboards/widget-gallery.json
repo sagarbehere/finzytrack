@@ -31,7 +31,10 @@
       { "widgetId": "gallery-scatter", "gridArea": "8 / 7 / 11 / 13" },
       { "widgetId": "gallery-treemap", "gridArea": "11 / 1 / 14 / 13" },
       { "widgetId": "gallery-table",   "gridArea": "14 / 1 / 17 / 13" },
-      { "widgetId": "gallery-pivot",   "gridArea": "17 / 1 / 21 / 13" }
+      { "widgetId": "gallery-pivot",   "gridArea": "17 / 1 / 21 / 13" },
+      { "widgetId": "gallery-funnel",   "gridArea": "21 / 1 / 24 / 7" },
+      { "widgetId": "gallery-gauge",    "gridArea": "21 / 7 / 24 / 13" },
+      { "widgetId": "gallery-calendar", "gridArea": "24 / 1 / 27 / 13" }
     ]
   },
   "widgets": [
@@ -255,6 +258,115 @@
             }
           }
         ]
+      }
+    },
+    {
+      "id": "gallery-funnel",
+      "title": "Income → Expenses → Savings (Funnel)",
+      "helpText": "Funnel chart shows ranked stages, larger at top, narrowing down. Query MUST return columns named 'name' (stage label) and 'value' (stage size). Like pie/treemap, the runtime injects rows into series[0].data — do NOT use encode. Use HAVING value > 0 (negatives don't make sense for stages). Good for budget/savings allocation.",
+      "query": "WITH totals AS (SELECT SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) AS income, SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END) AS expenses FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses')) SELECT 'Income' AS name, income AS value FROM totals UNION ALL SELECT 'After Expenses', income - expenses FROM totals UNION ALL SELECT 'Net Savings', CASE WHEN income - expenses > 0 THEN income - expenses ELSE 0 END FROM totals",
+      "visualization": {
+        "type": "chart",
+        "chartType": "funnel",
+        "options": {
+          "tooltip": { "trigger": "item" },
+          "legend": { "show": false },
+          "series": [
+            {
+              "type": "funnel",
+              "left": "10%",
+              "right": "10%",
+              "top": 20,
+              "bottom": 20,
+              "sort": "descending",
+              "gap": 2,
+              "label": { "show": true, "position": "inside", "formatter": "{b}" },
+              "labelLine": { "show": false },
+              "itemStyle": { "borderColor": "#fff", "borderWidth": 1 }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "gallery-gauge",
+      "title": "Savings Rate (Gauge)",
+      "helpText": "Gauge shows a single value against a min/max range. Query should return ONE row with a numeric column. The runtime injects the first row into series[0].data — do NOT use encode. Set series.min, series.max, and use detail.formatter for the centered display. Great for budget progress (% used) and savings rate.",
+      "query": "WITH totals AS (SELECT SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) AS income, SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END) AS expenses FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses')) SELECT ROUND(MAX(0, MIN(100, CASE WHEN income > 0 THEN ((income - expenses) * 100.0 / income) ELSE 0 END)), 1) AS value, 'Savings Rate' AS name FROM totals",
+      "visualization": {
+        "type": "chart",
+        "chartType": "gauge",
+        "options": {
+          "tooltip": { "trigger": "item" },
+          "series": [
+            {
+              "type": "gauge",
+              "min": 0,
+              "max": 100,
+              "startAngle": 200,
+              "endAngle": -20,
+              "axisLine": {
+                "lineStyle": {
+                  "width": 16,
+                  "color": [[0.2, "#E8A951"], [0.5, "#F0D670"], [1, "#7DD3C0"]]
+                }
+              },
+              "pointer": { "show": true, "length": "60%", "width": 4 },
+              "axisTick": { "show": false },
+              "splitLine": { "length": 8, "lineStyle": { "color": "#fff", "width": 2 } },
+              "axisLabel": { "fontSize": 10, "distance": -22 },
+              "title": { "show": false },
+              "detail": {
+                "valueAnimation": true,
+                "formatter": "{value}%",
+                "fontSize": 22,
+                "offsetCenter": [0, "60%"]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "gallery-calendar",
+      "title": "Daily Spending (Calendar Heatmap)",
+      "helpText": "Calendar heatmap shows one cell per day across a year. Query MUST return columns named 'date' (YYYY-MM-DD) and 'value' (numeric). The runtime projects rows to [date, value] pairs. The chart needs a top-level `calendar` option specifying the year `range`, and a `visualMap` for the colour scale. Use chartType:'calendar', series.type:'heatmap', series.coordinateSystem:'calendar'.",
+      "query": "SELECT transaction_date AS date, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency AND amount > 0 GROUP BY transaction_date ORDER BY transaction_date",
+      "visualization": {
+        "type": "chart",
+        "chartType": "calendar",
+        "options": {
+          "tooltip": { "trigger": "item" },
+          "visualMap": {
+            "show": true,
+            "min": 0,
+            "max": 5000,
+            "type": "continuous",
+            "orient": "horizontal",
+            "left": "center",
+            "top": 0,
+            "calculable": true,
+            "inRange": { "color": ["#f3f4f6", "#7DD3C0", "#10b981", "#065f46"] }
+          },
+          "calendar": {
+            "top": 60,
+            "left": 30,
+            "right": 30,
+            "cellSize": ["auto", 14],
+            "range": ":year",
+            "itemStyle": { "borderWidth": 0.5, "borderColor": "#fff" },
+            "yearLabel": { "show": false },
+            "dayLabel": { "fontSize": 9 },
+            "monthLabel": { "fontSize": 10 }
+          },
+          "series": [
+            {
+              "type": "heatmap",
+              "coordinateSystem": "calendar",
+              "name": "Daily Spending"
+            }
+          ]
+        }
       }
     },
     {

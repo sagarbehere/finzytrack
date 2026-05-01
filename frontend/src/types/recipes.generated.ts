@@ -43,7 +43,7 @@ export type JsonRecipeVisualization =
   | JsonKPIVisualization
   | JsonTableVisualization
   | JsonPivotVisualization;
-export type ChartType = "bar" | "line" | "pie" | "area" | "scatter" | "treemap";
+export type ChartType = "bar" | "line" | "pie" | "area" | "scatter" | "treemap" | "funnel" | "gauge" | "calendar";
 /**
  * Predefined value formatter applied at render time.
  */
