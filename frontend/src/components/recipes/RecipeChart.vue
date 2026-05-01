@@ -345,15 +345,35 @@ function injectSeriesData(series: EChartsOption['series']): EChartsOption['serie
 
     if (t === 'sankey') {
       // Build {nodes, links} from {source, target, value, ...extra} rows.
-      // Nodes are unique source/target names; each link spreads the full
-      // row so click-link templates can resolve {{data.<anyOriginalColumn>}}
-      // — important for sankey because source/target are display labels and
-      // the recipe usually wants to filter by an underlying real account
-      // exposed via an extra column.
+      //
+      // Click-link routing in sankey is tricky because source/target are
+      // typically display labels (often with prefixes stripped) rather than
+      // real account names. To make clickLinks work uniformly across both
+      // *node* clicks (rectangles) and *link* clicks (flows), the recipe
+      // can emit two optional columns:
+      //
+      //   sourceAccount: real account for the source side (NULL for
+      //                  synthetic intermediates that have no underlying account)
+      //   targetAccount: real account for the target side (NULL for synthetic)
+      //
+      // The runtime builds a name → realAccount map from these and attaches
+      // realAccount to:
+      //   - each node (when its name has a known realAccount via either
+      //     side it's appeared on)
+      //   - each link (using COALESCE(sourceAccount, targetAccount) so link
+      //     clicks resolve to whichever side is the non-synthetic real
+      //     account — typically the leaf of the flow).
+      //
+      // Recipes without these columns still work; clickLinks just won't
+      // route by real account.
       const sourceField = (s as { sourceField?: string }).sourceField || 'source'
       const targetField = (s as { targetField?: string }).targetField || 'target'
       const valueField = (s as { valueField?: string }).valueField || 'value'
+      const sourceAccountField = (s as { sourceAccountField?: string }).sourceAccountField || 'sourceAccount'
+      const targetAccountField = (s as { targetAccountField?: string }).targetAccountField || 'targetAccount'
+
       const nodeNames = new Set<string>()
+      const nodeRealAccount = new Map<string, string>()
       const links: Row[] = []
       for (const r of rows) {
         const src = String(r[sourceField] ?? '')
@@ -362,9 +382,25 @@ function injectSeriesData(series: EChartsOption['series']): EChartsOption['serie
         if (!src || !tgt || !isFinite(v) || v <= 0) continue
         nodeNames.add(src)
         nodeNames.add(tgt)
-        links.push({ ...r, source: src, target: tgt, value: v })
+        const srcAcct = r[sourceAccountField]
+        const tgtAcct = r[targetAccountField]
+        if (typeof srcAcct === 'string' && srcAcct) nodeRealAccount.set(src, srcAcct)
+        if (typeof tgtAcct === 'string' && tgtAcct) nodeRealAccount.set(tgt, tgtAcct)
+        // realAccount on the link itself: prefer the non-synthetic side.
+        const linkRealAccount = (typeof srcAcct === 'string' && srcAcct) ? srcAcct
+          : (typeof tgtAcct === 'string' && tgtAcct) ? tgtAcct : undefined
+        links.push({
+          ...r,
+          source: src,
+          target: tgt,
+          value: v,
+          ...(linkRealAccount ? { realAccount: linkRealAccount } : {}),
+        })
       }
-      const nodes = Array.from(nodeNames).map((name) => ({ name }))
+      const nodes = Array.from(nodeNames).map((name) => {
+        const realAccount = nodeRealAccount.get(name)
+        return realAccount ? { name, realAccount } : { name }
+      })
       return { ...s, data: nodes, links } as typeof s
     }
 
