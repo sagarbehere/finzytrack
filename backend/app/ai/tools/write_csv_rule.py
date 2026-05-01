@@ -8,7 +8,7 @@ from ruamel.yaml import YAML
 from app.ai.diagnostics import record_validation_failure
 from app.ai.tools.base import BaseTool
 from app.core.backup_manager import BackupManager
-from app.helpers.rule_validation import format_pydantic_errors
+from app.helpers.rule_validation import format_pydantic_errors, reference_shape
 from app.schemas.csv_schemas import CsvRule
 
 logger = logging.getLogger(__name__)
@@ -90,6 +90,7 @@ class WriteCsvRuleTool(BaseTool):
                 "success": False,
                 "error": "CSV rule validation failed",
                 "validation_errors": errors,
+                "reference_shape": reference_shape("csv"),
             }
         except Exception as e:
             return {"success": False, "error": f"Validation failed: {e}"}

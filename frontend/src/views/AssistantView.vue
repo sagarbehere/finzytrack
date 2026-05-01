@@ -301,9 +301,13 @@
                       <button
                         type="button"
                         :disabled="streaming"
-                        @click="askAssistantToFix(msg.validationNote)"
+                        @click="askAssistantToFix(msg)"
                         class="rounded px-2.5 py-1 text-xs font-medium bg-white/60 dark:bg-white/5 ring-1 ring-current/30 hover:bg-white dark:hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed"
                       >Ask assistant to fix</button>
+                      <span
+                        v-if="msg.validationAutoTriggered"
+                        class="ml-2 text-[10px] uppercase tracking-wide opacity-70"
+                      >auto-retrying…</span>
                     </div>
                   </div>
                 </div>
@@ -658,6 +662,13 @@ interface DisplayMessage {
   validationTransactions?: CsvParsedTransaction[]  // CSV/XLS: parsed rows for the table
   validationRawContent?: string        // decoded source file text for the raw view
   validationEmailFields?: TrialExtractedField[]    // email: extracted field values
+  // Structured fields for the auto-feedback prompt — let the AI see specific
+  // diagnostic detail (counts, rule values) rather than just the prose note.
+  validationActualCount?: number
+  validationExpectedCount?: number | null
+  validationRule?: Record<string, unknown>  // the rule that was saved & validated
+  validationFilename?: string
+  validationAutoTriggered?: boolean    // true if askAssistantToFix was auto-fired
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -1029,15 +1040,40 @@ async function sendMessage() {
   // tracked above so the fake-save guard skips, but it has no file to validate.
   const ruleTool = effectiveTool && effectiveTool !== 'write_recipe' ? effectiveTool : null
   if (ruleTool && effectiveFilename && sentFile.value) {
-    const { note, transactions, rawContent, emailFields } = await validateSavedRule(ruleTool, effectiveFilename, sentFile.value, sentExpectedCount.value)
+    const result = await validateSavedRule(ruleTool, effectiveFilename, sentFile.value, sentExpectedCount.value)
     const lastMsg = messages.value[messages.value.length - 1]
     if (lastMsg) {
-      lastMsg.validationNote = note
-      lastMsg.validationTransactions = transactions
-      lastMsg.validationRawContent = rawContent
-      lastMsg.validationEmailFields = emailFields
+      lastMsg.validationNote = result.note
+      lastMsg.validationTransactions = result.transactions
+      lastMsg.validationRawContent = result.rawContent
+      lastMsg.validationEmailFields = result.emailFields
+      lastMsg.validationActualCount = result.actualCount
+      lastMsg.validationExpectedCount = result.expectedCount
+      lastMsg.validationRule = result.rule
+      lastMsg.validationFilename = effectiveFilename
     }
     scrollToBottom()
+    // Auto-feedback: when validation fires a *critical* failure (0 transactions
+    // or a parse error), automatically ask the assistant to fix it instead of
+    // waiting for the user to click the button. This closes the AI ↔ file
+    // feedback loop that today depends on user attention. Cap at
+    // MAX_AUTO_FIX_RETRIES per failure-streak so we don't infinite-loop on
+    // unrecoverable errors (e.g. an XLS uploaded as CSV). On the first
+    // successful save the counter resets, so a *new* rule attempt later in
+    // the same conversation gets the full retry budget again.
+    if (lastMsg && result.note && result.note.startsWith('✓')) {
+      autoFixRetryCount.value = 0
+    } else if (
+      lastMsg
+      && isCriticalValidationFailure(result.note)
+      && autoFixRetryCount.value < MAX_AUTO_FIX_RETRIES
+    ) {
+      autoFixRetryCount.value += 1
+      lastMsg.validationAutoTriggered = true
+      // Tiny delay so the user sees the warning render before the next turn
+      // starts streaming over it.
+      setTimeout(() => askAssistantToFix(lastMsg), 600)
+    }
   } else if (!effectiveTool && looksLikeFakeSaveClaim(assistantMsg.content)) {
     // Fake-save detection: the assistant's text claims a save happened, but no
     // write tool was actually invoked in this turn. Without this check, the
@@ -1084,6 +1120,7 @@ function resetChat() {
   previewRecipe.value = null
   lastSavedRuleTool.value = null
   lastSavedRuleFilename.value = null
+  autoFixRetryCount.value = 0
   sessionMode.value = 'analyst'
   sessionFileType.value = null
   ruleFilename.value = ''
@@ -1101,7 +1138,17 @@ interface ValidationResult {
   transactions: CsvParsedTransaction[]
   rawContent: string
   emailFields?: TrialExtractedField[]
+  // Diagnostic detail for the auto-feedback prompt
+  actualCount?: number
+  expectedCount?: number | null
+  rule?: Record<string, unknown>
 }
+
+// Cap auto-retries per conversation: avoid an AI ↔ validator infinite loop
+// when the recipe simply can't parse the file (e.g. XLS uploaded with a CSV
+// rule). Reset on resetChat() / new file upload.
+const MAX_AUTO_FIX_RETRIES = 2
+const autoFixRetryCount = ref(0)
 
 async function validateSavedRule(
   tool: 'write_csv_rule' | 'write_xls_rule' | 'write_email_rule',
@@ -1142,6 +1189,9 @@ async function validateSavedRule(
         note: formatValidationNote(transactions.length, file.name, transactions[0]?.date, transactions.at(-1)?.date, expectedCount),
         transactions,
         rawContent: text,
+        actualCount: transactions.length,
+        expectedCount,
+        rule: rule as unknown as Record<string, unknown>,
       }
     } else {
       const res = await ImportService.getXlsRule(filename)
@@ -1153,6 +1203,9 @@ async function validateSavedRule(
         note: formatValidationNote(transactions.length, file.name, transactions[0]?.date, transactions.at(-1)?.date, expectedCount),
         transactions,
         rawContent: extractXlsText(buffer, rule),
+        actualCount: transactions.length,
+        expectedCount,
+        rule: rule as unknown as Record<string, unknown>,
       }
     }
   } catch (err) {
@@ -1212,21 +1265,86 @@ function looksLikeFakeSaveClaim(content: string): boolean {
 
 /**
  * Pre-fill the chat input with a fix request based on the validation note,
- * then submit it. Lets the user one-click their way to a retry without
- * having to type the failure summary themselves.
+ * then submit it. Builds a *specific* corrective prompt with the actual
+ * count, expected count, and the rule's current key fields — the AI fixes
+ * faster when it sees the diagnostic detail rather than a generic 'review
+ * the rule' nudge.
+ *
+ * Accepts either a DisplayMessage (preferred — has rich diagnostics) or a
+ * plain note string (legacy callers).
  */
-function askAssistantToFix(note: string) {
+function askAssistantToFix(arg: DisplayMessage | string) {
   if (streaming.value) return
+  const note = typeof arg === 'string' ? arg : (arg.validationNote || '')
+  const msg = typeof arg === 'string' ? null : arg
+
   if (/was NOT saved/i.test(note)) {
     inputText.value = "You claimed to save the rule, but the write tool was never invoked and the file was not actually saved. Please call the appropriate write tool now to save the rule."
   } else if (/could not be loaded back from disk/i.test(note)) {
     inputText.value = "The recipe was reported as saved but the file is not retrievable from disk. Please call write_recipe again with the same content to save it properly."
   } else if (isCriticalValidationFailure(note)) {
-    inputText.value = "The saved rule failed validation (0 transactions or a parser error). Please review the rule, identify what's wrong (sheet name, skip counts, date format, column indices), and save a corrected version."
+    inputText.value = buildCriticalFixPrompt(note, msg)
   } else {
-    inputText.value = "The saved rule's transaction count doesn't match what's expected. Please review and fix the rule, then save again."
+    inputText.value = buildCountMismatchFixPrompt(note, msg)
   }
   void sendMessage()
+}
+
+/** Detailed fix prompt for parser failures / 0-transaction saves. */
+function buildCriticalFixPrompt(note: string, msg: DisplayMessage | null): string {
+  const parts: string[] = []
+  parts.push(
+    `The rule you just saved failed validation against the user's file. ` +
+    `Result: ${note.replace(/^⚠\s*/, '').trim()}`
+  )
+  if (msg?.validationFilename) parts.push(`Saved rule filename: ${msg.validationFilename}.`)
+  const ruleSummary = summariseRuleForFix(msg?.validationRule)
+  if (ruleSummary) parts.push(`Current rule values that may be wrong:\n${ruleSummary}`)
+  parts.push(
+    `Diagnose why the rule didn't parse the file correctly — common causes: ` +
+    `wrong skip_lines_start, wrong date_format, swapped column indices, ` +
+    `wrong sheet_name (XLS), missing rows between header and first transaction. ` +
+    `Read the rule with read_file if helpful. Fix and save again.`
+  )
+  return parts.join('\n\n')
+}
+
+/** Less alarming prompt for count-mismatch (rule works, count differs). */
+function buildCountMismatchFixPrompt(note: string, msg: DisplayMessage | null): string {
+  const parts: string[] = [`The saved rule's transaction count doesn't match what's expected. ${note.replace(/^⚠\s*/, '').trim()}`]
+  if (msg?.validationActualCount !== undefined && msg?.validationExpectedCount != null) {
+    parts.push(`Found ${msg.validationActualCount} transactions; expected ${msg.validationExpectedCount}.`)
+  }
+  const ruleSummary = summariseRuleForFix(msg?.validationRule)
+  if (ruleSummary) parts.push(`Current rule values:\n${ruleSummary}`)
+  parts.push(
+    `Some transactions are likely being missed. Common causes: skip_lines_end ` +
+    `is too large (over-trimming the footer), skip_lines_start is too large ` +
+    `(over-trimming the header), or amount_debit/amount_credit indices map to ` +
+    `the wrong columns so some rows return amount=0 and get filtered out. ` +
+    `Diagnose, fix, and save again.`
+  )
+  return parts.join('\n\n')
+}
+
+/** Render a compact subset of a saved rule's fields for inclusion in a fix
+ *  prompt. Picks the fields most often responsible for parse failures. */
+function summariseRuleForFix(rule: Record<string, unknown> | undefined): string {
+  if (!rule) return ''
+  const lines: string[] = []
+  const fields: Array<keyof typeof rule | string> = [
+    'skip_lines_start', 'skip_lines_end', 'date_format', 'decimal_separator',
+    'separator', 'sheet_index', 'sheet_name', 'columns', 'default_account',
+    'default_currency',
+  ]
+  for (const f of fields) {
+    if (rule[f] !== undefined) {
+      const v = rule[f]
+      const formatted = typeof v === 'object' ? JSON.stringify(v) : String(v)
+      lines.push(`  - ${f}: ${formatted}`)
+    }
+  }
+  return lines.join('\n')
 }
 
 function validationRows(txs: CsvParsedTransaction[]): CsvParsedTransaction[] {

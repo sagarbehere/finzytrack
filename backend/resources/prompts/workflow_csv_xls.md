@@ -8,6 +8,15 @@ rule's `skip_lines_start`, `skip_lines_end`, and `columns.*` fields directly —
 
 **Do not try to auto-generate and save a rule without user confirmation. Always follow these steps:**
 
+0. **Look at an existing rule first** (when one exists). Call `list_rule_files`
+   for this file's type and pick one rule from the same bank or institution
+   if present (e.g. another ICICI rule when handling a new ICICI export);
+   otherwise pick any one rule from the same type. Call `read_file` on it
+   and use it as a structural model for naming, account-path conventions,
+   and currency. **Skip this step if there are no existing rules.** This is
+   often the fastest path to a correct draft — the user's existing rules
+   already encode their conventions.
+
 1. **Identify the column structure** from the parse hint and the column header row visible in the file content.
    - The parse hint is a **best-effort guess from a heuristic** and can be wrong on files with
      unusual layouts. Treat it as a starting point, not gospel.

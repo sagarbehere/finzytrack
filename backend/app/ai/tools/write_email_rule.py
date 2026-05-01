@@ -9,6 +9,7 @@ from app.ai.tools.base import BaseTool
 from app.ai.tools.test_email_extraction import _test_one_field
 from app.core.backup_manager import BackupManager
 from app.email_import.rule_schemas import ExtractionFieldDef, RuleFile as EmailRuleFile
+from app.helpers.rule_validation import reference_shape
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +189,7 @@ class WriteEmailRuleTool(BaseTool):
                 return {
                     "success": False,
                     "error": "Regex validation failed:\n" + "\n".join(f"  - {e}" for e in regex_errors),
+                    "reference_shape": reference_shape("email"),
                 }
 
         # Cross-validate patterns against the original email
@@ -202,13 +204,18 @@ class WriteEmailRuleTool(BaseTool):
                         "Patterns do not match the original email — fix before saving:\n"
                         + "\n".join(f"  - {e}" for e in email_errors)
                     ),
+                    "reference_shape": reference_shape("email"),
                 }
 
         # Validate against Pydantic schema
         try:
             EmailRuleFile.model_validate(data)
         except Exception as e:
-            return {"success": False, "error": f"Schema validation failed: {e}"}
+            return {
+                "success": False,
+                "error": f"Schema validation failed: {e}",
+                "reference_shape": reference_shape("email"),
+            }
 
         if not filename.endswith((".yaml", ".yml")):
             filename += ".yaml"

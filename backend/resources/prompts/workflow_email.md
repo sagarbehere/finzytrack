@@ -5,6 +5,16 @@ Email rules are more complex than CSV/XLS. Follow this specific workflow:
 **MANDATORY: You MUST call `match_email_against_rules` as your very first action when a .eml
 file is uploaded. Do NOT skip this step. Do NOT draft patterns or show extracted values first.**
 
+### Step 0 — Read an existing rule for structure (when one exists)
+
+Before drafting any new email rule, call `list_rule_files(type="email")`. If
+*any* rules exist, call `read_file` on one — preferably a same-bank
+example, otherwise any one — and use it as a structural model for
+`metadata`, `imap_server` defaults, and `mapping` conventions. Skip this
+step only when no email rules exist yet. Step 1 below is about matching
+the *current email* against rules; Step 0 is about understanding *the
+shape* of well-formed rule files.
+
 ### Step 1 — Check existing rules first
 
 Call `match_email_against_rules` with the sender, subject, and body from the uploaded email.
