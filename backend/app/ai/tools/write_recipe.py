@@ -56,6 +56,14 @@ def _sql_error_hint(message: str) -> str | None:
     return None
 
 
+# Match :paramName placeholders in SQL — used to extract parameter names so we
+# can pass them as named bindings to SQLite. The regex itself isn't used to
+# substitute (which would corrupt :name occurrences inside string literals);
+# SQLite's own parser knows about string boundaries when handling :name
+# placeholders, so we let it do the work.
+_PARAM_NAME_RE = re.compile(r":(\w+)")
+
+
 def _dry_run_queries(dashboard: dict, sqlite_path: str | None) -> list[str]:
     """Execute each widget's SQL query to check for errors. Returns list of errors."""
     if not sqlite_path:
@@ -72,15 +80,18 @@ def _dry_run_queries(dashboard: dict, sqlite_path: str | None) -> list[str]:
         if not isinstance(query, str):
             continue
 
-        # Replace :paramName placeholders with dummy values for dry-run
-        # This lets us check SQL syntax without needing real parameter values
-        dry_query = re.sub(r":(\w+)", "'__dry_run__'", query)
+        # Bind every :paramName placeholder to a dummy string. SQLite parses
+        # the query and only treats :name as a placeholder when it's outside
+        # string literals — so this also works for queries with colons inside
+        # quoted strings (e.g. 'Assets:Liquid:%').
+        param_names = set(_PARAM_NAME_RE.findall(query))
+        params = {name: "__dry_run__" for name in param_names}
 
         try:
             con = sqlite3.connect(sqlite_path, uri=True)
             con.execute("PRAGMA query_only = true")
             # Use LIMIT 0 wrapper to avoid actually fetching data
-            con.execute(f"SELECT * FROM ({dry_query}) LIMIT 0")
+            con.execute(f"SELECT * FROM ({query}) LIMIT 0", params)
             con.close()
         except (sqlite3.OperationalError, Exception) as e:
             wid = w.get("id", f"index {i}")

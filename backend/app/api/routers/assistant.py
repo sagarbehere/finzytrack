@@ -52,6 +52,7 @@ from app.ai.tools.read_recipe import ReadRecipeTool
 from app.ai.tools.get_recipe_schema import GetRecipeSchemaTool
 from app.ai.tools.preview_recipe import PreviewRecipeTool
 from app.ai.reference import get_readiness
+from app.ai.tools.get_example_widget import GetExampleWidgetTool
 from app.ai.tools.read_reference import ReadReferenceTool
 from app.ai.tools.write_recipe import WriteRecipeTool
 from app.helpers.response_helpers import success_json_response
@@ -224,6 +225,7 @@ def _build_registry(
             registry.register(PreviewRecipeTool(sqlite_path))
             registry.register(WriteRecipeTool(recipes_dir, sqlite_path, backup_manager))
             registry.register(ReadReferenceTool())
+            registry.register(GetExampleWidgetTool())
 
     return registry
 
