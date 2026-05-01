@@ -34,7 +34,10 @@
       { "widgetId": "gallery-pivot",   "gridArea": "17 / 1 / 21 / 13" },
       { "widgetId": "gallery-funnel",   "gridArea": "21 / 1 / 24 / 7" },
       { "widgetId": "gallery-gauge",    "gridArea": "21 / 7 / 24 / 13" },
-      { "widgetId": "gallery-calendar", "gridArea": "24 / 1 / 27 / 13" }
+      { "widgetId": "gallery-calendar", "gridArea": "24 / 1 / 27 / 13" },
+      { "widgetId": "gallery-sankey",   "gridArea": "27 / 1 / 31 / 13" },
+      { "widgetId": "gallery-radar",    "gridArea": "31 / 1 / 34 / 7" },
+      { "widgetId": "gallery-sunburst", "gridArea": "31 / 7 / 34 / 13" }
     ]
   },
   "widgets": [
@@ -364,6 +367,82 @@
               "type": "heatmap",
               "coordinateSystem": "calendar",
               "name": "Daily Spending"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "gallery-sankey",
+      "title": "Money Flow: Income → Expenses (Sankey)",
+      "helpText": "Sankey shows flow between source and target categories with link width proportional to value. Query MUST return columns named 'source', 'target', and 'value' — the runtime derives unique nodes and uses rows directly as links. Override column names via series.sourceField / targetField / valueField if needed. Filter out value <= 0 in SQL — sankey can't show zero or negative flows.",
+      "query": "SELECT REPLACE(account, 'Income:', '') AS source, 'Total Income' AS target, ROUND(SUM(-amount), 2) AS value FROM postings WHERE account_type = 'Income' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 UNION ALL SELECT 'Total Income' AS source, REPLACE(account, 'Expenses:', '') AS target, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0",
+      "visualization": {
+        "type": "chart",
+        "chartType": "sankey",
+        "options": {
+          "tooltip": { "trigger": "item", "triggerOn": "mousemove" },
+          "series": [
+            {
+              "type": "sankey",
+              "left": 16,
+              "right": 16,
+              "top": 16,
+              "bottom": 16,
+              "nodeAlign": "justify",
+              "lineStyle": { "color": "gradient", "curveness": 0.5, "opacity": 0.5 },
+              "label": { "fontSize": 10 },
+              "emphasis": { "focus": "adjacency" }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "gallery-radar",
+      "title": "Spending Profile by Category (Radar)",
+      "helpText": "Radar compares values across multiple dimensions on a single shape. Query returns one row per dimension with columns 'category' (axis label) and 'value' (axis value). The runtime auto-builds the radar.indicator from the categories, scaled to 1.2× the max value. Override via series.indicatorMaxRatio. Best for 4-8 dimensions; fewer feels sparse, more becomes hard to read.",
+      "query": "SELECT REPLACE(account, 'Expenses:', '') AS category, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC LIMIT 6",
+      "visualization": {
+        "type": "chart",
+        "chartType": "radar",
+        "options": {
+          "tooltip": { "trigger": "item" },
+          "legend": { "show": false },
+          "series": [
+            {
+              "type": "radar",
+              "areaStyle": { "opacity": 0.3 },
+              "lineStyle": { "width": 2 },
+              "itemStyle": { "color": "#7B83AD" },
+              "label": { "show": false }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "gallery-sunburst",
+      "title": "Hierarchical Expenses (Sunburst)",
+      "helpText": "Sunburst shows nested hierarchies as concentric rings. Query returns rows with 'account' (colon-separated path like 'Expenses:Food:Restaurants') and 'value'. The runtime splits paths and builds the nested tree automatically — outer rings are deeper levels. Use when categories naturally nest (account hierarchies, time periods); prefer treemap for flat distributions.",
+      "query": "SELECT account, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC",
+      "visualization": {
+        "type": "chart",
+        "chartType": "sunburst",
+        "options": {
+          "tooltip": { "trigger": "item" },
+          "series": [
+            {
+              "type": "sunburst",
+              "radius": [0, "90%"],
+              "label": { "rotate": "tangential", "minAngle": 6, "fontSize": 10 },
+              "itemStyle": { "borderColor": "#fff", "borderWidth": 1 },
+              "levels": [
+                {},
+                { "r0": "15%", "r": "45%", "label": { "rotate": "tangential" } },
+                { "r0": "45%", "r": "75%", "label": { "rotate": "tangential" } },
+                { "r0": "75%", "r": "90%", "label": { "rotate": 0 } }
+              ]
             }
           ]
         }

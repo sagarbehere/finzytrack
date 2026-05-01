@@ -44,7 +44,7 @@ export type VisualizationType = 'chart' | 'kpi' | 'table' | 'pivot'
 // Runtime const array of chart types (used by the Analysis chart picker etc.).
 // The corresponding `ChartType` *type* is generated from recipe.schema.json
 // and re-exported below; both must list the same values.
-export const SUPPORTED_CHART_TYPES = ['bar', 'line', 'pie', 'area', 'scatter', 'treemap', 'funnel', 'gauge', 'calendar'] as const
+export const SUPPORTED_CHART_TYPES = ['bar', 'line', 'pie', 'area', 'scatter', 'treemap', 'funnel', 'gauge', 'calendar', 'sankey', 'radar', 'sunburst'] as const
 
 /**
  * Context passed to getSeriesClickLink for chart click handling

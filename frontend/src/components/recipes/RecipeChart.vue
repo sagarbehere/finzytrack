@@ -14,6 +14,9 @@ import {
   FunnelChart,
   GaugeChart,
   HeatmapChart,
+  SankeyChart,
+  RadarChart,
+  SunburstChart,
 } from 'echarts/charts'
 import {
   TitleComponent,
@@ -41,6 +44,9 @@ echarts.use([
   FunnelChart,
   GaugeChart,
   HeatmapChart,
+  SankeyChart,
+  RadarChart,
+  SunburstChart,
   TitleComponent,
   TooltipComponent,
   LegendComponent,
@@ -126,15 +132,20 @@ function applySeriesLabelStyles(
 }
 
 // Series types that don't use ECharts dataset.source — runtime injects rows
-// directly into series[0].data instead. Treemap rejects encode entirely;
-// funnel/gauge/heatmap each have their own per-row shape (name+value, single
-// value, or [date, value] tuples). Add a series type here when introducing a
-// new chart type that doesn't read from dataset.source.
-const DATA_INJECTED_TYPES = new Set(['treemap', 'funnel', 'gauge', 'heatmap'])
+// directly into series[0].data (and sometimes auxiliary fields like .links
+// or .indicator). Add a series type here when introducing a new chart type
+// that doesn't read from dataset.source.
+const DATA_INJECTED_TYPES = new Set([
+  'treemap', 'funnel', 'gauge', 'heatmap',
+  'sankey', 'radar', 'sunburst',
+])
 
 // Series types that don't use cartesian xAxis/yAxis. These also skip the
 // default grid/axis configuration the runtime adds for bar/line charts.
-const NON_CARTESIAN_TYPES = new Set(['pie', 'treemap', 'funnel', 'gauge', 'heatmap'])
+const NON_CARTESIAN_TYPES = new Set([
+  'pie', 'treemap', 'funnel', 'gauge', 'heatmap',
+  'sankey', 'radar', 'sunburst',
+])
 
 function _firstSeriesType(): string | undefined {
   const series = props.chartOptions.series
@@ -260,29 +271,135 @@ function applyAxisLabelFormat(
   }
 }
 
-// Inject query rows into the first matching series for chart types that
-// don't read from dataset.source (treemap, funnel, gauge, heatmap).
-// `heatmap` is special-cased: ECharts wants [date, value] arrays whereas
-// our queries return objects, so we project before injection.
+type Row = Record<string, unknown>
+
+
+/** Build a node tree from rows whose `pathField` is a colon-separated path
+ *  (e.g. 'Expenses:Food:Restaurants'). Each leaf carries the row's value. */
+function buildAccountTree(rows: Row[], pathField: string, valueField: string) {
+  type Node = { name: string; value: number; children: Node[] }
+  const root: Node = { name: '__root__', value: 0, children: [] }
+
+  for (const row of rows) {
+    const path = String(row[pathField] ?? '')
+    const value = Number(row[valueField] ?? 0)
+    if (!path || !isFinite(value) || value <= 0) continue
+    const segments = path.split(':')
+    let cur = root
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i]
+      let child = cur.children.find((c) => c.name === seg)
+      if (!child) {
+        child = { name: seg, value: 0, children: [] }
+        cur.children.push(child)
+      }
+      // Only the leaf carries the row's value; parents are summed below.
+      if (i === segments.length - 1) child.value += value
+      cur = child
+    }
+  }
+
+  // Roll up each parent's value as the sum of descendants. ECharts can do this
+  // automatically but pre-computing avoids zero-value parent collapse.
+  function rollup(n: { value: number; children: { value: number }[] }): number {
+    if (n.children.length === 0) return n.value
+    n.value = (n.children as { value: number }[])
+      .map((c) => rollup(c as { value: number; children: { value: number }[] }))
+      .reduce((a, b) => a + b, 0)
+    return n.value
+  }
+  rollup(root)
+  // Strip leaves with zero/missing children arrays for cleaner ECharts data.
+  function clean(n: Node): unknown {
+    return n.children.length === 0
+      ? { name: n.name, value: n.value }
+      : { name: n.name, value: n.value, children: n.children.map(clean) }
+  }
+  return root.children.map(clean)
+}
+
+/** Inject query rows into the first matching series for chart types that
+ *  don't read from dataset.source. Each type has its own per-row shape; the
+ *  series may declare `*Field` overrides to point at non-default columns. */
 function injectSeriesData(series: EChartsOption['series']): EChartsOption['series'] {
   if (!Array.isArray(series)) return series
   return series.map((s) => {
     if (typeof s !== 'object' || s === null) return s
     const t = (s as { type?: string }).type
     if (!t || !DATA_INJECTED_TYPES.has(t)) return s
-    let injected: unknown = props.data
-    if (t === 'heatmap' && Array.isArray(props.data)) {
-      // Project objects → [date, value] pairs. Recipes set the column names
-      // they want via `dateField`/`valueField` on the series, defaulting to
-      // 'date' and 'value'.
+    if (!Array.isArray(props.data)) return { ...s, data: props.data } as typeof s
+    const rows = props.data as Row[]
+
+    if (t === 'heatmap') {
+      // ECharts heatmap-on-calendar wants [date, value] arrays.
       const dateField = (s as { dateField?: string }).dateField || 'date'
       const valueField = (s as { valueField?: string }).valueField || 'value'
-      injected = (props.data as Record<string, unknown>[]).map((row) => [
-        row[dateField],
-        row[valueField],
-      ])
+      return { ...s, data: rows.map((r) => [r[dateField], r[valueField]]) } as typeof s
     }
-    return { ...s, data: injected } as typeof s
+
+    if (t === 'sankey') {
+      // Build {nodes, links} from {source, target, value} rows. Nodes are
+      // unique source/target names; links are the rows themselves.
+      const sourceField = (s as { sourceField?: string }).sourceField || 'source'
+      const targetField = (s as { targetField?: string }).targetField || 'target'
+      const valueField = (s as { valueField?: string }).valueField || 'value'
+      const nodeNames = new Set<string>()
+      const links: Array<{ source: string; target: string; value: number }> = []
+      for (const r of rows) {
+        const src = String(r[sourceField] ?? '')
+        const tgt = String(r[targetField] ?? '')
+        const v = Number(r[valueField] ?? 0)
+        if (!src || !tgt || !isFinite(v) || v <= 0) continue
+        nodeNames.add(src)
+        nodeNames.add(tgt)
+        links.push({ source: src, target: tgt, value: v })
+      }
+      const nodes = Array.from(nodeNames).map((name) => ({ name }))
+      return { ...s, data: nodes, links } as typeof s
+    }
+
+    if (t === 'radar') {
+      // SQL returns one row per dimension: {category, value}. Runtime extracts
+      // categories → indicators, builds a single series.data entry whose
+      // `value` array is in matching order.
+      const categoryField = (s as { categoryField?: string }).categoryField || 'category'
+      const valueField = (s as { valueField?: string }).valueField || 'value'
+      const labelField = (s as { labelField?: string }).labelField
+      const indicatorMaxRatio = (s as { indicatorMaxRatio?: number }).indicatorMaxRatio || 1.2
+      const cats: string[] = []
+      const values: number[] = []
+      for (const r of rows) {
+        const c = String(r[categoryField] ?? '')
+        const v = Number(r[valueField] ?? 0)
+        if (!c || !isFinite(v)) continue
+        cats.push(c)
+        values.push(v)
+      }
+      const max = values.length ? Math.max(...values) * indicatorMaxRatio : 100
+      // Push the indicator config onto the *series* so it can be lifted to
+      // the top-level radar config below by the renderer.
+      const indicators = cats.map((name) => ({ name, max }))
+      const subjectName = labelField && rows[0] ? String(rows[0][labelField] ?? 'Series') : 'Series'
+      return {
+        ...s,
+        data: [{ name: subjectName, value: values }],
+        // _runtimeIndicators is a private side-channel for lifting the
+        // indicator config to the top-level radar block in finalOptions.
+        // Cast through unknown — ECharts SeriesOption types don't allow
+        // arbitrary fields, but the renderer strips this before render.
+        _runtimeIndicators: indicators,
+      } as unknown as typeof s
+    }
+
+    if (t === 'sunburst') {
+      // Build a tree from colon-separated account paths.
+      const pathField = (s as { pathField?: string }).pathField || 'account'
+      const valueField = (s as { valueField?: string }).valueField || 'value'
+      return { ...s, data: buildAccountTree(rows, pathField, valueField) } as typeof s
+    }
+
+    // Default: drop rows directly into series.data (treemap, funnel, gauge).
+    return { ...s, data: props.data } as typeof s
   })
 }
 
@@ -300,7 +417,24 @@ const finalOptions = computed<EChartsOption>(() => {
   if (props.seriesLabelFormat) {
     styledSeries = applySeriesLabelFormat(styledSeries, props.seriesLabelFormat)
   }
-  const finalSeries = injectData ? injectSeriesData(styledSeries) : styledSeries
+  let finalSeries = injectData ? injectSeriesData(styledSeries) : styledSeries
+
+  // Lift any radar series' runtime-derived indicator up to the top-level
+  // `radar` config (ECharts requires it there). Strip the temp field from the
+  // series after lifting so it doesn't leak into the rendered options.
+  let radarConfig: { indicator: Array<{ name: string; max: number }> } | null = null
+  if (Array.isArray(finalSeries)) {
+    finalSeries = finalSeries.map((s) => {
+      if (typeof s === 'object' && s !== null && '_runtimeIndicators' in s) {
+        const { _runtimeIndicators, ...rest } = s as unknown as Record<string, unknown>
+        if (Array.isArray(_runtimeIndicators)) {
+          radarConfig = { indicator: _runtimeIndicators as Array<{ name: string; max: number }> }
+        }
+        return rest as unknown as typeof s
+      }
+      return s
+    })
+  }
 
   const result: EChartsOption = {
     backgroundColor: 'transparent',
@@ -375,6 +509,13 @@ const finalOptions = computed<EChartsOption>(() => {
     if (v !== undefined) {
       ;(result as Record<string, unknown>)[key] = v
     }
+  }
+
+  // Apply the runtime-derived radar config if the recipe didn't supply one.
+  // Recipe-supplied radar config wins so users can customise the indicator
+  // (e.g. set custom `max` values per axis or re-order the axes).
+  if (radarConfig && !(result as { radar?: unknown }).radar) {
+    ;(result as Record<string, unknown>).radar = radarConfig
   }
 
   // For calendar-coordinate heatmaps, derive `calendar.range` from the data's

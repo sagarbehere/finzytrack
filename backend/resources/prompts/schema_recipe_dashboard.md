@@ -394,7 +394,7 @@ The following section is generated from the authoritative JSON Schema. Use it as
 
 #### `ChartType`
 
-Type: `'bar' | 'line' | 'pie' | 'area' | 'scatter' | 'treemap' | 'funnel' | 'gauge' | 'calendar'`
+Type: `'bar' | 'line' | 'pie' | 'area' | 'scatter' | 'treemap' | 'funnel' | 'gauge' | 'calendar' | 'sankey' | 'radar' | 'sunburst'`
 
 #### `JsonChartVisualization`
 
