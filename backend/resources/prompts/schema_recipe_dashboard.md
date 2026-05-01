@@ -454,7 +454,7 @@ Type: `string`
 | `label` | `string` | yes | Human-readable label shown in the parameter UI. |
 | `type` | `'date' | 'select' | 'number'` | yes |  |
 | `default` | `string | number | object` | — | Default value, or a generator object {"$gen": "name"} resolved at runtime. |
-| `options` | `object[]` | — |  |
+| `options` | `object[] | object` | — | Either a literal array of {value, label} options, or a generator reference like {"$gen": "monthOptions"} resolved to an array at runtime. |
 | `optionsFrom` | `'currencies' | 'years'` | — | Populate options dynamically from the user's ledger. |
 | `min` | `number` | — |  |
 | `max` | `number` | — |  |

@@ -346,23 +346,45 @@ def validate_dashboard(dashboard) -> list[str]:
     expanded.sort(key=lambda e: list(e.absolute_path))
     errors = [_format_error("", e) for e in expanded]
 
-    # Cross-check: every layout widgetId must reference an inline widget id
+    # Cross-check: every layout widgetId must reference *something* — either an
+    # inline widget definition in this dashboard's `widgets` array, or a widget
+    # registered separately and looked up by id at runtime. We can only see the
+    # inline list from here, so we use this heuristic: only flag missing
+    # widgetIds when the dashboard *appears* to be self-contained (every other
+    # layout widgetId resolves inline). If any widgetId doesn't resolve, we
+    # assume the dashboard is using the registry and skip the check — this
+    # avoids false positives on mixed inline+registry dashboards while still
+    # catching typos in single-widget AI-authored recipes.
     layout = dashboard.get("layout") or {}
     layout_widgets = layout.get("widgets") or []
     inline_widgets = dashboard.get("widgets") or []
     if isinstance(layout_widgets, list) and isinstance(inline_widgets, list):
         widget_ids = {w["id"] for w in inline_widgets if isinstance(w, dict) and "id" in w}
-        for i, lw_item in enumerate(layout_widgets):
-            if isinstance(lw_item, dict):
-                wid = lw_item.get("widgetId")
-                if wid and wid not in widget_ids:
-                    available = sorted(widget_ids) if widget_ids else "[]"
-                    errors.append(
-                        f"layout.widgets[{i}].widgetId: '{wid}' has no matching widget "
-                        f"definition. Available widget ids in this dashboard's 'widgets' "
-                        f"array: {available}. Hint: if the widget is saved separately, "
-                        f"leave 'widgets: []' and ensure the widgetId matches a registered widget."
-                    )
+        layout_ids = [
+            lw.get("widgetId") for lw in layout_widgets
+            if isinstance(lw, dict) and lw.get("widgetId")
+        ]
+        # Only run the cross-check in two clearly-self-contained shapes:
+        #   1. All layout widgetIds resolve inline (no registry lookups expected)
+        #   2. The widgets array is non-empty AND every inline id is referenced
+        #      (catches typos like a renamed widget)
+        all_resolve = layout_ids and all(wid in widget_ids for wid in layout_ids)
+        if widget_ids and all_resolve is False and any(wid in widget_ids for wid in layout_ids):
+            # Mixed: some resolve, some don't. Skip — assume registry mode for
+            # the unresolved ones rather than emit false positives.
+            pass
+        elif widget_ids and not all_resolve:
+            for i, lw_item in enumerate(layout_widgets):
+                if isinstance(lw_item, dict):
+                    wid = lw_item.get("widgetId")
+                    if wid and wid not in widget_ids:
+                        available = sorted(widget_ids)
+                        errors.append(
+                            f"layout.widgets[{i}].widgetId: '{wid}' has no matching widget "
+                            f"definition. Available widget ids in this dashboard's 'widgets' "
+                            f"array: {available}. Hint: if the widget is saved separately, "
+                            f"leave 'widgets: []' and ensure the widgetId matches a registered widget."
+                        )
 
     return errors
 

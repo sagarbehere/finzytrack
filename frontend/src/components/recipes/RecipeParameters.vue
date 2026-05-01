@@ -97,7 +97,11 @@ function getOptions(param: RecipeParameter): RecipeParameterOption[] {
   if (param.optionsFrom === 'years') {
     return dynamicYearOptions.value
   }
-  return param.options || []
+  // `options` is typed as `RecipeParameterOption[] | { $gen: ... }` per the
+  // JSON schema, but resolveGenerators (run by useRecipeLoader on every JSON
+  // recipe before it reaches this component) replaces $gen objects with their
+  // resolved arrays, so by this point it's always an array.
+  return (param.options as RecipeParameterOption[] | undefined) || []
 }
 
 function coerceValue(value: string | number): string | number {

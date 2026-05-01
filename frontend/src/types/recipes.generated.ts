@@ -99,11 +99,19 @@ export interface RecipeParameter {
         $gen: string;
         [k: string]: unknown;
       };
-  options?: {
-    value: string | number;
-    label: string;
-    [k: string]: unknown;
-  }[];
+  /**
+   * Either a literal array of {value, label} options, or a generator reference like {"$gen": "monthOptions"} resolved to an array at runtime.
+   */
+  options?:
+    | {
+        value: string | number;
+        label: string;
+        [k: string]: unknown;
+      }[]
+    | {
+        $gen: string;
+        [k: string]: unknown;
+      };
   /**
    * Populate options dynamically from the user's ledger.
    */

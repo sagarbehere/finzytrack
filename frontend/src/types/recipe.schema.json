@@ -43,15 +43,25 @@
           ]
         },
         "options": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["value", "label"],
-            "properties": {
-              "value": { "type": ["string", "number"] },
-              "label": { "type": "string" }
+          "description": "Either a literal array of {value, label} options, or a generator reference like {\"$gen\": \"monthOptions\"} resolved to an array at runtime.",
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["value", "label"],
+                "properties": {
+                  "value": { "type": ["string", "number"] },
+                  "label": { "type": "string" }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["$gen"],
+              "properties": { "$gen": { "type": "string" } }
             }
-          }
+          ]
         },
         "optionsFrom": {
           "type": "string",
