@@ -462,7 +462,15 @@
 
           <!-- Recipe preview content -->
           <div v-else-if="sidebarMode === 'recipePreview' && previewRecipe" class="flex-1 overflow-y-auto p-4">
-            <RecipeDashboard :dashboard="previewRecipe" />
+            <RecipeWidget
+              v-if="previewRecipeType === 'widget'"
+              :recipe="(previewRecipe as JsonWidgetRecipe)"
+              class="h-full"
+            />
+            <RecipeDashboard
+              v-else
+              :dashboard="(previewRecipe as JsonDashboardRecipe)"
+            />
           </div>
         </div>
 
@@ -610,7 +618,8 @@ import AccountDropdown from '@/components/common/AccountDropdown.vue'
 import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
 import FilePreviewTable from '@/components/FilePreviewTable.vue'
 import RecipeDashboard from '@/components/recipes/RecipeDashboard.vue'
-import type { JsonDashboardRecipe } from '@/types/recipes'
+import RecipeWidget from '@/components/recipes/RecipeWidget.vue'
+import type { JsonDashboardRecipe, JsonWidgetRecipe } from '@/types/recipes'
 import { resolveGenerators } from '@/recipes/functions'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -688,7 +697,8 @@ const sidebarMode = ref<'none' | 'filePreview' | 'recipePreview'>('none')
 const sidebarWidthPct = ref(55) // percentage of total width
 const previewSheets = ref<FileSheet[] | null>(null)
 const previewFileName = ref<string | null>(null)
-const previewRecipe = ref<JsonDashboardRecipe | null>(null)
+const previewRecipe = ref<JsonDashboardRecipe | JsonWidgetRecipe | null>(null)
+const previewRecipeType = ref<'widget' | 'dashboard' | null>(null)
 
 const sidebarOpen = computed(() => sidebarMode.value !== 'none')
 
@@ -949,11 +959,15 @@ async function sendMessage() {
           te.message = event.message
           te.data = event.data
         }
-        // Handle recipe preview — show live dashboard in sidebar
+        // Handle recipe preview — show live widget or dashboard in sidebar
         if (event.tool === 'preview_recipe' && event.success && event.recipe) {
           try {
-            const resolved = resolveGenerators(event.recipe as unknown as JsonDashboardRecipe)
+            const recipeType = event.recipe_type ?? 'dashboard'
+            const resolved = resolveGenerators(
+              event.recipe as unknown as JsonDashboardRecipe | JsonWidgetRecipe,
+            )
             previewRecipe.value = resolved
+            previewRecipeType.value = recipeType
             sidebarMode.value = 'recipePreview'
           } catch (err) {
             console.error('[preview] failed to resolve recipe generators:', err)

@@ -121,14 +121,16 @@ When the user asks you to create a chart, dashboard, or visualization:
 
 6. **Build and preview.** Decide single vs. multi from the request:
    - **One chart / metric** → build a widget recipe and call `preview_recipe`
-     with `recipe_type: "widget"`. The sidebar auto-wraps it in a 1-widget
-     dashboard for rendering.
+     with `recipe_type: "widget"`. The sidebar renders it as a standalone
+     widget; any widget-level parameters appear in the widget's own header.
+     **Do not wrap a single widget in a dashboard just to preview it.**
    - **Two or more charts/metrics** ("a dashboard with X and Y", "an income
-     overview", "two charts side by side") → build a single dashboard recipe
-     with the widgets defined inline in `widgets[]` and call `preview_recipe`
-     with `recipe_type: "dashboard"`. **Do not create separate widget files
-     first** unless the user explicitly asked for reusable widgets — see Mode
-     A below for the canonical inline pattern.
+     overview", "two charts side by side"), or a recipe that needs
+     dashboard-level parameters shared across widgets → build a single
+     dashboard recipe with the widgets defined inline in `widgets[]` and
+     call `preview_recipe` with `recipe_type: "dashboard"`. **Do not create
+     separate widget files first** unless the user explicitly asked for
+     reusable widgets — see Mode A below for the canonical inline pattern.
 
    Tell the user the preview is showing and **ask whether to save it** (e.g.
    "Preview is showing in the sidebar — confirm and I'll save it, or tell me
@@ -226,6 +228,21 @@ Example registry-mode dashboard (widgets loaded from registry by id):
 ```
 
 **Recipe authoring tips** (not covered in the steps above):
+- **Two `$name`-shaped things — do not confuse them.** Recipes use both
+  `:name` and `$name`, but they mean different things and live in
+  different places:
+  - **`:name` — SQL parameter binding.** Used inside the widget `query`
+    only. Refers to a parameter declared in `parameters[]`. Examples:
+    `WHERE year = :year`, `AND currency = :currency`. Every `:name` in
+    the SQL must have a matching `parameters[].name`.
+  - **`$columnName` — result-row template.** Used inside `clickLink.filters`,
+    `formatters[].currency`, and similar template fields. Refers to a
+    *column in the query result row*, not a parameter. Examples:
+    `"account": "$account"`, `"currency": "$currency"` (where `currency`
+    is a column the query SELECTs).
+  - **Never use `$name` inside the SQL `query`.** Even though SQLite
+    accepts `$name` as a placeholder syntax, the dry-run validator will
+    reject it. Use `:name` for SQL bindings, always.
 - Use `optionsFrom: "years"` for year selectors and `optionsFrom: "currencies"` for currency
   selectors — both populate dynamically from ledger data.
 - Use generators (`$gen`) for month selectors and default values instead of hardcoded values.

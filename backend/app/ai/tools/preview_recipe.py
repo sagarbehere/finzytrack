@@ -1,8 +1,8 @@
 """
 preview_recipe tool — validates a recipe and returns it for live preview.
 
-Supports both widget recipes and dashboard recipes. Widget recipes are
-auto-wrapped in a 1-widget dashboard for sidebar rendering.
+Supports both widget recipes and dashboard recipes. The frontend renders each
+type with the appropriate component (widget standalone, dashboard with layout).
 
 The last successfully previewed recipe is cached so that write_recipe can save
 it without the LLM needing to re-output the entire JSON.
@@ -38,24 +38,6 @@ def clear_last_previewed_recipe() -> None:
     _last_previewed_type = None
 
 
-def _wrap_widget_as_dashboard(widget: dict) -> dict:
-    """Wrap a widget recipe in a minimal 1-widget dashboard for preview."""
-    return {
-        "id": f"__preview__{widget.get('id', 'widget')}",
-        "title": widget.get("title", "Preview"),
-        "parameters": widget.get("parameters", []),
-        "layout": {
-            "columns": 6,
-            "gap": "1.5rem",
-            "rowHeight": "200px",
-            "widgets": [
-                {"widgetId": widget.get("id", "widget"), "gridArea": "1 / 1 / 4 / 7"}
-            ],
-        },
-        "widgets": [widget],
-    }
-
-
 class PreviewRecipeTool(BaseTool):
     @property
     def name(self) -> str:
@@ -66,10 +48,13 @@ class PreviewRecipeTool(BaseTool):
         return (
             "Validate a recipe and show a live preview in the sidebar. "
             "Accepts both widget recipes and dashboard recipes. "
-            "For widgets, the preview auto-wraps it in a single-widget dashboard. "
             "This does NOT save to disk. After the user approves, call write_recipe. "
-            "Set recipe_type to 'widget' for a standalone widget, or 'dashboard' for "
-            "a full dashboard layout."
+            "Choosing recipe_type: use 'widget' when the user is designing a single "
+            "standalone widget (the preview will render it on its own, with any "
+            "widget-level parameters in the widget header). Use 'dashboard' only "
+            "when the recipe composes multiple widgets into a layout, or defines "
+            "dashboard-level parameters shared across widgets. Do NOT wrap a single "
+            "widget in a dashboard just to preview it — pass it as 'widget'."
         )
 
     @property
@@ -130,16 +115,14 @@ class PreviewRecipeTool(BaseTool):
                     "validation_errors": sql_errors,
                 }
 
-            # Cache the original widget (not the wrapper)
             _last_previewed_recipe = content
             _last_previewed_type = "widget"
 
-            # Return wrapped version for frontend preview
-            preview_dashboard = _wrap_widget_as_dashboard(content)
             return {
                 "success": True,
                 "message": "Widget validated. A live preview is showing in the sidebar.",
-                "recipe": preview_dashboard,
+                "recipe": content,
+                "recipe_type": "widget",
             }
         else:
             # Validate as a dashboard
@@ -169,4 +152,5 @@ class PreviewRecipeTool(BaseTool):
                 "success": True,
                 "message": "Dashboard validated. A live preview is showing in the sidebar.",
                 "recipe": content,
+                "recipe_type": "dashboard",
             }

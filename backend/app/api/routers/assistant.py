@@ -460,6 +460,7 @@ async def _run_agent_loop(
             # Attach recipe JSON for preview_recipe so the frontend can render it
             if tc.name == "preview_recipe" and success and "recipe" in result:
                 tool_result_event["recipe"] = result["recipe"]
+                tool_result_event["recipe_type"] = result.get("recipe_type", "dashboard")
 
             yield tool_result_event
 

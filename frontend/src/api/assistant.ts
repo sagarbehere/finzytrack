@@ -36,6 +36,7 @@ export interface SseToolResultEvent {
   message: string
   data?: Record<string, unknown>   // Full tool result data for details panel
   recipe?: Record<string, unknown>  // Attached by preview_recipe tool
+  recipe_type?: 'widget' | 'dashboard'  // Attached by preview_recipe tool
 }
 
 export interface SseErrorEvent {

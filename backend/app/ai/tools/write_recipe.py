@@ -63,6 +63,25 @@ def _sql_error_hint(message: str) -> str | None:
 # placeholders, so we let it do the work.
 _PARAM_NAME_RE = re.compile(r":(\w+)")
 
+# Strip SQL string literals ('...' with '' escapes) and quoted identifiers
+# ("..." with "" escapes). Used before scanning for stray $name placeholders
+# so we don't false-positive on `'$column'` inside a string literal.
+_SQL_STRING_RE = re.compile(r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"")
+_DOLLAR_PARAM_RE = re.compile(r"\$(\w+)")
+
+
+def _detect_dollar_placeholders(query: str) -> list[str]:
+    """Return $name tokens found outside string literals (sorted, unique).
+
+    SQLite supports `$name` as a real parameter syntax, but our recipe
+    convention is `:name` for SQL bindings. `$name` appears elsewhere in
+    recipes (clickLink filters, formatter currency) as a template referring
+    to a result column — never as a SQL parameter. So any bare `$name` in
+    SQL is almost always the LLM mixing up the two syntaxes.
+    """
+    stripped = _SQL_STRING_RE.sub("''", query)
+    return sorted(set(_DOLLAR_PARAM_RE.findall(stripped)))
+
 
 def _dry_run_queries(dashboard: dict, sqlite_path: str | None) -> list[str]:
     """Execute each widget's SQL query to check for errors. Returns list of errors."""
@@ -80,6 +99,27 @@ def _dry_run_queries(dashboard: dict, sqlite_path: str | None) -> list[str]:
         if not isinstance(query, str):
             continue
 
+        # Reject `$name` placeholders before SQLite sees them. SQLite would
+        # accept `$name` as a binding, but our recipe convention is `:name`
+        # for SQL — `$name` is the click-link / formatter template syntax
+        # for result columns. Mixing them is a common LLM mistake, and
+        # SQLite's error message normalises `$name` to `:name`, which makes
+        # the failure nearly impossible to debug from the error alone.
+        wid = w.get("id", f"index {i}")
+        dollar_names = _detect_dollar_placeholders(query)
+        if dollar_names:
+            tokens = ", ".join(f"${n}" for n in dollar_names)
+            errors.append(
+                f"widgets[{i}] ('{wid}'): invalid SQL parameter syntax — "
+                f"found {tokens}. SQL bindings must use ':name' (e.g. "
+                f":currency, :year). The '$name' syntax is for clickLink "
+                f"filters and formatters — those refer to result columns, "
+                f"not parameters. Replace each '$name' with ':name' in the "
+                f"query and ensure the parameter is declared in "
+                f"'parameters[]'."
+            )
+            continue
+
         # Bind every :paramName placeholder to a dummy string. SQLite parses
         # the query and only treats :name as a placeholder when it's outside
         # string literals — so this also works for queries with colons inside
@@ -94,7 +134,6 @@ def _dry_run_queries(dashboard: dict, sqlite_path: str | None) -> list[str]:
             con.execute(f"SELECT * FROM ({query}) LIMIT 0", params)
             con.close()
         except (sqlite3.OperationalError, Exception) as e:
-            wid = w.get("id", f"index {i}")
             kind = "SQL error" if isinstance(e, sqlite3.OperationalError) else "query validation failed"
             msg = f"widgets[{i}] ('{wid}'): {kind} — {e}"
             hint = _sql_error_hint(str(e))
