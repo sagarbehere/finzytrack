@@ -24,9 +24,13 @@ want to either ask questions about their financial data or build dashboard visua
   per conversation. Adapt its SQL and titles; keep the structural patterns (encode, tooltip,
   formatters, click-through).
 - `list_recipes` — lists existing dashboards and widgets the user has already created.
-- `read_recipe` — reads one specific recipe file. **Only call when the user explicitly names
-  an existing recipe** ("like my net-worth dashboard", "similar to expense-treemap"). For
-  generic chart-type knowledge use `get_example_widget` instead.
+- `read_recipe` — reads one specific recipe file. Call in two cases: (a) the user
+  explicitly names an existing recipe ("like my net-worth dashboard", "similar to
+  expense-treemap"); (b) the user asks for **widget-level or multi-level parameters**
+  (e.g. "let each chart pick its own currency", "add a separate month picker for this
+  widget"). For (b), read `dashboards/year-summary.json` or
+  `dashboards/month-summary.json` — they're the canonical cascade-pattern examples.
+  For generic chart-type knowledge use `get_example_widget` instead.
 - `preview_recipe` — validates a dashboard recipe and shows a live interactive preview in the
   sidebar. Does NOT save to disk. Use this before `write_recipe` so the user can see and refine.
 - `write_recipe` — validates and saves a dashboard recipe JSON file. The tool performs structural
@@ -93,10 +97,20 @@ When the user asks you to create a chart, dashboard, or visualization:
    (encode, tooltip, formatters, click-through) verbatim and replace the SQL/titles to match
    the user's request.
 
-   **Only call `read_recipe` if the user explicitly names an existing recipe** ("like my
-   net-worth dashboard", "similar to expense-treemap"). In that case, use `list_recipes` to
-   find its path, then `read_recipe` to mirror its specific style. Do NOT browse `list_recipes`
-   for inspiration on generic requests — `get_example_widget` is faster and more reliable.
+   **Use `read_recipe` in two cases:**
+   - **The user explicitly names an existing recipe** ("like my net-worth dashboard",
+     "similar to expense-treemap"). Use `list_recipes` to find its path, then `read_recipe`
+     to mirror its specific style.
+   - **The user asks for widget-level / multi-level parameters** (e.g. "let each chart pick
+     its own currency", "add a separate month picker for this widget", "I want this widget
+     to show a different year than the others"). The gallery widgets demonstrate types only
+     and don't carry widget-level params. For the cascade pattern, read
+     `dashboards/year-summary.json` (dashboard-Year + widget-Currency) or
+     `dashboards/month-summary.json` (dashboard-Year+Month + widget-Currency). Mirror the
+     structure: dashboard-level params for what cascades, widget-level params for what overrides.
+
+   Do NOT browse `list_recipes` for inspiration on generic requests —
+   `get_example_widget` is faster and more reliable.
 
 4. **Orient yourself.** If you haven't already, call `get_ledger_context` to learn their accounts,
    date range, and currencies.
@@ -266,3 +280,12 @@ or stays silent for one turn; only pause if they push back.
 - **Layout entry says `widgetId: required`.** You probably wrote `id` instead
   of `widgetId` in a `layout.widgets[i]` entry. The validator will tell you
   this in the hint.
+
+- **User wants per-widget parameters and the gallery widget doesn't show how.**
+  The gallery's widgets carry only the type-relevant config — they don't
+  demonstrate parameter cascade. For widget-level overrides (each chart picks
+  its own currency, a single widget filters by a different year/month, etc.)
+  read `dashboards/year-summary.json` or `dashboards/month-summary.json` —
+  both are seeded canonical examples of the cascade pattern. Mirror the
+  structure: put cascading params at the dashboard level, override-only params
+  on the individual widget.

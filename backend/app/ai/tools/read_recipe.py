@@ -17,7 +17,12 @@ class ReadRecipeTool(BaseTool):
         return (
             "Read the contents of a recipe file. The path should be relative to the "
             "recipes directory, e.g. 'dashboards/year-summary.json' or "
-            "'widgets/expense-treemap.json'. Use list_recipes first to see available files."
+            "'widgets/expense-treemap.json'. Use list_recipes first to see available files. "
+            "Two main reasons to call this: (1) the user explicitly named an existing "
+            "recipe and wants something similar, OR (2) the user wants widget-level / "
+            "multi-level parameter cascade — read 'dashboards/year-summary.json' or "
+            "'dashboards/month-summary.json' for the canonical pattern (gallery widgets "
+            "from get_example_widget don't carry widget-level params)."
         )
 
     @property
