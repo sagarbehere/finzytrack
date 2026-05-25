@@ -151,6 +151,12 @@ export function buildTree(accounts: AccountDetails[]): AccountTreeNode[] {
         }
       }
       node.currencyBadges = Array.from(allCurrencies)
+
+      // Virtual nodes have no open/close directive of their own — derive
+      // status from children: closed only if every child is closed.
+      if (node.isVirtual && node.children.every(c => c.status === 'closed')) {
+        node.status = 'closed'
+      }
     }
   }
 
