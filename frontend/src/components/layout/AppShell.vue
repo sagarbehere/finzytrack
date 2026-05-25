@@ -329,7 +329,7 @@
           </div>
         </div>
 
-        <div class="px-4 sm:px-6 lg:px-8 pb-8 min-w-0 min-h-full">
+        <div class="px-4 sm:px-6 lg:px-8 pb-8 min-w-0 h-full">
           <slot />
         </div>
       </main>
