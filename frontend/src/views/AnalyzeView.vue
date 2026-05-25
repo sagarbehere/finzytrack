@@ -56,6 +56,7 @@
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
           <span>{{ isGenerating ? 'Generating...' : generateButtonLabel }}</span>
+          <kbd v-if="!isGenerating" class="rounded bg-white/20 px-1.5 py-0.5 text-xs font-mono font-normal text-white/80">{{ modEnter }}</kbd>
         </button>
         <button
           @click="nlQuery = ''"
@@ -104,6 +105,7 @@
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
           <span>{{ isExecuting ? 'Executing...' : 'Execute' }}</span>
+          <kbd v-if="!isExecuting" class="rounded bg-white/20 px-1.5 py-0.5 text-xs font-mono font-normal text-white/80">{{ modEnter }}</kbd>
         </button>
         <button
           @click="clearQuery"
@@ -321,6 +323,9 @@
   import type { QueryRequest } from '@/services/generated-api'
   import { useToast } from '@/composables/useNotifications'
   import { useConfig } from '@/composables/useConfig'
+  import { useShortcutLabel } from '@/composables/useShortcutLabel'
+
+  const { modEnter } = useShortcutLabel()
   import RecipeChart from '@/components/recipes/RecipeChart.vue'
   // (ChartType / SUPPORTED_CHART_TYPES are recipe-system constants — AnalyzeView
   // uses its own narrower union below since not every recipe-supported chart

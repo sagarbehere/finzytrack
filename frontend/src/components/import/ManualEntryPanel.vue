@@ -36,6 +36,7 @@
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
         <span>{{ isParsing ? 'Parsing...' : 'Parse & Add' }}</span>
+        <kbd v-if="!isParsing" class="rounded bg-white/20 px-1.5 py-0.5 text-xs font-mono font-normal text-white/80">{{ modEnter }}</kbd>
       </button>
       <!-- Validation warnings -->
       <div v-if="parseWarnings.length" class="mt-2 rounded-md border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 px-3 py-2">
@@ -82,6 +83,9 @@
   import { parseNaturalLanguageTransaction, type ParsedTransaction } from '@/services/nlParser'
   import { useToast } from '@/composables/useNotifications'
   import { useConfig } from '@/composables/useConfig'
+  import { useShortcutLabel } from '@/composables/useShortcutLabel'
+
+  const { modEnter } = useShortcutLabel()
 
   const { error: showErrorToast } = useToast()
   const { config } = useConfig()
