@@ -2,6 +2,10 @@
 
 Vue 3 + Tailwind CSS + HeadlessUI + HeroIcons + TanStack Vue Table + ECharts.
 
+## Money Handling (MANDATORY)
+
+Any monetary value is the branded type `Money` (a `string` backed by decimal.js) from `@/utils/money`. **Never use `number` for money.** Arithmetic goes through `add`/`sub`/`mul`/`div`/`neg`/`abs`/`sign` — direct `+ - * /` on `Money` is a type error. The lossy conversion to a JS `number` is allowed only at the display formatter (`Intl.NumberFormat` / `toNumber`). Full contract: [`dev-docs/money-types.md`](../dev-docs/money-types.md).
+
 ## UI Style Rules (MANDATORY)
 
 All UI work MUST follow the Tailwind Plus style system. **Do not invent custom styles.**

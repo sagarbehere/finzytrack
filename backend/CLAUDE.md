@@ -2,6 +2,10 @@
 
 Python + Beancount + SQLite backend. FastAPI with Pydantic models.
 
+## Money Handling (MANDATORY)
+
+Money is `Decimal` in Python and `TEXT` (string-decimal) in SQLite. **Never `float` on the money path.** Aggregations use explicit `SUM(CAST(amount AS REAL))` with a comment pointing at `dev-docs/money-types.md`. Full contract: [`dev-docs/money-types.md`](../dev-docs/money-types.md).
+
 ## Error Handling (MANDATORY)
 
 - **Raise `APIError`** for all errors — never `HTTPException` or raw error dicts

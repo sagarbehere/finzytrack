@@ -10,6 +10,9 @@ Personal finance app: Beancount backend + Vue 3 frontend.
 
 ## Cross-Cutting Rules
 
+### Money handling — single source of truth
+Any value that represents an amount of a commodity (currency, share, unit) follows the contract in [`dev-docs/money-types.md`](dev-docs/money-types.md). Short version: `Decimal` in Python, `TEXT` in SQLite, JSON string on the wire, branded `Money` (decimal.js-backed) in TypeScript. Float appears only at the display formatter and at explicit `SUM(CAST(amount AS REAL))` aggregations. See [`dev-docs/refactoring-money-types.md`](dev-docs/refactoring-money-types.md) for the per-file audit.
+
 ### Backend-then-frontend workflow
 When a task involves both backend and frontend changes:
 1. Complete all backend work first (endpoints, models, error codes)
