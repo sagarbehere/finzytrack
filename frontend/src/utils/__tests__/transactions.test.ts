@@ -74,6 +74,32 @@ describe('isTransactionBalanced', () => {
     expect(isTransactionBalanced(tx)).toBe(true)
   })
 
+  it('balanced: priced transaction with per-unit precision drift (real-world @@ case)', () => {
+    // Simulates: 7,839,929.89 INR @@ 85,000 USD → beancount stores as
+    // @ 0.010841934 USD/INR, multiplying back yields 84,999.999...something,
+    // which is ~1 cent off the -85,000 USD posting. Tolerance proportional
+    // to priced units (1e-8 × ~7.8M ≈ 0.08) absorbs that.
+    const tx = makeTx({
+      postings: [
+        { amount: toMoney('7839929.89'), currency: 'INR', price: { amount: toMoney('0.010841934'), currency: 'USD', type: '@' } },
+        { amount: toMoney('-85000.00'), currency: 'USD' },
+      ],
+    })
+    expect(isTransactionBalanced(tx)).toBe(true)
+  })
+
+  it('unbalanced: large priced drift exceeds proportional tolerance', () => {
+    // Same units but the price is wrong by enough that the imbalance
+    // exceeds the proportional tolerance (1e-8 × 7.8M ≈ 0.08).
+    const tx = makeTx({
+      postings: [
+        { amount: toMoney('7839929.89'), currency: 'INR', price: { amount: toMoney('0.011'), currency: 'USD', type: '@' } },
+        { amount: toMoney('-85000.00'), currency: 'USD' },
+      ],
+    })
+    expect(isTransactionBalanced(tx)).toBe(false)
+  })
+
   it('handles null amounts as zero', () => {
     const tx = makeTx({
       postings: [
