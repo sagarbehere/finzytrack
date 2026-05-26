@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 
@@ -10,7 +11,7 @@ class AccountCurrencyData(BaseModel):
     currency: CurrencyStr = Field(..., description="Currency code (e.g., 'USD')")
     transaction_count: int = Field(..., ge=0, description="Number of transactions in this currency")
     last_transaction_date: Optional[date] = Field(None, description="Date of last transaction (YYYY-MM-DD)")
-    balance: float = Field(..., description="Current balance in this currency")
+    balance: Decimal = Field(..., description="Current balance in this currency")
 
 class AccountDetails(BaseModel):
     """Detailed account information including transaction data."""
@@ -83,7 +84,7 @@ class BalanceDirectiveData(BaseModel):
     """A balance assertion directive with optional associated pad."""
     date: date
     currency: str
-    expected_balance: float
+    expected_balance: Decimal
     has_pad: bool
     pad_source_account: Optional[str] = None
     has_error: bool = False
@@ -98,7 +99,7 @@ class BalanceDirectiveCreateRequest(BaseModel):
     """Request to create a balance assertion (optionally with pad)."""
     date: date
     currency: str
-    amount: float
+    amount: Decimal
     include_pad: bool = False
     pad_source_account: Optional[str] = None  # Required when include_pad=True
 
@@ -106,10 +107,10 @@ class BalanceDirectiveUpdateRequest(BaseModel):
     """Request to update an existing balance directive."""
     original_date: date          # To identify the existing directive
     original_currency: str          # To identify the existing directive
-    original_amount: float          # To identify the existing directive
+    original_amount: Decimal          # To identify the existing directive
     new_date: Optional[date] = None
     new_currency: Optional[str] = None
-    new_amount: Optional[float] = None
+    new_amount: Optional[Decimal] = None
     include_pad: Optional[bool] = None
     pad_source_account: Optional[str] = None
 

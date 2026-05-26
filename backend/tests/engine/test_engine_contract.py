@@ -468,7 +468,7 @@ class TestBalanceDirectives:
     def test_add_balance_directive(self, engine, base_entries):
         entries = engine.add_balance_directive(
             base_entries, "Assets:Bank:Checking",
-            date(2024, 12, 31), "USD", 10000.00,
+            date(2024, 12, 31), "USD", Decimal("10000.00"),
         )
         from beancount.core import data as bd
         balances = [e for e in entries if isinstance(e, bd.Balance) and e.account == "Assets:Bank:Checking"]
@@ -480,7 +480,7 @@ class TestBalanceDirectives:
         balance_date = date(2024, 12, 31)
         entries = engine.add_balance_directive(
             base_entries, "Assets:Bank:Checking",
-            balance_date, "USD", 10000.00,
+            balance_date, "USD", Decimal("10000.00"),
             include_pad=True,
             pad_source_account="Expenses:Adjustments",
         )
@@ -494,11 +494,11 @@ class TestBalanceDirectives:
         # Add then delete
         entries = engine.add_balance_directive(
             base_entries, "Assets:Bank:Checking",
-            date(2024, 12, 31), "USD", 10000.00,
+            date(2024, 12, 31), "USD", Decimal("10000.00"),
         )
         entries = engine.delete_balance_directive(
             entries, "Assets:Bank:Checking",
-            date(2024, 12, 31), "USD", 10000.00,
+            date(2024, 12, 31), "USD", Decimal("10000.00"),
         )
         balances = [
             e for e in entries
@@ -511,7 +511,7 @@ class TestBalanceDirectives:
         from beancount.core import data as bd
         entries = engine.add_balance_directive(
             base_entries, "Assets:Bank:Checking",
-            date(2024, 12, 31), "USD", 10000.00,
+            date(2024, 12, 31), "USD", Decimal("10000.00"),
             include_pad=True,
             pad_source_account="Expenses:Adjustments",
         )
@@ -521,7 +521,7 @@ class TestBalanceDirectives:
 
         entries = engine.delete_balance_directive(
             entries, "Assets:Bank:Checking",
-            date(2024, 12, 31), "USD", 10000.00,
+            date(2024, 12, 31), "USD", Decimal("10000.00"),
             delete_pad=True,
         )
         # Both balance and pad should be gone
@@ -536,7 +536,7 @@ class TestBalanceDirectives:
         count_before = len([e for e in base_entries if isinstance(e, bd.Pad)])
         entries = engine.add_balance_directive(
             base_entries, "Assets:Bank:Checking",
-            date(2024, 12, 31), "USD", 10000.00,
+            date(2024, 12, 31), "USD", Decimal("10000.00"),
             include_pad=False,
         )
         count_after = len([e for e in entries if isinstance(e, bd.Pad)])

@@ -8,6 +8,7 @@ parsing, formatting, validation, and CRUD on ledger entries.
 
 from typing import Protocol, List, Dict, Any, Optional, Tuple
 from datetime import date
+from decimal import Decimal
 
 
 class LedgerEngine(Protocol):
@@ -171,7 +172,7 @@ class LedgerEngine(Protocol):
         account_name: str,
         directive_date: date,
         currency: str,
-        amount: float,
+        amount: Decimal,
         *,
         include_pad: bool = False,
         pad_source_account: Optional[str] = None,
@@ -187,10 +188,10 @@ class LedgerEngine(Protocol):
         *,
         original_date: date,
         original_currency: str,
-        original_amount: float,
+        original_amount: Decimal,
         new_date: Optional[date] = None,
         new_currency: Optional[str] = None,
-        new_amount: Optional[float] = None,
+        new_amount: Optional[Decimal] = None,
         include_pad: Optional[bool] = None,
         pad_source_account: Optional[str] = None,
         ledger_file: str = "",
@@ -204,7 +205,7 @@ class LedgerEngine(Protocol):
         account_name: str,
         directive_date: date,
         currency: str,
-        amount: float,
+        amount: Decimal,
         delete_pad: bool = True,
     ) -> list:
         """Remove a Balance (and optional Pad) directive.  Returns updated entries."""

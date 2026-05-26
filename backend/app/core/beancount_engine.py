@@ -9,7 +9,7 @@ import re
 import logging
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from beancount.core import data as bd
 from beancount.core.data import Transaction, Posting
@@ -379,7 +379,7 @@ class BeancountEngine:
         account_name: str,
         directive_date: date,
         currency: str,
-        amount: float,
+        amount: Decimal,
         *,
         include_pad: bool = False,
         pad_source_account: Optional[str] = None,
@@ -392,7 +392,7 @@ class BeancountEngine:
             new_entries.append(bd.Pad(pad_meta, pad_date, account_name, pad_source_account))
 
         meta = {'filename': ledger_file, 'lineno': 0}
-        balance_amount = BcAmount(Decimal(str(amount)), currency)
+        balance_amount = BcAmount(amount, currency)
         new_entries.append(bd.Balance(meta, directive_date, account_name, balance_amount, None, None))
 
         return list(entries) + new_entries
@@ -404,16 +404,15 @@ class BeancountEngine:
         *,
         original_date: date,
         original_currency: str,
-        original_amount: float,
+        original_amount: Decimal,
         new_date: Optional[date] = None,
         new_currency: Optional[str] = None,
-        new_amount: Optional[float] = None,
+        new_amount: Optional[Decimal] = None,
         include_pad: Optional[bool] = None,
         pad_source_account: Optional[str] = None,
         ledger_file: str = "",
     ) -> list:
         entries = list(entries)
-        orig_amount = Decimal(str(original_amount))
 
         balance_idx = None
         for i, entry in enumerate(entries):
@@ -421,7 +420,7 @@ class BeancountEngine:
                     and entry.account == account_name
                     and entry.date == original_date
                     and entry.amount.currency == original_currency
-                    and self._amounts_match(str(entry.amount.number), self._format_amount(original_amount))):
+                    and self._amounts_match(entry.amount.number, original_amount)):
                 balance_idx = i
                 break
 
@@ -434,7 +433,7 @@ class BeancountEngine:
         pad_idx = self._find_pad_before_balance_entry(entries, balance_idx, account_name)
 
         final_date = new_date if new_date else original_date
-        final_amount = Decimal(str(new_amount)) if new_amount is not None else orig_amount
+        final_amount = new_amount if new_amount is not None else original_amount
         final_currency = new_currency or original_currency
 
         old_balance = entries[balance_idx]
@@ -465,7 +464,7 @@ class BeancountEngine:
         account_name: str,
         directive_date: date,
         currency: str,
-        amount: float,
+        amount: Decimal,
         delete_pad: bool = True,
     ) -> list:
         entries = list(entries)
@@ -476,7 +475,7 @@ class BeancountEngine:
                     and entry.account == account_name
                     and entry.date == directive_date
                     and entry.amount.currency == currency
-                    and self._amounts_match(str(entry.amount.number), self._format_amount(amount))):
+                    and self._amounts_match(entry.amount.number, amount)):
                 balance_idx = i
                 break
 
@@ -554,14 +553,16 @@ class BeancountEngine:
         return None
 
     @staticmethod
-    def _format_amount(amount: float) -> str:
-        if amount == int(amount):
+    def _format_amount(amount: Decimal) -> str:
+        if amount == amount.to_integral_value():
             return str(int(amount))
-        return f"{amount:.10f}".rstrip('0').rstrip('.')
+        return format(amount.normalize(), 'f')
 
     @staticmethod
-    def _amounts_match(file_amount: str, expected_amount: str) -> bool:
+    def _amounts_match(file_amount: Decimal, expected_amount: Decimal) -> bool:
+        # Both sides are Decimal end-to-end (see dev-docs/money-types.md);
+        # value equality handles "100" vs "100.00" because Decimal compares by value.
         try:
-            return abs(float(file_amount) - float(expected_amount)) < 0.001
-        except ValueError:
+            return Decimal(file_amount) == Decimal(expected_amount)
+        except (InvalidOperation, TypeError, ValueError):
             return file_amount == expected_amount

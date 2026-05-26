@@ -12,6 +12,7 @@ import json
 import logging
 import sqlite3
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TypeVar
 
@@ -116,7 +117,7 @@ class SqliteReader:
                     balances_by_acct[acct] = []
                 balances_by_acct[acct].append(AccountCurrencyData(
                     currency=br["currency"],
-                    balance=float(br["balance"]),
+                    balance=Decimal(br["balance"]),
                     transaction_count=br["transaction_count"] or 0,
                     last_transaction_date=(
                         date.fromisoformat(br["last_transaction_date"])
@@ -173,7 +174,7 @@ class SqliteReader:
             currencies = [
                 AccountCurrencyData(
                     currency=br["currency"],
-                    balance=float(br["balance"]),
+                    balance=Decimal(br["balance"]),
                     transaction_count=br["transaction_count"] or 0,
                     last_transaction_date=(
                         date.fromisoformat(br["last_transaction_date"])
@@ -219,8 +220,9 @@ class SqliteReader:
             ).fetchall()
 
             # Assets/Liabilities: cumulative up to end_date
+            # intentional aggregation-time float; see dev-docs/money-types.md
             bs_rows = con.execute(
-                "SELECT account, currency, SUM(amount) AS balance, "
+                "SELECT account, currency, SUM(CAST(amount AS REAL)) AS balance, "
                 "COUNT(*) AS txn_count, MAX(transaction_date) AS last_date "
                 "FROM postings "
                 "WHERE account_type IN ('Assets', 'Liabilities') "
@@ -230,9 +232,10 @@ class SqliteReader:
             ).fetchall()
 
             # Income/Expenses: period total
+            # intentional aggregation-time float; see dev-docs/money-types.md
             is_params: list = []
             is_sql = (
-                "SELECT account, currency, SUM(amount) AS balance, "
+                "SELECT account, currency, SUM(CAST(amount AS REAL)) AS balance, "
                 "COUNT(*) AS txn_count, MAX(transaction_date) AS last_date "
                 "FROM postings "
                 "WHERE account_type IN ('Income', 'Expenses', 'Equity') "
@@ -253,7 +256,7 @@ class SqliteReader:
                     balances_by_acct[acct] = []
                 balances_by_acct[acct].append(AccountCurrencyData(
                     currency=br["currency"],
-                    balance=float(br["balance"]) if br["balance"] else 0.0,
+                    balance=Decimal(str(br["balance"])) if br["balance"] is not None else Decimal("0"),
                     transaction_count=br["txn_count"] or 0,
                     last_transaction_date=(
                         date.fromisoformat(br["last_date"]) if br["last_date"] else None
@@ -308,11 +311,11 @@ class SqliteReader:
                     if row["declaration_date"] else None
                 )
                 last_seen = first_seen
-                usage = CommodityUsageData(transaction_count=0, total_volume=0.0)
+                usage = CommodityUsageData(transaction_count=0, total_volume=Decimal("0"))
                 if u:
                     usage = CommodityUsageData(
                         transaction_count=u["transaction_count"],
-                        total_volume=float(u["total_volume"]),
+                        total_volume=Decimal(u["total_volume"]),
                     )
                     if u["first_seen"]:
                         fs = date.fromisoformat(u["first_seen"])
@@ -347,7 +350,7 @@ class SqliteReader:
                     ),
                     usage=CommodityUsageData(
                         transaction_count=u["transaction_count"],
-                        total_volume=float(u["total_volume"]),
+                        total_volume=Decimal(u["total_volume"]),
                     ),
                     metadata={},
                 ))
@@ -421,7 +424,7 @@ class SqliteReader:
                     date=date.fromisoformat(r["transaction_date"]),
                     payee=r["transaction_payee"] or "",
                     narration=r["transaction_narration"] or "",
-                    amount=Decimal(str(r["amount"])) if r["amount"] is not None else Decimal(0),
+                    amount=Decimal(r["amount"]) if r["amount"] is not None else Decimal("0"),
                     account=r["source_account"] or r["account"],
                     external_id=external_id,
                     external_id_type=external_id_type,
@@ -500,7 +503,7 @@ class SqliteReader:
                 result.append(BalanceDirectiveData(
                     date=bal_date,
                     currency=bal["amount_currency"],
-                    expected_balance=float(bal["amount_number"]),
+                    expected_balance=Decimal(bal["amount_number"]),
                     has_pad=pad_source is not None,
                     pad_source_account=pad_source,
                     has_error=has_error,

@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Path, Query
@@ -509,7 +510,7 @@ async def delete_balance_directive(
     account_name: str = Path(..., description="Beancount account name"),
     date: str = Query(..., description="Directive date (YYYY-MM-DD)"),
     currency: str = Query(..., description="Currency code"),
-    amount: float = Query(..., description="Expected balance amount"),
+    amount: Decimal = Query(..., description="Expected balance amount"),
     delete_pad: bool = Query(True, description="Also delete associated pad directive"),
     sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
     beancount_manager: BeancountManager = Depends(get_beancount_manager),

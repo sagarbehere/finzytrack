@@ -1,5 +1,6 @@
 """Schemas for the LLM-based transaction parsing endpoint."""
 
+from decimal import Decimal
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -9,7 +10,7 @@ class LlmParsedTransaction(BaseModel):
     date: str = Field(..., description="Transaction date in YYYY-MM-DD format")
     payee: str = Field(default="", description="Merchant or counterparty name")
     narration: str = Field(default="", description="Transaction description")
-    amount: float = Field(..., description="Signed amount (negative=debit, positive=credit)")
+    amount: Decimal = Field(..., description="Signed amount (negative=debit, positive=credit)")
     memo: str = Field(default="", description="Reference number or additional notes")
 
 

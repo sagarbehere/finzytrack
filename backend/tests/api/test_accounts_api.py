@@ -6,6 +6,7 @@ and business behavior based on double-entry accounting rules.
 """
 
 import pytest
+from decimal import Decimal
 
 
 class TestListAccounts:
@@ -67,7 +68,7 @@ class TestListAccounts:
         def get_food_balance(resp):
             accounts = resp.json()["data"]["accounts"]
             food = next(a for a in accounts if a["name"] == "Expenses:Food")
-            return sum(c["balance"] for c in food["currencies"])
+            return sum(Decimal(c["balance"]) for c in food["currencies"])
 
         full_balance = get_food_balance(unfiltered)
         feb_balance = get_food_balance(filtered)

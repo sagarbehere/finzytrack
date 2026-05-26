@@ -10,9 +10,9 @@ import base64
 import io
 import json
 import logging
-import math
 import re
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
 
@@ -341,12 +341,12 @@ def _validate_transactions(raw_transactions: list[dict]) -> tuple[list[LlmParsed
             continue
 
         try:
-            amount_float = float(amount)
-        except (ValueError, TypeError):
+            amount_decimal = Decimal(str(amount))
+        except (InvalidOperation, ValueError, TypeError):
             skipped += 1
             continue
 
-        if not math.isfinite(amount_float):
+        if not amount_decimal.is_finite():
             skipped += 1
             continue
 
@@ -359,7 +359,7 @@ def _validate_transactions(raw_transactions: list[dict]) -> tuple[list[LlmParsed
             date=date_normalized,
             payee=payee,
             narration=narration,
-            amount=amount_float,
+            amount=amount_decimal,
             memo=memo,
         ))
 

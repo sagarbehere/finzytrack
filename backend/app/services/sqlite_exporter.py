@@ -245,11 +245,11 @@ class SQLiteExporter:
                 transaction_links TEXT,
                 account TEXT NOT NULL,
                 account_type TEXT NOT NULL,
-                amount REAL,
+                amount TEXT,
                 currency TEXT,
-                cost_amount REAL,
+                cost_amount TEXT,
                 cost_currency TEXT,
-                price_amount REAL,
+                price_amount TEXT,
                 price_currency TEXT,
                 source_account TEXT,
                 source_account_type TEXT,
@@ -502,13 +502,13 @@ class SQLiteExporter:
                 if posting.cost is not None:
                     cost_number = getattr(posting.cost, 'number', None)
                     if cost_number is not None:
-                        cost_amount = self._decimal_to_float(cost_number)
+                        cost_amount = self._decimal_to_text(cost_number)
                     cost_currency = getattr(posting.cost, 'currency', None)
 
                 price_amount = None
                 price_currency = None
                 if posting.price is not None:
-                    price_amount = self._decimal_to_float(posting.price.number)
+                    price_amount = self._decimal_to_text(posting.price.number)
                     price_currency = posting.price.currency
 
                 year = txn.date.year
@@ -528,7 +528,7 @@ class SQLiteExporter:
                     transaction_links,
                     posting.account,
                     self._get_account_type(posting.account),
-                    self._decimal_to_float(posting.units.number) if posting.units is not None else None,
+                    self._decimal_to_text(posting.units.number) if posting.units is not None else None,
                     posting.units.currency if posting.units is not None else None,
                     cost_amount,
                     cost_currency,
@@ -1051,9 +1051,13 @@ class SQLiteExporter:
         return account.split(':')[0] if ':' in account else account
 
     @staticmethod
-    def _decimal_to_float(value: Optional[Decimal]) -> Optional[float]:
-        """Convert Decimal to float for database storage."""
-        return float(value) if value is not None else None
+    def _decimal_to_text(value: Optional[Decimal]) -> Optional[str]:
+        """Convert Decimal to its string form for TEXT-column storage.
+
+        Money columns use TEXT to preserve exact decimal precision; see
+        dev-docs/money-types.md.
+        """
+        return str(value) if value is not None else None
 
     @staticmethod
     def _serialize_array(arr: List[str]) -> str:
@@ -1116,7 +1120,7 @@ class SQLiteExporter:
     def _convert_value_to_json_serializable(value: Any) -> Any:
         """Recursively convert values to JSON-serializable types."""
         if isinstance(value, Decimal):
-            return float(value)
+            return str(value)
         elif isinstance(value, (date, datetime)):
             return value.isoformat()
         elif isinstance(value, (str, int, float, bool, type(None))):

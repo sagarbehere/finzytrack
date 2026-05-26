@@ -12,6 +12,7 @@ import json
 import logging
 import re
 from datetime import date
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -116,7 +117,7 @@ def _build_nl_prompt(
 
 class Posting(BaseModel):
     account: str = ""
-    amount: float | int | None = None
+    amount: Decimal | None = None
     currency: str = ""
 
 
@@ -177,8 +178,8 @@ def _validate_parsed_transaction(
     # Postings balance
     amounts = [p.amount for p in txn.postings if p.amount is not None]
     if amounts:
-        balance = sum(amounts)
-        if abs(balance) > 0.005:
+        balance = sum(amounts, start=Decimal("0"))
+        if abs(balance) > Decimal("0.005"):
             warnings.append(f"Postings do not balance (sum = {balance:.2f}).")
 
     return txn.model_dump(), warnings

@@ -133,24 +133,28 @@ class BeanqueryService:
         return formatted_types, result_rows
 
     def _serialize_value(self, value: Any) -> Any:
-        """Convert beancount values to JSON-serializable format."""
+        """Convert beancount values to JSON-serializable format.
+
+        Money values (Decimal, Inventory, Amount, Position) are serialised as
+        Decimal-as-string to preserve precision; see dev-docs/money-types.md.
+        """
         if value is None:
             return None
         elif isinstance(value, Decimal):
-            return float(value)
+            return str(value)
         elif isinstance(value, Inventory):
             if value.is_empty():
-                return 0
+                return "0"
             # Sum all positions in the inventory (handles multiple currencies)
-            total = 0.0
+            total = Decimal("0")
             for pos in value:
                 if hasattr(pos, 'units') and pos.units is not None and pos.units.number is not None:
-                    total += float(pos.units.number)
-            return total
+                    total += pos.units.number
+            return str(total)
         elif isinstance(value, Amount):
-            return float(value.number) if value.number is not None else 0
+            return str(value.number) if value.number is not None else "0"
         elif isinstance(value, Position):
-            return float(value.units.number) if hasattr(value, 'units') and value.units is not None and value.units.number is not None else 0
+            return str(value.units.number) if hasattr(value, 'units') and value.units is not None and value.units.number is not None else "0"
         elif hasattr(value, '_asdict'):  # Named tuples
             return str(value)
         elif hasattr(value, '__dict__'):  # Other objects with attributes
@@ -162,13 +166,15 @@ class BeanqueryService:
         """Determine the column type from a sample value."""
         if value is None:
             return "TEXT"
-        elif isinstance(value, (int, float, Decimal)):
+        elif isinstance(value, Decimal):
+            return "DECIMAL"  # serialised as string; see money-types.md
+        elif isinstance(value, (int, float)):
             return "REAL"
         elif isinstance(value, str):
             return "TEXT"
         elif isinstance(value, bool):
             return "BOOLEAN"
         elif isinstance(value, (Inventory, Amount, Position)):
-            return "REAL"  # These represent monetary values
+            return "DECIMAL"  # money values, serialised as string
         else:
             return "TEXT"  # Default for complex types

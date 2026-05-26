@@ -338,7 +338,7 @@ class TestExportZeroValuePostings:
         con.close()
 
         assert len(rows) == 1
-        assert rows[0][0] == 0.0
+        assert Decimal(rows[0][0]) == Decimal("0")
         assert rows[0][1] == "USD"
 
     def test_zero_cost_posting_has_cost_fields(self, edge_case_db):
@@ -358,7 +358,7 @@ class TestExportZeroValuePostings:
             assert cost_amount is not None, "cost_amount is NULL for zero-cost posting"
             assert cost_currency == "USD", \
                 f"cost_currency should be 'USD', got {cost_currency!r}"
-            assert cost_amount == 0.0
+            assert Decimal(cost_amount) == Decimal("0")
 
     def test_zero_price_posting_has_price_fields(self, edge_case_db):
         """edge_cases has a posting with @ 0.00 USD price (mark to zero).
@@ -374,7 +374,7 @@ class TestExportZeroValuePostings:
 
         assert len(rows) == 1
         assert rows[0][0] is not None, "price_amount is NULL for zero-price posting"
-        assert rows[0][0] == 0.0
+        assert Decimal(rows[0][0]) == Decimal("0")
         assert rows[0][1] == "USD", \
             f"price_currency should be 'USD', got {rows[0][1]!r}"
 
@@ -723,7 +723,7 @@ class TestReadAfterWriteConsistency:
             if a["name"] == "Assets:Bank:Checking"
         )
         checking_balance_before = sum(
-            c["balance"] for c in checking_before["currencies"]
+            Decimal(c["balance"]) for c in checking_before["currencies"]
         )
 
         # Delete Expenses:Rent (has 3 transactions, each -1500 from Checking)
@@ -737,7 +737,7 @@ class TestReadAfterWriteConsistency:
             if a["name"] == "Assets:Bank:Checking"
         )
         checking_balance_after = sum(
-            c["balance"] for c in checking_after["currencies"]
+            Decimal(c["balance"]) for c in checking_after["currencies"]
         )
 
         assert checking_balance_after != checking_balance_before, \
@@ -793,7 +793,7 @@ class TestStalenessDetection:
         savings_after = next(a for a in accounts_after if a.name == "Assets:Bank:Savings")
         savings_balance_after = sum(c.balance for c in savings_after.currencies)
 
-        assert savings_balance_after == pytest.approx(savings_balance_before + 2000.0, abs=0.01)
+        assert savings_balance_after == savings_balance_before + Decimal("2000.00")
 
     def test_missing_sqlite_triggers_export(self, tmp_path):
         """If the SQLite DB doesn't exist, the first read must create it

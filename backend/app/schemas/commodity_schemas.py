@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Annotated
 
@@ -16,7 +17,7 @@ CommodityStr = Annotated[
 class CommodityUsageData(BaseModel):
     """Transaction usage statistics for a commodity."""
     transaction_count: int = Field(..., ge=0, description="Number of transactions using this commodity")
-    total_volume: float = Field(..., description="Total absolute volume transacted in this commodity")
+    total_volume: Decimal = Field(..., description="Total absolute volume transacted in this commodity")
 
 class CommodityDetails(BaseModel):
     """Detailed commodity information including transaction usage data."""

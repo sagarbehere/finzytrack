@@ -15,6 +15,7 @@ import os
 import logging
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import date
+from decimal import Decimal
 from contextlib import contextmanager
 from beancount.core import data
 from beancount.core.data import Transaction, Posting
@@ -373,7 +374,7 @@ class LedgerManager:
 
     def delete_balance_directive(
         self, account_name: str,
-        directive_date: str, currency: str, amount: float,
+        directive_date: str, currency: str, amount: Decimal,
         delete_pad: bool = True,
     ) -> None:
         from datetime import datetime as dt
@@ -400,11 +401,11 @@ class LedgerManager:
         return (d - timedelta(days=1)).isoformat()
 
     @staticmethod
-    def _format_amount(amount: float) -> str:
+    def _format_amount(amount: Decimal) -> str:
         return BeancountEngine._format_amount(amount)
 
     @staticmethod
-    def _amounts_match(file_amount: str, expected_amount: str) -> bool:
+    def _amounts_match(file_amount: Decimal, expected_amount: Decimal) -> bool:
         return BeancountEngine._amounts_match(file_amount, expected_amount)
 
     def _rename_account_in_entry(self, entry, old_name: str, new_name: str):
