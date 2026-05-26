@@ -45,7 +45,7 @@
       "id": "gallery-kpi",
       "title": "Total Income (KPI)",
       "helpText": "Single-value metric. Use multiCurrency:true when the query GROUPs BY currency — the runtime then displays one figure per currency. clickLink navigates to a filtered transactions view.",
-      "query": "SELECT currency, SUM(amount) * -1 AS amount FROM postings WHERE account_type = 'Income' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency",
+      "query": "SELECT currency, SUM(CAST(amount AS REAL)) * -1 AS amount FROM postings WHERE account_type = 'Income' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency",
       "visualization": {
         "type": "kpi",
         "icon": "↑",
@@ -99,7 +99,7 @@
       "id": "gallery-line",
       "title": "Income Trend (Line)",
       "helpText": "Line chart. Identical to bar except chartType:'line' and series[].type:'line'. Add 'smooth':true for curved lines, 'symbol':'circle' to mark each point. For single-series charts, set legend:{show:false} so ECharts doesn't add a redundant series-name strip below.",
-      "query": "SELECT year_month, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, ROUND(SUM(-amount), 2) AS income FROM postings WHERE account_type = 'Income' AND year = :year AND currency = :currency GROUP BY year_month ORDER BY year_month",
+      "query": "SELECT year_month, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, ROUND(SUM(-CAST(amount AS REAL)), 2) AS income FROM postings WHERE account_type = 'Income' AND year = :year AND currency = :currency GROUP BY year_month ORDER BY year_month",
       "visualization": {
         "type": "chart",
         "chartType": "line",
@@ -173,7 +173,7 @@
       "id": "gallery-pie",
       "title": "Assets Breakdown (Pie)",
       "helpText": "Query MUST return columns named 'name' (slice label) and 'value' (slice size). Use HAVING value > 0 — pie cannot display negatives or zeros. radius:['35%','65%'] makes a donut; '50%' makes a solid pie.",
-      "query": "SELECT CASE WHEN account LIKE 'Assets:Liquid:%' THEN REPLACE(account, 'Assets:Liquid:', '') WHEN account LIKE 'Assets:Investments:%' THEN REPLACE(account, 'Assets:Investments:', '') ELSE REPLACE(account, 'Assets:', '') END AS name, account, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Assets' AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC",
+      "query": "SELECT CASE WHEN account LIKE 'Assets:Liquid:%' THEN REPLACE(account, 'Assets:Liquid:', '') WHEN account LIKE 'Assets:Investments:%' THEN REPLACE(account, 'Assets:Investments:', '') ELSE REPLACE(account, 'Assets:', '') END AS name, account, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Assets' AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC",
       "visualization": {
         "type": "chart",
         "chartType": "pie",
@@ -239,7 +239,7 @@
       "id": "gallery-treemap",
       "title": "Expenses by Category (Treemap)",
       "helpText": "Treemap is the trickiest chart type. Query MUST return columns named 'name' and 'value'. Do NOT set encode — the runtime injects rows directly into series[0].data. Use HAVING value > 0 (treemap rejects negatives and zeros). Skip label colour overrides — the component auto-adjusts label contrast against the box colour.",
-      "query": "SELECT REPLACE(account, 'Expenses:', '') AS name, account, SUM(amount) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC",
+      "query": "SELECT REPLACE(account, 'Expenses:', '') AS name, account, SUM(CAST(amount AS REAL)) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC",
       "visualization": {
         "type": "chart",
         "chartType": "treemap",
@@ -360,7 +360,7 @@
       "id": "gallery-calendar",
       "title": "Daily Spending (Calendar Heatmap)",
       "helpText": "Calendar heatmap shows one cell per day across a year. Query MUST return columns named 'date' (YYYY-MM-DD) and 'value' (numeric). The runtime projects rows to ECharts heatmap data and auto-injects a tooltip formatter that shows DATE + currency-formatted value. The chart needs a top-level `calendar` option (`range` is auto-derived from data if you don't set it) and a `visualMap` for the colour scale. Always set legend:{show:false} — the global legend swatch is cosmetic and clashes with the visualMap colour ramp. ClickLinks work — the runtime exposes the original row's columns to template variables, so {{data.date}} resolves to the cell's date.",
-      "query": "SELECT transaction_date AS date, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency AND amount > 0 GROUP BY transaction_date ORDER BY transaction_date",
+      "query": "SELECT transaction_date AS date, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency AND amount > 0 GROUP BY transaction_date ORDER BY transaction_date",
       "visualization": {
         "type": "chart",
         "chartType": "calendar",
@@ -411,7 +411,7 @@
       "id": "gallery-sankey",
       "title": "Money Flow: Income → Expenses (Sankey)",
       "helpText": "Sankey shows flow between source and target categories with link width proportional to value. Query MUST return 'source', 'target', and 'value'. Source/target are typically *display labels* (often with account prefixes stripped); to make clickLinks route correctly, also emit 'sourceAccount' and 'targetAccount' columns carrying the real account paths (NULL for synthetic intermediates like 'Total Income'). The runtime uses these to attach a realAccount to BOTH nodes (rectangles) and links (flows), so {{data.realAccount}} resolves correctly whether the user clicks a rectangle or a flow. Filter out value <= 0 in SQL — sankey can't show zero or negative flows.",
-      "query": "SELECT REPLACE(account, 'Income:', '') AS source, account AS sourceAccount, 'Total Income' AS target, NULL AS targetAccount, ROUND(SUM(-amount), 2) AS value FROM postings WHERE account_type = 'Income' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 UNION ALL SELECT 'Total Income' AS source, NULL AS sourceAccount, REPLACE(account, 'Expenses:', '') AS target, account AS targetAccount, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0",
+      "query": "SELECT REPLACE(account, 'Income:', '') AS source, account AS sourceAccount, 'Total Income' AS target, NULL AS targetAccount, ROUND(SUM(-CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Income' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 UNION ALL SELECT 'Total Income' AS source, NULL AS sourceAccount, REPLACE(account, 'Expenses:', '') AS target, account AS targetAccount, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0",
       "visualization": {
         "type": "chart",
         "chartType": "sankey",
@@ -441,7 +441,7 @@
       "id": "gallery-radar",
       "title": "Spending Profile by Category (Radar)",
       "helpText": "Radar compares values across multiple dimensions on a single shape. Query returns one row per dimension with columns 'category' (axis label) and 'value' (axis value). The runtime auto-builds the radar.indicator from the categories, scaled to 1.2× the max value. Override via series.indicatorMaxRatio. The recipe can supply a partial top-level `radar:` config to style the axes (axisName, splitLine, splitArea); the runtime merges with the derived indicator. Best for 4-8 dimensions; fewer feels sparse, more becomes hard to read. **No clickLink** — ECharts radar emits clicks at the subject (the whole row) level rather than the dimension level, so per-axis navigation isn't reliably expressible.",
-      "query": "SELECT REPLACE(account, 'Expenses:', '') AS category, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC LIMIT 6",
+      "query": "SELECT REPLACE(account, 'Expenses:', '') AS category, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC LIMIT 6",
       "visualization": {
         "type": "chart",
         "chartType": "radar",
@@ -474,7 +474,7 @@
       "id": "gallery-sunburst",
       "title": "Hierarchical Expenses (Sunburst)",
       "helpText": "Sunburst shows nested hierarchies as concentric rings. Query returns rows with 'account' (colon-separated path like 'Expenses:Food:Restaurants') and 'value'. The runtime splits paths and builds the nested tree automatically — outer rings are deeper levels. Use when categories naturally nest (account hierarchies, time periods); prefer treemap for flat distributions. **No clickLink** — ECharts sunburst uses clicks for drill-down/zoom navigation; adding a clickLink would conflict with that built-in interaction.",
-      "query": "SELECT account, ROUND(SUM(amount), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC",
+      "query": "SELECT account, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC",
       "visualization": {
         "type": "chart",
         "chartType": "sunburst",
@@ -501,7 +501,7 @@
       "id": "gallery-pivot",
       "title": "Expenses by Account × Month (Pivot)",
       "helpText": "Pivot needs a 'transform' of type 'pivot' that names rowField (the row-label column), columnField (which becomes column headers) and valueField (cell values). The visualization just consumes the pivoted result. Use formatColumn:'monthYear' to render YYYY-MM as 'January 2026'.",
-      "query": "SELECT account, year_month, SUM(amount) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account, year_month ORDER BY account, year_month",
+      "query": "SELECT account, year_month, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account, year_month ORDER BY account, year_month",
       "transform": {
         "type": "pivot",
         "rowField": "account",

@@ -42,7 +42,7 @@
     {
       "id": "total-income",
       "title": "Total Income",
-      "query": "SELECT currency, SUM(amount) * -1 AS amount FROM postings WHERE account_type = 'Income' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency",
+      "query": "SELECT currency, SUM(CAST(amount AS REAL)) * -1 AS amount FROM postings WHERE account_type = 'Income' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency",
       "visualization": {
         "type": "kpi",
         "icon": "\u2191",
@@ -61,7 +61,7 @@
     {
       "id": "total-expenses",
       "title": "Total Expenses",
-      "query": "SELECT currency, SUM(amount) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency",
+      "query": "SELECT currency, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency",
       "visualization": {
         "type": "kpi",
         "icon": "\u2193",
@@ -191,7 +191,7 @@
           "optionsFrom": "currencies"
         }
       ],
-      "query": "SELECT account, year_month, SUM(amount) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account, year_month ORDER BY account, year_month",
+      "query": "SELECT account, year_month, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account, year_month ORDER BY account, year_month",
       "transform": {
         "type": "pivot",
         "rowField": "account",

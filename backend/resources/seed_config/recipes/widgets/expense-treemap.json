@@ -26,7 +26,7 @@
       "optionsFrom": "currencies"
     }
   ],
-  "query": "SELECT REPLACE(account, 'Expenses:', '') AS name, account, SUM(amount) AS value, :year || '-' || printf('%02d', :month) || '-01' AS dateFrom, date(:year || '-' || printf('%02d', :month) || '-01', '+1 month', '-1 day') AS dateTo FROM postings WHERE account_type = 'Expenses' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC",
+  "query": "SELECT REPLACE(account, 'Expenses:', '') AS name, account, SUM(CAST(amount AS REAL)) AS value, :year || '-' || printf('%02d', :month) || '-01' AS dateFrom, date(:year || '-' || printf('%02d', :month) || '-01', '+1 month', '-1 day') AS dateTo FROM postings WHERE account_type = 'Expenses' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC",
   "visualization": {
     "type": "chart",
     "chartType": "treemap",

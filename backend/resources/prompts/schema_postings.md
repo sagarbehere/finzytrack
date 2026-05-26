@@ -14,7 +14,9 @@ account                 TEXT    -- Full colon-separated path, e.g. "Expenses:Foo
 account_type            TEXT    -- First segment: Assets, Liabilities, Equity, Income, Expenses
 -- When asked for "categories", GROUP BY account directly. Account paths ARE the categories.
 -- Do NOT try to parse or split the account string. "Expenses:Food" is the category name.
-amount                  REAL    -- Positive = debit, negative = credit
+amount                  TEXT    -- Decimal-as-string. Positive = debit, negative = credit. Cast with CAST(amount AS REAL) for aggregation/arithmetic.
+cost_amount             TEXT    -- Decimal-as-string (nullable). Per-unit cost of the units. Cast with CAST(cost_amount AS REAL) for arithmetic.
+price_amount            TEXT    -- Decimal-as-string (nullable). Per-unit conversion price. Cast with CAST(price_amount AS REAL) for arithmetic.
 currency                TEXT    -- e.g. "USD", "INR"
 
 -- Derived:
@@ -24,11 +26,11 @@ quarter                 INTEGER -- 1-4
 
 Sign conventions (double-entry):
 - Expenses: positive (debit). Refunds are negative — do NOT assume expenses are always positive.
-- Income: negative (credit). Use -SUM(amount) or ABS() to display as positive.
+- Income: negative (credit). Use -SUM(CAST(amount AS REAL)) or ABS() to display as positive.
 - Assets: positive (debit).
 - Liabilities: negative (credit).
-- Use SUM(amount) for net figures — handles refunds automatically.
-- Net worth = SUM(amount) WHERE account_type IN ('Assets', 'Liabilities').
+- Use SUM(CAST(amount AS REAL)) for net figures — handles refunds automatically.
+- Net worth = SUM(CAST(amount AS REAL)) WHERE account_type IN ('Assets', 'Liabilities').
 
 Multi-currency:
 - The ledger may contain multiple currencies (e.g. USD and INR). NEVER sum amounts across currencies.
@@ -36,6 +38,7 @@ Multi-currency:
 - Example: GROUP BY account, currency — or — WHERE currency = 'USD'.
 
 Query rules:
+- Money columns (amount, cost_amount, price_amount) are stored as TEXT for exact decimal precision. Always wrap them in CAST(... AS REAL) before SUM/AVG/arithmetic. SQLite will implicitly cast for plain comparisons (WHERE amount > 0), so those can stay unwrapped.
 - SQLite-compatible SQL only. Only SELECT statements.
 - Use strftime() for dates, not DATE_TRUNC or EXTRACT.
 - Group by month: use year_month or strftime('%Y-%m', transaction_date).

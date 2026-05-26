@@ -46,7 +46,7 @@ async def execute_query(
 
     Examples:
         POST /api/ledger/query {"query": "SELECT * FROM postings LIMIT 10"}
-        POST /api/ledger/query?db_type=sqlite {"query": "SELECT account, SUM(amount) FROM postings GROUP BY account"}
+        POST /api/ledger/query?db_type=sqlite {"query": "SELECT account, SUM(CAST(amount AS REAL)) FROM postings GROUP BY account"}
         POST /api/ledger/query?db_type=beanquery {"query": "SELECT account, sum(position) FROM postings GROUP BY account"}
     """
     engine = (db_type or "sqlite").lower()

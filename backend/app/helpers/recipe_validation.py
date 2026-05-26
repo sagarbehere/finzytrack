@@ -109,7 +109,7 @@ _FIELD_PLACEHOLDERS: dict[str, str] = {
     "description": "Brief description",
     "name": "year",
     "label": "Year",
-    "query": "SELECT account, SUM(amount) AS value FROM postings WHERE year = :year GROUP BY account",
+    "query": "SELECT account, SUM(CAST(amount AS REAL)) AS value FROM postings WHERE year = :year GROUP BY account",
     "gridArea": "1 / 1 / 2 / 4",
     "rowField": "account",
     "columnField": "year_month",

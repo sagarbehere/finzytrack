@@ -83,7 +83,7 @@ class GetLedgerContextTool(BaseTool):
             con.execute("PRAGMA query_only = true")
             try:
                 rows = con.execute(
-                    "SELECT account, currency, SUM(amount) as balance "
+                    "SELECT account, currency, SUM(CAST(amount AS REAL)) as balance "
                     "FROM postings "
                     "GROUP BY account, currency "
                     "ORDER BY account, currency"

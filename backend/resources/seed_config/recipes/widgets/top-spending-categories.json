@@ -19,7 +19,7 @@
       "optionsFrom": "currencies"
     }
   ],
-  "query": "SELECT account, SUM(amount) AS total FROM postings WHERE account_type = 'Expenses' AND currency = :currency GROUP BY account ORDER BY total DESC LIMIT :limit",
+  "query": "SELECT account, SUM(CAST(amount AS REAL)) AS total FROM postings WHERE account_type = 'Expenses' AND currency = :currency GROUP BY account ORDER BY total DESC LIMIT :limit",
   "visualization": {
     "type": "chart",
     "chartType": "bar",
