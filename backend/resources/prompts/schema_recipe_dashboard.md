@@ -122,6 +122,7 @@ Use generators for dynamic default values and option lists:
 - Use `:paramName` for parameter placeholders.
 - Use `strftime()` for date operations (not DATE_TRUNC or EXTRACT).
 - The `postings` table schema is described in the postings schema section.
+- Money columns (`amount`, `cost_amount`, `price_amount`) are stored as `TEXT` (Decimal-as-string). Always wrap them in `CAST(amount AS REAL)` before `SUM`/`AVG`/arithmetic. Comparisons (`WHERE amount > 0`) and grouping work without an explicit cast.
 - Always `GROUP BY currency` or filter `WHERE currency = :currency` when summing amounts.
 - Use `HAVING` to filter out zero-value rows.
 - Include `ORDER BY` when results have a natural ordering.

@@ -2,7 +2,7 @@ import { h, type Component } from 'vue'
 import { createColumnHelper } from '@tanstack/vue-table'
 import type { PostingViewModel, TransactionViewModel, ImportContext, LedgerContext } from '@/types/transactions'
 import type { useTableColumns } from '@/composables/useTableColumns'
-import type { Money } from '@/utils/money'
+import { toFixed, toMoney, type Money } from '@/utils/money'
 
 export interface TableRowData extends PostingViewModel {
   transaction: TransactionViewModel
@@ -51,7 +51,7 @@ export interface BuildColumnsOptions {
   updateField: (txId: string, path: string, value: unknown) => void
   numericInputProps: (
     txId: string, postingIdx: number, field: string,
-    currentValue: number | null | undefined,
+    currentValue: Money | null | undefined,
     updateFn: (raw: string) => void,
     extraClasses?: string
   ) => Record<string, any>
@@ -160,7 +160,7 @@ export function buildTanStackColumns(
               tx.id, postingIndex, def.id,
               value,
               (raw) => {
-                const parsed = raw ? parseFloat(raw) : null
+                const parsed = raw ? toMoney(raw) : null
                 updateField(tx.id, storePath, parsed)
               },
               `${getEditableInputClasses('text-right')} ${amountColorClass}`,
@@ -168,7 +168,7 @@ export function buildTanStackColumns(
           }
           return h('span', {
             class: `${getDisplayClasses()} font-mono text-right block ${amountColorClass}`,
-          }, value !== undefined && value !== null ? value.toFixed(2) : '')
+          }, value !== undefined && value !== null ? toFixed(value, 2) : '')
         }
 
         case 'dropdown': {

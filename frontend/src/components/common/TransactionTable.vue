@@ -282,7 +282,7 @@ const clearRawAmountsForTx = (txId: string) => {
 
 const numericInputProps = (
   txId: string, postingIdx: number, field: string,
-  currentValue: number | null | undefined,
+  currentValue: Money | null | undefined,
   updateFn: (raw: string) => void,
   extraClasses: string = ''
 ): Record<string, unknown> => {
@@ -292,7 +292,7 @@ const numericInputProps = (
     if (currentValue === null || currentValue === undefined) return ''
     const s = String(currentValue)
     const decimals = s.includes('.') ? s.split('.')[1].length : 0
-    return decimals < 2 ? currentValue.toFixed(2) : s
+    return decimals < 2 ? toFixed(currentValue, 2) : s
   })()
   return {
     type: 'text',
