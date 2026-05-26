@@ -23,7 +23,7 @@ describe('isTransactionBalanced', () => {
     expect(isTransactionBalanced(tx)).toBe(false)
   })
 
-  it('balanced: within 1 cent tolerance', () => {
+  it('unbalanced: 1-cent off is no longer tolerated (Decimal is exact)', () => {
     const tx = makeTx({
       postings: [
         { amount: toMoney(33.33), currency: 'USD' },
@@ -31,7 +31,7 @@ describe('isTransactionBalanced', () => {
         { amount: toMoney(-66.67), currency: 'USD' },
       ],
     })
-    expect(isTransactionBalanced(tx)).toBe(true)
+    expect(isTransactionBalanced(tx)).toBe(false)
   })
 
   it('balanced: multi-currency with cost basis', () => {

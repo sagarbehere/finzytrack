@@ -1,16 +1,16 @@
 import type { TransactionViewModel } from '@/types/transactions'
-import { abs, add, gt, mul, neg, sign, toMoney, zero, type Money } from '@/utils/money'
+import { add, eq, mul, neg, sign, zero, type Money } from '@/utils/money'
 
-// Balance tolerance: 0.01 (one cent) matches Beancount's default rounding
-// tolerance for fiat currencies. For commodities with higher precision the
-// tolerance is irrelevant in practice because exact Decimal sums hit zero.
-const BALANCE_TOLERANCE = toMoney('0.01')
+const ZERO = zero()
 
 export function isTransactionBalanced(transaction: TransactionViewModel): boolean {
+  // Decimal arithmetic is exact, so a balanced transaction sums to exactly
+  // zero per currency. No tolerance fudge — a 1-cent off-by-one is a real
+  // imbalance and the user wants to see it.
   const currencyTotals: Record<string, Money> = {}
 
   for (const posting of transaction.postings) {
-    const amount: Money = posting.amount ?? zero()
+    const amount: Money = posting.amount ?? ZERO
     let effectiveCurrency: string
     let effectiveAmount: Money
 
@@ -31,8 +31,8 @@ export function isTransactionBalanced(transaction: TransactionViewModel): boolea
       effectiveAmount = amount
     }
 
-    currencyTotals[effectiveCurrency] = add(currencyTotals[effectiveCurrency] ?? zero(), effectiveAmount)
+    currencyTotals[effectiveCurrency] = add(currencyTotals[effectiveCurrency] ?? ZERO, effectiveAmount)
   }
 
-  return Object.values(currencyTotals).every(total => !gt(abs(total), BALANCE_TOLERANCE))
+  return Object.values(currencyTotals).every(total => eq(total, ZERO))
 }
