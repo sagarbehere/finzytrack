@@ -177,6 +177,10 @@ async def startup_user_services(services: UserServices, config: Config) -> None:
     """
     if config.setup_complete:
         try:
+            # Drop the SQLite file so the current schema (CREATE statements in
+            # the exporter) is what gets built. The ledger is the source of
+            # truth; the DB is a materialised view rebuilt below.
+            Path(config.sqlite_export_path).unlink(missing_ok=True)
             from beancount import loader
             entries, errors, options = loader.load_file(config.ledger_file)
             await services.sqlite_exporter.export_full(entries, errors, options)
