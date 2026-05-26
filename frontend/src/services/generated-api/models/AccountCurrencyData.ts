@@ -21,6 +21,6 @@ export type AccountCurrencyData = {
     /**
      * Current balance in this currency
      */
-    balance: number;
+    balance: string;
 };
 

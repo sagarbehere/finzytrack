@@ -8,7 +8,7 @@
 export type BalanceDirectiveCreateRequest = {
     date: string;
     currency: string;
-    amount: number;
+    amount: (number | string);
     include_pad?: boolean;
     pad_source_account?: (string | null);
 };

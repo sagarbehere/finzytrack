@@ -1,6 +1,7 @@
 import type { AccountDetails } from '@/services/generated-api'
 import { ACCOUNT_TYPES, type AccountTreeNode, type AccountFilters, type AccountType, type AggregatedBalance } from '@/types/accounts'
 import { getLocale } from '@/utils/currencyFormat'
+import { toMoney, add, abs as moneyAbs, toNumber, type Money } from '@/utils/money'
 
 /**
  * Extract the account type from the full path
@@ -29,7 +30,7 @@ export function buildTree(accounts: AccountDetails[]): AccountTreeNode[] {
     // Calculate balances from currencies
     const aggregatedBalances: AggregatedBalance[] = account.currencies.map(c => ({
       currency: c.currency,
-      balance: c.balance
+      balance: toMoney(c.balance)
     }))
 
     // Extract metadata, filtering out beancount internal keys
@@ -123,17 +124,17 @@ export function buildTree(accounts: AccountDetails[]): AccountTreeNode[] {
 
     // Then aggregate children's balances into this node
     if (node.children.length > 0) {
-      const balanceMap = new Map<string, number>()
+      const balanceMap = new Map<string, Money>()
 
       // Add own balances first
       for (const bal of node.aggregatedBalances) {
-        balanceMap.set(bal.currency, (balanceMap.get(bal.currency) || 0) + bal.balance)
+        balanceMap.set(bal.currency, add(balanceMap.get(bal.currency) ?? toMoney(0), bal.balance))
       }
 
       // Add children's balances
       for (const child of node.children) {
         for (const bal of child.aggregatedBalances) {
-          balanceMap.set(bal.currency, (balanceMap.get(bal.currency) || 0) + bal.balance)
+          balanceMap.set(bal.currency, add(balanceMap.get(bal.currency) ?? toMoney(0), bal.balance))
         }
       }
 
@@ -266,11 +267,11 @@ export function formatBalances(balances: AggregatedBalance[], maxShow = 2): { di
   }
 
   // Sort by absolute balance value
-  const sorted = [...balances].sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance))
+  const sorted = [...balances].sort((a, b) => toNumber(moneyAbs(b.balance)) - toNumber(moneyAbs(a.balance)))
   const shown = sorted.slice(0, maxShow)
 
   const display = shown
-    .map(b => `${b.balance.toLocaleString(getLocale(b.currency), { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${b.currency}`)
+    .map(b => `${toNumber(b.balance).toLocaleString(getLocale(b.currency), { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${b.currency}`)
     .join(', ')
 
   return { display, overflow: Math.max(0, sorted.length - maxShow) }

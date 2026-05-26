@@ -231,6 +231,7 @@
 </template>
 
 <script setup lang="ts">
+  import { toNumber, type Money } from '@/utils/money'
   import { ref, computed } from 'vue'
   import {
     DocumentArrowUpIcon,
@@ -349,8 +350,8 @@
     return `${formatDate(startDate)} - ${formatDate(endDate)}`
   }
 
-  const formatCurrency = (amount: number | null | undefined, currency: string = 'USD'): string => {
+  const formatCurrency = (amount: Money | null | undefined, currency: string = 'USD'): string => {
     if (amount === null || amount === undefined) return 'Unknown'
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency }).format(amount)
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency }).format(toNumber(amount))
   }
 </script>

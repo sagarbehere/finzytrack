@@ -101,9 +101,9 @@
                           <span class="text-gray-500 dark:text-gray-400">{{ bal.currency }}</span>
                           <span
                             class="font-medium tabular-nums"
-                            :class="bal.balance < 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'"
+                            :class="sign(bal.balance) < 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'"
                           >
-                            {{ bal.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+                            {{ toNumber(bal.balance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
                           </span>
                         </div>
                       </div>
@@ -181,6 +181,7 @@ import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } fro
 import { XMarkIcon } from '@heroicons/vue/24/outline'
 import type { AccountTreeNode } from '@/types/accounts'
 import { typeColors, statusColors } from '@/types/accounts'
+import { sign, toNumber } from '@/utils/money'
 
 const BANKING_KEYS = ['account_number', 'ifsc_code', 'swift_bic']
 const RESERVED_KEYS = new Set(['description', ...BANKING_KEYS])

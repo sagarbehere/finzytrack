@@ -8,7 +8,7 @@
 export type BalanceDirectiveData = {
     date: string;
     currency: string;
-    expected_balance: number;
+    expected_balance: string;
     has_pad: boolean;
     pad_source_account?: (string | null);
     has_error?: boolean;

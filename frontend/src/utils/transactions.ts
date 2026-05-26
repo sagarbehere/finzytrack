@@ -1,33 +1,38 @@
 import type { TransactionViewModel } from '@/types/transactions'
+import { abs, add, gt, mul, neg, sign, toMoney, zero, type Money } from '@/utils/money'
+
+// Balance tolerance: 0.01 (one cent) matches Beancount's default rounding
+// tolerance for fiat currencies. For commodities with higher precision the
+// tolerance is irrelevant in practice because exact Decimal sums hit zero.
+const BALANCE_TOLERANCE = toMoney('0.01')
 
 export function isTransactionBalanced(transaction: TransactionViewModel): boolean {
-  const currencyTotals: Record<string, number> = {}
+  const currencyTotals: Record<string, Money> = {}
 
   for (const posting of transaction.postings) {
-    const amount = posting.amount || 0
+    const amount: Money = posting.amount ?? zero()
     let effectiveCurrency: string
-    let effectiveAmountInCents: number
+    let effectiveAmount: Money
 
     if (posting.price?.amount && posting.price?.currency) {
       effectiveCurrency = posting.price.currency
       if (posting.price.type === '@@') {
         // @@ = total price: sign follows the posting amount
-        effectiveAmountInCents = Math.round((amount >= 0 ? posting.price.amount : -posting.price.amount) * 100)
+        effectiveAmount = sign(amount) < 0 ? neg(posting.price.amount) : posting.price.amount
       } else {
         // @ = per-unit price (default)
-        effectiveAmountInCents = Math.round(amount * posting.price.amount * 100)
+        effectiveAmount = mul(amount, posting.price.amount)
       }
     } else if (posting.cost?.amount && posting.cost?.currency) {
       effectiveCurrency = posting.cost.currency
-      effectiveAmountInCents = Math.round(amount * posting.cost.amount * 100)
+      effectiveAmount = mul(amount, posting.cost.amount)
     } else {
       effectiveCurrency = posting.currency || 'UNKNOWN'
-      effectiveAmountInCents = Math.round(amount * 100)
+      effectiveAmount = amount
     }
 
-    currencyTotals[effectiveCurrency] = (currencyTotals[effectiveCurrency] || 0) + effectiveAmountInCents
+    currencyTotals[effectiveCurrency] = add(currencyTotals[effectiveCurrency] ?? zero(), effectiveAmount)
   }
 
-  // Balanced if every currency bucket is within tolerance (1 cent)
-  return Object.values(currencyTotals).every(total => Math.abs(total) <= 1)
+  return Object.values(currencyTotals).every(total => !gt(abs(total), BALANCE_TOLERANCE))
 }

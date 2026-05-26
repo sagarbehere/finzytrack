@@ -1,8 +1,10 @@
+import type { Money } from '@/utils/money'
+
 export interface CsvParsedTransaction {
   date: string
   payee: string
   narration: string
-  amount: number
+  amount: Money
   memo: string
 }
 

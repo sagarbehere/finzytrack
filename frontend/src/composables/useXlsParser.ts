@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import * as XLSX from 'xlsx'
 import type { XlsRule } from '@/services/generated-api'
 import type { CsvParsedTransaction, CsvFileDetails } from '@/types/csv'
+import { abs, neg, sign, toMoney, type Money } from '@/utils/money'
 
 export function useXlsParser() {
   const selectedFile = ref<File | null>(null)
@@ -163,21 +164,21 @@ export function parseXlsContent(buffer: ArrayBuffer, rule: XlsRule): CsvParsedTr
     const date = parseDateWithFormat(dateStr, dateFormat)
     if (!date) continue
 
-    let amount: number
+    let amount: Money
 
     if (hasSplitAmounts) {
       const drStr = String(row[col.amount_debit!] ?? '').trim()
       const crStr = String(row[col.amount_credit!] ?? '').trim()
       if (!drStr && !crStr) continue
 
-      if (crStr && parseAmountStr(crStr, decimalSep) !== null && Math.abs(parseAmountStr(crStr, decimalSep)!) > 0) {
-        const parsed = parseAmountStr(crStr, decimalSep)!
-        amount = Math.abs(parsed) // Credit = money in = positive
+      const crParsed = crStr ? parseAmountStr(crStr, decimalSep) : null
+      if (crParsed !== null && sign(crParsed) !== 0) {
+        amount = abs(crParsed) // Credit = money in = positive
       } else if (drStr) {
         const parsed = parseAmountStr(drStr, decimalSep)
         if (parsed === null) continue
-        if (Math.abs(parsed) === 0) continue // both zero — skip
-        amount = -Math.abs(parsed) // Debit = money out = negative
+        if (sign(parsed) === 0) continue // both zero — skip
+        amount = neg(abs(parsed)) // Debit = money out = negative
       } else {
         continue
       }
@@ -190,7 +191,7 @@ export function parseXlsContent(buffer: ArrayBuffer, rule: XlsRule): CsvParsedTr
       amount = parsed
     }
 
-    if (negateAmounts) amount = -amount
+    if (negateAmounts) amount = neg(amount)
 
     const payee = col.payee != null && row[col.payee] != null
       ? String(row[col.payee]).trim()
@@ -208,16 +209,17 @@ export function parseXlsContent(buffer: ArrayBuffer, rule: XlsRule): CsvParsedTr
   return transactions
 }
 
-function parseAmountStr(amountStr: string, decimalSep: string): number | null {
+function parseAmountStr(amountStr: string, decimalSep: string): Money | null {
   let normalized = amountStr
   const isParensNegative = /^\s*\(.*\)\s*$/.test(normalized)
   if (decimalSep !== '.') {
     normalized = normalized.replace(/\./g, '').replace(decimalSep, '.')
   }
   normalized = normalized.replace(/[^0-9.-]/g, '')
-  const value = parseFloat(normalized)
-  if (isNaN(value)) return null
-  return isParensNegative ? -Math.abs(value) : value
+  if (normalized === '' || normalized === '-' || normalized === '.') return null
+  let value: Money
+  try { value = toMoney(normalized) } catch { return null }
+  return isParensNegative ? (sign(value) < 0 ? value : neg(value)) : value
 }
 
 const MONTH_ABBREVS: Record<string, number> = {

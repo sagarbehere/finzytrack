@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import Papa from 'papaparse'
 import type { CsvRule } from '@/services/generated-api'
 import type { CsvParsedTransaction, CsvFileDetails } from '@/types/csv'
+import { abs, neg, sign, toMoney, type Money } from '@/utils/money'
 
 export function useCsvParser() {
   const selectedFile = ref<File | null>(null)
@@ -132,7 +133,7 @@ export function parseCsvContent(content: string, rule: CsvRule): CsvParsedTransa
     const date = parseDateWithFormat(dateStr, dateFormat)
     if (!date) continue
 
-    let amount: number
+    let amount: Money
 
     if (hasSplitAmounts) {
       // Separate debit/credit columns
@@ -143,11 +144,11 @@ export function parseCsvContent(content: string, rule: CsvRule): CsvParsedTransa
       if (crStr) {
         const parsed = parseAmountStr(crStr, decimalSep)
         if (parsed === null) continue
-        amount = Math.abs(parsed) // Credit = money in = positive
+        amount = abs(parsed) // Credit = money in = positive
       } else {
         const parsed = parseAmountStr(drStr, decimalSep)
         if (parsed === null) continue
-        amount = -Math.abs(parsed) // Debit = money out = negative
+        amount = neg(abs(parsed)) // Debit = money out = negative
       }
     } else {
       // Single amount column
@@ -161,7 +162,7 @@ export function parseCsvContent(content: string, rule: CsvRule): CsvParsedTransa
     }
 
     if (negateAmounts) {
-      amount = -amount
+      amount = neg(amount)
     }
 
     const payee = col.payee != null && row[col.payee] != null
@@ -180,7 +181,7 @@ export function parseCsvContent(content: string, rule: CsvRule): CsvParsedTransa
   return transactions
 }
 
-function parseAmountStr(amountStr: string, decimalSep: string): number | null {
+function parseAmountStr(amountStr: string, decimalSep: string): Money | null {
   let normalized = amountStr
   // Detect accounting-style negative: (100.00) or $(1,234.56)
   const isParensNegative = /^\s*\(.*\)\s*$/.test(normalized)
@@ -188,9 +189,13 @@ function parseAmountStr(amountStr: string, decimalSep: string): number | null {
     normalized = normalized.replace(/\./g, '').replace(decimalSep, '.')
   }
   normalized = normalized.replace(/[^0-9.-]/g, '')
-  const value = parseFloat(normalized)
-  if (isNaN(value)) return null
-  return isParensNegative ? -Math.abs(value) : value
+  if (normalized === '' || normalized === '-' || normalized === '.') return null
+  try {
+    const m = toMoney(normalized)
+    return isParensNegative ? (sign(m) < 0 ? m : neg(m)) : m
+  } catch {
+    return null
+  }
 }
 
 function parseDateWithFormat(dateStr: string, format: string): string | null {

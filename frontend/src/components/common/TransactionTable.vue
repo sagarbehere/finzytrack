@@ -163,6 +163,7 @@ import { useToast } from '@/composables/useNotifications'
 import { useTransactionStore } from '@/composables/useTransactionStore'
 import { buildTanStackColumns, type TransactionColumnDef, type TableRowData } from '@/composables/useTransactionColumns'
 import { flattenTransactionRows } from '@/utils/flattenTransactionRows'
+import { sign, toFixed, type Money } from '@/utils/money'
 import type { TransactionViewModel, ImportContext, LedgerContext } from '@/types/transactions'
 import type { Cell } from '@tanstack/vue-table'
 
@@ -362,9 +363,11 @@ const getDisplayClasses = () => {
 }
 
 /** Returns color classes for a monetary amount (green for positive, red for negative, gray for zero/null) */
-const getAmountColorClass = (amount: number | null | undefined): string => {
-  if ((amount ?? 0) > 0) return 'text-green-700 dark:text-green-400'
-  if ((amount ?? 0) < 0) return 'text-red-700 dark:text-red-400'
+const getAmountColorClass = (amount: Money | null | undefined): string => {
+  if (amount == null) return 'text-gray-700 dark:text-gray-300'
+  const s = sign(amount)
+  if (s > 0) return 'text-green-700 dark:text-green-400'
+  if (s < 0) return 'text-red-700 dark:text-red-400'
   return 'text-gray-700 dark:text-gray-300'
 }
 
@@ -438,7 +441,7 @@ const columns = computed(() => {
         if (balance !== undefined) {
           return h('span', {
             class: `${getDisplayClasses()} font-mono text-right block`
-          }, balance.toFixed(2))
+          }, toFixed(balance, 2))
         }
         return h('span', { class: 'text-gray-400 text-sm' }, '—')
       },

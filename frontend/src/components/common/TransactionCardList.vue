@@ -163,12 +163,12 @@
                 v-bind="numericInputProps(
                   transaction.id, idx, 'amount',
                   posting.amount,
-                  (raw: string) => emit('updateField', transaction.id, `postings.${idx}.amount`, raw === '' ? null : parseFloat(raw)),
+                  (raw: string) => emit('updateField', transaction.id, `postings.${idx}.amount`, raw === '' ? null : toMoney(raw)),
                   `${inputClasses()} text-right max-w-[8rem] ${getAmountColorClass(posting.amount)}`
                 )"
               />
               <span v-else class="text-sm tabular-nums font-medium" :class="getAmountColorClass(posting.amount)">
-                {{ posting.amount !== null ? posting.amount.toFixed(2) : '—' }}
+                {{ posting.amount !== null ? toFixed(posting.amount, 2) : '—' }}
               </span>
             </div>
 
@@ -197,12 +197,12 @@
                 v-bind="numericInputProps(
                   transaction.id, idx, 'cost.amount',
                   posting.cost?.amount,
-                  (raw: string) => emit('updateField', transaction.id, `postings.${idx}.cost.amount`, raw === '' ? null : parseFloat(raw)),
+                  (raw: string) => emit('updateField', transaction.id, `postings.${idx}.cost.amount`, raw === '' ? null : toMoney(raw)),
                   `${inputClasses()} text-right max-w-[8rem]`
                 )"
               />
               <span v-else class="text-sm tabular-nums text-gray-900 dark:text-white">
-                {{ posting.cost?.amount !== undefined ? posting.cost.amount.toFixed(2) : '—' }}
+                {{ posting.cost?.amount !== undefined ? toFixed(posting.cost.amount, 2) : '—' }}
               </span>
             </div>
 
@@ -246,12 +246,12 @@
                 v-bind="numericInputProps(
                   transaction.id, idx, 'price.amount',
                   posting.price?.amount,
-                  (raw: string) => emit('updateField', transaction.id, `postings.${idx}.price.amount`, raw === '' ? null : parseFloat(raw)),
+                  (raw: string) => emit('updateField', transaction.id, `postings.${idx}.price.amount`, raw === '' ? null : toMoney(raw)),
                   `${inputClasses()} text-right max-w-[8rem]`
                 )"
               />
               <span v-else class="text-sm tabular-nums text-gray-900 dark:text-white">
-                {{ posting.price?.amount !== undefined ? posting.price.amount.toFixed(2) : '—' }}
+                {{ posting.price?.amount !== undefined ? toFixed(posting.price.amount, 2) : '—' }}
               </span>
             </div>
 
@@ -292,7 +292,7 @@
             <div v-if="isColumnVisible('balance')" class="flex items-center justify-between px-4 py-2">
               <label class="text-xs font-medium text-gray-500 dark:text-gray-400">Balance</label>
               <span v-if="ledgerContext?.get(transaction.id)?.balance !== undefined" class="text-sm tabular-nums font-mono text-gray-900 dark:text-white">
-                {{ ledgerContext!.get(transaction.id)!.balance!.toFixed(2) }}
+                {{ toFixed(ledgerContext!.get(transaction.id)!.balance!, 2) }}
               </span>
               <span v-else class="text-sm text-gray-400">—</span>
             </div>
@@ -322,6 +322,7 @@ import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
 import PriceTypeDropdown from '@/components/common/PriceTypeDropdown.vue'
 import TransactionStatusIndicator from '@/components/common/TransactionStatusIndicator.vue'
 import type { TransactionViewModel, ImportContext, LedgerContext } from '@/types/transactions'
+import { sign, toFixed, toMoney, type Money } from '@/utils/money'
 
 interface Props {
   transactions: TransactionViewModel[]
@@ -350,9 +351,11 @@ const inputClasses = (extraClasses = '') => {
 }
 
 /** Returns color classes for a monetary amount */
-const getAmountColorClass = (amount: number | null | undefined): string => {
-  if ((amount ?? 0) > 0) return 'text-green-700 dark:text-green-400'
-  if ((amount ?? 0) < 0) return 'text-red-700 dark:text-red-400'
+const getAmountColorClass = (amount: Money | null | undefined): string => {
+  if (amount == null) return 'text-gray-700 dark:text-gray-300'
+  const s = sign(amount)
+  if (s > 0) return 'text-green-700 dark:text-green-400'
+  if (s < 0) return 'text-red-700 dark:text-red-400'
   return 'text-gray-700 dark:text-gray-300'
 }
 
@@ -361,7 +364,7 @@ const rawAmountStrings = ref<Record<string, string>>({})
 
 const numericInputProps = (
   txId: string, postingIdx: number, field: string,
-  currentValue: number | null | undefined,
+  currentValue: Money | null | undefined,
   updateFn: (raw: string) => void,
   extraClasses: string = ''
 ): Record<string, unknown> => {
@@ -371,7 +374,7 @@ const numericInputProps = (
     if (currentValue === null || currentValue === undefined) return ''
     const s = String(currentValue)
     const decimals = s.includes('.') ? s.split('.')[1].length : 0
-    return decimals < 2 ? currentValue.toFixed(2) : s
+    return decimals < 2 ? toFixed(currentValue, 2) : s
   })()
   return {
     type: 'text',

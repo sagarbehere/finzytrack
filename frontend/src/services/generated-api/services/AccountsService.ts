@@ -255,7 +255,7 @@ export class AccountsService {
         accountName: string,
         date: string,
         currency: string,
-        amount: number,
+        amount: (number | string),
         deletePad: boolean = true,
     ): CancelablePromise<ApiResponse_BalanceDirectiveDeleteData_> {
         return __request(OpenAPI, {

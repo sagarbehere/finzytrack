@@ -1,4 +1,5 @@
 import { useAccountsTree, formatBalances } from '@/composables/useAccountsTree'
+import { toMoney } from '@/utils/money'
 import type { AccountDetails } from '@/services/generated-api'
 import type { AccountTreeNode, AccountFilters } from '@/types/accounts'
 
@@ -15,7 +16,7 @@ function makeAccount(
     open_date: '2024-01-01',
     close_date: overrides.close_date ?? null,
     currencies: overrides.currencies ?? [
-      { currency: 'USD', transaction_count: 5, last_transaction_date: '2024-06-01', balance: 100 },
+      { currency: 'USD', transaction_count: 5, last_transaction_date: '2024-06-01', balance: toMoney(100)},
     ],
     metadata: overrides.metadata ?? {},
   }
@@ -96,10 +97,10 @@ describe('buildTree', () => {
   it('aggregates balances from children up to parents', () => {
     const roots = buildTree([
       makeAccount('Assets:Bank:Checking', {
-        currencies: [{ currency: 'USD', transaction_count: 1, last_transaction_date: null, balance: 500 }],
+        currencies: [{ currency: 'USD', transaction_count: 1, last_transaction_date: null, balance: toMoney(500)}],
       }),
       makeAccount('Assets:Bank:Savings', {
-        currencies: [{ currency: 'USD', transaction_count: 1, last_transaction_date: null, balance: 300 }],
+        currencies: [{ currency: 'USD', transaction_count: 1, last_transaction_date: null, balance: toMoney(300)}],
       }),
     ])
 
@@ -109,20 +110,20 @@ describe('buildTree', () => {
     // Bank should aggregate Checking + Savings = 800 USD
     const bankUsd = bank.aggregatedBalances.find(b => b.currency === 'USD')
     expect(bankUsd).toBeDefined()
-    expect(bankUsd!.balance).toBe(800)
+    expect(bankUsd!.balance).toBe(toMoney(800))
 
     // Assets should also aggregate to 800 USD
     const assetsUsd = assets.aggregatedBalances.find(b => b.currency === 'USD')
-    expect(assetsUsd!.balance).toBe(800)
+    expect(assetsUsd!.balance).toBe(toMoney(800))
   })
 
   it('aggregates multiple currencies separately', () => {
     const roots = buildTree([
       makeAccount('Assets:US', {
-        currencies: [{ currency: 'USD', transaction_count: 1, last_transaction_date: null, balance: 100 }],
+        currencies: [{ currency: 'USD', transaction_count: 1, last_transaction_date: null, balance: toMoney(100)}],
       }),
       makeAccount('Assets:EU', {
-        currencies: [{ currency: 'EUR', transaction_count: 1, last_transaction_date: null, balance: 200 }],
+        currencies: [{ currency: 'EUR', transaction_count: 1, last_transaction_date: null, balance: toMoney(200)}],
       }),
     ])
 
@@ -130,8 +131,8 @@ describe('buildTree', () => {
     const usd = assets.aggregatedBalances.find(b => b.currency === 'USD')
     const eur = assets.aggregatedBalances.find(b => b.currency === 'EUR')
 
-    expect(usd!.balance).toBe(100)
-    expect(eur!.balance).toBe(200)
+    expect(usd!.balance).toBe(toMoney(100))
+    expect(eur!.balance).toBe(toMoney(200))
   })
 
   it('marks closed accounts correctly', () => {
@@ -179,8 +180,8 @@ describe('buildTree', () => {
     const roots = buildTree([
       makeAccount('Assets:Multi', {
         currencies: [
-          { currency: 'USD', transaction_count: 1, last_transaction_date: null, balance: 100 },
-          { currency: 'EUR', transaction_count: 1, last_transaction_date: null, balance: 50 },
+          { currency: 'USD', transaction_count: 1, last_transaction_date: null, balance: toMoney(100)},
+          { currency: 'EUR', transaction_count: 1, last_transaction_date: null, balance: toMoney(50)},
         ],
       }),
     ])
@@ -198,10 +199,10 @@ describe('buildTree', () => {
     // "Assets:Bank" exists as a real account AND is parent of "Assets:Bank:Checking"
     const roots = buildTree([
       makeAccount('Assets:Bank', {
-        currencies: [{ currency: 'USD', transaction_count: 1, last_transaction_date: null, balance: 50 }],
+        currencies: [{ currency: 'USD', transaction_count: 1, last_transaction_date: null, balance: toMoney(50)}],
       }),
       makeAccount('Assets:Bank:Checking', {
-        currencies: [{ currency: 'USD', transaction_count: 1, last_transaction_date: null, balance: 200 }],
+        currencies: [{ currency: 'USD', transaction_count: 1, last_transaction_date: null, balance: toMoney(200)}],
       }),
     ])
     const assets = roots.find(r => r.name === 'Assets')!
@@ -217,7 +218,7 @@ describe('buildTree', () => {
 
     // Bank's aggregated balance = own 50 + child 200 = 250
     const bankUsd = bank.aggregatedBalances.find(b => b.currency === 'USD')
-    expect(bankUsd!.balance).toBe(250)
+    expect(bankUsd!.balance).toBe(toMoney(250))
   })
 })
 
@@ -419,7 +420,7 @@ describe('formatBalances', () => {
   })
 
   it('formats a single currency with 2 decimal places', () => {
-    const result = formatBalances([{ currency: 'USD', balance: 1234.5 }])
+    const result = formatBalances([{ currency: 'USD', balance: toMoney(1234.5) }])
     // Should contain the formatted number and currency code
     expect(result.display).toContain('USD')
     expect(result.display).toContain('1,234.50') // or locale-appropriate
@@ -428,9 +429,9 @@ describe('formatBalances', () => {
 
   it('shows at most maxShow currencies and reports overflow', () => {
     const balances = [
-      { currency: 'USD', balance: 100 },
-      { currency: 'EUR', balance: 200 },
-      { currency: 'GBP', balance: 50 },
+      { currency: 'USD', balance: toMoney(100)},
+      { currency: 'EUR', balance: toMoney(200)},
+      { currency: 'GBP', balance: toMoney(50)},
     ]
     const result = formatBalances(balances, 2)
 
@@ -443,8 +444,8 @@ describe('formatBalances', () => {
 
   it('sorts by absolute balance value (negative balances ranked correctly)', () => {
     const balances = [
-      { currency: 'USD', balance: 10 },
-      { currency: 'EUR', balance: -500 },
+      { currency: 'USD', balance: toMoney(10) },
+      { currency: 'EUR', balance: toMoney(-500) },
     ]
     const result = formatBalances(balances, 1)
 

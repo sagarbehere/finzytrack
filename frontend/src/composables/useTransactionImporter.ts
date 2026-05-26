@@ -16,6 +16,7 @@ import type {
   CommitTransaction
 } from '@/services/generated-api'
 import type { TransactionViewModel } from '@/types/transactions'
+import { sign } from '@/utils/money'
 
 export interface CategorizationResult {
   results: CategorizedTransactionResult[]
@@ -109,7 +110,7 @@ export function useTransactionImporter() {
           // Validate cost completeness (treat 0 as empty)
           const costAmountIsNonZero = posting.cost?.amount !== undefined &&
                                       posting.cost?.amount !== null &&
-                                      posting.cost?.amount !== 0
+                                      sign(posting.cost.amount) !== 0
           if (costAmountIsNonZero) {
             if (!posting.cost?.currency) {
               commitError.value = `Validation failed: Cost amount specified but cost currency missing (row ${rowNum}, posting ${j + 1})`
@@ -124,7 +125,7 @@ export function useTransactionImporter() {
           // Validate price completeness (treat 0 as empty)
           const priceAmountIsNonZero = posting.price?.amount !== undefined &&
                                        posting.price?.amount !== null &&
-                                       posting.price?.amount !== 0
+                                       sign(posting.price.amount) !== 0
           if (priceAmountIsNonZero) {
             if (!posting.price?.currency || !posting.price?.type) {
               commitError.value = `Validation failed: Price amount specified but currency or type missing (row ${rowNum}, posting ${j + 1})`
@@ -157,9 +158,9 @@ export function useTransactionImporter() {
         links: tx.links,
         postings: tx.postings.map(p => {
           // Only send cost fields if amount is non-zero and non-empty
-          const hasCost = p.cost?.amount !== undefined && p.cost?.amount !== null && p.cost?.amount !== 0
+          const hasCost = p.cost?.amount !== undefined && p.cost?.amount !== null && sign(p.cost.amount) !== 0
           // Only send price fields if amount is non-zero and non-empty
-          const hasPrice = p.price?.amount !== undefined && p.price?.amount !== null && p.price?.amount !== 0
+          const hasPrice = p.price?.amount !== undefined && p.price?.amount !== null && sign(p.price.amount) !== 0
 
           return {
             account: p.account,

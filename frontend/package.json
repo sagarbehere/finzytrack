@@ -21,6 +21,7 @@
     "@heroicons/vue": "^2.1.5",
     "@tanstack/vue-table": "^8.21.3",
     "@tanstack/vue-virtual": "^3.13.12",
+    "decimal.js": "^10.6.0",
     "echarts": "^6.0.0",
     "events": "^3.3.0",
     "monaco-editor": "^0.54.0",

@@ -14,6 +14,7 @@ import { OpenAPI, ImportService } from '@/services/generated-api'
 import type { ProfileInfo, InvalidProfileInfo, TestConnectionResponse } from '@/services/generated-api'
 import { useConfig } from '@/composables/useConfig'
 import { errorHandler } from '@/utils/ErrorHandler'
+import type { Money } from '@/utils/money'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -23,7 +24,7 @@ export type { TestConnectionResponse }
 
 export interface EmailParsedTransaction {
   date: string
-  amount: string        // string Decimal — convert to Number for postings
+  amount: Money         // string Decimal (Money brand)
   payee: string
   external_id: string | null
   external_id_type: string | null

@@ -1,3 +1,4 @@
+import { toMoney } from '@/utils/money'
 import { ref } from 'vue'
 import type { TransactionViewModel } from '@/types/transactions'
 import { useTransactionStore } from '@/composables/useTransactionStore'
@@ -9,8 +10,8 @@ function setup(transactions?: TransactionViewModel[]) {
       id: 'tx-1',
       payee: 'Original',
       postings: [
-        { account: 'Expenses:Food', amount: 50, currency: 'USD' },
-        { account: 'Assets:Bank', amount: -50, currency: 'USD' },
+        { account: 'Expenses:Food', amount: toMoney(50), currency: 'USD' },
+        { account: 'Assets:Bank', amount: toMoney(-50), currency: 'USD' },
       ],
     }),
   ])
@@ -71,7 +72,7 @@ describe('updateField', () => {
       makeTx({
         id: 'tx-1',
         date: '2025-01-15',
-        postings: [{ account: 'Assets:Stock', amount: 10, currency: 'AAPL', cost: undefined }],
+        postings: [{ account: 'Assets:Stock', amount: toMoney(10), currency: 'AAPL', cost: undefined }],
       }),
     ])
     store.updateField('tx-1', 'postings.0.cost.amount', 150)
@@ -84,7 +85,7 @@ describe('updateField', () => {
     const store = setup([
       makeTx({
         id: 'tx-1',
-        postings: [{ amount: 10, currency: 'AAPL', cost: { amount: 100, currency: 'USD', date: '2025-01-01' } }],
+        postings: [{ amount: toMoney(10), currency: 'AAPL', cost: { amount: toMoney(100), currency: 'USD', date: '2025-01-01' } }],
       }),
     ])
     store.updateField('tx-1', 'postings.0.cost.amount', 200)
@@ -98,7 +99,7 @@ describe('updateField', () => {
     const store = setup([
       makeTx({
         id: 'tx-1',
-        postings: [{ amount: 100, currency: 'EUR', price: undefined }],
+        postings: [{ amount: toMoney(100), currency: 'EUR', price: undefined }],
       }),
     ])
     store.updateField('tx-1', 'postings.0.price.amount', 1.5)
@@ -110,7 +111,7 @@ describe('updateField', () => {
     const store = setup([
       makeTx({
         id: 'tx-1',
-        postings: [{ amount: 100, currency: 'EUR', price: { amount: 1.5, currency: 'EUR', type: '@' } }],
+        postings: [{ amount: toMoney(100), currency: 'EUR', price: { amount: toMoney(1.5), currency: 'EUR', type: '@' } }],
       }),
     ])
     store.updateField('tx-1', 'postings.0.price.type', '@@')
@@ -132,8 +133,8 @@ describe('updateField — source_account sync', () => {
         id: 'tx-1',
         meta: { source_account: 'Assets:Checking' },
         postings: [
-          { account: 'Assets:Checking', amount: -50, currency: 'USD' },
-          { account: 'Expenses:Food', amount: 50, currency: 'USD' },
+          { account: 'Assets:Checking', amount: toMoney(-50), currency: 'USD' },
+          { account: 'Expenses:Food', amount: toMoney(50), currency: 'USD' },
         ],
       }),
     ])
@@ -147,8 +148,8 @@ describe('updateField — source_account sync', () => {
         id: 'tx-1',
         meta: { source_account: 'Assets:Checking' },
         postings: [
-          { account: 'Assets:Checking', amount: -50, currency: 'USD' },
-          { account: 'Expenses:Food', amount: 50, currency: 'USD' },
+          { account: 'Assets:Checking', amount: toMoney(-50), currency: 'USD' },
+          { account: 'Expenses:Food', amount: toMoney(50), currency: 'USD' },
         ],
       }),
     ])
@@ -161,7 +162,7 @@ describe('updateField — source_account sync', () => {
       makeTx({
         id: 'tx-1',
         meta: {},
-        postings: [{ account: 'Expenses:Food', amount: 50, currency: 'USD' }],
+        postings: [{ account: 'Expenses:Food', amount: toMoney(50), currency: 'USD' }],
       }),
     ])
     expect(() => store.updateField('tx-1', 'postings.0.account', 'X')).not.toThrow()
@@ -244,9 +245,9 @@ describe('removePosting', () => {
       makeTx({
         id: 'tx-1',
         postings: [
-          { account: 'A', amount: 10, currency: 'USD' },
-          { account: 'B', amount: -5, currency: 'USD' },
-          { account: 'C', amount: -5, currency: 'USD' },
+          { account: 'A', amount: toMoney(10), currency: 'USD' },
+          { account: 'B', amount: toMoney(-5), currency: 'USD' },
+          { account: 'C', amount: toMoney(-5), currency: 'USD' },
         ],
       }),
     ])
@@ -258,7 +259,7 @@ describe('removePosting', () => {
 
   it('does not remove the last posting', () => {
     const store = setup([
-      makeTx({ id: 'tx-1', postings: [{ account: 'A', amount: 0, currency: 'USD' }] }),
+      makeTx({ id: 'tx-1', postings: [{ account: 'A', amount: toMoney(0), currency: 'USD' }] }),
     ])
     store.removePosting('tx-1', 0)
     expect(store.transactions.value[0].postings.length).toBe(1)
@@ -269,9 +270,9 @@ describe('removePosting', () => {
       makeTx({
         id: 'tx-1',
         postings: [
-          { account: 'A', amount: 10, currency: 'USD' },
-          { account: 'B', amount: -5, currency: 'USD' },
-          { account: 'C', amount: -5, currency: 'USD' },
+          { account: 'A', amount: toMoney(10), currency: 'USD' },
+          { account: 'B', amount: toMoney(-5), currency: 'USD' },
+          { account: 'C', amount: toMoney(-5), currency: 'USD' },
         ],
       }),
     ])
@@ -354,12 +355,12 @@ describe('notifyChange identity guarantees', () => {
   function setupTwo() {
     const input = ref([
       makeTx({ id: 'tx-1', payee: 'One', postings: [
-        { account: 'Expenses:A', amount: 10, currency: 'USD' },
-        { account: 'Assets:Bank', amount: -10, currency: 'USD' },
+        { account: 'Expenses:A', amount: toMoney(10), currency: 'USD' },
+        { account: 'Assets:Bank', amount: toMoney(-10), currency: 'USD' },
       ]}),
       makeTx({ id: 'tx-2', payee: 'Two', postings: [
-        { account: 'Expenses:B', amount: 20, currency: 'USD' },
-        { account: 'Assets:Bank', amount: -20, currency: 'USD' },
+        { account: 'Expenses:B', amount: toMoney(20), currency: 'USD' },
+        { account: 'Assets:Bank', amount: toMoney(-20), currency: 'USD' },
       ]}),
     ])
     return useTransactionStore(input)

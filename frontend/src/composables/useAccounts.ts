@@ -10,6 +10,7 @@ import {
   type BalanceDirectiveUpdateRequest,
 } from '@/services/generated-api'
 import { errorHandler } from '@/utils/ErrorHandler'
+import type { Money } from '@/utils/money'
 
 // Date filter parameters for fetching accounts
 export interface AccountDateFilter {
@@ -49,7 +50,7 @@ interface UseAccountsReturn {
   fetchBalanceDirectives: (accountName: string) => Promise<BalanceDirectiveData[]>
   addBalanceDirective: (accountName: string, request: BalanceDirectiveCreateRequest) => Promise<void>
   updateBalanceDirective: (accountName: string, request: BalanceDirectiveUpdateRequest) => Promise<void>
-  deleteBalanceDirective: (accountName: string, date: string, currency: string, amount: number, deletePad?: boolean) => Promise<void>
+  deleteBalanceDirective: (accountName: string, date: string, currency: string, amount: Money, deletePad?: boolean) => Promise<void>
 }
 
 // Module-level state (singleton behavior)
@@ -239,7 +240,7 @@ const deleteBalanceDirective = async (
   accountName: string,
   date: string,
   currency: string,
-  amount: number,
+  amount: Money,
   deletePad = true
 ): Promise<void> => {
   try {

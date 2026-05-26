@@ -92,7 +92,7 @@
                       <td
                         class="px-4 py-2 text-sm text-right"
                         :class="[
-                          balance.balance >= 0
+                          sign(balance.balance) >= 0
                             ? 'text-green-600 dark:text-green-400'
                             : 'text-red-600 dark:text-red-400'
                         ]"
@@ -133,6 +133,7 @@ import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } fro
 import { MagnifyingGlassIcon, ChevronUpIcon } from '@heroicons/vue/24/outline'
 import type { AccountTreeNode } from '@/types/accounts'
 import { getLocale } from '@/utils/currencyFormat'
+import { abs, sign, toNumber, type Money } from '@/utils/money'
 
 interface Props {
   open: boolean
@@ -176,7 +177,7 @@ const filteredBalances = computed(() => {
     if (sortBy.value === 'currency') {
       comparison = a.currency.localeCompare(b.currency)
     } else {
-      comparison = Math.abs(b.balance) - Math.abs(a.balance)
+      comparison = toNumber(abs(b.balance)) - toNumber(abs(a.balance))
     }
     return sortDir.value === 'asc' ? comparison : -comparison
   })
@@ -193,8 +194,8 @@ function toggleSort(field: 'currency' | 'balance') {
   }
 }
 
-function formatBalance(value: number, currency: string): string {
-  return value.toLocaleString(getLocale(currency), {
+function formatBalance(value: Money, currency: string): string {
+  return toNumber(value).toLocaleString(getLocale(currency), {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   })

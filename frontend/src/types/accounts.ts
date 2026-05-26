@@ -1,4 +1,5 @@
 // Account management types for the Accounts view
+import type { Money } from '@/utils/money'
 
 /** The five Beancount account types — single source of truth. */
 export const ACCOUNT_TYPES = ['Assets', 'Liabilities', 'Equity', 'Income', 'Expenses'] as const;
@@ -7,7 +8,7 @@ export type AccountStatus = 'open' | 'closed';
 
 export interface AggregatedBalance {
   currency: string;
-  balance: number;
+  balance: Money;
 }
 
 export interface AccountTreeNode {

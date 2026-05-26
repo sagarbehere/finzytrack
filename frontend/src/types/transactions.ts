@@ -1,20 +1,21 @@
 // To be defined in frontend/src/types/transactions.ts
+import type { Money } from '@/utils/money'
 
 export interface PostingViewModel {
   account: string;
-  amount: number | null;
+  amount: Money | null;
   currency: string;
 
   // Cost fields
   cost?: {
-    amount?: number;
+    amount?: Money;
     currency?: string;
     date?: string; // ISO date YYYY-MM-DD
   };
 
   // Price fields
   price?: {
-    amount?: number;
+    amount?: Money;
     currency?: string;
     type?: '@' | '@@'; // @ = per-unit, @@ = total
   };
@@ -78,7 +79,7 @@ export interface ImportContext {
  */
 export interface LedgerContext {
   /** Current running balance at this transaction */
-  balance?: number;
+  balance?: Money;
   /** Whether this transaction has been reconciled with bank statements */
   reconciled?: boolean;
   /** ISO timestamp of last modification */

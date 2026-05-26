@@ -1,3 +1,4 @@
+import { toMoney } from '@/utils/money'
 import { ref } from 'vue'
 import { buildTanStackColumns, type TransactionColumnDef, type TableRowData, type BuildColumnsOptions } from '@/composables/useTransactionColumns'
 import { makeTx } from '@/test/factories'
@@ -49,7 +50,7 @@ function makeRowData(overrides: Partial<TableRowData> = {}): TableRowData {
   const tx = makeTx({ id: 'tx-1' })
   return {
     account: 'Expenses:Food',
-    amount: 50,
+    amount: toMoney(50),
     currency: 'USD',
     transaction: tx,
     postingIndex: 0,

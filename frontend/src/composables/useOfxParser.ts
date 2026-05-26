@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { parse } from 'ofx-js'
 import type { OfxFileDetails, OFXTransaction } from '@/types/ofx'
+import { toMoney } from '@/utils/money'
 
 export function useOfxParser() {
   const selectedFile = ref<File | null>(null)
@@ -131,7 +132,7 @@ export function useOfxParser() {
       transactionCount: transactions.length,
       startDate: startDate,
       endDate: endDate,
-      balance: parseFloat(stmt.LEDGERBAL?.BALAMT || stmt.AVAILBAL?.BALAMT || 0),
+      balance: toMoney(stmt.LEDGERBAL?.BALAMT || stmt.AVAILBAL?.BALAMT || '0'),
       rawTransactions: transactions,
     };
 

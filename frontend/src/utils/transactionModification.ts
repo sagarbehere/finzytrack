@@ -1,11 +1,12 @@
 import type { TransactionViewModel, PostingViewModel } from '@/types/transactions'
+import { sign } from '@/utils/money'
 
 function isCostEmpty(cost: PostingViewModel['cost']): boolean {
-  return !cost || cost.amount === undefined || cost.amount === null || cost.amount === 0 || cost.amount === ('' as unknown as number)
+  return !cost || cost.amount === undefined || cost.amount === null || cost.amount === '' || sign(cost.amount) === 0
 }
 
 function isPriceEmpty(price: PostingViewModel['price']): boolean {
-  return !price || price.amount === undefined || price.amount === null || price.amount === 0 || price.amount === ('' as unknown as number)
+  return !price || price.amount === undefined || price.amount === null || price.amount === '' || sign(price.amount) === 0
 }
 
 function isMetaEmpty(meta: PostingViewModel['meta']): boolean {

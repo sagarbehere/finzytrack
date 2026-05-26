@@ -13,6 +13,6 @@ export type CommodityUsageData = {
     /**
      * Total absolute volume transacted in this commodity
      */
-    total_volume: number;
+    total_volume: string;
 };
 

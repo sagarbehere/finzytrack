@@ -10,6 +10,8 @@ export interface OFXTransaction {
   FITID?: string
 }
 
+import type { Money } from '@/utils/money'
+
 // OFX file details extracted from parsed OFX file
 export interface OfxFileDetails {
   institution: string
@@ -20,6 +22,6 @@ export interface OfxFileDetails {
   transactionCount: number
   startDate: string | null
   endDate: string | null
-  balance: number
+  balance: Money
   rawTransactions: OFXTransaction[]
 }

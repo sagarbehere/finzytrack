@@ -2,6 +2,7 @@ import { h, type Component } from 'vue'
 import { createColumnHelper } from '@tanstack/vue-table'
 import type { PostingViewModel, TransactionViewModel, ImportContext, LedgerContext } from '@/types/transactions'
 import type { useTableColumns } from '@/composables/useTableColumns'
+import type { Money } from '@/utils/money'
 
 export interface TableRowData extends PostingViewModel {
   transaction: TransactionViewModel
@@ -59,7 +60,7 @@ export interface BuildColumnsOptions {
   onDuplicateClick: (id: string) => void
   getEditableInputClasses: (extra?: string) => string
   getDisplayClasses: () => string
-  getAmountColorClass: (amount: number | null | undefined) => string
+  getAmountColorClass: (amount: Money | null | undefined) => string
   columnConfig: ReturnType<typeof useTableColumns>
 }
 

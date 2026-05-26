@@ -349,6 +349,7 @@ import { useToast } from '@/composables/useNotifications'
 import AccountDropdown from '@/components/common/AccountDropdown.vue'
 import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
 import { getLocale } from '@/utils/currencyFormat'
+import { toMoney, toNumber, type Money } from '@/utils/money'
 
 interface Props {
   open: boolean
@@ -520,7 +521,7 @@ function startEdit(index: number) {
   editForm.value = {
     newDate: d.date,
     newCurrency: d.currency,
-    newAmount: d.expected_balance,
+    newAmount: toNumber(toMoney(d.expected_balance)),
     includePad: d.has_pad,
     padSourceAccount: d.pad_source_account ?? '',
   }
@@ -570,7 +571,7 @@ async function performDelete() {
       props.account.fullPath,
       d.date,
       d.currency,
-      d.expected_balance,
+      toMoney(d.expected_balance),
       deleteAlsoPad.value,
     )
     toast.success('Balance Assertion Deleted', `Deleted balance assertion for ${d.date}`)
@@ -583,8 +584,8 @@ async function performDelete() {
   }
 }
 
-function formatBalance(value: number, currency: string): string {
-  return value.toLocaleString(getLocale(currency), {
+function formatBalance(value: Money | string, currency: string): string {
+  return toNumber(toMoney(value)).toLocaleString(getLocale(currency), {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })

@@ -341,7 +341,7 @@
                         >{{ txDescription(tx) }}</td>
                         <td
                           class="px-3 py-1.5 text-right font-mono"
-                          :class="tx.amount >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'"
+                          :class="sign(tx.amount) >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'"
                         >{{ formatAmount(tx.amount) }}</td>
                       </tr>
                       <tr v-if="msg.validationTransactions.length > MAX_VALIDATION_ROWS" class="border-t border-gray-100 dark:border-white/10/50">
@@ -614,6 +614,7 @@ import { useConfig } from '@/composables/useConfig'
 import { parseCsvContent, extractCsvRows } from '@/composables/useCsvParser'
 import { parseXlsContent, extractXlsText, extractXlsSheets } from '@/composables/useXlsParser'
 import type { CsvParsedTransaction } from '@/types/csv'
+import { sign, toNumber, type Money } from '@/utils/money'
 import AccountDropdown from '@/components/common/AccountDropdown.vue'
 import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
 import FilePreviewTable from '@/components/FilePreviewTable.vue'
@@ -1373,9 +1374,10 @@ function txDescription(tx: CsvParsedTransaction): string {
   return tx.payee || tx.narration || tx.memo || ''
 }
 
-function formatAmount(amount: number): string {
-  const sign = amount >= 0 ? '+' : ''
-  return sign + amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+function formatAmount(amount: Money): string {
+  const n = toNumber(amount)
+  const s = n >= 0 ? '+' : ''
+  return s + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function rawContentLines(content: string): string[] {

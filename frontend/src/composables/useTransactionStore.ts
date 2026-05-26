@@ -1,6 +1,7 @@
 import { type Ref, ref } from 'vue'
 import type { TransactionViewModel } from '@/types/transactions'
 import { isModified } from '@/utils/transactionModification'
+import type { Money } from '@/utils/money'
 
 function deepCopy<T>(obj: T): T {
   return JSON.parse(JSON.stringify(obj))
@@ -96,7 +97,7 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
       if (!posting.cost) {
         posting.cost = {}
       }
-      posting.cost.amount = value as number | undefined
+      posting.cost.amount = value as Money | undefined
       if (posting.cost.amount !== undefined && !posting.cost.date) {
         posting.cost.date = tx.date
       }

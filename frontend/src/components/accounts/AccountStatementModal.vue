@@ -186,9 +186,10 @@ import type { TransactionViewModel } from '@/types/transactions'
 import { getLocale } from '@/utils/currencyFormat'
 import { useTransactionQuery } from '@/composables/useTransactionQuery'
 import DatePresetSelector from '@/components/common/DatePresetSelector.vue'
+import { add, sign, toNumber, zero, type Money } from '@/utils/money'
 
 interface AccountPosting {
-  amount: number
+  amount: Money
   currency: string
 }
 
@@ -198,7 +199,7 @@ interface EnrichedTransaction {
   payee: string
   narration: string
   accountPostings: AccountPosting[]
-  runningBalances: Record<string, number>
+  runningBalances: Record<string, Money>
 }
 
 interface Props {
@@ -311,7 +312,7 @@ function computeEnrichedTransactions() {
   })
 
   // Compute running balances
-  const runningBalances: Record<string, number> = {}
+  const runningBalances: Record<string, Money> = {}
   const currencySet = new Set<string>()
   const enriched: EnrichedTransaction[] = []
 
@@ -327,10 +328,7 @@ function computeEnrichedTransactions() {
         currencySet.add(posting.currency)
 
         // Accumulate running balance
-        if (!(posting.currency in runningBalances)) {
-          runningBalances[posting.currency] = 0
-        }
-        runningBalances[posting.currency] += posting.amount
+        runningBalances[posting.currency] = add(runningBalances[posting.currency] ?? zero(), posting.amount)
       }
     }
 
@@ -376,38 +374,39 @@ function txDescription(tx: EnrichedTransaction): string {
   return tx.payee || tx.narration || '—'
 }
 
-function txAmount(tx: EnrichedTransaction, currency: string): number | null {
-  let total = 0
+function txAmount(tx: EnrichedTransaction, currency: string): Money | null {
+  let total: Money = zero()
   let found = false
   for (const p of tx.accountPostings) {
     if (p.currency === currency) {
-      total += p.amount
+      total = add(total, p.amount)
       found = true
     }
   }
   return found ? total : null
 }
 
-function formatAmount(value: number | null, currency: string): string {
+function formatAmount(value: Money | null, currency: string): string {
   if (value === null) return '—'
-  return value.toLocaleString(getLocale(currency), {
+  return toNumber(value).toLocaleString(getLocale(currency), {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })
 }
 
-function formatBalance(value: number | undefined, currency: string): string {
+function formatBalance(value: Money | undefined, currency: string): string {
   if (value === undefined) return '—'
-  return value.toLocaleString(getLocale(currency), {
+  return toNumber(value).toLocaleString(getLocale(currency), {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })
 }
 
-function amountColor(value: number | null): string {
+function amountColor(value: Money | null): string {
   if (value === null) return 'text-gray-400 dark:text-gray-500'
-  if (value > 0) return 'text-green-600 dark:text-green-400'
-  if (value < 0) return 'text-red-600 dark:text-red-400'
+  const s = sign(value)
+  if (s > 0) return 'text-green-600 dark:text-green-400'
+  if (s < 0) return 'text-red-600 dark:text-red-400'
   return 'text-gray-900 dark:text-white'
 }
 

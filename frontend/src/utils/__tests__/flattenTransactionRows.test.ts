@@ -1,3 +1,4 @@
+import { toMoney } from '@/utils/money'
 import { flattenTransactionRows } from '@/utils/flattenTransactionRows'
 import { makeTx } from '@/test/factories'
 import type { TransactionViewModel } from '@/types/transactions'
@@ -6,11 +7,11 @@ import type { TableRowData } from '@/composables/useTransactionColumns'
 describe('flattenTransactionRows', () => {
   it('flattens transactions into one row per posting', () => {
     const tx1 = makeTx({ id: 'a', postings: [
-      { account: 'A', amount: 1, currency: 'USD' },
-      { account: 'B', amount: -1, currency: 'USD' },
+      { account: 'A', amount: toMoney(1), currency: 'USD' },
+      { account: 'B', amount: toMoney(-1), currency: 'USD' },
     ]})
     const tx2 = makeTx({ id: 'b', postings: [
-      { account: 'C', amount: 2, currency: 'USD' },
+      { account: 'C', amount: toMoney(2), currency: 'USD' },
     ]})
     const cache = new Map<TransactionViewModel, TableRowData[]>()
     const rows = flattenTransactionRows([tx1, tx2], cache)
@@ -83,7 +84,7 @@ describe('flattenTransactionRows', () => {
   })
 
   it('assigns sequential transactionIndex starting at 1', () => {
-    const single = { account: 'X', amount: 1, currency: 'USD' }
+    const single = { account: 'X', amount: toMoney(1), currency: 'USD' }
     const txs = [
       makeTx({ id: 'a', postings: [single] }),
       makeTx({ id: 'b', postings: [single] }),

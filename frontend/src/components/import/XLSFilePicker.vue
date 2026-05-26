@@ -242,8 +242,8 @@
                 <td class="px-4 py-2 whitespace-nowrap text-gray-900 dark:text-white">{{ tx.date }}</td>
                 <td class="px-4 py-2 text-gray-900 dark:text-white">{{ tx.payee || '-' }}</td>
                 <td class="px-4 py-2 text-gray-600 dark:text-gray-400">{{ tx.narration || '-' }}</td>
-                <td class="px-4 py-2 text-right whitespace-nowrap" :class="tx.amount < 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'">
-                  {{ tx.amount.toFixed(2) }}
+                <td class="px-4 py-2 text-right whitespace-nowrap" :class="sign(tx.amount) < 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'">
+                  {{ toFixed(tx.amount, 2) }}
                 </td>
                 <td class="px-4 py-2 text-gray-500 dark:text-gray-400">{{ tx.memo || '-' }}</td>
               </tr>
@@ -295,6 +295,7 @@
 </template>
 
 <script setup lang="ts">
+  import { sign, toFixed } from '@/utils/money'
   import { Listbox, ListboxButton, ListboxLabel, ListboxOption, ListboxOptions } from '@headlessui/vue'
   import { ChevronUpDownIcon } from '@heroicons/vue/16/solid'
   import { CheckIcon } from '@heroicons/vue/20/solid'

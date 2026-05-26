@@ -1,3 +1,4 @@
+import { toMoney } from '@/utils/money'
 import { mount } from '@vue/test-utils'
 import TransactionTableSummary from '@/components/common/TransactionTableSummary.vue'
 import { makeTx, makeImportContext } from '@/test/factories'
@@ -20,8 +21,8 @@ describe('TransactionTableSummary', () => {
 
   it('shows unbalanced count', () => {
     const transactions = [
-      makeTx({ postings: [{ amount: 100, currency: 'USD' }, { amount: -100, currency: 'USD' }] }),
-      makeTx({ postings: [{ amount: 100, currency: 'USD' }, { amount: -50, currency: 'USD' }] }),
+      makeTx({ postings: [{ amount: toMoney(100), currency: 'USD' }, { amount: toMoney(-100), currency: 'USD' }] }),
+      makeTx({ postings: [{ amount: toMoney(100), currency: 'USD' }, { amount: toMoney(-50), currency: 'USD' }] }),
     ]
     const wrapper = mount(TransactionTableSummary, { props: { transactions } })
     const unbalancedSection = wrapper.findAll('.flex.items-center.gap-2').find(el => el.text().includes('Unbalanced:'))
@@ -33,8 +34,8 @@ describe('TransactionTableSummary', () => {
 
   it('shows zero unbalanced without red styling', () => {
     const transactions = [
-      makeTx({ postings: [{ amount: 50, currency: 'USD' }, { amount: -50, currency: 'USD' }] }),
-      makeTx({ postings: [{ amount: 100, currency: 'USD' }, { amount: -100, currency: 'USD' }] }),
+      makeTx({ postings: [{ amount: toMoney(50), currency: 'USD' }, { amount: toMoney(-50), currency: 'USD' }] }),
+      makeTx({ postings: [{ amount: toMoney(100), currency: 'USD' }, { amount: toMoney(-100), currency: 'USD' }] }),
     ]
     const wrapper = mount(TransactionTableSummary, { props: { transactions } })
     const unbalancedSection = wrapper.findAll('.flex.items-center.gap-2').find(el => el.text().includes('Unbalanced:'))
@@ -83,8 +84,8 @@ describe('TransactionTableSummary', () => {
     const tx = makeTx({
       meta: { source_account: 'Assets:Bank' },
       postings: [
-        { account: 'Assets:Bank', amount: -500, currency: 'USD' },
-        { account: 'Expenses:Food', amount: 500, currency: 'USD' },
+        { account: 'Assets:Bank', amount: toMoney(-500), currency: 'USD' },
+        { account: 'Expenses:Food', amount: toMoney(500), currency: 'USD' },
       ],
     })
     const importContext = new Map<string, ImportContext>([[tx.id, makeImportContext()]])
@@ -96,8 +97,8 @@ describe('TransactionTableSummary', () => {
   it('shows account totals by top-level account', () => {
     const tx = makeTx({
       postings: [
-        { account: 'Expenses:Food', amount: 50, currency: 'USD' },
-        { account: 'Assets:Bank', amount: -50, currency: 'USD' },
+        { account: 'Expenses:Food', amount: toMoney(50), currency: 'USD' },
+        { account: 'Assets:Bank', amount: toMoney(-50), currency: 'USD' },
       ],
     })
     const wrapper = mount(TransactionTableSummary, { props: { transactions: [tx] } })

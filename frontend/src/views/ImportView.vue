@@ -262,6 +262,7 @@
   import { useTransactionImporter } from '@/composables/useTransactionImporter'
   import { useLedgerHealth } from '@/composables/useLedgerHealth'
   import { useToast } from '@/composables/useNotifications'
+  import { toMoney, neg } from '@/utils/money'
   import { isTransactionBalanced } from '@/utils/transactions'
 
   defineOptions({ name: 'ImportView' })
@@ -364,7 +365,7 @@
       // Extract payee and memo from the raw transaction
       const payee = tx.NAME || tx.PAYEE || 'Unknown Payee'
       const memo = tx.MEMO || tx.CHECKNUM || ''
-      const amount = parseFloat(tx.TRNAMT || '0') || 0
+      const amount = toMoney(tx.TRNAMT || '0')
       const date = tx.DTPOSTED ? new Date(tx.DTPOSTED.substring(0, 8).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
 
       // Create postings - preserve original amount signs from OFX
@@ -380,7 +381,7 @@
         },
         {
           account: 'Expenses:Unknown', // Default category to be updated later
-          amount: -amount, // Opposite sign to balance the transaction
+          amount: neg(amount), // Opposite sign to balance the transaction
           currency: currency,
           // NEW fields (undefined for OFX imports)
           cost: undefined,
@@ -469,7 +470,7 @@
     csvTransactions.forEach(tx => {
       const payee = tx.payee || 'Unknown Payee'
       const memo = tx.memo || ''
-      const amount = tx.amount
+      const amount = toMoney(tx.amount)
       const date = tx.date
 
       const postings: PostingViewModel[] = [
@@ -483,7 +484,7 @@
         },
         {
           account: 'Expenses:Unknown',
-          amount: -amount,
+          amount: neg(amount),
           currency: currency,
           cost: undefined,
           price: undefined,
@@ -563,7 +564,7 @@
 
     emailTransactions.forEach(tx => {
       const transactionId = uuidv7()
-      const amount = Number(tx.amount)  // already signed
+      const amount = toMoney(tx.amount)  // already signed
 
       const postings: PostingViewModel[] = [
         {
@@ -574,7 +575,7 @@
         },
         {
           account: 'Expenses:Unknown',
-          amount: -amount,
+          amount: neg(amount),
           currency,
           cost: undefined, price: undefined, meta: undefined
         }
@@ -636,7 +637,7 @@
       postings: [
         {
           account: firstAccount,
-          amount: parsed?.postings?.[0]?.amount ?? null,
+          amount: parsed?.postings?.[0]?.amount ? toMoney(parsed.postings[0].amount) : null,
           currency: firstCurrency,
           cost: undefined,
           price: undefined,
@@ -644,7 +645,7 @@
         },
         {
           account: secondPosting?.account ?? 'Expenses:Unknown',
-          amount: secondPosting?.amount ?? null,
+          amount: secondPosting?.amount ? toMoney(secondPosting.amount) : null,
           currency: secondPosting?.currency ?? firstCurrency,
           cost: undefined,
           price: undefined,

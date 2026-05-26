@@ -47,7 +47,7 @@
               <span class="text-gray-600 dark:text-gray-400">{{ account }}:</span>
               <span class="font-semibold text-gray-900 dark:text-white">
                 <span v-for="(amount, currency, index) in currencies" :key="currency">
-                  {{ amount.toFixed(2) }} {{ currency }}<span v-if="index < Object.keys(currencies).length - 1">, </span>
+                  {{ toFixed(amount, 2) }} {{ currency }}<span v-if="index < Object.keys(currencies).length - 1">, </span>
                 </span>
               </span>
             </div>
@@ -62,6 +62,7 @@
 import { computed } from 'vue'
 import type { TransactionViewModel, ImportContext } from '@/types/transactions'
 import { isTransactionBalanced } from '@/utils/transactions'
+import { add, toFixed, zero, type Money } from '@/utils/money'
 
 interface Props {
   transactions: TransactionViewModel[]
@@ -79,7 +80,7 @@ const getImportContext = (transactionId: string): ImportContext | undefined => {
 }
 
 const netFlowByCurrency = computed(() => {
-  const flows: Record<string, number> = {}
+  const flows: Record<string, Money> = {}
 
   props.transactions.forEach(transaction => {
     const sourceAccount = transaction.meta['source_account']
@@ -88,17 +89,14 @@ const netFlowByCurrency = computed(() => {
       const sourcePosting = transaction.postings.find(p => p.account === sourceAccount)
       if (sourcePosting && sourcePosting.amount !== null) {
         const currency = sourcePosting.currency
-        if (!flows[currency]) {
-          flows[currency] = 0
-        }
-        flows[currency] += sourcePosting.amount
+        flows[currency] = add(flows[currency] ?? zero(), sourcePosting.amount)
       }
     }
   })
 
   const formatted: Record<string, string> = {}
   Object.keys(flows).forEach(currency => {
-    formatted[currency] = flows[currency].toFixed(2)
+    formatted[currency] = toFixed(flows[currency], 2)
   })
   return formatted
 })
@@ -119,7 +117,7 @@ const duplicateCount = computed(() => {
 })
 
 const accountSumsByCurrency = computed(() => {
-  const sums: Record<string, Record<string, number>> = {}
+  const sums: Record<string, Record<string, Money>> = {}
 
   props.transactions.forEach(transaction => {
     transaction.postings.forEach(posting => {
@@ -131,11 +129,7 @@ const accountSumsByCurrency = computed(() => {
       if (!sums[topLevelAccount]) {
         sums[topLevelAccount] = {}
       }
-      if (!sums[topLevelAccount][currency]) {
-        sums[topLevelAccount][currency] = 0
-      }
-
-      sums[topLevelAccount][currency] += posting.amount
+      sums[topLevelAccount][currency] = add(sums[topLevelAccount][currency] ?? zero(), posting.amount)
     })
   })
 

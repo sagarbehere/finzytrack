@@ -4,7 +4,7 @@
 /* eslint-disable */
 export type Posting = {
     account?: string;
-    amount?: (number | null);
+    amount?: (string | null);
     currency?: string;
 };
 
