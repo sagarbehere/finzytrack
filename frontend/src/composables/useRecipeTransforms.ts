@@ -4,6 +4,7 @@ import type {
   PivotData,
   PivotRow,
 } from '@/types/recipes'
+import { add, toMoney, toNumber, zero, type Money } from '@/utils/money'
 
 // ============================================================================
 // Transform Type Guards
@@ -138,14 +139,18 @@ export const configurableTransforms: Record<
     const columnField = config.columnField ?? 'year_month'
     const valueField = config.valueField ?? 'amount'
 
-    // Collect unique column keys and per-row data
+    // Collect unique column keys and per-row data.
+    // Sums are kept as Money for exactness; we convert to JS number at the
+    // final assembly step since PivotRow is a display surface (see
+    // dev-docs/money-types.md).
     const columnsSet = new Set<string>()
-    const rowsMap = new Map<string, Map<string, number>>()
+    const rowsMap = new Map<string, Map<string, Money>>()
 
     for (const row of rows) {
       const rowLabel = String(row[rowField] ?? '')
       const colKey = String(row[columnField] ?? '')
-      const value = Number(row[valueField]) || 0
+      const raw = row[valueField]
+      const value: Money = raw === null || raw === undefined || raw === '' ? zero() : toMoney(raw as string | number)
 
       columnsSet.add(colKey)
       if (!rowsMap.has(rowLabel)) rowsMap.set(rowLabel, new Map())
@@ -171,28 +176,32 @@ export const configurableTransforms: Record<
       }
     })
 
-    // Build pivot rows
-    const columnTotals: Record<string, number> = {}
-    for (const col of columns) columnTotals[col] = 0
-    let grandTotal = 0
+    // Build pivot rows — Decimal math throughout, convert to number at the end.
+    const columnTotalsMoney: Record<string, Money> = {}
+    for (const col of columns) columnTotalsMoney[col] = zero()
+    let grandTotalMoney: Money = zero()
 
     const pivotRows: PivotRow[] = []
     for (const [label, colMap] of rowsMap) {
       const values: Record<string, number> = {}
-      let rowTotal = 0
+      let rowTotalMoney: Money = zero()
 
       for (let i = 0; i < rawColumns.length; i++) {
-        const amount = colMap.get(rawColumns[i]) || 0
-        if (amount !== 0) {
-          values[columns[i]] = amount
-          rowTotal += amount
-          columnTotals[columns[i]] += amount
+        const amountMoney = colMap.get(rawColumns[i]) ?? zero()
+        if (amountMoney !== '0') {
+          values[columns[i]] = toNumber(amountMoney)
+          rowTotalMoney = add(rowTotalMoney, amountMoney)
+          columnTotalsMoney[columns[i]] = add(columnTotalsMoney[columns[i]], amountMoney)
         }
       }
 
-      grandTotal += rowTotal
-      pivotRows.push({ label, values, total: rowTotal })
+      grandTotalMoney = add(grandTotalMoney, rowTotalMoney)
+      pivotRows.push({ label, values, total: toNumber(rowTotalMoney) })
     }
+
+    const columnTotals: Record<string, number> = {}
+    for (const col of columns) columnTotals[col] = toNumber(columnTotalsMoney[col])
+    const grandTotal = toNumber(grandTotalMoney)
 
     // Sort rows
     const sortBy = config.sortRowsBy ?? 'total_desc'

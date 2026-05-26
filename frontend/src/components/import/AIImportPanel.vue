@@ -169,6 +169,7 @@
   import { ImportService } from '@/services/generated-api'
   import { useConfig } from '@/composables/useConfig'
   import type { CsvParsedTransaction, CsvFileDetails } from '@/types/csv'
+  import { toMoney } from '@/utils/money'
 
   const { config } = useConfig()
 
@@ -309,12 +310,14 @@
         )
       }
 
-      // Convert to CsvParsedTransaction format (same shape)
+      // Convert to CsvParsedTransaction format (same shape).
+      // LLM endpoint returns Decimal strings; canonicalise via toMoney so
+      // downstream code sees the same form CSV/XLS parsers produce.
       const transactions: CsvParsedTransaction[] = data.transactions.map((tx: any) => ({
         date: tx.date,
         payee: tx.payee || '',
         narration: tx.narration || '',
-        amount: tx.amount,
+        amount: toMoney(tx.amount ?? 0),
         memo: tx.memo || '',
       }))
 
