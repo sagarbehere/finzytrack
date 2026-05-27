@@ -17,7 +17,7 @@
       <RecipeParameters
         v-if="dashboard.parameters && dashboard.parameters.length > 0"
         :parameters="dashboard.parameters"
-        v-model="dashboardParameters"
+        v-model="dashboardSelections"
       />
     </div>
 
@@ -34,7 +34,7 @@
         <RecipeWidget
           v-if="getWidgetById(widgetLayout.widgetId)"
           :recipe="getWidgetById(widgetLayout.widgetId)!"
-          :dashboardParameters="dashboardParameters"
+          :dashboardParameters="resolvedDashboardParameters"
           :style="{ gridArea: widgetLayout.gridArea }"
         />
         <!-- Shown when a widgetId in the layout has no matching widget definition -->
@@ -59,7 +59,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type {
   DashboardRecipe,
   JsonDashboardRecipe,
@@ -67,6 +67,8 @@ import type {
   JsonWidgetRecipe,
 } from '@/types/recipes'
 import { useRecipeLoader } from '@/composables/useRecipeLoader'
+import { getStorageAdapter, STORAGE_KEYS } from '@/services/storage'
+import { resolveParameterValues } from '@/recipes/functions'
 import RecipeWidget from './RecipeWidget.vue'
 import RecipeParameters from './RecipeParameters.vue'
 
@@ -83,8 +85,20 @@ const emit = defineEmits<{
 
 const { getWidget } = useRecipeLoader()
 
-// Dashboard-level parameters
-const dashboardParameters = ref<Record<string, string | number>>({})
+/**
+ * The user's parameter *selections* — what they picked in the dropdowns.
+ * Values may be literal scalars OR generator sentinels like "$gen:currentMonth"
+ * (which re-evaluate on each load). Selections are persisted to localStorage
+ * and emitted upward for URL sync.
+ *
+ * The resolved scalars (what queries and widgets actually consume) live in
+ * `resolvedDashboardParameters` below.
+ */
+const dashboardSelections = ref<Record<string, string | number>>({})
+
+const resolvedDashboardParameters = computed(() =>
+  resolveParameterValues(dashboardSelections.value),
+)
 
 /**
  * Get widget by ID.
@@ -98,36 +112,57 @@ function getWidgetById(widgetId: string): WidgetRecipe | JsonWidgetRecipe | unde
   return props.dashboard.widgets?.find((w) => w.id === widgetId) ?? getWidget(widgetId)
 }
 
-// Initialize dashboard parameters with defaults, then overlay any initial values from URL
+/**
+ * Initialize parameter selections. Precedence (later overrides earlier):
+ *   1. Recipe defaults (may be sentinels for templated $gen defaults).
+ *   2. Saved selections from localStorage (per-dashboard, by id).
+ *   3. Initial parameters from the URL (treated as explicit literals).
+ *
+ * URL wins over localStorage because shared/bookmarked URLs are the user's
+ * most explicit intent for a particular session.
+ */
 function initializeParameters() {
   const params: Record<string, string | number> = {}
   if (props.dashboard.parameters) {
     for (const param of props.dashboard.parameters) {
-      // `default` is typed as `string | number | { $gen, ... }` per the JSON
-      // schema, but resolveGenerators (run by useRecipeLoader on every JSON
-      // recipe before it reaches this component) replaces $gen objects with
-      // their scalar results, so by this point the value is always a scalar.
+      // After resolveRecipeGenerators, `default` is always a scalar — either
+      // a literal or a "$gen:name" sentinel for no-arg templated defaults.
       params[param.name] = param.default as string | number
     }
   }
-  // Override defaults with initial parameters (e.g., from URL query params)
-  if (props.initialParameters) {
-    for (const [key, value] of Object.entries(props.initialParameters)) {
-      if (key in params) {
-        params[key] = value
+  if (props.dashboard.id) {
+    const all = getStorageAdapter().get<Record<string, Record<string, string | number>>>(
+      STORAGE_KEYS.DASHBOARD_SETTINGS,
+    ) ?? {}
+    const saved = all[props.dashboard.id]
+    if (saved) {
+      for (const [k, v] of Object.entries(saved)) {
+        if (k in params) params[k] = v
       }
     }
   }
-  dashboardParameters.value = params
+  if (props.initialParameters) {
+    for (const [key, value] of Object.entries(props.initialParameters)) {
+      if (key in params) params[key] = value
+    }
+  }
+  dashboardSelections.value = params
 }
 
-// Initialize parameters synchronously during setup so child RecipeWidgets
+// Initialize selections synchronously during setup so child RecipeWidgets
 // receive correct dashboardParameters on first render (before their onMounted fires).
 initializeParameters()
 
-// Emit parameter changes to parent for URL sync
-watch(dashboardParameters, (newParams) => {
-  emit('update:parameters', { ...newParams })
+// Persist selections (sentinels included) and emit upward for URL sync.
+watch(dashboardSelections, (newSelections) => {
+  if (props.dashboard.id && props.dashboard.parameters?.length) {
+    const all = getStorageAdapter().get<Record<string, Record<string, string | number>>>(
+      STORAGE_KEYS.DASHBOARD_SETTINGS,
+    ) ?? {}
+    all[props.dashboard.id] = newSelections
+    getStorageAdapter().set(STORAGE_KEYS.DASHBOARD_SETTINGS, all)
+  }
+  emit('update:parameters', { ...newSelections })
 }, { deep: true })
 </script>
 

@@ -23,7 +23,7 @@
       <RecipeParameters
         v-if="widgetOnlyParameters.length > 0"
         :parameters="widgetOnlyParameters"
-        v-model="localParameters"
+        v-model="localSelections"
       />
     </div>
 
@@ -98,6 +98,7 @@ import {
   useRecipeExecutor,
   type AnyWidgetRecipe,
 } from '@/composables/useRecipeExecutor'
+import { resolveParameterValues } from '@/recipes/functions'
 import RecipeWidgetRenderer from './RecipeWidgetRenderer.vue'
 import RecipeParameters from './RecipeParameters.vue'
 
@@ -112,8 +113,15 @@ const { executeRecipe, getDefaultParameters, isLoading, error } = useRecipeExecu
 
 const rendererRef = ref<InstanceType<typeof RecipeWidgetRenderer>>()
 
-// Local parameters (for widget-level params not controlled by dashboard)
-const localParameters = ref<Record<string, string | number>>({})
+/**
+ * The user's widget-level parameter *selections* — what they picked in the
+ * dropdowns. Values may be literal scalars OR generator sentinels like
+ * "$gen:currentMonth" (templated picks that re-evaluate on each load).
+ *
+ * Selections are persisted to localStorage. The resolved scalars consumed by
+ * the SQL query and visualization live in `mergedParameters` below.
+ */
+const localSelections = ref<Record<string, string | number>>({})
 
 // Widget parameters that are NOT provided by the dashboard (shown in widget header)
 const widgetOnlyParameters = computed(() => {
@@ -122,10 +130,11 @@ const widgetOnlyParameters = computed(() => {
   return props.recipe.parameters.filter((p) => !(p.name in props.dashboardParameters!))
 })
 
-// Merged parameters: dashboard params override local params
+// Merged parameters: dashboard params override local params. Both sources
+// are resolved (sentinels → scalar) before they reach the query/widget.
 const mergedParameters = computed(() => ({
-  ...getDefaultParameters(props.recipe),
-  ...localParameters.value,
+  ...resolveParameterValues(getDefaultParameters(props.recipe)),
+  ...resolveParameterValues(localSelections.value),
   ...(props.dashboardParameters || {}),
 }))
 
@@ -154,23 +163,23 @@ watch(mergedParameters, () => executeQuery(), { deep: true })
 // Vue reuses the keyed instance and the panel keeps showing stale data.
 watch(() => props.recipe, () => executeQuery(), { deep: true })
 
-// Persist widget-level parameter selections when they change
-watch(localParameters, (newParams) => {
+// Persist widget-level parameter selections (sentinels included) when they change.
+watch(localSelections, (newSelections) => {
   if (!props.recipe.id || !props.recipe.parameters?.length) return
   const all = getStorageAdapter().get<Record<string, Record<string, string | number>>>(STORAGE_KEYS.WIDGET_SETTINGS) ?? {}
-  all[props.recipe.id] = newParams
+  all[props.recipe.id] = newSelections
   getStorageAdapter().set(STORAGE_KEYS.WIDGET_SETTINGS, all)
 }, { deep: true })
 
-// Initial execution — restore saved parameters if available
+// Initial execution — restore saved selections if available.
 onMounted(() => {
   const defaults = getDefaultParameters(props.recipe)
   if (props.recipe.id && props.recipe.parameters?.length) {
     const all = getStorageAdapter().get<Record<string, Record<string, string | number>>>(STORAGE_KEYS.WIDGET_SETTINGS) ?? {}
     const saved = all[props.recipe.id]
-    localParameters.value = saved ? { ...defaults, ...saved } : defaults
+    localSelections.value = saved ? { ...defaults, ...saved } : defaults
   } else {
-    localParameters.value = defaults
+    localSelections.value = defaults
   }
   executeQuery()
 })

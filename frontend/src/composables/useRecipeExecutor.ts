@@ -220,6 +220,13 @@ export function useRecipeExecutor() {
 
   /**
    * Build initial parameter values from recipe defaults.
+   *
+   * After `resolveRecipeGenerators` runs at load time, `param.default` is
+   * always a scalar — either a literal `string`/`number`, or a sentinel
+   * string like `"$gen:currentMonth"` for no-arg generator defaults. We
+   * preserve the sentinel here so the UI can offer it as a templated option;
+   * call `resolveParameterValue` at the consumer point (query interpolation,
+   * widget rendering) to get the runtime scalar.
    */
   function getDefaultParameters(
     recipe: AnyWidgetRecipe
@@ -227,10 +234,6 @@ export function useRecipeExecutor() {
     const params: Record<string, string | number> = {}
     if (recipe.parameters) {
       for (const param of recipe.parameters) {
-        // `default` is typed as `string | number | { $gen, ... }` per the JSON
-        // schema, but resolveGenerators (called by useRecipeLoader before the
-        // recipe reaches us) replaces every `$gen` object with its scalar
-        // result, so by this point the value is always a string or number.
         params[param.name] = param.default as string | number
       }
     }

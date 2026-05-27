@@ -216,7 +216,7 @@ import { RecipesService } from '@/services/generated-api'
 import { errorHandler } from '@/utils/ErrorHandler'
 import { getStorageAdapter, STORAGE_KEYS } from '@/services/storage'
 import { useRecipeLoader } from '@/composables/useRecipeLoader'
-import { resolveGenerators } from '@/recipes/functions'
+import { resolveRecipeGenerators } from '@/recipes/functions'
 import type { JsonDashboardRecipe } from '@/types/recipes'
 
 const { loadUserRecipes, checkIdConflict } = useRecipeLoader()
@@ -326,7 +326,7 @@ function refreshPreview() {
     } else {
       dashboard = parsed as unknown as JsonDashboardRecipe
     }
-    const resolved = resolveGenerators(dashboard)
+    const resolved = resolveRecipeGenerators(dashboard)
     previewDashboard.value = resolved
     previewKey.value++
   } catch (e) {

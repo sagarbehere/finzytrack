@@ -8,7 +8,7 @@ import type {
   HybridRecipeRegistry,
 } from '@/types/recipes'
 import { recipeRegistry as builtInRegistry } from '@/recipes'
-import { resolveGenerators } from '@/recipes/functions'
+import { resolveRecipeGenerators } from '@/recipes/functions'
 import { validateJsonWidgetRecipe, validateJsonDashboardRecipe } from '@/composables/useRecipeValidator'
 import { useNotifications } from '@/composables/useNotifications'
 
@@ -17,7 +17,10 @@ import { useNotifications } from '@/composables/useNotifications'
  * and merging them with built-in TypeScript recipes.
  *
  * Generator references ({ "$gen": "name", ...args }) in JSON recipes
- * are automatically resolved at load time.
+ * are automatically resolved at load time, with one exception: no-arg
+ * `$gen` references used as `parameters[].default` are preserved as
+ * templated sentinels so the UI can offer them as sticky dropdown options
+ * (see resolveRecipeGenerators).
  */
 
 const RECIPES_BASE_PATH = '/api/recipes'
@@ -197,7 +200,7 @@ async function loadUserRecipes(): Promise<void> {
         reportFileError(path, 'schema', validationErrors.map((e) => `${e.field}: ${e.message}`))
         return null
       }
-      const widget = resolveGenerators(raw as JsonWidgetRecipe)
+      const widget = resolveRecipeGenerators(raw as JsonWidgetRecipe)
       console.log(`[RecipeLoader] Loaded widget: ${widget.id}`)
       return [widget, path]
     })
@@ -217,7 +220,7 @@ async function loadUserRecipes(): Promise<void> {
         reportFileError(path, 'schema', validationErrors.map((e) => `${e.field}: ${e.message}`))
         return null
       }
-      const dashboard = resolveGenerators(raw as JsonDashboardRecipe)
+      const dashboard = resolveRecipeGenerators(raw as JsonDashboardRecipe)
       console.log(`[RecipeLoader] Loaded dashboard: ${dashboard.id}`)
       return [dashboard, path]
     })

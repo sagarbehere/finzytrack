@@ -621,7 +621,7 @@ import FilePreviewTable from '@/components/FilePreviewTable.vue'
 import RecipeDashboard from '@/components/recipes/RecipeDashboard.vue'
 import RecipeWidget from '@/components/recipes/RecipeWidget.vue'
 import type { JsonDashboardRecipe, JsonWidgetRecipe } from '@/types/recipes'
-import { resolveGenerators } from '@/recipes/functions'
+import { resolveRecipeGenerators } from '@/recipes/functions'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -964,7 +964,7 @@ async function sendMessage() {
         if (event.tool === 'preview_recipe' && event.success && event.recipe) {
           try {
             const recipeType = event.recipe_type ?? 'dashboard'
-            const resolved = resolveGenerators(
+            const resolved = resolveRecipeGenerators(
               event.recipe as unknown as JsonDashboardRecipe | JsonWidgetRecipe,
             )
             previewRecipe.value = resolved

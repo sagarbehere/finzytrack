@@ -11,6 +11,9 @@ export const STORAGE_KEYS = {
   TABLE_COLUMN_WIDTHS: 'tableColumnWidths',
   /** Per-widget user parameter selections (e.g. currency, year). Keyed by widget id. */
   WIDGET_SETTINGS: 'widgetSettings',
+  /** Per-dashboard user parameter selections (e.g. currency, year). Keyed by dashboard id.
+   *  Values may be literal scalars or generator sentinels ("$gen:name") for templated picks. */
+  DASHBOARD_SETTINGS: 'dashboardSettings',
   /** Dashboards tab editor/preview layout: 'vertical' (stacked) or 'horizontal' (side-by-side) */
   DASHBOARDS_TAB_LAYOUT: 'dashboardsTabLayout',
   /** Rules tab editor/preview layout: 'vertical' (stacked) or 'horizontal' (side-by-side) */
