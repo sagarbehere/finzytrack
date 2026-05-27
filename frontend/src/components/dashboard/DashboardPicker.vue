@@ -144,7 +144,7 @@ function handleSelect(dashboardId: string) {
 }
 
 function handleDelete(dashboard: AvailableDashboard) {
-  if (confirm(`Delete "${dashboard.title}"? This cannot be undone.`)) {
+  if (confirm(`Delete "${dashboard.title}"? A timestamped backup is kept in the backup directory; you can restore it from there if needed.`)) {
     emit('delete', dashboard)
   }
 }

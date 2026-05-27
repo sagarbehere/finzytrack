@@ -515,7 +515,7 @@ async function handleDelete() {
 
   const confirmed = await confirmDialog.showConfirm({
     title: 'Delete Recipe',
-    message: `Are you sure you want to delete "${selectedDisplayName.value}"? This cannot be undone.`,
+    message: `Delete "${selectedDisplayName.value}"? A timestamped backup is kept in the backup directory; you can restore it from there if needed.`,
     confirmText: 'Delete',
     cancelText: 'Cancel',
     variant: 'danger',

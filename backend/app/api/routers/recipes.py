@@ -197,8 +197,12 @@ async def write_recipe_file(
 async def delete_recipe_file(
     file_path: str,
     config_manager: ConfigManager = Depends(get_config_manager),
+    backup_manager: BackupManager = Depends(get_backup_manager),
 ):
-    """Delete a recipe file. (Auto-discovery picks up the removal on the next manifest fetch.)"""
+    """Delete a recipe file. A timestamped backup is taken first (same
+    retention policy as overwrites) so an accidental delete can be
+    recovered from the backup directory. Auto-discovery picks up the
+    removal on the next manifest fetch."""
     recipes_path = _recipes_dir(config_manager)
     target = (recipes_path / file_path).resolve()
 
@@ -208,7 +212,8 @@ async def delete_recipe_file(
     if not target.is_file():
         raise APIError(f"Recipe file not found: {file_path}", "RECIPE_NOT_FOUND", 404)
 
-    # Delete the file
+    # Snapshot before delete so the user can recover from the backup dir.
+    backup_manager._create_backup(target)
     target.unlink()
     logger.info(f"Deleted recipe file: {target}")
 
