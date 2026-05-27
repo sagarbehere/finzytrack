@@ -415,6 +415,21 @@ const defaultCurrency = computed<string>(() => {
   return declaredCurrencies.value[0] ?? postingCurrencies.value[0] ?? ''
 })
 
+function todayIso(): string {
+  const d = new Date()
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
+}
+
+// Look up the account's current balance for a given currency.
+// Returns 0 when the account has never held the currency.
+function currentBalanceFor(currency: string): number {
+  const bal = props.account?.aggregatedBalances.find(b => b.currency === currency)
+  return bal ? toNumber(toMoney(bal.balance)) : 0
+}
+
 function currencyWarning(picked: string): string {
   if (!picked) return ''
   // Constrained accounts use dropdown restriction, so no need to warn here.
@@ -468,10 +483,11 @@ async function loadDirectives() {
 }
 
 function resetAddForm() {
+  const currency = defaultCurrency.value
   addForm.value = {
-    date: '',
-    amount: 0,
-    currency: defaultCurrency.value,
+    date: todayIso(),
+    amount: currentBalanceFor(currency),
+    currency,
     includePad: false,
     padSourceAccount: '',
   }
@@ -480,7 +496,18 @@ function resetAddForm() {
 // Re-seed the currency once the account (and therefore its declared currencies)
 // is available, in case resetAddForm ran before defaults were known.
 watch(defaultCurrency, (next) => {
-  if (showAddForm.value && !addForm.value.currency) addForm.value.currency = next
+  if (showAddForm.value && !addForm.value.currency) {
+    addForm.value.currency = next
+    addForm.value.amount = currentBalanceFor(next)
+  }
+})
+
+// When the user changes the currency in the add form, re-prefill the amount
+// with the balance for that currency. Common case: the user wants to assert
+// each currency's balance, not retype a stale number from another currency.
+watch(() => addForm.value.currency, (next, prev) => {
+  if (!showAddForm.value || !next || next === prev) return
+  addForm.value.amount = currentBalanceFor(next)
 })
 
 function openAddForm() {
