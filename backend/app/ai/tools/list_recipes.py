@@ -73,26 +73,22 @@ class ListRecipesTool(BaseTool):
         self._recipes_dir = recipes_dir
 
     async def execute(self) -> dict:
-        manifest_path = self._recipes_dir / "manifest.json"
-        if not manifest_path.is_file():
-            return {"success": False, "error": "No recipe manifest found"}
-
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except Exception as e:
-            return {"success": False, "error": f"Failed to read manifest: {e}"}
+        # Auto-discover from the filesystem — no manifest file is maintained.
+        def _scan(subfolder: str) -> list[str]:
+            dir_path = self._recipes_dir / subfolder
+            if not dir_path.is_dir():
+                return []
+            return sorted(f"{subfolder}/{p.name}" for p in dir_path.glob("*.json"))
 
         widgets = []
-        for rel in manifest.get("widgets", []):
-            full = self._recipes_dir / rel
-            summary = _summarise_widget(full)
+        for rel in _scan("widgets"):
+            summary = _summarise_widget(self._recipes_dir / rel)
             summary["path"] = rel
             widgets.append(summary)
 
         dashboards = []
-        for rel in manifest.get("dashboards", []):
-            full = self._recipes_dir / rel
-            summary = _summarise_dashboard(full)
+        for rel in _scan("dashboards"):
+            summary = _summarise_dashboard(self._recipes_dir / rel)
             summary["path"] = rel
             dashboards.append(summary)
 

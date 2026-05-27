@@ -4,7 +4,7 @@ write_recipe tool — validates and saves a dashboard recipe JSON to config/reci
 Validation layers:
 1. Structural — required fields, valid enum values, layout consistency
 2. SQL dry-run — executes each widget's query to verify it runs without error
-3. Manifest update — adds the new file to manifest.json atomically
+3. (Auto-discovery — no manifest is maintained; files are picked up by their location)
 """
 
 import json
@@ -301,35 +301,10 @@ class WriteRecipeTool(BaseTool):
 
         logger.info(f"Saved {recipe_type} recipe to {save_path}")
 
-        # ── 5. Update manifest ──────────────────────────────────────────
-        manifest_path = self._recipes_dir / "manifest.json"
-        manifest_entry = f"{subfolder}/{filename}"
-        manifest_key = "widgets" if recipe_type == "widget" else "dashboards"
-
-        try:
-            if manifest_path.is_file():
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            else:
-                manifest = {"widgets": [], "dashboards": []}
-
-            if manifest_entry not in manifest.get(manifest_key, []):
-                manifest.setdefault(manifest_key, []).append(manifest_entry)
-                manifest_path.write_text(
-                    json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-                )
-                logger.info(f"Added '{manifest_entry}' to manifest")
-        except Exception as e:
-            logger.error(f"Failed to update manifest: {e}")
-            return {
-                "success": True,
-                "path": str(save_path),
-                "backup_created": file_existed,
-                "warning": f"Recipe saved but manifest update failed: {e}",
-            }
-
+        # Recipes are auto-discovered from the filesystem; no manifest to update.
         return {
             "success": True,
             "path": str(save_path),
-            "manifest_entry": manifest_entry,
+            "relative_path": f"{subfolder}/{filename}",
             "backup_created": file_existed,
         }

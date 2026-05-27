@@ -2,17 +2,22 @@
 Recipes router — serves dashboard recipe JSON files from config/recipes/.
 
 Endpoints:
-  GET    /api/recipes/manifest.json           — recipe manifest
+  GET    /api/recipes/manifest.json           — auto-discovered list of recipe files
   GET    /api/recipes/{path:path}             — individual recipe file (parsed JSON)
   GET    /api/recipes/{path:path}/raw         — individual recipe file (raw text)
-  PUT    /api/recipes/{path:path}             — write/update a recipe file (validates + updates manifest)
-  DELETE /api/recipes/{path:path}             — delete a recipe file + remove from manifest
+  PUT    /api/recipes/{path:path}             — write/update a recipe file (validates content)
+  DELETE /api/recipes/{path:path}             — delete a recipe file
+
+The manifest is auto-discovered from the filesystem on every request:
+any `widgets/*.json` or `dashboards/*.json` under the recipes directory
+is treated as a recipe. There is no on-disk manifest to maintain.
+Per-file validation happens at the GET endpoint (and on the frontend
+loader); broken files surface as errors against the file path.
 """
 
 import json
 import logging
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -72,39 +77,39 @@ def _validate_recipe(content: dict, recipe_type: str) -> list[str]:
     return errors
 
 
-def _update_manifest_add(recipes_path: Path, file_path: str, recipe_type: str) -> Optional[str]:
-    """Add file_path to manifest if not already present. Returns warning on failure."""
-    manifest_path = recipes_path / "manifest.json"
-    manifest_key = "widgets" if recipe_type == "widget" else "dashboards"
+def _discover_recipes(recipes_path: Path) -> dict[str, list[str]]:
+    """Glob the recipes directory for widget and dashboard files.
 
-    try:
-        if manifest_path.is_file():
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        else:
-            manifest = {"widgets": [], "dashboards": []}
+    Returns paths relative to recipes_path, sorted alphabetically. Files
+    that fail to parse or validate are still returned — the frontend (and
+    the per-recipe GET endpoint) surface their errors against the path.
+    """
+    def _scan(subdir: str) -> list[str]:
+        dir_path = recipes_path / subdir
+        if not dir_path.is_dir():
+            return []
+        files = sorted(p.name for p in dir_path.glob("*.json"))
+        return [f"{subdir}/{name}" for name in files]
 
-        if file_path not in manifest.get(manifest_key, []):
-            manifest.setdefault(manifest_key, []).append(file_path)
-            manifest_path.write_text(
-                json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-            )
-            logger.info(f"Added '{file_path}' to manifest")
-    except Exception as e:
-        logger.error(f"Failed to update manifest: {e}")
-        return f"Recipe saved but manifest update failed: {e}"
-    return None
+    return {
+        "widgets": _scan("widgets"),
+        "dashboards": _scan("dashboards"),
+    }
 
 
 @router.get("/recipes/manifest.json")
 async def get_manifest(
     config_manager: ConfigManager = Depends(get_config_manager),
 ):
-    """Return the recipe manifest."""
+    """Return the auto-discovered recipe manifest.
+
+    Any `widgets/*.json` and `dashboards/*.json` under the recipes
+    directory is included. Paths are sorted alphabetically; the manifest
+    is recomputed on every request, so files added by `cp`, `mv`, or any
+    other out-of-band write are picked up immediately.
+    """
     recipes_path = _recipes_dir(config_manager)
-    manifest_path = recipes_path / "manifest.json"
-    if not manifest_path.is_file():
-        raise APIError("No recipe manifest found", "RECIPE_NOT_FOUND", 404)
-    return JSONResponse(content=json.loads(manifest_path.read_text(encoding="utf-8")))
+    return JSONResponse(content=_discover_recipes(recipes_path))
 
 
 @router.get("/recipes/{file_path:path}/raw",
@@ -183,10 +188,7 @@ async def write_recipe_file(
 
     logger.info(f"Wrote recipe file: {target}")
 
-    # Update manifest
-    warning = _update_manifest_add(recipes_path, file_path, recipe_type)
-
-    return success_json_response(RecipeWriteResponse(path=str(target), warning=warning))
+    return success_json_response(RecipeWriteResponse(path=str(target)))
 
 
 @router.delete("/recipes/{file_path:path}", response_model=ApiResponse[RecipeWriteResponse])
@@ -208,24 +210,4 @@ async def delete_recipe_file(
     target.unlink()
     logger.info(f"Deleted recipe file: {target}")
 
-    # Remove from manifest
-    warning = None
-    manifest_path = recipes_path / "manifest.json"
-    if manifest_path.is_file():
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            changed = False
-            for key in ("widgets", "dashboards"):
-                if file_path in manifest.get(key, []):
-                    manifest[key].remove(file_path)
-                    changed = True
-            if changed:
-                manifest_path.write_text(
-                    json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-                )
-                logger.info(f"Removed '{file_path}' from manifest")
-        except Exception as e:
-            logger.error(f"Failed to update manifest after delete: {e}")
-            warning = f"File deleted but manifest update failed: {e}"
-
-    return success_json_response(RecipeWriteResponse(path=str(target), warning=warning))
+    return success_json_response(RecipeWriteResponse(path=str(target)))
