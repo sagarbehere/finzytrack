@@ -157,7 +157,9 @@ async def write_recipe_file(
     config_manager: ConfigManager = Depends(get_config_manager),
     backup_manager: BackupManager = Depends(get_backup_manager),
 ):
-    """Write or update a recipe JSON file. Validates content and updates manifest."""
+    """Write or update a recipe JSON file. Validates content; existing files
+    are atomically replaced via the backup manager (timestamped backup + temp
+    file + atomic rename); new files are written directly."""
     recipes_path = _recipes_dir(config_manager)
     target = (recipes_path / file_path).resolve()
 
@@ -196,7 +198,7 @@ async def delete_recipe_file(
     file_path: str,
     config_manager: ConfigManager = Depends(get_config_manager),
 ):
-    """Delete a recipe file and remove it from the manifest."""
+    """Delete a recipe file. (Auto-discovery picks up the removal on the next manifest fetch.)"""
     recipes_path = _recipes_dir(config_manager)
     target = (recipes_path / file_path).resolve()
 
