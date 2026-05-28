@@ -134,7 +134,7 @@ class SQLiteExporter:
 
         try:
             result = await asyncio.to_thread(
-                self._export_full_to_sqlite, entries, errors, options
+                self.export_full_sync, entries, errors, options
             )
             duration_ms = int((time.time() - start_time) * 1000)
 
@@ -1078,15 +1078,19 @@ class SQLiteExporter:
             "transactions_count": len(transactions),
         }
 
-    def _export_full_to_sqlite(
+    def export_full_sync(
         self,
         entries: List[Any],
         errors: List[Any],
         options: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """
-        Full export — postings + all ledger-mirror tables in one atomic txn.
-        Runs in a thread pool.
+        """Synchronous full-export entry point.
+
+        Public sibling of the async ``export_full`` — used directly by
+        ``SqliteReader._ensure_fresh`` for stale-recovery, and indirectly by
+        ``export_full`` via ``asyncio.to_thread``. Both callers are expected
+        to hold their user's write lock for the duration to prevent
+        re-export stampedes and races against in-flight writes.
         """
         transactions = [e for e in entries if isinstance(e, Transaction)]
 

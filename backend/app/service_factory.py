@@ -114,11 +114,13 @@ def create_user_services(config: Config, user_id: str = "local") -> UserServices
         sqlite_exporter=sqlite_exporter,
     )
 
-    # 5b. SqliteReader
+    # 5b. SqliteReader (shares the per-user write lock so stale-recovery
+    #     re-exports serialise against writes and against each other)
     sqlite_reader = SqliteReader(
         sqlite_path=Path(config.sqlite_export_path),
         ledger_file=Path(config.ledger_file),
         exporter=sqlite_exporter,
+        write_lock=write_lock,
     )
 
     # 5c. Hot ledger switching references

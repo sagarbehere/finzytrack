@@ -148,7 +148,7 @@ def exported_db(small_ledger_path, tmp_path):
     db_path = tmp_path / "ledger.db"
     exporter = SQLiteExporter(str(db_path))
     entries, errors, options = loader.load_file(str(small_ledger_path))
-    exporter._export_full_to_sqlite(entries, errors, options)
+    exporter.export_full_sync(entries, errors, options)
     return db_path, entries, errors, options
 
 
@@ -158,7 +158,7 @@ def edge_case_db(edge_case_ledger_path, tmp_path):
     db_path = tmp_path / "ledger.db"
     exporter = SQLiteExporter(str(db_path))
     entries, errors, options = loader.load_file(str(edge_case_ledger_path))
-    exporter._export_full_to_sqlite(entries, errors, options)
+    exporter.export_full_sync(entries, errors, options)
     return db_path, entries, errors, options
 
 
@@ -949,7 +949,7 @@ def _export_ledger_to_db(tmp_path, ledger_text):
     db_path = tmp_path / "ledger.db"
     exporter = SQLiteExporter(str(db_path))
     entries, errors, options = loader.load_file(str(ledger_path))
-    exporter._export_full_to_sqlite(entries, errors, options)
+    exporter.export_full_sync(entries, errors, options)
     return db_path, errors
 
 
@@ -1079,7 +1079,7 @@ class TestExportResilience:
         db_path = tmp_path / "ledger.db"
         exporter = SQLiteExporter(str(db_path))
         entries, errors, options = loader.load_file(str(ledger_path))
-        exporter._export_full_to_sqlite(entries, errors, options)
+        exporter.export_full_sync(entries, errors, options)
         assert not errors
 
         # Storage must be TEXT, not REAL (Decimal preserved exactly on disk).
@@ -1117,6 +1117,70 @@ class TestExportResilience:
             f"Cancellation must vanish at display precision; got {test_balance!r}"
         con.close()
 
+    def test_concurrent_stale_reads_do_not_stampede(self, tmp_path):
+        """N concurrent readers all seeing stale SQLite must trigger exactly
+        ONE recovery re-export, not N. The per-user write lock + the
+        in-lock double-check are what prevents the stampede.
+        """
+        import threading
+        from app.write_lock import WriteLockManager
+
+        ledger_path = tmp_path / "main.beancount"
+        ledger_path.write_text("""
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Equity:Opening-Balances
+
+2020-01-02 * "Seed"
+  Assets:Cash              100 USD
+  Equity:Opening-Balances
+""")
+        # Stale condition: SQLite file is missing entirely. Every concurrent
+        # reader's freshness check will see this, but only the first one
+        # through the lock should actually run the re-export — subsequent
+        # threads must double-check (see that the DB now exists with the
+        # accounts table) and return early.
+        db_path = tmp_path / "ledger.db"
+        exporter = SQLiteExporter(str(db_path))
+
+        # Count how many times the recovery re-export actually runs.
+        call_count = {"n": 0}
+        original = exporter.export_full_sync
+
+        def counting_export(*args, **kwargs):
+            call_count["n"] += 1
+            return original(*args, **kwargs)
+        exporter.export_full_sync = counting_export  # type: ignore
+
+        write_lock = WriteLockManager(user_id="test")
+        reader = SqliteReader(
+            sqlite_path=db_path,
+            ledger_file=ledger_path,
+            exporter=exporter,
+            write_lock=write_lock,
+        )
+
+        # Fire 10 concurrent reads. Without locking + double-check, each
+        # would call export_full_sync. With them, exactly one should.
+        errors_seen: List[BaseException] = []
+
+        def hit_read():
+            try:
+                reader.get_accounts()
+            except BaseException as e:
+                errors_seen.append(e)
+
+        threads = [threading.Thread(target=hit_read) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors_seen, errors_seen
+        assert call_count["n"] == 1, (
+            f"Stampede: expected 1 re-export across 10 concurrent stale reads, "
+            f"got {call_count['n']}"
+        )
+
     def test_sub_export_failure_carries_step_name(self, tmp_path, monkeypatch):
         """When a sub-export raises, the wrapped error names which step failed
         so logs and downstream messages point at the right place.
@@ -1136,6 +1200,6 @@ class TestExportResilience:
         monkeypatch.setattr(exporter, "_export_lots", _boom)
 
         with pytest.raises(Exception) as excinfo:
-            exporter._export_full_to_sqlite(entries, errors, options)
+            exporter.export_full_sync(entries, errors, options)
         assert "lots" in str(excinfo.value)
         assert "synthetic failure" in str(excinfo.value)

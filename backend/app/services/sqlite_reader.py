@@ -35,12 +35,40 @@ class SqliteReader:
         sqlite_path: Path,
         ledger_file: Path,
         exporter: Any,  # SQLiteExporter — forward ref to avoid circular import
+        write_lock: Optional[Any] = None,  # WriteLockManager — forward ref
     ):
         self.sqlite_path = sqlite_path
         self.ledger_file = ledger_file
         self.exporter = exporter
+        # Optional so unit tests can construct a reader without wiring a lock.
+        # Production wiring (`service_factory`) always passes the per-user lock
+        # so stale-recovery serialises against writes and other readers.
+        self.write_lock = write_lock
 
     # ── Core query infrastructure ────────────────────────────────────────────
+
+    def _needs_export(self) -> bool:
+        """Mtime check + accounts-table check. Cheap, no side effects."""
+        try:
+            ledger_mtime = self.ledger_file.stat().st_mtime
+            sqlite_mtime = self.sqlite_path.stat().st_mtime
+            if ledger_mtime > sqlite_mtime:
+                return True
+        except FileNotFoundError:
+            return True
+
+        if self.sqlite_path.exists():
+            try:
+                con = sqlite3.connect(str(self.sqlite_path))
+                row = con.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'"
+                ).fetchone()
+                con.close()
+                if row is None:
+                    return True
+            except Exception:
+                return True
+        return False
 
     def _ensure_fresh(self) -> None:
         """Detect and recover from stale SQLite — any cause.
@@ -48,37 +76,40 @@ class SqliteReader:
         Catches: failed exports, external edits to the .beancount file,
         crash between write and export, manual file manipulation,
         and missing CQRS tables (legacy export that only created postings).
-        Cost: one stat() call per read (~1 microsecond).
+        Cost on the fast path: one stat() call (~1µs).
+
+        On a miss we acquire the per-user write lock before re-exporting so
+        that (a) concurrent stale-detect readers serialise instead of all
+        re-parsing the ledger in parallel, and (b) the re-export can't
+        interleave with an in-flight ``LedgerManager`` write. Inside the
+        lock we re-check freshness — another thread may have already done
+        the work while we were blocked.
         """
-        needs_export = False
+        if not self._needs_export():
+            return
 
-        try:
-            ledger_mtime = self.ledger_file.stat().st_mtime
-            sqlite_mtime = self.sqlite_path.stat().st_mtime
-            if ledger_mtime > sqlite_mtime:
-                needs_export = True
-        except FileNotFoundError:
-            needs_export = True
+        # No lock wired (test-only construction): preserve the historical
+        # unlocked behaviour. Logged once so it's diagnosable.
+        if self.write_lock is None:
+            logger.warning(
+                "SQLite stale and no write_lock wired — re-exporting without "
+                "serialisation; this is only safe in single-threaded tests"
+            )
+            self._do_recovery_export()
+            return
 
-        # Also check if new tables exist (handles legacy DBs with only postings)
-        if not needs_export and self.sqlite_path.exists():
-            try:
-                import sqlite3 as _sqlite3
-                con = _sqlite3.connect(str(self.sqlite_path))
-                row = con.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'"
-                ).fetchone()
-                con.close()
-                if row is None:
-                    needs_export = True
-            except Exception:
-                needs_export = True
+        with self.write_lock.acquire("sqlite_stale_recovery"):
+            # Double-check inside the lock: another thread may have just
+            # finished the same recovery.
+            if not self._needs_export():
+                return
+            self._do_recovery_export()
 
-        if needs_export:
-            logger.warning("SQLite stale or missing tables — triggering full re-export")
-            from app.core.ledger_loader import load_ledger_checked
-            entries, errors, options = load_ledger_checked(self.ledger_file)
-            self.exporter._export_full_to_sqlite(entries, errors, options)
+    def _do_recovery_export(self) -> None:
+        logger.warning("SQLite stale or missing tables — triggering full re-export")
+        from app.core.ledger_loader import load_ledger_checked
+        entries, errors, options = load_ledger_checked(self.ledger_file)
+        self.exporter.export_full_sync(entries, errors, options)
 
     def _query(self, fn: Callable[[sqlite3.Connection], T]) -> T:
         """All reads go through this — freshness check + connection automatic.

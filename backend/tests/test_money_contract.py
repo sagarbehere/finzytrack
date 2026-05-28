@@ -64,7 +64,7 @@ def test_sqlite_stores_money_columns_as_text(ledger_path: Path, tmp_path: Path) 
     db_path = tmp_path / "ledger.db"
     exporter = SQLiteExporter(str(db_path))
     entries, errors, options = loader.load_file(str(ledger_path))
-    exporter._export_full_to_sqlite(entries, errors, options)
+    exporter.export_full_sync(entries, errors, options)
 
     con = sqlite3.connect(str(db_path))
     try:
@@ -82,7 +82,7 @@ def test_high_precision_btc_survives_round_trip(ledger_path: Path, tmp_path: Pat
     db_path = tmp_path / "ledger.db"
     exporter = SQLiteExporter(str(db_path))
     entries, errors, options = loader.load_file(str(ledger_path))
-    exporter._export_full_to_sqlite(entries, errors, options)
+    exporter.export_full_sync(entries, errors, options)
 
     con = sqlite3.connect(str(db_path))
     try:
