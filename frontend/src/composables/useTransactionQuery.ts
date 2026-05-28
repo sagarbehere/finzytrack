@@ -1,3 +1,30 @@
+/**
+ * Why this composable assembles SQL on the frontend rather than calling a
+ * structured-filter endpoint:
+ *
+ * SQL-on-the-wire to ``/api/ledger/query`` is the app's user-facing query
+ * API by design, not an implementation leak. Three other places already
+ * cross this boundary intentionally:
+ *   1. The SQL Assistant view, where users type queries directly.
+ *   2. Recipes (dashboards/widgets) embed user-authored SQL.
+ *   3. The AI assistant's ``execute_query`` tool writes SQL on the user's
+ *      behalf.
+ * The schema is *published* (see backend ``GET /api/ledger/schema/postings``)
+ * so users / AI can compose queries against it. The backend enforces
+ * read-only at the engine level via ``PRAGMA query_only = true`` per
+ * connection — that's the load-bearing safety property, and it's not
+ * bypassable by input crafting.
+ *
+ * This composable assembles SQL on the user's behalf using form filter
+ * values — it's another *front-end* to the same public SQL surface, not a
+ * new abstraction. Replacing it with a parallel structured-filter
+ * endpoint would double the API surface for marginal gain (one fewer file
+ * touching the schema, while four other places by design still do).
+ *
+ * Revisit only if (a) the read-only enforcement story changes, or (b) a
+ * second non-trivial frontend client needs the same data. See
+ * dev-docs/code-review.md H8 #2 for the audit trail.
+ */
 import { ref } from 'vue'
 import type { TransactionViewModel, PostingViewModel } from '@/types/transactions'
 import type { TransactionFilters } from '@/types/filters'
@@ -6,11 +33,33 @@ import type { QueryRequest } from '@/services/generated-api'
 import { errorHandler } from '@/utils/ErrorHandler'
 
 /**
- * Escape SQL string to prevent injection.
- * Note: This is basic escaping. For production, consider using parameterized queries.
+ * Escape a value for use inside a single-quoted SQL string literal.
+ *
+ * Doubles single quotes per SQL's standard escape. Read-only enforcement
+ * (`PRAGMA query_only`) lives on the backend connection — see query.py —
+ * so this is only about producing syntactically valid SQL, not an
+ * injection defense.
  */
 function escapeSQLString(str: string): string {
   return str.replace(/'/g, "''")
+}
+
+/**
+ * Escape a value for use inside a SQL ``LIKE`` pattern.
+ *
+ * In addition to the single-quote escape, `%` and `_` are LIKE wildcards
+ * (match any sequence / single char) and the backslash is the escape
+ * character we declare via ``ESCAPE '\'``. Without this, a user searching
+ * for ``100%`` would match ``1004``, ``100A``, etc., and ``path_to``
+ * would match ``pathXto``. Use together with ``ESCAPE '\'`` on the LIKE
+ * clause so SQLite knows about the escape character.
+ */
+function escapeSQLLike(str: string): string {
+  return str
+    .replace(/\\/g, "\\\\")  // escape the escape char first
+    .replace(/%/g, "\\%")
+    .replace(/_/g, "\\_")
+    .replace(/'/g, "''")
 }
 
 /**
@@ -28,23 +77,26 @@ function buildWhereClause(filters: TransactionFilters): string {
     transactionLevelWhereClauses.push(`transaction_date <= '${filters.dateTo}'`)
   }
   if (filters.search) {
-    const term = escapeSQLString(filters.search)
-    transactionLevelWhereClauses.push(`(LOWER(transaction_payee) LIKE LOWER('%${term}%') OR LOWER(transaction_narration) LIKE LOWER('%${term}%'))`)
+    const term = escapeSQLLike(filters.search)
+    transactionLevelWhereClauses.push(
+      `(LOWER(transaction_payee) LIKE LOWER('%${term}%') ESCAPE '\\' `
+      + `OR LOWER(transaction_narration) LIKE LOWER('%${term}%') ESCAPE '\\')`
+    )
   }
   if (filters.payeeContains) {
-    transactionLevelWhereClauses.push(`LOWER(transaction_payee) LIKE LOWER('%${escapeSQLString(filters.payeeContains)}%')`)
+    transactionLevelWhereClauses.push(`LOWER(transaction_payee) LIKE LOWER('%${escapeSQLLike(filters.payeeContains)}%') ESCAPE '\\'`)
   }
   if (filters.narrationContains) {
-    transactionLevelWhereClauses.push(`LOWER(transaction_narration) LIKE LOWER('%${escapeSQLString(filters.narrationContains)}%')`)
+    transactionLevelWhereClauses.push(`LOWER(transaction_narration) LIKE LOWER('%${escapeSQLLike(filters.narrationContains)}%') ESCAPE '\\'`)
   }
   if (filters.flag) {
     transactionLevelWhereClauses.push(`LOWER(transaction_flag) = LOWER('${escapeSQLString(filters.flag)}')`)
   }
   if (filters.tagsContain) {
-    transactionLevelWhereClauses.push(`LOWER(transaction_tags) LIKE LOWER('%${escapeSQLString(filters.tagsContain)}%')`)
+    transactionLevelWhereClauses.push(`LOWER(transaction_tags) LIKE LOWER('%${escapeSQLLike(filters.tagsContain)}%') ESCAPE '\\'`)
   }
   if (filters.linksContain) {
-    transactionLevelWhereClauses.push(`LOWER(transaction_links) LIKE LOWER('%${escapeSQLString(filters.linksContain)}%')`)
+    transactionLevelWhereClauses.push(`LOWER(transaction_links) LIKE LOWER('%${escapeSQLLike(filters.linksContain)}%') ESCAPE '\\'`)
   }
   if (filters.year !== undefined) {
     transactionLevelWhereClauses.push(`year = ${filters.year}`)
@@ -55,7 +107,7 @@ function buildWhereClause(filters: TransactionFilters): string {
 
   // POSTING-LEVEL FILTERS
   if (filters.accountContains) {
-    postingLevelFilters.push(`LOWER(account) LIKE LOWER('%${escapeSQLString(filters.accountContains)}%')`)
+    postingLevelFilters.push(`LOWER(account) LIKE LOWER('%${escapeSQLLike(filters.accountContains)}%') ESCAPE '\\'`)
   }
   if (filters.amountGreaterThan !== undefined) {
     postingLevelFilters.push(`ABS(amount) > ${filters.amountGreaterThan}`)
