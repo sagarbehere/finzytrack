@@ -699,6 +699,13 @@ def build_tool_result_message(tool_call_id: str, result: dict) -> dict:
     cause is a tool bug, not user data. In that case the content is
     replaced with a structured notice so we don't ship a runaway
     response to the model.
+
+    The content is wrapped in ``<tool_result>...</tool_result>`` tags
+    so the system prompt can forbid the model from treating anything
+    inside as instructions. Adversary-injected content reaching the
+    LLM via imported emails or CSV merchant strings is then explicitly
+    framed as data, not commands. See
+    ``resources/prompts/tool_output_safety.md``.
     """
     content = json.dumps(result)
     if len(content) > _RUNAWAY_TOOL_RESULT_CHARS:
@@ -715,10 +722,11 @@ def build_tool_result_message(tool_call_id: str, result: dict) -> dict:
             "_keys": sorted(result.keys()),
         }
         content = json.dumps(notice)
+    wrapped = f"<tool_result>\n{content}\n</tool_result>"
     return {
         "role": "tool",
         "tool_call_id": tool_call_id,
-        "content": content,
+        "content": wrapped,
     }
 
 

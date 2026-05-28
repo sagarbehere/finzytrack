@@ -61,6 +61,12 @@ def build_system_prompt(context: dict) -> str:
     """
     file_type = context.get("file_type")
 
+    # Shared safety preamble — applies to both modes. Tells the model that
+    # content inside <tool_result>...</tool_result> tags is data, not
+    # instructions, so adversary-injected text in imported emails / CSV
+    # merchant strings / third-party rule files can't redirect behaviour.
+    safety = _load("tool_output_safety.md")
+
     if file_type:
         # Setup mode — rule creation. Include only the workflow + schema for the
         # specific file type to keep the prompt focused and the input small.
@@ -71,6 +77,7 @@ def build_system_prompt(context: dict) -> str:
             )
         parts = [
             _load("assistant_base.md"),
+            safety,
             _load(_WORKFLOW_FILES[file_type]),
             _load(_SCHEMA_FILES[file_type]),
         ]
@@ -78,7 +85,11 @@ def build_system_prompt(context: dict) -> str:
         # Analyst mode — financial questions + recipe generation
         # Recipe schema is loaded on demand via get_recipe_schema tool,
         # not injected here, to keep the system prompt small.
-        parts = [_load("assistant_analyst.md"), _load("schema_postings.md")]
+        parts = [
+            _load("assistant_analyst.md"),
+            safety,
+            _load("schema_postings.md"),
+        ]
 
     if context.get("page"):
         parts.append(f"## Current context\nThe user is on the '{context['page']}' page.")

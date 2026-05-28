@@ -1,6 +1,8 @@
 import logging
 from typing import Literal
 
+import jsonschema
+
 from app.ai.tools.base import BaseTool
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,24 @@ class ToolRegistry:
                 "success": False,
                 "error": f"Missing required arguments: {', '.join(sorted(missing))}. "
                          f"Please call {name} again with all required arguments.",
+            }
+
+        # Full type validation against the declared schema. The above filter
+        # only checks key membership; this catches LLM-emitted values whose
+        # type or constraints don't match (e.g. a string where an integer
+        # was declared). Returning an actionable error lets the model retry
+        # with the right shape rather than crashing the tool with a
+        # TypeError mid-execution.
+        try:
+            jsonschema.validate(instance=filtered, schema=schema)
+        except jsonschema.ValidationError as e:
+            return {
+                "success": False,
+                "error": (
+                    f"Invalid arguments for tool '{name}': {e.message}. "
+                    f"Path: {'/'.join(str(p) for p in e.absolute_path) or '(root)'}. "
+                    f"Please call {name} again with arguments matching its schema."
+                ),
             }
 
         try:
