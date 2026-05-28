@@ -157,9 +157,12 @@ async def write_recipe_file(
     config_manager: ConfigManager = Depends(get_config_manager),
     backup_manager: BackupManager = Depends(get_backup_manager),
 ):
-    """Write or update a recipe JSON file. Validates content; existing files
-    are atomically replaced via the backup manager (timestamped backup + temp
-    file + atomic rename); new files are written directly."""
+    """Write or update a recipe JSON file. Validates content, then writes
+    via the backup manager's atomic-write path (temp file + fsync + atomic
+    rename). Existing files also get a timestamped backup first; new files
+    skip the backup step automatically (no original to snapshot). Same path
+    for both new and existing files, matching the AI tool in
+    ``ai/tools/write_recipe.py``."""
     recipes_path = _recipes_dir(config_manager)
     target = (recipes_path / file_path).resolve()
 
@@ -180,13 +183,10 @@ async def write_recipe_file(
     # Write file
     target.parent.mkdir(parents=True, exist_ok=True)
     content = json.dumps(body.content, indent=2) + "\n"
-    if target.exists():
-        with backup_manager.atomic_write(str(target)) as f:
-            f.seek(0)
-            f.write(content)
-            f.truncate()
-    else:
-        target.write_text(content, encoding="utf-8")
+    with backup_manager.atomic_write(str(target)) as f:
+        f.seek(0)
+        f.write(content)
+        f.truncate()
 
     logger.info(f"Wrote recipe file: {target}")
 
