@@ -624,12 +624,45 @@ def _to_anthropic_message(msg: dict) -> dict:
     return {"role": role, "content": content}
 
 
+# Soft cap on the serialised tool-result payload before it goes back to the
+# LLM. ~8k tokens at 4 chars/token; with the 12-round tool loop this leaves
+# ~96k tokens of total tool-result budget per session, room for system+tools
+# headers, and headroom inside 200k-context models. The user-facing SSE
+# `tool_result` event is built separately in `assistant.py` and is NOT
+# affected by this cap — the details panel still shows full data.
+_MAX_TOOL_RESULT_CHARS = 32_000
+
+
 def build_tool_result_message(tool_call_id: str, result: dict) -> dict:
-    """Build an OpenAI-format tool result message."""
+    """Build an OpenAI-format tool result message.
+
+    Caps the serialised payload at ``_MAX_TOOL_RESULT_CHARS``. When a tool
+    returns more data than the cap allows (e.g. an unfiltered
+    ``execute_query``), the result is replaced with a structured notice
+    telling the model the truncation happened and how to recover. The
+    notice is valid JSON, preserves the original ``success`` flag so
+    branching isn't broken, and lists the original keys so the model can
+    tell what kind of tool ran.
+    """
+    content = json.dumps(result)
+    if len(content) > _MAX_TOOL_RESULT_CHARS:
+        notice = {
+            "success": result.get("success", True),
+            "_truncated": True,
+            "_original_size_chars": len(content),
+            "_note": (
+                f"Tool result exceeded {_MAX_TOOL_RESULT_CHARS} chars and "
+                "was truncated before being sent back to the model. Refine "
+                "your query to return less data (tighter filter, narrower "
+                "SELECT, smaller LIMIT)."
+            ),
+            "_keys": sorted(result.keys()),
+        }
+        content = json.dumps(notice)
     return {
         "role": "tool",
         "tool_call_id": tool_call_id,
-        "content": json.dumps(result),
+        "content": content,
     }
 
 
