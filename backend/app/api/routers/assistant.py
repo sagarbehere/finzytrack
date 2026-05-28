@@ -31,6 +31,7 @@ from app.ai.client import (
     TokenEvent,
     build_assistant_message,
     build_tool_result_message,
+    is_context_overflow_error,
     stream_chat,
 )
 from app.ai.file_processor import process_file
@@ -267,6 +268,12 @@ async def _run_agent_loop(
         except Exception:
             return False
 
+    # Track the most recent tool name so the context-overflow error can name
+    # the likely culprit. The overflow shows up on the *next* iteration's
+    # request, so this is the tool whose result we appended just before the
+    # failed call.
+    last_tool_name: str | None = None
+
     for iteration in range(max_iterations):
         if await _client_gone():
             logger.info("Assistant client disconnected before iteration %d; aborting", iteration)
@@ -282,23 +289,52 @@ async def _run_agent_loop(
         reasoning_chars = 0
         client_disconnected = False
 
-        async for event in stream_chat(llm_config, messages, tool_schemas):
-            if await _client_gone():
-                # Break out of the async iterator so the SDK's stream context
-                # closes the upstream HTTP connection and stops billing.
-                client_disconnected = True
-                break
-            if isinstance(event, ThinkingEvent):
-                yield {"type": "thinking", "content": event.content}
-            elif isinstance(event, TokenEvent):
-                accumulated_text += event.content
-                yield {"type": "token", "content": event.content}
-            elif isinstance(event, ToolCallEvent):
-                tool_calls_this_turn.append(event)
-            elif isinstance(event, DoneEvent):
-                finish_reason = event.finish_reason
-                reasoning_chars = event.reasoning_chars
-                break
+        try:
+            async for event in stream_chat(llm_config, messages, tool_schemas):
+                if await _client_gone():
+                    # Break out of the async iterator so the SDK's stream context
+                    # closes the upstream HTTP connection and stops billing.
+                    client_disconnected = True
+                    break
+                if isinstance(event, ThinkingEvent):
+                    yield {"type": "thinking", "content": event.content}
+                elif isinstance(event, TokenEvent):
+                    accumulated_text += event.content
+                    yield {"type": "token", "content": event.content}
+                elif isinstance(event, ToolCallEvent):
+                    tool_calls_this_turn.append(event)
+                elif isinstance(event, DoneEvent):
+                    finish_reason = event.finish_reason
+                    reasoning_chars = event.reasoning_chars
+                    break
+        except Exception as exc:
+            if is_context_overflow_error(exc):
+                # The accumulated history (system + tools + N rounds of
+                # messages + tool results) exceeds the model's context
+                # window. Surface an actionable message instead of the
+                # provider's opaque 400.
+                logger.info(
+                    "Context overflow at iteration %d (last tool: %s): %s",
+                    iteration, last_tool_name, exc,
+                )
+                culprit = (
+                    f" The previous tool call was '{last_tool_name}', "
+                    "which may have produced a large result."
+                    if last_tool_name else ""
+                )
+                yield {
+                    "type": "error",
+                    "reason": "context_overflow",
+                    "message": (
+                        "This conversation has grown too large for the model's "
+                        "context window. Try starting a new chat, asking a more "
+                        "focused question, or switching to a model with a larger "
+                        f"context window.{culprit}"
+                    ),
+                }
+                yield {"type": "done"}
+                return
+            raise
 
         if client_disconnected:
             logger.info("Assistant client disconnected mid-stream at iteration %d; aborting", iteration)
@@ -500,6 +536,7 @@ async def _run_agent_loop(
             yield tool_result_event
 
             messages.append(build_tool_result_message(tc.id, result))
+            last_tool_name = tc.name
 
     # Fell through — hit iteration limit
     yield {

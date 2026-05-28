@@ -624,37 +624,44 @@ def _to_anthropic_message(msg: dict) -> dict:
     return {"role": role, "content": content}
 
 
-# Soft cap on the serialised tool-result payload before it goes back to the
-# LLM. ~8k tokens at 4 chars/token; with the 12-round tool loop this leaves
-# ~96k tokens of total tool-result budget per session, room for system+tools
-# headers, and headroom inside 200k-context models. The user-facing SSE
-# `tool_result` event is built separately in `assistant.py` and is NOT
-# affected by this cap — the details panel still shows full data.
-_MAX_TOOL_RESULT_CHARS = 32_000
+# Runaway-bug detector: only fires when a tool returns clearly absurd
+# payload (a bug, not a user's real data). Realistic tools cap by row count
+# (`execute_query` at 500 rows) or bytes (`read_file` at 64 KB); those are
+# the appropriate semantic limits. This char-level threshold is *not* a
+# budget control — context overflow is a real, recoverable failure mode
+# surfaced by the provider, handled by `_run_agent_loop`. We don't
+# preemptively truncate realistic-but-large results because:
+#   1. Truncating mid-payload changes the semantics of "give me X" tools
+#      like read_recipe and read_file (the LLM asked for X; returning a
+#      notice is misleading).
+#   2. Any specific cap embeds a magic number that real users could trip
+#      with no advance warning.
+#   3. Context overflow already produces a structured 400 from the LLM
+#      provider; `_run_agent_loop.is_context_overflow_error` converts that
+#      into an actionable user message naming the cause.
+_RUNAWAY_TOOL_RESULT_CHARS = 500_000
 
 
 def build_tool_result_message(tool_call_id: str, result: dict) -> dict:
     """Build an OpenAI-format tool result message.
 
-    Caps the serialised payload at ``_MAX_TOOL_RESULT_CHARS``. When a tool
-    returns more data than the cap allows (e.g. an unfiltered
-    ``execute_query``), the result is replaced with a structured notice
-    telling the model the truncation happened and how to recover. The
-    notice is valid JSON, preserves the original ``success`` flag so
-    branching isn't broken, and lists the original keys so the model can
-    tell what kind of tool ran.
+    Carries the full ``result`` as serialised JSON unless it exceeds
+    ``_RUNAWAY_TOOL_RESULT_CHARS`` — at half a megabyte of JSON, the
+    cause is a tool bug, not user data. In that case the content is
+    replaced with a structured notice so we don't ship a runaway
+    response to the model.
     """
     content = json.dumps(result)
-    if len(content) > _MAX_TOOL_RESULT_CHARS:
+    if len(content) > _RUNAWAY_TOOL_RESULT_CHARS:
         notice = {
             "success": result.get("success", True),
             "_truncated": True,
             "_original_size_chars": len(content),
             "_note": (
-                f"Tool result exceeded {_MAX_TOOL_RESULT_CHARS} chars and "
-                "was truncated before being sent back to the model. Refine "
-                "your query to return less data (tighter filter, narrower "
-                "SELECT, smaller LIMIT)."
+                f"Tool returned an unreasonably large payload "
+                f"({len(content)} chars > {_RUNAWAY_TOOL_RESULT_CHARS}). "
+                "Likely a tool bug. Replacing with this notice to avoid "
+                "sending a runaway response to the model."
             ),
             "_keys": sorted(result.keys()),
         }
@@ -664,6 +671,29 @@ def build_tool_result_message(tool_call_id: str, result: dict) -> dict:
         "tool_call_id": tool_call_id,
         "content": content,
     }
+
+
+# Substrings indicating the provider rejected the request because input
+# exceeded the model's context window. Matched on the exception string
+# rather than caught by SDK exception type so the detection stays
+# resilient to SDK version changes across providers.
+_CONTEXT_OVERFLOW_HINTS = (
+    "prompt is too long",
+    "context_length_exceeded",
+    "maximum context length",
+    "exceeds maximum",
+    "context length",
+    "too many tokens",
+)
+
+
+def is_context_overflow_error(exc: BaseException) -> bool:
+    """True when *exc* looks like a context-window overflow from an LLM
+    provider. Used by the assistant agent loop to convert opaque 400s into
+    an actionable user-facing message.
+    """
+    msg = str(exc).lower()
+    return any(hint in msg for hint in _CONTEXT_OVERFLOW_HINTS)
 
 
 def _sanitize_arguments(raw: str) -> str:
