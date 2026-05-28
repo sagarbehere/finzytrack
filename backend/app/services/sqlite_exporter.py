@@ -14,8 +14,9 @@ import time
 import asyncio
 import logging
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Callable, Dict, Any, Iterator, List, Optional, Tuple
 from decimal import Decimal
 from datetime import datetime, date
 
@@ -552,6 +553,33 @@ class SQLiteExporter:
 
     # ── Full ledger export (new CQRS tables) ─────────────────────────────────
 
+    @contextmanager
+    def _sub_export(
+        self,
+        name: str,
+        sample: Optional[Callable[[], Any]] = None,
+    ) -> Iterator[None]:
+        """Tag a sub-export step so failures log which step crashed and on what.
+
+        On exception, logs ``Sub-export 'name' failed: <error> sample=<row>`` and
+        re-raises with the name prefixed onto the message. The whole transaction
+        still rolls back at the caller — the wrapper is for diagnosis, not
+        recovery.
+        """
+        try:
+            yield
+        except Exception as e:
+            hint = ""
+            if sample is not None:
+                try:
+                    s = sample()
+                    if s is not None:
+                        hint = f" sample={s!r}"
+                except Exception:
+                    pass
+            logger.error("Sub-export %r failed: %s%s", name, e, hint)
+            raise RuntimeError(f"sub-export {name!r} failed: {e}") from e
+
     def _export_full_ledger(
         self,
         con: sqlite3.Connection,
@@ -577,8 +605,24 @@ class SQLiteExporter:
         custom_rows = []
         query_rows = []
 
+        # Collapse duplicate `open` directives for the same account before
+        # building rows: Beancount flags duplicates as a parse error but still
+        # keeps every Open entry in the list. The `accounts` row is keyed by
+        # name alone, so without this collapse the export would crash on any
+        # ledger with a duplicate open. We keep the entry with the earliest
+        # date — that's the one that established the account. The Beancount
+        # error remains in `ledger_errors` so the user/AI can see what's wrong.
+        seen_opens: Dict[str, data.Open] = {}
         for entry in entries:
             if isinstance(entry, data.Open):
+                existing = seen_opens.get(entry.account)
+                if existing is None or entry.date < existing.date:
+                    seen_opens[entry.account] = entry
+
+        for entry in entries:
+            if isinstance(entry, data.Open):
+                if seen_opens.get(entry.account) is not entry:
+                    continue  # skip duplicate; the earliest is already chosen
                 currencies = list(entry.currencies) if entry.currencies else []
                 account_rows.append((
                     entry.account,
@@ -687,80 +731,96 @@ class SQLiteExporter:
                 ))
 
         # ── 2. Bulk insert directive tables ──────────────────────────────
-        con.executemany(
-            "INSERT INTO accounts (name, open_date, close_date, currencies_json, booking, metadata_json) "
-            "VALUES (?,?,?,?,?,?)",
-            account_rows,
-        )
-        # Apply close dates
-        for close_date, account_name in close_updates:
-            con.execute(
-                "UPDATE accounts SET close_date = ? WHERE name = ?",
-                (close_date, account_name),
+        with self._sub_export("accounts", lambda: account_rows[0] if account_rows else None):
+            con.executemany(
+                "INSERT INTO accounts (name, open_date, close_date, currencies_json, booking, metadata_json) "
+                "VALUES (?,?,?,?,?,?)",
+                account_rows,
+            )
+            # Apply close dates
+            for close_date, account_name in close_updates:
+                con.execute(
+                    "UPDATE accounts SET close_date = ? WHERE name = ?",
+                    (close_date, account_name),
+                )
+
+        with self._sub_export("commodities", lambda: commodity_rows[0] if commodity_rows else None):
+            con.executemany(
+                "INSERT OR REPLACE INTO commodities (code, declaration_date, name, type, metadata_json) "
+                "VALUES (?,?,?,?,?)",
+                commodity_rows,
+            )
+        with self._sub_export("balance_assertions", lambda: balance_rows[0] if balance_rows else None):
+            con.executemany(
+                "INSERT INTO balance_assertions "
+                "(date, account, amount_number, amount_currency, tolerance, passed, diff_number, diff_currency, metadata_json) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                balance_rows,
+            )
+        with self._sub_export("pad_directives", lambda: pad_rows[0] if pad_rows else None):
+            con.executemany(
+                "INSERT INTO pad_directives (date, account, source_account, metadata_json) "
+                "VALUES (?,?,?,?)",
+                pad_rows,
+            )
+        with self._sub_export("prices", lambda: price_rows[0] if price_rows else None):
+            con.executemany(
+                "INSERT INTO prices (date, base_currency, quote_number, quote_currency, metadata_json) "
+                "VALUES (?,?,?,?,?)",
+                price_rows,
+            )
+        with self._sub_export("notes", lambda: note_rows[0] if note_rows else None):
+            con.executemany(
+                "INSERT INTO notes (date, account, comment, tags_json, links_json, metadata_json) "
+                "VALUES (?,?,?,?,?,?)",
+                note_rows,
+            )
+        with self._sub_export("events", lambda: event_rows[0] if event_rows else None):
+            con.executemany(
+                "INSERT INTO events (date, type, description, metadata_json) "
+                "VALUES (?,?,?,?)",
+                event_rows,
+            )
+        with self._sub_export("documents", lambda: document_rows[0] if document_rows else None):
+            con.executemany(
+                "INSERT INTO documents (date, account, filename, tags_json, links_json, metadata_json) "
+                "VALUES (?,?,?,?,?,?)",
+                document_rows,
+            )
+        with self._sub_export("custom_directives", lambda: custom_rows[0] if custom_rows else None):
+            con.executemany(
+                "INSERT INTO custom_directives (date, type, values_json, metadata_json) "
+                "VALUES (?,?,?,?)",
+                custom_rows,
+            )
+        with self._sub_export("stored_queries", lambda: query_rows[0] if query_rows else None):
+            con.executemany(
+                "INSERT INTO stored_queries (date, name, query_string, metadata_json) "
+                "VALUES (?,?,?,?)",
+                query_rows,
             )
 
-        con.executemany(
-            "INSERT OR REPLACE INTO commodities (code, declaration_date, name, type, metadata_json) "
-            "VALUES (?,?,?,?,?)",
-            commodity_rows,
-        )
-        con.executemany(
-            "INSERT INTO balance_assertions "
-            "(date, account, amount_number, amount_currency, tolerance, passed, diff_number, diff_currency, metadata_json) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
-            balance_rows,
-        )
-        con.executemany(
-            "INSERT INTO pad_directives (date, account, source_account, metadata_json) "
-            "VALUES (?,?,?,?)",
-            pad_rows,
-        )
-        con.executemany(
-            "INSERT INTO prices (date, base_currency, quote_number, quote_currency, metadata_json) "
-            "VALUES (?,?,?,?,?)",
-            price_rows,
-        )
-        con.executemany(
-            "INSERT INTO notes (date, account, comment, tags_json, links_json, metadata_json) "
-            "VALUES (?,?,?,?,?,?)",
-            note_rows,
-        )
-        con.executemany(
-            "INSERT INTO events (date, type, description, metadata_json) "
-            "VALUES (?,?,?,?)",
-            event_rows,
-        )
-        con.executemany(
-            "INSERT INTO documents (date, account, filename, tags_json, links_json, metadata_json) "
-            "VALUES (?,?,?,?,?,?)",
-            document_rows,
-        )
-        con.executemany(
-            "INSERT INTO custom_directives (date, type, values_json, metadata_json) "
-            "VALUES (?,?,?,?)",
-            custom_rows,
-        )
-        con.executemany(
-            "INSERT INTO stored_queries (date, name, query_string, metadata_json) "
-            "VALUES (?,?,?,?)",
-            query_rows,
-        )
-
         # ── 3. Computed state: account balances + lots ───────────────────
-        self._export_account_balances(con, entries)
-        self._export_lots(con, entries)
+        with self._sub_export("account_balances"):
+            self._export_account_balances(con, entries)
+        with self._sub_export("lots"):
+            self._export_lots(con, entries)
 
         # ── 4. Commodity usage ───────────────────────────────────────────
-        self._export_commodity_usage(con, entries)
+        with self._sub_export("commodity_usage"):
+            self._export_commodity_usage(con, entries)
 
         # ── 5. Training data ─────────────────────────────────────────────
-        self._export_training_data(con, entries)
+        with self._sub_export("training_data"):
+            self._export_training_data(con, entries)
 
         # ── 6. Errors ────────────────────────────────────────────────────
-        self._export_errors(con, errors)
+        with self._sub_export("ledger_errors"):
+            self._export_errors(con, errors)
 
         # ── 7. Options ───────────────────────────────────────────────────
-        self._export_options(con, options)
+        with self._sub_export("ledger_options"):
+            self._export_options(con, options)
 
         logger.info(
             "Full ledger export: %d accounts, %d commodities, %d balances, "
@@ -772,7 +832,17 @@ class SQLiteExporter:
     def _export_account_balances(
         self, con: sqlite3.Connection, entries: List[Any]
     ) -> None:
-        """Compute and export per-account, per-currency balances using realization."""
+        """Compute and export per-account, per-currency balances using realization.
+
+        An ``Inventory`` keys positions by ``(currency, cost)``, so an account
+        holding the same security at two different cost lots produces two
+        ``Position`` objects with the same ``(account, currency)``. The
+        ``account_balances`` row is keyed by ``(account, currency)`` alone —
+        cost-lot detail lives in the ``lots`` table — so we aggregate units
+        across positions sharing the summary key before insert. Without this
+        aggregation, multi-lot ledgers crash the entire export with a UNIQUE
+        constraint violation.
+        """
         from beancount.core.realization import realize, iter_children
 
         real_root = realize(entries)
@@ -796,21 +866,26 @@ class SQLiteExporter:
                 if prev is None or entry.date > prev:
                     acct_stats[acct][ccy]["last_date"] = entry.date
 
-        rows = []
+        # Sum units across positions sharing (account, currency) so the row PK holds.
+        totals: Dict[Tuple[str, str], Decimal] = {}
         for real_account in iter_children(real_root):
             account_name = real_account.account
             if not account_name:
                 continue
             for position in real_account.balance:
-                ccy = position.units.currency
-                stats = (acct_stats.get(account_name) or {}).get(ccy, {})
-                rows.append((
-                    account_name,
-                    ccy,
-                    str(position.units.number),
-                    stats.get("count", 0),
-                    stats["last_date"].isoformat() if stats.get("last_date") else None,
-                ))
+                key = (account_name, position.units.currency)
+                totals[key] = totals.get(key, Decimal("0")) + position.units.number
+
+        rows = []
+        for (account_name, ccy), total in totals.items():
+            stats = (acct_stats.get(account_name) or {}).get(ccy, {})
+            rows.append((
+                account_name,
+                ccy,
+                str(total),
+                stats.get("count", 0),
+                stats["last_date"].isoformat() if stats.get("last_date") else None,
+            ))
 
         con.executemany(
             "INSERT INTO account_balances "
@@ -1021,7 +1096,8 @@ class SQLiteExporter:
 
         try:
             # Existing postings export (unchanged logic)
-            postings_count = self._export_postings(con, transactions)
+            with self._sub_export("postings"):
+                postings_count = self._export_postings(con, transactions)
 
             # New: full ledger export (same atomic transaction)
             self._export_full_ledger(con, entries, errors, options)

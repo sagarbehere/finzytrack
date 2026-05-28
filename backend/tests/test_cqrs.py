@@ -932,3 +932,137 @@ class TestDateFilteredBalances:
             }
 
         assert balance_map(unfiltered) == balance_map(also_unfiltered)
+
+
+# ── Export resilience: latent crash regressions ─────────────────────────────
+#
+# These tests guard against constraint-violation crashes in `_export_full_ledger`
+# triggered by plausible user ledger states. Each crash would have rolled back
+# the entire SQLite mirror, leaving the app unable to serve reads.
+
+
+def _export_ledger_to_db(tmp_path, ledger_text):
+    """Helper: write *ledger_text* to a temp .beancount, export to a fresh DB,
+    return (db_path, errors)."""
+    ledger_path = tmp_path / "main.beancount"
+    ledger_path.write_text(ledger_text)
+    db_path = tmp_path / "ledger.db"
+    exporter = SQLiteExporter(str(db_path))
+    entries, errors, options = loader.load_file(str(ledger_path))
+    exporter._export_full_to_sqlite(entries, errors, options)
+    return db_path, errors
+
+
+class TestExportResilience:
+    """Regressions for latent UNIQUE/PK constraint crashes in the exporter."""
+
+    def test_multi_cost_lot_does_not_crash_export(self, tmp_path):
+        """Two cost lots on the same security must export without crashing.
+
+        Previously: ``account_balances`` PK was ``(account, currency)`` but the
+        export emitted one row per Position from the realized Inventory, which
+        keys positions by ``(currency, cost)``. Two lots → two rows with the
+        same PK → ``UNIQUE constraint failed`` → whole transaction rolled back
+        → empty SQLite mirror → every read 500'd.
+        """
+        ledger = """
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Assets:Stocks:GOOG GOOG
+2020-01-01 open Income:PnL USD
+2020-01-01 open Equity:Opening-Balances
+
+2020-01-01 * "Seed"
+  Assets:Cash             100000 USD
+  Equity:Opening-Balances
+
+2024-01-01 * "Buy GOOG lot 1"
+  Assets:Stocks:GOOG  100 GOOG {500 USD}
+  Assets:Cash         -50000 USD
+
+2024-02-01 * "Buy GOOG lot 2 at a different cost"
+  Assets:Stocks:GOOG  50 GOOG {600 USD}
+  Assets:Cash         -30000 USD
+
+2024-03-01 * "Partial sell from lot 1"
+  Assets:Stocks:GOOG  -80 GOOG {500 USD} @ 700 USD
+  Assets:Cash          56000 USD
+  Income:PnL          -16000 USD
+"""
+        db_path, errors = _export_ledger_to_db(tmp_path, ledger)
+        assert not errors, errors
+
+        con = sqlite3.connect(str(db_path))
+        # Exactly one summary row per (account, currency).
+        goog_rows = con.execute(
+            "SELECT account, currency, balance FROM account_balances "
+            "WHERE currency = 'GOOG'"
+        ).fetchall()
+        assert len(goog_rows) == 1
+        assert goog_rows[0] == ("Assets:Stocks:GOOG", "GOOG", "70")
+
+        # Lot-level detail is preserved in the lots table.
+        lot_rows = con.execute(
+            "SELECT units_number, cost_number FROM lots "
+            "WHERE account = 'Assets:Stocks:GOOG' ORDER BY cost_number"
+        ).fetchall()
+        assert lot_rows == [("20", "500"), ("50", "600")]
+        con.close()
+
+    def test_duplicate_open_does_not_crash_export(self, tmp_path):
+        """A ledger with duplicate ``open`` directives must export without
+        crashing. Beancount reports duplicates as a parse error but keeps
+        every Open entry in the result; the exporter has to collapse them
+        because ``accounts.name`` is the primary key.
+        """
+        ledger = """
+2020-01-01 open Assets:Cash USD
+2021-01-01 open Assets:Cash USD
+2020-01-01 open Equity:Opening-Balances
+
+2020-01-02 * "First write"
+  Assets:Cash              100 USD
+  Equity:Opening-Balances
+"""
+        db_path, errors = _export_ledger_to_db(tmp_path, ledger)
+        assert len(errors) >= 1  # duplicate-open parse error
+
+        con = sqlite3.connect(str(db_path))
+        # Exactly one row per account name; the duplicate must be collapsed.
+        rows = con.execute(
+            "SELECT name, open_date FROM accounts ORDER BY name"
+        ).fetchall()
+        assert rows == [
+            ("Assets:Cash", "2020-01-01"),  # earliest open_date wins
+            ("Equity:Opening-Balances", "2020-01-01"),
+        ]
+
+        # The parse error must still surface in ledger_errors so the user/AI
+        # can diagnose the underlying ledger problem.
+        err_count = con.execute(
+            "SELECT COUNT(*) FROM ledger_errors"
+        ).fetchone()[0]
+        assert err_count >= 1
+        con.close()
+
+    def test_sub_export_failure_carries_step_name(self, tmp_path, monkeypatch):
+        """When a sub-export raises, the wrapped error names which step failed
+        so logs and downstream messages point at the right place.
+        """
+        ledger = """
+2020-01-01 open Assets:Cash USD
+"""
+        ledger_path = tmp_path / "main.beancount"
+        ledger_path.write_text(ledger)
+        db_path = tmp_path / "ledger.db"
+        exporter = SQLiteExporter(str(db_path))
+        entries, errors, options = loader.load_file(str(ledger_path))
+
+        # Force a failure inside the 'lots' sub-export.
+        def _boom(*_a, **_k):
+            raise RuntimeError("synthetic failure")
+        monkeypatch.setattr(exporter, "_export_lots", _boom)
+
+        with pytest.raises(Exception) as excinfo:
+            exporter._export_full_to_sqlite(entries, errors, options)
+        assert "lots" in str(excinfo.value)
+        assert "synthetic failure" in str(excinfo.value)
