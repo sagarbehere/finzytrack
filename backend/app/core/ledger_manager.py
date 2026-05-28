@@ -126,6 +126,15 @@ class LedgerManager:
         Always re-parses after writing to get fresh errors/options, because the
         write may have resolved or introduced validation errors (e.g. changing an
         account open date can fix "inactive account" errors).
+
+        Two-parse policy: this method intentionally re-parses (parse 2) after
+        the write to refresh errors. Combined with parse 1 in the API-handler
+        (which read current state to build ``entries``), every mutation pays
+        two full ledger parses. This is the deliberate cost of the design
+        constraints: (a) no in-memory ledger cache (parsing is the architectural
+        choice — see ``ledger_loader.py``), and (b) post-write errors must be
+        immediately visible. Bulk imports batch into a single ``append_entries``
+        call, so a 1000-transaction import is still 2 parses, not 2000.
         """
         self._write_entries(entries)
 
