@@ -352,6 +352,55 @@ async def _stream_openai(
     yield DoneEvent(finish_reason=finish_reason, reasoning_chars=reasoning_chars)
 
 
+# ── Anthropic prompt caching helpers ──────────────────────────────────────────
+#
+# Anthropic's prompt caching: marking stable content with
+# `cache_control={"type": "ephemeral"}` caches it for ~5 minutes. Subsequent
+# requests with the same cached content pay ~10% of the normal input-token
+# cost (cache reads); the first request pays 25% extra to write the cache.
+# Breakeven at 2 requests — which is well below our 12-round agent loop.
+#
+# Two breakpoints: the system prompt (stable per session+context) and the
+# tail of the tools list (stable per session). Two breakpoints mean changing
+# one part doesn't invalidate the other's cache. Conversation history is NOT
+# cached — it grows each turn.
+#
+# References: https://docs.anthropic.com/claude/docs/prompt-caching
+
+
+def _apply_anthropic_system_cache(system_content: str) -> list[dict]:
+    """Wrap *system_content* as a single text block marked for prompt caching.
+
+    Anthropic accepts ``system`` as either a string or a list of blocks; the
+    list form is required to attach ``cache_control``. Below the model's
+    minimum cacheable size (1024 tokens for Sonnet, 2048 for Haiku) the
+    field is silently no-op'd by the API, so there's no risk in marking
+    short prompts.
+    """
+    return [
+        {
+            "type": "text",
+            "text": system_content,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+
+
+def _apply_anthropic_tools_cache(tools: list[dict]) -> list[dict]:
+    """Return a copy of *tools* with ``cache_control`` on the last entry.
+
+    Marking the last tool caches the entire preceding tool list. The list
+    is copied (and the last item shallow-copied) so we never mutate the
+    caller's data — ``ToolRegistry.get_schemas`` returns the canonical list
+    each turn, and we'd otherwise leak the cache annotation across calls.
+    """
+    if not tools:
+        return tools
+    result = list(tools)
+    result[-1] = {**result[-1], "cache_control": {"type": "ephemeral"}}
+    return result
+
+
 # ── Anthropic streaming ───────────────────────────────────────────────────────
 
 async def _stream_anthropic(
@@ -385,9 +434,9 @@ async def _stream_anthropic(
     )
 
     if system_content:
-        call_kwargs["system"] = system_content
+        call_kwargs["system"] = _apply_anthropic_system_cache(system_content)
     if tools:
-        call_kwargs["tools"] = tools
+        call_kwargs["tools"] = _apply_anthropic_tools_cache(tools)
 
     extras = _resolve_extra_request_body(config)
     if extras:
@@ -493,7 +542,7 @@ async def _complete_anthropic(
         temperature=temperature,
     )
     if system_content:
-        call_kwargs["system"] = system_content
+        call_kwargs["system"] = _apply_anthropic_system_cache(system_content)
 
     resp = await client.messages.create(**call_kwargs)
     content = resp.content[0].text if resp.content else ""
