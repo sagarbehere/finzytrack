@@ -64,6 +64,26 @@ class BackupManager:
         except Exception as e:
             logger.warning(f"Failed to clean up old backups for {original_filename}: {e}", exc_info=True)
 
+    @staticmethod
+    def _fsync_dir(directory: Path) -> None:
+        """Flush a directory's entries to disk (POSIX). No-op on platforms
+        where directories can't be opened as file descriptors (Windows).
+        """
+        try:
+            dir_fd = os.open(str(directory), os.O_RDONLY)
+        except OSError:
+            return  # e.g. Windows — directory fsync isn't applicable
+        try:
+            try:
+                os.fsync(dir_fd)
+            except OSError as e:
+                # Some filesystems (e.g. tmpfs in containers) refuse fsync
+                # on directories. Logged, not fatal — the file data fsync
+                # is the durability-critical part.
+                logger.debug("Directory fsync on %s skipped: %s", directory, e)
+        finally:
+            os.close(dir_fd)
+
     @contextmanager
     def atomic_write(self, file_path_str: str, encoding: str = 'utf-8') -> Generator[IO, None, None]:
         """
@@ -72,18 +92,26 @@ class BackupManager:
         - Creates a backup of the original file.
         - Creates a temporary file and copies the original content into it.
         - Yields a file handle to this temporary file, ready for reading and writing.
+        - Before swapping, ``fsync`` flushes the temp file's data to disk and
+          (on POSIX) the parent directory's entry change is fsynced after the
+          rename. This makes the write durable across power loss — without
+          these fsyncs, ``os.replace`` only guarantees *visibility* atomicity,
+          not durability, and a crash between rename and the kernel's next
+          writeback can leave the target as the old content, a zero-byte
+          file, or the new content depending on the filesystem.
         - On successful exit, the modified temporary file atomically replaces the original.
         - If an error occurs, the temporary file is discarded, leaving the original untouched.
         """
         file_path = Path(file_path_str)
         temp_file_handle = None
         temp_path = None
-        
+
         try:
             if file_path.exists():
                 self._create_backup(file_path)
 
             fd, temp_path_str = tempfile.mkstemp(dir=file_path.parent, prefix=f".{file_path.name}")
+            os.close(fd)  # mkstemp returns an fd we don't use; the open() below is the writer
             temp_path = Path(temp_path_str)
 
             if file_path.exists():
@@ -93,8 +121,16 @@ class BackupManager:
                 temp_file_handle = f
                 f.seek(0)
                 yield f
+                # Flush Python's buffer, then push the kernel page cache to
+                # disk while we still have the fd open. Without this, the
+                # rename below can land before the data does.
+                f.flush()
+                os.fsync(f.fileno())
 
-            os.rename(temp_path, file_path)
+            os.replace(temp_path, file_path)
+            # The rename swap is now visible; flush the directory entry so
+            # the swap itself survives a crash.
+            self._fsync_dir(file_path.parent)
             logger.info(f"Successfully wrote to {file_path}")
             temp_file_handle = None
 
