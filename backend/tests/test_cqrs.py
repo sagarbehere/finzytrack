@@ -1044,6 +1044,79 @@ class TestExportResilience:
         assert err_count >= 1
         con.close()
 
+    def test_float_aggregation_artifacts_round_to_zero_at_display_precision(self, tmp_path):
+        """Locks in the documented money-types contract: storage is TEXT
+        (exact Decimal), aggregation passes through ``CAST(amount AS REAL)``
+        for SUM (lossy at IEEE precision), Python hydrates back to Decimal.
+        At display precision (2 decimals for USD), cancellation artifacts
+        from the SQL float SUM must round to zero — otherwise the user
+        sees ghost cents.
+        """
+        # Three +0.10 outflows balanced by one +0.30 inflow → net 0.00 USD.
+        # In raw IEEE, 0.30 - 0.10 - 0.10 - 0.10 ≈ -2.78e-17.
+        ledger = """
+2020-01-01 open Assets:Test USD
+2020-01-01 open Equity:Opening-Balances
+
+2020-01-01 * "Outflow 1"
+  Assets:Test              -0.10 USD
+  Equity:Opening-Balances   0.10 USD
+
+2020-01-02 * "Outflow 2"
+  Assets:Test              -0.10 USD
+  Equity:Opening-Balances   0.10 USD
+
+2020-01-03 * "Outflow 3"
+  Assets:Test              -0.10 USD
+  Equity:Opening-Balances   0.10 USD
+
+2020-01-04 * "Inflow"
+  Assets:Test               0.30 USD
+  Equity:Opening-Balances  -0.30 USD
+"""
+        ledger_path = tmp_path / "main.beancount"
+        ledger_path.write_text(ledger)
+        db_path = tmp_path / "ledger.db"
+        exporter = SQLiteExporter(str(db_path))
+        entries, errors, options = loader.load_file(str(ledger_path))
+        exporter._export_full_to_sqlite(entries, errors, options)
+        assert not errors
+
+        # Storage must be TEXT, not REAL (Decimal preserved exactly on disk).
+        con = sqlite3.connect(str(db_path))
+        amount_type = con.execute(
+            "SELECT type FROM pragma_table_info('postings') WHERE name = 'amount'"
+        ).fetchone()[0].upper()
+        assert amount_type == "TEXT", \
+            f"postings.amount must be TEXT (Decimal contract), got {amount_type}"
+
+        # The float aggregation may leak a sub-ULP artifact, but quantized to
+        # USD display precision (2 decimals), Assets:Test must read exactly 0.
+        # Pass an explicit date range to force the float-SUM path (the
+        # no-arg path hits the cached account_balances table built via
+        # realize() with Decimal arithmetic, which doesn't exercise the
+        # behavior under test).
+        from datetime import date as _date
+        reader = SqliteReader(
+            sqlite_path=db_path,
+            ledger_file=ledger_path,
+            exporter=exporter,
+        )
+        accounts = {
+            a.name: a
+            for a in reader.get_accounts_filtered(
+                start_date=_date(2020, 1, 1), end_date=_date(2020, 12, 31)
+            )
+        }
+        test_balance = sum(
+            (c.balance for c in accounts["Assets:Test"].currencies),
+            start=Decimal("0"),
+        )
+        quantized = test_balance.quantize(Decimal("0.01"))
+        assert quantized == Decimal("0.00"), \
+            f"Cancellation must vanish at display precision; got {test_balance!r}"
+        con.close()
+
     def test_sub_export_failure_carries_step_name(self, tmp_path, monkeypatch):
         """When a sub-export raises, the wrapped error names which step failed
         so logs and downstream messages point at the right place.
