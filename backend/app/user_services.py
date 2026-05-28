@@ -15,7 +15,6 @@ from app.core.xls_rules_manager import XlsRulesManager
 from app.email_import.rule_registry import AccountProfileRegistry
 from app.services.sqlite_exporter import SQLiteExporter
 from app.services.sqlite_reader import SqliteReader
-from app.services.db_sync_manager import DBSyncManager
 
 
 @dataclass
@@ -36,4 +35,3 @@ class UserServices:
     email_registry: AccountProfileRegistry
     sqlite_exporter: SQLiteExporter
     sqlite_reader: SqliteReader
-    db_sync_manager: DBSyncManager

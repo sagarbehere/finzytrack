@@ -12,7 +12,7 @@ from app.exceptions import APIError
 
 if TYPE_CHECKING:
     from app.core.ledger_manager import LedgerManager
-    from app.services.db_sync_manager import DBSyncManager
+    from app.services.sqlite_exporter import SQLiteExporter
 
 logger = logging.getLogger(__name__)
 
@@ -22,22 +22,26 @@ class ConfigManager:
     def __init__(self, config: Config, backup_manager: BackupManager):
         self.config = config
         self.backup_manager = backup_manager
-        # Optional references for hot-reloading; set via set_ledger_services()
+        # Optional references for hot-reloading; set via set_ledger_services().
+        # Stored as post-hoc setters because ConfigManager is constructed before
+        # LedgerManager and SQLiteExporter exist in the wiring graph.
         self._ledger_manager: Optional[LedgerManager] = None
-        self._sqlite_sync_manager: Optional[DBSyncManager] = None
+        self._sqlite_exporter: Optional[SQLiteExporter] = None
 
     def set_ledger_services(
         self,
         ledger_manager: LedgerManager,
-        sqlite_sync_manager: DBSyncManager,
+        sqlite_exporter: SQLiteExporter,
     ) -> None:
         """
         Provide references to services needed for hot ledger switching.
 
-        Called once during app startup after all services are created.
+        Called once during app startup after all services are created. The
+        exporter is needed to rebuild the SQLite mirror against the new ledger
+        file; the ledger manager is needed to swap the active ledger path.
         """
         self._ledger_manager = ledger_manager
-        self._sqlite_sync_manager = sqlite_sync_manager
+        self._sqlite_exporter = sqlite_exporter
 
     def get_config(self) -> Config:
         """Returns the raw configuration data object."""
@@ -126,7 +130,7 @@ class ConfigManager:
 
         # Ledger file path change — hot-switch if services are available
         if new_config.ledger_file != self.config.ledger_file:
-            if self._ledger_manager is not None and self._sqlite_sync_manager is not None:
+            if self._ledger_manager is not None and self._sqlite_exporter is not None:
                 notice = await self._switch_ledger(new_config.ledger_file)
             else:
                 restart_required = True
@@ -183,7 +187,7 @@ class ConfigManager:
             was created), or None.
         """
         assert self._ledger_manager is not None
-        assert self._sqlite_sync_manager is not None
+        assert self._sqlite_exporter is not None
 
         ledger_path = Path(new_ledger_file)
         notice: Optional[str] = None
@@ -222,17 +226,13 @@ class ConfigManager:
         # Switch the beancount manager (cache, initializer, etc.)
         self._ledger_manager.switch_ledger(new_ledger_file)
 
-        # Update the sync manager so mtime checks use the new file
-        self._sqlite_sync_manager.ledger_file = new_ledger_file
-
-        # Parse the new ledger and force an immediate SQLite re-export.
-        # We bypass the debounced callback because mtime checks are
-        # meaningless when switching between different ledger files —
-        # the new file may be older than the existing SQLite DB.
+        # Parse the new ledger and rebuild the SQLite mirror against it. The
+        # new file may be older than the existing SQLite DB, so a full
+        # re-export is the correct semantic — not an mtime-gated one.
         try:
             from app.core.ledger_loader import load_ledger_checked
             entries, errors, options = load_ledger_checked(new_ledger_file)
-            await self._sqlite_sync_manager.exporter.export_full(entries, errors, options)
+            await self._sqlite_exporter.export_full(entries, errors, options)
         except Exception as e:
             logger.error(f"Failed to parse new ledger after switch: {e}", exc_info=True)
             raise APIError(

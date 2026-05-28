@@ -13,7 +13,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from app.config import Config, SQLITE_AUTO_SYNC, SQLITE_SYNC_DEBOUNCE_SECONDS, SQLITE_ENABLE_WAL
+from app.config import Config, SQLITE_ENABLE_WAL
 from app.core.backup_manager import BackupManager
 from app.core.config_manager import ConfigManager
 from app.core.csv_rules_manager import CsvRulesManager
@@ -22,7 +22,6 @@ from app.core.ledger_initializer import LedgerInitializer
 from app.core.ledger_manager import LedgerManager
 from app.services.sqlite_exporter import SQLiteExporter
 from app.services.sqlite_reader import SqliteReader
-from app.services.db_sync_manager import DBSyncManager
 from app.email_import.rule_registry import AccountProfileRegistry
 from app.user_services import UserServices
 from app.write_lock import WriteLockManager
@@ -115,21 +114,15 @@ def create_user_services(config: Config, user_id: str = "local") -> UserServices
         sqlite_exporter=sqlite_exporter,
     )
 
-    # 5b. SqliteReader + DBSyncManager
+    # 5b. SqliteReader
     sqlite_reader = SqliteReader(
         sqlite_path=Path(config.sqlite_export_path),
         ledger_file=Path(config.ledger_file),
         exporter=sqlite_exporter,
     )
-    db_sync_manager = DBSyncManager(
-        exporter=sqlite_exporter,
-        ledger_file=config.ledger_file,
-        delay=SQLITE_SYNC_DEBOUNCE_SECONDS,
-        db_type="sqlite",
-    )
 
     # 5c. Hot ledger switching references
-    config_manager.set_ledger_services(ledger_manager, db_sync_manager)
+    config_manager.set_ledger_services(ledger_manager, sqlite_exporter)
 
     # 6. Ensure ledger exists (skip when setup is incomplete)
     if config.setup_complete:
@@ -151,11 +144,6 @@ def create_user_services(config: Config, user_id: str = "local") -> UserServices
     else:
         logger.info("Setup not complete — skipping ledger initialization")
 
-    # 7. SQLite sync: writes export inline now; keep debounced callback
-    #    as a safety net for any edge cases during transition
-    if SQLITE_AUTO_SYNC:
-        logger.info("SQLite auto-sync: inline export on writes + startup mtime check")
-
     return UserServices(
         ledger_manager=ledger_manager,
         config_manager=config_manager,
@@ -165,7 +153,6 @@ def create_user_services(config: Config, user_id: str = "local") -> UserServices
         email_registry=email_registry,
         sqlite_exporter=sqlite_exporter,
         sqlite_reader=sqlite_reader,
-        db_sync_manager=db_sync_manager,
     )
 
 
@@ -190,8 +177,10 @@ async def startup_user_services(services: UserServices, config: Config) -> None:
 
 
 async def shutdown_user_services(services: UserServices) -> None:
-    """Cancel pending async tasks for graceful cleanup."""
-    try:
-        await services.db_sync_manager.cancel_pending_sync()
-    except Exception as e:
-        logger.error("Error cancelling pending sync: %s", e)
+    """Graceful per-user cleanup hook.
+
+    Kept as a no-op extension point — writes now export to SQLite inline so
+    there is no background task to cancel. Future per-user shutdown work
+    (flushing caches, closing handles) should go here.
+    """
+    return None
