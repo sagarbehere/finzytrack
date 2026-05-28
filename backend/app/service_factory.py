@@ -105,7 +105,10 @@ def create_user_services(config: Config, user_id: str = "local") -> UserServices
     )
 
     # 5. LedgerManager (with per-user write lock + sqlite exporter for inline export)
-    write_lock = WriteLockManager(user_id=user_id)
+    write_lock = WriteLockManager(
+        user_id=user_id,
+        lock_file=Path(config.write_lock_path),
+    )
     ledger_manager = LedgerManager(
         ledger_file=config.ledger_file,
         backup_manager=backup_manager,

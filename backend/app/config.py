@@ -195,6 +195,16 @@ class Config(BaseModel):
         return str(self.root_dir / 'data' / 'ledger.db')
 
     @property
+    def write_lock_path(self) -> str:
+        """Path to the per-user inter-process write lock sidecar file.
+
+        Lives alongside the SQLite mirror in the user's data directory so the
+        lock follows the user across ledger hot-switches and is naturally
+        per-user in hosted mode.
+        """
+        return str(self.root_dir / 'data' / '.write.lock')
+
+    @property
     def backup_dir(self) -> str:
         return str(self.root_dir / 'data' / 'backups')
 
