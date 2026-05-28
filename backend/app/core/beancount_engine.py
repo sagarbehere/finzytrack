@@ -546,11 +546,29 @@ class BeancountEngine:
 
     @staticmethod
     def _find_pad_before_balance_entry(entries: list, balance_idx: int, account_name: str):
-        if balance_idx > 0:
-            prev = entries[balance_idx - 1]
-            if isinstance(prev, bd.Pad) and prev.account == account_name:
-                return balance_idx - 1
-        return None
+        """Return the index of the Pad that feeds the balance at *balance_idx*.
+
+        Mirrors Beancount semantics and the export-side pairing in
+        ``SQLiteExporter._export_full_ledger``: a Pad sets a per-account
+        candidate, later Pads for the same account overwrite earlier ones,
+        and the next Balance for that account consumes the candidate. So the
+        pad that "feeds" *balance_idx* is the most recent Pad for
+        *account_name* in ``entries[:balance_idx]`` that wasn't already
+        consumed by an earlier Balance for the same account.
+
+        Returns ``None`` when no such pad exists. Crucially, this finds the
+        pad even when non-pad entries (e.g. transactions) sit between the
+        Pad and the Balance — the previous strict
+        ``entries[balance_idx - 1]`` check missed those.
+        """
+        candidate_pad_idx = None
+        for i in range(balance_idx):
+            entry = entries[i]
+            if isinstance(entry, bd.Pad) and entry.account == account_name:
+                candidate_pad_idx = i
+            elif isinstance(entry, bd.Balance) and entry.account == account_name:
+                candidate_pad_idx = None
+        return candidate_pad_idx
 
     @staticmethod
     def _format_amount(amount: Decimal) -> str:

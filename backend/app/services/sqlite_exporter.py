@@ -315,7 +315,12 @@ class SQLiteExporter:
                 passed          INTEGER NOT NULL DEFAULT 1,
                 diff_number     TEXT,
                 diff_currency   TEXT,
-                metadata_json   TEXT
+                metadata_json   TEXT,
+                -- Pad pairing stamped at export time using Beancount's
+                -- "most recent unused pad for this account" semantics.
+                -- See _export_full_ledger. NULL if no pad feeds this balance.
+                pad_date            TEXT,
+                pad_source_account  TEXT
             )
         """)
         con.execute(
@@ -619,6 +624,24 @@ class SQLiteExporter:
                 if existing is None or entry.date < existing.date:
                     seen_opens[entry.account] = entry
 
+        # Pair each Balance with the Pad that feeds it, per Beancount semantics:
+        # a Pad sets a per-account candidate; later Pads for the same account
+        # overwrite earlier ones; the next Balance for that account consumes
+        # the candidate. This mirrors `engine._find_pad_before_balance_entry`
+        # exactly so the read and write paths agree on pairings.
+        candidate_pad: Dict[str, Tuple[str, str]] = {}  # account -> (date_iso, source)
+        balance_pad_pairing: Dict[int, Tuple[str, str]] = {}  # id(entry) -> (date_iso, source)
+        for entry in entries:
+            if isinstance(entry, data.Pad):
+                candidate_pad[entry.account] = (
+                    entry.date.isoformat(),
+                    entry.source_account,
+                )
+            elif isinstance(entry, data.Balance):
+                pending = candidate_pad.pop(entry.account, None)
+                if pending is not None:
+                    balance_pad_pairing[id(entry)] = pending
+
         for entry in entries:
             if isinstance(entry, data.Open):
                 if seen_opens.get(entry.account) is not entry:
@@ -650,6 +673,9 @@ class SQLiteExporter:
                 passed = 1 if entry.diff_amount is None else 0
                 diff_num = str(entry.diff_amount.number) if entry.diff_amount else None
                 diff_ccy = entry.diff_amount.currency if entry.diff_amount else None
+                pad_pair = balance_pad_pairing.get(id(entry))
+                pad_date_iso = pad_pair[0] if pad_pair else None
+                pad_source = pad_pair[1] if pad_pair else None
                 balance_rows.append((
                     entry.date.isoformat(),
                     entry.account,
@@ -660,6 +686,8 @@ class SQLiteExporter:
                     diff_num,
                     diff_ccy,
                     self._metadata_to_json(entry.meta),
+                    pad_date_iso,
+                    pad_source,
                 ))
 
             elif isinstance(entry, data.Pad):
@@ -753,8 +781,9 @@ class SQLiteExporter:
         with self._sub_export("balance_assertions", lambda: balance_rows[0] if balance_rows else None):
             con.executemany(
                 "INSERT INTO balance_assertions "
-                "(date, account, amount_number, amount_currency, tolerance, passed, diff_number, diff_currency, metadata_json) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
+                "(date, account, amount_number, amount_currency, tolerance, passed, "
+                "diff_number, diff_currency, metadata_json, pad_date, pad_source_account) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 balance_rows,
             )
         with self._sub_export("pad_directives", lambda: pad_rows[0] if pad_rows else None):

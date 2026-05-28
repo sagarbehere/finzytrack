@@ -494,7 +494,13 @@ class SqliteReader:
     # ── Balance directives ───────────────────────────────────────────────────
 
     def get_balance_directives(self, account_name: str) -> List[BalanceDirectiveData]:
-        """Get balance assertions for an account, paired with pad directives."""
+        """Get balance assertions for an account, with their paired pads.
+
+        Pad pairing is stamped on each balance row at export time using
+        Beancount's "most recent unused pad" semantics (see
+        ``_export_full_ledger`` and ``engine._find_pad_before_balance_entry``).
+        The reader just selects the pre-paired columns.
+        """
         def query(con: sqlite3.Connection) -> List[BalanceDirectiveData]:
             errors = con.execute(
                 "SELECT line_number, message FROM ledger_errors "
@@ -502,37 +508,24 @@ class SqliteReader:
             ).fetchall()
             error_by_line = {r["line_number"]: r["message"] for r in errors if r["line_number"]}
 
-            pads = con.execute(
-                "SELECT date, source_account FROM pad_directives WHERE account = ? ORDER BY date",
-                (account_name,),
-            ).fetchall()
-
             balances = con.execute(
                 "SELECT date, amount_number, amount_currency, passed, "
-                "diff_number, diff_currency, metadata_json "
+                "diff_number, diff_currency, metadata_json, "
+                "pad_date, pad_source_account "
                 "FROM balance_assertions WHERE account = ? ORDER BY date",
                 (account_name,),
             ).fetchall()
 
-            pad_iter = iter(pads)
-            current_pad = next(pad_iter, None)
-
             result = []
             for bal in balances:
-                bal_date = date.fromisoformat(bal["date"])
-
-                pad_source = None
-                if current_pad and date.fromisoformat(current_pad["date"]) <= bal_date:
-                    pad_source = current_pad["source_account"]
-                    current_pad = next(pad_iter, None)
-
                 meta = json.loads(bal["metadata_json"]) if bal["metadata_json"] else {}
                 lineno = meta.get("lineno", 0)
                 has_error = bal["passed"] == 0 or lineno in error_by_line
                 error_message = error_by_line.get(lineno)
+                pad_source = bal["pad_source_account"]
 
                 result.append(BalanceDirectiveData(
-                    date=bal_date,
+                    date=date.fromisoformat(bal["date"]),
                     currency=bal["amount_currency"],
                     expected_balance=Decimal(bal["amount_number"]),
                     has_pad=pad_source is not None,
@@ -540,8 +533,6 @@ class SqliteReader:
                     has_error=has_error,
                     error_message=error_message,
                 ))
-
-            result.sort(key=lambda d: d.date)
             return result
 
         return self._query(query)
