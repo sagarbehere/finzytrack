@@ -6,6 +6,8 @@ All providers yield a common stream of events:
   ToolCallEvent — the LLM wants to call a tool
   DoneEvent    — the response is complete
 """
+import asyncio
+import concurrent.futures
 import json
 import logging
 from dataclasses import dataclass
@@ -202,6 +204,40 @@ async def complete_chat(
     if config.provider == "anthropic":
         return await _complete_anthropic(config, messages, temp)
     return await _complete_openai(config, messages, temp)
+
+
+def complete_chat_sync(
+    config: LLMConfig,
+    messages: list[dict],
+    temperature: float | None = None,
+) -> str:
+    """Synchronous wrapper for ``complete_chat`` callable from any context.
+
+    Existing sync call sites (``services/ai_categorizer.py``,
+    ``email_import/llm_extractor.py``) used to hand-roll their own provider
+    routing. Routing through this wrapper gets them ``resolve_config``
+    (Finzytrack AI proxy), prompt caching, ``extra_request_body`` filtering,
+    and one canonical retry/timeout policy — without each site having to
+    care which event loop, if any, is in play.
+
+    Two call contexts to support:
+      1. Already on a worker thread (e.g. the IMAP fetch thread) — no
+         event loop in this thread; ``asyncio.run`` is the fast path.
+      2. On the event-loop thread (a sync function called from inside an
+         ``async def`` route) — ``asyncio.run`` would raise; offload to a
+         single worker thread that gets its own loop. The calling thread
+         blocks on the result, which is the same shape as today's
+         sync-SDK call — no async regression, but also no improvement.
+         The route handler could await ``complete_chat`` directly in the
+         future if it wanted to unblock the loop.
+    """
+    coro = complete_chat(config, messages, temperature)
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(asyncio.run, coro).result()
 
 
 async def stream_chat(
@@ -494,6 +530,15 @@ async def _complete_openai(
             base = base + "/v1"
         kwargs["base_url"] = base
 
+    # Match the streaming sibling so sync callers get bounded behaviour.
+    # Without this, a stuck upstream hangs forever.
+    kwargs["timeout"] = httpx.Timeout(
+        connect=10.0,
+        read=float(config.timeout_secs),
+        write=30.0,
+        pool=10.0,
+    )
+
     client = AsyncOpenAI(**kwargs)
     call_kwargs: dict = dict(
         model=config.model,
@@ -503,6 +548,10 @@ async def _complete_openai(
     )
     if config.max_tokens > 0:
         call_kwargs["max_tokens"] = config.max_tokens
+
+    extras = _resolve_extra_request_body(config)
+    if extras:
+        call_kwargs["extra_body"] = extras
 
     resp = await client.chat.completions.create(**call_kwargs)
     content = resp.choices[0].message.content or ""

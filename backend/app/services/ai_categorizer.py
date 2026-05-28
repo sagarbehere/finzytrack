@@ -5,15 +5,19 @@ Uses the configured LLM to categorize transactions by matching payees
 to the user's chart of accounts. Intended for cold-start scenarios where
 the ML classifier has insufficient training data.
 
-Follows the same sync LLM call patterns as email_import/llm_extractor.py.
+LLM routing goes through ``ai.client.complete_chat_sync`` so this site
+benefits from the canonical provider abstraction: Finzytrack AI proxy
+support, ``extra_request_body`` filtering, prompt caching, and the same
+timeout/retry policy as the streaming assistant.
 """
 
 import json
 import logging
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Set, Tuple
+from typing import Dict, List, Set, Tuple
 
+from app.ai.client import complete_chat_sync
 from app.config import LLMConfig
 
 logger = logging.getLogger(__name__)
@@ -68,62 +72,18 @@ def _build_user_message(
     )
 
 
-def _call_openai(llm_config: LLMConfig, user_message: str) -> str:
-    """Call an OpenAI-compatible API (sync) and return the response text."""
-    from openai import OpenAI
-
-    kwargs: dict[str, Any] = {"api_key": llm_config.api_key.get_secret_value() or "not-needed"}
-    if llm_config.api_url:
-        base = llm_config.api_url.rstrip("/")
-        if not base.endswith("/v1"):
-            base = base + "/v1"
-        kwargs["base_url"] = base
-
-    client = OpenAI(**kwargs, timeout=float(llm_config.timeout_secs))
-    call_kwargs: dict[str, Any] = dict(
-        model=llm_config.model or "gpt-4o",
-        temperature=llm_config.temperature,
-        messages=[
-            {"role": "system", "content": _load_system_prompt()},
-            {"role": "user", "content": user_message},
-        ],
-    )
-    if llm_config.max_tokens > 0:
-        call_kwargs["max_tokens"] = llm_config.max_tokens
-
-    resp = client.chat.completions.create(**call_kwargs)
-    return resp.choices[0].message.content or ""
-
-
-def _call_anthropic(llm_config: LLMConfig, user_message: str) -> str:
-    """Call the Anthropic API (sync) and return the response text."""
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=llm_config.api_key.get_secret_value() or "not-needed")
-    max_tokens = llm_config.max_tokens if llm_config.max_tokens > 0 else 4096
-
-    resp = client.messages.create(
-        model=llm_config.model,
-        max_tokens=max_tokens,
-        system=_load_system_prompt(),
-        messages=[{"role": "user", "content": user_message}],
-    )
-    return resp.content[0].text if resp.content else ""
-
-
 def _call_llm(llm_config: LLMConfig, user_message: str) -> str:
-    """Route to the appropriate LLM provider."""
+    """Send the categorisation prompt through the canonical sync LLM client."""
+    messages = [
+        {"role": "system", "content": _load_system_prompt()},
+        {"role": "user", "content": user_message},
+    ]
     try:
-        if llm_config.provider == "anthropic":
-            content = _call_anthropic(llm_config, user_message)
-        else:
-            content = _call_openai(llm_config, user_message)
+        content = complete_chat_sync(llm_config, messages)
     except Exception as e:
         raise AICategorizeError(f"LLM request failed: {e}")
-
     if not content:
         raise AICategorizeError("LLM returned empty response")
-
     return content
 
 

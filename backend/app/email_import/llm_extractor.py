@@ -1,4 +1,10 @@
-"""Extract transaction fields from email text using an LLM API."""
+"""Extract transaction fields from email text using an LLM API.
+
+LLM routing goes through ``ai.client.complete_chat_sync`` so this site
+benefits from the canonical provider abstraction: Finzytrack AI proxy
+support, ``extra_request_body`` filtering, prompt caching, and the same
+timeout/retry policy as the streaming assistant.
+"""
 import json
 import logging
 from decimal import Decimal
@@ -6,6 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from app.ai.client import complete_chat_sync
 from app.config import LLMConfig
 
 logger = logging.getLogger(__name__)
@@ -25,49 +32,6 @@ class LLMExtractionError(Exception):
     pass
 
 
-def _call_openai(llm_config: LLMConfig, user_message: str) -> str:
-    """Call an OpenAI-compatible API (sync) and return the response text."""
-    from openai import OpenAI
-
-    kwargs: dict[str, Any] = {"api_key": llm_config.api_key.get_secret_value() or "not-needed"}
-    if llm_config.api_url:
-        base = llm_config.api_url.rstrip("/")
-        if not base.endswith("/v1"):
-            base = base + "/v1"
-        kwargs["base_url"] = base
-
-    client = OpenAI(**kwargs, timeout=float(llm_config.timeout_secs))
-    call_kwargs: dict[str, Any] = dict(
-        model=llm_config.model or "gpt-4o",
-        temperature=llm_config.temperature,
-        messages=[
-            {"role": "system", "content": _load_system_prompt()},
-            {"role": "user", "content": user_message},
-        ],
-    )
-    if llm_config.max_tokens > 0:
-        call_kwargs["max_tokens"] = llm_config.max_tokens
-
-    resp = client.chat.completions.create(**call_kwargs)
-    return resp.choices[0].message.content or ""
-
-
-def _call_anthropic(llm_config: LLMConfig, user_message: str) -> str:
-    """Call the Anthropic API (sync) and return the response text."""
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=llm_config.api_key.get_secret_value() or "not-needed")
-    max_tokens = llm_config.max_tokens if llm_config.max_tokens > 0 else 4096
-
-    resp = client.messages.create(
-        model=llm_config.model,
-        max_tokens=max_tokens,
-        system=_load_system_prompt(),
-        messages=[{"role": "user", "content": user_message}],
-    )
-    return resp.content[0].text if resp.content else ""
-
-
 def extract_fields_llm(
     body_text: str,
     subject: str,
@@ -77,23 +41,28 @@ def extract_fields_llm(
     """
     Extract transaction fields using an LLM.
 
-    Uses the shared ai.llm config from the main backend.
-    Supports both OpenAI-compatible and Anthropic providers.
+    Uses the shared ai.llm config from the main backend, routed through
+    the canonical ``complete_chat_sync`` — so this site supports the
+    Finzytrack AI proxy and inherits the assistant's request shape.
 
     explicit_sign_rule: if provided, overrides LLM's is_debit inference.
     Format: {"field": "fixed", "value": "negative"} or {"field": "transaction_type",
              "negative_values": [...], "positive_values": [...]}
     """
-    if not llm_config.api_url and llm_config.provider != "anthropic":
-        raise LLMExtractionError("AI API URL is not configured")
+    if not llm_config.is_configured:
+        raise LLMExtractionError(
+            "AI is not configured. Enable Finzytrack AI or set a model under "
+            "Settings → AI."
+        )
 
     user_message = f"Subject: {subject}\n\nBody:\n{body_text}"
+    messages = [
+        {"role": "system", "content": _load_system_prompt()},
+        {"role": "user", "content": user_message},
+    ]
 
     try:
-        if llm_config.provider == "anthropic":
-            content = _call_anthropic(llm_config, user_message)
-        else:
-            content = _call_openai(llm_config, user_message)
+        content = complete_chat_sync(llm_config, messages)
     except Exception as e:
         raise LLMExtractionError(f"AI request failed: {e}")
 
