@@ -20,7 +20,7 @@ import logging
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -239,6 +239,7 @@ async def _run_agent_loop(
     *,
     analyst_mode: bool = False,
     max_iterations: int = MAX_TOOL_ROUNDS_DEFAULT,
+    request: Request | None = None,
 ) -> AsyncIterator[dict]:
     """
     Run the agentic tool-use loop and yield SSE-ready event dicts.
@@ -254,7 +255,24 @@ async def _run_agent_loop(
     ground_truth = GroundTruth()
     validator = ResponseValidator()
 
+    async def _client_gone() -> bool:
+        # True only when the browser-side TCP connection has been torn down
+        # (user clicked New Chat / closed tab / closed the desktop app). In-app
+        # navigation keeps the AssistantView mounted (KeepAlive), so this stays
+        # False during normal sidebar nav.
+        if request is None:
+            return False
+        try:
+            return await request.is_disconnected()
+        except Exception:
+            return False
+
     for iteration in range(max_iterations):
+        if await _client_gone():
+            logger.info("Assistant client disconnected before iteration %d; aborting", iteration)
+            yield {"type": "aborted", "reason": "client_disconnected"}
+            return
+
         # ── Debug: log context size before each LLM call ──────────────
         _log_context_size(messages, tool_schemas, iteration)
 
@@ -262,8 +280,14 @@ async def _run_agent_loop(
         tool_calls_this_turn: list[ToolCallEvent] = []
         finish_reason: str | None = None
         reasoning_chars = 0
+        client_disconnected = False
 
         async for event in stream_chat(llm_config, messages, tool_schemas):
+            if await _client_gone():
+                # Break out of the async iterator so the SDK's stream context
+                # closes the upstream HTTP connection and stops billing.
+                client_disconnected = True
+                break
             if isinstance(event, ThinkingEvent):
                 yield {"type": "thinking", "content": event.content}
             elif isinstance(event, TokenEvent):
@@ -275,6 +299,11 @@ async def _run_agent_loop(
                 finish_reason = event.finish_reason
                 reasoning_chars = event.reasoning_chars
                 break
+
+        if client_disconnected:
+            logger.info("Assistant client disconnected mid-stream at iteration %d; aborting", iteration)
+            yield {"type": "aborted", "reason": "client_disconnected"}
+            return
 
         if not tool_calls_this_turn:
             # Normal exit — model finished with text, no more tool calls
@@ -328,6 +357,13 @@ async def _run_agent_loop(
 
         # Execute each tool call and add results
         for tc in tool_calls_this_turn:
+            if await _client_gone():
+                logger.info(
+                    "Assistant client disconnected before tool '%s' at iteration %d; aborting",
+                    tc.name, iteration,
+                )
+                yield {"type": "aborted", "reason": "client_disconnected"}
+                return
             try:
                 args = json.loads(tc.arguments) if tc.arguments else {}
             except json.JSONDecodeError as e:
@@ -482,6 +518,7 @@ async def _run_agent_loop(
 @router.post("/assistant/chat")
 async def assistant_chat(
     body: AssistantChatRequest,
+    request: Request,
     config_manager: ConfigManager = Depends(get_config_manager),
     beancount_manager: BeancountManager = Depends(get_beancount_manager),
     sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
@@ -572,6 +609,7 @@ async def assistant_chat(
                 llm_config, messages, registry,
                 analyst_mode=bool(analyst_mode),
                 max_iterations=llm_config.max_tool_rounds,
+                request=request,
             ):
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as e:

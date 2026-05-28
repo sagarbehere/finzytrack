@@ -16,7 +16,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 
 from app.ai.client import DoneEvent, TokenEvent, stream_chat
 from app.ai.file_processor import process_file as process_eml_file
@@ -241,8 +241,18 @@ def _build_pdf_text_fallback(file_bytes: bytes, account: str, currency: str) -> 
     return f"{context_line}\n\n{text}"
 
 
-async def _call_llm(llm_config: LLMConfig, system_prompt: str, user_content: str | list) -> str:
-    """Call the LLM and collect the full text response."""
+async def _call_llm(
+    llm_config: LLMConfig,
+    system_prompt: str,
+    user_content: str | list,
+    request: Request | None = None,
+) -> str:
+    """Call the LLM and collect the full text response.
+
+    If *request* is supplied, abort the stream as soon as the client disconnects
+    (clicked away / closed app). Exiting the async iterator lets the SDK close
+    the upstream HTTP connection so we stop paying for tokens no one will read.
+    """
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
@@ -250,6 +260,19 @@ async def _call_llm(llm_config: LLMConfig, system_prompt: str, user_content: str
 
     full_response = ""
     async for event in stream_chat(llm_config, messages, tools=[]):
+        if request is not None:
+            try:
+                if await request.is_disconnected():
+                    logger.info("llm-parse client disconnected mid-stream; aborting")
+                    raise APIError(
+                        "Request cancelled by client.",
+                        code=ec.CLIENT_DISCONNECTED,
+                        status_code=499,
+                    )
+            except APIError:
+                raise
+            except Exception:
+                pass
         if isinstance(event, TokenEvent):
             full_response += event.content
         elif isinstance(event, DoneEvent):
@@ -377,6 +400,7 @@ def _validate_transactions(raw_transactions: list[dict]) -> tuple[list[LlmParsed
 
 @router.post("/llm-parse")
 async def llm_parse(
+    request: Request,
     file: UploadFile = File(...),
     account: str = Form(...),
     currency: str = Form(...),
@@ -426,7 +450,7 @@ async def llm_parse(
 
     # Call LLM
     try:
-        raw_response = await _call_llm(llm_config, system_prompt, user_content)
+        raw_response = await _call_llm(llm_config, system_prompt, user_content, request=request)
     except Exception as e:
         if file_type == "pdf" and not force_text_extraction:
             # Native PDF not supported — tell the frontend to retry with text extraction
