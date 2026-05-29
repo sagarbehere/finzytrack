@@ -105,7 +105,29 @@ class ServiceRegistry:
             logger.info("Provisioned new user directory: %s", ctx.root_dir)
 
     async def _evict_if_needed(self) -> None:
-        """Evict the oldest entry if cache exceeds max_users."""
+        """Evict the oldest entry if cache exceeds max_users.
+
+        Eviction is silent with respect to in-flight requests: if a handler
+        is still holding a reference to the evicted ``UserServices``, Python
+        will keep it alive until the handler returns. Data integrity is
+        preserved across this window because ``WriteLockManager`` is wired
+        with a ``portalocker`` file lock in production (see
+        ``service_factory.py``) — two ``WriteLockManager`` instances for the
+        same user pointing at the same sidecar lock file still serialise via
+        the filesystem, so the old in-flight write and any new write from a
+        post-eviction services bundle don't interleave.
+
+        Post-CQRS there are no background tasks tied to a user
+        (``shutdown_user_services`` is a no-op extension point — H2 #1), so
+        eviction doesn't drop pending work either.
+
+        Clean F1 hardening, deferred until hosted is live: refcount active
+        requests per user, only evict when refcount == 0. That removes the
+        intra-process ``threading.Lock`` divergence across the
+        eviction-and-recreate window. Today the cost-benefit doesn't justify
+        adding per-request acquire/release middleware — desktop never
+        evicts, and portalocker covers the safety property hosted needs.
+        """
         while len(self._cache) > self._max_users:
             oldest_id, oldest_svc = self._cache.popitem(last=False)
             self._configs.pop(oldest_id, None)

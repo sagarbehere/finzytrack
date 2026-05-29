@@ -13,7 +13,7 @@ from app.schemas.account_schemas import (
     BalanceDirectiveCreateData, BalanceDirectiveUpdateRequest,
     BalanceDirectiveUpdateData, BalanceDirectiveDeleteData,
 )
-from app.core.beancount_manager import BeancountManager
+from app.core.ledger_manager import LedgerManager
 from app.core.config_manager import ConfigManager
 from app.services.sqlite_reader import SqliteReader
 from app.dependencies import get_config_manager, get_beancount_manager, get_sqlite_reader
@@ -67,11 +67,11 @@ async def list_accounts(
 async def create_account_endpoint(
     request: AccountCreateRequest,
     config_manager: ConfigManager = Depends(get_config_manager),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+    beancount_manager: LedgerManager = Depends(get_beancount_manager)
 ):
     """Create and open a new Beancount account with comprehensive configuration."""
     try:
-        # Delegate account creation to BeancountManager (business logic & ledger operations)
+        # Delegate account creation to LedgerManager (business logic & ledger operations)
         create_data = beancount_manager.create_account_directive(request)
         
         return success_json_response(create_data, status_code=201)
@@ -161,7 +161,7 @@ async def update_account(
     account_name: str = Path(..., description="Beancount account name to update"),
     config_manager: ConfigManager = Depends(get_config_manager),
     sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    beancount_manager: LedgerManager = Depends(get_beancount_manager),
 ):
     """Update account details."""
     config = config_manager.get_config()
@@ -219,7 +219,7 @@ async def update_account(
 
         new_name = request.new_name or account_name
 
-        # Delegate the write to BeancountManager (parse → modify entries → print)
+        # Delegate the write to LedgerManager (parse → modify entries → print)
         beancount_manager.update_account_directive(
             account_name,
             new_name=request.new_name or None,
@@ -251,7 +251,7 @@ async def close_account(
     account_name: str = Path(..., description="Beancount account name to close"),
     config_manager: ConfigManager = Depends(get_config_manager),
     sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    beancount_manager: LedgerManager = Depends(get_beancount_manager),
 ):
     """Close an account by adding a closing directive to the Beancount ledger."""
     config = config_manager.get_config()
@@ -290,7 +290,7 @@ async def close_account(
                 }
             )
 
-        # Delegate the write to BeancountManager (parse → modify entries → print)
+        # Delegate the write to LedgerManager (parse → modify entries → print)
         beancount_manager.close_account_directive(account_name, request.close_date, reason=request.reason or None)
 
         close_data = AccountCloseData(
@@ -305,7 +305,7 @@ async def reopen_account(
     account_name: str = Path(..., description="Beancount account name to reopen"),
     config_manager: ConfigManager = Depends(get_config_manager),
     sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    beancount_manager: LedgerManager = Depends(get_beancount_manager),
 ):
     """Reopen a closed account by removing the close directive from the ledger."""
     config = config_manager.get_config()
@@ -330,7 +330,7 @@ async def reopen_account(
                 details={"account_name": account_name}
             )
 
-        # Delegate the write to BeancountManager (parse → modify entries → print)
+        # Delegate the write to LedgerManager (parse → modify entries → print)
         beancount_manager.reopen_account_directive(account_name)
 
         reopen_data = AccountReopenData(
@@ -346,7 +346,7 @@ async def delete_account(
     delete_transactions: bool = Query(True, description="Whether to delete transactions associated with this account"),
     config_manager: ConfigManager = Depends(get_config_manager),
     sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    beancount_manager: LedgerManager = Depends(get_beancount_manager),
 ):
     """Remove account from ledger. Optionally deletes associated transactions."""
     config = config_manager.get_config()
@@ -428,7 +428,7 @@ async def list_balance_directives(
 async def create_balance_directive(
     request: BalanceDirectiveCreateRequest,
     account_name: str = Path(..., description="Beancount account name"),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+    beancount_manager: LedgerManager = Depends(get_beancount_manager)
 ):
     """Create a balance assertion (optionally with a pad directive)."""
     try:
@@ -467,7 +467,7 @@ async def update_balance_directive(
     request: BalanceDirectiveUpdateRequest,
     account_name: str = Path(..., description="Beancount account name"),
     sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    beancount_manager: LedgerManager = Depends(get_beancount_manager),
 ):
     """Update an existing balance directive."""
     if account_name not in sqlite_reader.get_account_names():
@@ -513,7 +513,7 @@ async def delete_balance_directive(
     amount: Decimal = Query(..., description="Expected balance amount"),
     delete_pad: bool = Query(True, description="Also delete associated pad directive"),
     sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    beancount_manager: LedgerManager = Depends(get_beancount_manager),
 ):
     """Delete a balance directive (and optionally its associated pad)."""
     if account_name not in sqlite_reader.get_account_names():

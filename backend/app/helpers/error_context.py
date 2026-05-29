@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from typing import Optional
 
 from app.exceptions import APIError
+from app import error_codes as ec
 
 
 @contextmanager
@@ -27,20 +28,20 @@ def ledger_error_context(ledger_path: Optional[str] = None):
     except FileNotFoundError:
         raise APIError(
             message="Ledger file not found",
-            code="FILE_NOT_FOUND",
+            code=ec.FILE_NOT_FOUND,
             status_code=404,
             details={"path": ledger_path} if ledger_path else {},
         )
     except PermissionError:
         raise APIError(
             message="Permission denied accessing ledger file",
-            code="FILE_PERMISSION_ERROR",
+            code=ec.FILE_PERMISSION_ERROR,
             status_code=403,
             details={"path": ledger_path} if ledger_path else {},
         )
     except Exception as e:
         raise APIError(
             message=f"Error accessing ledger: {str(e)}",
-            code="UNKNOWN_SERVER_ERROR",
+            code=ec.UNKNOWN_SERVER_ERROR,
             status_code=500,
         )

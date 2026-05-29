@@ -22,7 +22,7 @@ from typing import AsyncIterator
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.ai.client import (
     DoneEvent,
@@ -58,7 +58,7 @@ from app.ai.tools.read_reference import ReadReferenceTool
 from app.ai.tools.write_recipe import WriteRecipeTool
 from app.helpers.response_helpers import success_json_response
 from app.core.backup_manager import BackupManager
-from app.core.beancount_manager import BeancountManager
+from app.core.ledger_manager import LedgerManager
 from app.core.config_manager import ConfigManager
 from app.core.csv_rules_manager import CsvRulesManager
 from app.core.xls_rules_manager import XlsRulesManager
@@ -168,11 +168,16 @@ class AttachedFile(BaseModel):
 
 class ChatMessage(BaseModel):
     role: str
-    content: str
+    # 1 MB per message — catches "user pasted a 10 MB CSV into the chat box"
+    # without rejecting normal long-form questions. Pydantic returns a 422.
+    content: str = Field(..., max_length=1_000_000)
 
 
 class AssistantChatRequest(BaseModel):
-    messages: list[ChatMessage]
+    # 200 turns is far beyond any realistic conversation; the cap exists to
+    # reject abusive payloads (e.g. a forged 10MB history) at the boundary
+    # instead of burning a round-trip to the LLM provider's context limit.
+    messages: list[ChatMessage] = Field(..., max_length=200)
     file: AttachedFile | None = None
     context: dict | None = None
 
@@ -183,7 +188,7 @@ def _build_registry(
     csv_rules_manager: CsvRulesManager,
     xls_rules_manager: XlsRulesManager,
     email_registry: AccountProfileRegistry,
-    beancount_manager: BeancountManager,
+    beancount_manager: LedgerManager,
     sqlite_reader: SqliteReader,
     backup_manager: BackupManager,
     file_type: str | None = None,
@@ -557,7 +562,7 @@ async def assistant_chat(
     body: AssistantChatRequest,
     request: Request,
     config_manager: ConfigManager = Depends(get_config_manager),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    beancount_manager: LedgerManager = Depends(get_beancount_manager),
     sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
     backup_manager: BackupManager = Depends(get_backup_manager),
     csv_rules_manager: CsvRulesManager = Depends(get_csv_rules_manager),

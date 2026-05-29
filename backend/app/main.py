@@ -58,13 +58,17 @@ def setup_logging(
     # Clear existing handlers
     logger.handlers.clear()
 
-    # Create formatter
+    # Create formatter and the user_id filter (injects per-request user_id
+    # from the contextvar onto every LogRecord; see app/logging_context.py)
+    from app.logging_context import UserIdLogFilter
     formatter = logging.Formatter(LOG_FORMAT)
+    user_id_filter = UserIdLogFilter()
 
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
     console_handler.setFormatter(formatter)
+    console_handler.addFilter(user_id_filter)
     logger.addHandler(console_handler)
 
     # Rotating file handler
@@ -75,6 +79,7 @@ def setup_logging(
     )
     file_handler.setLevel(log_level)
     file_handler.setFormatter(formatter)
+    file_handler.addFilter(user_id_filter)
     logger.addHandler(file_handler)
 
 
@@ -162,10 +167,6 @@ def create_app(
     app.state.root_dir = config.root_dir
     app.state.base_dir = config.root_dir
     app.state.registry = registry
-
-    # Desktop backward compat — tests and inline endpoints use app.state.services
-    if mode == AppMode.DESKTOP:
-        app.state.services = services
 
     # CORS
     app.add_middleware(

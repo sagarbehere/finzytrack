@@ -20,7 +20,7 @@ class ConfigurationError(Exception):
 
 
 # ── Non-path constants (not user-configurable) ─────────────────────────────
-LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - [user=%(user_id)s] %(message)s"
 CORS_ORIGINS = ["http://127.0.0.1:3000", "http://localhost:3000"]
 SQLITE_ENABLE_WAL = True
 

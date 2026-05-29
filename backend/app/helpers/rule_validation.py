@@ -10,6 +10,7 @@ from pydantic import BaseModel, ValidationError
 from ruamel.yaml import YAML
 
 from app.exceptions import APIError
+from app import error_codes as ec
 
 
 # ── Reference shapes for rule write failures ────────────────────────────────
@@ -141,13 +142,13 @@ def parse_yaml(content: str) -> dict:
     except Exception as e:
         raise APIError(
             message=f"YAML parse error: {e}",
-            code="YAML_PARSE_ERROR",
+            code=ec.YAML_PARSE_ERROR,
             status_code=400,
         )
     if not isinstance(data, dict):
         raise APIError(
             message="YAML content must be a mapping (key-value pairs), not a scalar or list.",
-            code="YAML_PARSE_ERROR",
+            code=ec.YAML_PARSE_ERROR,
             status_code=400,
         )
     return data
@@ -160,7 +161,7 @@ def validate_rule_schema(data: dict, schema_class: Type[BaseModel], rule_type: s
     except Exception as e:
         raise APIError(
             message=f"{rule_type} rule validation failed: {e}",
-            code="VALIDATION_ERROR",
+            code=ec.VALIDATION_ERROR,
             status_code=400,
         )
 
@@ -178,7 +179,7 @@ def resolve_rule_path(rules_dir: Path, filename: str) -> Path:
     if not target.is_relative_to(rules_dir.resolve()):
         raise APIError(
             message="Invalid filename — path traversal not allowed.",
-            code="INVALID_PATH",
+            code=ec.INVALID_PATH,
             status_code=400,
             details={"filename": filename},
         )

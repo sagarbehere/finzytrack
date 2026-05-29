@@ -13,6 +13,7 @@ from typing import Tuple, Any, Dict, List
 from beancount import loader
 
 from app.exceptions import APIError
+from app import error_codes as ec
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class MemoryPressureError(APIError):
     def __init__(self):
         super().__init__(
             message="Server memory low, please retry shortly",
-            code="MEMORY_PRESSURE",
+            code=ec.MEMORY_PRESSURE,
             status_code=503,
         )
 

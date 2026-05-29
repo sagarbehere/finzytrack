@@ -16,7 +16,7 @@ from app.schemas.transaction_delete_schemas import (
     DeleteTransactionResponse,
 )
 from app.dependencies import get_beancount_manager, get_sqlite_reader
-from app.core.beancount_manager import BeancountManager
+from app.core.ledger_manager import LedgerManager
 from app.services.sqlite_reader import SqliteReader
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
@@ -39,7 +39,7 @@ router = APIRouter()
 )
 async def update_ledger_transactions(
     request: UpdateTransactionRequest = Body(...),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    beancount_manager: LedgerManager = Depends(get_beancount_manager),
     sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
 ):
     """
@@ -210,7 +210,7 @@ def _convert_to_beancount_transaction(update_txn: UpdateTransaction) -> Transact
 )
 async def delete_ledger_transactions(
     request: DeleteTransactionRequest = Body(...),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager)
+    beancount_manager: LedgerManager = Depends(get_beancount_manager)
 ):
     """
     Delete transactions from the ledger by ID.

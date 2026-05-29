@@ -134,7 +134,14 @@ function checkIdConflict(
 }
 
 /**
- * Fetch and parse a JSON file
+ * Fetch and parse a recipe JSON file.
+ *
+ * Sanctioned `fetch()` exception per frontend/CLAUDE.md: the recipe endpoints
+ * (`/api/recipes/manifest.json`, `/api/recipes/{path}`) intentionally return
+ * raw JSON via `JSONResponse(content=...)` — not the `ApiResponse[T]` envelope —
+ * so the AI tools (`write_recipe`, etc.) and this loader read the same shape
+ * for `$gen` template processing. The generated client wraps everything in
+ * `ApiResponse[T]` and can't represent the unwrapped envelope.
  */
 async function fetchJson<T>(path: string): Promise<T> {
   const response = await fetch(path)

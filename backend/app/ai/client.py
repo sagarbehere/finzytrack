@@ -10,6 +10,8 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import os
+import time
 from dataclasses import dataclass
 from typing import AsyncIterator
 
@@ -20,7 +22,24 @@ from app.config import LLMConfig
 
 logger = logging.getLogger(__name__)
 
+# Placeholder api_key for SDK construction when the user has no real key.
+# The OpenAI/Anthropic SDK constructors require a non-empty string in
+# `api_key` even when the request goes to a local server (LM Studio, Ollama,
+# etc.) that ignores authentication entirely. Passing None or omitting the
+# arg raises at construction time. The literal value can surface in local
+# logs and upstream error messages — "local-proxy" is more self-explanatory
+# there than the old "not-needed".
+_LOCAL_PROXY_API_KEY_PLACEHOLDER = "local-proxy"
+
+
 _ANTHROPIC_MAX_TOKENS_DEFAULT = 8192
+# Process-wide "already warned" flag. The warning is a developer-facing log
+# line for "user didn't set max_tokens; defaulting to 8192" — once per process
+# is fine in desktop (one user). In hosted multi-user, this is wrong: user A's
+# warning suppresses user B's. The clean fix is to move the flag onto the
+# per-user UserServices bundle and thread it through stream_chat/complete_chat,
+# but the value (a single log line) doesn't justify the plumbing today.
+# Revisit if hosted ships and ops actually wants per-user warnings.
 _anthropic_max_tokens_warned = False
 
 
@@ -115,13 +134,25 @@ ChatEvent = ThinkingEvent | TokenEvent | ToolCallEvent | DoneEvent
 
 # ── Finzytrack AI config resolution ──────────────────────────────────────────
 
-_proxy_config_cache: dict[str, dict] = {}  # proxy_url -> config dict
+# Process-wide cache of proxy `/v1/config` responses keyed by proxy_url.
+# Process-wide is correct: the proxy is operator-controlled and shared across
+# users, so two users hitting the same proxy can safely share one fetched
+# config. TTL keeps a stale entry from outliving an operator-side config
+# rollout — without it, a max_tokens / model change at the proxy would only
+# reach a running backend after restart. Default 300s; tunable via env var.
+_PROXY_CONFIG_TTL_SECONDS: float = float(
+    os.environ.get("FINZYTRACK_AI_PROXY_CONFIG_TTL", "300")
+)
+_proxy_config_cache: dict[str, tuple[float, dict]] = {}  # proxy_url -> (fetched_at, config)
 
 
 async def _fetch_proxy_config(proxy_url: str) -> dict:
     """Fetch client settings from the Finzytrack AI proxy's /v1/config endpoint."""
-    if proxy_url in _proxy_config_cache:
-        return _proxy_config_cache[proxy_url]
+    cached = _proxy_config_cache.get(proxy_url)
+    if cached is not None:
+        fetched_at, data = cached
+        if time.time() - fetched_at < _PROXY_CONFIG_TTL_SECONDS:
+            return data
 
     url = proxy_url.rstrip("/") + "/v1/config"
     try:
@@ -129,7 +160,7 @@ async def _fetch_proxy_config(proxy_url: str) -> dict:
             resp = await client.get(url)
             resp.raise_for_status()
             data = resp.json()
-            _proxy_config_cache[proxy_url] = data
+            _proxy_config_cache[proxy_url] = (time.time(), data)
             logger.info(
                 "Finzytrack AI proxy config: model=%s temperature=%s max_tokens=%s",
                 data.get("model"), data.get("temperature"), data.get("max_tokens"),
@@ -264,7 +295,7 @@ async def _stream_openai(
     import httpx
     from openai import AsyncOpenAI
 
-    kwargs = {"api_key": config.api_key.get_secret_value() or "not-needed"}
+    kwargs = {"api_key": config.api_key.get_secret_value() or _LOCAL_PROXY_API_KEY_PLACEHOLDER}
     if config.api_url:
         # Ensure the base URL ends without a trailing /v1 (SDK appends it)
         base = config.api_url.rstrip("/")
@@ -446,7 +477,7 @@ async def _stream_anthropic(
 ) -> AsyncIterator[ChatEvent]:
     import anthropic
 
-    client_kwargs: dict = {"api_key": config.api_key.get_secret_value() or "not-needed"}
+    client_kwargs: dict = {"api_key": config.api_key.get_secret_value() or _LOCAL_PROXY_API_KEY_PLACEHOLDER}
     if config.api_url:
         client_kwargs["base_url"] = config.api_url.rstrip("/")
     client = anthropic.AsyncAnthropic(**client_kwargs)
@@ -523,7 +554,7 @@ async def _complete_openai(
 ) -> str:
     from openai import AsyncOpenAI
 
-    kwargs: dict = {"api_key": config.api_key.get_secret_value() or "not-needed"}
+    kwargs: dict = {"api_key": config.api_key.get_secret_value() or _LOCAL_PROXY_API_KEY_PLACEHOLDER}
     if config.api_url:
         base = config.api_url.rstrip("/")
         if not base.endswith("/v1"):
@@ -571,7 +602,7 @@ async def _complete_anthropic(
 ) -> str:
     import anthropic
 
-    client_kwargs: dict = {"api_key": config.api_key.get_secret_value() or "not-needed"}
+    client_kwargs: dict = {"api_key": config.api_key.get_secret_value() or _LOCAL_PROXY_API_KEY_PLACEHOLDER}
     if config.api_url:
         client_kwargs["base_url"] = config.api_url.rstrip("/")
     client = anthropic.AsyncAnthropic(**client_kwargs)

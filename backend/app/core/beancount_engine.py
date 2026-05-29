@@ -297,9 +297,10 @@ class BeancountEngine:
         not_found = transaction_ids - found_ids
         if not_found:
             from app.exceptions import APIError
+            from app import error_codes as ec
             raise APIError(
                 message=f"Transaction IDs not found: {not_found}",
-                code="TRANSACTIONS_NOT_FOUND",
+                code=ec.TRANSACTIONS_NOT_FOUND,
                 status_code=404,
                 details={"not_found_ids": list(not_found)},
             )
@@ -324,9 +325,10 @@ class BeancountEngine:
         not_found = ids_set - found_ids
         if not_found:
             from app.exceptions import APIError
+            from app import error_codes as ec
             raise APIError(
                 message=f"Transaction IDs not found: {list(not_found)}",
-                code="TRANSACTIONS_NOT_FOUND",
+                code=ec.TRANSACTIONS_NOT_FOUND,
                 status_code=404,
                 details={"not_found_ids": list(not_found)},
             )

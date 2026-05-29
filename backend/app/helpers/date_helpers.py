@@ -2,6 +2,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from app.exceptions import APIError
+from app import error_codes as ec
 
 
 def parse_date_param(date_str: str, param_name: str) -> date:
@@ -23,7 +24,7 @@ def parse_date_param(date_str: str, param_name: str) -> date:
     except ValueError:
         raise APIError(
             message=f"Invalid {param_name} format",
-            code="VALIDATION_ERROR",
+            code=ec.VALIDATION_ERROR,
             status_code=422,
             details={
                 "field": param_name,

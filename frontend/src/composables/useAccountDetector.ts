@@ -102,9 +102,9 @@ export function useAccountDetector(fileDetails: Ref<OfxFileDetails | null>) {
         selectedCurrency.value = response.data.currency || 'USD'
       }
     } catch (err) {
+      // handleApiError already routes to errorHandler.display.
       handleApiError(err)
       accountDetected.value = false
-      console.error('Account detection failed:', err)
     } finally {
       isDetecting.value = false
     }
@@ -166,9 +166,9 @@ export function useAccountDetector(fileDetails: Ref<OfxFileDetails | null>) {
         }
       }
     } catch (err) {
-      // A single catch for any failure in the process
+      // A single catch for any failure in the process — handleApiError
+      // already routes to errorHandler.display.
       handleApiError(err);
-      console.error('Learn or Create account failed:', err);
     } finally {
       isLearning.value = false;
     }

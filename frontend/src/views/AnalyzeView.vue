@@ -330,7 +330,7 @@
   import { generateQuery, type QueryLanguage } from '@/services/sqlAssistant'
   import { LedgerService, ApiError } from '@/services/generated-api'
   import type { QueryRequest } from '@/services/generated-api'
-  import { useToast } from '@/composables/useNotifications'
+  import { errorHandler } from '@/utils/ErrorHandler'
   import { useConfig } from '@/composables/useConfig'
   import { useShortcutLabel } from '@/composables/useShortcutLabel'
 
@@ -341,7 +341,6 @@
   // type maps onto an x/y column selection.)
   import type { EChartsOption } from 'echarts'
 
-  const toast = useToast()
   const { config } = useConfig()
 
   // --- Language mode ---
@@ -524,9 +523,11 @@
       const query = await generateQuery(nlQuery.value.trim(), queryLanguage.value)
       queryText.value = query
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Failed to generate query'
-      errorMessage.value = msg
-      toast.error('Generation Failed', msg)
+      // ApiError flows untouched through generateQuery — route it to the
+      // notification panel via the standard handler; inline ref shows a
+      // generic pointer per frontend/CLAUDE.md error-handling rules.
+      errorHandler.display(e)
+      errorMessage.value = 'Failed to generate query — see notification panel for details.'
     } finally {
       isGenerating.value = false
     }

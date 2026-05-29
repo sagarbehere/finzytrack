@@ -15,12 +15,11 @@ const defaultErrorMappings: ErrorHandlerOptions = {
   // User-facing, recoverable errors (Toast)
   VALIDATION_ERROR: 'Toast',
   RESOURCE_CONFLICT: 'Toast',
-  ACCOUNT_CREATION_NEEDED: 'Toast',
 
   // System or file-related issues (Modal for user attention)
   FILE_NOT_FOUND: 'Modal',
   FILE_PERMISSION_ERROR: 'Modal',
-  FILE_SYNTAX_ERROR: 'Modal',
+  FILE_PARSE_ERROR: 'Modal',
   CONFIG_SAVE_ERROR: 'Modal',
   RESOURCE_NOT_FOUND: 'Modal',
 

@@ -8,7 +8,7 @@ from ruamel.yaml import YAML
 
 from app.config import OFXAccountMapping
 from app.core.backup_manager import BackupManager
-from app.core.beancount_manager import BeancountManager
+from app.core.ledger_manager import LedgerManager
 from app.core.config_manager import ConfigManager
 from app.exceptions import APIError
 from app.dependencies import get_backup_manager, get_config_manager, get_beancount_manager, get_sqlite_reader
@@ -83,7 +83,7 @@ async def learn_ofx_account(
     request: LearnOFXAccountRequest,
     config_manager: ConfigManager = Depends(get_config_manager),
     sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    beancount_manager: LedgerManager = Depends(get_beancount_manager),
 ):
     config = config_manager.get_config()
     if not beancount_manager.validate_account_format(request.beancount_account):

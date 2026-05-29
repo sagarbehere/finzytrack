@@ -9,6 +9,7 @@ import logging
 from app.config import Config, OFXAccountMapping
 from app.core.backup_manager import BackupManager
 from app.exceptions import APIError
+from app import error_codes as ec
 
 if TYPE_CHECKING:
     from app.core.ledger_manager import LedgerManager
@@ -189,42 +190,10 @@ class ConfigManager:
         assert self._ledger_manager is not None
         assert self._sqlite_exporter is not None
 
-        ledger_path = Path(new_ledger_file)
-        notice: Optional[str] = None
-
-        # If file doesn't exist, try to create a new ledger
-        if not ledger_path.exists():
-            # Point the initializer at the new path and attempt creation
-            self._ledger_manager.ledger_initializer.ledger_file = new_ledger_file
-            created = self._ledger_manager.ledger_initializer.ensure_ledger_exists()
-            if not created:
-                raise APIError(
-                    f"Ledger file does not exist and could not be created: {new_ledger_file}",
-                    code="LEDGER_CREATE_FAILED",
-                    status_code=400,
-                    details={"path": new_ledger_file},
-                )
-            notice = f"Ledger file did not exist — a new ledger was created at {new_ledger_file}"
-            logger.info(notice)
-
-        if not ledger_path.is_file():
-            raise APIError(
-                f"Ledger path is not a file: {new_ledger_file}",
-                code="LEDGER_INVALID",
-                status_code=400,
-                details={"path": new_ledger_file},
-            )
-
-        if not os.access(ledger_path, os.R_OK):
-            raise APIError(
-                f"Ledger file is not readable: {new_ledger_file}",
-                code="LEDGER_NOT_READABLE",
-                status_code=400,
-                details={"path": new_ledger_file},
-            )
-
-        # Switch the beancount manager (cache, initializer, etc.)
-        self._ledger_manager.switch_ledger(new_ledger_file)
+        # Switch the ledger manager — handles create-if-missing, validates
+        # the path, and rolls back its own state on failure. The returned
+        # notice (if any) describes a template-created file for the user.
+        notice = self._ledger_manager.switch_ledger(new_ledger_file, create_if_missing=True)
 
         # Parse the new ledger and rebuild the SQLite mirror against it. The
         # new file may be older than the existing SQLite DB, so a full
@@ -237,7 +206,7 @@ class ConfigManager:
             logger.error(f"Failed to parse new ledger after switch: {e}", exc_info=True)
             raise APIError(
                 f"Ledger file could not be parsed: {e}",
-                code="LEDGER_PARSE_ERROR",
+                code=ec.LEDGER_PARSE_ERROR,
                 status_code=400,
                 details={"path": new_ledger_file, "error": str(e)},
             )

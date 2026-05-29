@@ -4,6 +4,7 @@ from typing import List, Optional
 
 from ruamel.yaml import YAML
 
+from app.helpers.path_guard import guard_path
 from app.schemas.csv_schemas import CsvRule, CsvRuleSummary, InvalidRuleSummary
 
 logger = logging.getLogger(__name__)
@@ -44,10 +45,11 @@ class CsvRulesManager:
         if not self._rules_dir:
             raise FileNotFoundError("No CSV rules directory configured")
 
-        # Path traversal protection
-        resolved = (self._rules_dir / filename).resolve()
-        if not resolved.is_relative_to(self._rules_dir.resolve()):
-            raise ValueError(f"Invalid filename: {filename}")
+        # Canonical path-traversal guard — raises APIError(INVALID_PATH, 403)
+        # on escape, matching every other path-guarded endpoint.
+        resolved = guard_path(
+            self._rules_dir / filename, self._rules_dir, context="CSV rule filename"
+        )
 
         if not resolved.is_file():
             raise FileNotFoundError(f"CSV rule file not found: {filename}")

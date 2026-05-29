@@ -14,6 +14,7 @@ from fastapi import Request
 
 from app.app_mode import AppMode, UserContext
 from app.exceptions import APIError
+from app.logging_context import set_user_id
 from app import error_codes as ec
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,10 @@ async def get_user_context(request: Request) -> UserContext:
     mode: AppMode = request.app.state.mode
 
     if mode == AppMode.DESKTOP:
+        # Tag every log line in this request's task with the user id.
+        # asyncio scopes the contextvar per task, so concurrent requests
+        # don't leak into each other's context.
+        set_user_id("local")
         return UserContext(
             user_id="local",
             root_dir=request.app.state.root_dir,
@@ -47,6 +52,7 @@ async def get_user_context(request: Request) -> UserContext:
             status_code=400,
         )
 
+    set_user_id(user_id)
     return UserContext(
         user_id=user_id,
         root_dir=request.app.state.base_dir / "users" / user_id,

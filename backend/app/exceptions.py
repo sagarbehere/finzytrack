@@ -4,6 +4,8 @@ Simple API exceptions for Finzytrack.
 
 from typing import Dict, Any, Optional
 
+from app import error_codes as ec
+
 
 class APIError(Exception):
     """
@@ -28,18 +30,22 @@ class APIError(Exception):
 
 
 def convert_stdlib_exception(exc: Exception) -> APIError:
-    """Convert standard Python exceptions to APIError."""
+    """Convert standard Python exceptions to APIError.
+
+    KeyError is intentionally NOT mapped to VALIDATION_ERROR — a KeyError
+    inside service code is almost always a bug (a dict lookup expected a key
+    that wasn't there), not a user-input problem. Falling through to
+    UNKNOWN_SERVER_ERROR / 500 gives the user an honest 'server bug' rather
+    than a misleading 400 that implies they sent bad input.
+    """
     if isinstance(exc, APIError):
         return exc
-    
-    # Map common exceptions to appropriate HTTP status codes and generic codes
+
     if isinstance(exc, FileNotFoundError):
-        return APIError(f"File not found: {exc.filename}", code="FILE_NOT_FOUND", status_code=404, details={"path": str(exc.filename)})
+        return APIError(f"File not found: {exc.filename}", code=ec.FILE_NOT_FOUND, status_code=404, details={"path": str(exc.filename)})
     elif isinstance(exc, PermissionError):
-        return APIError("Permission denied", code="FILE_PERMISSION_ERROR", status_code=403, details={"error": str(exc)})
+        return APIError("Permission denied", code=ec.FILE_PERMISSION_ERROR, status_code=403, details={"error": str(exc)})
     elif isinstance(exc, ValueError):
-        return APIError(f"Invalid value: {str(exc)}", code="VALIDATION_ERROR", status_code=400)
-    elif isinstance(exc, KeyError):
-        return APIError(f"Missing required field: {str(exc)}", code="VALIDATION_ERROR", status_code=400)
+        return APIError(f"Invalid value: {str(exc)}", code=ec.VALIDATION_ERROR, status_code=400)
     else:
-        return APIError("Internal server error", code="UNKNOWN_SERVER_ERROR", status_code=500, details={"error": str(exc)})
+        return APIError("Internal server error", code=ec.UNKNOWN_SERVER_ERROR, status_code=500, details={"error": str(exc)})

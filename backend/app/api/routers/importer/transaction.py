@@ -9,7 +9,7 @@ from beancount.parser import parser
 
 from app.config import CategorizationEngine
 from app.core.config_manager import ConfigManager
-from app.core.beancount_manager import BeancountManager
+from app.core.ledger_manager import LedgerManager
 from app.services.sqlite_reader import SqliteReader
 from app.dependencies import get_config_manager, get_beancount_manager, get_sqlite_reader
 from app.exceptions import APIError
@@ -39,7 +39,7 @@ async def categorize_transactions(
     request: CategorizeRequest,
     config_manager: ConfigManager = Depends(get_config_manager),
     sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    beancount_manager: LedgerManager = Depends(get_beancount_manager),
 ):
     """
     Categorize transactions and detect potential duplicates.
@@ -212,7 +212,7 @@ async def commit_transactions(
     request: CommitRequest,
     config_manager: ConfigManager = Depends(get_config_manager),
     sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
-    beancount_manager: BeancountManager = Depends(get_beancount_manager),
+    beancount_manager: LedgerManager = Depends(get_beancount_manager),
 ):
     """
     Commit transactions to the Beancount ledger.

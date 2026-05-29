@@ -33,7 +33,7 @@ All writes to the Beancount ledger file **must** go through `LedgerManager._writ
 
 **Exception — initial ledger creation:** `LedgerInitializer.ensure_ledger_exists()` may call `BackupManager.atomic_write()` directly to materialize a brand-new ledger from a template, but only when the ledger file does not yet exist. The template is human-authored raw text containing comments (`;; ...`) that are not Beancount entries and would be discarded if round-tripped through `format_entries()`. There are no entries to filter, so the padding-flag invariant is trivially satisfied. This is the only sanctioned bypass.
 
-**Reference:** `app/core/ledger_manager.py` — `_write_entries()`, `_do_write_entries()`, `append_entries()`; `app/core/beancount_engine.py` — `format_entries()` (padding filter). `app/core/beancount_manager.py` is a backwards-compat shim re-exporting `LedgerManager` as `BeancountManager`; new code should import `LedgerManager` directly.
+**Reference:** `app/core/ledger_manager.py` — `_write_entries()`, `_do_write_entries()`, `append_entries()`; `app/core/beancount_engine.py` — `format_entries()` (padding filter).
 
 ## Config Conventions
 

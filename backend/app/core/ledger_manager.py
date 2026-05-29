@@ -23,6 +23,8 @@ from beancount.core.data import Transaction, Posting
 from app.core.backup_manager import BackupManager
 from app.core.beancount_engine import BeancountEngine
 from app.core.ledger_loader import load_ledger_checked
+from app.exceptions import APIError
+from app import error_codes as ec
 from app.write_lock import WriteLockManager
 from .ledger_initializer import LedgerInitializer
 from app.schemas.account_schemas import (
@@ -56,10 +58,63 @@ class LedgerManager:
         """Set the SQLite exporter for synchronous exports after writes."""
         self._sqlite_exporter = exporter
 
-    def switch_ledger(self, new_ledger_file: str) -> None:
+    def switch_ledger(self, new_ledger_file: str, *, create_if_missing: bool = False) -> Optional[str]:
+        """Point the manager (and its initializer) at a new ledger file.
+
+        Steps, in order: point the initializer at the new path, optionally
+        materialise a new file from template, validate that the path is a
+        readable regular file, then commit the switch by updating
+        ``self.ledger_file``. If any step fails, the initializer's path is
+        rolled back so it stays consistent with the still-active ledger.
+
+        Returns a user-facing notice when a new file was created from the
+        template, otherwise ``None``.
+
+        This is the single writer to ``ledger_initializer.ledger_file``; the
+        ``ConfigManager`` hot-switch flow goes through here instead of
+        reaching into the initializer directly.
+        """
         logger.info(f"Switching ledger file: {self.ledger_file} → {new_ledger_file}")
-        self.ledger_file = new_ledger_file
+        previous_initializer_path = self.ledger_initializer.ledger_file
         self.ledger_initializer.ledger_file = new_ledger_file
+
+        try:
+            notice: Optional[str] = None
+            if create_if_missing and not os.path.exists(new_ledger_file):
+                created = self.ledger_initializer.ensure_ledger_exists()
+                if not created:
+                    raise APIError(
+                        f"Ledger file does not exist and could not be created: {new_ledger_file}",
+                        code=ec.LEDGER_CREATE_FAILED,
+                        status_code=400,
+                        details={"path": new_ledger_file},
+                    )
+                notice = f"Ledger file did not exist — a new ledger was created at {new_ledger_file}"
+                logger.info(notice)
+
+            if not os.path.isfile(new_ledger_file):
+                raise APIError(
+                    f"Ledger path is not a file: {new_ledger_file}",
+                    code=ec.LEDGER_INVALID,
+                    status_code=400,
+                    details={"path": new_ledger_file},
+                )
+
+            if not os.access(new_ledger_file, os.R_OK):
+                raise APIError(
+                    f"Ledger file is not readable: {new_ledger_file}",
+                    code=ec.LEDGER_NOT_READABLE,
+                    status_code=400,
+                    details={"path": new_ledger_file},
+                )
+
+            self.ledger_file = new_ledger_file
+            return notice
+        except Exception:
+            # Roll back the initializer so it stays consistent with the
+            # still-active ledger_file we never moved to.
+            self.ledger_initializer.ledger_file = previous_initializer_path
+            raise
 
     # ── Transient parse ─────────────────────────────────────────────────────
 

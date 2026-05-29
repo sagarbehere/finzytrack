@@ -114,6 +114,7 @@ import { useTransactionUpdater } from '@/composables/useTransactionUpdater'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useLedgerHealth } from '@/composables/useLedgerHealth'
 import { useToast } from '@/composables/useNotifications'
+import { errorHandler } from '@/utils/ErrorHandler'
 
 const route = useRoute()
 
@@ -203,12 +204,10 @@ async function handleFilterChanged(filters: TransactionFilters, limit: number) {
         }
       })
     }
-  } catch (error: any) {
-    console.error('Failed to query transactions:', error)
-    toast.error(
-      'Query Failed',
-      error.message || 'Failed to query transactions. Please try again.'
-    )
+  } catch (error: unknown) {
+    // ApiError flows untouched through queryTransactions — route it through
+    // the canonical handler (see frontend/CLAUDE.md error rules).
+    errorHandler.display(error)
   } finally {
     isQuerying.value = false
   }
@@ -261,12 +260,10 @@ async function handleSaveChanges() {
       // Check for ledger errors introduced by the edit
       checkLedgerErrors()
     }
-  } catch (error: any) {
-    console.error('Failed to save changes:', error)
-    toast.error(
-      'Save Failed',
-      error.message || 'Failed to save changes. Please try again.'
-    )
+  } catch (error: unknown) {
+    // ApiError flows untouched — canonical handler routes to the
+    // notification panel based on error code.
+    errorHandler.display(error)
   } finally {
     isSaving.value = false
   }

@@ -43,6 +43,7 @@ All backend API calls MUST use the generated client in `src/services/generated-a
 - **Never use `fetch()` for backend API calls** except:
   1. **SSE streaming endpoints** — generated client can't handle `text/event-stream`; use `fetch()` + `ReadableStream`
   2. **External APIs** — user-configured services (e.g. LLM endpoints)
+  3. **Recipe endpoints** (`/api/recipes/...`) — they intentionally return raw JSON via `JSONResponse(content=...)`, not the `ApiResponse[T]` envelope, because AI tools (`write_recipe`, etc.) read recipes as raw JSON for `$gen` template processing. The frontend loader reads the same shape. Generated client can't represent the unwrapped envelope; `useRecipeLoader.ts`'s `fetchJson` helper is the sanctioned reader.
 - Type checking: `npx vue-tsc --noEmit`
 - API codegen: `npm run generate-api` (backend must be running with latest code)
 
@@ -53,3 +54,13 @@ All backend API calls MUST use the generated client in `src/services/generated-a
 - **Do NOT** manually parse `ApiError.body` to extract messages — `errorHandler.display()` does this
 - **Do NOT** use only `console.error()` for API failures — always call `errorHandler.display()`
 - **Client-side errors** (file parsing, pre-API validation): Set local error ref for inline display only — these aren't `ApiError` instances
+
+## Composable Lifetimes (MANDATORY)
+
+Two intentional shapes; pick by where the state belongs:
+
+- **Module-level singleton state** — `const someRef = ref(...)` declared *outside* the exported `useX()` function. Use this for genuinely global, cross-view state: app theme, notifications, auth/user context, ledger health, loaded recipes/dashboards, in-memory caches for accounts/commodities/years that every view shares. Singletons survive route changes and are the right home for state that would otherwise re-fetch per view.
+  - Current singletons: `useAccounts`, `useCommodities`, `useConfig`, `useTheme`, `useNotifications`, `useLedgerHealth`, `useDashboardTabs`, `useRecipeLoader`, `useAccountsTree`, `useAvailableYears`.
+- **Function-scoped state** — `ref(...)` declared *inside* the exported `useX()` function. Use this for view-local state: a transactions filter, a CSV importer's parse buffer, a form's draft. Each call site gets a fresh copy.
+
+Do not introduce Pinia for state of this size — the module-singleton pattern provides the same shape with no extra dependency. If a composable's state truly belongs to one view, keep it function-scoped; promoting it to a singleton silently leaks state across views.
