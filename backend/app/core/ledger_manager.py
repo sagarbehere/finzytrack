@@ -1,5 +1,5 @@
 """
-LedgerManager — thin orchestrator that delegates pure ledger logic to a LedgerEngine.
+LedgerManager — thin orchestrator that delegates pure ledger logic to BeancountEngine.
 
 Responsibilities:
 - File I/O (atomic writes with backup)

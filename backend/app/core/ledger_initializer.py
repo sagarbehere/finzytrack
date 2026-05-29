@@ -56,27 +56,25 @@ class LedgerInitializer:
 ;; Your transactions will appear below this line
 '''
     
-    def _load_template_from_path(self, template_path: str) -> str:
-        """Load template content from a custom file path (for future extensibility)."""
-        try:
-            with open(template_path, 'r', encoding='utf-8') as f:
-                return f.read()
-        except (FileNotFoundError, PermissionError, UnicodeDecodeError) as e:
-            logger.error(f"Failed to load custom template from {template_path}: {e}")
-            raise
-    
     def ensure_ledger_exists(self) -> bool:
-        """Ensure ledger file exists, create if missing using atomic_write."""
+        """Ensure ledger file exists, create if missing using atomic_write.
+
+        This is the sanctioned exception to the "all writes go through
+        LedgerManager._write_entries()" rule documented in backend/CLAUDE.md.
+        The template is human-authored raw text with comments that would be
+        lost if round-tripped through Beancount's printer, and there are no
+        entries to filter — so the padding-flag invariant is trivial.
+        """
         if os.path.exists(self.ledger_file):
             return True
-        
+
         if not self.backup_manager:
             raise ValueError("BackupManager is not configured on LedgerInitializer")
 
         try:
             logger.info(f"Ledger file not found. Creating a new one at {self.ledger_file}")
             initial_content = self.get_initial_content()
-            
+
             # atomic_write will yield an empty, writable file handle
             with self.backup_manager.atomic_write(self.ledger_file) as f:
                 f.write(initial_content)

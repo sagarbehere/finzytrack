@@ -175,17 +175,11 @@ async def complete_setup(
     updated_config = config_manager.get_config()
 
     # Initialize ledger services that were skipped at startup because
-    # setup_complete was false.  The managers already exist in
-    # app.state.services — they just haven't parsed/exported yet.
+    # setup_complete was false. Delegate to startup_user_services so the
+    # post-setup and cold-start paths stay in sync (single load + export).
     try:
-        from beancount import loader
-        entries, errors, options = loader.load_file(
-            services.ledger_manager.ledger_file
-        )
-        logger.info(f"Ledger loaded after setup: {len(entries)} entries")
-
-        await services.sqlite_exporter.export_full(entries, errors, options)
-        logger.info("SQLite full-exported after setup completion")
+        from app.service_factory import startup_user_services
+        await startup_user_services(services, updated_config)
     except Exception as e:
         logger.error(f"Post-setup initialization failed: {e}", exc_info=True)
         # Don't fail the wizard — config is saved, ledger exists.

@@ -6,6 +6,15 @@
         <p class="mt-1 text-gray-600 dark:text-gray-400">
           Run {{ queryLanguage === 'sqlite' ? 'SQL' : 'BQL' }} queries against your financial data
         </p>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-500">
+          <template v-if="queryLanguage === 'sqlite'">
+            Standard SQL over a flat, indexed view of your ledger. Fast for aggregates, time series, and joins.
+          </template>
+          <template v-else>
+            Beancount's native query language. Cost- and position-aware for balances and portfolios.
+          </template>
+          <a href="https://docs.finzytrack.com/reference/querying-data/" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">Compare SQL and BQL</a>
+        </p>
       </div>
 
       <!-- Language Toggle -->
@@ -344,7 +353,7 @@
 
   const queryPlaceholder = computed(() =>
     queryLanguage.value === 'sqlite'
-      ? 'SELECT account, SUM(amount) as total FROM postings WHERE account_type = \'Expenses\' GROUP BY account ORDER BY total DESC LIMIT 10'
+      ? 'SELECT account, SUM(CAST(amount AS REAL)) as total FROM postings WHERE account_type = \'Expenses\' GROUP BY account ORDER BY total DESC LIMIT 10'
       : 'SELECT account, COST(SUM(position)) AS total WHERE account ~ \'Expenses\' GROUP BY 1 ORDER BY 2 DESC LIMIT 10'
   )
 

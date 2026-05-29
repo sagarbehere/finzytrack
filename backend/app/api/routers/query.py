@@ -13,7 +13,7 @@ from fastapi.responses import PlainTextResponse
 
 from app.schemas.response_schemas import ApiResponse
 from app.schemas.query_schemas import QueryRequest, QueryData
-from app.dependencies import get_config_manager, get_sqlite_reader
+from app.dependencies import get_config_manager, get_sqlite_reader, get_sqlite_exporter
 from app.services.sqlite_exporter import SQLiteExporter
 from app.services.beanquery_service import BeanqueryService
 from app.services.sqlite_reader import SqliteReader
@@ -36,13 +36,35 @@ async def execute_query(
     request: QueryRequest = Body(...),
     db_type: Optional[str] = Query(
         None,
-        description="Database/engine type: 'sqlite' or 'beanquery'. Defaults to 'sqlite'."
+        description=(
+            "Query engine: 'sqlite' (default) or 'beanquery'. "
+            "SQLite is fast and indexed but reads `amount` as raw units — "
+            "`SUM(CAST(amount AS REAL))` over investment postings gives unit totals, "
+            "not market value or cost basis. "
+            "Beanquery is cost/position-aware (knows lots, costs, hierarchical accounts) "
+            "but re-parses the ledger on every query."
+        )
     ),
     sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
     config_manager: ConfigManager = Depends(get_config_manager),
+    exporter: SQLiteExporter = Depends(get_sqlite_exporter),
 ):
     """
     Execute a query against the specified database engine.
+
+    Both engines reflect the current ledger state at request time
+    (SQLite via stale-mirror recovery in SqliteReader; beanquery via
+    transient parse), so the difference between them is *semantic*,
+    not freshness.
+
+    When to pick which:
+    - **sqlite** — fast, indexed, joinable. Best for time-series aggregates,
+      payee/category roll-ups, dashboard widgets. Reads `amount` as raw
+      units; aggregates over investment postings give unit totals, not
+      market value. No cost-basis or lot folding.
+    - **beanquery** — Beancount-native, cost/position-aware. Best for
+      portfolio queries, balance lookups by account, lot inspection.
+      Slower because every query re-parses the ledger.
 
     Examples:
         POST /api/ledger/query {"query": "SELECT * FROM postings LIMIT 10"}
@@ -114,9 +136,6 @@ async def execute_query(
                 )
 
     else:  # sqlite
-        config = config_manager.get_config()
-        exporter = SQLiteExporter(sqlite_path=config.sqlite_export_path)
-
         status = await exporter.get_status()
         if not status["exists"]:
             raise APIError(

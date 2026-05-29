@@ -1,8 +1,6 @@
 """
-LedgerEngine contract tests — written from the protocol specification, not
-the implementation. Any LedgerEngine must pass these tests.
-
-Parameterized by engine implementation so future engines can be plugged in.
+BeancountEngine behaviour tests — written against the engine's documented
+contract (parse / format / CRUD on entries), not its internal mechanics.
 """
 
 import pytest
@@ -17,12 +15,10 @@ from decimal import Decimal
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 
 
-@pytest.fixture(params=["beancount"])
-def engine(request):
-    if request.param == "beancount":
-        from app.core.beancount_engine import BeancountEngine
-        return BeancountEngine()
-    raise ValueError(f"Unknown engine: {request.param}")
+@pytest.fixture
+def engine():
+    from app.core.beancount_engine import BeancountEngine
+    return BeancountEngine()
 
 
 @pytest.fixture

@@ -103,8 +103,8 @@ class BackupManager:
         - If an error occurs, the temporary file is discarded, leaving the original untouched.
         """
         file_path = Path(file_path_str)
-        temp_file_handle = None
         temp_path = None
+        success = False
 
         try:
             if file_path.exists():
@@ -118,7 +118,6 @@ class BackupManager:
                 shutil.copy(file_path, temp_path)
 
             with open(temp_path, 'r+', encoding=encoding) as f:
-                temp_file_handle = f
                 f.seek(0)
                 yield f
                 # Flush Python's buffer, then push the kernel page cache to
@@ -131,15 +130,15 @@ class BackupManager:
             # The rename swap is now visible; flush the directory entry so
             # the swap itself survives a crash.
             self._fsync_dir(file_path.parent)
+            success = True
             logger.info(f"Successfully wrote to {file_path}")
-            temp_file_handle = None
 
         except Exception:
             logger.error(f"Atomic write to {file_path} failed. Original file is safe.", exc_info=True)
             raise
         finally:
-            if temp_file_handle is not None and temp_path is not None:
+            if success:
+                self._cleanup_old_backups(file_path.name)
+            elif temp_path is not None:
                 logger.warning(f"An error occurred during write operation. Cleaning up temporary file {temp_path}")
                 temp_path.unlink(missing_ok=True)
-            elif temp_path is not None and not temp_path.exists():
-                 self._cleanup_old_backups(file_path.name)

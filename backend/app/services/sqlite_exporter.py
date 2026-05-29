@@ -489,9 +489,10 @@ class SQLiteExporter:
 
         posting_id = 0
         rows = []
+        fallback_ids = self._compute_fallback_id_map(transactions)
 
         for txn_index, txn in enumerate(transactions):
-            transaction_id = self._get_transaction_id(txn, txn_index)
+            transaction_id = self._get_transaction_id(txn, fallback_ids.get(txn_index))
             transaction_content_hash = self._get_content_hash(txn)
             transaction_tags = self._serialize_array(self._extract_tags(txn))
             transaction_links = self._serialize_array(self._extract_links(txn))
@@ -1182,8 +1183,9 @@ class SQLiteExporter:
         Compute the source account for a posting based on the rules:
         1. If 'source_account' metadata exists on transaction, use that
         2. If only 2 postings, use the other posting's account
-        3. If multiple postings but only one is Assets/Liabilities, use that
-        4. Otherwise, pick the first Assets/Liabilities account (excluding current posting)
+        3. Otherwise, pick the first Assets/Liabilities account other than
+           the current posting (parse order — for transfer-with-fee patterns
+           this picks the origin leg the user wrote first)
         """
         # Rule 1: Check for explicit source_account metadata
         if txn.meta and 'source_account' in txn.meta:
@@ -1198,19 +1200,10 @@ class SQLiteExporter:
             source_acc = other_postings[0].account
             return source_acc, SQLiteExporter._get_account_type(source_acc)
 
-        # Rule 3 & 4: Find Assets/Liabilities accounts
-        asset_liability_postings = [
-            p for p in other_postings
-            if SQLiteExporter._get_account_type(p.account) in SOURCE_ACCOUNT_TYPES
-        ]
-
-        if len(asset_liability_postings) == 1:
-            source_acc = asset_liability_postings[0].account
-            return source_acc, SQLiteExporter._get_account_type(source_acc)
-        elif len(asset_liability_postings) > 1:
-            # Pick the first one
-            source_acc = asset_liability_postings[0].account
-            return source_acc, SQLiteExporter._get_account_type(source_acc)
+        # Rule 3: First Assets/Liabilities account among the others
+        for p in other_postings:
+            if SQLiteExporter._get_account_type(p.account) in SOURCE_ACCOUNT_TYPES:
+                return p.account, SQLiteExporter._get_account_type(p.account)
 
         # No clear source account found
         return None, None
@@ -1257,26 +1250,57 @@ class SQLiteExporter:
         return json.dumps(clean_meta)
 
     @staticmethod
-    def _get_transaction_id(txn: Transaction, txn_index: int) -> str:
+    def _get_transaction_id(txn: Transaction, fallback_id: Optional[str]) -> str:
         """
         Get transaction ID from metadata.
 
         Priority:
         1. Use 'id' field (new UUIDv7 system)
         2. Fallback to 'transaction_id' (old system, for migration)
-        3. Generate from date-index (legacy fallback)
+        3. Caller-supplied fallback (content_hash-based, see
+           _compute_fallback_id_map). Used for legacy un-IDed transactions
+           imported from hand-edited ledgers.
         """
         if txn.meta:
-            # New system
             if 'id' in txn.meta:
                 return str(txn.meta['id'])
-
-            # Old system (migration support)
             if 'transaction_id' in txn.meta:
                 return str(txn.meta['transaction_id'])
 
-        # Legacy fallback
-        return f"{txn.date.isoformat()}-{txn_index}"
+        # fallback_id is always populated by _compute_fallback_id_map for
+        # transactions without meta IDs; the Optional type is for the
+        # narrow case where a caller hasn't built the map.
+        return fallback_id or ""
+
+    @staticmethod
+    def _compute_fallback_id_map(transactions: List[Transaction]) -> Dict[int, str]:
+        """Build stable fallback IDs for transactions without 'id'/'transaction_id' meta.
+
+        Returns {txn_index: fallback_id}. The fallback is the transaction's
+        content_hash (date + payee + narration + source_account + amount).
+        Two transactions with identical content (e.g. milk bought twice on
+        the same day, same payee, same amount, no narration) get distinct
+        IDs by appending a within-duplicate ordinal: `<hash>`, `<hash>-1`,
+        `<hash>-2`. Beancount preserves source order within a date, so the
+        ordinal is stable across re-exports as long as the user does not
+        manually reorder duplicate lines in the ledger file.
+
+        Transactions that already carry 'id' or 'transaction_id' meta are
+        omitted from the map.
+        """
+        from app.core.beancount_engine import BeancountEngine
+        engine = BeancountEngine()
+
+        seen: Dict[str, int] = {}
+        out: Dict[int, str] = {}
+        for i, txn in enumerate(transactions):
+            if txn.meta and ('id' in txn.meta or 'transaction_id' in txn.meta):
+                continue
+            _src, content_hash = engine.compute_hash_from_transaction(txn)
+            n = seen.get(content_hash, 0)
+            out[i] = content_hash if n == 0 else f"{content_hash}-{n}"
+            seen[content_hash] = n + 1
+        return out
 
     @staticmethod
     def _get_content_hash(txn: Transaction) -> Optional[str]:

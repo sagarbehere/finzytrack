@@ -1,8 +1,9 @@
 """
-BeancountEngine — Beancount-specific implementation of the LedgerEngine protocol.
+BeancountEngine — pure in-memory ledger operations on Beancount entries.
 
 All methods are pure: they take in-memory data and return in-memory data.
-No file I/O, no caching, no side effects.
+No file I/O, no caching, no side effects. File I/O and write atomicity
+live in LedgerManager.
 """
 
 import re
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 class BeancountEngine:
-    """Beancount implementation of the LedgerEngine protocol."""
+    """Pure in-memory operations on Beancount entries."""
 
     # --- Parsing and serialization ---
 

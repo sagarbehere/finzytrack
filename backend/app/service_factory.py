@@ -173,8 +173,8 @@ async def startup_user_services(services: UserServices, config: Config) -> None:
             # the exporter) is what gets built. The ledger is the source of
             # truth; the DB is a materialised view rebuilt below.
             Path(config.sqlite_export_path).unlink(missing_ok=True)
-            from beancount import loader
-            entries, errors, options = loader.load_file(config.ledger_file)
+            from app.core.ledger_loader import load_ledger_checked
+            entries, errors, options = load_ledger_checked(config.ledger_file)
             await services.sqlite_exporter.export_full(entries, errors, options)
             logger.info("SQLite full-exported on startup")
         except Exception as e:
