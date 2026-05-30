@@ -256,10 +256,34 @@ def main():
     # tabular real estate as possible.
     window.events.shown += lambda: window.maximize()
 
-    if not args.debug:
-        def on_loaded():
+    # Browser-like zoom shortcuts (Ctrl/Cmd +/-/0) — pywebview has no built-in
+    # zoom UI, so we drive document.body.style.zoom from JS and persist the
+    # level in localStorage so it survives restarts.
+    zoom_js = """
+    (function () {
+      const KEY = 'finzytrack:zoom';
+      const apply = (z) => { document.body.style.zoom = z; };
+      let zoom = parseFloat(localStorage.getItem(KEY)) || 1.0;
+      apply(zoom);
+      const set = (z) => {
+        zoom = Math.min(3.0, Math.max(0.5, Math.round(z * 100) / 100));
+        localStorage.setItem(KEY, zoom);
+        apply(zoom);
+      };
+      window.addEventListener('keydown', (e) => {
+        if (!(e.ctrlKey || e.metaKey)) return;
+        if (e.key === '=' || e.key === '+') { set(zoom + 0.1); e.preventDefault(); }
+        else if (e.key === '-')             { set(zoom - 0.1); e.preventDefault(); }
+        else if (e.key === '0')             { set(1.0);        e.preventDefault(); }
+      });
+    })();
+    """
+
+    def on_loaded():
+        window.evaluate_js(zoom_js)
+        if not args.debug:
             window.evaluate_js("document.addEventListener('contextmenu', e => e.preventDefault())")
-        window.events.loaded += on_loaded
+    window.events.loaded += on_loaded
 
     # On Linux, pywebview tries Qt first and falls back to GTK with a noisy
     # traceback. Force GTK so the log stays clean. macOS/Windows have their
