@@ -47,6 +47,25 @@ def clean():
             shutil.rmtree(d)
 
 
+def ensure_icons():
+    """Generate platform icon assets from master.svg if any are missing.
+
+    The platform icon directories under assets/icons/ are gitignored — only the
+    SVG source and generator are tracked. A fresh clone has no PNG/ICO/ICNS
+    files, so the later packaging steps would fail without this.
+    """
+    required = {
+        'Darwin': ICONS_DIR / 'macos' / 'AppIcon.iconset' / 'icon_512x512.png',
+        'Linux': ICONS_DIR / 'linux' / '256x256' / 'finzytrack.png',
+        'Windows': ICONS_DIR / 'windows' / 'app.ico',
+    }
+    probe = required.get(platform.system())
+    if probe is None or probe.exists():
+        return
+    print(f'==> Platform icons missing ({probe}). Generating from master.svg...')
+    run([sys.executable, 'generate.py'], cwd=str(ICONS_DIR))
+
+
 def sync_ai_resources():
     """Copy AI reference / schema files from frontend/ into backend/resources/.
 
@@ -149,7 +168,7 @@ def package_linux():
     run([str(appimagetool), str(appdir), str(DIST_DIR / appimage_name)], env=env)
 
     print(f'\n==> Done. AppImage: {DIST_DIR / appimage_name}')
-    print(f'    To run: chmod +x dist/{appimage_name} && ./dist/{appimage_name}')
+    print(f'    To run: ./dist/{appimage_name}')
 
 
 def package_windows():
@@ -178,6 +197,8 @@ def main():
 
     if args.clean:
         clean()
+
+    ensure_icons()
 
     # AI reference sync + schema-driven codegen must happen before the frontend
     # build (which compiles recipes.generated.ts) and before PyInstaller (which

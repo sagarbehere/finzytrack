@@ -1,2 +1,12 @@
 pyinstaller>=6.0.0
 pywebview>=6.1
+
+# Icon generation (assets/icons/generate.py rasterises master.svg)
+Pillow>=10.0.0
+
+# PyWebView GTK backend (Linux only).
+# Pinned to <3.51 because newer PyGObject crashes pywebview's on_load_finish
+# callback with "TypeError: Must be number, not method". Remove the pin once
+# pywebview's GTK backend is updated for the newer gi binding.
+pygobject<3.51; sys_platform == "linux"
+pycairo; sys_platform == "linux"
