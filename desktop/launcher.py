@@ -251,17 +251,29 @@ def main():
         text_select=True,
     )
 
+    # Open maximized — works around small-screen overflow on Linux laptops
+    # and is the right default for a finance app where users want as much
+    # tabular real estate as possible.
+    window.events.shown += lambda: window.maximize()
+
     if not args.debug:
         def on_loaded():
             window.evaluate_js("document.addEventListener('contextmenu', e => e.preventDefault())")
         window.events.loaded += on_loaded
 
+    # On Linux, pywebview tries Qt first and falls back to GTK with a noisy
+    # traceback. Force GTK so the log stays clean. macOS/Windows have their
+    # own native backends and don't need an override.
+    start_kwargs = {
+        'debug': args.debug,
+        'private_mode': False,
+        'storage_path': os.path.join(APP_DIR, 'browser_storage'),
+    }
+    if sys.platform.startswith('linux'):
+        start_kwargs['gui'] = 'gtk'
+
     # Blocks until the window is closed.
-    webview.start(
-        debug=args.debug,
-        private_mode=False,
-        storage_path=os.path.join(APP_DIR, 'browser_storage'),
-    )
+    webview.start(**start_kwargs)
 
     # Window closed — tell the backend to shut down gracefully so FastAPI
     # lifespan cleanup runs (cancels pending SQLite syncs, flushes logs).
@@ -269,6 +281,13 @@ def main():
     shutdown_event.set()
     thread.join(timeout=5)
     print('[launcher] Done.', flush=True)
+
+    # pywebview's GTK backend leaves a non-daemon thread alive after the
+    # window closes, which keeps the process attached to the terminal even
+    # though everything has shut down cleanly. Force exit so the shell
+    # prompt comes back.
+    if sys.platform.startswith('linux'):
+        os._exit(0)
 
 
 if __name__ == '__main__':
