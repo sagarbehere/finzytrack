@@ -49,6 +49,8 @@ cd ../frontend
 npm install
 ```
 
+**Linux:** install system prerequisites first — see [platform-specific prerequisites](https://docs.finzytrack.com/development/building/#platform-specific-prerequisites). Without them, `pip install` will fail building PyGObject.
+
 See [Building from Source](https://docs.finzytrack.com/development/building/) for full development instructions.
 
 ## Contributing
