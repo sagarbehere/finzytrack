@@ -24,6 +24,7 @@ FRONTEND_DIR = ROOT_DIR / 'frontend'
 DIST_DIR = SCRIPT_DIR / 'dist'
 BUILD_DIR = SCRIPT_DIR / 'build'
 ICONS_DIR = ROOT_DIR / 'assets' / 'icons'
+VERSION_FILE = ROOT_DIR / 'VERSION'
 
 
 def run(cmd: list[str], **kwargs):
@@ -83,7 +84,26 @@ def sync_ai_resources():
     run(['npm', 'run', 'generate-recipe-types'], cwd=str(FRONTEND_DIR))
 
 
+def sync_frontend_version():
+    """Mirror /VERSION into frontend/package.json's "version" field.
+
+    The frontend doesn't currently display its package.json version anywhere,
+    but keeping the two in sync means the npm metadata doesn't lie about
+    what build produced the bundle.
+    """
+    import json
+    version = VERSION_FILE.read_text().strip()
+    pkg_path = FRONTEND_DIR / 'package.json'
+    pkg = json.loads(pkg_path.read_text())
+    if pkg.get('version') == version:
+        return
+    print(f'==> Syncing frontend/package.json version → {version}')
+    pkg['version'] = version
+    pkg_path.write_text(json.dumps(pkg, indent=2) + '\n')
+
+
 def build_frontend():
+    sync_frontend_version()
     print('==> Building Vue frontend...')
     run(['npm', 'run', 'build'], cwd=str(FRONTEND_DIR))
     print(f'    Frontend built: {FRONTEND_DIR / "dist"}')

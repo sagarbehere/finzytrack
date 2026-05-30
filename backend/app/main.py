@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from ._version import __version__
 from .app_mode import AppMode
 from .config import (
     Config, ConfigurationError,
@@ -221,7 +222,7 @@ def create_app(
     else:
         @app.get("/")
         async def root():
-            return {"message": "Finzytrack Backend", "version": "1.0.0"}
+            return {"message": "Finzytrack Backend", "version": __version__}
 
     # ── Health / debug (use registry for desktop, mode-aware) ───────────
 

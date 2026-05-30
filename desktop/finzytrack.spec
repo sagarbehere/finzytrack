@@ -27,6 +27,9 @@ else:
 
 ROOT = Path('..')
 
+# Single source of truth for the app version — see /VERSION
+VERSION = (ROOT / 'VERSION').read_text().strip()
+
 # Find the active venv's site-packages
 import site
 SITE_PACKAGES = Path(site.getsitepackages()[0])
@@ -60,6 +63,8 @@ a = Analysis(
         (str(FRONTEND_DIST), 'frontend_dist'),
         # beancount VERSION file (read at import time)
         (str(SITE_PACKAGES / 'beancount' / 'VERSION'), 'beancount'),
+        # FinzyTrack VERSION file — read by backend/app/_version.py at runtime
+        (str(ROOT / 'VERSION'), '.'),
     ],
     hiddenimports=[
         *beancount_hidden,
@@ -134,7 +139,7 @@ if sys.platform == 'darwin':
         bundle_identifier='com.finzytrack.app',
         info_plist={
             'NSHighResolutionCapable': True,
-            'CFBundleShortVersionString': '0.1.0',
+            'CFBundleShortVersionString': VERSION,
         },
         icon=ICON,
     )
