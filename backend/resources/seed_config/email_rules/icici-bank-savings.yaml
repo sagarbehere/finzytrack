@@ -7,17 +7,17 @@ metadata:
   version: "1.0"
 
 imap_server:
-  server: "imap.fastmail.com"   # EDIT: your IMAP server
+  server: "imap.example.com"   # EDIT: your IMAP server
   port: 993
-  username: "${FASTMAIL_EMAIL_USERNAME}"    # EDIT: set env var, e.g. export FASTMAIL_EMAIL_USERNAME=you@gmail.com
-  password: "${FASTMAIL_EMAIL_PASSWORD}"    # EDIT: set env var, e.g. export FASTMAIL_EMAIL_PASSWORD=your-app-password
+  username: "${IMAP_USERNAME}"    # EDIT: set env var, e.g. export IMAP_USERNAME=you@example.com
+  password: "${IMAP_PASSWORD}"    # EDIT: set env var, e.g. export IMAP_PASSWORD=your-app-password
   folder: "Finalerts"
 
 lookback_days: 7
 
 bank_emails:
   - "customercare@icicibank.com"
-  - "sagar@sagar.se"    # self-forwarded Finalert SMS alerts
+  - "alerts@example.com"    # your forwarded-alerts mailbox
 
 body_keyword: "XX815"
 
@@ -135,14 +135,14 @@ transaction_types:
         pattern: 'XX815\s+(credited|debited)'
         type: "string"
       payee_raw:
-        # Matches: "Info NEFT-AXOMB08802049739-SAGAR ." → "SAGAR"
+        # Matches: "Info NEFT-AXOMB08802049739-<sender> ." → "<sender>"
         # NEFT format: NEFT-<bank_ref>-<sender_name>
         pattern: 'NEFT-[A-Z0-9]+-([A-Za-z][A-Za-z ]*?)\s*\.'
         type: "string"
         cleanup: "strip_whitespace"
         optional: true
       reference:
-        # Matches: "NEFT-AXOMB08802049739-SAGAR" → "NEFT-AXOMB08802049739"
+        # Matches: "NEFT-AXOMB08802049739-<sender>" → "NEFT-AXOMB08802049739"
         pattern: '(NEFT-[A-Z0-9]+)'
         type: "string"
         optional: true

@@ -7,17 +7,17 @@ metadata:
   version: "1.0"
 
 imap_server:
-  server: "imap.fastmail.com"
+  server: "imap.example.com"
   port: 993
-  username: "${FASTMAIL_EMAIL_USERNAME}"
-  password: "${FASTMAIL_EMAIL_PASSWORD}"
+  username: "${IMAP_USERNAME}"
+  password: "${IMAP_PASSWORD}"
   folder: "Finalerts"
 
 lookback_days: 7
 bank_emails:
-  - "sagar@sagar.se"    # self-forwarded Finalert SMS alerts
+  - "alerts@example.com"    # your forwarded-alerts mailbox
 
-body_keyword: "XX911"
+body_keyword: "XX1234"
 
 parsing_mode: "regex"
 
@@ -26,7 +26,7 @@ transaction_types:
     description: "Debit transactions reported via SMS-forwarded Finalert emails"
     email_filter:
       subject_regex: "Finalert"
-      body_regex: 'XX911'
+      body_regex: 'XX1234'
     extraction:
       amount:
         # Matches: "Rs. 9,778.83" or "Rs 500.00"
@@ -49,7 +49,7 @@ transaction_types:
         format: "%d-%b-%y"
         timezone: "+05:30"
       masked_account:
-        # Matches: "Acc XX911"
+        # Matches: "Acc XX1234"
         pattern: 'Acc\s+(XX\d+)'
         type: "string"
         source: "body"

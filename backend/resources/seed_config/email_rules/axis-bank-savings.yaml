@@ -7,10 +7,10 @@ metadata:
   version: "1.0"
 
 imap_server:
-  server: "imap.fastmail.com"
+  server: "imap.example.com"
   port: 993
-  username: "${FASTMAIL_EMAIL_USERNAME}"    # EDIT: set env var, e.g. export FASTMAIL_EMAIL_USERNAME=you@gmail.com
-  password: "${FASTMAIL_EMAIL_PASSWORD}"    # EDIT: set env var, e.g. export FASTMAIL_EMAIL_PASSWORD=your-app-password
+  username: "${IMAP_USERNAME}"    # EDIT: set env var, e.g. export IMAP_USERNAME=you@example.com
+  password: "${IMAP_PASSWORD}"    # EDIT: set env var, e.g. export IMAP_PASSWORD=your-app-password
   folder: "Finalerts"
 
 lookback_days: 7
@@ -159,7 +159,7 @@ transaction_types:
         format: "%d-%m-%Y at %H:%M:%S"
         timezone: "+05:30"
       payee_raw:
-        # Format: "by MOB/SELFFT/SAGAR MORESHWAR" or "by NEFT/IR/SENDER NAME"
+        # Format: "by MOB/SELFFT/JOHN DOE" or "by NEFT/IR/SENDER NAME"
         pattern: 'by \w+/\w+/([^\n.]+)'
         type: "string"
         cleanup: "strip_whitespace"
