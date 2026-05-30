@@ -142,6 +142,13 @@ def package_linux():
     icon_dest.mkdir(parents=True)
     shutil.copy2(icon_src, icon_dest / 'finzytrack.png')
 
+    # AppStream metadata — silences `appimagetool`'s warning and makes the
+    # AppImage indexable by GNOME Software / AppImageHub.
+    metainfo_dir = appdir / 'usr' / 'share' / 'metainfo'
+    metainfo_dir.mkdir(parents=True)
+    shutil.copy2(linux_assets / 'finzytrack.appdata.xml',
+                 metainfo_dir / 'finzytrack.appdata.xml')
+
     usr_bin = appdir / 'usr' / 'bin'
     usr_bin.mkdir(parents=True)
     # Move the COLLECT contents into usr/bin/
