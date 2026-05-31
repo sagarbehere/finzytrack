@@ -105,7 +105,11 @@ const router = createRouter({
         if (main) {
           if (savedPosition) {
             main.scrollTop = mainScrollPositions.get(to.fullPath) ?? 0
-          } else {
+          } else if (!to.hash) {
+            // When navigating to a hash target (e.g. /settings#ai-settings),
+            // don't reset scroll to top — the destination view scrolls the
+            // anchor into view via its own onMounted/watcher. Resetting here
+            // would race that logic and win, leaving the user at the top.
             main.scrollTop = 0
           }
         }
