@@ -35,14 +35,15 @@
           <h3 class="font-semibold text-amber-800 dark:text-amber-300">AI not configured</h3>
           <p class="mt-1 text-sm text-amber-700 dark:text-amber-400">
             The AI assistant requires an AI model to be configured. Go to
-            <RouterLink to="/settings" class="underline font-medium hover:text-amber-900 dark:hover:text-amber-200">
+            <RouterLink to="/settings#ai-settings" class="underline font-medium hover:text-amber-900 dark:hover:text-amber-200">
               Settings → AI
             </RouterLink>
             and set your provider, API key, and model name.
           </p>
           <p class="mt-2 text-sm text-amber-700 dark:text-amber-400">
-            Both cloud providers (OpenAI, Anthropic, Groq) and local models via
-            LM Studio or Ollama are supported.
+            Any OpenAI-compatible endpoint is supported — OpenAI itself, other
+            cloud providers exposing an OpenAI-compatible API, Anthropic directly,
+            and local models via LM Studio, Ollama, or similar.
           </p>
         </div>
       </div>

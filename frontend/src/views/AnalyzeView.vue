@@ -44,7 +44,7 @@
         <a href="https://docs.finzytrack.com/reference/ai-data-sharing/" target="_blank" rel="noopener noreferrer" class="text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline underline-offset-2">Data shared with AI</a>
       </p>
       <p v-if="!config?.ai?.llm?.is_configured" class="text-xs text-amber-600 dark:text-amber-400 mb-2">
-        AI not configured. Set a model under Settings → AI to enable query generation.
+        AI not configured. Set a model under <router-link to="/settings#ai-settings" class="underline underline-offset-2">Settings → AI</router-link> to enable query generation.
       </p>
       <textarea
         v-model="nlQuery"

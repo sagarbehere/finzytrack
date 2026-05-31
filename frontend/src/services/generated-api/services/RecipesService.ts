@@ -11,7 +11,12 @@ import { request as __request } from '../core/request';
 export class RecipesService {
     /**
      * Get Manifest
-     * Return the recipe manifest.
+     * Return the auto-discovered recipe manifest.
+     *
+     * Any `widgets*.json` and `dashboards*.json` under the recipes
+     * directory is included. Paths are sorted alphabetically; the manifest
+     * is recomputed on every request, so files added by `cp`, `mv`, or any
+     * other out-of-band write are picked up immediately.
      * @returns any Successful Response
      * @throws ApiError
      */
@@ -65,7 +70,12 @@ export class RecipesService {
     }
     /**
      * Write Recipe File
-     * Write or update a recipe JSON file. Validates content and updates manifest.
+     * Write or update a recipe JSON file. Validates content, then writes
+     * via the backup manager's atomic-write path (temp file + fsync + atomic
+     * rename). Existing files also get a timestamped backup first; new files
+     * skip the backup step automatically (no original to snapshot). Same path
+     * for both new and existing files, matching the AI tool in
+     * ``ai/tools/write_recipe.py``.
      * @param filePath
      * @param requestBody
      * @returns ApiResponse_RecipeWriteResponse_ Successful Response
@@ -90,7 +100,10 @@ export class RecipesService {
     }
     /**
      * Delete Recipe File
-     * Delete a recipe file and remove it from the manifest.
+     * Delete a recipe file. A timestamped backup is taken first (same
+     * retention policy as overwrites) so an accidental delete can be
+     * recovered from the backup directory. Auto-discovery picks up the
+     * removal on the next manifest fetch.
      * @param filePath
      * @returns ApiResponse_RecipeWriteResponse_ Successful Response
      * @throws ApiError

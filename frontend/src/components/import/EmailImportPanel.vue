@@ -145,7 +145,7 @@
         </span>
 
         <p v-if="parsingMode === 'ai' && !config?.ai?.llm?.is_configured" class="text-xs text-amber-600 dark:text-amber-400">
-          AI not configured. Enable Finzytrack AI or set a model under <strong>AI</strong> in <router-link to="/settings" class="underline underline-offset-2">Settings</router-link>.
+          AI not configured. Enable Finzytrack AI or set a model under <strong>AI</strong> in <router-link to="/settings#ai-settings" class="underline underline-offset-2">Settings</router-link>.
         </p>
 
         <!-- Action buttons -->

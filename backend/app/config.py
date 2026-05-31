@@ -99,7 +99,19 @@ class LLMConfig(BaseModel):
         default="openai",
         description="LLM provider: 'openai' (any OpenAI-compatible endpoint incl. LM Studio, Ollama, OpenAI, Groq) or 'anthropic' (Anthropic API directly)",
     )
-    api_url: str = Field(default="", description="OpenAI-compatible API base URL — only used when provider=openai (e.g. http://127.0.0.1:1234 or https://api.openai.com)")
+    api_url: str = Field(default="", description="OpenAI-compatible API base URL — only used when provider=openai. Must include the API version path (e.g. http://127.0.0.1:1234/v1 or https://api.openai.com/v1). Sent to the SDK verbatim; no auto-correction.")
+
+    @field_validator("api_url")
+    @classmethod
+    def _validate_api_url(cls, v: str) -> str:
+        # Empty is allowed (means "not configured" — caught by is_configured).
+        # If non-empty, must be a syntactically valid http(s) URL — otherwise the
+        # OpenAI SDK / httpx will raise a cryptic error deep in a streaming response.
+        if not v:
+            return v
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("api_url must start with http:// or https://")
+        return v
     api_key: SecretStr = Field(default=SecretStr(""), description="API key (required for cloud providers, leave empty for local LLMs)")
     model: str = Field(default="", description="Model name (e.g. gpt-4o, claude-sonnet-4-6, llama-3.1-8b-instruct)")
 
@@ -107,8 +119,21 @@ class LLMConfig(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def is_configured(self) -> bool:
-        """True if AI is usable — either via Finzytrack AI or a bring-your-own model."""
-        return self.finzytrack_ai or bool(self.model)
+        """True if AI is usable — either via Finzytrack AI or a fully-specified bring-your-own model.
+
+        For bring-your-own, a model name alone isn't enough: provider=openai needs
+        api_url (the endpoint base URL — local LLMs leave api_key empty, so that's
+        not required), and provider=anthropic needs api_key (Anthropic is always cloud).
+        """
+        if self.finzytrack_ai:
+            return True
+        if not self.model:
+            return False
+        if self.provider == "openai":
+            return bool(self.api_url)
+        if self.provider == "anthropic":
+            return bool(self.api_key.get_secret_value())
+        return False
 
     # ── Shared settings ─────────────────────────────────────────────────
     temperature: float = Field(default=0.1, ge=0.0, le=2.0, description="Sampling temperature (0=deterministic, 2=very random)")

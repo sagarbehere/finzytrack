@@ -1,5 +1,5 @@
 <template>
-  <div class="transactions-view">
+  <div class="transactions-view pb-8">
     <!-- Header -->
     <div class="mb-6">
       <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Transactions</h1>
@@ -17,13 +17,31 @@
       />
     </div>
 
-    <!-- Loading State -->
-    <div v-if="isQuerying" class="flex justify-center items-center py-12">
-      <div class="animate-spin rounded-full h-8 w-8 border-2 border-gray-300 border-t-indigo-600 dark:border-white/10 dark:border-t-indigo-400"></div>
+    <!-- Loading skeleton — placed where the table will appear so the user
+         sees a clear, freeze-resistant "loading here" signal. CSS-only;
+         survives main-thread blocking during initial render. -->
+    <div
+      v-if="isQuerying"
+      class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10"
+      aria-busy="true"
+      aria-label="Loading transactions"
+    >
+      <div class="px-4 py-3 border-b border-gray-200 dark:border-white/10 flex items-center gap-3">
+        <div class="h-4 w-40 rounded bg-gray-200 dark:bg-white/10 animate-pulse"></div>
+        <div class="ml-auto h-4 w-24 rounded bg-gray-200 dark:bg-white/10 animate-pulse"></div>
+      </div>
+      <div class="divide-y divide-gray-100 dark:divide-white/5">
+        <div v-for="i in 8" :key="i" class="flex items-center gap-4 px-4 py-3">
+          <div class="h-3 w-20 rounded bg-gray-200 dark:bg-white/10 animate-pulse"></div>
+          <div class="h-3 w-48 rounded bg-gray-200 dark:bg-white/10 animate-pulse"></div>
+          <div class="h-3 flex-1 rounded bg-gray-200 dark:bg-white/10 animate-pulse"></div>
+          <div class="h-3 w-24 rounded bg-gray-200 dark:bg-white/10 animate-pulse"></div>
+        </div>
+      </div>
     </div>
 
     <!-- Transaction Table -->
-    <div ref="transactionTableContainer" v-if="showTable && transactions.length > 0" class="scroll-mt-32">
+    <div ref="transactionTableContainer" v-else-if="showTable && transactions.length > 0" class="scroll-mt-32">
       <!-- Warning if limit is reached -->
       <div
         v-if="totalCount !== null && transactions.length < totalCount"
@@ -75,8 +93,8 @@
       </div>
     </div>
 
-    <!-- Empty State -->
-    <div v-else class="text-center py-12 overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10">
+    <!-- Empty State — only after a query has actually completed -->
+    <div v-else-if="!isQuerying" class="text-center py-12 overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10">
       <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
       </svg>
@@ -194,15 +212,10 @@ async function handleFilterChanged(filters: TransactionFilters, limit: number) {
     await nextTick()
     transactionTableRef.value?.reinitializeBaselines()
 
-    // Show table and scroll to it
+    // Flip showTable now; the v-else-if on the container won't render it
+    // until isQuerying flips false in the finally block below.
     if (transactions.value.length > 0) {
       showTable.value = true
-
-      nextTick(() => {
-        if (transactionTableContainer.value) {
-          transactionTableContainer.value.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        }
-      })
     }
   } catch (error: unknown) {
     // ApiError flows untouched through queryTransactions — route it through
@@ -210,6 +223,13 @@ async function handleFilterChanged(filters: TransactionFilters, limit: number) {
     errorHandler.display(error)
   } finally {
     isQuerying.value = false
+    // Scroll only after isQuerying flips false — the skeleton is now gone
+    // and the real table is mounted, so the container ref is populated.
+    if (showTable.value && transactions.value.length > 0) {
+      nextTick(() => {
+        transactionTableContainer.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      })
+    }
   }
 }
 

@@ -297,11 +297,7 @@ async def _stream_openai(
 
     kwargs = {"api_key": config.api_key.get_secret_value() or _LOCAL_PROXY_API_KEY_PLACEHOLDER}
     if config.api_url:
-        # Ensure the base URL ends without a trailing /v1 (SDK appends it)
-        base = config.api_url.rstrip("/")
-        if not base.endswith("/v1"):
-            base = base + "/v1"
-        kwargs["base_url"] = base
+        kwargs["base_url"] = config.api_url.rstrip("/")
 
     # Idle/read timeout — when streaming, this aborts if no bytes arrive for
     # `timeout_secs` (default 120). Without this, a stuck upstream hangs forever.
@@ -556,10 +552,7 @@ async def _complete_openai(
 
     kwargs: dict = {"api_key": config.api_key.get_secret_value() or _LOCAL_PROXY_API_KEY_PLACEHOLDER}
     if config.api_url:
-        base = config.api_url.rstrip("/")
-        if not base.endswith("/v1"):
-            base = base + "/v1"
-        kwargs["base_url"] = base
+        kwargs["base_url"] = config.api_url.rstrip("/")
 
     # Match the streaming sibling so sync callers get bounded behaviour.
     # Without this, a stuck upstream hangs forever.

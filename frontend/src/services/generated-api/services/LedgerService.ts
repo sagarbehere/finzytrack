@@ -114,12 +114,26 @@ export class LedgerService {
      * Execute Query
      * Execute a query against the specified database engine.
      *
+     * Both engines reflect the current ledger state at request time
+     * (SQLite via stale-mirror recovery in SqliteReader; beanquery via
+     * transient parse), so the difference between them is *semantic*,
+     * not freshness.
+     *
+     * When to pick which:
+     * - **sqlite** — fast, indexed, joinable. Best for time-series aggregates,
+     * payee/category roll-ups, dashboard widgets. Reads `amount` as raw
+     * units; aggregates over investment postings give unit totals, not
+     * market value. No cost-basis or lot folding.
+     * - **beanquery** — Beancount-native, cost/position-aware. Best for
+     * portfolio queries, balance lookups by account, lot inspection.
+     * Slower because every query re-parses the ledger.
+     *
      * Examples:
      * POST /api/ledger/query {"query": "SELECT * FROM postings LIMIT 10"}
-     * POST /api/ledger/query?db_type=sqlite {"query": "SELECT account, SUM(amount) FROM postings GROUP BY account"}
+     * POST /api/ledger/query?db_type=sqlite {"query": "SELECT account, SUM(CAST(amount AS REAL)) FROM postings GROUP BY account"}
      * POST /api/ledger/query?db_type=beanquery {"query": "SELECT account, sum(position) FROM postings GROUP BY account"}
      * @param requestBody
-     * @param dbType Database/engine type: 'sqlite' or 'beanquery'. Defaults to 'sqlite'.
+     * @param dbType Query engine: 'sqlite' (default) or 'beanquery'. SQLite is fast and indexed but reads `amount` as raw units — `SUM(CAST(amount AS REAL))` over investment postings gives unit totals, not market value or cost basis. Beanquery is cost/position-aware (knows lots, costs, hierarchical accounts) but re-parses the ledger on every query.
      * @returns ApiResponse_QueryData_ Successful Response
      * @throws ApiError
      */

@@ -57,6 +57,7 @@
 
     <!-- ── AI ─────────────────────────────────────────────────────────────── -->
     <SettingsSection
+      id="ai-settings"
       title="AI"
       description="Configure the AI model used across the app."
       :is-dirty="llmIsDirty"
@@ -140,9 +141,9 @@
         <div v-if="llmFields.provider === 'openai'">
           <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">API URL</label>
           <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">
-            Base URL of the OpenAI-compatible endpoint, e.g. <code class="font-mono">http://127.0.0.1:1234</code> or <code class="font-mono">https://api.openai.com</code>.
+            URL of the OpenAI-compatible endpoint, including the API version path, e.g. <code class="font-mono">http://127.0.0.1:1234/v1</code> or <code class="font-mono">https://api.openai.com/v1</code>.
           </p>
-          <input v-model="llmFields.api_url" type="text" placeholder="http://127.0.0.1:1234" :class="inputClass" />
+          <input v-model="llmFields.api_url" type="text" placeholder="http://127.0.0.1:1234/v1" :class="inputClass" />
         </div>
 
         <div>

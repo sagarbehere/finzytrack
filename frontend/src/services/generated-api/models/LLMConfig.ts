@@ -55,7 +55,11 @@ export type LLMConfig = {
      */
     extra_request_body?: (Record<string, any> | null);
     /**
-     * True if AI is usable — either via Finzytrack AI or a bring-your-own model.
+     * True if AI is usable — either via Finzytrack AI or a fully-specified bring-your-own model.
+     *
+     * For bring-your-own, a model name alone isn't enough: provider=openai needs
+     * api_url (the endpoint base URL — local LLMs leave api_key empty, so that's
+     * not required), and provider=anthropic needs api_key (Anthropic is always cloud).
      */
     readonly is_configured: boolean;
 };

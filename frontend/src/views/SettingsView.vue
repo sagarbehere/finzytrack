@@ -43,7 +43,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GeneralSettingsTab from '@/components/settings/GeneralSettingsTab.vue'
 import RulesTab from '@/components/settings/RulesTab.vue'
@@ -83,4 +83,19 @@ watch(() => route.query.tab, (newTab) => {
     activeTab.value = 'general'
   }
 })
+
+// Scroll to a specific section when the route hash is set (e.g. /settings#ai-settings).
+// Needed because tab content is rendered with v-if, so the anchor isn't in the DOM
+// at navigation time — browser-native hash scrolling won't find it.
+function scrollToHash(hash: string) {
+  if (!hash) return
+  const id = hash.startsWith('#') ? hash.slice(1) : hash
+  nextTick(() => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
+}
+
+onMounted(() => scrollToHash(route.hash))
+watch(() => route.hash, (h) => scrollToHash(h))
+watch(activeTab, () => scrollToHash(route.hash))
 </script>
