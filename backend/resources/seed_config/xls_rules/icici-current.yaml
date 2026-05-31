@@ -1,3 +1,6 @@
+# Example XLS import rule shipped with FinzyTrack. Treat every field as a
+# starting point — review and adapt to your bank's spreadsheet layout and
+# your Beancount accounts before using it. Safe to delete if it doesn't apply.
 name: "ICICI Bank Current Account"
 sheet_index: 0
 skip_lines_start: 17

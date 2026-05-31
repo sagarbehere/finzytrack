@@ -1,3 +1,7 @@
+# Example email-import rule shipped with FinzyTrack. Treat every field as a
+# starting point — review and adapt to your bank's alert email format, your
+# IMAP credentials, your masked account numbers, and your Beancount accounts
+# before using it. Safe to delete if it doesn't apply.
 metadata:
   name: "Axis Bank NRE"
   beancount_account: "Assets:Liquid:Savings:AxisBank:NRE"

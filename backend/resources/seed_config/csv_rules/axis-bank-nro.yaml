@@ -1,3 +1,6 @@
+# Example CSV import rule shipped with FinzyTrack. Treat every field as a
+# starting point — review and adapt to your bank's CSV layout and your
+# Beancount accounts before using it. Safe to delete if it doesn't apply.
 name: "Axis Bank NRO Account"
 separator: ","
 encoding: "utf-8"
