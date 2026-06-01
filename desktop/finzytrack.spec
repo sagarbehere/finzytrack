@@ -30,9 +30,12 @@ ROOT = Path('..')
 # Single source of truth for the app version — see /VERSION
 VERSION = (ROOT / 'VERSION').read_text().strip()
 
-# Find the active venv's site-packages
-import site
-SITE_PACKAGES = Path(site.getsitepackages()[0])
+# Find the active venv's site-packages. Use sysconfig instead of
+# site.getsitepackages()[0] — on Windows the latter returns the install
+# prefix first and Lib/site-packages second, so [0] points at the wrong
+# directory and the beancount/VERSION data file can't be located.
+import sysconfig
+SITE_PACKAGES = Path(sysconfig.get_paths()['purelib'])
 
 # Collect all beancount and beanquery submodules (many are dynamically imported)
 beancount_hidden = collect_submodules('beancount')
