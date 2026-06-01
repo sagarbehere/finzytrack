@@ -112,9 +112,11 @@ exe = EXE(
     name='FinzyTrack',
     debug=False,
     bootloader_ignore_signals=False,
-    strip=True,
-    # UPX corrupts python3xx.dll on Windows ("LoadLibrary: Invalid access
-    # to memory location"). The size savings aren't worth the breakage.
+    # strip / UPX both corrupt python3xx.dll on Windows when MinGW's strip
+    # or UPX is on PATH (which it is on the GitHub windows-latest runner),
+    # producing "LoadLibrary: Invalid access to memory location" at startup.
+    # The size savings aren't worth the breakage on any platform.
+    strip=False,
     upx=False,
     console=True,
     disable_windowed_traceback=False,
@@ -129,7 +131,7 @@ coll = COLLECT(
     a.binaries,
     a.zipfiles,
     a.datas,
-    strip=True,
+    strip=False,
     upx=False,
     upx_exclude=[],
     name='FinzyTrack',
