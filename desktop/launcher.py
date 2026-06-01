@@ -10,6 +10,15 @@ import argparse
 import urllib.request
 import urllib.error
 
+# Windows defaults stdout/stderr to cp1252, which crashes the moment any
+# log line contains a non-Latin-1 character (e.g. "→" in our progress
+# output). Reconfigure to UTF-8 before any other module imports so every
+# downstream print() / logging handler is safe.
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
+
 # ---------------------------------------------------------------------------
 # Path resolution — works both from source and inside a PyInstaller bundle
 # ---------------------------------------------------------------------------
