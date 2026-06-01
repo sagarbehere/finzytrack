@@ -24,6 +24,13 @@ import io, json, os, shutil, subprocess, sys
 from pathlib import Path
 from PIL import Image, ImageDraw
 
+# Windows subprocesses default to cp1252 stdout, which can't encode the
+# Unicode box-drawing characters this script prints. Force UTF-8 so the
+# script runs identically under GitHub Actions.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
 MASTER_SVG = Path(__file__).parent / "master.svg"
 
 # ── SVG renderer detection ────────────────────────────────────────────────────
