@@ -57,3 +57,4 @@ node_modules
 .vite
 .astro/
 .claude/
+dev-docs/
