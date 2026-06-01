@@ -96,7 +96,16 @@ jobs:
             pkg-config \
             gir1.2-webkit2-4.1 \
             libwebkit2gtk-4.1-0 \
-            libfuse2
+            libfuse2 \
+            librsvg2-bin
+
+      # -- macOS: install librsvg so assets/icons/generate.py renders
+      #    master.svg directly. Without it the script falls through to
+      #    a PIL fallback that produces a visually-different icon.
+
+      - name: Install macOS system dependencies
+        if: runner.os == 'macOS'
+        run: brew install librsvg
 
       # -- Diagnostics: record the .NET runtimes available on Windows
       #    runners. pythonnet picks one of these at startup; differences

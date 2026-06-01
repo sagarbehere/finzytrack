@@ -4,3 +4,12 @@ windows/
 linux/
 ios/
 android/
+
+# Pre-rendered Windows icon checked into the repo so Windows CI builds
+# don't need to install an SVG renderer (rsvg-convert / cairosvg are
+# painful on Windows). Re-render this from master.svg on a machine that
+# has rsvg-convert by running `python generate.py` and committing the
+# updated file.
+!windows/
+windows/*
+!windows/app.ico
