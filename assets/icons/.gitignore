@@ -1,15 +1,19 @@
+# Generated assets that aren't part of the desktop build — only needed
+# by web (favicon) and mobile (iOS/Android) consumers. Regenerated on
+# demand by `python generate.py`.
 favicon/
-macos/
-windows/
-linux/
 ios/
 android/
 
-# Pre-rendered Windows icon checked into the repo so Windows CI builds
-# don't need to install an SVG renderer (rsvg-convert / cairosvg are
-# painful on Windows). Re-render this from master.svg on a machine that
-# has rsvg-convert by running `python generate.py` and committing the
-# updated file.
-!windows/
-windows/*
-!windows/app.ico
+# Mac noise inside the iconset directory
+.DS_Store
+
+# AppIcon.icns is built from the iconset by `iconutil` during the macOS
+# build, so we don't track the generated bundle. Source PNGs in
+# AppIcon.iconset/ are tracked.
+macos/AppIcon.icns
+
+# Platform icons used by the desktop build (macos/, linux/, windows/)
+# are committed artifacts — re-render from master.svg by running
+# `python generate.py` on a machine with rsvg-convert and commit the
+# changes.

@@ -65,18 +65,14 @@ def clean():
 
 
 def ensure_icons():
-    """Generate platform icon assets from master.svg if any are missing.
+    """Verify that the per-platform icon assets exist in the repo.
 
-    Most platform icon directories under assets/icons/ are gitignored — only
-    the SVG source, generator, and a pre-rendered windows/app.ico are
-    tracked. A fresh clone has no macOS/Linux raster files, so the later
-    packaging steps would fail without this regeneration step.
-
-    Windows is the exception: we ship a pre-rendered ICO because none of
-    our SVG renderers (cairosvg/rsvg-convert/inkscape) installs cleanly
-    on Windows. If that committed file is missing on a Windows build,
-    fail loudly instead of falling through to the PIL fallback in
-    generate.py, which produces a visually-different (dark-theme) icon.
+    Platform icons (assets/icons/{macos,linux,windows}/) are committed
+    artifacts, rendered from master.svg by running assets/icons/generate.py
+    on a machine with rsvg-convert. The build does not regenerate them —
+    if a file is missing, fail loudly with a regeneration hint instead of
+    silently falling through to the PIL fallback in generate.py, which
+    produces a visually-different (dark) icon.
     """
     required = {
         'Darwin': ICONS_DIR / 'macos' / 'AppIcon.iconset' / 'icon_512x512.png',
@@ -86,15 +82,12 @@ def ensure_icons():
     probe = required.get(platform.system())
     if probe is None or probe.exists():
         return
-    if platform.system() == 'Windows':
-        print(f'ERROR: {probe} is missing. The Windows build expects a '
-              f'pre-rendered ICO checked into the repo. Re-run '
-              f'assets/icons/generate.py on a machine with rsvg-convert '
-              f'(macOS: brew install librsvg) and commit the result.',
-              file=sys.stderr)
-        sys.exit(1)
-    print(f'==> Platform icons missing ({probe}). Generating from master.svg...')
-    run([sys.executable, 'generate.py'], cwd=str(ICONS_DIR))
+    print(f'ERROR: required icon asset is missing: {probe}\n'
+          f'  Icons are committed to the repo. Re-render them by running '
+          f'assets/icons/generate.py on a machine with rsvg-convert '
+          f'(macOS: brew install librsvg; Linux: apt install librsvg2-bin) '
+          f'and commit the changes.', file=sys.stderr)
+    sys.exit(1)
 
 
 def sync_ai_resources():
