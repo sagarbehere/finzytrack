@@ -2,6 +2,16 @@ name: Build Desktop App
 
 on:
   workflow_dispatch:      # Manual trigger from GitHub UI
+    inputs:
+      platforms:
+        description: 'Which platforms to build'
+        type: choice
+        options:
+          - all
+          - windows
+          - macos
+          - linux
+        default: all
   push:
     tags:
       - 'v*'             # Auto-build on version tags
@@ -17,16 +27,25 @@ jobs:
         include:
           - os: macos-latest
             name: macOS
+            key: macos
             artifact: FinzyTrack.app
           - os: ubuntu-22.04
             name: Linux
+            key: linux
             artifact: FinzyTrack-x86_64.AppImage
           - os: windows-latest
             name: Windows
+            key: windows
             artifact: FinzyTrack-windows.zip
 
     name: Build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
+    # Skip platforms not selected via workflow_dispatch. Tag-triggered runs
+    # always build everything (inputs.platforms is empty in that case).
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      inputs.platforms == 'all' ||
+      inputs.platforms == matrix.key
 
     steps:
       - uses: actions/checkout@v4
@@ -101,6 +120,7 @@ jobs:
         with:
           name: FinzyTrack-macOS
           path: desktop/dist/FinzyTrack-macOS.zip
+          retention-days: 14
 
       - name: Upload Linux artifact
         if: runner.os == 'Linux'
@@ -108,6 +128,7 @@ jobs:
         with:
           name: FinzyTrack-Linux
           path: desktop/dist/FinzyTrack-x86_64.AppImage
+          retention-days: 14
 
       - name: Upload Windows artifact
         if: runner.os == 'Windows'
@@ -115,6 +136,7 @@ jobs:
         with:
           name: FinzyTrack-Windows
           path: desktop/dist/FinzyTrack-windows.zip
+          retention-days: 14
 
   # -- Create a GitHub Release when triggered by a version tag --
 
