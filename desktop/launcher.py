@@ -31,6 +31,28 @@ if hasattr(sys.stderr, 'reconfigure'):
 if sys.platform == 'win32':
     os.environ.setdefault('PYTHONNET_RUNTIME', 'netfx')
 
+# Strip the Mark-of-the-Web from every bundled file. Windows tags each
+# file extracted from a downloaded zip with a Zone.Identifier alternate
+# data stream marking it untrusted, and the .NET Framework loader then
+# refuses to load pythonnet's managed Python.Runtime.dll — surfacing as
+# "Failed to resolve Python.Runtime.Loader.Initialize" at startup. The
+# bytes on disk are fine; only the trust metadata is wrong. Unblock-File
+# clears the ADS in place. Best-effort: any failure here is non-fatal so
+# the app can still attempt to start (and surface its own error if the
+# real problem is something else).
+if sys.platform == 'win32' and getattr(sys, 'frozen', False):
+    import subprocess
+    _bundle_root = os.path.dirname(sys.executable)
+    try:
+        subprocess.run(
+            ['powershell', '-NoProfile', '-Command',
+             f"Get-ChildItem -Recurse -LiteralPath '{_bundle_root}' | Unblock-File"],
+            check=False, capture_output=True, timeout=30,
+        )
+    except Exception as _e:
+        print(f'[launcher] Unblock-File step failed (non-fatal): {_e}',
+              file=sys.stderr, flush=True)
+
 # ---------------------------------------------------------------------------
 # Path resolution — works both from source and inside a PyInstaller bundle
 # ---------------------------------------------------------------------------
