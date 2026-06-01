@@ -1,9 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec for FinzyTrack desktop app.
+PyInstaller spec for Finzytrack desktop app.
 
 Build with:  pyinstaller finzytrack.spec
-Output:      dist/FinzyTrack.app  (macOS .app bundle)
+Output:      dist/Finzytrack.app  (macOS .app bundle)
 """
 
 import os
@@ -85,7 +85,7 @@ a = Analysis(
         (str(FRONTEND_DIST), 'frontend_dist'),
         # beancount VERSION file (read at import time)
         (str(SITE_PACKAGES / 'beancount' / 'VERSION'), 'beancount'),
-        # FinzyTrack VERSION file — read by backend/app/_version.py at runtime
+        # Finzytrack VERSION file — read by backend/app/_version.py at runtime
         (str(ROOT / 'VERSION'), '.'),
     ],
     hiddenimports=[
@@ -131,7 +131,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='FinzyTrack',
+    name='Finzytrack',
     debug=False,
     bootloader_ignore_signals=False,
     # strip / UPX both corrupt python3xx.dll on Windows when MinGW's strip
@@ -156,7 +156,7 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='FinzyTrack',
+    name='Finzytrack',
 )
 
 # macOS .app bundle — Gatekeeper verifies the bundle signature once
@@ -164,7 +164,7 @@ coll = COLLECT(
 if sys.platform == 'darwin':
     app = BUNDLE(
         coll,
-        name='FinzyTrack.app',
+        name='Finzytrack.app',
         bundle_identifier='com.finzytrack.app',
         info_plist={
             'NSHighResolutionCapable': True,

@@ -1,5 +1,5 @@
 """
-Shared pytest fixtures for FinzyTrack backend tests.
+Shared pytest fixtures for Finzytrack backend tests.
 
 Provides:
 - Isolated temp directories per test (config/, data/, logs/)

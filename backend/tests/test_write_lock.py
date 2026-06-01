@@ -1,7 +1,7 @@
 """Inter-process write-lock serialisation tests.
 
 Spec under test: a ``WriteLockManager`` wired with a sidecar lock file
-serialises writes between two FinzyTrack-instance processes against the
+serialises writes between two Finzytrack-instance processes against the
 same user's data dir. Intra-process serialisation (threading.Lock) is
 exercised by `tests/isolation/test_concurrent_writes.py`.
 """

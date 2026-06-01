@@ -9,7 +9,7 @@ Two layers of locking:
    not protect against concurrent threadpool threads.
 
 2. ``portalocker`` exclusive file lock on a sidecar ``.lock`` file —
-   inter-process path. Catches the case where two instances of FinzyTrack
+   inter-process path. Catches the case where two instances of Finzytrack
    itself run against the same user's data directory (dev uvicorn + the
    desktop launcher, accidental double-launch, future hosted multi-worker
    deployment). The lock file is per-user (lives in the user's data dir).

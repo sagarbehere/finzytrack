@@ -33,9 +33,9 @@ jobs:
           PLATFORMS: ${{ inputs.platforms }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
-          MAC='{"os":"macos-latest","name":"macOS","artifact":"FinzyTrack.app"}'
-          LIN='{"os":"ubuntu-22.04","name":"Linux","artifact":"FinzyTrack-x86_64.AppImage"}'
-          WIN='{"os":"windows-latest","name":"Windows","artifact":"FinzyTrack-windows.zip"}'
+          MAC='{"os":"macos-latest","name":"macOS","artifact":"Finzytrack.app"}'
+          LIN='{"os":"ubuntu-22.04","name":"Linux","artifact":"Finzytrack-x86_64.AppImage"}'
+          WIN='{"os":"windows-latest","name":"Windows","artifact":"Finzytrack-windows.zip"}'
 
           if [[ "$EVENT_NAME" == "workflow_dispatch" && "$PLATFORMS" != "all" && -n "$PLATFORMS" ]]; then
             case "$PLATFORMS" in
@@ -111,13 +111,13 @@ jobs:
         run: |
           cd desktop/dist
           # Zip the .app bundle preserving symlinks
-          ditto -c -k --sequesterRsrc --keepParent FinzyTrack.app FinzyTrack-macOS.zip
+          ditto -c -k --sequesterRsrc --keepParent Finzytrack.app Finzytrack-macOS.zip
         shell: bash
 
       - name: Package Linux artifact
         if: runner.os == 'Linux'
         run: |
-          chmod +x desktop/dist/FinzyTrack-x86_64.AppImage
+          chmod +x desktop/dist/Finzytrack-x86_64.AppImage
         shell: bash
 
       # Windows zip is already created by build.py
@@ -128,24 +128,24 @@ jobs:
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
-          name: FinzyTrack-macOS
-          path: desktop/dist/FinzyTrack-macOS.zip
+          name: Finzytrack-macOS
+          path: desktop/dist/Finzytrack-macOS.zip
           retention-days: 14
 
       - name: Upload Linux artifact
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: FinzyTrack-Linux
-          path: desktop/dist/FinzyTrack-x86_64.AppImage
+          name: Finzytrack-Linux
+          path: desktop/dist/Finzytrack-x86_64.AppImage
           retention-days: 14
 
       - name: Upload Windows artifact
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: FinzyTrack-Windows
-          path: desktop/dist/FinzyTrack-windows.zip
+          name: Finzytrack-Windows
+          path: desktop/dist/Finzytrack-windows.zip
           retention-days: 14
 
   # -- Create a GitHub Release when triggered by a version tag --
@@ -166,6 +166,6 @@ jobs:
           draft: true
           generate_release_notes: true
           files: |
-            artifacts/FinzyTrack-macOS/FinzyTrack-macOS.zip
-            artifacts/FinzyTrack-Linux/FinzyTrack-x86_64.AppImage
-            artifacts/FinzyTrack-Windows/FinzyTrack-windows.zip
+            artifacts/Finzytrack-macOS/Finzytrack-macOS.zip
+            artifacts/Finzytrack-Linux/Finzytrack-x86_64.AppImage
+            artifacts/Finzytrack-Windows/Finzytrack-windows.zip

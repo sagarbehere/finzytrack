@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Cross-platform build script for FinzyTrack desktop app.
+Cross-platform build script for Finzytrack desktop app.
 
 Usage (from the desktop/ directory, with venv active):
     python build.py [--clean]
 
 Builds:
-    macOS  -> dist/FinzyTrack.app
-    Linux  -> dist/FinzyTrack-x86_64.AppImage
-    Windows -> dist/FinzyTrack-windows.zip
+    macOS  -> dist/Finzytrack.app
+    Linux  -> dist/Finzytrack-x86_64.AppImage
+    Windows -> dist/Finzytrack-windows.zip
 """
 import argparse
 import os
@@ -126,7 +126,7 @@ def run_pyinstaller():
 
 def package_macos():
     """Ad-hoc codesign and strip quarantine on the .app bundle."""
-    app_path = DIST_DIR / 'FinzyTrack.app'
+    app_path = DIST_DIR / 'Finzytrack.app'
     if not app_path.exists():
         print(f'ERROR: {app_path} not found after PyInstaller build.')
         sys.exit(1)
@@ -138,18 +138,18 @@ def package_macos():
     run(['xattr', '-cr', str(app_path)])
 
     print(f'\n==> Done. App bundle: {app_path}')
-    print('    To run: open dist/FinzyTrack.app')
+    print('    To run: open dist/Finzytrack.app')
 
 
 def package_linux():
     """Build an AppImage from the PyInstaller COLLECT output."""
-    collect_dir = DIST_DIR / 'FinzyTrack'
+    collect_dir = DIST_DIR / 'Finzytrack'
     if not collect_dir.exists():
         print(f'ERROR: {collect_dir} not found after PyInstaller build.')
         sys.exit(1)
 
     print('==> Assembling AppDir...')
-    appdir = DIST_DIR / 'FinzyTrack.AppDir'
+    appdir = DIST_DIR / 'Finzytrack.AppDir'
     if appdir.exists():
         shutil.rmtree(appdir)
     appdir.mkdir()
@@ -193,7 +193,7 @@ def package_linux():
 
     print('==> Building AppImage...')
     arch = 'x86_64' if platform.machine() in ('x86_64', 'AMD64') else 'aarch64'
-    appimage_name = f'FinzyTrack-{arch}.AppImage'
+    appimage_name = f'Finzytrack-{arch}.AppImage'
     env = {**os.environ, 'ARCH': arch}
     run([str(appimagetool), str(appdir), str(DIST_DIR / appimage_name)], env=env)
 
@@ -203,21 +203,21 @@ def package_linux():
 
 def package_windows():
     """Zip the PyInstaller COLLECT output for Windows distribution."""
-    collect_dir = DIST_DIR / 'FinzyTrack'
+    collect_dir = DIST_DIR / 'Finzytrack'
     if not collect_dir.exists():
         print(f'ERROR: {collect_dir} not found after PyInstaller build.')
         sys.exit(1)
 
     print('==> Creating Windows zip archive...')
-    archive_path = DIST_DIR / 'FinzyTrack-windows'
-    shutil.make_archive(str(archive_path), 'zip', root_dir=str(DIST_DIR), base_dir='FinzyTrack')
+    archive_path = DIST_DIR / 'Finzytrack-windows'
+    shutil.make_archive(str(archive_path), 'zip', root_dir=str(DIST_DIR), base_dir='Finzytrack')
 
     print(f'\n==> Done. Archive: {archive_path}.zip')
-    print('    Extract and run FinzyTrack/FinzyTrack.exe')
+    print('    Extract and run Finzytrack/Finzytrack.exe')
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Build FinzyTrack desktop app')
+    parser = argparse.ArgumentParser(description='Build Finzytrack desktop app')
     parser.add_argument('--clean', action='store_true', help='Remove build/dist before building')
     parser.add_argument('--skip-frontend', action='store_true',
                         help='Skip frontend build (use existing frontend/dist)')
@@ -249,7 +249,7 @@ def main():
         package_windows()
     else:
         print(f'WARNING: No packaging step for {system}. '
-              f'Raw output is in dist/FinzyTrack/')
+              f'Raw output is in dist/Finzytrack/')
 
 
 if __name__ == '__main__':

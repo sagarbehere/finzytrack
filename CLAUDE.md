@@ -1,4 +1,4 @@
-# FinzyTrack
+# Finzytrack
 
 Personal finance app: Beancount backend + Vue 3 frontend.
 

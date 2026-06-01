@@ -1,5 +1,5 @@
 #!/bin/bash
-# AppImage entry point — launch the FinzyTrack binary from the AppDir.
+# AppImage entry point — launch the Finzytrack binary from the AppDir.
 HERE="$(dirname "$(readlink -f "$0")")"
 
 # KDE Plasma injects its GTK-integration modules (colorreload-gtk-module,
@@ -8,4 +8,4 @@ HERE="$(dirname "$(readlink -f "$0")")"
 # Clear the variable so the bundled GTK only loads what it actually ships.
 unset GTK_MODULES
 
-exec "$HERE/usr/bin/FinzyTrack" "$@"
+exec "$HERE/usr/bin/Finzytrack" "$@"

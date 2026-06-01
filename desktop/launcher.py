@@ -1,5 +1,5 @@
 """
-FinzyTrack Desktop Launcher
+Finzytrack Desktop Launcher
 Starts the FastAPI backend and opens a PyWebView window.
 """
 import os
@@ -31,19 +31,19 @@ if getattr(sys, 'frozen', False):
     SEED_CONFIG_DIR = os.path.join(BUNDLE_DIR, 'backend', 'seed_config')
     SEED_DATA_DIR = os.path.join(BUNDLE_DIR, 'backend', 'seed_data')
     # User data (config, ledger, etc.) in the platform-standard location:
-    #   macOS:   ~/Library/Application Support/FinzyTrack
-    #   Windows: %LOCALAPPDATA%/FinzyTrack
-    #   Linux:   ~/.local/share/FinzyTrack (XDG_DATA_HOME)
+    #   macOS:   ~/Library/Application Support/Finzytrack
+    #   Windows: %LOCALAPPDATA%/Finzytrack
+    #   Linux:   ~/.local/share/Finzytrack (XDG_DATA_HOME)
     if sys.platform == 'darwin':
         APP_DIR = os.path.join(os.path.expanduser('~'), 'Library',
-                               'Application Support', 'FinzyTrack')
+                               'Application Support', 'Finzytrack')
     elif sys.platform == 'win32':
         APP_DIR = os.path.join(os.environ.get('LOCALAPPDATA',
-                               os.path.expanduser('~')), 'FinzyTrack')
+                               os.path.expanduser('~')), 'Finzytrack')
     else:
         APP_DIR = os.path.join(os.environ.get('XDG_DATA_HOME',
                                os.path.join(os.path.expanduser('~'), '.local', 'share')),
-                               'FinzyTrack')
+                               'Finzytrack')
     os.makedirs(APP_DIR, exist_ok=True)
     os.chdir(APP_DIR)
     # Config and data directories are seeded by main.py on first run.
@@ -107,7 +107,7 @@ def load_config_defaults() -> dict:
 def parse_args():
     defaults = load_config_defaults()
     parser = argparse.ArgumentParser(
-        description='FinzyTrack — personal finance app',
+        description='Finzytrack — personal finance app',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -252,7 +252,7 @@ def main():
         return
 
     window = webview.create_window(
-        'FinzyTrack',
+        'Finzytrack',
         url,
         width=1380,
         height=860,
