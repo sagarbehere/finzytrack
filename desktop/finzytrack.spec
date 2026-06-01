@@ -10,7 +10,7 @@ import os
 import sys
 import platform
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files, collect_all
 
 # Platform-specific icon — built from assets/icons/ at build time
 ICONS = Path('..') / 'assets' / 'icons'
@@ -40,6 +40,18 @@ SITE_PACKAGES = Path(sysconfig.get_paths()['purelib'])
 # Collect all beancount and beanquery submodules (many are dynamically imported)
 beancount_hidden = collect_submodules('beancount')
 beanquery_hidden = collect_submodules('beanquery')
+
+# pywebview on Windows uses pythonnet + clr_loader to drive the EdgeChromium
+# WebView2 control via the .NET CLR. Those packages ship native DLLs and
+# runtime support files that PyInstaller's default analysis misses, which
+# causes "Failed to resolve Python.Runtime.Loader.Initialize" when the
+# window tries to render. collect_all pulls in every binary, data file,
+# and submodule for each. (Harmless on macOS/Linux where pywebview uses
+# native backends and these collections are empty/no-ops.)
+webview_datas, webview_binaries, webview_hidden = collect_all('webview')
+pythonnet_datas, pythonnet_binaries, pythonnet_hidden = collect_all('pythonnet')
+clr_loader_datas, clr_loader_binaries, clr_loader_hidden = collect_all('clr_loader')
+
 BACKEND = ROOT / 'backend'
 FRONTEND_DIST = ROOT / 'frontend' / 'dist'
 
@@ -48,8 +60,15 @@ block_cipher = None
 a = Analysis(
     ['launcher.py'],
     pathex=[str(BACKEND)],
-    binaries=[],
+    binaries=[
+        *webview_binaries,
+        *pythonnet_binaries,
+        *clr_loader_binaries,
+    ],
     datas=[
+        *webview_datas,
+        *pythonnet_datas,
+        *clr_loader_datas,
         # Seed config template (copied to user's config/ on first run)
         (str(BACKEND / 'resources' / 'seed_config'), 'backend/seed_config'),
         # Seed data template (copied to user's data/ on first run)
@@ -72,6 +91,9 @@ a = Analysis(
     hiddenimports=[
         *beancount_hidden,
         *beanquery_hidden,
+        *webview_hidden,
+        *pythonnet_hidden,
+        *clr_loader_hidden,
         # FastAPI / uvicorn
         'uvicorn.logging',
         'uvicorn.loops',
