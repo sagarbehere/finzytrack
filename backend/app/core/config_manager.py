@@ -59,7 +59,7 @@ class ConfigManager:
             return []
 
         yaml = YAML()
-        with open(mappings_file, 'r') as f:
+        with open(mappings_file, 'r', encoding='utf-8') as f:
             data = yaml.load(f)
 
         if not data:

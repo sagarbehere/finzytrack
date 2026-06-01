@@ -47,7 +47,7 @@ class EmailRuleParser:
     def __init__(self, rule_file_path: Path):
         self.path = rule_file_path
         self.profile_id = rule_file_path.stem   # filename without .yaml
-        with open(rule_file_path, 'r') as f:
+        with open(rule_file_path, 'r', encoding='utf-8') as f:
             raw = yaml.safe_load(f)
 
         # Expand env vars in IMAP credentials before validation

@@ -309,7 +309,7 @@ class Config(BaseModel):
             raise ConfigurationError(f"Config file not found: {config_path}")
 
         try:
-            with open(config_path, 'r') as f:
+            with open(config_path, 'r', encoding='utf-8') as f:
                 yaml_data = yaml.safe_load(f) or {}
         except yaml.YAMLError as e:
             raise ConfigurationError(f"Invalid YAML in config file: {e}")

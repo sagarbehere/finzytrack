@@ -58,6 +58,6 @@ class XlsRulesManager:
         return self._load_rule_file(resolved)
 
     def _load_rule_file(self, path: Path) -> XlsRule:
-        with open(path, 'r') as f:
+        with open(path, 'r', encoding='utf-8') as f:
             data = self._yaml.load(f)
         return XlsRule.model_validate(data)

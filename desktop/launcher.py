@@ -92,7 +92,7 @@ def load_config_defaults() -> dict:
     try:
         import yaml
         config_path = peek_config_path_from_argv() or find_config_path()
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             raw = yaml.safe_load(f) or {}
         return {
             'host':         raw.get('server', {}).get('host', _FALLBACK_DEFAULTS['host']),

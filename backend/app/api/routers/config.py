@@ -94,7 +94,7 @@ async def patch_config_endpoint(
 
     # Load with round-trip parser to preserve comments and YAML structure
     yaml = YAML()
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         data = yaml.load(f)
 
     # Never allow a redacted or empty api_key to overwrite the stored one.

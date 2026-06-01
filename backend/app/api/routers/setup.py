@@ -149,7 +149,7 @@ async def complete_setup(
     from app.api.routers.config import _deep_merge, _to_plain_dict
 
     yaml = YAML()
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         data = yaml.load(f)
 
     _deep_merge(data, patch)
