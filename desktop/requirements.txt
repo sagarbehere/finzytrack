@@ -1,4 +1,4 @@
-pyinstaller>=6.0.0
+pyinstaller==6.19.0
 pywebview==6.2.1
 
 # pywebview on Windows pulls in pythonnet + clr_loader transitively.

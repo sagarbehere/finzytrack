@@ -44,6 +44,12 @@ def run(cmd: list[str], **kwargs):
 
 
 def check_venv():
+    # The warning is for interactive developers who forgot to source
+    # their venv. CI installs dependencies into the system Python with
+    # `pip install -r ...`, so VIRTUAL_ENV is correctly empty there —
+    # printing the warning on every CI run is just noise.
+    if os.environ.get('CI', '').lower() in ('true', '1'):
+        return
     venv = os.environ.get('VIRTUAL_ENV', '')
     if 'finzytrack' not in venv.lower():
         print('WARNING: finzytrack venv does not appear to be active.')

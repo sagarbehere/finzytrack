@@ -115,36 +115,6 @@ jobs:
         run: python build.py
         working-directory: desktop
 
-      # -- Diagnostics: hash and inventory the bundled pythonnet runtime
-      #    directory after the build. We compare these against the same
-      #    files in a known-good local Windows build to determine whether
-      #    the CI bundle differs at the byte level (different wheel,
-      #    different PyInstaller behaviour) or has the same bytes laid
-      #    out differently (different sibling files, different paths).
-
-      - name: Inventory bundled pythonnet (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          $root = "dist\Finzytrack\_internal\pythonnet"
-          if (Test-Path $root) {
-            Write-Host "--- File listing under $root ---"
-            Get-ChildItem -Recurse $root | Select-Object FullName, Length | Format-Table -AutoSize
-            Write-Host "--- SHA256 of Python.Runtime.dll ---"
-            $dll = Join-Path $root "runtime\Python.Runtime.dll"
-            if (Test-Path $dll) {
-              Get-FileHash $dll -Algorithm SHA256 | Format-List
-            } else {
-              Write-Host "Python.Runtime.dll not found at expected path"
-            }
-            Write-Host "--- pip-installed pythonnet/clr_loader/pywebview versions ---"
-            pip show pythonnet clr_loader pywebview | Select-String "Name|Version"
-          } else {
-            Write-Host "$root does not exist — pythonnet was not bundled"
-          }
-        shell: pwsh
-        working-directory: desktop
-        continue-on-error: true
-
       # -- Package platform artifacts --
 
       - name: Package macOS artifact
