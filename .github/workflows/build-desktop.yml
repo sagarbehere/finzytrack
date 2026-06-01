@@ -20,32 +20,42 @@ permissions:
   contents: write        # Needed to create releases
 
 jobs:
+  # Emit the build matrix based on the workflow_dispatch `platforms` input.
+  # Tag-triggered runs (and unselected/all) build every platform.
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        shell: bash
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          MAC='{"os":"macos-latest","name":"macOS","artifact":"FinzyTrack.app"}'
+          LIN='{"os":"ubuntu-22.04","name":"Linux","artifact":"FinzyTrack-x86_64.AppImage"}'
+          WIN='{"os":"windows-latest","name":"Windows","artifact":"FinzyTrack-windows.zip"}'
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$PLATFORMS" != "all" && -n "$PLATFORMS" ]]; then
+            case "$PLATFORMS" in
+              macos)   INCLUDES="$MAC" ;;
+              linux)   INCLUDES="$LIN" ;;
+              windows) INCLUDES="$WIN" ;;
+            esac
+          else
+            INCLUDES="$MAC,$LIN,$WIN"
+          fi
+          echo "matrix={\"include\":[$INCLUDES]}" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: setup
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            name: macOS
-            key: macos
-            artifact: FinzyTrack.app
-          - os: ubuntu-22.04
-            name: Linux
-            key: linux
-            artifact: FinzyTrack-x86_64.AppImage
-          - os: windows-latest
-            name: Windows
-            key: windows
-            artifact: FinzyTrack-windows.zip
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
 
     name: Build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    # Skip platforms not selected via workflow_dispatch. Tag-triggered runs
-    # always build everything (inputs.platforms is empty in that case).
-    if: |
-      github.event_name != 'workflow_dispatch' ||
-      inputs.platforms == 'all' ||
-      inputs.platforms == matrix.key
 
     steps:
       - uses: actions/checkout@v4
