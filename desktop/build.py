@@ -28,7 +28,17 @@ VERSION_FILE = ROOT_DIR / 'VERSION'
 
 
 def run(cmd: list[str], **kwargs):
-    """Run a command, printing it first, and abort on failure."""
+    """Run a command, printing it first, and abort on failure.
+
+    On Windows, resolve the executable via shutil.which() so wrappers like
+    `npm.cmd` and `pyinstaller.exe` are found — subprocess.run() on Windows
+    calls CreateProcess directly, which doesn't do the PATHEXT lookup the
+    shell does.
+    """
+    if platform.system() == 'Windows' and cmd and not Path(cmd[0]).is_absolute():
+        resolved = shutil.which(cmd[0])
+        if resolved:
+            cmd = [resolved, *cmd[1:]]
     print(f'  $ {" ".join(cmd)}', flush=True)
     subprocess.run(cmd, check=True, **kwargs)
 
