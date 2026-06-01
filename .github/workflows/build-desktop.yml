@@ -98,6 +98,17 @@ jobs:
             libwebkit2gtk-4.1-0 \
             libfuse2
 
+      # -- Diagnostics: record the .NET runtimes available on Windows
+      #    runners. pythonnet picks one of these at startup; differences
+      #    between dev boxes and CI here have caused subtle runtime
+      #    crashes that are hard to reproduce locally.
+
+      - name: Show .NET runtimes (Windows)
+        if: runner.os == 'Windows'
+        run: dotnet --list-runtimes
+        shell: pwsh
+        continue-on-error: true
+
       # -- Build --
 
       - name: Build desktop app

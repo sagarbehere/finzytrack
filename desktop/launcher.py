@@ -19,6 +19,18 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
 
+# On Windows, force pythonnet to use the .NET Framework runtime via
+# mscoree.dll, which ships with every Windows install. clr_loader's
+# auto-detection picks .NET Core/.NET 5+ when a SDK is on PATH (as on
+# the GitHub windows-latest runner), but the assemblies pythonnet
+# bundles can't be initialised under that runtime in our PyInstaller
+# layout — the app crashes at startup with "Failed to resolve
+# Python.Runtime.Loader.Initialize". Forcing netfx makes the runtime
+# selection deterministic across dev machines and CI, and removes the
+# need for end users to install any .NET runtime.
+if sys.platform == 'win32':
+    os.environ.setdefault('PYTHONNET_RUNTIME', 'netfx')
+
 # ---------------------------------------------------------------------------
 # Path resolution — works both from source and inside a PyInstaller bundle
 # ---------------------------------------------------------------------------

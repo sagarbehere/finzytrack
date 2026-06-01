@@ -1,5 +1,12 @@
 pyinstaller>=6.0.0
-pywebview>=6.1
+pywebview==6.2.1
+
+# pywebview on Windows pulls in pythonnet + clr_loader transitively.
+# Pin them explicitly so dev and CI install identical binaries — version
+# drift in this stack has produced "Failed to resolve Python.Runtime
+# .Loader.Initialize" errors that only reproduced on one machine.
+pythonnet==3.1.0; sys_platform == "win32"
+clr_loader==0.3.1; sys_platform == "win32"
 
 # Icon generation (assets/icons/generate.py rasterises master.svg)
 Pillow>=10.0.0
