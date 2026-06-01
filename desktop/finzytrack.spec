@@ -113,7 +113,9 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=True,
-    upx=True,
+    # UPX corrupts python3xx.dll on Windows ("LoadLibrary: Invalid access
+    # to memory location"). The size savings aren't worth the breakage.
+    upx=False,
     console=True,
     disable_windowed_traceback=False,
     target_arch=None,
@@ -128,7 +130,7 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=True,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name='FinzyTrack',
 )
