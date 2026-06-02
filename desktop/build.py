@@ -18,6 +18,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+# On Windows, Python's stdout/stderr default to the system code page
+# (cp1252), which can't encode characters like '→' that appear in our
+# build logs. Reconfigure to UTF-8 before anything else prints.
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT_DIR = SCRIPT_DIR.parent
 FRONTEND_DIR = ROOT_DIR / 'frontend'
