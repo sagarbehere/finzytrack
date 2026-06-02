@@ -204,7 +204,14 @@ def create_app(
     app.include_router(recipes.router, prefix="/api", tags=["recipes"])
     app.include_router(setup_router.router, prefix="/api", tags=["setup"])
 
-    # ── Static files / SPA fallback ─────────────────────────────────────
+    # ── Static files (mounts only — SPA fallback registered last) ───────
+    #
+    # The SPA catch-all `@app.get("/{full_path:path}")` must be the LAST
+    # route registered. FastAPI matches routes in registration order, so any
+    # top-level (non-`/api`) route declared after the catch-all (e.g.
+    # `/health`, `/debug/config`) would be shadowed and return `index.html`
+    # instead of the intended JSON. See the bottom of this function for
+    # where the SPA fallback is actually registered.
 
     static_path = Path(static_dir) if static_dir else None
     if static_path and static_path.exists():
@@ -215,10 +222,6 @@ def create_app(
 
         @app.get("/")
         async def serve_index():
-            return FileResponse(str(static_path / "index.html"))
-
-        @app.get("/{full_path:path}")
-        async def spa_fallback(full_path: str):
             return FileResponse(str(static_path / "index.html"))
     else:
         @app.get("/")
@@ -306,6 +309,16 @@ def create_app(
             }
             return config_dict
         return {"mode": "hosted", "message": "Per-user config available via /api/config"}
+
+    # ── SPA fallback (MUST be the last route registered) ────────────────
+    # Anything not matched by an earlier route or `/api/*` router falls
+    # through to the SPA so client-side routes (e.g. /dashboard) work on
+    # hard refresh. Adding any non-`/api` top-level route below this point
+    # would silently break it.
+    if static_path and static_path.exists():
+        @app.get("/{full_path:path}")
+        async def spa_fallback(full_path: str):
+            return FileResponse(str(static_path / "index.html"))
 
     return app
 
