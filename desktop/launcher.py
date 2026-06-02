@@ -53,6 +53,28 @@ if sys.platform == 'win32' and getattr(sys, 'frozen', False):
         print(f'[launcher] Unblock-File step failed (non-fatal): {_e}',
               file=sys.stderr, flush=True)
 
+# On Linux, the bundle deliberately doesn't ship GTK / WebKit / etc. —
+# those come from the user's system (see the allowlist in
+# finzytrack.spec). Probe for libwebkit2gtk-4.1 before importing
+# pywebview so users hit a clear "install this package" message
+# instead of a cryptic stack trace from inside webview.platforms.gtk.
+if sys.platform.startswith('linux') and getattr(sys, 'frozen', False):
+    import ctypes
+    try:
+        ctypes.CDLL('libwebkit2gtk-4.1.so.0')
+    except OSError:
+        print(
+            '\nFinzytrack requires libwebkit2gtk-4.1 (and libfuse2) on the\n'
+            'system to render its UI. Install it with one of:\n'
+            '  Debian 13 / Ubuntu 24.04+:  sudo apt install libwebkit2gtk-4.1-0 libfuse2t64\n'
+            '  Debian 12 / Ubuntu 22.04:   sudo apt install libwebkit2gtk-4.1-0 libfuse2\n'
+            '  Fedora 36+:                 sudo dnf install webkit2gtk4.1 fuse-libs\n'
+            '  Arch / Manjaro:             sudo pacman -S webkit2gtk-4.1 fuse2\n'
+            '  openSUSE Tumbleweed:        sudo zypper install libwebkit2gtk-4_1-0 libfuse2\n',
+            file=sys.stderr, flush=True,
+        )
+        sys.exit(1)
+
 # ---------------------------------------------------------------------------
 # Path resolution — works both from source and inside a PyInstaller bundle
 # ---------------------------------------------------------------------------

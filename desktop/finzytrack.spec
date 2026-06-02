@@ -124,48 +124,48 @@ a = Analysis(
     noarchive=False,
 )
 
-# On Linux, drop bundled copies of system runtime libraries that must come
-# from the user's OS rather than from this bundle. The canonical AppImage
-# rule: build on the oldest distro you want to support, then let the user's
-# OS supply C/C++ runtime, GLib/GObject, GTK, Pango, Cairo, X11, etc. These
-# libraries are forward-compatible (an app built against an older version
-# runs fine against a newer one), but the reverse fails when *other* system
-# libraries demand newer symbols than the bundled copy provides — e.g.
-# libwebkit2gtk → libgudev → GLib's g_once_init_enter_pointer (added in
-# 2.80). Bundling our older 22.04 copy of GLib breaks this chain on Debian
-# 13 etc.; bundling our older libstdc++ breaks ICU's newer CXXABI symbols.
-# Mirrors the AppImage excludelist subset relevant to GTK apps.
+# On Linux, bundle only Python's own files — Python's interpreter,
+# Python stdlib C extensions, and third-party Python packages from
+# site-packages. Everything else (GLib, GTK, libstdc++, libmount, …)
+# must come from the user's OS.
+#
+# This is the inverse of the AppImage excludelist approach: instead of
+# enumerating the open-ended list of system libraries to drop, we
+# enumerate the closed list of things that are ours to ship. The
+# failure mode is much friendlier: a missing system lib produces a
+# clear "cannot open shared object file: libX.so.Y" error the user
+# can resolve by apt-installing one package, vs. the cryptic
+# "version `MOUNT_2_40' not found" symbol mismatches we hit when
+# bundling old copies of newer system libraries.
+#
+# A small set of native libs that *aren't* general system libraries
+# but that Python extensions need at runtime are explicitly bundled
+# below (see MUST_BUNDLE).
 if sys.platform.startswith('linux'):
-    _LINUX_SYSTEM_LIBS = {
-        # C / C++ runtime
-        'libstdc++.so.6', 'libgcc_s.so.1', 'libc.so.6', 'libm.so.6',
-        'libpthread.so.0', 'libdl.so.2', 'librt.so.1', 'libutil.so.1',
-        'libresolv.so.2', 'ld-linux-x86-64.so.2',
-        # GLib / GObject / GIO
-        'libglib-2.0.so.0', 'libgobject-2.0.so.0', 'libgio-2.0.so.0',
-        'libgmodule-2.0.so.0', 'libgthread-2.0.so.0', 'libffi.so.7',
-        'libffi.so.8', 'libgirepository-1.0.so.1',
-        # GTK / Pango / Cairo / GDK-Pixbuf
-        'libgtk-3.so.0', 'libgdk-3.so.0', 'libgdk_pixbuf-2.0.so.0',
-        'libpango-1.0.so.0', 'libpangocairo-1.0.so.0', 'libpangoft2-1.0.so.0',
-        'libcairo.so.2', 'libcairo-gobject.so.2', 'libatk-1.0.so.0',
-        'libepoxy.so.0',
-        # X11 / Wayland
-        'libX11.so.6', 'libxcb.so.1', 'libxcb-render.so.0', 'libxcb-shm.so.0',
-        'libXrandr.so.2', 'libXrender.so.1', 'libXfixes.so.3', 'libXext.so.6',
-        'libXi.so.6', 'libXcomposite.so.1', 'libXcursor.so.1',
-        'libXdamage.so.1', 'libXinerama.so.1', 'libXtst.so.6',
-        'libwayland-client.so.0', 'libwayland-cursor.so.0',
-        'libwayland-egl.so.1', 'libwayland-server.so.0',
-        # Common system services
-        'libdbus-1.so.3', 'libfontconfig.so.1', 'libfreetype.so.6',
-        'libharfbuzz.so.0', 'libharfbuzz-gobject.so.0', 'libxml2.so.2',
-        'libz.so.1', 'libzstd.so.1', 'libudev.so.1', 'libsystemd.so.0',
-        'libdrm.so.2', 'libgbm.so.1', 'libEGL.so.1', 'libGL.so.1',
-        'libGLX.so.0', 'libOpenGL.so.0',
+    def _is_python_owned(b):
+        """True if this binary belongs to Python's install tree."""
+        src_path = Path(b[1])
+        if any(part == 'site-packages' for part in src_path.parts):
+            return True
+        if any(part == 'lib-dynload' for part in src_path.parts):
+            return True
+        name = Path(b[0]).name
+        if name.startswith('libpython'):
+            return True
+        return False
+
+    # Native libraries that are not general system libs but are needed
+    # at runtime by our Python C extensions. Add to this if a runtime
+    # error reports a missing library that turns out to be required
+    # by a Python package (not by GTK/glibc/etc.).
+    MUST_BUNDLE = {
+        'libgomp.so.1',  # OpenMP — required by scikit-learn
     }
-    a.binaries = [b for b in a.binaries
-                  if Path(b[0]).name not in _LINUX_SYSTEM_LIBS]
+
+    a.binaries = [
+        b for b in a.binaries
+        if _is_python_owned(b) or Path(b[0]).name in MUST_BUNDLE
+    ]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
