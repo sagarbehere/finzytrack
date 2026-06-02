@@ -28,9 +28,9 @@ Open-source personal finance software for people who want to understand their fi
 Full documentation at [docs.finzytrack.com](https://docs.finzytrack.com), including:
 
 - [Quick Start](https://docs.finzytrack.com/quick-start/) — get up and running from first launch
-- [Installation](https://docs.finzytrack.com/installation/) — download and install on macOS, Linux, or Windows
+- [Installation](https://docs.finzytrack.com/installation/) — download and install on macOS (Apple Silicon), Linux, or Windows
 - [Views](https://docs.finzytrack.com/views/) — guide to each screen in the app
-- [Reference](https://docs.finzytrack.com/reference/dashboard-recipes/) — technical reference for recipes, rules, queries, and configuration
+- [Reference](https://docs.finzytrack.com/reference/) — technical reference for recipes, rules, queries, and configuration
 
 ## Development Setup
 
