@@ -12,6 +12,10 @@ on:
           - macos
           - linux
         default: all
+      make_release:
+        description: 'Publish a shareable pre-release with these artifacts'
+        type: boolean
+        default: false
   push:
     tags:
       - 'v*'             # Auto-build on version tags
@@ -163,11 +167,25 @@ jobs:
           path: desktop/dist/Finzytrack-windows.zip
           retention-days: 14
 
-  # -- Create a GitHub Release when triggered by a version tag --
+  # -- Publish a GitHub Release with the built artifacts.
+  #
+  # Triggers in two situations:
+  #   1. A version tag was pushed (v*) — the formal release path.
+  #      Created as a DRAFT so the maintainer reviews the release notes
+  #      before publishing. Marked PRERELEASE automatically when the tag
+  #      contains a hyphen (semver convention: v1.2.3-beta.1, -rc.2, etc.)
+  #      so it doesn't appear as the "latest" release on the website.
+  #
+  #   2. workflow_dispatch with make_release=true — the "share this
+  #      branch build with a tester" path. Tag is auto-generated
+  #      (dev-<branch>-<shortsha>), always marked PRERELEASE, and
+  #      published immediately (not draft) so the URL is shareable.
 
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: |
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.make_release)
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -175,10 +193,40 @@ jobs:
         with:
           path: artifacts
 
+      - name: Compute release metadata
+        id: meta
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+            # Strip slashes so the tag name is well-formed
+            BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-')
+            TAG="dev-${BRANCH}-${SHORT_SHA}"
+            echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+            echo "name=Dev build ${TAG}" >> "$GITHUB_OUTPUT"
+            echo "draft=false" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            TAG="${{ github.ref_name }}"
+            echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+            echo "name=${TAG}" >> "$GITHUB_OUTPUT"
+            echo "draft=true" >> "$GITHUB_OUTPUT"
+            # Semver convention: anything with a hyphen is a pre-release
+            # (v1.2.3-beta.1, v1.2.3-rc.2, v1.2.3-fix.bug123, ...)
+            if [[ "${TAG}" == *-* ]]; then
+              echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          draft: ${{ steps.meta.outputs.draft == 'true' }}
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
           generate_release_notes: true
           files: |
             artifacts/Finzytrack-macOS/Finzytrack-macOS.zip
