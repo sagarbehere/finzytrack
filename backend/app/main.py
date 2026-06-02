@@ -6,6 +6,7 @@ CLI interface with configuration management and logging setup.
 import os
 import sys
 import logging
+import platform
 from pathlib import Path
 from typing import Any, Optional
 from contextlib import asynccontextmanager
@@ -228,8 +229,21 @@ def create_app(
 
     @app.get("/health")
     async def health():
-        """Perform health checks on critical application components."""
-        checks: dict[str, Any] = {"config_loaded": True, "mode": mode.value}
+        """Perform health checks on critical application components.
+
+        The response also carries app/runtime metadata (version, python,
+        platform) that the frontend's About tab surfaces and that users
+        include in bug reports via the "Copy diagnostics" button. The
+        metadata fields don't participate in the healthy/unhealthy
+        determination — they're purely informational.
+        """
+        checks: dict[str, Any] = {
+            "config_loaded": True,
+            "mode": mode.value,
+            "app_version": __version__,
+            "python_version": sys.version.split()[0],
+            "platform": platform.platform(),
+        }
 
         if mode == AppMode.DESKTOP:
             svc = services  # pre-registered singleton
@@ -269,7 +283,9 @@ def create_app(
                 checks["email_import"] = {"enabled": False}
 
             critical_checks = {k: v for k, v in checks.items()
-                               if k not in ("training_samples", "mode")}
+                               if k not in ("training_samples", "mode",
+                                            "app_version", "python_version",
+                                            "platform")}
             is_healthy = all(critical_checks.values())
         else:
             # Hosted mode: lightweight health (no per-user checks)

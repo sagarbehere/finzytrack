@@ -23,7 +23,7 @@ export type LLMConfig = {
      */
     provider?: LLMConfig.provider;
     /**
-     * OpenAI-compatible API base URL — only used when provider=openai (e.g. http://127.0.0.1:1234 or https://api.openai.com)
+     * OpenAI-compatible API base URL — only used when provider=openai. Must include the API version path (e.g. http://127.0.0.1:1234/v1 or https://api.openai.com/v1). Sent to the SDK verbatim; no auto-correction.
      */
     api_url?: string;
     /**

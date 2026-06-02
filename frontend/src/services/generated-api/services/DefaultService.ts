@@ -20,6 +20,12 @@ export class DefaultService {
     /**
      * Health
      * Perform health checks on critical application components.
+     *
+     * The response also carries app/runtime metadata (version, python,
+     * platform) that the frontend's About tab surfaces and that users
+     * include in bug reports via the "Copy diagnostics" button. The
+     * metadata fields don't participate in the healthy/unhealthy
+     * determination — they're purely informational.
      * @returns any Successful Response
      * @throws ApiError
      */
