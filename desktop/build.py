@@ -118,9 +118,11 @@ def sync_ai_resources():
 def sync_frontend_version():
     """Mirror /VERSION into frontend/package.json's "version" field.
 
-    The frontend doesn't currently display its package.json version anywhere,
-    but keeping the two in sync means the npm metadata doesn't lie about
-    what build produced the bundle.
+    The committed value in frontend/package.json is the placeholder
+    "0.0.0-source", signalling that the file is not the source of truth
+    for the app's version — /VERSION is. The build rewrites it to the
+    real version here so the npm metadata of the produced bundle is
+    accurate. Do not edit frontend/package.json's "version" by hand.
     """
     import json
     version = VERSION_FILE.read_text().strip()
