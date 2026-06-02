@@ -21,7 +21,7 @@ Open-source personal finance software for people who want to understand their fi
 - **Auto-categorization** — train on your past transactions or use AI assistance
 - **Powerful querying** — SQL and BQL queries against your financial data
 - **Optional AI assistance** — parse statements, create import rules, enter transactions in natural language, build dashboards, and answer financial questions
-- **Your data, your control** — everything stored in a single plain-text Beancount ledger file with zero lock-in
+- **You own your data** — everything stored in a single plain-text Beancount ledger file with zero lock-in
 
 ## Documentation
 
@@ -33,6 +33,8 @@ Full documentation at [docs.finzytrack.com](https://docs.finzytrack.com), includ
 - [Reference](https://docs.finzytrack.com/reference/dashboard-recipes/) — technical reference for recipes, rules, queries, and configuration
 
 ## Development Setup
+
+See [Building from Source](https://docs.finzytrack.com/development/building/) for full development instructions. But here's a quickstart — first, install the [platform-specific prerequisites](https://docs.finzytrack.com/development/building/#platform-specific-prerequisites) for your platform (on Linux, without them `pip install` will fail building PyGObject). Then:
 
 ```bash
 git clone git@github.com:sagarbehere/finzytrack.git
@@ -48,10 +50,6 @@ pip install -r requirements.txt
 cd ../frontend
 npm install
 ```
-
-**Linux:** install system prerequisites first — see [platform-specific prerequisites](https://docs.finzytrack.com/development/building/#platform-specific-prerequisites). Without them, `pip install` will fail building PyGObject.
-
-See [Building from Source](https://docs.finzytrack.com/development/building/) for full development instructions.
 
 ## Contributing
 
