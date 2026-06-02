@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-6">
+  <div class="space-y-6 pb-8">
     <!-- About -->
     <div class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10">
       <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
@@ -20,8 +20,7 @@
             target="_blank"
             rel="noopener noreferrer"
             class="text-indigo-600 hover:underline dark:text-indigo-400"
-          >GPL v2</a>
-          — open source, forever.
+          >GPL v2</a>.
         </p>
       </div>
     </div>
@@ -86,12 +85,15 @@
       </div>
       <div class="p-6">
         <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-          Finzytrack stands on a deep stack of open-source work. Built with<template
-            v-for="(ack, i) in acknowledgements" :key="ack.href"
-          > <a
+          <span>Finzytrack stands on a deep stack of open-source work. Built with </span>
+          <template v-for="(ack, i) in acknowledgements" :key="ack.href">
+            <span v-if="i > 0">{{ i === acknowledgements.length - 1 ? ', and ' : ', ' }}</span>
+            <a
               :href="ack.href" target="_blank" rel="noopener noreferrer"
               class="text-indigo-600 hover:underline dark:text-indigo-400"
-            >{{ ack.name }}</a>{{ separator(i) }}</template>.
+            >{{ ack.name }}</a>
+          </template>
+          <span>.</span>
         </p>
       </div>
     </div>
@@ -114,7 +116,7 @@ const resourceLinks = [
   { label: 'Documentation', href: 'https://docs.finzytrack.com' },
   { label: 'Website', href: 'https://finzytrack.com' },
   { label: 'Source code', href: 'https://github.com/sagarbehere/finzytrack' },
-  { label: 'Report an issue', href: 'https://github.com/sagarbehere/finzytrack/issues' },
+  { label: 'Discussions', href: 'https://github.com/sagarbehere/finzytrack/discussions' },
 ]
 
 const acknowledgements = [
@@ -128,13 +130,6 @@ const acknowledgements = [
   { name: 'PyInstaller', href: 'https://pyinstaller.org/' },
   { name: 'PyWebView', href: 'https://pywebview.flowrl.com/' },
 ]
-
-// Comma-separated list with an Oxford "and" before the last item.
-function separator(i: number): string {
-  if (i === acknowledgements.length - 1) return ''
-  if (i === acknowledgements.length - 2) return ', and '
-  return ', '
-}
 
 const diagnosticsText = computed(() =>
   `Finzytrack ${appVersion.value}\n` +
