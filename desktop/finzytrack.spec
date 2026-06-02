@@ -124,15 +124,46 @@ a = Analysis(
     noarchive=False,
 )
 
-# On Linux, drop bundled copies of the C/C++ runtime libraries. PyInstaller
-# picks these up from the build machine, but bundling an older copy than
-# the user's system causes "version `CXXABI_x.y.z' not found" failures when
-# the user's other system libraries (e.g. libwebkit2gtk → libicui18n) demand
-# a newer C++ ABI than we ship. The canonical AppImage rule is "build on the
-# oldest distro you want to support, but let the user's OS supply the
-# C++ runtime" — these libraries are forward-compatible.
+# On Linux, drop bundled copies of system runtime libraries that must come
+# from the user's OS rather than from this bundle. The canonical AppImage
+# rule: build on the oldest distro you want to support, then let the user's
+# OS supply C/C++ runtime, GLib/GObject, GTK, Pango, Cairo, X11, etc. These
+# libraries are forward-compatible (an app built against an older version
+# runs fine against a newer one), but the reverse fails when *other* system
+# libraries demand newer symbols than the bundled copy provides — e.g.
+# libwebkit2gtk → libgudev → GLib's g_once_init_enter_pointer (added in
+# 2.80). Bundling our older 22.04 copy of GLib breaks this chain on Debian
+# 13 etc.; bundling our older libstdc++ breaks ICU's newer CXXABI symbols.
+# Mirrors the AppImage excludelist subset relevant to GTK apps.
 if sys.platform.startswith('linux'):
-    _LINUX_SYSTEM_LIBS = {'libstdc++.so.6', 'libgcc_s.so.1'}
+    _LINUX_SYSTEM_LIBS = {
+        # C / C++ runtime
+        'libstdc++.so.6', 'libgcc_s.so.1', 'libc.so.6', 'libm.so.6',
+        'libpthread.so.0', 'libdl.so.2', 'librt.so.1', 'libutil.so.1',
+        'libresolv.so.2', 'ld-linux-x86-64.so.2',
+        # GLib / GObject / GIO
+        'libglib-2.0.so.0', 'libgobject-2.0.so.0', 'libgio-2.0.so.0',
+        'libgmodule-2.0.so.0', 'libgthread-2.0.so.0', 'libffi.so.7',
+        'libffi.so.8', 'libgirepository-1.0.so.1',
+        # GTK / Pango / Cairo / GDK-Pixbuf
+        'libgtk-3.so.0', 'libgdk-3.so.0', 'libgdk_pixbuf-2.0.so.0',
+        'libpango-1.0.so.0', 'libpangocairo-1.0.so.0', 'libpangoft2-1.0.so.0',
+        'libcairo.so.2', 'libcairo-gobject.so.2', 'libatk-1.0.so.0',
+        'libepoxy.so.0',
+        # X11 / Wayland
+        'libX11.so.6', 'libxcb.so.1', 'libxcb-render.so.0', 'libxcb-shm.so.0',
+        'libXrandr.so.2', 'libXrender.so.1', 'libXfixes.so.3', 'libXext.so.6',
+        'libXi.so.6', 'libXcomposite.so.1', 'libXcursor.so.1',
+        'libXdamage.so.1', 'libXinerama.so.1', 'libXtst.so.6',
+        'libwayland-client.so.0', 'libwayland-cursor.so.0',
+        'libwayland-egl.so.1', 'libwayland-server.so.0',
+        # Common system services
+        'libdbus-1.so.3', 'libfontconfig.so.1', 'libfreetype.so.6',
+        'libharfbuzz.so.0', 'libharfbuzz-gobject.so.0', 'libxml2.so.2',
+        'libz.so.1', 'libzstd.so.1', 'libudev.so.1', 'libsystemd.so.0',
+        'libdrm.so.2', 'libgbm.so.1', 'libEGL.so.1', 'libGL.so.1',
+        'libGLX.so.0', 'libOpenGL.so.0',
+    }
     a.binaries = [b for b in a.binaries
                   if Path(b[0]).name not in _LINUX_SYSTEM_LIBS]
 
