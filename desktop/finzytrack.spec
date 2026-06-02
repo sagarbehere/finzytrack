@@ -124,6 +124,18 @@ a = Analysis(
     noarchive=False,
 )
 
+# On Linux, drop bundled copies of the C/C++ runtime libraries. PyInstaller
+# picks these up from the build machine, but bundling an older copy than
+# the user's system causes "version `CXXABI_x.y.z' not found" failures when
+# the user's other system libraries (e.g. libwebkit2gtk → libicui18n) demand
+# a newer C++ ABI than we ship. The canonical AppImage rule is "build on the
+# oldest distro you want to support, but let the user's OS supply the
+# C++ runtime" — these libraries are forward-compatible.
+if sys.platform.startswith('linux'):
+    _LINUX_SYSTEM_LIBS = {'libstdc++.so.6', 'libgcc_s.so.1'}
+    a.binaries = [b for b in a.binaries
+                  if Path(b[0]).name not in _LINUX_SYSTEM_LIBS]
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
