@@ -74,17 +74,11 @@ jobs:
 
       # -- Install dependencies --
 
-      - name: Install frontend dependencies
-        run: npm ci
-        working-directory: frontend
-
-      - name: Install backend dependencies
-        run: pip install -r backend/requirements.txt
-
-      - name: Install desktop build dependencies
-        run: pip install -r desktop/requirements.txt
-
-      # -- Linux: install system libraries for PyWebView (GTK + WebKit) --
+      # Linux apt step must run *before* pip installs because pygobject
+      # has no wheels on Linux and builds from source against system
+      # headers — libgirepository1.0-dev / libcairo2-dev / pkg-config
+      # must be present before `pip install -r desktop/requirements.txt`
+      # tries to compile it.
 
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
@@ -97,6 +91,16 @@ jobs:
             gir1.2-webkit2-4.1 \
             libwebkit2gtk-4.1-0 \
             libfuse2
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Install desktop build dependencies
+        run: pip install -r desktop/requirements.txt
 
       # -- Diagnostics: record the .NET runtimes available on Windows
       #    runners. pythonnet picks one of these at startup; differences
