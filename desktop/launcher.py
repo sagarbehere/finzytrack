@@ -7,8 +7,21 @@ import sys
 import time
 import threading
 import argparse
+import multiprocessing
 import urllib.request
 import urllib.error
+
+# Intercept multiprocessing worker bootstraps before anything else runs.
+# scikit-learn's RandomForestClassifier(n_jobs=-1) uses joblib's loky
+# backend, which spawns workers by re-executing the parent (here: the
+# frozen Finzytrack binary) with a `--multiprocessing-fork ...` argv.
+# Without freeze_support(), those workers fall through to launcher's
+# argparse, which rejects the bootstrap flags as unknown arguments;
+# loky then silently falls back to serial execution and RF training
+# uses one CPU core. freeze_support() detects the worker argv and
+# runs the worker logic (then exits) before any of our code runs.
+# In non-worker invocations it's a cheap no-op.
+multiprocessing.freeze_support()
 
 # Windows defaults stdout/stderr to cp1252, which crashes the moment any
 # log line contains a non-Latin-1 character (e.g. "→" in our progress
@@ -18,6 +31,53 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8')
+
+# --smoke-test: validate that the sklearn/scipy/numpy stack required by
+# the categorizer survived PyInstaller's pruning. Runs before any
+# user-state side effects (no chdir, no APP_DIR creation, no webview
+# import) and exits 0/1. Used by the build pipeline to detect when
+# spec excludes drop a module the categorizer actually needs.
+if '--smoke-test' in sys.argv:
+    if getattr(sys, 'frozen', False):
+        sys.path.insert(0, sys._MEIPASS)
+    else:
+        sys.path.insert(0, os.path.abspath(os.path.join(
+            os.path.dirname(__file__), '..', 'backend')))
+    try:
+        from app.services.categorizer import (
+            categorize_transaction, train_classifier,
+        )
+        data = [
+            ("STARBUCKS COFFEE", "Expenses:Food:Coffee"),
+            ("STARBUCKS RESERVE", "Expenses:Food:Coffee"),
+            ("BLUE BOTTLE COFFEE", "Expenses:Food:Coffee"),
+            ("PEETS COFFEE", "Expenses:Food:Coffee"),
+            ("PHILZ COFFEE", "Expenses:Food:Coffee"),
+            ("SHELL GAS STATION", "Expenses:Auto:Fuel"),
+            ("CHEVRON GAS", "Expenses:Auto:Fuel"),
+            ("EXXON MOBIL", "Expenses:Auto:Fuel"),
+            ("BP STATION", "Expenses:Auto:Fuel"),
+            ("ARCO GAS", "Expenses:Auto:Fuel"),
+            ("WHOLE FOODS MARKET", "Expenses:Food:Groceries"),
+            ("TRADER JOES", "Expenses:Food:Groceries"),
+            ("SAFEWAY", "Expenses:Food:Groceries"),
+            ("KROGER STORE", "Expenses:Food:Groceries"),
+            ("COSTCO WHOLESALE", "Expenses:Food:Groceries"),
+        ]
+        pipe = train_classifier(data)
+        cat, conf = categorize_transaction("STARBUCKS NEW LOCATION", pipe)
+        known = {c for _, c in data}
+        assert pipe is not None
+        assert cat in known, f"unknown category {cat!r}"
+        assert 0.0 <= conf <= 1.0, f"confidence {conf} out of range"
+        print(f'SMOKE PASS  category={cat}  confidence={conf:.3f}', flush=True)
+        sys.exit(0)
+    except Exception as e:
+        print(f'SMOKE FAIL  {type(e).__name__}: {e}',
+              file=sys.stderr, flush=True)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 # On Windows, force pythonnet to use the .NET Framework runtime via
 # mscoree.dll, which ships with every Windows install. clr_loader's
