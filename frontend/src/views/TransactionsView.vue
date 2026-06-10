@@ -130,7 +130,7 @@ import type { TransactionFilters } from '@/types/filters'
 import { useTransactionQuery } from '@/composables/useTransactionQuery'
 import { useTransactionUpdater } from '@/composables/useTransactionUpdater'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
-import { useLedgerHealth } from '@/composables/useLedgerHealth'
+import { useServerNotices } from '@/composables/useServerNotices'
 import { useToast } from '@/composables/useNotifications'
 import { errorHandler } from '@/utils/ErrorHandler'
 
@@ -180,7 +180,7 @@ const initialFilters = computed<TransactionFilters | undefined>(() => {
 const { queryTransactions } = useTransactionQuery()
 const { updateTransactions } = useTransactionUpdater()
 const unsavedConfirm = useConfirmDialog()
-const { checkErrors: checkLedgerErrors } = useLedgerHealth()
+const { check: checkServerNotices } = useServerNotices()
 const toast = useToast()
 
 // Computed
@@ -277,8 +277,9 @@ async function handleSaveChanges() {
         `Successfully updated ${result.updated_count} transaction${result.updated_count > 1 ? 's' : ''}.`
       )
 
-      // Check for ledger errors introduced by the edit
-      checkLedgerErrors()
+      // Refresh server-side notices in case the edit introduced (or
+      // resolved) parse errors or other advisories.
+      checkServerNotices()
     }
   } catch (error: unknown) {
     // ApiError flows untouched — canonical handler routes to the

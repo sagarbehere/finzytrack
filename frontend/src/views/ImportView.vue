@@ -260,7 +260,7 @@
   import type { DuplicateInfo } from '@/services/generated-api'
   import type { ParsedTransaction } from '@/services/nlParser'
   import { useTransactionImporter } from '@/composables/useTransactionImporter'
-  import { useLedgerHealth } from '@/composables/useLedgerHealth'
+  import { useServerNotices } from '@/composables/useServerNotices'
   import { useToast } from '@/composables/useNotifications'
   import { toMoney, neg } from '@/utils/money'
   import { isTransactionBalanced } from '@/utils/transactions'
@@ -268,7 +268,7 @@
   defineOptions({ name: 'ImportView' })
 
   const { performCategorization, performCommit, isLoading } = useTransactionImporter()
-  const { checkErrors: checkLedgerErrors } = useLedgerHealth()
+  const { check: checkServerNotices } = useServerNotices()
   const { success: showSuccessToast } = useToast()
 
   // Tab state
@@ -852,8 +852,9 @@
         // Reset all importer components by incrementing the key
         importerKey.value++
 
-        // Check for ledger errors introduced by the import
-        checkLedgerErrors()
+        // Refresh server-side notices in case the import introduced (or
+        // resolved) parse errors or other advisories.
+        checkServerNotices()
       }
     } catch (_error) {
       // Error already displayed via errorHandler.display() in composable

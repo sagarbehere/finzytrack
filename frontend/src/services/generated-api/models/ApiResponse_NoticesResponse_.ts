@@ -3,10 +3,10 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ErrorInfo } from './ErrorInfo';
-import type { LedgerErrorsResponse } from './LedgerErrorsResponse';
-export type ApiResponse_LedgerErrorsResponse_ = {
+import type { NoticesResponse } from './NoticesResponse';
+export type ApiResponse_NoticesResponse_ = {
     success: boolean;
-    data?: (LedgerErrorsResponse | null);
+    data?: (NoticesResponse | null);
     error?: (ErrorInfo | null);
 };
 

@@ -60,7 +60,7 @@ All backend API calls MUST use the generated client in `src/services/generated-a
 Two intentional shapes; pick by where the state belongs:
 
 - **Module-level singleton state** — `const someRef = ref(...)` declared *outside* the exported `useX()` function. Use this for genuinely global, cross-view state: app theme, notifications, auth/user context, ledger health, loaded recipes/dashboards, in-memory caches for accounts/commodities/years that every view shares. Singletons survive route changes and are the right home for state that would otherwise re-fetch per view.
-  - Current singletons: `useAccounts`, `useCommodities`, `useConfig`, `useTheme`, `useNotifications`, `useLedgerHealth`, `useDashboardTabs`, `useRecipeLoader`, `useAccountsTree`, `useAvailableYears`.
+  - Current singletons: `useAccounts`, `useCommodities`, `useConfig`, `useTheme`, `useNotifications`, `useServerNotices`, `useDashboardTabs`, `useRecipeLoader`, `useAccountsTree`, `useAvailableYears`.
 - **Function-scoped state** — `ref(...)` declared *inside* the exported `useX()` function. Use this for view-local state: a transactions filter, a CSV importer's parse buffer, a form's draft. Each call site gets a fresh copy.
 
 Do not introduce Pinia for state of this size — the module-singleton pattern provides the same shape with no extra dependency. If a composable's state truly belongs to one view, keep it function-scoped; promoting it to a singleton silently leaks state across views.

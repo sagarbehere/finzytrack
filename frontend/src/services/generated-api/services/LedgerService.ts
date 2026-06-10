@@ -5,7 +5,6 @@
 import type { ApiResponse_DeleteTransactionResponse_ } from '../models/ApiResponse_DeleteTransactionResponse_';
 import type { ApiResponse_ExportData_ } from '../models/ApiResponse_ExportData_';
 import type { ApiResponse_ExportStatusData_ } from '../models/ApiResponse_ExportStatusData_';
-import type { ApiResponse_LedgerErrorsResponse_ } from '../models/ApiResponse_LedgerErrorsResponse_';
 import type { ApiResponse_QueryData_ } from '../models/ApiResponse_QueryData_';
 import type { ApiResponse_UpdateTransactionResponse_ } from '../models/ApiResponse_UpdateTransactionResponse_';
 import type { Body_exportLedger } from '../models/Body_exportLedger';
@@ -164,20 +163,6 @@ export class LedgerService {
         return __request(OpenAPI, {
             method: 'GET',
             url: '/api/ledger/schema/postings',
-        });
-    }
-    /**
-     * Get Ledger Errors
-     * Return current ledger parse errors from SQLite.
-     *
-     * This is a lightweight read — no re-parsing occurs.
-     * @returns ApiResponse_LedgerErrorsResponse_ Successful Response
-     * @throws ApiError
-     */
-    public static getLedgerErrors(): CancelablePromise<ApiResponse_LedgerErrorsResponse_> {
-        return __request(OpenAPI, {
-            method: 'GET',
-            url: '/api/ledger/errors',
         });
     }
 }

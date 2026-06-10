@@ -299,29 +299,91 @@
 
       <!-- Main content -->
       <main class="flex-1 min-h-0 overflow-auto pt-8 min-w-0">
-        <!-- Ledger error banner -->
+        <!-- Server-side notices (parse errors, advisories) -->
         <div
-          v-if="ledgerErrorCount > 0 && !ledgerDismissed"
-          class="mx-4 sm:mx-6 lg:mx-8 mb-4 rounded-md bg-red-50 dark:bg-red-500/10 p-4 dark:outline dark:outline-red-500/15"
+          v-for="notice in serverNotices"
+          :key="`${notice.code}::${notice.signature}`"
+          class="mx-4 sm:mx-6 lg:mx-8 mb-4 rounded-md p-4"
+          :class="{
+            'bg-red-50 dark:bg-red-500/10 dark:outline dark:outline-red-500/15': notice.severity === 'error',
+            'bg-amber-50 dark:bg-amber-500/10 dark:outline dark:outline-amber-500/15': notice.severity === 'warning',
+            'bg-blue-50 dark:bg-blue-500/10 dark:outline dark:outline-blue-500/15': notice.severity === 'info',
+          }"
         >
           <div class="flex items-start gap-3">
-            <ExclamationTriangleIcon class="mt-0.5 h-5 w-5 shrink-0 text-red-600 dark:text-red-400" aria-hidden="true" />
+            <ExclamationTriangleIcon
+              class="mt-0.5 h-5 w-5 shrink-0"
+              :class="{
+                'text-red-600 dark:text-red-400': notice.severity === 'error',
+                'text-amber-600 dark:text-amber-400': notice.severity === 'warning',
+                'text-blue-600 dark:text-blue-400': notice.severity === 'info',
+              }"
+              aria-hidden="true"
+            />
             <div class="flex-1 min-w-0">
-              <p class="text-sm font-medium text-red-800 dark:text-red-200">
-                Your ledger has {{ ledgerErrorCount }} parsing {{ ledgerErrorCount === 1 ? 'error' : 'errors' }} that may affect app functionality.
+              <p
+                class="text-sm font-medium"
+                :class="{
+                  'text-red-800 dark:text-red-200': notice.severity === 'error',
+                  'text-amber-800 dark:text-amber-200': notice.severity === 'warning',
+                  'text-blue-800 dark:text-blue-200': notice.severity === 'info',
+                }"
+              >
+                {{ notice.title }}
               </p>
-              <details class="mt-2">
-                <summary class="text-sm text-red-700 dark:text-red-300 cursor-pointer hover:text-red-900 dark:hover:text-red-100">Show details</summary>
-                <ul class="mt-2 space-y-1 text-sm text-red-700 dark:text-red-300 font-mono">
-                  <li v-for="(err, i) in ledgerErrors" :key="i">
-                    Line {{ err.line }}: {{ err.message }}
-                  </li>
+              <p
+                v-if="notice.message"
+                class="mt-1 text-sm"
+                :class="{
+                  'text-red-700 dark:text-red-300': notice.severity === 'error',
+                  'text-amber-700 dark:text-amber-300': notice.severity === 'warning',
+                  'text-blue-700 dark:text-blue-300': notice.severity === 'info',
+                }"
+              >
+                {{ notice.message }}
+                <a
+                  v-if="notice.learn_more_url"
+                  :href="notice.learn_more_url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="ml-1 underline hover:no-underline"
+                  :class="{
+                    'text-red-800 dark:text-red-200': notice.severity === 'error',
+                    'text-amber-800 dark:text-amber-200': notice.severity === 'warning',
+                    'text-blue-800 dark:text-blue-200': notice.severity === 'info',
+                  }"
+                >Learn more →</a>
+              </p>
+              <details v-if="notice.details && notice.details.length" class="mt-2">
+                <summary
+                  class="text-sm cursor-pointer"
+                  :class="{
+                    'text-red-700 dark:text-red-300 hover:text-red-900 dark:hover:text-red-100': notice.severity === 'error',
+                    'text-amber-700 dark:text-amber-300 hover:text-amber-900 dark:hover:text-amber-100': notice.severity === 'warning',
+                    'text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100': notice.severity === 'info',
+                  }"
+                >Show details</summary>
+                <ul
+                  class="mt-2 space-y-1 text-sm font-mono"
+                  :class="{
+                    'text-red-700 dark:text-red-300': notice.severity === 'error',
+                    'text-amber-700 dark:text-amber-300': notice.severity === 'warning',
+                    'text-blue-700 dark:text-blue-300': notice.severity === 'info',
+                  }"
+                >
+                  <li v-for="(detail, i) in notice.details" :key="i">{{ detail }}</li>
                 </ul>
               </details>
             </div>
             <button
-              @click="dismissLedgerErrors"
-              class="shrink-0 rounded-md p-1 text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-200"
+              v-if="notice.dismissible !== false"
+              @click="dismissServerNotice(notice)"
+              class="shrink-0 rounded-md p-1"
+              :class="{
+                'text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-200': notice.severity === 'error',
+                'text-amber-500 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-200': notice.severity === 'warning',
+                'text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-200': notice.severity === 'info',
+              }"
               aria-label="Dismiss"
             >
               <XMarkIcon class="h-4 w-4" />
@@ -343,7 +405,7 @@
   import { useTheme } from '@/composables/useTheme'
   import { useNotifications } from '@/composables/useNotifications'
   import { useSidebarWidth } from '@/composables/useSidebarWidth'
-  import { useLedgerHealth } from '@/composables/useLedgerHealth'
+  import { useServerNotices } from '@/composables/useServerNotices'
   import NotificationPanel from '@/components/common/NotificationPanel.vue'
   import GlobalSearch from '@/components/layout/GlobalSearch.vue'
   import { Dialog, DialogPanel, TransitionChild, TransitionRoot } from '@headlessui/vue'
@@ -404,14 +466,12 @@
     }
   }
 
-  // Ledger health
+  // Server-side notices (parse errors, multi-file advisories, etc.)
   const {
-    errorCount: ledgerErrorCount,
-    errors: ledgerErrors,
-    dismissed: ledgerDismissed,
-    checkErrors: checkLedgerErrors,
-    dismiss: dismissLedgerErrors,
-  } = useLedgerHealth()
+    visibleNotices: serverNotices,
+    check: checkServerNotices,
+    dismiss: dismissServerNotice,
+  } = useServerNotices()
 
   // Sidebar resizing
   const { sidebarWidth, sidebarWidthPx, setSidebarWidth } = useSidebarWidth()
@@ -451,7 +511,7 @@
     window.addEventListener('resize', handleWindowResize)
     document.addEventListener('mousedown', handleClickOutside)
     document.addEventListener('keydown', handleEscape)
-    checkLedgerErrors()
+    checkServerNotices()
   })
 
   // Cleanup on component unmount
