@@ -1,0 +1,9 @@
+option "title" "Demo Ledger (Multi-file)"
+option "operating_currency" "USD"
+plugin "beancount.plugins.implicit_prices"
+include "accounts.beancount"
+include "transactions-2024.beancount"
+include "transactions-2025.beancount"
+include "2026/index.beancount"
+include "pushtag-demo.beancount"
+

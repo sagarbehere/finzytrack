@@ -1,0 +1,32 @@
+2024-01-01 open Assets:Bank:Checking                            USD
+
+
+2024-01-01 open Assets:Bank:Savings                             USD
+
+
+2024-01-01 open Liabilities:CreditCard                          USD
+
+
+2024-01-01 open Income:Salary                                   USD
+
+
+2024-01-01 open Expenses:Food                                   USD
+
+
+2024-01-01 open Expenses:Rent                                   USD
+
+
+2024-01-01 open Expenses:Transport                              USD
+
+
+2024-01-01 open Expenses:Travel                                 USD
+
+
+2024-01-01 open Equity:Opening-Balances                         USD
+
+
+2024-01-01 commodity USD
+  name: "US Dollar"
+  type: "Cash"
+
+

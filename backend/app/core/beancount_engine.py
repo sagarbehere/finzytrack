@@ -24,6 +24,52 @@ from app.libs.content_hash import compute_content_hash
 logger = logging.getLogger(__name__)
 
 
+#: Options that may legitimately appear as ``option "key" "value"`` lines in a
+#: ledger and that we know how to round-trip. The value type drives
+#: serialization in ``format_options``. Anything not in this allowlist is
+#: deliberately skipped on rewrite — we'd rather lose an exotic option than
+#: emit a malformed line. The set is closed: adding a new entry is a
+#: deliberate choice, and any user who needs an unsupported option will see
+#: it stripped on first write (documented in dev-docs/multi-file-ledger.md).
+_USER_OPTION_TYPES: Dict[str, str] = {
+    "title": "str",
+    "operating_currency": "list",
+    "name_assets": "str",
+    "name_equity": "str",
+    "name_expenses": "str",
+    "name_income": "str",
+    "name_liabilities": "str",
+    "account_previous_balances": "str",
+    "account_previous_earnings": "str",
+    "account_previous_conversions": "str",
+    "account_current_earnings": "str",
+    "account_current_conversions": "str",
+    "account_rounding": "str",
+    "account_unrealized_gains": "str",
+    "conversion_currency": "str",
+    "render_commas": "bool",
+    "long_string_maxlines": "int",
+    "plugin_processing_mode": "str",
+    "allow_pipe_separator": "bool",
+    "allow_deprecated_none_for_tags_and_links": "bool",
+    "insert_pythonpath": "bool",
+    "infer_tolerance_from_cost": "bool",
+    "booking_method": "enum",
+}
+
+
+def _default_options() -> Dict[str, Any]:
+    """Return Beancount's default options dict (from an empty parse).
+
+    Cached at module import so we don't repeatedly parse the empty string.
+    """
+    _, _, opts = bc_parser.parse_string("")
+    return opts
+
+
+_DEFAULT_OPTIONS: Dict[str, Any] = _default_options()
+
+
 class BeancountEngine:
     """Pure in-memory operations on Beancount entries."""
 
@@ -49,6 +95,81 @@ class BeancountEngine:
                     continue
             parts.append(bc_printer.format_entry(entry))
             parts.append('\n\n')
+        return ''.join(parts)
+
+    def format_includes(self, paths: List[str], relative_to: Any) -> str:
+        """Emit ``include "..."`` lines for each path, made relative to
+        ``relative_to`` (the directory of the file being written).
+
+        Preserves the user's relative-path convention: absolute paths from
+        ``options['include']`` are stripped back to the shortest representation
+        relative to the file's own directory. Paths outside ``relative_to``'s
+        tree fall back to absolute form.
+        """
+        from pathlib import Path as _Path
+        base = _Path(relative_to).resolve()
+        parts = []
+        for p in paths:
+            abs_p = _Path(p).resolve()
+            try:
+                rel = abs_p.relative_to(base)
+                line_path = str(rel)
+            except ValueError:
+                # The included file is outside the base directory — emit the
+                # absolute path verbatim. Beancount accepts both.
+                line_path = str(abs_p)
+            parts.append(f'include "{line_path}"\n')
+        return ''.join(parts)
+
+    def format_plugins(self, options: Dict[str, Any]) -> str:
+        """Emit ``plugin "name" "config"`` lines from ``options['plugin']``.
+
+        ``options['plugin']`` is a list of ``(name, config_or_None)`` tuples.
+        Plugins with no config argument get a single-argument ``plugin "name"``
+        line; plugins with a config string get the two-argument form.
+        """
+        parts = []
+        for plugin_name, config in (options.get('plugin') or []):
+            if config is None or config == "":
+                parts.append(f'plugin "{plugin_name}"\n')
+            else:
+                # Escape any embedded double quotes in the config string.
+                safe = str(config).replace('"', '\\"')
+                parts.append(f'plugin "{plugin_name}" "{safe}"\n')
+        return ''.join(parts)
+
+    def format_options(self, options: Dict[str, Any]) -> str:
+        """Emit ``option "key" "value"`` lines for user-set options that
+        differ from Beancount defaults.
+
+        Only options in ``_USER_OPTION_TYPES`` (a closed allowlist of known
+        user-settable scalar/list/enum options) are considered. Each value is
+        compared to the default from a fresh empty parse; only divergent
+        values are emitted. This keeps the rewritten root file from gaining
+        a wall of phantom ``option "name_assets" "Assets"`` lines on first
+        write of a ledger that never set those options.
+        """
+        parts = []
+        for key, kind in _USER_OPTION_TYPES.items():
+            if key not in options:
+                continue
+            current = options[key]
+            default = _DEFAULT_OPTIONS.get(key)
+            if current == default:
+                continue
+            if kind == "list":
+                # operating_currency: list of currency strings — one line each.
+                for item in current or []:
+                    parts.append(f'option "{key}" "{item}"\n')
+            elif kind == "bool":
+                parts.append(f'option "{key}" "{"TRUE" if current else "FALSE"}"\n')
+            elif kind == "enum":
+                # e.g. Booking.STRICT — emit the .value or fall back to str().
+                value = getattr(current, "value", str(current))
+                parts.append(f'option "{key}" "{value}"\n')
+            else:
+                # str / int / Decimal — str() does the right thing for all.
+                parts.append(f'option "{key}" "{current}"\n')
         return ''.join(parts)
 
     # --- Validation ---
@@ -212,6 +333,7 @@ class BeancountEngine:
         external_id: Optional[str] = None,
         external_id_type: Optional[str] = None,
         additional_meta: Optional[Dict] = None,
+        ledger_file: str = "",
     ) -> Transaction:
         transaction_id = str(uuid.uuid7())
 
@@ -230,6 +352,8 @@ class BeancountEngine:
         )
 
         meta = {
+            'filename': ledger_file,
+            'lineno': 0,
             'id': transaction_id,
             'content_hash': content_hash,
             'source_account': source_account,

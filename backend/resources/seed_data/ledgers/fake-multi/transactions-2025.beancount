@@ -1,0 +1,67 @@
+2025-01-15 * "Employer" "January salary"
+  id: "019fa1ed-2025-7001-8000-000000000001"
+  content_hash: "11bb11bb11bb11bb11bb11bb11bb11bb11bb11bb11bb11bb11bb11bb11bb11bb"
+  source_account: "Assets:Bank:Checking"
+  Assets:Bank:Checking   4800.00 USD
+  Income:Salary         -4800.00 USD
+
+
+2025-01-16 * "Landlord" "January rent"
+  id: "019fa1ed-2025-7002-8000-000000000002"
+  content_hash: "22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb22bb"
+  source_account: "Assets:Bank:Checking"
+  Expenses:Rent          1600.00 USD
+  Assets:Bank:Checking  -1600.00 USD
+
+
+2025-02-15 * "Employer" "February salary"
+  id: "019fa1ed-2025-7003-8000-000000000003"
+  content_hash: "33bb33bb33bb33bb33bb33bb33bb33bb33bb33bb33bb33bb33bb33bb33bb33bb"
+  source_account: "Assets:Bank:Checking"
+  Assets:Bank:Checking   4800.00 USD
+  Income:Salary         -4800.00 USD
+
+
+2025-02-16 * "Landlord" "February rent"
+  id: "019fa1ed-2025-7004-8000-000000000004"
+  content_hash: "44bb44bb44bb44bb44bb44bb44bb44bb44bb44bb44bb44bb44bb44bb44bb44bb"
+  source_account: "Assets:Bank:Checking"
+  Expenses:Rent          1600.00 USD
+  Assets:Bank:Checking  -1600.00 USD
+
+
+2025-03-04 * "Cafe Aurora" "Coffee with Sam"
+  id: "019fa1ed-2025-7005-8000-000000000005"
+  content_hash: "55bb55bb55bb55bb55bb55bb55bb55bb55bb55bb55bb55bb55bb55bb55bb55bb"
+  source_account: "Liabilities:CreditCard"
+  Expenses:Food            12.40 USD
+  Liabilities:CreditCard  -12.40 USD
+
+
+2025-05-20 * "Grocery Store" "Weekly groceries"
+  id: "019fa1ed-2025-7006-8000-000000000006"
+  content_hash: "66bb66bb66bb66bb66bb66bb66bb66bb66bb66bb66bb66bb66bb66bb66bb66bb"
+  source_account: "Assets:Bank:Checking"
+  Expenses:Food          102.85 USD
+  Assets:Bank:Checking  -102.85 USD
+
+
+2025-07-12 * "Transfer" "To savings"
+  id: "019fa1ed-2025-7007-8000-000000000007"
+  content_hash: "77bb77bb77bb77bb77bb77bb77bb77bb77bb77bb77bb77bb77bb77bb77bb77bb"
+  source_account: "Assets:Bank:Checking"
+  Assets:Bank:Savings    500.00 USD
+  Assets:Bank:Checking  -500.00 USD
+
+
+2025-09-25 * "Rideshare" "Airport trip"
+  id: "019fa1ed-2025-7008-8000-000000000008"
+  content_hash: "88bb88bb88bb88bb88bb88bb88bb88bb88bb88bb88bb88bb88bb88bb88bb88bb"
+  source_account: "Liabilities:CreditCard"
+  Expenses:Transport       42.10 USD
+  Liabilities:CreditCard  -42.10 USD
+
+
+2025-12-31 balance Assets:Bank:Savings                             1500.00 USD
+
+

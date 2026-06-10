@@ -1,0 +1,62 @@
+2024-01-01 * "Opening" "Initial balance"
+  id: "019fa1ed-2024-7001-8000-000000000001"
+  content_hash: "11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa11aa"
+  source_account: "Assets:Bank:Checking"
+  Assets:Bank:Checking      5000.00 USD
+  Equity:Opening-Balances  -5000.00 USD
+
+
+2024-01-15 * "Employer" "January salary"
+  id: "019fa1ed-2024-7002-8000-000000000002"
+  content_hash: "22aa22aa22aa22aa22aa22aa22aa22aa22aa22aa22aa22aa22aa22aa22aa22aa"
+  source_account: "Assets:Bank:Checking"
+  Assets:Bank:Checking   4500.00 USD
+  Income:Salary         -4500.00 USD
+
+
+2024-01-16 * "Landlord" "January rent"
+  id: "019fa1ed-2024-7003-8000-000000000003"
+  content_hash: "33aa33aa33aa33aa33aa33aa33aa33aa33aa33aa33aa33aa33aa33aa33aa33aa"
+  source_account: "Assets:Bank:Checking"
+  Expenses:Rent          1500.00 USD
+  Assets:Bank:Checking  -1500.00 USD
+
+
+2024-01-20 * "Grocery Store" "Weekly groceries"
+  id: "019fa1ed-2024-7004-8000-000000000004"
+  content_hash: "44aa44aa44aa44aa44aa44aa44aa44aa44aa44aa44aa44aa44aa44aa44aa44aa"
+  source_account: "Assets:Bank:Checking"
+  Expenses:Food          95.40 USD
+  Assets:Bank:Checking  -95.40 USD
+
+
+2024-02-15 * "Employer" "February salary"
+  id: "019fa1ed-2024-7005-8000-000000000005"
+  content_hash: "55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa55aa"
+  source_account: "Assets:Bank:Checking"
+  Assets:Bank:Checking   4500.00 USD
+  Income:Salary         -4500.00 USD
+
+
+2024-02-16 * "Landlord" "February rent"
+  id: "019fa1ed-2024-7006-8000-000000000006"
+  content_hash: "66aa66aa66aa66aa66aa66aa66aa66aa66aa66aa66aa66aa66aa66aa66aa66aa"
+  source_account: "Assets:Bank:Checking"
+  Expenses:Rent          1500.00 USD
+  Assets:Bank:Checking  -1500.00 USD
+
+
+2024-03-05 * "Transit Auth" "Monthly transit pass"
+  id: "019fa1ed-2024-7007-8000-000000000007"
+  content_hash: "77aa77aa77aa77aa77aa77aa77aa77aa77aa77aa77aa77aa77aa77aa77aa77aa"
+  source_account: "Liabilities:CreditCard"
+  Expenses:Transport       120.00 USD
+  Liabilities:CreditCard  -120.00 USD
+
+
+2024-12-30 pad Assets:Bank:Savings Equity:Opening-Balances
+
+
+2024-12-31 balance Assets:Bank:Savings                             1000.00 USD
+
+

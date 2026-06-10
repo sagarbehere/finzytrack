@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Tuple, Any, Dict, List
 
 from beancount import loader
+from beancount.parser import parser as bc_parser
 
 from app.exceptions import APIError
 from app import error_codes as ec
@@ -69,3 +70,59 @@ def load_ledger_checked(
         pass
 
     return loader.load_file(str(ledger_file))
+
+
+def discover_includes_per_file(root_path: str | Path) -> Dict[str, List[str]]:
+    """Walk the include tree starting at ``root_path`` and return a map of
+    ``{absolute_filename: [absolute_path_of_each_file_it_includes, ...]}``.
+
+    Each file is parsed individually via ``bc_parser.parse_file`` so we only
+    see *that file's own* ``include`` directives, not the flat union that the
+    full loader returns in ``options['include']``. This lets the write path
+    preserve nested includes (root → A → B) by re-emitting A's own include
+    of B when A is rewritten.
+
+    The traversal is breadth-first and tolerates missing/unreadable child
+    files (logs and skips, rather than raising) — write-path callers want a
+    best-effort map and will fall back to re-emitting only the root's
+    includes if traversal partially fails.
+    """
+    result: Dict[str, List[str]] = {}
+    root_abs = str(Path(root_path).resolve())
+    stack: List[str] = [root_abs]
+    seen: set[str] = set()
+
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+
+        current_path = Path(current)
+        if not current_path.is_file():
+            logger.debug("discover_includes_per_file: %s missing or not a file", current)
+            result[current] = []
+            continue
+
+        try:
+            _, _, opts = bc_parser.parse_file(current)
+        except Exception as e:
+            logger.warning("discover_includes_per_file: parse_file(%s) failed: %s", current, e)
+            result[current] = []
+            continue
+
+        own_includes_raw: List[str] = list(opts.get('include') or [])
+        own_includes_abs: List[str] = []
+        for inc in own_includes_raw:
+            inc_path = Path(inc)
+            if not inc_path.is_absolute():
+                inc_path = current_path.parent / inc_path
+            abs_inc = str(inc_path.resolve())
+            own_includes_abs.append(abs_inc)
+            if abs_inc not in seen:
+                stack.append(abs_inc)
+
+        result[current] = own_includes_abs
+
+    return result
+

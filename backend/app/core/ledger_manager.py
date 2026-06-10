@@ -13,6 +13,8 @@ creation, account/transaction/commodity/balance CRUD.
 
 import os
 import logging
+from collections import defaultdict
+from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import date
 from decimal import Decimal
@@ -22,7 +24,7 @@ from beancount.core.data import Transaction, Posting
 
 from app.core.backup_manager import BackupManager
 from app.core.beancount_engine import BeancountEngine
-from app.core.ledger_loader import load_ledger_checked
+from app.core.ledger_loader import load_ledger_checked, discover_includes_per_file
 from app.exceptions import APIError
 from app import error_codes as ec
 from app.write_lock import WriteLockManager
@@ -152,25 +154,138 @@ class LedgerManager:
         with self.backup_manager.atomic_write(target_file) as f:
             yield f
 
-    def _write_entries(self, entries) -> None:
+    def _write_entries(self, entries, options: Optional[Dict[str, Any]] = None) -> None:
         """Write all entries to the ledger using the engine's formatter.
 
         This is the single authorised path for mutating the ledger file.
         When a WriteLockManager is present (multi-user / concurrent access),
         the write is serialised under the per-user lock.
+
+        ``options`` is the third element of ``_parse_ledger()``. It carries the
+        per-load ``include``/``plugin``/``option`` directives that must be
+        re-emitted into the root file on rewrite so that a multi-file ledger
+        is not collapsed on the first write. When ``None`` (single-file
+        callers), no extra preamble is emitted.
         """
         if self._write_lock:
             with self._write_lock.acquire("_write_entries"):
-                self._do_write_entries(entries)
+                self._do_write_entries(entries, options)
         else:
-            self._do_write_entries(entries)
+            self._do_write_entries(entries, options)
 
-    def _do_write_entries(self, entries) -> None:
-        """Perform the actual atomic write (called by _write_entries)."""
-        with self.atomic_ledger_write() as f:
-            f.seek(0)
-            f.truncate()
-            f.write(self.engine.format_entries(entries))
+    def _do_write_entries(self, entries, options: Optional[Dict[str, Any]] = None) -> None:
+        """Perform the actual atomic write per source file (called by ``_write_entries``).
+
+        Multi-file ledgers: entries are grouped by ``meta['filename']`` (which
+        the parser stamps with the absolute path of the file each entry came
+        from). Each group is written through ``atomic_ledger_write`` against
+        its own file. New entries created in-app are stamped with the root
+        ``ledger_file`` and so land in the root.
+
+        Order: child files first, root last. If a child write fails after the
+        root has already been updated, the root could reference content the
+        children haven't received — writing the root last keeps the include
+        map referencing the still-valid pre-write child files until the very
+        last step.
+
+        Single-file ledgers collapse to a single group and the loop runs once,
+        producing the same output as before — except that user-set ``option``
+        and ``plugin`` directives at the root are now preserved across writes
+        (previously stripped because they aren't entries).
+        """
+        root_abs = str(Path(self.ledger_file).resolve())
+
+        # Discover the per-file include map up front so we can preserve nested
+        # `include` directives (root → A → B). Best-effort: if a child is
+        # missing or unparseable, ``discover_includes_per_file`` returns []
+        # for that file and we just emit no include lines.
+        try:
+            include_map = discover_includes_per_file(root_abs)
+        except Exception:
+            logger.exception("discover_includes_per_file failed; falling back to root-only includes")
+            include_map = {root_abs: list((options or {}).get('include') or [])}
+
+        known_files = set(include_map.keys())
+
+        # Group entries by their source filename. Entries whose filename is
+        # missing or doesn't resolve to a known file in the include tree are
+        # treated as either (a) new entries, routed to root; or (b)
+        # plugin-synthesized, filtered out — distinguished by whether the
+        # filename looks like a real path.
+        groups: Dict[str, list] = defaultdict(list)
+        for e in entries:
+            raw_fname = (e.meta or {}).get('filename')
+            if not raw_fname:
+                groups[root_abs].append(e)
+                continue
+            try:
+                abs_fname = str(Path(raw_fname).resolve())
+            except (OSError, ValueError):
+                # Unresolvable path — almost certainly synthetic (e.g. '<plugin>')
+                continue
+            if abs_fname in known_files:
+                groups[abs_fname].append(e)
+            elif raw_fname.startswith('<') and raw_fname.endswith('>'):
+                # Plugin-synthesized entry; the plugin will regenerate it on
+                # the next parse. Skip silently.
+                continue
+            elif Path(raw_fname).is_file():
+                # A real file but not in the include tree — defensive: route
+                # to root rather than dropping data.
+                groups[root_abs].append(e)
+            else:
+                # Synthetic-looking and unresolvable — drop.
+                continue
+
+        # Ensure every known file in the include tree is represented, even
+        # if no entries point at it any more (e.g. the user just deleted the
+        # last entry from a per-year child file — that file should be
+        # rewritten to empty, not left stale). The content-equality check
+        # below means files with unchanged content are still skipped.
+        for known in known_files:
+            if known not in groups:
+                groups[known] = []
+
+        # Sort: children first, root last.
+        ordered_files = [f for f in groups if f != root_abs] + [root_abs]
+
+        for fname in ordered_files:
+            group = groups[fname]
+            preamble_parts: List[str] = []
+
+            if fname == root_abs and options:
+                opt_text = self.engine.format_options(options)
+                if opt_text:
+                    preamble_parts.append(opt_text)
+                plugin_text = self.engine.format_plugins(options)
+                if plugin_text:
+                    preamble_parts.append(plugin_text)
+
+            file_includes = include_map.get(fname) or []
+            if file_includes:
+                inc_text = self.engine.format_includes(file_includes, relative_to=Path(fname).parent)
+                if inc_text:
+                    preamble_parts.append(inc_text)
+
+            preamble = ''.join(preamble_parts)
+            new_content = (preamble + '\n' if preamble else '') + self.engine.format_entries(group)
+
+            # Skip files whose serialized content is byte-identical to what's
+            # already on disk — no rewrite, no backup. This keeps single-file
+            # edits from touching unrelated child files in a multi-file ledger.
+            fpath = Path(fname)
+            if fpath.is_file():
+                try:
+                    existing = fpath.read_bytes()
+                except OSError:
+                    existing = None
+                if existing is not None and existing == new_content.encode('utf-8'):
+                    continue
+
+            with self.atomic_ledger_write(file_path=fname) as f:
+                f.seek(0)
+                f.truncate()
+                f.write(new_content)
 
     def _write_and_export(self, entries, errors=None, options=None) -> None:
         """Write entries then synchronously export to SQLite.
@@ -191,7 +306,7 @@ class LedgerManager:
         immediately visible. Bulk imports batch into a single ``append_entries``
         call, so a 1000-transaction import is still 2 parses, not 2000.
         """
-        self._write_entries(entries)
+        self._write_entries(entries, options)
 
         if self._sqlite_exporter:
             entries, errors, options = self._parse_ledger()
@@ -351,6 +466,7 @@ class LedgerManager:
             flag=flag, external_id=external_id,
             external_id_type=external_id_type,
             additional_meta=additional_meta,
+            ledger_file=str(self.ledger_file),
         )
 
     def add_ids_to_transaction(self, txn: Transaction, force_regenerate: bool = False) -> Transaction:
