@@ -382,7 +382,7 @@ const COLUMN_DEFS: TransactionColumnDef[] = [
   { id: 'narration', header: 'Narration', type: 'textarea', field: 'transaction.narration', span: 'transaction', placeholder: 'Description' },
   {
     id: 'tags_links', header: 'Tags/Links', type: 'tags', span: 'transaction', placeholder: '#tag ^link',
-    accessor: (row: TableRowData) => [...row.transaction.tags, ...row.transaction.links.map((l: string) => `^${l}`)].join(' '),
+    accessor: (row: TableRowData) => [...row.transaction.tags.map((t: string) => `#${t}`), ...row.transaction.links.map((l: string) => `^${l}`)].join(' '),
   },
   { id: 'account', header: 'Account', type: 'dropdown', field: 'account', span: 'posting', component: AccountDropdown, componentProps: { 'allow-custom': false }, placeholder: 'Account...' },
   { id: 'amount', header: 'Amount', type: 'numeric', field: 'amount', span: 'posting', align: 'right', colorize: true },

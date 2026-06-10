@@ -65,11 +65,12 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
     if (!tx) return
 
     // Special case: tags_links virtual field
+    // Also accept ˆ (U+02C6, Mac dead-key) as a link prefix and normalize to ^.
     if (path === 'tags_links') {
       const str = (value as string) || ''
       const parts = str.split(/\s+/).filter(p => p)
       tx.tags = parts.filter(p => p.startsWith('#')).map(p => p.substring(1))
-      tx.links = parts.filter(p => p.startsWith('^')).map(p => p.substring(1))
+      tx.links = parts.filter(p => p.startsWith('^') || p.startsWith('ˆ')).map(p => p.substring(1))
       refreshModifiedFlag(tx)
       notifyChange(tx)
       return

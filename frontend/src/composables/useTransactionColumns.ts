@@ -125,7 +125,7 @@ export function buildTanStackColumns(
           if (editable()) {
             return h('textarea', {
               value: getValue() || '',
-              onInput: (e: any) => updateField(tx.id, storePath, e.target.value),
+              onChange: (e: any) => updateField(tx.id, storePath, e.target.value),
               class: `${getEditableInputClasses()} resize-none overflow-y-auto h-full`,
               style: { width: '100%', minHeight: '2.5rem', boxSizing: 'border-box', display: 'block' },
               ...(def.placeholder ? { placeholder: def.placeholder } : {}),
@@ -142,7 +142,7 @@ export function buildTanStackColumns(
             return h('input', {
               type: 'date',
               value: getValue() || '',
-              onInput: (e: any) => updateField(tx.id, storePath, e.target.value),
+              onChange: (e: any) => updateField(tx.id, storePath, e.target.value),
               class: getEditableInputClasses(),
               autocomplete: 'off',
             })
@@ -190,7 +190,7 @@ export function buildTanStackColumns(
             return h('input', {
               type: 'text',
               value: getValue() ?? '',
-              onInput: (e: any) => updateField(tx.id, 'tags_links', e.target.value),
+              onChange: (e: any) => updateField(tx.id, 'tags_links', e.target.value),
               class: getEditableInputClasses(),
               placeholder: def.placeholder || '#tag ^link',
               autocomplete: 'off',
