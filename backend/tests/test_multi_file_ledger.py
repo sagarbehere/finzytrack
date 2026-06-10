@@ -496,6 +496,144 @@ def _clear_backups(backup_dir: Path) -> None:
 class TestRoundTripEdits:
     """Editing an entry must rewrite only its source file."""
 
+    def test_multiple_append_then_edit_does_not_re_touch_root(self, tmp_path: Path):
+        """Regression: tests 4 + 5 of the manual checklist appended a new
+        Transaction and a new Open into the root in sequence. Test 6 then
+        edited an entry in a child file. Without per-group sorting, the
+        root's on-disk order was 'append-order' (Transaction then Open),
+        the re-parse for test 6 returned 'sort-order' (Open then
+        Transaction), and the root got rewritten with no semantic content
+        change. With the sort, the root stays byte-identical."""
+        from app.schemas.account_schemas import AccountCreateRequest
+        from beancount.core.amount import Amount as _A
+        ledger_dir = tmp_path / "ledger"
+        ledger_dir.mkdir()
+        root = build_flat_multi_file_ledger(ledger_dir)
+        mgr = build_manager(root, tmp_path / "backups")
+
+        _persist_ids_for_all_txns(mgr)
+
+        # Append a new transaction with later date, then a new account
+        # with an earlier open date. Out-of-order on append.
+        new_txn = mgr.create_transaction_with_ids(
+            date_obj=date(2026, 6, 1), payee='Append',
+            narration='Late-date new txn',
+            postings=[
+                bd.Posting('Expenses:Food', _A(Decimal('25'), 'USD'), None, None, None, None),
+                bd.Posting('Assets:Bank:Checking', _A(Decimal('-25'), 'USD'), None, None, None, None),
+            ],
+            source_account='Assets:Bank:Checking',
+        )
+        mgr.append_entries([new_txn])
+        mgr.create_account_directive(AccountCreateRequest(
+            name='Expenses:Demo:NewCategory', open_date=date(2026, 1, 1), currencies=['USD'],
+        ))
+
+        main_before = (ledger_dir / "main.beancount").read_bytes()
+
+        # Edit an entry in a child file. Root must be untouched.
+        entries, _, _ = mgr._parse_ledger()
+        target = _find_txn(entries, "January 2026 salary")
+        mgr.update_transactions_by_id([(target.meta['id'], target._replace(narration="edit"))])
+
+        main_after = (ledger_dir / "main.beancount").read_bytes()
+        assert main_before == main_after, "root file must NOT be rewritten when only a child-file entry was edited"
+
+    def test_update_balance_directive_pad_replacement_preserves_source_file(self, tmp_path: Path):
+        """Regression: when ``update_balance_directive`` replaces an existing
+        Pad (include_pad=True, pad_idx not None), the replacement Pad must
+        stay in the file the old Pad came from. Before the fix it was being
+        routed to the root, moving the Pad to a different file than the
+        Balance it feeds — same bug class as the transaction-edit routing
+        bug, just on a different update site."""
+        from app.schemas.account_schemas import BalanceDirectiveUpdateRequest
+
+        ledger_dir = tmp_path / "ledger"
+        ledger_dir.mkdir()
+        # Hand-rolled fixture: a child file with a Pad+Balance pair both
+        # living in the child, not the root.
+        (ledger_dir / "accounts.beancount").write_text(ACCOUNTS_BLOCK)
+        (ledger_dir / "child.beancount").write_text(
+            "2025-12-30 pad Assets:Bank:Savings Equity:Opening-Balances\n"
+            "2025-12-31 balance Assets:Bank:Savings  500.00 USD\n"
+        )
+        root = ledger_dir / "main.beancount"
+        root.write_text(
+            'include "accounts.beancount"\ninclude "child.beancount"\n'
+        )
+        mgr = build_manager(root, tmp_path / "backups")
+
+        mgr.update_balance_directive(
+            "Assets:Bank:Savings",
+            BalanceDirectiveUpdateRequest(
+                original_date=date(2025, 12, 31),
+                original_currency="USD",
+                original_amount=Decimal("500.00"),
+                new_amount=Decimal("750.00"),
+                include_pad=True,
+                pad_source_account="Equity:Opening-Balances",
+            ),
+        )
+
+        child_text = (ledger_dir / "child.beancount").read_text()
+        main_text = (ledger_dir / "main.beancount").read_text()
+        assert "pad Assets:Bank:Savings" in child_text, "Pad must stay in source file after update"
+        assert "pad Assets:Bank:Savings" not in main_text, "Pad must NOT leak into root after update"
+        # And the balance reflects the new amount, also still in child
+        assert "750.00 USD" in child_text
+
+    def test_edit_via_fresh_transaction_object_still_routes_to_source_file(self, tmp_path: Path):
+        """Regression for an edit-routing bug: when the API builds the
+        updated Transaction from the request payload, that fresh object has
+        no ``meta['filename']``. The engine must still route the edit back
+        to the original entry's source file, not to the root.
+
+        Without this test, an edit through the public HTTP API would land in
+        the root file even though the unit test using ``target._replace(...)``
+        passed (because ``_replace`` preserves all meta).
+        """
+        from beancount.core.amount import Amount as _A
+        ledger_dir = tmp_path / "ledger"
+        ledger_dir.mkdir()
+        backup_dir = tmp_path / "backups"
+        root = build_flat_multi_file_ledger(ledger_dir)
+        mgr = build_manager(root, backup_dir)
+
+        _persist_ids_for_all_txns(mgr)
+        _clear_backups(backup_dir)
+
+        entries, _, _ = mgr._parse_ledger()
+        original = _find_txn(entries, "January salary")  # lives in transactions-2025.beancount
+
+        # Build a brand-new Transaction object the way the API layer does:
+        # only id + payload, NO filename/lineno meta.
+        fresh = Transaction(
+            meta={'id': original.meta['id']},
+            date=original.date,
+            flag=original.flag,
+            payee=original.payee,
+            narration="January salary (API-edited)",
+            tags=original.tags,
+            links=original.links,
+            postings=original.postings,
+        )
+        mgr.update_transactions_by_id([(original.meta['id'], fresh)])
+
+        # The edit must land in the source file, NOT the root.
+        txns_2025 = (ledger_dir / "transactions-2025.beancount").read_text()
+        main = (ledger_dir / "main.beancount").read_text()
+        assert "(API-edited)" in txns_2025, "edit must land in the source file"
+        assert "(API-edited)" not in main, "edit must NOT leak into the root"
+
+        # And the edited transaction must re-parse with the source file path
+        # still stamped on it (so subsequent edits also route correctly).
+        entries_after, _, _ = mgr._parse_ledger()
+        reparsed = next(
+            e for e in entries_after
+            if isinstance(e, Transaction) and e.meta.get('id') == original.meta['id']
+        )
+        assert str(Path(reparsed.meta['filename']).resolve()) == str((ledger_dir / "transactions-2025.beancount").resolve())
+
     def test_edit_transaction_rewrites_only_its_source_file(self, tmp_path: Path):
         ledger_dir = tmp_path / "ledger"
         ledger_dir.mkdir()

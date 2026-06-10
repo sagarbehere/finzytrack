@@ -51,6 +51,7 @@ Tests must verify the **specification**, not mirror the implementation. See `dev
 - Assert exact counts, not `> 0`
 - Engine contract tests are parameterized by engine (`@pytest.fixture(params=["beancount"])`) — they must not use Beancount-specific internals
 - Do not assert on error message strings — assert on error codes and status codes
+- **Edit-path tests must simulate the API construction of the updated entry.** Build a fresh `Transaction` / `Balance` / `Open` from scratch with only the fields the HTTP payload carries — *do not* use `entry._replace(narration=...)` on a parsed entry. Namedtuple `_replace` preserves parser-stamped `meta['filename']` and `meta['lineno']` by reference, which masks bugs in the multi-file write-routing logic (the API path constructs the updated entry without those fields). See `BeancountEngine._carry_source_location` for the rule every replacement site enforces, and `test_edit_via_fresh_transaction_object_still_routes_to_source_file` for the canonical test shape.
 
 **Running tests:**
 ```bash

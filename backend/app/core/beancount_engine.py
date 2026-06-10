@@ -406,11 +406,9 @@ class BeancountEngine:
                 txn_id = entry.meta.get('id') if entry.meta else None
                 if txn_id and txn_id in transaction_ids:
                     updated_txn = update_map[txn_id]
-                    if entry.meta and 'lineno' in entry.meta:
-                        if not updated_txn.meta:
-                            updated_txn = updated_txn._replace(meta={'lineno': entry.meta['lineno']})
-                        else:
-                            updated_txn.meta['lineno'] = entry.meta['lineno']
+                    updated_txn = updated_txn._replace(
+                        meta=self._carry_source_location(entry.meta, updated_txn.meta)
+                    )
                     updated_entries.append(updated_txn)
                     found_ids.add(txn_id)
                 else:
@@ -571,11 +569,19 @@ class BeancountEngine:
         if include_pad is True:
             if not pad_source_account:
                 raise ValueError("pad_source_account is required when include_pad is True")
-            new_pad = bd.Pad({'filename': ledger_file, 'lineno': 0}, new_pad_date, account_name, pad_source_account)
             if pad_idx is not None:
-                entries[pad_idx] = new_pad
+                # Replacing an existing Pad — keep it in its source file.
+                old_pad = entries[pad_idx]
+                pad_meta = self._carry_source_location(
+                    old_pad.meta, {'filename': ledger_file, 'lineno': 0}
+                )
+                entries[pad_idx] = bd.Pad(pad_meta, new_pad_date, account_name, pad_source_account)
             else:
-                entries.insert(balance_idx, new_pad)
+                # Brand-new Pad — route to root per the new-entry spec.
+                entries.insert(balance_idx, bd.Pad(
+                    {'filename': ledger_file, 'lineno': 0},
+                    new_pad_date, account_name, pad_source_account,
+                ))
         elif include_pad is False and pad_idx is not None:
             entries.pop(pad_idx)
         elif pad_idx is not None:
@@ -670,6 +676,27 @@ class BeancountEngine:
             narration=txn.narration or "",
         )
         return source_account, content_hash
+
+    @staticmethod
+    def _carry_source_location(original_meta: Optional[Dict[str, Any]], new_meta: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Return a meta dict that takes ``filename`` and ``lineno`` from the
+        original parser-stamped entry and everything else from ``new_meta``.
+
+        Every entry-*replacement* site in the engine must route the meta dict
+        through this helper. Without it, the multi-file write path loses the
+        entry's source-file stamp and rewrites the edit to the root file
+        instead of the file the entry came from. Two kinds of meta share one
+        dict on Beancount entries — user content (``id``, ``content_hash``,
+        ``source_account``, etc.) and parser infrastructure (``filename``,
+        ``lineno``). The API carries the former; the parser stamps the
+        latter; replacement sites must reconcile them.
+        """
+        merged = dict(new_meta) if new_meta else {}
+        if original_meta:
+            for key in ('filename', 'lineno'):
+                if key in original_meta:
+                    merged[key] = original_meta[key]
+        return merged
 
     @staticmethod
     def _find_pad_before_balance_entry(entries: list, balance_idx: int, account_name: str):

@@ -1,4 +1,6 @@
-2026-03-08 * "Airline" "Round-trip to demo destination" #travel
+pushtag #travel
+
+2026-03-08 * "Airline" "Round-trip to demo destination"
   id: "019fa1ed-2026-7006-8000-000000000006"
   content_hash: "66cc66cc66cc66cc66cc66cc66cc66cc66cc66cc66cc66cc66cc66cc66cc66cc"
   source_account: "Liabilities:CreditCard"
@@ -6,7 +8,7 @@
   Liabilities:CreditCard  -680.00 USD
 
 
-2026-03-10 * "Boutique Hotel" "Two nights" #travel
+2026-03-10 * "Boutique Hotel" "Two nights"
   id: "019fa1ed-2026-7007-8000-000000000007"
   content_hash: "77cc77cc77cc77cc77cc77cc77cc77cc77cc77cc77cc77cc77cc77cc77cc77cc"
   source_account: "Liabilities:CreditCard"
@@ -14,3 +16,4 @@
   Liabilities:CreditCard  -420.00 USD
 
 
+poptag #travel

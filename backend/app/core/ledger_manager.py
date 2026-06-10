@@ -250,7 +250,21 @@ class LedgerManager:
         ordered_files = [f for f in groups if f != root_abs] + [root_abs]
 
         for fname in ordered_files:
-            group = groups[fname]
+            # Sort the group by Beancount's own sort key (date, type-priority,
+            # lineno). This matches the order the loader returns on re-parse,
+            # so the byte-equality skip below works on every subsequent write
+            # — without this, entries appended out of date order (e.g. by
+            # ``append_entries``) land on disk in append-order, the next
+            # re-parse sorts them, and the next write rewrites the file with
+            # no content change other than the reordering.
+            group = sorted(
+                groups[fname],
+                key=lambda e: (
+                    e.date,
+                    data.SORT_ORDER.get(type(e), 0),
+                    (e.meta or {}).get('lineno', 0),
+                ),
+            )
             preamble_parts: List[str] = []
 
             if fname == root_abs and options:
