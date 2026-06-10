@@ -5,6 +5,7 @@
       :start-date="filters.dateFrom || null"
       :end-date="filters.dateTo || null"
       :active-preset="activePreset"
+      auto-apply
       @update:active-preset="activePreset = $event"
       @change="handleDatePresetChange"
     />

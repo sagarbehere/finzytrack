@@ -113,6 +113,7 @@
           type="date"
           class="flex-1 px-1.5 py-1 text-sm bg-transparent border-none focus:outline-none focus:ring-0 dark:text-white"
           @change="onDateChange($event, 'startDate')"
+          @input="onDateChange($event, 'startDate')"
           @keydown.enter="applyDateInputs"
         />
       </div>
@@ -123,10 +124,12 @@
           type="date"
           class="flex-1 px-1.5 py-1 text-sm bg-transparent border-none focus:outline-none focus:ring-0 dark:text-white"
           @change="onDateChange($event, 'endDate')"
+          @input="onDateChange($event, 'endDate')"
           @keydown.enter="applyDateInputs"
         />
       </div>
       <button
+        v-if="!autoApply"
         @click="applyDateInputs"
         class="rounded-md bg-indigo-600 px-2 py-1 text-sm font-semibold text-white shadow-xs hover:bg-indigo-500 dark:bg-indigo-500 dark:shadow-none dark:hover:bg-indigo-400 sm:self-auto self-end"
       >
@@ -150,12 +153,14 @@ interface Props {
   startDate?: string | null
   endDate?: string | null
   activePreset?: string | null
+  autoApply?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   startDate: null,
   endDate: null,
   activePreset: null,
+  autoApply: false,
 })
 
 const emit = defineEmits<{
@@ -332,6 +337,9 @@ function onDateChange(event: Event, field: 'startDate' | 'endDate') {
   }
   localActivePreset.value = null
   emit('update:activePreset', null)
+  if (props.autoApply) {
+    emit('change', { startDate: localStartDate.value, endDate: localEndDate.value })
+  }
 }
 
 function applyDateInputs() {
