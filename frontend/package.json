@@ -1,6 +1,6 @@
 {
   "name": "finzytrack-frontend",
-  "version": "0.0.0-source",
+  "version": "0.1.2",
   "description": "Finzytrack Frontend - Privacy-focused personal finance application",
   "type": "module",
   "scripts": {
