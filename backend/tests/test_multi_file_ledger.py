@@ -1231,6 +1231,58 @@ class TestRoutingEngineUnit:
         assert eng.route_entry(txn, rules, "/x/default.beancount", "/root") == "/x/default.beancount"
         assert eng.route_entry(txn, rules, None, "/root") == "/root"
 
+    def test_route_entry_regex_alternation_matches_either_branch(self):
+        """A real regex (alternation) routes any matching account — proves the
+        matcher is genuinely regex, not a literal string compare."""
+        eng = BeancountEngine()
+        rules = [(date(2020, 1, 1), _re.compile("Expenses:(Food|Rent)"), "/x/living.beancount")]
+        food = _mk_txn(date(2026, 1, 1), [("Assets:Bank:Checking", -5), ("Expenses:Food", 5)])
+        rent = _mk_txn(date(2026, 1, 1), [("Assets:Bank:Checking", -9), ("Expenses:Rent", 9)])
+        assert eng.route_entry(food, rules, None, "/root") == "/x/living.beancount"
+        assert eng.route_entry(rent, rules, None, "/root") == "/x/living.beancount"
+
+    def test_route_entry_regex_wildcard_matches_subtree(self):
+        """A wildcard pattern matches a whole account subtree."""
+        eng = BeancountEngine()
+        rules = [(date(2020, 1, 1), _re.compile("Expenses:Travel.*"), "/x/travel.beancount")]
+        flights = _mk_txn(date(2026, 1, 1), [("Assets:Bank:Checking", -5), ("Expenses:Travel:Flights", 5)])
+        assert eng.route_entry(flights, rules, None, "/root") == "/x/travel.beancount"
+
+    def test_route_entry_match_is_start_anchored(self):
+        """re.match anchors at the start (Fava semantics): a pattern that would
+        only match mid-string does NOT match, and the entry falls through."""
+        eng = BeancountEngine()
+        rules = [(date(2020, 1, 1), _re.compile("Food"), "/x/food.beancount")]
+        txn = _mk_txn(date(2026, 1, 1), [("Assets:Bank:Checking", -5), ("Expenses:Food", 5)])
+        # "Food" is a substring of "Expenses:Food" but not a prefix → no match.
+        assert eng.route_entry(txn, rules, "/x/default.beancount", "/root") == "/x/default.beancount"
+
+    def test_route_entry_parent_rule_matches_child_account(self):
+        """re.match is start-anchored but NOT end-anchored (Fava semantics): a
+        rule on a parent account also matches its sub-accounts."""
+        eng = BeancountEngine()
+        rules = [(date(2020, 1, 1), _re.compile("Expenses:Food"), "/x/food.beancount")]
+        txn = _mk_txn(date(2026, 1, 1), [("Assets:Bank:Checking", -5), ("Expenses:Food:Restaurants", 5)])
+        assert eng.route_entry(txn, rules, None, "/root") == "/x/food.beancount"
+
+    def test_parse_routing_directives_skips_invalid_regex(self, tmp_path: Path):
+        """A malformed insert-entry regex is skipped with a warning (not raised);
+        a valid directive alongside it still routes."""
+        eng = BeancountEngine()
+        bad = tmp_path / "bad.beancount"
+        good = tmp_path / "good.beancount"
+        # "Expenses:[Food" has an unterminated character class → re.error.
+        bad.write_text('2020-01-01 custom "fava-option" "insert-entry" "Expenses:[Food"\n')
+        good.write_text('2020-01-01 custom "fava-option" "insert-entry" "Expenses:Rent"\n')
+        root = build_ledger_from_files(tmp_path, {}, ["bad.beancount", "good.beancount"])
+        entries, _, _ = load_ledger_checked(root)
+        rules, _ = eng.parse_routing_directives(entries)
+        # Only the valid rule survives; the bad one is dropped, not raised.
+        assert len(rules) == 1
+        _, pattern, target = rules[0]
+        assert pattern.match("Expenses:Rent")
+        assert target == str(good.resolve())
+
     def test_parse_routing_directives_reads_insert_entry_and_default_file(self, tmp_path: Path):
         eng = BeancountEngine()
         food = tmp_path / "food.beancount"
@@ -1321,6 +1373,31 @@ class TestFavaInsertEntryRouting:
         _new_txn_in(mgr, date(2026, 6, 1), "Expenses:Misc", "5.00")
 
         assert self._file_of(mgr, "route-Expenses:Misc") == str(root.resolve())
+
+    def test_subaccount_routes_to_parent_rule_file_end_to_end(self, tmp_path: Path):
+        """Through the real write path: a new entry on a sub-account
+        (``Expenses:Food:Restaurants``) routes to the file whose rule names the
+        parent (``Expenses:Food``), since re.match is start- but not
+        end-anchored. Mirrors how a user's nested categories behave."""
+        ledger_dir = tmp_path / "ledger"
+        ledger_dir.mkdir()
+        accounts = ROUTING_ACCOUNTS_BLOCK + "1970-01-01 open Expenses:Food:Restaurants USD\n"
+        root = build_ledger_from_files(
+            ledger_dir,
+            {
+                "accounts.beancount": accounts,
+                "food.beancount": '2020-01-01 custom "fava-option" "insert-entry" "Expenses:Food"\n',
+            },
+            ["accounts.beancount", "food.beancount"],
+        )
+        mgr = build_manager(root, tmp_path / "backups")
+        _normalize_ledger(mgr)
+        _new_txn_in(mgr, date(2026, 6, 1), "Expenses:Food:Restaurants", "30.00")
+
+        food = ledger_dir / "food.beancount"
+        assert "route-Expenses:Food:Restaurants" in food.read_text()
+        assert "route-Expenses:Food:Restaurants" not in (ledger_dir / "main.beancount").read_text()
+        assert self._file_of(mgr, "route-Expenses:Food:Restaurants") == str(food.resolve())
 
     def test_insert_entry_directive_survives_routed_write(self, tmp_path: Path):
         """The custom routing directive must still be present in its file
