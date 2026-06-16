@@ -8,7 +8,8 @@ live in LedgerManager.
 
 import re
 import logging
-from typing import Optional, List, Dict, Any, Tuple
+from pathlib import Path
+from typing import Optional, List, Dict, Any, Tuple, Pattern
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
@@ -171,6 +172,131 @@ class BeancountEngine:
                 # str / int / Decimal — str() does the right thing for all.
                 parts.append(f'option "{key}" "{current}"\n')
         return ''.join(parts)
+
+    # --- Fava-compatible new-entry routing ---
+    #
+    # Honors Fava's in-ledger ``custom "fava-option" "insert-entry" "<regex>"``
+    # directives so that *new* entries created in-app land in the same file Fava
+    # would put them in. The routing *decision* lives here (pure computation);
+    # the actual placement reuses the existing group-by-``meta['filename']``
+    # full-rewrite path in ``LedgerManager._do_write_entries`` — no second,
+    # text-splicing write path. The tradeoff vs. Fava's targeted line-insert is
+    # that the destination file is reformatted on write (comments/alignment are
+    # not preserved), consistent with how every other Finzytrack write behaves.
+    # See dev-docs/multi-file-ledger.md ("Fava-compatible routing via
+    # parse-and-write").
+    #
+    # The algorithm mirrors fava.core.file.find_insert_position and
+    # fava.beans.account.get_entry_accounts exactly (verified against source):
+    # accounts in priority order (outer loop), insert rules sorted by date
+    # descending (inner loop), the first rule strictly before the entry's date
+    # whose regex *matches* (anchored, ``re.match``) an account wins.
+
+    def parse_routing_directives(
+        self, entries: list
+    ) -> Tuple[List[Tuple[date, Pattern[str], str]], Optional[str]]:
+        """Extract Fava routing config from ``custom "fava-option"`` directives.
+
+        Recognizes two keys, matching Fava's semantics:
+
+        - ``"insert-entry" "<regex>"`` — new entries whose account matches
+          ``<regex>`` route to the file *containing this directive*. Since that
+          file was parsed (the directive was discovered), it is by construction
+          already in the include tree, so routing to it needs no new ``include``
+          line and no new-file creation.
+        - ``"default-file" ["<path>"]`` — new entries matching no insert-entry
+          rule route here. With a path argument it is resolved relative to the
+          directive's own file's directory (Fava semantics); an empty/absent
+          argument means the directive's own file.
+
+        Returns ``(insert_rules, default_file_abs)`` where ``insert_rules`` is a
+        list of ``(directive_date, compiled_regex, target_file_abs)`` (unsorted;
+        ``route_entry`` sorts). ``default_file_abs`` is an absolute path or
+        ``None``.
+        """
+        rules: List[Tuple[date, Pattern[str], str]] = []
+        default_file: Optional[str] = None
+
+        for e in entries:
+            if not isinstance(e, bd.Custom) or e.type != "fava-option":
+                continue
+            values = [v.value for v in (e.values or [])]
+            if not values:
+                continue
+            key = values[0]
+            directive_file = (e.meta or {}).get('filename')
+            if not directive_file:
+                continue
+
+            if key == "insert-entry" and len(values) >= 2:
+                try:
+                    pattern = re.compile(values[1])
+                except re.error:
+                    logger.warning("Skipping invalid insert-entry regex: %r", values[1])
+                    continue
+                try:
+                    target = str(Path(directive_file).resolve())
+                except (OSError, ValueError):
+                    continue
+                rules.append((e.date, pattern, target))
+
+            elif key == "default-file":
+                arg = values[1] if len(values) >= 2 else ""
+                try:
+                    if arg:
+                        default_file = str((Path(directive_file).parent / arg).resolve())
+                    else:
+                        default_file = str(Path(directive_file).resolve())
+                except (OSError, ValueError):
+                    continue
+
+        return rules, default_file
+
+    @staticmethod
+    def get_entry_accounts(entry: Any) -> List[str]:
+        """Accounts for an entry, in routing-priority order.
+
+        Mirrors fava.beans.account.get_entry_accounts: for transactions the
+        posting accounts are returned in *reverse* order (the last posting —
+        conventionally the destination asset/liability — is tried first); a
+        ``Pad`` yields ``[account, source_account]``; any other directive with
+        an ``.account`` attribute yields ``[account]``; entries with no account
+        (``Commodity``, ``Price``) yield ``[]`` and therefore never match an
+        insert-entry rule.
+        """
+        if isinstance(entry, Transaction):
+            return list(reversed([p.account for p in entry.postings]))
+        if isinstance(entry, bd.Pad):
+            return [entry.account, entry.source_account]
+        account = getattr(entry, "account", None)
+        if account is not None:
+            return [account]
+        return []
+
+    def route_entry(
+        self,
+        entry: Any,
+        rules: List[Tuple[date, Pattern[str], str]],
+        default_file: Optional[str],
+        root_file: str,
+    ) -> str:
+        """Return the file a *new* ``entry`` should be written to.
+
+        Mirrors fava.core.file.find_insert_position: iterate the entry's
+        accounts in priority order (outer), and for each, the insert rules
+        sorted by date descending (inner); the first rule whose date is
+        strictly before the entry's date and whose regex matches the account
+        wins. Falls back to ``default_file``, then ``root_file``.
+        """
+        accounts = self.get_entry_accounts(entry)
+        rules_desc = sorted(rules, key=lambda r: r[0], reverse=True)
+        for account in accounts:
+            for rule_date, pattern, target in rules_desc:
+                if rule_date >= entry.date:
+                    continue
+                if pattern.match(account):
+                    return target
+        return default_file or root_file
 
     # --- Validation ---
 

@@ -207,6 +207,16 @@ class LedgerManager:
 
         known_files = set(include_map.keys())
 
+        # Fava-compatible new-entry routing. If the ledger carries
+        # ``custom "fava-option" "insert-entry"`` directives, re-stamp the
+        # ``meta['filename']`` of genuinely new entries (the ones currently
+        # bound for the root) so they land in the file Fava would choose. This
+        # is the *only* routing step — the grouping + per-file full-rewrite
+        # below then places each entry by ``meta['filename']`` exactly as it
+        # already does for parsed entries. No second write path. See
+        # dev-docs/multi-file-ledger.md.
+        entries = self._route_new_entries(entries, root_abs, known_files)
+
         # Group entries by their source filename. Entries whose filename is
         # missing or doesn't resolve to a known file in the include tree are
         # treated as either (a) new entries, routed to root; or (b)
@@ -300,6 +310,55 @@ class LedgerManager:
                 f.seek(0)
                 f.truncate()
                 f.write(new_content)
+
+    def _route_new_entries(self, entries, root_abs: str, known_files: set) -> list:
+        """Re-stamp ``meta['filename']`` on new entries per Fava insert-entry rules.
+
+        A *new* entry is one the app just created: it carries
+        ``meta['lineno'] == 0`` and a ``meta['filename']`` that resolves to the
+        root file (every engine ``create_*`` stamps the root). Parsed entries
+        always have a real (1-based) lineno, and edited entries carry their
+        original source location via ``_carry_source_location`` — so both are
+        left untouched and stay in their own file, matching Fava (only new
+        entries route).
+
+        Routing only targets files already in the include tree
+        (``known_files``); a rule or ``default-file`` pointing outside the tree
+        is ignored and the entry stays at the root, because we never create new
+        files or ``include`` lines (also matching Fava). Plugin-synthesized
+        entries (filename like ``<...>``) never resolve to the root and so are
+        never touched here — important, since re-stamping one would defeat the
+        synthetic-entry filter in the grouping step below.
+        """
+        rules, default_file = self.engine.parse_routing_directives(entries)
+        if not rules and not default_file:
+            return entries
+
+        routed = []
+        for e in entries:
+            meta = e.meta or {}
+            if meta.get('lineno', 0) != 0:
+                routed.append(e)
+                continue
+            raw_fname = meta.get('filename')
+            if not raw_fname:
+                routed.append(e)
+                continue
+            try:
+                resolved = str(Path(raw_fname).resolve())
+            except (OSError, ValueError):
+                routed.append(e)
+                continue
+            if resolved != root_abs:
+                routed.append(e)
+                continue
+
+            target = self.engine.route_entry(e, rules, default_file, root_abs)
+            if target != root_abs and target in known_files:
+                routed.append(e._replace(meta={**meta, 'filename': target}))
+            else:
+                routed.append(e)
+        return routed
 
     def _write_and_export(self, entries, errors=None, options=None) -> None:
         """Write entries then synchronously export to SQLite.

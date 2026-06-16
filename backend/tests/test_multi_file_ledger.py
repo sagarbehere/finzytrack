@@ -1115,3 +1115,282 @@ class TestChildBeforeRootOrdering:
         # Root must be the last file written
         assert order[-1] == root_abs, f"expected root last, got order: {order}"
 
+
+# ─────────────────── Fava-compatible new-entry routing ──────────────────────
+
+import re as _re  # noqa: E402
+from beancount.core.amount import Amount as _AMT  # noqa: E402
+
+# Accounts block for routing tests — adds Savings + a misc expense so we can
+# exercise rules that match different postings and a no-match fallback.
+ROUTING_ACCOUNTS_BLOCK = """\
+option "operating_currency" "USD"
+
+1970-01-01 open Assets:Bank:Checking       USD
+1970-01-01 open Assets:Bank:Savings        USD
+1970-01-01 open Income:Salary              USD
+1970-01-01 open Expenses:Food              USD
+1970-01-01 open Expenses:Rent              USD
+1970-01-01 open Expenses:Misc              USD
+1970-01-01 open Equity:Opening-Balances    USD
+
+1970-01-01 commodity USD
+"""
+
+
+def build_ledger_from_files(tmp_path: Path, files: dict, includes: list) -> Path:
+    """Write ``files`` (name → content) under ``tmp_path`` and a root that
+    ``include``s ``includes``. Returns the absolute root path."""
+    for name, content in files.items():
+        p = tmp_path / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+    root = tmp_path / "main.beancount"
+    root.write_text("".join(f'include "{inc}"\n' for inc in includes))
+    return root
+
+
+def _mk_txn(d: date, postings: list) -> Transaction:
+    """Build a bare Transaction from (account, number) pairs for unit tests."""
+    return Transaction(
+        meta={'filename': '/root.beancount', 'lineno': 0},
+        date=d, flag='*', payee=None, narration='x',
+        tags=frozenset(), links=frozenset(),
+        postings=[
+            bd.Posting(acct, _AMT(Decimal(str(n)), 'USD'), None, None, None, None)
+            for acct, n in postings
+        ],
+    )
+
+
+def _new_txn_in(mgr: LedgerManager, d: date, dest_account: str, amount: str) -> None:
+    """Create + append a new transaction whose *last* posting is dest_account."""
+    txn = mgr.create_transaction_with_ids(
+        date_obj=d, payee="P", narration=f"route-{dest_account}",
+        postings=[
+            bd.Posting("Assets:Bank:Checking", _AMT(-Decimal(amount), "USD"), None, None, None, None),
+            bd.Posting(dest_account, _AMT(Decimal(amount), "USD"), None, None, None, None),
+        ],
+        source_account="Assets:Bank:Checking",
+    )
+    mgr.append_entries([txn])
+
+
+class TestRoutingEngineUnit:
+    """Pure routing logic mirrors Fava's find_insert_position/get_entry_accounts."""
+
+    def test_get_entry_accounts_transaction_is_reversed(self):
+        eng = BeancountEngine()
+        txn = _mk_txn(date(2026, 1, 1), [("Assets:Bank:Checking", -5), ("Expenses:Food", 5)])
+        # Last posting first.
+        assert eng.get_entry_accounts(txn) == ["Expenses:Food", "Assets:Bank:Checking"]
+
+    def test_get_entry_accounts_pad_open_commodity(self):
+        eng = BeancountEngine()
+        pad = bd.Pad({}, date(2026, 1, 1), "Assets:Bank:Checking", "Equity:Opening-Balances")
+        assert eng.get_entry_accounts(pad) == ["Assets:Bank:Checking", "Equity:Opening-Balances"]
+        opn = bd.Open({}, date(2026, 1, 1), "Assets:Bank:Checking", ["USD"], None)
+        assert eng.get_entry_accounts(opn) == ["Assets:Bank:Checking"]
+        com = bd.Commodity({}, date(2026, 1, 1), "USD")
+        assert eng.get_entry_accounts(com) == []
+
+    def test_route_entry_date_descending_most_recent_wins(self):
+        eng = BeancountEngine()
+        rules = [
+            (date(2020, 1, 1), _re.compile("Expenses:Food"), "/x/food-old.beancount"),
+            (date(2024, 1, 1), _re.compile("Expenses:Food"), "/x/food-new.beancount"),
+        ]
+        txn = _mk_txn(date(2026, 1, 1), [("Assets:Bank:Checking", -5), ("Expenses:Food", 5)])
+        assert eng.route_entry(txn, rules, None, "/root") == "/x/food-new.beancount"
+
+    def test_route_entry_rule_on_or_after_entry_date_is_ignored(self):
+        eng = BeancountEngine()
+        rules = [
+            (date(2020, 1, 1), _re.compile("Expenses:Food"), "/x/food-old.beancount"),
+            (date(2030, 1, 1), _re.compile("Expenses:Food"), "/x/food-future.beancount"),
+        ]
+        # Entry in 2026: the 2030 rule is in the future (>=) and must be skipped;
+        # the 2020 rule wins. (Strictly-before semantics, matching Fava.)
+        txn = _mk_txn(date(2026, 1, 1), [("Assets:Bank:Checking", -5), ("Expenses:Food", 5)])
+        assert eng.route_entry(txn, rules, None, "/root") == "/x/food-old.beancount"
+
+    def test_route_entry_account_priority_last_posting_wins(self):
+        eng = BeancountEngine()
+        rules = [
+            (date(2020, 1, 1), _re.compile("Assets:Bank:Savings"), "/x/savings.beancount"),
+            (date(2020, 1, 1), _re.compile("Expenses:Food"), "/x/food.beancount"),
+        ]
+        # First posting Savings, last posting Food → reversed tries Food first.
+        txn = _mk_txn(date(2026, 1, 1), [("Assets:Bank:Savings", -5), ("Expenses:Food", 5)])
+        assert eng.route_entry(txn, rules, None, "/x/food.beancount") == "/x/food.beancount"
+
+    def test_route_entry_falls_back_to_default_then_root(self):
+        eng = BeancountEngine()
+        rules = [(date(2020, 1, 1), _re.compile("Expenses:Food"), "/x/food.beancount")]
+        txn = _mk_txn(date(2026, 1, 1), [("Assets:Bank:Checking", -5), ("Expenses:Misc", 5)])
+        assert eng.route_entry(txn, rules, "/x/default.beancount", "/root") == "/x/default.beancount"
+        assert eng.route_entry(txn, rules, None, "/root") == "/root"
+
+    def test_parse_routing_directives_reads_insert_entry_and_default_file(self, tmp_path: Path):
+        eng = BeancountEngine()
+        food = tmp_path / "food.beancount"
+        misc = tmp_path / "misc.beancount"
+        food.write_text('2020-01-01 custom "fava-option" "insert-entry" "Expenses:Food"\n')
+        misc.write_text('2020-01-01 custom "fava-option" "default-file"\n')
+        root = build_ledger_from_files(
+            tmp_path, {}, ["food.beancount", "misc.beancount"]
+        )
+        # main.beancount already written by helper; append the include of itself? no.
+        entries, _, _ = load_ledger_checked(root)
+        rules, default_file = eng.parse_routing_directives(entries)
+        assert len(rules) == 1
+        rdate, pattern, target = rules[0]
+        assert rdate == date(2020, 1, 1)
+        assert pattern.match("Expenses:Food")
+        assert target == str(food.resolve())
+        # Empty default-file arg → the directive's own file.
+        assert default_file == str(misc.resolve())
+
+
+class TestFavaInsertEntryRouting:
+    """New entries route to the file named by the matching insert-entry
+    directive, using the existing parse-and-write path (no text splicing)."""
+
+    def _build(self, tmp_path: Path) -> tuple[Path, LedgerManager]:
+        ledger_dir = tmp_path / "ledger"
+        ledger_dir.mkdir()
+        root = build_ledger_from_files(
+            ledger_dir,
+            {
+                "accounts.beancount": ROUTING_ACCOUNTS_BLOCK,
+                "food.beancount": '2020-01-01 custom "fava-option" "insert-entry" "Expenses:Food"\n',
+                "rent.beancount": '2020-01-01 custom "fava-option" "insert-entry" "Expenses:Rent"\n',
+                "misc.beancount": '2020-01-01 custom "fava-option" "default-file"\n',
+            },
+            ["accounts.beancount", "food.beancount", "rent.beancount", "misc.beancount"],
+        )
+        mgr = build_manager(root, tmp_path / "backups")
+        _normalize_ledger(mgr)
+        return root, mgr
+
+    def _file_of(self, mgr: LedgerManager, narration: str) -> str:
+        for e in mgr._parse_ledger()[0]:
+            if isinstance(e, Transaction) and narration in (e.narration or ""):
+                return str(Path(e.meta['filename']).resolve())
+        raise AssertionError(f"txn {narration!r} not found")
+
+    def test_new_transaction_routes_to_matching_insert_entry_file(self, tmp_path: Path):
+        ledger_dir = tmp_path / "ledger"
+        root, mgr = self._build(tmp_path)
+        _new_txn_in(mgr, date(2026, 6, 1), "Expenses:Food", "50.00")
+
+        food = ledger_dir / "food.beancount"
+        assert "route-Expenses:Food" in food.read_text()
+        assert "route-Expenses:Food" not in (ledger_dir / "main.beancount").read_text()
+        assert self._file_of(mgr, "route-Expenses:Food") == str(food.resolve())
+
+    def test_two_rules_route_to_their_own_files(self, tmp_path: Path):
+        ledger_dir = tmp_path / "ledger"
+        root, mgr = self._build(tmp_path)
+        _new_txn_in(mgr, date(2026, 6, 1), "Expenses:Food", "10.00")
+        _new_txn_in(mgr, date(2026, 6, 2), "Expenses:Rent", "20.00")
+
+        assert self._file_of(mgr, "route-Expenses:Food") == str((ledger_dir / "food.beancount").resolve())
+        assert self._file_of(mgr, "route-Expenses:Rent") == str((ledger_dir / "rent.beancount").resolve())
+
+    def test_no_match_routes_to_default_file(self, tmp_path: Path):
+        ledger_dir = tmp_path / "ledger"
+        root, mgr = self._build(tmp_path)
+        _new_txn_in(mgr, date(2026, 6, 1), "Expenses:Misc", "5.00")
+
+        assert self._file_of(mgr, "route-Expenses:Misc") == str((ledger_dir / "misc.beancount").resolve())
+
+    def test_no_match_no_default_routes_to_root(self, tmp_path: Path):
+        ledger_dir = tmp_path / "ledger"
+        ledger_dir.mkdir()
+        root = build_ledger_from_files(
+            ledger_dir,
+            {
+                "accounts.beancount": ROUTING_ACCOUNTS_BLOCK,
+                "food.beancount": '2020-01-01 custom "fava-option" "insert-entry" "Expenses:Food"\n',
+            },
+            ["accounts.beancount", "food.beancount"],
+        )
+        mgr = build_manager(root, tmp_path / "backups")
+        _normalize_ledger(mgr)
+        _new_txn_in(mgr, date(2026, 6, 1), "Expenses:Misc", "5.00")
+
+        assert self._file_of(mgr, "route-Expenses:Misc") == str(root.resolve())
+
+    def test_insert_entry_directive_survives_routed_write(self, tmp_path: Path):
+        """The custom routing directive must still be present in its file
+        after a new entry has been routed into that file."""
+        ledger_dir = tmp_path / "ledger"
+        root, mgr = self._build(tmp_path)
+        _new_txn_in(mgr, date(2026, 6, 1), "Expenses:Food", "50.00")
+
+        food_text = (ledger_dir / "food.beancount").read_text()
+        assert 'custom "fava-option" "insert-entry" "Expenses:Food"' in food_text
+
+    def test_editing_routed_entry_keeps_it_in_place(self, tmp_path: Path):
+        """Edits must not re-route: an edited transaction stays in the file it
+        currently lives in (here, the routed child file), not the root."""
+        ledger_dir = tmp_path / "ledger"
+        root, mgr = self._build(tmp_path)
+        _new_txn_in(mgr, date(2026, 6, 1), "Expenses:Food", "50.00")
+        _persist_ids_for_all_txns(mgr)
+
+        target = _find_txn(mgr._parse_ledger()[0], "route-Expenses:Food")
+        # Build the edited txn the way the API does (fresh object, no parser meta).
+        edited = mgr.create_transaction_with_ids(
+            date_obj=target.date, payee=target.payee, narration="edited-in-place",
+            postings=list(target.postings), source_account="Assets:Bank:Checking",
+        )
+        edited = edited._replace(meta={**edited.meta, 'id': target.meta['id']})
+        mgr.update_transactions_by_id([(target.meta['id'], edited)])
+
+        food = ledger_dir / "food.beancount"
+        assert "edited-in-place" in food.read_text()
+        assert "edited-in-place" not in (ledger_dir / "main.beancount").read_text()
+        assert self._file_of(mgr, "edited-in-place") == str(food.resolve())
+
+    def test_new_open_directive_routes_by_account(self, tmp_path: Path):
+        """A new Open whose account matches an insert-entry rule routes to that
+        file — fixing the minimal-design 'Close lands in root' wart for users
+        with insert-entry directives."""
+        from app.schemas.account_schemas import AccountCreateRequest
+        ledger_dir = tmp_path / "ledger"
+        root, mgr = self._build(tmp_path)
+
+        mgr.create_account_directive(AccountCreateRequest(
+            name="Expenses:Food:Restaurants", open_date=date(2026, 1, 1), currencies=["USD"],
+        ))
+
+        food = ledger_dir / "food.beancount"
+        assert "Expenses:Food:Restaurants" in food.read_text()
+        assert "Expenses:Food:Restaurants" not in (ledger_dir / "main.beancount").read_text()
+
+
+class TestRoutingNoOpWithoutDirectives:
+    """A ledger with no fava-option directives behaves exactly as Tier-0."""
+
+    def test_single_file_new_txn_unchanged_by_routing(self, tmp_path: Path):
+        root = build_single_file_ledger(tmp_path)
+        mgr = build_manager(root, tmp_path / "backups")
+        _normalize_ledger(mgr)
+        _new_txn_in(mgr, date(2026, 6, 1), "Expenses:Food", "12.00")
+
+        # Only one file exists and the new entry is in it.
+        assert "route-Expenses:Food" in root.read_text()
+        assert str(Path(self_file := _find_txn(mgr._parse_ledger()[0], "route-Expenses:Food").meta['filename']).resolve()) == str(root.resolve())
+
+    def test_multi_file_without_directives_new_txn_lands_in_root(self, tmp_path: Path):
+        ledger_dir = tmp_path / "ledger"
+        ledger_dir.mkdir()
+        root = build_flat_multi_file_ledger(ledger_dir)
+        mgr = build_manager(root, tmp_path / "backups")
+        _normalize_ledger(mgr)
+        _new_txn_in(mgr, date(2026, 6, 1), "Expenses:Food", "12.00")
+
+        assert "route-Expenses:Food" in (ledger_dir / "main.beancount").read_text()
+

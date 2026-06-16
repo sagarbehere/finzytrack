@@ -5,5 +5,7 @@ include "accounts.beancount"
 include "transactions-2024.beancount"
 include "transactions-2025.beancount"
 include "2026/index.beancount"
+include "subscriptions-archive.beancount"
+include "subscriptions.beancount"
 include "pushtag-demo.beancount"
 
