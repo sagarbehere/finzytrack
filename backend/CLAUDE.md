@@ -64,11 +64,6 @@ python -m coverage report --show-missing      # see uncovered lines
 **Before merging changes to `app/core/` or `app/api/routers/`:**
 1. Run `python -m pytest tests/` — all tests must pass
 2. Run coverage — new/changed code should be covered
-3. Run mutation testing on changed files:
-   ```bash
-   python -m mutmut run --paths-to-mutate=<changed-file> --tests-dir=tests/
-   ```
-4. Investigate surviving mutations on covered lines — add tests for real behavioral gaps (not metadata/error-message/default-param mutations)
 
 ## API Codegen Workflow
 
