@@ -37,36 +37,53 @@
 
                 <div class="mt-3 max-h-72 overflow-y-auto">
                   <!-- Older orphans (safe to delete; checked by default) -->
-                  <ul v-if="olderOrphans.length" class="divide-y divide-gray-100 dark:divide-white/5">
-                    <li v-for="o in olderOrphans" :key="o.path" class="flex items-center gap-3 py-2">
-                      <input
-                        type="checkbox" :value="o.path" v-model="selected"
-                        class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600 dark:border-white/20 dark:bg-white/5"
-                      />
-                      <div class="min-w-0 flex-1">
-                        <button
-                          type="button" @click="openDocument(o.path, o.display_name)"
-                          class="block truncate text-left text-sm text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
-                        >{{ o.display_name }}</button>
-                        <p class="text-xs text-gray-500 dark:text-gray-400">{{ formatSize(o.size) }} · modified {{ formatDate(o.modified) }}</p>
-                      </div>
-                    </li>
-                  </ul>
+                  <div v-if="olderOrphans.length">
+                    <div class="flex items-center justify-between">
+                      <h4 class="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                        Orphaned documents ({{ olderOrphans.length }})
+                      </h4>
+                      <button
+                        type="button" @click="toggleSection('older')"
+                        class="text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
+                      >{{ allSelectedIn('older') ? 'Deselect all' : 'Select all' }}</button>
+                    </div>
+                    <ul class="mt-1 divide-y divide-gray-100 dark:divide-white/5">
+                      <li v-for="(o, i) in olderOrphans" :key="o.path" class="flex items-center gap-3 py-2">
+                        <input
+                          type="checkbox" :checked="isSelected(o.path)" @click.prevent="onItemClick('older', i, $event)"
+                          class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600 dark:border-white/20 dark:bg-white/5"
+                        />
+                        <div class="min-w-0 flex-1">
+                          <button
+                            type="button" @click="openDocument(o.path, o.display_name)"
+                            class="block truncate text-left text-sm text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+                          >{{ o.display_name }}</button>
+                          <p class="text-xs text-gray-500 dark:text-gray-400">{{ formatSize(o.size) }} · modified {{ formatDate(o.modified) }}</p>
+                        </div>
+                      </li>
+                    </ul>
+                  </div>
 
                   <!-- Recent orphans (may belong to an unsaved draft; unchecked by default) -->
                   <div v-if="recentOrphans.length" class="mt-4">
-                    <h4 class="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-amber-600 dark:text-amber-400">
-                      <ExclamationTriangleIcon class="h-4 w-4" />
-                      Recent (last 24h)
-                    </h4>
+                    <div class="flex items-center justify-between">
+                      <h4 class="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                        <ExclamationTriangleIcon class="h-4 w-4" />
+                        Recent (last 24h, {{ recentOrphans.length }})
+                      </h4>
+                      <button
+                        type="button" @click="toggleSection('recent')"
+                        class="text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
+                      >{{ allSelectedIn('recent') ? 'Deselect all' : 'Select all' }}</button>
+                    </div>
                     <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                       These were modified recently and may belong to an unsaved draft. They're left
                       unchecked — select them only if you're sure.
                     </p>
                     <ul class="mt-2 divide-y divide-gray-100 dark:divide-white/5">
-                      <li v-for="o in recentOrphans" :key="o.path" class="flex items-center gap-3 py-2">
+                      <li v-for="(o, i) in recentOrphans" :key="o.path" class="flex items-center gap-3 py-2">
                         <input
-                          type="checkbox" :value="o.path" v-model="selected"
+                          type="checkbox" :checked="isSelected(o.path)" @click.prevent="onItemClick('recent', i, $event)"
                           class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600 dark:border-white/20 dark:bg-white/5"
                         />
                         <div class="min-w-0 flex-1">
@@ -80,6 +97,9 @@
                     </ul>
                   </div>
                 </div>
+                <p class="mt-2 text-xs text-gray-400 dark:text-gray-500">
+                  Tip: shift-click to select a range.
+                </p>
 
                 <p class="mt-3 flex items-start gap-2 text-xs text-gray-500 dark:text-gray-400">
                   <InformationCircleIcon class="h-4 w-4 flex-shrink-0" />
@@ -153,11 +173,61 @@ const olderOrphans = computed(() => props.orphans.filter(o => !isRecent(o)))
 // On open, pre-select the older orphans only; recent ones (possible in-flight
 // draft uploads) start unchecked so a stray confirm can't delete them.
 const selected = ref<string[]>([])
+// Anchor for shift-click range selection, tracked per section.
+const lastIndex = ref<{ older: number | null; recent: number | null }>({ older: null, recent: null })
 watch(
   () => [props.open, props.orphans] as const,
-  ([open]) => { if (open) selected.value = olderOrphans.value.map(o => o.path) },
+  ([open]) => {
+    if (open) {
+      selected.value = olderOrphans.value.map(o => o.path)
+      lastIndex.value = { older: null, recent: null }
+    }
+  },
   { immediate: true },
 )
+
+type Section = 'older' | 'recent'
+function sectionList(section: Section) {
+  return section === 'older' ? olderOrphans.value : recentOrphans.value
+}
+
+function isSelected(path: string): boolean {
+  return selected.value.includes(path)
+}
+
+function setSelected(paths: string[], on: boolean) {
+  const set = new Set(selected.value)
+  for (const p of paths) { if (on) set.add(p); else set.delete(p) }
+  selected.value = Array.from(set)
+}
+
+function allSelectedIn(section: Section): boolean {
+  const list = sectionList(section)
+  return list.length > 0 && list.every(o => isSelected(o.path))
+}
+
+function toggleSection(section: Section) {
+  const paths = sectionList(section).map(o => o.path)
+  setSelected(paths, !allSelectedIn(section))
+  lastIndex.value[section] = null
+}
+
+// Per-row click: toggles the row, or (with shift) applies the toggled state to
+// the contiguous range from the last clicked row in the same section.
+function onItemClick(section: Section, index: number, event: MouseEvent) {
+  const list = sectionList(section)
+  const path = list[index].path
+  const willSelect = !isSelected(path)
+  const anchor = lastIndex.value[section]
+  if (event.shiftKey && anchor !== null) {
+    const start = Math.min(anchor, index)
+    const end = Math.max(anchor, index)
+    setSelected(list.slice(start, end + 1).map(o => o.path), willSelect)
+  } else {
+    setSelected([path], willSelect)
+  }
+  lastIndex.value[section] = index
+}
 
 function formatSize(bytes: number): string {
   if (bytes === 0) return '0 B'

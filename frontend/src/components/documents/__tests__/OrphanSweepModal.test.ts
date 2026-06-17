@@ -44,7 +44,7 @@ describe('OrphanSweepModal', () => {
       attachTo: document.body,
     })
     await flushPromises()
-    expect(document.body.textContent).toContain('Recent (last 24h)')
+    expect(document.body.textContent).toContain('Recent (last 24h')
     // Confirm with defaults: only the older (checked) file is submitted.
     const deleteBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Delete')) as HTMLElement
     deleteBtn.click()
@@ -70,13 +70,59 @@ describe('OrphanSweepModal', () => {
     const wrapper = mount(OrphanSweepModal, { props: { open: true, orphans }, attachTo: document.body })
     await flushPromises()
     const boxes = document.body.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
-    // Uncheck the first orphan (v-model on checkbox listens to 'change').
-    boxes[0].checked = false
-    boxes[0].dispatchEvent(new Event('change'))
+    boxes[0].click() // toggles a.pdf off
     await nextTick()
     const deleteBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Delete')) as HTMLElement
     deleteBtn.click()
     await nextTick()
     expect(wrapper.emitted('confirm')?.[0]).toEqual([['b.pdf']])
+  })
+
+  it('per-section Select all / Deselect all toggles every item in the section', async () => {
+    const orphans = [
+      makeOrphan({ path: 'a.pdf', display_name: 'a.pdf', modified: '2020-01-01T00:00:00' }),
+      makeOrphan({ path: 'b.pdf', display_name: 'b.pdf', modified: '2020-01-02T00:00:00' }),
+      makeOrphan({ path: 'c.pdf', display_name: 'c.pdf', modified: '2020-01-03T00:00:00' }),
+    ]
+    mount(OrphanSweepModal, { props: { open: true, orphans }, attachTo: document.body })
+    await flushPromises()
+    const toggle = () => Array.from(document.body.querySelectorAll('button'))
+      .find(b => b.textContent?.trim() === 'Deselect all' || b.textContent?.trim() === 'Select all') as HTMLElement
+    const boxes = () => document.body.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
+
+    // All checked by default -> control reads "Deselect all"; clicking clears all.
+    expect(toggle().textContent?.trim()).toBe('Deselect all')
+    toggle().click(); await nextTick()
+    expect(Array.from(boxes()).every(b => !b.checked)).toBe(true)
+
+    // Now reads "Select all"; clicking re-selects all.
+    expect(toggle().textContent?.trim()).toBe('Select all')
+    toggle().click(); await nextTick()
+    expect(Array.from(boxes()).every(b => b.checked)).toBe(true)
+  })
+
+  it('shift-click selects a contiguous range within a section', async () => {
+    const orphans = [
+      makeOrphan({ path: 'a.pdf', display_name: 'a.pdf', modified: '2020-01-01T00:00:00' }),
+      makeOrphan({ path: 'b.pdf', display_name: 'b.pdf', modified: '2020-01-02T00:00:00' }),
+      makeOrphan({ path: 'c.pdf', display_name: 'c.pdf', modified: '2020-01-03T00:00:00' }),
+      makeOrphan({ path: 'd.pdf', display_name: 'd.pdf', modified: '2020-01-04T00:00:00' }),
+    ]
+    const wrapper = mount(OrphanSweepModal, { props: { open: true, orphans }, attachTo: document.body })
+    await flushPromises()
+    const boxes = document.body.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
+
+    // Clear all, click index 1 (anchor), then shift-click index 3 -> selects b,c,d.
+    Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.trim() === 'Deselect all')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await nextTick()
+    boxes[1].click()
+    await nextTick()
+    boxes[3].dispatchEvent(new MouseEvent('click', { shiftKey: true, bubbles: true, cancelable: true }))
+    await nextTick()
+
+    const deleteBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Delete')) as HTMLElement
+    deleteBtn.click()
+    await nextTick()
+    expect((wrapper.emitted('confirm')?.[0][0] as string[]).sort()).toEqual(['b.pdf', 'c.pdf', 'd.pdf'])
   })
 })
