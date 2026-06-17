@@ -396,9 +396,6 @@
         </div>
       </main>
     </div>
-
-    <!-- App-level document preview (single instance; opened from any drawer/modal) -->
-    <DocumentPreviewModal />
   </div>
 </template>
 
@@ -411,7 +408,6 @@
   import { useServerNotices } from '@/composables/useServerNotices'
   import NotificationPanel from '@/components/common/NotificationPanel.vue'
   import GlobalSearch from '@/components/layout/GlobalSearch.vue'
-  import DocumentPreviewModal from '@/components/documents/DocumentPreviewModal.vue'
   import { Dialog, DialogPanel, TransitionChild, TransitionRoot } from '@headlessui/vue'
   import {
     Bars3Icon,

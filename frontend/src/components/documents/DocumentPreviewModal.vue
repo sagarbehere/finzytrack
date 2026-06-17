@@ -1,6 +1,6 @@
 <template>
   <TransitionRoot appear :show="isOpen" as="template">
-    <Dialog as="div" @close="close" class="relative z-50">
+    <Dialog as="div" @close="close" class="relative z-[60]">
       <TransitionChild
         as="template"
         enter="duration-200 ease-out" enter-from="opacity-0" enter-to="opacity-100"
@@ -82,7 +82,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch, onUnmounted } from 'vue'
 import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } from '@headlessui/vue'
 import { XMarkIcon } from '@heroicons/vue/24/outline'
 import { useDocuments } from '@/composables/useDocuments'
@@ -90,6 +90,24 @@ import { useDocumentPreview } from '@/composables/useDocumentPreview'
 
 const { isOpen, path, displayName, close } = useDocumentPreview()
 const { serveUrl } = useDocuments()
+
+// This modal is rendered *nested* inside whichever drawer/modal opened it, so
+// HeadlessUI's stack disables the underlying dialog's Escape + outside-click
+// while the preview is up (that's what stops "Esc closes everything"). But a
+// nested HeadlessUI dialog also disables its *own* Escape, so we close the
+// preview on Escape ourselves. The underlying dialog's window keydown handler
+// is inert here (stacked), so this is conflict-free.
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && isOpen.value) {
+    e.stopPropagation()
+    close()
+  }
+}
+watch(isOpen, (open) => {
+  if (open) window.addEventListener('keydown', onKeydown)
+  else window.removeEventListener('keydown', onKeydown)
+}, { immediate: true })
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 
 const url = computed(() => (path.value ? serveUrl(path.value) : ''))
 

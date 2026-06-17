@@ -52,10 +52,14 @@ describe('OrphanSweepModal', () => {
     expect(wrapper.emitted('confirm')?.[0]).toEqual([['old.pdf']])
   })
 
-  it('shows the git-recoverability note', async () => {
+  it('warns that deletion is permanent without assuming git', async () => {
     mount(OrphanSweepModal, { props: { open: true, orphans: [makeOrphan()] }, attachTo: document.body })
     await flushPromises()
-    expect(document.body.textContent).toContain('restored from your git history')
+    const text = document.body.textContent || ''
+    expect(text).toContain('permanently removes these files')
+    expect(text).toContain("can't be undone")
+    // git is mentioned only as a conditional, not promised.
+    expect(text).toContain('If your documents folder is under version control')
   })
 
   it('confirm emits only the still-checked paths', async () => {

@@ -83,7 +83,11 @@
 
                 <p class="mt-3 flex items-start gap-2 text-xs text-gray-500 dark:text-gray-400">
                   <InformationCircleIcon class="h-4 w-4 flex-shrink-0" />
-                  <span>Deleted files can be restored from your git history.</span>
+                  <span>
+                    Deleting permanently removes these files from disk — this can't be undone from
+                    Finzytrack. If your documents folder is under version control (e.g. git), you can
+                    recover them there.
+                  </span>
                 </p>
               </template>
 
@@ -104,6 +108,11 @@
           </TransitionChild>
         </div>
       </div>
+
+      <!-- Nested so HeadlessUI suppresses this modal's Esc/outside-click while
+           a document preview is open (otherwise closing the preview would also
+           close this modal and drop the user back to Settings). -->
+      <DocumentPreviewModal />
     </Dialog>
   </TransitionRoot>
 </template>
@@ -112,6 +121,7 @@
 import { ref, computed, watch } from 'vue'
 import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } from '@headlessui/vue'
 import { CheckCircleIcon, InformationCircleIcon, ExclamationTriangleIcon } from '@heroicons/vue/24/outline'
+import DocumentPreviewModal from '@/components/documents/DocumentPreviewModal.vue'
 import { useDocuments } from '@/composables/useDocuments'
 import type { OrphanCandidateData } from '@/services/generated-api'
 

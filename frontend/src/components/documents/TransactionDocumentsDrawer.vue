@@ -81,6 +81,10 @@
           </div>
         </div>
       </div>
+
+      <!-- Nested so HeadlessUI suppresses this drawer's Esc/outside-click while
+           a document preview is open (prevents the preview closing the drawer). -->
+      <DocumentPreviewModal />
     </Dialog>
   </TransitionRoot>
 </template>
@@ -91,6 +95,7 @@ import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } fro
 import { XMarkIcon } from '@heroicons/vue/24/outline'
 import { PaperClipIcon } from '@heroicons/vue/20/solid'
 import DocumentUploadZone from '@/components/documents/DocumentUploadZone.vue'
+import DocumentPreviewModal from '@/components/documents/DocumentPreviewModal.vue'
 import { useDocuments } from '@/composables/useDocuments'
 import { listDocuments, addDocument, removeDocument } from '@/utils/documentMeta'
 import type { TransactionViewModel } from '@/types/transactions'
