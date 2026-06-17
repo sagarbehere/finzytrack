@@ -57,6 +57,21 @@ describe('AccountsTable account name rendering', () => {
     expect(wrapper.find('td').text()).toContain('3')
   })
 
+  it('clicking the paperclip badge opens the detail drawer (same as the name)', async () => {
+    const wrapper = mount(AccountsTable, {
+      props: {
+        displayNodes: [node()],
+        expandedIds: new Set<string>(),
+        documentCounts: { 'Assets:Bank:Checking': 3 },
+      },
+    })
+    const badge = wrapper.findAll('button').find(b => b.text() === '3')!
+    await badge.trigger('click')
+    const emitted = wrapper.emitted('show-detail')
+    expect(emitted).toBeTruthy()
+    expect((emitted![0][0] as AccountTreeNode).fullPath).toBe('Assets:Bank:Checking')
+  })
+
   it('omits the badge when the account has no documents', () => {
     const wrapper = mount(AccountsTable, {
       props: {

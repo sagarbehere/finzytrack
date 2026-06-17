@@ -72,14 +72,18 @@
                 {{ node.name }}
               </span>
               <!-- Paperclip badge (appended after the name; must not sit between
-                   the name button's v-if and its v-else) -->
-              <span
+                   the name button's v-if and its v-else). Clicking it opens the
+                   detail drawer — same target as the name — for consistency with
+                   the transactions table's paperclip. -->
+              <button
                 v-if="!node.isVirtual && (documentCounts[node.fullPath] || 0) > 0"
-                class="ml-2 inline-flex items-center gap-0.5 text-xs font-medium text-indigo-600 dark:text-indigo-400"
+                type="button"
+                @click="emit('show-detail', node)"
+                class="ml-2 inline-flex items-center gap-0.5 rounded text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
                 :title="`${documentCounts[node.fullPath]} document(s)`"
               >
                 <PaperClipIcon class="h-3.5 w-3.5" />{{ documentCounts[node.fullPath] }}
-              </span>
+              </button>
             </div>
           </td>
 
