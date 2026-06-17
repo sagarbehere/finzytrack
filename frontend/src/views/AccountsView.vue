@@ -318,6 +318,10 @@ async function loadAccounts() {
   } else {
     await fetchAccounts(true)
   }
+  // Refresh badge counts alongside the tree. The counts are keyed by account
+  // path, so any mutation that changes a path (rename) or document set must
+  // re-query, or stale/missing keys leave badges blank until a page reload.
+  loadDocumentCounts()
 }
 
 // Derive the earliest account open date from loaded data
@@ -370,8 +374,7 @@ async function loadDocumentCounts() {
 
 // Fetch accounts on mount
 onMounted(async () => {
-  await loadAccounts()
-  loadDocumentCounts()
+  await loadAccounts() // also loads document counts
   hasLoaded.value = true
 
   // Auto-expand all nodes when navigated with ?expanded=1 (e.g. from setup wizard)
