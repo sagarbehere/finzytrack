@@ -50,7 +50,7 @@
                     <ul class="mt-1 divide-y divide-gray-100 dark:divide-white/5">
                       <li v-for="(o, i) in olderOrphans" :key="o.path" class="flex items-center gap-3 py-2">
                         <input
-                          type="checkbox" :checked="isSelected(o.path)" @click.prevent="onItemClick('older', i, $event)"
+                          type="checkbox" :checked="isSelected(o.path)" @click="onItemClick('older', i, $event)"
                           class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600 dark:border-white/20 dark:bg-white/5"
                         />
                         <div class="min-w-0 flex-1">
@@ -83,7 +83,7 @@
                     <ul class="mt-2 divide-y divide-gray-100 dark:divide-white/5">
                       <li v-for="(o, i) in recentOrphans" :key="o.path" class="flex items-center gap-3 py-2">
                         <input
-                          type="checkbox" :checked="isSelected(o.path)" @click.prevent="onItemClick('recent', i, $event)"
+                          type="checkbox" :checked="isSelected(o.path)" @click="onItemClick('recent', i, $event)"
                           class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600 dark:border-white/20 dark:bg-white/5"
                         />
                         <div class="min-w-0 flex-1">
