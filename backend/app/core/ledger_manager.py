@@ -618,15 +618,16 @@ class LedgerManager:
             ledger_file=str(self.ledger_file), options=options, default_dir=default_dir
         )
 
-    def scan_orphan_documents(self, *, documents_root: "Path", grace_seconds: float, now=None):
-        """Scan the documents root for orphans against the *entire* loaded
-        ledger (all ``include``d files) — both ``document*`` metadata and
-        ``Document`` directives (invariant I7)."""
+    def scan_orphan_documents(self, *, documents_root: "Path"):
+        """Scan the documents root for files referenced by nothing in the
+        *entire* loaded ledger (all ``include``d files) — both ``document*``
+        metadata and ``Document`` directives (invariant I7). Returns every
+        unreferenced file; the recency split is a UI concern."""
         from app.core.document_store import DocumentStore, collect_referenced_paths
         entries, _, _ = self._parse_ledger()
         store = DocumentStore(documents_root, Path(self.ledger_file).resolve().parent)
         referenced = collect_referenced_paths(entries)
-        return store.scan_orphans(referenced=referenced, grace_seconds=grace_seconds, now=now)
+        return store.scan_orphans(referenced=referenced)
 
     def delete_orphan_documents(self, *, documents_root: "Path", paths):
         """Delete selected orphan files, re-validating each is *still* an orphan

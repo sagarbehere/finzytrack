@@ -110,7 +110,7 @@ class TestUploadServe:
         resp = _upload(doc_client, content, narration="ACME office")
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["path"] == f"../documents/2026/2026-06-15-acme-office-{hashlib.sha256(content).hexdigest()[:8]}.pdf"
+        assert data["path"] == f"../documents/main/2026/2026-06-15-acme-office-{hashlib.sha256(content).hexdigest()[:8]}.pdf"
         assert data["full_hash"] == hashlib.sha256(content).hexdigest()
         assert data["size"] == len(content)
         # file exists on disk under the documents root
@@ -137,7 +137,7 @@ class TestUploadServe:
         assert resp.json()["error"]["code"] == "FILE_TOO_LARGE"
 
     def test_serve_missing_path_404(self, doc_client):
-        resp = doc_client.get("/api/documents/file", params={"path": "../documents/2026/nope.pdf"})
+        resp = doc_client.get("/api/documents/file", params={"path": "../documents/main/2026/nope.pdf"})
         assert resp.status_code == 404
         assert resp.json()["error"]["code"] == "DOCUMENT_NOT_FOUND"
 
@@ -153,7 +153,7 @@ class TestUploadServe:
         assert 'option "documents"' not in _ledger_text(doc_client)
         _upload(doc_client, b"%PDF x")
         text = _ledger_text(doc_client)
-        assert 'option "documents" "../documents"' in text
+        assert 'option "documents" "../documents/main"' in text
 
     def test_option_survives_subsequent_rewrite(self, doc_client):
         """The auto-written option must round-trip, not be stripped on rewrite."""
@@ -163,7 +163,7 @@ class TestUploadServe:
             "name": "Expenses:Travel", "open_date": "2024-01-01", "currencies": ["USD"],
         })
         assert resp.status_code in (200, 201), resp.text
-        assert 'option "documents" "../documents"' in _ledger_text(doc_client)
+        assert 'option "documents" "../documents/main"' in _ledger_text(doc_client)
 
 
 # ── Transaction document metadata (I2, I3, I4) ──────────────────────────────────
@@ -321,10 +321,14 @@ class TestOrphanSweep:
         data = doc_client.post("/api/documents/orphans/scan").json()["data"]
         assert data["orphans"] == []
 
-    def test_grace_window_excludes_fresh_upload(self, doc_client):
-        # a just-uploaded, unreferenced file (draft scenario) is NOT flagged
-        _upload(doc_client, b"%PDF fresh")
-        assert doc_client.post("/api/documents/orphans/scan").json()["data"]["orphans"] == []
+    def test_fresh_unreferenced_upload_is_returned(self, doc_client):
+        # The scan no longer hard-excludes recent files; a just-uploaded,
+        # unreferenced file is returned (the UI labels it "recent" using the
+        # mtime + grace_seconds the response carries). grace_seconds is reported.
+        up = _upload(doc_client, b"%PDF fresh").json()["data"]["path"]
+        data = doc_client.post("/api/documents/orphans/scan").json()["data"]
+        assert up in [o["path"] for o in data["orphans"]]
+        assert data["grace_seconds"] == 24 * 60 * 60
 
     def test_delete_subset_only(self, doc_client):
         a = _upload(doc_client, b"%PDF a").json()["data"]["path"]

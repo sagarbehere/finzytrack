@@ -59,9 +59,13 @@ describe('TransactionTable row drag-and-drop', () => {
     expect(rows.length).toBe(3) // one <tr> per posting
 
     await rows[0].trigger('dragover', fileDragEvent(true))
-    // The highlight is keyed on transaction id, so every row of the tx lights up.
-    for (const row of wrapper.findAll('tr.transaction-tx-1')) {
-      expect(row.classes()).toContain('ring-indigo-400')
+    // The highlight is keyed on transaction id and applied per-cell (a soft
+    // background that overrides the # column's own tint), so every cell of
+    // every row of the tx lights up.
+    const cells = wrapper.findAll('tr.transaction-tx-1 td')
+    expect(cells.length).toBeGreaterThan(0)
+    for (const cell of cells) {
+      expect(cell.classes()).toContain('!bg-indigo-50')
     }
   })
 
@@ -70,8 +74,8 @@ describe('TransactionTable row drag-and-drop', () => {
     const wrapper = mount(TransactionTable, { props: { transactions: [tx] }, ...mountOpts })
     await flushPromises()
     await wrapper.find('tr.transaction-tx-2').trigger('dragover', fileDragEvent(false))
-    for (const row of wrapper.findAll('tr.transaction-tx-2')) {
-      expect(row.classes()).not.toContain('ring-indigo-400')
+    for (const cell of wrapper.findAll('tr.transaction-tx-2 td')) {
+      expect(cell.classes()).not.toContain('!bg-indigo-50')
     }
   })
 

@@ -17,6 +17,7 @@ import type {
 } from '@/services/generated-api'
 import { OpenAPI } from '@/services/generated-api/core/OpenAPI'
 import { errorHandler } from '@/utils/ErrorHandler'
+import { useDocumentPreview } from '@/composables/useDocumentPreview'
 
 export function useDocuments() {
   const isUploading = ref(false)
@@ -27,9 +28,9 @@ export function useDocuments() {
     return `${OpenAPI.BASE}/api/documents/file?path=${encodeURIComponent(path)}`
   }
 
-  /** Open a stored document in a new browser tab. */
-  function openDocument(path: string): void {
-    window.open(serveUrl(path), '_blank', 'noopener')
+  /** Open a stored document in the in-app preview modal. */
+  function openDocument(path: string, displayName?: string): void {
+    useDocumentPreview().openPreview(path, displayName)
   }
 
   /**

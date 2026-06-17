@@ -22,6 +22,7 @@
     <OrphanSweepModal
       :open="modalOpen"
       :orphans="orphans"
+      :grace-seconds="graceSeconds"
       :deleting="deleting"
       @update:open="modalOpen = $event"
       @confirm="onConfirm"
@@ -43,12 +44,14 @@ const scanning = ref(false)
 const deleting = ref(false)
 const modalOpen = ref(false)
 const orphans = ref<OrphanCandidateData[]>([])
+const graceSeconds = ref(24 * 60 * 60)
 
 async function scan() {
   scanning.value = true
   try {
     const result = await scanOrphans()
     orphans.value = result.orphans
+    graceSeconds.value = result.grace_seconds
     modalOpen.value = true
   } catch {
     // useDocuments already surfaced the error.
@@ -68,6 +71,7 @@ async function onConfirm(paths: string[]) {
     // Re-scan so the list reflects the current state (skipped files remain).
     const rescan = await scanOrphans()
     orphans.value = rescan.orphans
+    graceSeconds.value = rescan.grace_seconds
     if (orphans.value.length === 0) modalOpen.value = false
   } catch {
     // surfaced by useDocuments

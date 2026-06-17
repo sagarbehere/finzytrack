@@ -141,7 +141,9 @@ async def serve_document(
             code=ec.DOCUMENT_NOT_FOUND,
             status_code=404,
         )
-    return FileResponse(str(abs_path), filename=abs_path.name)
+    # `inline` so the browser/webview previews PDFs and images in place rather
+    # than forcing a download; the filename still drives a sensible Save-As name.
+    return FileResponse(str(abs_path), filename=abs_path.name, content_disposition_type="inline")
 
 
 @router.get("/account", response_model=ApiResponse[DocumentListData], operation_id="listAccountDocuments")
@@ -214,10 +216,7 @@ async def scan_orphan_documents(
     """List files in the documents root referenced by nothing in the ledger and
     older than the grace window."""
     store = _store_for(beancount_manager, config_manager)
-    candidates = beancount_manager.scan_orphan_documents(
-        documents_root=store.documents_root,
-        grace_seconds=DEFAULT_GRACE_SECONDS,
-    )
+    candidates = beancount_manager.scan_orphan_documents(documents_root=store.documents_root)
     orphans = [
         OrphanCandidateData(
             path=c.path,

@@ -88,9 +88,6 @@
                   'transaction-row',
                   `transaction-${row.original.transaction.id}`,
                   getTransactionRowClasses(row.original),
-                  dragOverTransactionId === row.original.transaction.id
-                    ? 'ring-2 ring-inset ring-indigo-400 bg-indigo-50/40 dark:bg-indigo-900/20'
-                    : ''
                 ]"
                 @dragover="(e) => onRowDragOver(e, row.original.transaction.id)"
                 @dragenter.prevent
@@ -105,7 +102,12 @@
                     :data-row="row.original.transactionIndex"
                     :data-posting="row.original.postingIndex"
                     :style="{ width: `${cell.column.getSize()}px` }"
-                    :class="getCellClasses(cell)"
+                    :class="[
+                      getCellClasses(cell),
+                      dragOverTransactionId === row.original.transaction.id
+                        ? '!bg-indigo-50 dark:!bg-indigo-900/30'
+                        : ''
+                    ]"
                     @keydown.capture="(e) => handleCellKeydown(e, cell, row.original)"
                     @click="(e) => handleCellClick(e, cell, row.original)"
                   >

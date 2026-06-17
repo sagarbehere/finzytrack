@@ -8,7 +8,6 @@ are hand-derived from the spec, not computed by re-running the code under test.
 
 import hashlib
 import os
-import time
 from datetime import date
 from pathlib import Path
 
@@ -20,7 +19,6 @@ from app.core.document_store import (
     collect_referenced_paths,
     resolve_documents_root,
     documents_option_value,
-    DEFAULT_GRACE_SECONDS,
 )
 from app.exceptions import APIError
 
@@ -180,46 +178,34 @@ class TestOrphanScan:
         ledger_dir.mkdir(parents=True)
         return DocumentStore(tmp_path / "data" / "documents", ledger_dir)
 
-    def _old_file(self, store, name, data=b"x"):
+    def _file(self, store, name, data=b"x"):
         p = store.documents_root / "2026" / name
         p.write_bytes(data)
-        old = time.time() - 2 * DEFAULT_GRACE_SECONDS
-        os.utime(p, (old, old))
         return p
 
     def test_unreferenced_old_file_is_orphan(self, store):
-        p = self._old_file(store, "orphan.pdf")
+        p = self._file(store, "orphan.pdf")
         orphans = store.scan_orphans(referenced=set())
         assert [o.path for o in orphans] == ["../documents/2026/orphan.pdf"]
         assert orphans[0].size == 1
 
     def test_referenced_file_not_flagged(self, store):
-        p = self._old_file(store, "kept.pdf")
+        p = self._file(store, "kept.pdf")
         orphans = store.scan_orphans(referenced={p.resolve()})
         assert orphans == []
 
-    def test_within_grace_window_excluded(self, store):
+    def test_recent_file_is_returned_with_mtime(self, store):
+        """Recently-modified files are no longer hard-excluded — the scan
+        returns them (the UI separates 'recent' using mtime + grace_seconds).
+        The mtime is reported so the UI can make that distinction."""
         p = store.documents_root / "2026" / "fresh.pdf"
         p.write_bytes(b"x")  # mtime = now
-        assert store.scan_orphans(referenced=set()) == []
-        # just outside the window -> included
-        old = time.time() - DEFAULT_GRACE_SECONDS - 10
-        os.utime(p, (old, old))
-        assert len(store.scan_orphans(referenced=set())) == 1
+        orphans = store.scan_orphans(referenced=set())
+        assert [o.path for o in orphans] == ["../documents/2026/fresh.pdf"]
+        assert orphans[0].mtime == pytest.approx(p.stat().st_mtime)
 
     def test_empty_root_returns_empty(self, store):
         assert store.scan_orphans(referenced=set()) == []
-
-    def test_grace_boundary_is_inclusive_of_exactly_old_files(self, store):
-        """A file exactly ``grace_seconds`` old is old enough to be an orphan
-        (the window is 'younger than grace'). Pins the boundary so `<` can't
-        silently become `<=`."""
-        p = store.documents_root / "2026" / "edge.pdf"
-        p.write_bytes(b"x")
-        now = 1_000_000_000.0
-        os.utime(p, (now - DEFAULT_GRACE_SECONDS, now - DEFAULT_GRACE_SECONDS))
-        found = store.scan_orphans(referenced=set(), grace_seconds=DEFAULT_GRACE_SECONDS, now=now)
-        assert [o.path for o in found] == ["../documents/2026/edge.pdf"]
 
 
 class TestOrphanDelete:
@@ -393,11 +379,21 @@ class TestRelativizeDocumentPath:
 # ── Documents-root resolution ────────────────────────────────────────────────────
 
 class TestRootResolution:
-    def test_default_when_no_option(self, tmp_path):
-        ledger = tmp_path / "data" / "ledgers" / "main.beancount"
+    def test_default_is_per_ledger_subfolder(self, tmp_path):
+        # No option -> a subfolder keyed by the ledger stem, so two ledgers
+        # never share a documents root.
         default = str(tmp_path / "data" / "documents")
-        root = resolve_documents_root(ledger_file=str(ledger), options={}, default_dir=default)
-        assert root == Path(default).resolve()
+        a = resolve_documents_root(
+            ledger_file=str(tmp_path / "data" / "ledgers" / "personal.beancount"),
+            options={}, default_dir=default,
+        )
+        b = resolve_documents_root(
+            ledger_file=str(tmp_path / "data" / "ledgers" / "business.beancount"),
+            options={}, default_dir=default,
+        )
+        assert a == (Path(default) / "personal").resolve()
+        assert b == (Path(default) / "business").resolve()
+        assert a != b
 
     def test_respects_relative_option(self, tmp_path):
         ledger = tmp_path / "data" / "ledgers" / "main.beancount"

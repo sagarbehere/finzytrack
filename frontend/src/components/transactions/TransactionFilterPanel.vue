@@ -220,6 +220,44 @@
         </div>
       </Listbox>
 
+      <!-- Documents Filter -->
+      <div>
+        <Listbox as="div" :model-value="filters.documents" @update:model-value="filters.documents = $event">
+          <ListboxLabel class="block text-sm/6 font-medium text-gray-900 dark:text-white">
+            Documents
+          </ListboxLabel>
+          <div class="relative mt-1">
+            <ListboxButton class="grid w-full cursor-default grid-cols-1 rounded-md bg-white py-1.5 pr-2 pl-3 text-left text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus-visible:outline-indigo-500">
+              <span class="col-start-1 row-start-1 truncate pr-6">{{ documentsOptions.find(o => o.value === filters.documents)?.label || 'Any' }}</span>
+              <ChevronUpDownIcon class="col-start-1 row-start-1 size-5 self-center justify-self-end text-gray-500 sm:size-4 dark:text-gray-400" aria-hidden="true" />
+            </ListboxButton>
+            <transition leave-active-class="transition ease-in duration-100" leave-to-class="opacity-0">
+              <ListboxOptions class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline-1 outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10">
+                <ListboxOption v-for="opt in documentsOptions" :key="String(opt.value)" :value="opt.value" as="template" v-slot="{ active, selected }">
+                  <li :class="[active ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'text-gray-900 dark:text-white', 'relative cursor-default py-2 pr-9 pl-3 select-none']">
+                    <span :class="[selected ? 'font-semibold' : 'font-normal', 'block truncate']">{{ opt.label }}</span>
+                    <span v-if="selected" :class="[active ? 'text-white' : 'text-indigo-600 dark:text-indigo-400', 'absolute inset-y-0 right-0 flex items-center pr-4']">
+                      <CheckIcon class="size-5" aria-hidden="true" />
+                    </span>
+                  </li>
+                </ListboxOption>
+              </ListboxOptions>
+            </transition>
+          </div>
+          <!-- N operand for "at least" / "at most" -->
+          <input
+            v-if="filters.documents === 'atLeast' || filters.documents === 'atMost'"
+            v-model.number="filters.documentsCount"
+            type="number"
+            min="0"
+            step="1"
+            placeholder="count"
+            aria-label="Document count"
+            class="mt-2 block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
+          />
+        </Listbox>
+      </div>
+
       <!-- Max Results -->
       <div>
         <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">
@@ -287,6 +325,14 @@ const quarterOptions: { value: number | undefined; label: string }[] = [
   { value: 4, label: 'Q4 (Oct-Dec)' },
 ]
 
+const documentsOptions: { value: TransactionFilters['documents']; label: string }[] = [
+  { value: undefined, label: 'Any' },
+  { value: 'with', label: 'With documents' },
+  { value: 'without', label: 'Without documents' },
+  { value: 'atLeast', label: 'At least…' },
+  { value: 'atMost', label: 'At most…' },
+]
+
 interface Props {
   loading?: boolean
   initialFilters?: TransactionFilters
@@ -322,11 +368,23 @@ function getDefaultFilters(): TransactionFilters {
     accountType: '',
     year: undefined,
     quarter: undefined,
+    documents: undefined,
+    documentsCount: undefined,
   }
 }
 
 // Initialize filters - will be populated on mount with initialFilters if provided
 const filters = ref<TransactionFilters>(getDefaultFilters())
+
+// Prefill a sensible count (1) when switching to a count-based document filter,
+// and clear it otherwise so the operand doesn't linger.
+watch(() => filters.value.documents, (mode) => {
+  if (mode === 'atLeast' || mode === 'atMost') {
+    if (filters.value.documentsCount === undefined) filters.value.documentsCount = 1
+  } else {
+    filters.value.documentsCount = undefined
+  }
+})
 
 function handleDatePresetChange(range: { startDate: string | null; endDate: string | null }) {
   filters.value.dateFrom = range.startDate ?? ''
@@ -364,6 +422,8 @@ function handleClear() {
     accountType: '',
     year: undefined,
     quarter: undefined,
+    documents: undefined,
+    documentsCount: undefined,
   }
   activePreset.value = null
 }

@@ -26,4 +26,8 @@ export interface TransactionFilters {
   // Time-based filters
   year?: number              // e.g., 2024
   quarter?: number           // 1-4
+
+  // Attachment filters (on document_count)
+  documents?: 'with' | 'without' | 'atLeast' | 'atMost'
+  documentsCount?: number    // operand for 'atLeast' / 'atMost' (N)
 }

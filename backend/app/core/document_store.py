@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import os
 import re
-import time
 import hashlib
 import logging
 import unicodedata
@@ -170,7 +169,13 @@ def resolve_documents_root(
         if not candidate.is_absolute():
             candidate = ledger_dir / candidate
         return candidate.resolve()
-    return Path(default_dir).resolve()
+    # No option set: a per-ledger subfolder (keyed by the ledger filename stem)
+    # under the default parent. Different ledgers therefore never share a
+    # documents folder — which matters because the orphan sweep is scoped to one
+    # ledger's root, and a shared folder would let ledger B's sweep flag (and
+    # offer to delete) ledger A's files. The auto-written option records this
+    # choice in the ledger so it survives even if the default ever changes.
+    return (Path(default_dir) / Path(ledger_file).stem).resolve()
 
 
 def documents_option_value(*, documents_root: Path, ledger_file: str) -> str:
@@ -277,20 +282,21 @@ class DocumentStore:
 
     # -- orphan sweep --
 
-    def scan_orphans(
-        self,
-        *,
-        referenced: Set[Path],
-        grace_seconds: float = DEFAULT_GRACE_SECONDS,
-        now: Optional[float] = None,
-    ) -> List[OrphanCandidate]:
-        """Files under the root referenced by nothing and older than the grace
-        window (invariants I7, I8). ``referenced`` must be resolved absolute
-        paths (use ``collect_referenced_paths``)."""
+    def scan_orphans(self, *, referenced: Set[Path]) -> List[OrphanCandidate]:
+        """All files under the root referenced by nothing (invariant I7).
+        ``referenced`` must be resolved absolute paths (use
+        ``collect_referenced_paths``).
+
+        Each candidate carries its ``mtime`` so the UI can distinguish recently
+        modified files (within the grace window — likely an in-flight draft
+        upload) from older ones. The grace window is *informational only*: it no
+        longer hard-excludes files here, because that silently hid genuinely
+        orphaned files the user had just dereferenced. The real safety guarantee
+        is the delete-time re-validation in ``delete`` (a referenced file is
+        never removed). See dev-docs/documents.md (orphan sweep).
+        """
         if not self.documents_root.exists():
             return []
-        now_ts = time.time() if now is None else now
-
         candidates: List[OrphanCandidate] = []
         for path in sorted(self.documents_root.rglob("*")):
             if not path.is_file():
@@ -304,8 +310,6 @@ class DocumentStore:
             try:
                 st = path.stat()
             except OSError:
-                continue
-            if now_ts - st.st_mtime < grace_seconds:
                 continue
             candidates.append(OrphanCandidate(
                 path=self.to_ledger_relative(path),

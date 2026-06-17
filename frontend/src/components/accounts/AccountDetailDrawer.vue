@@ -156,7 +156,7 @@
                         >
                           <button
                             type="button"
-                            @click="openDocument(doc.path)"
+                            @click="openDocument(doc.path, doc.display_name)"
                             class="flex items-center gap-2 min-w-0 text-left text-sm text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
                           >
                             <PaperClipIcon class="h-4 w-4 flex-shrink-0" />

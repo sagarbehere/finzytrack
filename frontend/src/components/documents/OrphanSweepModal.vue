@@ -29,61 +29,76 @@
                 </p>
               </div>
 
-              <!-- Orphans list -->
-              <div v-else class="mt-4">
-                <p class="text-sm text-gray-600 dark:text-gray-400">
+              <template v-else>
+                <p class="mt-4 text-sm text-gray-600 dark:text-gray-400">
                   These files are not referenced by any transaction or account. Review and select the
                   ones to delete.
                 </p>
 
-                <ul class="mt-3 max-h-72 overflow-y-auto divide-y divide-gray-100 dark:divide-white/5">
-                  <li v-for="o in orphans" :key="o.path" class="flex items-center gap-3 py-2">
-                    <input
-                      type="checkbox"
-                      :value="o.path"
-                      v-model="selected"
-                      class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600 dark:border-white/20 dark:bg-white/5"
-                    />
-                    <div class="min-w-0 flex-1">
-                      <button
-                        type="button"
-                        @click="openDocument(o.path)"
-                        class="block truncate text-left text-sm text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
-                      >
-                        {{ o.display_name }}
-                      </button>
-                      <p class="text-xs text-gray-500 dark:text-gray-400">
-                        {{ formatSize(o.size) }} · modified {{ formatDate(o.modified) }}
-                      </p>
-                    </div>
-                  </li>
-                </ul>
+                <div class="mt-3 max-h-72 overflow-y-auto">
+                  <!-- Older orphans (safe to delete; checked by default) -->
+                  <ul v-if="olderOrphans.length" class="divide-y divide-gray-100 dark:divide-white/5">
+                    <li v-for="o in olderOrphans" :key="o.path" class="flex items-center gap-3 py-2">
+                      <input
+                        type="checkbox" :value="o.path" v-model="selected"
+                        class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600 dark:border-white/20 dark:bg-white/5"
+                      />
+                      <div class="min-w-0 flex-1">
+                        <button
+                          type="button" @click="openDocument(o.path, o.display_name)"
+                          class="block truncate text-left text-sm text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+                        >{{ o.display_name }}</button>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">{{ formatSize(o.size) }} · modified {{ formatDate(o.modified) }}</p>
+                      </div>
+                    </li>
+                  </ul>
 
-                <!-- Git recoverability note -->
+                  <!-- Recent orphans (may belong to an unsaved draft; unchecked by default) -->
+                  <div v-if="recentOrphans.length" class="mt-4">
+                    <h4 class="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                      <ExclamationTriangleIcon class="h-4 w-4" />
+                      Recent (last 24h)
+                    </h4>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      These were modified recently and may belong to an unsaved draft. They're left
+                      unchecked — select them only if you're sure.
+                    </p>
+                    <ul class="mt-2 divide-y divide-gray-100 dark:divide-white/5">
+                      <li v-for="o in recentOrphans" :key="o.path" class="flex items-center gap-3 py-2">
+                        <input
+                          type="checkbox" :value="o.path" v-model="selected"
+                          class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600 dark:border-white/20 dark:bg-white/5"
+                        />
+                        <div class="min-w-0 flex-1">
+                          <button
+                            type="button" @click="openDocument(o.path, o.display_name)"
+                            class="block truncate text-left text-sm text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+                          >{{ o.display_name }}</button>
+                          <p class="text-xs text-gray-500 dark:text-gray-400">{{ formatSize(o.size) }} · modified {{ formatDate(o.modified) }}</p>
+                        </div>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+
                 <p class="mt-3 flex items-start gap-2 text-xs text-gray-500 dark:text-gray-400">
                   <InformationCircleIcon class="h-4 w-4 flex-shrink-0" />
                   <span>Deleted files can be restored from your git history.</span>
                 </p>
-              </div>
+              </template>
 
               <!-- Footer -->
               <div class="mt-6 flex justify-end gap-3">
                 <button
-                  type="button"
-                  @click="emit('update:open', false)"
+                  type="button" @click="emit('update:open', false)"
                   class="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
-                >
-                  {{ orphans.length === 0 ? 'Close' : 'Cancel' }}
-                </button>
+                >{{ orphans.length === 0 ? 'Close' : 'Cancel' }}</button>
                 <button
                   v-if="orphans.length > 0"
-                  type="button"
-                  @click="emit('confirm', selected)"
+                  type="button" @click="emit('confirm', selected)"
                   :disabled="selected.length === 0 || deleting"
                   class="rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-xs hover:bg-red-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-red-500 dark:hover:bg-red-400"
-                >
-                  {{ deleting ? 'Deleting…' : `Delete ${selected.length} selected` }}
-                </button>
+                >{{ deleting ? 'Deleting…' : `Delete ${selected.length} selected` }}</button>
               </div>
             </DialogPanel>
           </TransitionChild>
@@ -94,17 +109,20 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } from '@headlessui/vue'
-import { CheckCircleIcon, InformationCircleIcon } from '@heroicons/vue/24/outline'
+import { CheckCircleIcon, InformationCircleIcon, ExclamationTriangleIcon } from '@heroicons/vue/24/outline'
 import { useDocuments } from '@/composables/useDocuments'
 import type { OrphanCandidateData } from '@/services/generated-api'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   open: boolean
   orphans: OrphanCandidateData[]
+  graceSeconds?: number
   deleting?: boolean
-}>()
+}>(), {
+  graceSeconds: 24 * 60 * 60,
+})
 
 const emit = defineEmits<{
   (e: 'update:open', value: boolean): void
@@ -113,11 +131,21 @@ const emit = defineEmits<{
 
 const { openDocument } = useDocuments()
 
-// All orphans selected by default each time the modal opens with new results.
+function isRecent(o: OrphanCandidateData): boolean {
+  const modifiedMs = Date.parse(o.modified)
+  if (Number.isNaN(modifiedMs)) return false
+  return (Date.now() - modifiedMs) / 1000 < props.graceSeconds
+}
+
+const recentOrphans = computed(() => props.orphans.filter(isRecent))
+const olderOrphans = computed(() => props.orphans.filter(o => !isRecent(o)))
+
+// On open, pre-select the older orphans only; recent ones (possible in-flight
+// draft uploads) start unchecked so a stray confirm can't delete them.
 const selected = ref<string[]>([])
 watch(
   () => [props.open, props.orphans] as const,
-  ([open]) => { if (open) selected.value = props.orphans.map(o => o.path) },
+  ([open]) => { if (open) selected.value = olderOrphans.value.map(o => o.path) },
   { immediate: true },
 )
 

@@ -104,6 +104,22 @@ function buildWhereClause(filters: TransactionFilters): string {
   if (filters.quarter !== undefined) {
     transactionLevelWhereClauses.push(`quarter = ${filters.quarter}`)
   }
+  // Attachment count. document_count is constant across a transaction's
+  // postings, so a row-level filter here selects whole transactions correctly.
+  if (filters.documents) {
+    const n = Number.isFinite(filters.documentsCount as number)
+      ? Math.max(0, Math.trunc(filters.documentsCount as number))
+      : 1
+    if (filters.documents === 'with') {
+      transactionLevelWhereClauses.push(`document_count > 0`)
+    } else if (filters.documents === 'without') {
+      transactionLevelWhereClauses.push(`document_count = 0`)
+    } else if (filters.documents === 'atLeast') {
+      transactionLevelWhereClauses.push(`document_count >= ${n}`)
+    } else if (filters.documents === 'atMost') {
+      transactionLevelWhereClauses.push(`document_count <= ${n}`)
+    }
+  }
 
   // POSTING-LEVEL FILTERS
   if (filters.accountContains) {
