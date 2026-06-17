@@ -18,6 +18,15 @@
             />
           </div>
 
+          <!-- Documents -->
+          <div v-if="isColumnVisible('documents')" class="flex items-center justify-between px-4 py-2">
+            <span class="text-xs font-medium text-gray-500 dark:text-gray-400">Documents</span>
+            <DocumentBadge
+              :transaction="transaction"
+              @document-click="(id: string) => emit('openDocuments', id)"
+            />
+          </div>
+
           <!-- Index -->
           <div v-if="isColumnVisible('index')" class="flex items-center justify-between px-4 py-2">
             <span class="text-xs font-medium text-gray-500 dark:text-gray-400">#</span>
@@ -321,6 +330,7 @@ import AccountDropdown from '@/components/common/AccountDropdown.vue'
 import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
 import PriceTypeDropdown from '@/components/common/PriceTypeDropdown.vue'
 import TransactionStatusIndicator from '@/components/common/TransactionStatusIndicator.vue'
+import DocumentBadge from '@/components/documents/DocumentBadge.vue'
 import type { TransactionViewModel, ImportContext, LedgerContext } from '@/types/transactions'
 import { sign, toFixed, toMoney, type Money } from '@/utils/money'
 
@@ -342,6 +352,7 @@ const emit = defineEmits<{
   (e: 'removePosting', txId: string, postingIndex: number): void
   (e: 'removeTransaction', transaction: TransactionViewModel): void
   (e: 'duplicateClick', transactionId: string): void
+  (e: 'openDocuments', transactionId: string): void
 }>()
 
 const isColumnVisible = (columnId: string) => props.columnVisibility[columnId] === true

@@ -275,6 +275,13 @@ class LedgerManager:
                     (e.meta or {}).get('lineno', 0),
                 ),
             )
+            # Re-express any absolutized Document directive filenames relative
+            # to the file they're written into. Beancount absolutizes these on
+            # parse; without this the printer would bake absolute, non-portable
+            # paths into the ledger on every rewrite. See engine docstring.
+            file_dir = Path(fname).parent
+            group = [self.engine.relativize_document_path(e, file_dir) for e in group]
+
             preamble_parts: List[str] = []
 
             if fname == root_abs and options:
@@ -519,6 +526,127 @@ class LedgerManager:
             commodity_details=None,
             message=f"Commodity '{request.code}' created successfully",
         )
+
+    # ── Document directive management (account-level documents) ──────────────
+
+    def create_document_attachment(
+        self,
+        *,
+        date_obj: date,
+        account_name: str,
+        filename: str,
+        tags: Optional[List[str]] = None,
+        links: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Attach a document to an account via a ``Document`` directive."""
+        entries, errors, options = self._parse_ledger()
+
+        acct_exists = any(isinstance(e, data.Open) and e.account == account_name for e in entries)
+        if not acct_exists:
+            raise ValueError(f"Account not found: {account_name}")
+
+        new_entries = self.engine.create_document(
+            list(entries),
+            date_obj=date_obj,
+            account_name=account_name,
+            filename=filename,
+            tags=tags,
+            links=links,
+            metadata=metadata,
+            ledger_file=str(self.ledger_file),
+        )
+        self._write_and_export(new_entries, errors, options)
+
+    def delete_document_directive(self, *, account_name: str, filename: str) -> int:
+        """Remove the ``Document`` directive(s) matching account + filename.
+
+        ``filename`` is compared after resolving both sides to absolute paths,
+        since Beancount absolutizes Document filenames on load while the stored
+        value is ledger-relative.
+        """
+        entries, errors, options = self._parse_ledger()
+        ledger_dir = Path(self.ledger_file).resolve().parent
+        target = (ledger_dir / filename).resolve()
+
+        remaining = []
+        removed = 0
+        for e in entries:
+            if isinstance(e, data.Document) and e.account == account_name:
+                try:
+                    e_abs = Path(e.filename).resolve()
+                except OSError:
+                    e_abs = None
+                if e_abs == target:
+                    removed += 1
+                    continue
+            remaining.append(e)
+
+        if removed:
+            self._write_and_export(remaining, errors, options)
+        return removed
+
+    def ensure_documents_option(self, documents_root: "Path") -> bool:
+        """Write ``option "documents" "<rel>"`` into the ledger if it has none.
+
+        Called on first document upload so Fava auto-discovery resolves to the
+        same root Finzytrack uses (decision: auto-write on first use). Idempotent
+        — a no-op when the ledger already declares the option. Returns whether a
+        write occurred.
+        """
+        from app.core.document_store import documents_option_value
+
+        entries, errors, options = self._parse_ledger()
+        if (options or {}).get("documents"):
+            return False
+
+        value = documents_option_value(
+            documents_root=documents_root, ledger_file=str(self.ledger_file)
+        )
+        new_options = dict(options or {})
+        new_options["documents"] = [value]
+        self._write_and_export(list(entries), errors, new_options)
+        logger.info("Auto-wrote option \"documents\" \"%s\" to ledger", value)
+        return True
+
+    def resolve_documents_root(self, default_dir: str) -> "Path":
+        """Resolve the documents storage root from the ledger's
+        ``option "documents"`` (if any), else ``default_dir``."""
+        from app.core.document_store import resolve_documents_root
+        _, _, options = self._parse_ledger()
+        return resolve_documents_root(
+            ledger_file=str(self.ledger_file), options=options, default_dir=default_dir
+        )
+
+    def scan_orphan_documents(self, *, documents_root: "Path", grace_seconds: float, now=None):
+        """Scan the documents root for orphans against the *entire* loaded
+        ledger (all ``include``d files) — both ``document*`` metadata and
+        ``Document`` directives (invariant I7)."""
+        from app.core.document_store import DocumentStore, collect_referenced_paths
+        entries, _, _ = self._parse_ledger()
+        store = DocumentStore(documents_root, Path(self.ledger_file).resolve().parent)
+        referenced = collect_referenced_paths(entries)
+        return store.scan_orphans(referenced=referenced, grace_seconds=grace_seconds, now=now)
+
+    def delete_orphan_documents(self, *, documents_root: "Path", paths):
+        """Delete selected orphan files, re-validating each is *still* an orphan
+        against the current ledger immediately before unlinking (invariant I8).
+
+        Serialised under the per-user write lock so the re-validation can't
+        interleave with a concurrent ledger write that attaches one of the
+        files mid-sweep.
+        """
+        if self._write_lock:
+            with self._write_lock.acquire("orphan_document_delete"):
+                return self._delete_orphans_locked(documents_root, paths)
+        return self._delete_orphans_locked(documents_root, paths)
+
+    def _delete_orphans_locked(self, documents_root: "Path", paths):
+        from app.core.document_store import DocumentStore, collect_referenced_paths
+        entries, _, _ = self._parse_ledger()
+        store = DocumentStore(documents_root, Path(self.ledger_file).resolve().parent)
+        referenced = collect_referenced_paths(entries)
+        return store.delete(paths=list(paths), referenced=referenced)
 
     # ── Transaction management ──────────────────────────────────────────────
 

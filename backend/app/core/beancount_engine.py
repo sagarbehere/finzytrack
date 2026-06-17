@@ -6,6 +6,7 @@ No file I/O, no caching, no side effects. File I/O and write atomicity
 live in LedgerManager.
 """
 
+import os
 import re
 import logging
 from pathlib import Path
@@ -56,6 +57,11 @@ _USER_OPTION_TYPES: Dict[str, str] = {
     "insert_pythonpath": "bool",
     "infer_tolerance_from_cost": "bool",
     "booking_method": "enum",
+    # Documents folder(s). A genuine list option (Beancount accumulates one
+    # entry per ``option "documents" "..."`` line). Listed here so a documents
+    # root we auto-write on first attachment survives subsequent rewrites
+    # rather than being silently stripped. See dev-docs/documents.md.
+    "documents": "list",
 }
 
 
@@ -597,6 +603,66 @@ class BeancountEngine:
             remaining.append(entry)
 
         return remaining, deleted
+
+    # --- Document directive CRUD (account-level documents) ---
+
+    def create_document(
+        self,
+        entries: list,
+        *,
+        date_obj: date,
+        account_name: str,
+        filename: str,
+        tags: Optional[List[str]] = None,
+        links: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        ledger_file: str = "",
+    ) -> list:
+        """Append a ``Document`` directive for an account.
+
+        ``filename`` is the path exactly as it should appear in the ledger —
+        relative to the ledger file's directory (Fava/Beancount resolve it that
+        way). It is left verbatim here; the write path re-relativizes any
+        absolutized filenames on rewrite (see ``relativize_document_path``).
+        """
+        meta: Dict[str, Any] = {'filename': ledger_file, 'lineno': 0}
+        if metadata:
+            meta.update(metadata)
+        doc = bd.Document(
+            meta,
+            date_obj,
+            account_name,
+            filename,
+            frozenset(tags or ()),
+            frozenset(links or ()),
+        )
+        return list(entries) + [doc]
+
+    @staticmethod
+    def relativize_document_path(entry: Any, file_dir: Path) -> Any:
+        """Express a ``Document`` directive's ``filename`` relative to the file
+        it is being written into.
+
+        Beancount's loader absolutizes ``Document`` filenames at parse time
+        (relative to the directive's source file). The printer then emits
+        whatever is in ``.filename`` verbatim, so without this step every
+        rewrite would bake absolute paths into the ledger — breaking
+        portability and the byte-identical-filename rename invariant (I6).
+        Relative filenames (freshly created, not yet round-tripped) are left
+        untouched. Non-Document entries pass through unchanged.
+        """
+        if not isinstance(entry, bd.Document):
+            return entry
+        fn = entry.filename
+        if not fn or not os.path.isabs(fn):
+            return entry
+        # realpath both sides: Beancount's absolutized filename is an unresolved
+        # join (e.g. ``/tmp/...``) while the target dir is symlink-resolved
+        # (e.g. ``/private/tmp/...`` on macOS). Without normalizing both, relpath
+        # would emit a long ``../../..`` climb instead of a clean relative path.
+        rel = os.path.relpath(os.path.realpath(fn), os.path.realpath(str(file_dir)))
+        rel = rel.replace(os.sep, '/')
+        return entry._replace(filename=rel)
 
     # --- Commodity CRUD ---
 

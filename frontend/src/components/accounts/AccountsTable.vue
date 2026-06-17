@@ -66,6 +66,13 @@
                 {{ node.name }}
               </button>
               <span
+                v-if="!node.isVirtual && (documentCounts[node.fullPath] || 0) > 0"
+                class="ml-2 inline-flex items-center gap-0.5 text-xs font-medium text-indigo-600 dark:text-indigo-400"
+                :title="`${documentCounts[node.fullPath]} document(s)`"
+              >
+                <PaperClipIcon class="h-3.5 w-3.5" />{{ documentCounts[node.fullPath] }}
+              </span>
+              <span
                 v-else
                 class="text-sm font-medium text-gray-400 italic dark:text-gray-500"
               >
@@ -218,6 +225,7 @@ import {
   ScaleIcon,
   DocumentTextIcon,
 } from '@heroicons/vue/24/outline'
+import { PaperClipIcon } from '@heroicons/vue/20/solid'
 import type { AccountTreeNode } from '@/types/accounts'
 import { typeColors, statusColors } from '@/types/accounts'
 import { formatBalances } from '@/composables/useAccountsTree'
@@ -225,6 +233,8 @@ import { formatBalances } from '@/composables/useAccountsTree'
 interface Props {
   displayNodes: AccountTreeNode[]
   expandedIds: Set<string>
+  /** Map of full account name → attached document count, for the paperclip badge. */
+  documentCounts?: Record<string, number>
 }
 
 interface Emits {
@@ -240,7 +250,7 @@ interface Emits {
   (e: 'show-detail', node: AccountTreeNode): void
 }
 
-defineProps<Props>()
+withDefaults(defineProps<Props>(), { documentCounts: () => ({}) })
 const emit = defineEmits<Emits>()
 
 function formatBalanceDisplay(node: AccountTreeNode) {

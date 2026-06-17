@@ -256,6 +256,7 @@ class SQLiteExporter:
                 source_account_type TEXT,
                 transaction_metadata_json TEXT,
                 posting_metadata_json TEXT,
+                document_count INTEGER NOT NULL DEFAULT 0,
                 year INTEGER NOT NULL,
                 month INTEGER NOT NULL,
                 quarter INTEGER NOT NULL,
@@ -268,6 +269,7 @@ class SQLiteExporter:
         con.execute("CREATE INDEX idx_year_month ON postings(year_month)")
         con.execute("CREATE INDEX idx_transaction_id ON postings(transaction_id)")
         con.execute("CREATE INDEX idx_content_hash ON postings(transaction_content_hash)")
+        con.execute("CREATE INDEX idx_document_count ON postings(document_count)")
         logger.info("Created postings table and indexes")
 
     def _ensure_new_tables(self, con: sqlite3.Connection) -> None:
@@ -497,6 +499,7 @@ class SQLiteExporter:
             transaction_tags = self._serialize_array(self._extract_tags(txn))
             transaction_links = self._serialize_array(self._extract_links(txn))
             transaction_metadata = self._metadata_to_json(txn.meta)
+            document_count = self._count_documents(txn.meta)
 
             for posting in txn.postings:
                 posting_id += 1
@@ -545,6 +548,7 @@ class SQLiteExporter:
                     source_account_type,
                     transaction_metadata,
                     posting_metadata,
+                    document_count,
                     year,
                     month,
                     quarter,
@@ -552,7 +556,7 @@ class SQLiteExporter:
                 ))
 
         con.executemany(
-            "INSERT INTO postings VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO postings VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
         return posting_id
@@ -1234,6 +1238,22 @@ class SQLiteExporter:
         else:
             # Convert other types to string
             return str(value)
+
+    @staticmethod
+    def _count_documents(meta: Optional[Dict[str, Any]]) -> int:
+        """Number of ``document*`` keys on a transaction's metadata.
+
+        This is the ``document`` / ``document2` / ``document3`` … scheme
+        (invariant I4): the count drives the paperclip badge and the
+        "has documents" filter, and matches what Fava's ``link_documents``
+        plugin keys off (any metadata key ``startswith("document")``).
+        """
+        if not meta:
+            return 0
+        return sum(
+            1 for k in meta
+            if isinstance(k, str) and k.startswith("document")
+        )
 
     @staticmethod
     def _metadata_to_json(meta: Optional[Dict[str, Any]]) -> Optional[str]:

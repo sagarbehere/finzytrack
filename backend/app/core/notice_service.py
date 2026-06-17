@@ -21,8 +21,9 @@ in the frontend session.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, asdict
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Tuple
 
 from app.services.sqlite_reader import SqliteReader
 
@@ -77,9 +78,16 @@ def compute_ledger_notices(sqlite_reader: SqliteReader, ledger_root: Optional[st
     except Exception:
         logger.exception("notice_service: failed to read ledger errors")
 
-    if raw_errors:
+    # A `plugin "fava.plugins.*"` directive doesn't hard-fail the load —
+    # Beancount catches the ImportError per-plugin and continues (invariant
+    # I9). Rather than letting it surface as a scary red parse error, split it
+    # out into a friendly info Notice; the directive is left in the file so it
+    # still works if the user opens the ledger in Fava.
+    fava_errors, other_errors = _partition_fava_plugin_errors(raw_errors)
+
+    if other_errors:
         details = []
-        for e in raw_errors:
+        for e in other_errors:
             line = e.get("line_number", 0) or 0
             msg = e.get("message", "")
             src = e.get("source_file") or "ledger"
@@ -89,14 +97,33 @@ def compute_ledger_notices(sqlite_reader: SqliteReader, ledger_root: Optional[st
             severity="error",
             source="ledger",
             title=(
-                f"Your ledger has {len(raw_errors)} parsing "
-                f"{'error' if len(raw_errors) == 1 else 'errors'} "
+                f"Your ledger has {len(other_errors)} parsing "
+                f"{'error' if len(other_errors) == 1 else 'errors'} "
                 "that may affect app functionality."
             ),
             message="Open the details to see each error.",
-            signature=str(len(raw_errors)),
+            signature=str(len(other_errors)),
             dismissible=True,
             details=details,
+        ))
+
+    if fava_errors:
+        plugin_names = sorted({
+            name for e in fava_errors
+            if (name := _extract_fava_plugin_name(e.get("message", "")))
+        })
+        notices.append(Notice(
+            code="FAVA_PLUGIN_NOT_NEEDED",
+            severity="info",
+            source="ledger",
+            title="A Fava plugin in your ledger isn't needed in Finzytrack.",
+            message=(
+                "Your documents work without it. The plugin line is left "
+                "untouched, so your ledger still works if you open it in Fava."
+            ),
+            signature=str(len(fava_errors)),
+            dismissible=True,
+            details=plugin_names or None,
         ))
 
     if ledger_root:
@@ -119,6 +146,40 @@ def compute_ledger_notices(sqlite_reader: SqliteReader, ledger_root: Optional[st
             ))
 
     return notices
+
+
+_FAVA_PLUGIN_RE = re.compile(r"""importing ["'](fava\.plugins[^"']*)["']""")
+
+
+def _extract_fava_plugin_name(message: str) -> Optional[str]:
+    """Return the ``fava.plugins.*`` module name from a load-error message,
+    or ``None`` if the message isn't a Fava-plugin import failure."""
+    if not message:
+        return None
+    match = _FAVA_PLUGIN_RE.search(message)
+    return match.group(1) if match else None
+
+
+def is_fava_plugin_import_error(message: str) -> bool:
+    """True if a ledger error is a ``fava.plugins.*`` import failure.
+
+    Such errors do not break the load (Beancount catches them per-plugin), so
+    callers that gate functionality on "fatal" errors should treat them as
+    benign — see the query endpoint and invariant I9.
+    """
+    return _extract_fava_plugin_name(message) is not None
+
+
+def _partition_fava_plugin_errors(raw_errors: List[dict]) -> Tuple[List[dict], List[dict]]:
+    """Split ledger errors into (fava-plugin-import errors, everything else)."""
+    fava: List[dict] = []
+    other: List[dict] = []
+    for e in raw_errors:
+        if _extract_fava_plugin_name(e.get("message", "")):
+            fava.append(e)
+        else:
+            other.append(e)
+    return fava, other
 
 
 def _detect_special_syntax(ledger_root: str) -> List[str]:

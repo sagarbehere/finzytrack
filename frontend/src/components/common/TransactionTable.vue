@@ -87,8 +87,15 @@
                 :class="[
                   'transaction-row',
                   `transaction-${row.original.transaction.id}`,
-                  getTransactionRowClasses(row.original)
+                  getTransactionRowClasses(row.original),
+                  dragOverTransactionId === row.original.transaction.id
+                    ? 'ring-2 ring-inset ring-indigo-400 bg-indigo-50/40 dark:bg-indigo-900/20'
+                    : ''
                 ]"
+                @dragover="(e) => onRowDragOver(e, row.original.transaction.id)"
+                @dragenter.prevent
+                @dragleave="onRowDragLeave"
+                @drop="(e) => onRowDrop(e, row.original.transaction)"
               >
                 <template v-for="cell in row.getVisibleCells()" :key="cell.id">
                   <td
@@ -125,6 +132,15 @@
       @remove-posting="handleRemovePosting"
       @remove-transaction="removeTransaction"
       @duplicate-click="(id) => emit('duplicateClick', id)"
+      @open-documents="openDocumentsDrawer"
+    />
+
+    <!-- Transaction documents drawer (shared by desktop badge + mobile card) -->
+    <TransactionDocumentsDrawer
+      :open="documentsDrawerOpen"
+      :transaction="documentsDrawerTx"
+      @update:open="documentsDrawerOpen = $event"
+      @changed="onDocumentsDrawerChanged"
     />
 
     <!-- Summary section (when enabled) -->
@@ -151,6 +167,8 @@ import AccountDropdown from '@/components/common/AccountDropdown.vue'
 import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
 import PriceTypeDropdown from '@/components/common/PriceTypeDropdown.vue'
 import TransactionStatusIndicator from '@/components/common/TransactionStatusIndicator.vue'
+import DocumentBadge from '@/components/documents/DocumentBadge.vue'
+import TransactionDocumentsDrawer from '@/components/documents/TransactionDocumentsDrawer.vue'
 import ColumnVisibilityControl from '@/components/common/ColumnVisibilityControl.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import TransactionTableSummary from '@/components/common/TransactionTableSummary.vue'
@@ -161,6 +179,8 @@ import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import { useTransactionDeleter } from '@/composables/useTransactionDeleter'
 import { useToast } from '@/composables/useNotifications'
 import { useTransactionStore } from '@/composables/useTransactionStore'
+import { useDocuments } from '@/composables/useDocuments'
+import { addDocument } from '@/utils/documentMeta'
 import { buildTanStackColumns, type TransactionColumnDef, type TableRowData } from '@/composables/useTransactionColumns'
 import { flattenTransactionRows } from '@/utils/flattenTransactionRows'
 import { sign, toFixed, type Money } from '@/utils/money'
@@ -234,6 +254,77 @@ let isOwnEmit = false
 const emitAndGuard = () => {
   isOwnEmit = true
   emitTransactions()
+}
+
+// ── Documents ──────────────────────────────────────────────────────────────
+const { uploadDocument } = useDocuments()
+const documentsDrawerOpen = ref(false)
+const documentsDrawerTxId = ref<string | null>(null)
+// Resolve the live store transaction by id so the drawer reflects meta updates
+// after the parent persists/stages a document change.
+const documentsDrawerTx = computed<TransactionViewModel | null>(
+  () => store.transactions.value.find(t => t.id === documentsDrawerTxId.value) ?? null
+)
+const dragOverTransactionId = ref<string | null>(null)
+
+const openDocumentsDrawer = (id: string) => {
+  documentsDrawerTxId.value = id
+  documentsDrawerOpen.value = true
+}
+
+// A document attach/remove is applied to the store like any other edit: the
+// badge updates immediately, the row is marked modified, and it persists via
+// the normal Save flow (TransactionsView) or import commit (ImportView). No
+// separate persistence path — `document*` meta rides the existing update API.
+const applyDocumentMeta = (txId: string, meta: Record<string, string>) => {
+  // Update the store like any other field edit: the badge/drawer reflect the
+  // change instantly, the row is marked modified (document paths participate in
+  // modification detection), and the emit syncs the new meta into the parent's
+  // array. It then persists via the normal Save flow / import commit.
+  store.updateField(txId, 'meta', meta)
+  emitAndGuard()
+}
+
+const onDocumentsDrawerChanged = (meta: Record<string, string>) => {
+  if (documentsDrawerTxId.value) {
+    applyDocumentMeta(documentsDrawerTxId.value, meta)
+  }
+}
+
+// Row-level native file drag-and-drop (desktop accelerator). The browser owns
+// the drag; we only handle the drop side — mirrors OFXFilePicker. Every row
+// already carries its transaction id, so "which transaction" needs no lookup.
+const dragHasFiles = (e: DragEvent): boolean =>
+  Array.from(e.dataTransfer?.types ?? []).includes('Files')
+
+const onRowDragOver = (e: DragEvent, txId: string) => {
+  if (!props.editable || !dragHasFiles(e)) return
+  e.preventDefault()
+  dragOverTransactionId.value = txId
+}
+
+const onRowDragLeave = (e: DragEvent) => {
+  if (e.currentTarget instanceof HTMLElement && !e.currentTarget.contains(e.relatedTarget as Node)) {
+    dragOverTransactionId.value = null
+  }
+}
+
+const onRowDrop = async (e: DragEvent, tx: TransactionViewModel) => {
+  dragOverTransactionId.value = null
+  if (!props.editable || !dragHasFiles(e)) return
+  e.preventDefault()
+  const files = Array.from(e.dataTransfer?.files ?? [])
+  if (files.length === 0) return
+  let meta = { ...tx.meta }
+  try {
+    for (const file of files) {
+      const stored = await uploadDocument(file, { date: tx.date, narration: tx.payee || tx.narration })
+      meta = addDocument(meta, stored.path)
+    }
+    applyDocumentMeta(tx.id, meta)
+  } catch {
+    // useDocuments already routed the error to errorHandler.
+  }
 }
 
 watch(() => props.transactions, (newVal) => {
@@ -374,6 +465,7 @@ const getAmountColorClass = (amount: Money | null | undefined): string => {
 // Column definitions
 const COLUMN_DEFS: TransactionColumnDef[] = [
   { id: 'status', header: 'Status', type: 'component', span: 'transaction', component: TransactionStatusIndicator },
+  { id: 'documents', header: '', type: 'component', span: 'transaction', component: DocumentBadge },
   { id: 'index', header: '#', type: 'display', span: 'transaction', accessor: 'transactionIndex' },
   { id: 'date', header: 'Date', type: 'date', field: 'transaction.date', span: 'transaction' },
   { id: 'flag', header: 'Flag', type: 'text', field: 'transaction.flag', span: 'transaction' },
@@ -421,6 +513,7 @@ const columns = computed(() => {
     getImportContext,
     getLedgerContext,
     onDuplicateClick: (id: string) => emit('duplicateClick', id),
+    onDocumentClick: (id: string) => openDocumentsDrawer(id),
     getEditableInputClasses,
     getDisplayClasses,
     getAmountColorClass,

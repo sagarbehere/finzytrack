@@ -14,6 +14,7 @@ export interface ColumnConfig {
 
 const COLUMN_CONFIGS: ColumnConfig[] = [
   { id: 'status', label: 'Status', defaultVisible: true, defaultWidth: 60, minWidth: 30, resizable: true },
+  { id: 'documents', label: 'Docs', defaultVisible: true, defaultWidth: 56, minWidth: 40, resizable: true },
   { id: 'index', label: '#', defaultVisible: true, defaultWidth: 50, minWidth: 30, resizable: true },
   { id: 'date', label: 'Date', defaultVisible: true, defaultWidth: 120, minWidth: 60, resizable: true },
   { id: 'flag', label: 'Flag', defaultVisible: false, defaultWidth: 60, minWidth: 30, resizable: true },

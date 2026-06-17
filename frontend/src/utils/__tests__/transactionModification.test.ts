@@ -93,9 +93,17 @@ describe('normalizeForComparison', () => {
     expect(normalizeForComparison(a)).toBe(normalizeForComparison(b))
   })
 
-  it('ignores the meta field at transaction level', () => {
-    const a = makeTx({ meta: { source_account: 'Assets:Bank', content_hash: 'abc' } })
-    const b = makeTx({ meta: { source_account: 'Assets:Other', content_hash: 'xyz' } })
+  it('includes persisted transaction-level meta (so document changes are detected)', () => {
+    const a = makeTx({ meta: { source_account: 'Assets:Bank' } })
+    const b = makeTx({ meta: { source_account: 'Assets:Other' } })
+    expect(normalizeForComparison(a)).not.toBe(normalizeForComparison(b))
+  })
+
+  it('ignores parser-internal meta keys (filename/lineno/__tolerances__)', () => {
+    const a = makeTx({ meta: { source_account: 'Assets:Bank' } })
+    const b = makeTx({
+      meta: { source_account: 'Assets:Bank', filename: '/x.beancount', lineno: '7', __tolerances__: '{}' },
+    })
     expect(normalizeForComparison(a)).toBe(normalizeForComparison(b))
   })
 })
@@ -217,6 +225,33 @@ describe('isModified', () => {
   it('returns false when changed back to original', () => {
     const baseline = makeTx({ id: 'tx-1', payee: 'Original' })
     const tx = makeTx({ id: 'tx-1', payee: 'Original' })
+    expect(isModified(tx, [baseline])).toBe(false)
+  })
+
+  it('detects an attached document (document meta) as modified', () => {
+    const baseline = makeTx({ id: 'tx-1', meta: {} })
+    const tx = makeTx({ id: 'tx-1', meta: { document: '../documents/2026/r.pdf' } })
+    expect(isModified(tx, [baseline])).toBe(true)
+  })
+
+  it('detects a removed document as modified', () => {
+    const baseline = makeTx({ id: 'tx-1', meta: { document: 'a.pdf', document2: 'b.pdf' } })
+    const tx = makeTx({ id: 'tx-1', meta: { document: 'a.pdf' } })
+    expect(isModified(tx, [baseline])).toBe(true)
+  })
+
+  it('ignores parser-internal meta keys (filename/lineno/__tolerances__)', () => {
+    const baseline = makeTx({ id: 'tx-1', meta: { document: 'a.pdf' } })
+    const tx = makeTx({
+      id: 'tx-1',
+      meta: { document: 'a.pdf', filename: '/x/main.beancount', lineno: '42', __tolerances__: '{}' },
+    })
+    expect(isModified(tx, [baseline])).toBe(false)
+  })
+
+  it('is insensitive to meta key ordering', () => {
+    const baseline = makeTx({ id: 'tx-1', meta: { document: 'a.pdf', memo: 'x' } })
+    const tx = makeTx({ id: 'tx-1', meta: { memo: 'x', document: 'a.pdf' } })
     expect(isModified(tx, [baseline])).toBe(false)
   })
 })

@@ -3,37 +3,12 @@ import type { TransactionViewModel } from '@/types/transactions'
 import { LedgerService } from '@/services/generated-api'
 import type { UpdateTransactionRequest } from '@/services/generated-api'
 import { useAccounts } from '@/composables/useAccounts'
+import { filterInternalMetadata } from '@/utils/transactionMeta'
 
 interface UpdateTransactionResult {
   success: boolean
   updated_count: number
   message?: string
-}
-
-/**
- * Filter out internal Beancount metadata fields that shouldn't be sent in updates.
- * These are read-only fields managed by Beancount parser.
- */
-function filterInternalMetadata(meta: Record<string, any>): Record<string, string> {
-  const internalFields = new Set([
-    'filename',      // Beancount parser metadata
-    'lineno',        // Beancount parser metadata
-    '__tolerances__' // Beancount internal tolerances
-  ])
-
-  const cleanMeta: Record<string, string> = {}
-
-  for (const [key, value] of Object.entries(meta)) {
-    // Skip internal fields
-    if (internalFields.has(key)) {
-      continue
-    }
-
-    // Convert value to string (Beancount metadata values are always strings)
-    cleanMeta[key] = String(value)
-  }
-
-  return cleanMeta
 }
 
 export function useTransactionUpdater() {

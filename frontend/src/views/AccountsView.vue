@@ -58,6 +58,7 @@
         <AccountsTable
           :display-nodes="displayNodes"
           :expanded-ids="expandedIds"
+          :document-counts="documentCounts"
           @toggle="toggleExpand"
           @edit="handleEdit"
           @close="handleClose"
@@ -166,6 +167,7 @@
       v-model:open="showDetailDrawer"
       :account="detailAccount"
       @edit="handleEditFromDrawer"
+      @documents-changed="loadDocumentCounts"
     />
   </div>
 </template>
@@ -185,6 +187,7 @@ import BalanceDirectivesModal from '@/components/accounts/BalanceDirectivesModal
 import AccountStatementModal from '@/components/accounts/AccountStatementModal.vue'
 import AccountDetailDrawer from '@/components/accounts/AccountDetailDrawer.vue'
 import { ArrowPathIcon } from '@heroicons/vue/24/outline'
+import { LedgerService } from '@/services/generated-api'
 import { useAccounts, type AccountDateFilter } from '@/composables/useAccounts'
 import { useAccountsTree } from '@/composables/useAccountsTree'
 import { useToast } from '@/composables/useNotifications'
@@ -342,9 +345,33 @@ async function handleDateFilterChange(newDateFilter: AccountDateFilter) {
   }
 }
 
+// Per-account document counts for the paperclip badge. Sourced from the
+// documents SQLite table via the public query endpoint (same pattern as
+// useTransactionQuery) — no dedicated endpoint needed.
+const documentCounts = ref<Record<string, number>>({})
+
+async function loadDocumentCounts() {
+  try {
+    const resp = await LedgerService.executeQuery(
+      { query: 'SELECT account, COUNT(*) AS n FROM documents GROUP BY account' },
+      'sqlite',
+    )
+    const counts: Record<string, number> = {}
+    for (const row of resp.data?.rows ?? []) {
+      counts[String((row as any).account)] = Number((row as any).n)
+    }
+    documentCounts.value = counts
+  } catch {
+    // Non-fatal: badges just won't show. (e.g. documents table absent on a
+    // ledger that has never stored one.)
+    documentCounts.value = {}
+  }
+}
+
 // Fetch accounts on mount
 onMounted(async () => {
   await loadAccounts()
+  loadDocumentCounts()
   hasLoaded.value = true
 
   // Auto-expand all nodes when navigated with ?expanded=1 (e.g. from setup wizard)

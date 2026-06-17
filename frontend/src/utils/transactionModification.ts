@@ -1,5 +1,6 @@
 import type { TransactionViewModel, PostingViewModel } from '@/types/transactions'
 import { sign, toMoney, type Money } from '@/utils/money'
+import { filterInternalMetadata } from '@/utils/transactionMeta'
 
 function isCostEmpty(cost: PostingViewModel['cost']): boolean {
   return !cost || cost.amount === undefined || cost.amount === null || cost.amount === '' || sign(cost.amount) === 0
@@ -43,6 +44,16 @@ function normalizePosting(p: PostingViewModel) {
   }
 }
 
+// Persisted metadata, with keys sorted so insertion order (e.g. after
+// re-compacting document keys) doesn't read as a change — only the key set and
+// values matter.
+function canonMeta(meta: Record<string, string>): Record<string, string> {
+  const clean = filterInternalMetadata(meta)
+  const sorted: Record<string, string> = {}
+  for (const key of Object.keys(clean).sort()) sorted[key] = clean[key]
+  return sorted
+}
+
 export function normalizeForComparison(tx: TransactionViewModel): string {
   return JSON.stringify({
     date: tx.date,
@@ -53,6 +64,10 @@ export function normalizeForComparison(tx: TransactionViewModel): string {
     tags: [...tx.tags].sort(),
     links: [...tx.links].sort(),
     postings: tx.postings.map(normalizePosting),
+    // All persisted transaction metadata participates — including the
+    // document/document2/... attachment scheme — so attaching or removing a
+    // document marks the row modified and rides the normal Save flow.
+    meta: canonMeta(tx.meta),
   })
 }
 

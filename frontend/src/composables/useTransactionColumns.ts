@@ -58,6 +58,7 @@ export interface BuildColumnsOptions {
   getImportContext: (id: string) => ImportContext | undefined
   getLedgerContext: (id: string) => LedgerContext | undefined
   onDuplicateClick: (id: string) => void
+  onDocumentClick?: (id: string) => void
   getEditableInputClasses: (extra?: string) => string
   getDisplayClasses: () => string
   getAmountColorClass: (amount: Money | null | undefined) => string
@@ -101,6 +102,7 @@ export function buildTanStackColumns(
             importContext: options.getImportContext(tx.id),
             ledgerContext: options.getLedgerContext(tx.id),
             onDuplicateClick: (transactionId: string) => options.onDuplicateClick(transactionId),
+            onDocumentClick: (transactionId: string) => options.onDocumentClick?.(transactionId),
             ...(def.componentProps || {}),
           })
         }

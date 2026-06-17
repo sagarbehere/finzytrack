@@ -234,6 +234,18 @@ class Config(BaseModel):
         return str(self.root_dir / 'data' / 'backups')
 
     @property
+    def documents_dir(self) -> str:
+        """Default storage root for transaction/account documents.
+
+        Used when the ledger does not set a Beancount ``option "documents"``.
+        Lives under the user's data directory (not config/) because documents
+        are user *data*, git-trackable alongside the ledger. When the ledger
+        does declare ``option "documents"``, that takes precedence — see
+        ``app.core.document_store.resolve_documents_root``.
+        """
+        return str(self.root_dir / 'data' / 'documents')
+
+    @property
     def log_file(self) -> str:
         return str(self.root_dir / 'logs' / 'finzytrack.log')
 

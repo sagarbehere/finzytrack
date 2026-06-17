@@ -19,6 +19,9 @@ cost_amount             TEXT    -- Decimal-as-string (nullable). Per-unit cost o
 price_amount            TEXT    -- Decimal-as-string (nullable). Per-unit conversion price. Cast with CAST(price_amount AS REAL) for arithmetic.
 currency                TEXT    -- e.g. "USD", "INR"
 
+-- Attachments:
+document_count          INTEGER -- Number of documents attached to the transaction (document/document2/... metadata keys). 0 = none. Filter "transactions with documents" via WHERE document_count > 0.
+
 -- Derived:
 year                    INTEGER -- Year from transaction_date
 year_month              TEXT    -- YYYY-MM

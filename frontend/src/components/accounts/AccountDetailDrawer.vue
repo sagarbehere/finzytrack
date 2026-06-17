@@ -145,6 +145,39 @@
                       <p class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{{ account.notes }}</p>
                     </section>
 
+                    <!-- Documents -->
+                    <section>
+                      <h3 class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Documents</h3>
+                      <ul v-if="documents.length > 0" class="divide-y divide-gray-100 dark:divide-white/5 mb-3">
+                        <li
+                          v-for="doc in documents"
+                          :key="doc.path"
+                          class="flex items-center justify-between gap-3 py-2"
+                        >
+                          <button
+                            type="button"
+                            @click="openDocument(doc.path)"
+                            class="flex items-center gap-2 min-w-0 text-left text-sm text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+                          >
+                            <PaperClipIcon class="h-4 w-4 flex-shrink-0" />
+                            <span class="truncate">{{ doc.display_name }}</span>
+                          </button>
+                          <button
+                            type="button"
+                            @click="detach(doc.path)"
+                            class="flex-shrink-0 text-gray-400 hover:text-red-600 dark:hover:text-red-400"
+                            title="Detach document"
+                          >
+                            <XMarkIcon class="h-4 w-4" />
+                          </button>
+                        </li>
+                      </ul>
+                      <p v-else-if="!documentsLoading" class="text-sm text-gray-400 dark:text-gray-500 italic mb-3">
+                        No documents attached yet.
+                      </p>
+                      <DocumentUploadZone :uploading="isUploading" @files-selected="onFiles" />
+                    </section>
+
                     <!-- Empty metadata state -->
                     <p
                       v-if="!hasBankingDetails && !customFields.length && !account.notes"
@@ -176,9 +209,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } from '@headlessui/vue'
 import { XMarkIcon } from '@heroicons/vue/24/outline'
+import { PaperClipIcon } from '@heroicons/vue/20/solid'
+import DocumentUploadZone from '@/components/documents/DocumentUploadZone.vue'
+import { useDocuments } from '@/composables/useDocuments'
+import type { DocumentDetails } from '@/services/generated-api'
 import type { AccountTreeNode } from '@/types/accounts'
 import { typeColors, statusColors } from '@/types/accounts'
 import { sign, toNumber } from '@/utils/money'
@@ -194,10 +231,65 @@ interface Props {
 interface Emits {
   (e: 'update:open', value: boolean): void
   (e: 'edit', account: AccountTreeNode): void
+  /** Emitted after an account document is attached/detached, so callers can refresh badge counts. */
+  (e: 'documents-changed', account: string): void
 }
 
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
+
+const {
+  uploadDocument, openDocument, listAccountDocuments,
+  attachAccountDocument, detachAccountDocument, isUploading,
+} = useDocuments()
+
+const documents = ref<DocumentDetails[]>([])
+const documentsLoading = ref(false)
+
+async function refreshDocuments() {
+  if (!props.account) { documents.value = []; return }
+  documentsLoading.value = true
+  try {
+    documents.value = await listAccountDocuments(props.account.fullPath)
+  } catch {
+    documents.value = []
+  } finally {
+    documentsLoading.value = false
+  }
+}
+
+// Fetch documents when the drawer opens or switches account.
+watch(
+  () => [props.open, props.account?.fullPath] as const,
+  ([open]) => { if (open) refreshDocuments() },
+  { immediate: true },
+)
+
+function today(): string {
+  // Local calendar date (YYYY-MM-DD) for the document directive.
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+async function onFiles(files: File[]) {
+  if (!props.account) return
+  const account = props.account.fullPath
+  for (const file of files) {
+    const stored = await uploadDocument(file, { date: today(), narration: props.account.name })
+    await attachAccountDocument({ account, date: today(), path: stored.path })
+  }
+  await refreshDocuments()
+  emit('documents-changed', account)
+}
+
+async function detach(path: string) {
+  if (!props.account) return
+  const account = props.account.fullPath
+  await detachAccountDocument(account, path)
+  await refreshDocuments()
+  emit('documents-changed', account)
+}
 
 const hasBankingDetails = computed(() =>
   BANKING_KEYS.some(k => props.account?.metadata[k])

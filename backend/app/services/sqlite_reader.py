@@ -537,6 +537,61 @@ class SqliteReader:
 
         return self._query(query)
 
+    # ── Documents (account-level) ─────────────────────────────────────────────
+
+    def get_documents(self, account: Optional[str] = None) -> list:
+        """Account documents (``Document`` directives), optionally filtered.
+
+        Beancount absolutizes ``Document`` filenames on load, so the stored
+        ``filename`` is absolute; this converts it back to the ledger-relative
+        form the serve endpoint expects and exposes a display basename.
+        """
+        import os
+        from app.schemas.document_schemas import DocumentDetails
+
+        ledger_dir = str(Path(self.ledger_file).resolve().parent)
+
+        def query(con: sqlite3.Connection) -> list:
+            if account:
+                rows = con.execute(
+                    "SELECT date, account, filename, tags_json, links_json, metadata_json "
+                    "FROM documents WHERE account = ? ORDER BY date DESC, filename",
+                    (account,),
+                ).fetchall()
+            else:
+                rows = con.execute(
+                    "SELECT date, account, filename, tags_json, links_json, metadata_json "
+                    "FROM documents ORDER BY date DESC, filename"
+                ).fetchall()
+
+            result = []
+            for r in rows:
+                filename = r["filename"]
+                if os.path.isabs(filename):
+                    # Resolve both sides so a symlinked path component (e.g.
+                    # /tmp → /private/tmp on macOS) can't make relpath diverge
+                    # from how the serve endpoint resolves the same path.
+                    rel = os.path.relpath(
+                        str(Path(filename).resolve()), ledger_dir
+                    ).replace(os.sep, "/")
+                else:
+                    rel = filename
+                tags = json.loads(r["tags_json"]) if r["tags_json"] else []
+                links = json.loads(r["links_json"]) if r["links_json"] else []
+                metadata = json.loads(r["metadata_json"]) if r["metadata_json"] else {}
+                result.append(DocumentDetails(
+                    date=date.fromisoformat(r["date"]),
+                    account=r["account"],
+                    path=rel,
+                    display_name=os.path.basename(filename),
+                    tags=tags,
+                    links=links,
+                    metadata=metadata,
+                ))
+            return result
+
+        return self._query(query)
+
     # ── Options ──────────────────────────────────────────────────────────────
 
     def get_options(self) -> Dict[str, Any]:

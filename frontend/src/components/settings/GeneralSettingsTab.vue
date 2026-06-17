@@ -455,6 +455,9 @@
       </div>
     </SettingsSection>
 
+    <!-- ── Documents maintenance (orphan sweep) ───────────────────────────── -->
+    <DocumentMaintenanceSection />
+
     <!-- Shared file picker modal -->
     <FilePickerModal
       :open="filePicker.open"
@@ -475,6 +478,7 @@ import { Listbox, ListboxButton, ListboxLabel, ListboxOption, ListboxOptions } f
 import { ChevronUpDownIcon } from '@heroicons/vue/16/solid'
 import { CheckIcon } from '@heroicons/vue/20/solid'
 import SettingsSection from './SettingsSection.vue'
+import DocumentMaintenanceSection from './DocumentMaintenanceSection.vue'
 import FilePickerModal from '@/components/common/FilePickerModal.vue'
 import { useConfig } from '@/composables/useConfig'
 import { useAccounts } from '@/composables/useAccounts'

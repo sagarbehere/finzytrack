@@ -33,6 +33,31 @@ export function makeTx(overrides: Omit<Partial<TransactionViewModel>, 'postings'
   }
 }
 
+import type { DocumentDetails, OrphanCandidateData } from '@/services/generated-api'
+
+export function makeDocument(overrides: Partial<DocumentDetails> = {}): DocumentDetails {
+  return {
+    date: '2026-06-15',
+    account: 'Assets:Bank:Checking',
+    path: '../documents/2026/2026-06-15-statement-a1b2c3d4.pdf',
+    display_name: '2026-06-15-statement-a1b2c3d4.pdf',
+    tags: [],
+    links: [],
+    metadata: {},
+    ...overrides,
+  }
+}
+
+export function makeOrphan(overrides: Partial<OrphanCandidateData> = {}): OrphanCandidateData {
+  return {
+    path: '../documents/2026/2026-06-15-orphan-deadbeef.pdf',
+    display_name: '2026-06-15-orphan-deadbeef.pdf',
+    size: 1234,
+    modified: '2026-06-15T10:00:00',
+    ...overrides,
+  }
+}
+
 export function makeImportContext(overrides: Partial<ImportContext> = {}): ImportContext {
   return {
     is_duplicate: false,
