@@ -127,7 +127,7 @@ def create_user_services(config: Config, user_id: str = "local") -> UserServices
     )
 
     # 5c. Hot ledger switching references
-    config_manager.set_ledger_services(ledger_manager, sqlite_exporter)
+    config_manager.set_ledger_services(ledger_manager, sqlite_exporter, sqlite_reader)
 
     # 6. Ensure ledger exists (skip when setup is incomplete)
     if config.setup_complete:

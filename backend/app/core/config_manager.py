@@ -28,21 +28,27 @@ class ConfigManager:
         # LedgerManager and SQLiteExporter exist in the wiring graph.
         self._ledger_manager: Optional[LedgerManager] = None
         self._sqlite_exporter: Optional[SQLiteExporter] = None
+        self._sqlite_reader: Optional[Any] = None
 
     def set_ledger_services(
         self,
         ledger_manager: LedgerManager,
         sqlite_exporter: SQLiteExporter,
+        sqlite_reader: Optional[Any] = None,
     ) -> None:
         """
         Provide references to services needed for hot ledger switching.
 
         Called once during app startup after all services are created. The
         exporter is needed to rebuild the SQLite mirror against the new ledger
-        file; the ledger manager is needed to swap the active ledger path.
+        file; the ledger manager is needed to swap the active ledger path; the
+        reader holds its own copy of the active ledger path (used for freshness
+        checks, stale-recovery re-exports, and relativizing document paths) and
+        must be repointed on switch.
         """
         self._ledger_manager = ledger_manager
         self._sqlite_exporter = sqlite_exporter
+        self._sqlite_reader = sqlite_reader
 
     def get_config(self) -> Config:
         """Returns the raw configuration data object."""
@@ -194,6 +200,14 @@ class ConfigManager:
         # the path, and rolls back its own state on failure. The returned
         # notice (if any) describes a template-created file for the user.
         notice = self._ledger_manager.switch_ledger(new_ledger_file, create_if_missing=True)
+
+        # Repoint the reader at the new ledger. It holds its own copy of the
+        # active ledger path; without this it would keep relativizing document
+        # paths (and running stale-recovery re-exports) against the *old*
+        # ledger directory after a switch.
+        if self._sqlite_reader is not None:
+            from pathlib import Path
+            self._sqlite_reader.ledger_file = Path(self._ledger_manager.ledger_file)
 
         # Parse the new ledger and rebuild the SQLite mirror against it. The
         # new file may be older than the existing SQLite DB, so a full

@@ -377,6 +377,45 @@ class TestOrphanSweep:
 
 # ── Plugin tolerance (I9) ────────────────────────────────────────────────────────
 
+class TestLedgerSwitch:
+    """A runtime ledger switch must repoint the reader, or it relativizes
+    document paths against the *old* ledger directory — producing a path that
+    escapes the documents root on serve and can't be matched on delete."""
+
+    def test_documents_resolve_after_switching_ledger(self, tmp_path):
+        from app.main import create_app
+        root = _make_root(tmp_path, _DOC_LEDGER)  # active: data/ledgers/main.beancount
+        # A second ledger in a *different directory* (so its documents folder
+        # and its relative paths differ from the first).
+        other_dir = root / "data" / "ledgers" / "other"
+        other_dir.mkdir(parents=True)
+        (other_dir / "main.beancount").write_text(_DOC_LEDGER)
+
+        with TestClient(create_app(_build_config(root))) as client:
+            client._root = root  # type: ignore[attr-defined]
+
+            # Hot-switch to the other ledger.
+            resp = client.patch("/api/config", json={"ledger_file": str(other_dir / "main.beancount")})
+            assert resp.status_code == 200, resp.text
+
+            # Attach a document to an account in the now-active ledger.
+            up = client.post(
+                "/api/documents/upload",
+                files={"file": ("s.pdf", b"%PDF s", "application/pdf")},
+                data={"date": "2026-06-15"},
+            ).json()["data"]["path"]
+            r = client.post("/api/documents/account", json={
+                "account": "Assets:Bank:Checking", "date": "2026-06-15", "path": up})
+            assert r.status_code == 200, r.text
+
+            # The listed path must relativize against the *switched* ledger dir
+            # and remain servable — a stale reader yields a path that escapes the
+            # documents root (403) instead.
+            docs = client.get("/api/documents/account", params={"account": "Assets:Bank:Checking"}).json()["data"]["documents"]
+            assert len(docs) == 1
+            assert client.get("/api/documents/file", params={"path": docs[0]["path"]}).status_code == 200
+
+
 class TestPluginTolerance:
     @pytest.fixture
     def plugin_client(self, tmp_path):
