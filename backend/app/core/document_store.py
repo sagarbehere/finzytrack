@@ -163,19 +163,23 @@ def resolve_documents_root(
     relative) wins; otherwise the config default (``data/documents/``).
     """
     docs_opt = (options or {}).get("documents") or []
-    ledger_dir = Path(ledger_file).resolve().parent
+    ledger_path = Path(ledger_file).resolve()
+    ledger_dir = ledger_path.parent
     if docs_opt:
         candidate = Path(docs_opt[0])
         if not candidate.is_absolute():
             candidate = ledger_dir / candidate
         return candidate.resolve()
-    # No option set: a per-ledger subfolder (keyed by the ledger filename stem)
-    # under the default parent. Different ledgers therefore never share a
-    # documents folder — which matters because the orphan sweep is scoped to one
-    # ledger's root, and a shared folder would let ledger B's sweep flag (and
-    # offer to delete) ledger A's files. The auto-written option records this
-    # choice in the ledger so it survives even if the default ever changes.
-    return (Path(default_dir) / Path(ledger_file).stem).resolve()
+    # No option set: a per-ledger subfolder under the default parent, named
+    # "<stem>-<short hash of the ledger's absolute path>". The filename stem
+    # alone isn't enough — two ledgers both named main.beancount in different
+    # folders would collide — so the path hash disambiguates them. Different
+    # ledgers therefore never share a documents folder, which matters because
+    # the orphan sweep is scoped to one ledger's root: a shared folder would let
+    # one ledger's sweep flag (and offer to delete) another ledger's files. The
+    # auto-written option records the chosen folder so it stays put thereafter.
+    digest = hashlib.sha256(str(ledger_path).encode("utf-8")).hexdigest()[:8]
+    return (Path(default_dir) / f"{ledger_path.stem}-{digest}").resolve()
 
 
 def documents_option_value(*, documents_root: Path, ledger_file: str) -> str:

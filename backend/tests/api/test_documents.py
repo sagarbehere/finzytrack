@@ -106,11 +106,17 @@ def _query(client: TestClient, sql: str):
 class TestUploadServe:
     def test_upload_returns_relative_path_and_hash(self, doc_client):
         import hashlib
+        import re
         content = b"%PDF fake receipt content"
         resp = _upload(doc_client, content, narration="ACME office")
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["path"] == f"../documents/main/2026/2026-06-15-acme-office-{hashlib.sha256(content).hexdigest()[:8]}.pdf"
+        # ../documents/<stem>-<8hex path hash>/<year>/<date>-<slug>-<file hash>.<ext>
+        short = hashlib.sha256(content).hexdigest()[:8]
+        assert re.fullmatch(
+            rf"\.\./documents/main-[0-9a-f]{{8}}/2026/2026-06-15-acme-office-{short}\.pdf",
+            data["path"],
+        ), data["path"]
         assert data["full_hash"] == hashlib.sha256(content).hexdigest()
         assert data["size"] == len(content)
         # file exists on disk under the documents root
@@ -137,7 +143,11 @@ class TestUploadServe:
         assert resp.json()["error"]["code"] == "FILE_TOO_LARGE"
 
     def test_serve_missing_path_404(self, doc_client):
-        resp = doc_client.get("/api/documents/file", params={"path": "../documents/main/2026/nope.pdf"})
+        # Build a non-existent path inside the real (hashed) documents root by
+        # reusing an upload's folder.
+        up = _upload(doc_client, b"%PDF x").json()["data"]["path"]
+        folder = up.rsplit("/", 1)[0]
+        resp = doc_client.get("/api/documents/file", params={"path": f"{folder}/nope.pdf"})
         assert resp.status_code == 404
         assert resp.json()["error"]["code"] == "DOCUMENT_NOT_FOUND"
 
@@ -150,20 +160,22 @@ class TestUploadServe:
         assert resp.status_code == 403
 
     def test_upload_autowrites_documents_option(self, doc_client):
+        import re
         assert 'option "documents"' not in _ledger_text(doc_client)
         _upload(doc_client, b"%PDF x")
         text = _ledger_text(doc_client)
-        assert 'option "documents" "../documents/main"' in text
+        assert re.search(r'option "documents" "\.\./documents/main-[0-9a-f]{8}"', text), text
 
     def test_option_survives_subsequent_rewrite(self, doc_client):
         """The auto-written option must round-trip, not be stripped on rewrite."""
+        import re
         _upload(doc_client, b"%PDF x")
         # Trigger another ledger write (account create) and re-check.
         resp = doc_client.post("/api/accounts", json={
             "name": "Expenses:Travel", "open_date": "2024-01-01", "currencies": ["USD"],
         })
         assert resp.status_code in (200, 201), resp.text
-        assert 'option "documents" "../documents/main"' in _ledger_text(doc_client)
+        assert re.search(r'option "documents" "\.\./documents/main-[0-9a-f]{8}"', _ledger_text(doc_client))
 
 
 # ── Transaction document metadata (I2, I3, I4) ──────────────────────────────────

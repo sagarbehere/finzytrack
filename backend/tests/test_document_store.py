@@ -380,8 +380,9 @@ class TestRelativizeDocumentPath:
 
 class TestRootResolution:
     def test_default_is_per_ledger_subfolder(self, tmp_path):
-        # No option -> a subfolder keyed by the ledger stem, so two ledgers
-        # never share a documents root.
+        # No option -> a subfolder named "<stem>-<8hex path hash>", so two
+        # ledgers never share a documents root.
+        import re
         default = str(tmp_path / "data" / "documents")
         a = resolve_documents_root(
             ledger_file=str(tmp_path / "data" / "ledgers" / "personal.beancount"),
@@ -391,9 +392,33 @@ class TestRootResolution:
             ledger_file=str(tmp_path / "data" / "ledgers" / "business.beancount"),
             options={}, default_dir=default,
         )
-        assert a == (Path(default) / "personal").resolve()
-        assert b == (Path(default) / "business").resolve()
+        assert a.parent == Path(default).resolve()
+        assert re.fullmatch(r"personal-[0-9a-f]{8}", a.name)
+        assert re.fullmatch(r"business-[0-9a-f]{8}", b.name)
         assert a != b
+
+    def test_same_filename_different_folders_do_not_collide(self, tmp_path):
+        # Two ledgers both named main.beancount, in different folders, must
+        # resolve to distinct documents roots (the path hash disambiguates).
+        default = str(tmp_path / "data" / "documents")
+        a = resolve_documents_root(
+            ledger_file=str(tmp_path / "personal" / "main.beancount"),
+            options={}, default_dir=default,
+        )
+        b = resolve_documents_root(
+            ledger_file=str(tmp_path / "work" / "main.beancount"),
+            options={}, default_dir=default,
+        )
+        assert a.name.startswith("main-") and b.name.startswith("main-")
+        assert a != b
+
+    def test_default_is_stable_for_a_given_ledger(self, tmp_path):
+        default = str(tmp_path / "data" / "documents")
+        led = str(tmp_path / "data" / "ledgers" / "main.beancount")
+        assert (
+            resolve_documents_root(ledger_file=led, options={}, default_dir=default)
+            == resolve_documents_root(ledger_file=led, options={}, default_dir=default)
+        )
 
     def test_respects_relative_option(self, tmp_path):
         ledger = tmp_path / "data" / "ledgers" / "main.beancount"
