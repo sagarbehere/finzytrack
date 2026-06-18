@@ -384,8 +384,10 @@ class TestPluginTolerance:
         assert "PLUGIN_NOT_LOADED" in codes
         assert codes["PLUGIN_NOT_LOADED"]["severity"] == "info"
         assert "LEDGER_PARSE_ERROR" not in codes
-        # names the offending plugin in the details, no value judgement in copy
-        assert "fava.plugins.link_documents" in (codes["PLUGIN_NOT_LOADED"]["details"] or [])
+        # names the offending plugin AND where it is, no value judgement in copy
+        details = codes["PLUGIN_NOT_LOADED"]["details"] or []
+        # the plugin directive sits on line 1 of main.beancount in this fixture
+        assert any("fava.plugins.link_documents" in d and "main.beancount:1" in d for d in details), details
         assert "Fava" not in codes["PLUGIN_NOT_LOADED"]["title"]
         assert "Fava" not in codes["PLUGIN_NOT_LOADED"]["message"]
 

@@ -21,9 +21,10 @@ in the frontend session.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass, asdict
-from typing import List, Literal, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 
 from app.services.sqlite_reader import SqliteReader
 
@@ -111,6 +112,13 @@ def compute_ledger_notices(sqlite_reader: SqliteReader, ledger_root: Optional[st
             name for e in plugin_errors
             if (name := _extract_plugin_name(e.get("message", "")))
         })
+        # Beancount doesn't record the source location on a plugin-import error,
+        # so locate each `plugin "..."` line ourselves to spare the user a hunt.
+        locations = _locate_plugin_directives(ledger_root, plugin_names) if ledger_root else {}
+        details = [
+            f"{name} — {locations[name]}" if name in locations else name
+            for name in plugin_names
+        ]
         many = len(plugin_names) != 1
         notices.append(Notice(
             code="PLUGIN_NOT_LOADED",
@@ -128,7 +136,7 @@ def compute_ledger_notices(sqlite_reader: SqliteReader, ledger_root: Optional[st
             ),
             signature=",".join(plugin_names) or "1",
             dismissible=True,
-            details=plugin_names or None,
+            details=details or None,
         ))
 
     if ledger_root:
@@ -174,6 +182,54 @@ def is_plugin_import_error(message: str) -> bool:
     treat them as benign — see the query endpoint.
     """
     return _extract_plugin_name(message) is not None
+
+
+def _locate_plugin_directives(ledger_root: str, plugin_names: List[str]) -> Dict[str, str]:
+    """Map each plugin name to a ``"<file>:<line>"`` location of its
+    ``plugin "<name>"`` directive across the loaded include tree.
+
+    Beancount stamps plugin-import errors with ``<load>:0`` rather than the real
+    source location, so we scan the files ourselves (same include traversal the
+    pushtag/pushmeta detector uses). Paths are relative to the ledger root's
+    directory for readability; a name we can't find is simply omitted.
+    """
+    from pathlib import Path
+
+    from app.core.ledger_loader import discover_includes_per_file
+
+    locations: Dict[str, str] = {}
+    if not plugin_names:
+        return locations
+    try:
+        include_map = discover_includes_per_file(ledger_root)
+    except Exception:
+        logger.exception("notice_service: include traversal failed (plugin locate)")
+        return locations
+
+    base = Path(ledger_root).resolve().parent
+    patterns = {
+        name: re.compile(r'^\s*plugin\s+"' + re.escape(name) + r'"')
+        for name in plugin_names
+    }
+
+    for fname in include_map:
+        try:
+            text = Path(fname).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if line.lstrip().startswith(";"):
+                continue
+            for name, pattern in patterns.items():
+                if name not in locations and pattern.match(line):
+                    try:
+                        where = os.path.relpath(fname, base)
+                    except ValueError:
+                        where = fname
+                    locations[name] = f"{where}:{lineno}"
+        if len(locations) == len(plugin_names):
+            break
+    return locations
 
 
 def _partition_plugin_errors(raw_errors: List[dict]) -> Tuple[List[dict], List[dict]]:
