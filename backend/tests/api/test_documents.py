@@ -367,27 +367,42 @@ class TestOrphanSweep:
 
 class TestPluginTolerance:
     @pytest.fixture
-    def fava_client(self, tmp_path):
+    def plugin_client(self, tmp_path):
         from app.main import create_app
         root = _make_root(tmp_path, 'plugin "fava.plugins.link_documents"\n' + _DOC_LEDGER)
         with TestClient(create_app(_build_config(root))) as client:
             client._root = root
             yield client
 
-    def test_ledger_loads_and_notice_is_non_error(self, fava_client):
-        # entries are present despite the missing plugin
-        rows = _query(fava_client, "SELECT COUNT(*) AS n FROM postings")
+    def test_uninstalled_plugin_loads_and_surfaces_neutral_notice(self, plugin_client):
+        # entries are present despite the missing plugin (queries not blocked)
+        rows = _query(plugin_client, "SELECT COUNT(*) AS n FROM postings")
         assert rows[0]["n"] > 0
-        notices = fava_client.get("/api/notices").json()["data"]["notices"]
+        notices = plugin_client.get("/api/notices").json()["data"]["notices"]
         codes = {n["code"]: n for n in notices}
-        assert "FAVA_PLUGIN_NOT_NEEDED" in codes
-        assert codes["FAVA_PLUGIN_NOT_NEEDED"]["severity"] == "info"
-        # not surfaced as a scary parse error
+        # Neutral, generalized notice — not Fava-specific, not a scary error.
+        assert "PLUGIN_NOT_LOADED" in codes
+        assert codes["PLUGIN_NOT_LOADED"]["severity"] == "info"
         assert "LEDGER_PARSE_ERROR" not in codes
+        # names the offending plugin in the details, no value judgement in copy
+        assert "fava.plugins.link_documents" in (codes["PLUGIN_NOT_LOADED"]["details"] or [])
+        assert "Fava" not in codes["PLUGIN_NOT_LOADED"]["title"]
+        assert "Fava" not in codes["PLUGIN_NOT_LOADED"]["message"]
 
-    def test_directive_left_in_file_after_write(self, fava_client):
+    def test_non_fava_plugin_also_tolerated(self, tmp_path):
+        from app.main import create_app
+        root = _make_root(tmp_path, 'plugin "some.random.uninstalled_plugin"\n' + _DOC_LEDGER)
+        with TestClient(create_app(_build_config(root))) as client:
+            client._root = root
+            rows = _query(client, "SELECT COUNT(*) AS n FROM postings")  # not blocked
+            assert rows[0]["n"] > 0
+            codes = {n["code"]: n for n in client.get("/api/notices").json()["data"]["notices"]}
+            assert "PLUGIN_NOT_LOADED" in codes
+            assert "LEDGER_PARSE_ERROR" not in codes
+
+    def test_directive_left_in_file_after_write(self, plugin_client):
         # trigger a write
-        fava_client.post("/api/accounts", json={
+        plugin_client.post("/api/accounts", json={
             "name": "Expenses:Travel", "open_date": "2024-01-01", "currencies": ["USD"]})
-        text = (fava_client._root / "data" / "ledgers" / "main.beancount").read_text()
+        text = (plugin_client._root / "data" / "ledgers" / "main.beancount").read_text()
         assert 'plugin "fava.plugins.link_documents"' in text

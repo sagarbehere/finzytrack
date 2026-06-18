@@ -78,12 +78,11 @@ def compute_ledger_notices(sqlite_reader: SqliteReader, ledger_root: Optional[st
     except Exception:
         logger.exception("notice_service: failed to read ledger errors")
 
-    # A `plugin "fava.plugins.*"` directive doesn't hard-fail the load —
-    # Beancount catches the ImportError per-plugin and continues (invariant
-    # I9). Rather than letting it surface as a scary red parse error, split it
-    # out into a friendly info Notice; the directive is left in the file so it
-    # still works if the user opens the ledger in Fava.
-    fava_errors, other_errors = _partition_fava_plugin_errors(raw_errors)
+    # An uninstalled `plugin "..."` doesn't hard-fail the load — Beancount
+    # catches the ImportError per-plugin and continues. Rather than letting it
+    # surface as a scary red parse error (or block queries), split plugin-import
+    # errors out into a neutral info Notice; the directive is left in the file.
+    plugin_errors, other_errors = _partition_plugin_errors(raw_errors)
 
     if other_errors:
         details = []
@@ -107,21 +106,27 @@ def compute_ledger_notices(sqlite_reader: SqliteReader, ledger_root: Optional[st
             details=details,
         ))
 
-    if fava_errors:
+    if plugin_errors:
         plugin_names = sorted({
-            name for e in fava_errors
-            if (name := _extract_fava_plugin_name(e.get("message", "")))
+            name for e in plugin_errors
+            if (name := _extract_plugin_name(e.get("message", "")))
         })
+        many = len(plugin_names) != 1
         notices.append(Notice(
-            code="FAVA_PLUGIN_NOT_NEEDED",
+            code="PLUGIN_NOT_LOADED",
             severity="info",
             source="ledger",
-            title="A Fava plugin in your ledger isn't needed in Finzytrack.",
-            message=(
-                "Your documents work without it. The plugin line is left "
-                "untouched, so your ledger still works if you open it in Fava."
+            title=(
+                f"{len(plugin_names)} plugins referenced by your ledger aren't installed."
+                if many else
+                "A plugin referenced by your ledger isn't installed."
             ),
-            signature=str(len(fava_errors)),
+            message=(
+                "They didn't run, so your entries loaded without them."
+                if many else
+                "It didn't run, so your entries loaded without it."
+            ),
+            signature=",".join(plugin_names) or "1",
             dismissible=True,
             details=plugin_names or None,
         ))
@@ -148,38 +153,39 @@ def compute_ledger_notices(sqlite_reader: SqliteReader, ledger_root: Optional[st
     return notices
 
 
-_FAVA_PLUGIN_RE = re.compile(r"""importing ["'](fava\.plugins[^"']*)["']""")
+_PLUGIN_IMPORT_RE = re.compile(r"""Error importing ["']([^"']+)["']""")
 
 
-def _extract_fava_plugin_name(message: str) -> Optional[str]:
-    """Return the ``fava.plugins.*`` module name from a load-error message,
-    or ``None`` if the message isn't a Fava-plugin import failure."""
+def _extract_plugin_name(message: str) -> Optional[str]:
+    """Return the plugin module name from a Beancount plugin-import error
+    message (``Error importing "<name>": ...``), or ``None`` if the message
+    isn't a plugin-import failure."""
     if not message:
         return None
-    match = _FAVA_PLUGIN_RE.search(message)
+    match = _PLUGIN_IMPORT_RE.search(message)
     return match.group(1) if match else None
 
 
-def is_fava_plugin_import_error(message: str) -> bool:
-    """True if a ledger error is a ``fava.plugins.*`` import failure.
+def is_plugin_import_error(message: str) -> bool:
+    """True if a ledger error is an (uninstalled) plugin-import failure.
 
-    Such errors do not break the load (Beancount catches them per-plugin), so
-    callers that gate functionality on "fatal" errors should treat them as
-    benign — see the query endpoint and invariant I9.
+    Such errors do not break the load (Beancount catches them per-plugin and
+    continues), so callers that gate functionality on "fatal" errors should
+    treat them as benign — see the query endpoint.
     """
-    return _extract_fava_plugin_name(message) is not None
+    return _extract_plugin_name(message) is not None
 
 
-def _partition_fava_plugin_errors(raw_errors: List[dict]) -> Tuple[List[dict], List[dict]]:
-    """Split ledger errors into (fava-plugin-import errors, everything else)."""
-    fava: List[dict] = []
+def _partition_plugin_errors(raw_errors: List[dict]) -> Tuple[List[dict], List[dict]]:
+    """Split ledger errors into (plugin-import errors, everything else)."""
+    plugins: List[dict] = []
     other: List[dict] = []
     for e in raw_errors:
-        if _extract_fava_plugin_name(e.get("message", "")):
-            fava.append(e)
+        if _extract_plugin_name(e.get("message", "")):
+            plugins.append(e)
         else:
             other.append(e)
-    return fava, other
+    return plugins, other
 
 
 def _detect_special_syntax(ledger_root: str) -> List[str]:

@@ -82,16 +82,16 @@ async def execute_query(
         )
 
     # Check for ledger errors (filter out warnings like PadError which are non-fatal)
-    from app.core.notice_service import is_fava_plugin_import_error
+    from app.core.notice_service import is_plugin_import_error
     raw_errors = sqlite_reader.get_errors()
     # Filter non-fatal errors by message content (class info not available in SQLite).
-    # A `plugin "fava.plugins.*"` import error doesn't break the load (Beancount
+    # An uninstalled plugin's import error doesn't break the load (Beancount
     # catches it per-plugin and continues), so it must not block queries — it is
-    # surfaced as a friendly Notice instead (invariant I9).
+    # surfaced as a neutral Notice instead.
     fatal_errors = [
         e for e in raw_errors
         if "pad" not in (e.get("message", "") or "").lower()
-        and not is_fava_plugin_import_error(e.get("message", "") or "")
+        and not is_plugin_import_error(e.get("message", "") or "")
     ]
 
     if fatal_errors:
