@@ -442,6 +442,109 @@ def _oneof_allowed_types(err: ValidationError) -> set[str]:
     return result
 
 
+# ── Steps semantics cross-checks (mirror the client validator, §4.8) ─────────
+
+_ANY_TOKEN_RE = re.compile(r"\{\{\s*([^}]+?)\s*\}\}")
+_WHOLE_TOKEN_RE = re.compile(r"^\{\{\s*([^}]+?)\s*\}\}$")
+VALID_STEP_KINDS = {"sql", "compute", "transform"}
+
+
+def _extract_refs(text: str) -> list[tuple[str, str]]:
+    """Return (scope, id) pairs for every {{...}} reference in a string."""
+    refs: list[tuple[str, str]] = []
+    for m in _ANY_TOKEN_RE.finditer(text):
+        path = m.group(1).strip()
+        if path.startswith("dashboard.steps."):
+            refs.append(("dashboard.steps", path[len("dashboard.steps."):].split(".")[0]))
+        elif path.startswith("steps."):
+            refs.append(("steps", path[len("steps."):].split(".")[0]))
+        elif path.startswith("params."):
+            refs.append(("params", path[len("params."):].split(".")[0]))
+        else:
+            refs.append(("unknown", path))
+    return refs
+
+
+def _step_refs(step: dict) -> list[tuple[str, str]]:
+    refs: list[tuple[str, str]] = []
+    if step.get("kind") == "compute" and step.get("args") is not None:
+        refs.extend(_extract_refs(json.dumps(step["args"])))
+    if step.get("kind") == "transform" and isinstance(step.get("inputs"), list):
+        for inp in step["inputs"]:
+            if isinstance(inp, str):
+                refs.extend(_extract_refs(inp))
+    return refs
+
+
+def _validate_steps_semantics(
+    steps, prefix: str, known_dashboard_step_ids: set[str]
+) -> tuple[list[str], list[str]]:
+    """Cross-checks the JSON Schema can't express: unique step ids, references
+    resolve, acyclicity, and no {{...}} inside sql.query. Returns
+    (errors, step_ids). Assumes the structural (schema) pass already ran."""
+    errors: list[str] = []
+    if not isinstance(steps, list) or not steps:
+        return errors, []
+
+    ids: list[str] = []
+    seen: set[str] = set()
+    for i, s in enumerate(steps):
+        if not isinstance(s, dict):
+            continue
+        sid = s.get("id")
+        if isinstance(sid, str) and sid:
+            if sid in seen:
+                errors.append(f"{prefix}[{i}].id: duplicate step id '{sid}'")
+            seen.add(sid)
+            ids.append(sid)
+        if s.get("kind") == "sql" and isinstance(s.get("query"), str) and _ANY_TOKEN_RE.search(s["query"]):
+            errors.append(
+                f"{prefix}[{i}].query: SQL steps cannot use {{{{...}}}} references — "
+                f"use :paramName for parameters; combine other steps in a transform"
+            )
+
+    id_set = set(ids)
+    adjacency: dict[str, list[str]] = {}
+    for i, s in enumerate(steps):
+        if not isinstance(s, dict) or not isinstance(s.get("id"), str):
+            continue
+        local_deps: list[str] = []
+        for scope, rid in _step_refs(s):
+            if scope == "steps":
+                if rid not in id_set:
+                    errors.append(f"{prefix}[{i}]: references unknown step '{rid}'")
+                else:
+                    local_deps.append(rid)
+            elif scope == "dashboard.steps":
+                if rid not in known_dashboard_step_ids:
+                    errors.append(f"{prefix}[{i}]: references unknown dashboard shared step '{rid}'")
+            elif scope == "unknown":
+                errors.append(f"{prefix}[{i}]: unknown reference scope in '{{{{{rid}}}}}' (use params / steps / dashboard.steps)")
+        adjacency[s["id"]] = local_deps
+
+    # Cycle detection
+    state: dict[str, str] = {}
+
+    def visit(node: str) -> bool:
+        if state.get(node) == "done":
+            return False
+        if state.get(node) == "visiting":
+            return True
+        state[node] = "visiting"
+        for dep in adjacency.get(node, []):
+            if visit(dep):
+                return True
+        state[node] = "done"
+        return False
+
+    for sid in ids:
+        if visit(sid):
+            errors.append(f"{prefix}: cyclic step reference involving '{sid}'")
+            break
+
+    return errors, ids
+
+
 # ── Public API ──────────────────────────────────────────────────────────────
 
 
@@ -452,11 +555,23 @@ def _validate_against(definition_name: str, instance, prefix: str) -> list[str]:
     return [_format_error(prefix, e) for e in expanded]
 
 
-def validate_widget(widget, prefix: str) -> list[str]:
-    """Validate a single widget recipe. Returns a list of error strings."""
+def validate_widget(widget, prefix: str, known_dashboard_step_ids: set[str] | None = None) -> list[str]:
+    """Validate a single inline widget recipe (steps/output form). Returns a
+    list of error strings. `known_dashboard_step_ids` are the ids of dashboard
+    shared steps the widget may reference via {{dashboard.steps.x}}."""
     if not isinstance(widget, dict):
         return [f"{prefix}: must be a JSON object, {_describe(widget)}"]
     errors = _validate_against("JsonWidgetRecipe", widget, prefix)
+
+    # Cross-checks beyond the JSON Schema: step semantics + output names a step.
+    step_errors, step_ids = _validate_steps_semantics(
+        widget.get("steps"), f"{prefix}.steps", known_dashboard_step_ids or set()
+    )
+    errors.extend(step_errors)
+    output = widget.get("output")
+    if isinstance(output, str) and step_ids and output not in step_ids:
+        errors.append(f"{prefix}.output: names unknown step '{output}' (steps: {sorted(step_ids)})")
+
     _check_risky_tooltip_formatters(widget, errors)
     return errors
 
@@ -507,15 +622,8 @@ def _check_risky_tooltip_formatters(content: dict, errors: list[str]) -> None:
             )
 
 
-def validate_transform(transform, prefix: str) -> list[str]:
-    """Validate a transform (simple string or object form)."""
-    if transform is None:
-        return []
-    return _validate_against("Transform", transform, prefix)
-
-
 def validate_dashboard(dashboard) -> list[str]:
-    """Validate a dashboard recipe and run the cross-check pass."""
+    """Validate a dashboard recipe (the only recipe type) and run cross-checks."""
     if not isinstance(dashboard, dict):
         return [f"(root): must be a JSON object, {_describe(dashboard)}"]
     validator = _validator_for("JsonDashboardRecipe")
@@ -523,45 +631,40 @@ def validate_dashboard(dashboard) -> list[str]:
     expanded.sort(key=lambda e: list(e.absolute_path))
     errors = [_format_error("", e) for e in expanded]
 
-    # Cross-check: every layout widgetId must reference *something* — either an
-    # inline widget definition in this dashboard's `widgets` array, or a widget
-    # registered separately and looked up by id at runtime. We can only see the
-    # inline list from here, so we use this heuristic: only flag missing
-    # widgetIds when the dashboard *appears* to be self-contained (every other
-    # layout widgetId resolves inline). If any widgetId doesn't resolve, we
-    # assume the dashboard is using the registry and skip the check — this
-    # avoids false positives on mixed inline+registry dashboards while still
-    # catching typos in single-widget AI-authored recipes.
+    # Dashboard shared steps (optional) — validate semantics; collect their ids.
+    dashboard_step_ids: set[str] = set()
+    if dashboard.get("steps") is not None:
+        shared_errors, shared_ids = _validate_steps_semantics(dashboard.get("steps"), "steps", set())
+        errors.extend(shared_errors)
+        dashboard_step_ids = set(shared_ids)
+
+    # Per-widget cross-checks (steps semantics, output) — widgets are inline-only.
+    inline_widgets = dashboard.get("widgets") or []
+    if isinstance(inline_widgets, list):
+        for i, w in enumerate(inline_widgets):
+            if isinstance(w, dict):
+                step_errors, step_ids = _validate_steps_semantics(
+                    w.get("steps"), f"widgets[{i}].steps", dashboard_step_ids
+                )
+                errors.extend(step_errors)
+                output = w.get("output")
+                if isinstance(output, str) and step_ids and output not in step_ids:
+                    errors.append(f"widgets[{i}].output: names unknown step '{output}' (steps: {sorted(step_ids)})")
+
+    # Cross-check: every layout widgetId must resolve to an inline widget
+    # (widgets are inline-only — there is no registry to fall back to).
     layout = dashboard.get("layout") or {}
     layout_widgets = layout.get("widgets") or []
-    inline_widgets = dashboard.get("widgets") or []
     if isinstance(layout_widgets, list) and isinstance(inline_widgets, list):
         widget_ids = {w["id"] for w in inline_widgets if isinstance(w, dict) and "id" in w}
-        layout_ids = [
-            lw.get("widgetId") for lw in layout_widgets
-            if isinstance(lw, dict) and lw.get("widgetId")
-        ]
-        # Only run the cross-check in two clearly-self-contained shapes:
-        #   1. All layout widgetIds resolve inline (no registry lookups expected)
-        #   2. The widgets array is non-empty AND every inline id is referenced
-        #      (catches typos like a renamed widget)
-        all_resolve = layout_ids and all(wid in widget_ids for wid in layout_ids)
-        if widget_ids and all_resolve is False and any(wid in widget_ids for wid in layout_ids):
-            # Mixed: some resolve, some don't. Skip — assume registry mode for
-            # the unresolved ones rather than emit false positives.
-            pass
-        elif widget_ids and not all_resolve:
-            for i, lw_item in enumerate(layout_widgets):
-                if isinstance(lw_item, dict):
-                    wid = lw_item.get("widgetId")
-                    if wid and wid not in widget_ids:
-                        available = sorted(widget_ids)
-                        errors.append(
-                            f"layout.widgets[{i}].widgetId: '{wid}' has no matching widget "
-                            f"definition. Available widget ids in this dashboard's 'widgets' "
-                            f"array: {available}. Hint: if the widget is saved separately, "
-                            f"leave 'widgets: []' and ensure the widgetId matches a registered widget."
-                        )
+        for i, lw_item in enumerate(layout_widgets):
+            if isinstance(lw_item, dict):
+                wid = lw_item.get("widgetId")
+                if wid and wid not in widget_ids:
+                    errors.append(
+                        f"layout.widgets[{i}].widgetId: '{wid}' has no matching inline widget "
+                        f"definition. Available widget ids: {sorted(widget_ids)}."
+                    )
 
     _check_risky_tooltip_formatters(dashboard, errors)
     return errors

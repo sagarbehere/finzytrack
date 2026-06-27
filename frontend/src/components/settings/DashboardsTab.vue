@@ -294,6 +294,7 @@ const confirmDialog = useConfirmDialog()
 function wrapWidgetAsDashboard(widget: Record<string, unknown>): JsonDashboardRecipe {
   const id = (widget.id as string) || 'widget'
   return {
+    schemaVersion: 2,
     id: `__preview__${id}`,
     title: (widget.title as string) || 'Preview',
     parameters: (widget.parameters as JsonDashboardRecipe['parameters']) || [],
@@ -446,44 +447,20 @@ async function handleSave() {
   }
   jsonParseError.value = null
 
-  // Check for ID conflicts before saving
+  // Check for dashboard ID conflicts before saving (dashboard is the only recipe type)
   const recipeId = parsed.id as string | undefined
   if (recipeId) {
-    const type = recipeType.value === 'dashboards' ? 'dashboard' : 'widget'
     const currentPath = isCreating.value ? undefined : selectedFile.value ?? undefined
-    const conflict = checkIdConflict(recipeId, type as 'widget' | 'dashboard', currentPath)
+    const conflict = checkIdConflict(recipeId, currentPath)
     if (conflict) {
-      const kindLabel =
-        conflict.kind === 'widget' ? 'a standalone widget recipe' :
-        conflict.kind === 'dashboard' ? 'a dashboard recipe' :
-        'an inline widget in a dashboard'
       const proceed = await confirmDialog.showConfirm({
         title: 'Recipe ID Conflict',
-        message: `The ${type} ID "${recipeId}" is already used by ${kindLabel} in ${conflict.conflictingFile}. Saving will cause one definition to silently override the other, leading to unpredictable behavior.\n\nDo you want to save anyway?`,
+        message: `The dashboard ID "${recipeId}" is already used by a dashboard recipe in ${conflict.conflictingFile}. Saving will cause one definition to silently override the other, leading to unpredictable behavior.\n\nDo you want to save anyway?`,
         confirmText: 'Save Anyway',
         cancelText: 'Go Back',
         variant: 'warning',
       })
       if (!proceed) return
-    }
-
-    // For dashboards, also check inline widget IDs against standalone widgets
-    if (type === 'dashboard' && Array.isArray(parsed.widgets)) {
-      for (const inlineWidget of parsed.widgets as Array<{ id?: string }>) {
-        if (!inlineWidget.id) continue
-        const inlineConflict = checkIdConflict(inlineWidget.id, 'widget', undefined)
-        if (inlineConflict) {
-          const proceed = await confirmDialog.showConfirm({
-            title: 'Inline Widget ID Conflict',
-            message: `This dashboard defines an inline widget with ID "${inlineWidget.id}" which conflicts with ${inlineConflict.conflictingFile}. The inline definition will silently override the standalone widget recipe.\n\nDo you want to save anyway?`,
-            confirmText: 'Save Anyway',
-            cancelText: 'Go Back',
-            variant: 'warning',
-          })
-          if (!proceed) return
-          break
-        }
-      }
     }
   }
 

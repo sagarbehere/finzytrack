@@ -1,0 +1,103 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`recipe transform golden baseline (pre-DAG-refactor) > firstRow/transaction-count (from transaction-count) renders the same data 1`] = `
+{
+  "count": 1843,
+}
+`;
+
+exports[`recipe transform golden baseline (pre-DAG-refactor) > none/expense-treemap (from expense-treemap) renders the same data 1`] = `
+[
+  {
+    "account": "Expenses:Groceries",
+    "dateFrom": "2025-06-01",
+    "dateTo": "2025-06-30",
+    "name": "Groceries",
+    "value": 650.5,
+  },
+  {
+    "account": "Expenses:HouseRent",
+    "dateFrom": "2025-06-01",
+    "dateTo": "2025-06-30",
+    "name": "HouseRent",
+    "value": 2200,
+  },
+  {
+    "account": "Expenses:EatingOut",
+    "dateFrom": "2025-06-01",
+    "dateTo": "2025-06-30",
+    "name": "EatingOut",
+    "value": 312.4,
+  },
+]
+`;
+
+exports[`recipe transform golden baseline (pre-DAG-refactor) > none/kpi-multicurrency (from net-worth, monthly-income) renders the same data 1`] = `
+[
+  {
+    "amount": 125430.18,
+    "currency": "USD",
+  },
+  {
+    "amount": 845200.5,
+    "currency": "INR",
+  },
+]
+`;
+
+exports[`recipe transform golden baseline (pre-DAG-refactor) > pivot/year-summary (from year-summary, widget-gallery) renders the same data 1`] = `
+{
+  "columnMeta": [
+    {
+      "endDate": "2025-01-31",
+      "rawValue": "2025-01",
+      "startDate": "2025-01-01",
+    },
+    {
+      "endDate": "2025-02-28",
+      "rawValue": "2025-02",
+      "startDate": "2025-02-01",
+    },
+    {
+      "endDate": "2025-03-31",
+      "rawValue": "2025-03",
+      "startDate": "2025-03-01",
+    },
+  ],
+  "columnTotals": {
+    "February 2025": 712.25,
+    "January 2025": 950.5,
+    "March 2025": 943.75,
+  },
+  "columns": [
+    "January 2025",
+    "February 2025",
+    "March 2025",
+  ],
+  "grandTotal": 2606.5,
+  "rows": [
+    {
+      "label": "Expenses:Groceries",
+      "total": 2060.75,
+      "values": {
+        "February 2025": 712.25,
+        "January 2025": 650.5,
+        "March 2025": 698,
+      },
+    },
+    {
+      "label": "Expenses:EatingOut",
+      "total": 545.75,
+      "values": {
+        "January 2025": 300,
+        "March 2025": 245.75,
+      },
+    },
+    {
+      "label": "Expenses:Utilities",
+      "total": 0,
+      "values": {},
+    },
+  ],
+}
+`;

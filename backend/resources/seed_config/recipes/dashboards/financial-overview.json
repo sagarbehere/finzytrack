@@ -1,4 +1,5 @@
 {
+  "schemaVersion": 2,
   "id": "financial-overview",
   "title": "Financial Overview",
   "description": "Overview of your financial status with net worth, assets, liabilities, and breakdowns",
@@ -7,45 +8,105 @@
     "gap": "1.5rem",
     "rowHeight": "140px",
     "widgets": [
-      { "widgetId": "net-worth", "gridArea": "1 / 1 / 2 / 5" },
-      { "widgetId": "total-assets", "gridArea": "1 / 5 / 2 / 9" },
-      { "widgetId": "total-liabilities", "gridArea": "1 / 9 / 2 / 13" },
-      { "widgetId": "assets-pie", "gridArea": "2 / 1 / 5 / 7" },
-      { "widgetId": "liabilities-pie", "gridArea": "2 / 7 / 5 / 13" }
+      {
+        "widgetId": "net-worth",
+        "gridArea": "1 / 1 / 2 / 5"
+      },
+      {
+        "widgetId": "total-assets",
+        "gridArea": "1 / 5 / 2 / 9"
+      },
+      {
+        "widgetId": "total-liabilities",
+        "gridArea": "1 / 9 / 2 / 13"
+      },
+      {
+        "widgetId": "assets-pie",
+        "gridArea": "2 / 1 / 5 / 7"
+      },
+      {
+        "widgetId": "liabilities-pie",
+        "gridArea": "2 / 7 / 5 / 13"
+      }
     ]
   },
   "widgets": [
     {
       "id": "net-worth",
       "title": "Net Worth",
-      "query": "SELECT currency, SUM(CASE WHEN account_type IN ('Assets', 'Liabilities') THEN amount ELSE 0 END) AS amount FROM postings GROUP BY currency HAVING amount != 0 ORDER BY currency",
       "visualization": {
         "type": "kpi",
         "icon": "$",
         "multiCurrency": true
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT currency, SUM(CASE WHEN account_type IN ('Assets', 'Liabilities') THEN amount ELSE 0 END) AS amount FROM postings GROUP BY currency HAVING amount != 0 ORDER BY currency"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "total-assets",
       "title": "Total Assets",
-      "query": "SELECT currency, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Assets' GROUP BY currency HAVING amount != 0 ORDER BY currency",
       "visualization": {
         "type": "kpi",
-        "icon": "\u2191",
+        "icon": "↑",
         "iconColor": "green",
         "multiCurrency": true
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT currency, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Assets' GROUP BY currency HAVING amount != 0 ORDER BY currency"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "total-liabilities",
       "title": "Total Liabilities",
-      "query": "SELECT currency, SUM(CAST(amount AS REAL)) * -1 AS amount FROM postings WHERE account_type = 'Liabilities' GROUP BY currency HAVING amount != 0 ORDER BY currency",
       "visualization": {
         "type": "kpi",
-        "icon": "\u2193",
+        "icon": "↓",
         "iconColor": "red",
         "multiCurrency": true
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT currency, SUM(CAST(amount AS REAL)) * -1 AS amount FROM postings WHERE account_type = 'Liabilities' GROUP BY currency HAVING amount != 0 ORDER BY currency"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "assets-pie",
@@ -56,11 +117,12 @@
           "name": "currency",
           "label": "Currency",
           "type": "select",
-          "default": { "$gen": "defaultCurrency" },
+          "default": {
+            "$gen": "defaultCurrency"
+          },
           "optionsFrom": "currencies"
         }
       ],
-      "query": "SELECT CASE WHEN account LIKE 'Assets:Liquid:%' THEN REPLACE(account, 'Assets:Liquid:', '') WHEN account LIKE 'Assets:Investments:%' THEN REPLACE(account, 'Assets:Investments:', '') ELSE REPLACE(account, 'Assets:', '') END AS name, account, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Assets' AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC",
       "visualization": {
         "type": "chart",
         "chartType": "pie",
@@ -68,17 +130,40 @@
           "tooltip": {
             "trigger": "item"
           },
-          "legend": { "show": false },
+          "legend": {
+            "show": false
+          },
           "series": [
             {
               "type": "pie",
-              "radius": ["35%", "65%"],
-              "center": ["50%", "50%"],
-              "encode": { "itemName": "name", "value": "value" },
-              "label": { "show": true, "formatter": "{b}", "minShowLabelAngle": 15 },
-              "labelLine": { "show": true, "length": 8, "length2": 8 },
+              "radius": [
+                "35%",
+                "65%"
+              ],
+              "center": [
+                "50%",
+                "50%"
+              ],
+              "encode": {
+                "itemName": "name",
+                "value": "value"
+              },
+              "label": {
+                "show": true,
+                "formatter": "{b}",
+                "minShowLabelAngle": 15
+              },
+              "labelLine": {
+                "show": true,
+                "length": 8,
+                "length2": 8
+              },
               "emphasis": {
-                "label": { "show": true, "fontWeight": "bold", "formatter": "{b}\n{d}%" }
+                "label": {
+                  "show": true,
+                  "fontWeight": "bold",
+                  "formatter": "{b}\n{d}%"
+                }
               }
             }
           ]
@@ -89,7 +174,23 @@
             "accountContains": "{{data.account}}"
           }
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT CASE WHEN account LIKE 'Assets:Liquid:%' THEN REPLACE(account, 'Assets:Liquid:', '') WHEN account LIKE 'Assets:Investments:%' THEN REPLACE(account, 'Assets:Investments:', '') ELSE REPLACE(account, 'Assets:', '') END AS name, account, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Assets' AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "liabilities-pie",
@@ -100,11 +201,12 @@
           "name": "currency",
           "label": "Currency",
           "type": "select",
-          "default": { "$gen": "defaultCurrency" },
+          "default": {
+            "$gen": "defaultCurrency"
+          },
           "optionsFrom": "currencies"
         }
       ],
-      "query": "SELECT REPLACE(account, 'Liabilities:', '') AS name, account, ROUND(SUM(CAST(amount AS REAL)) * -1, 2) AS value FROM postings WHERE account_type = 'Liabilities' AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC",
       "visualization": {
         "type": "chart",
         "chartType": "pie",
@@ -112,17 +214,40 @@
           "tooltip": {
             "trigger": "item"
           },
-          "legend": { "show": false },
+          "legend": {
+            "show": false
+          },
           "series": [
             {
               "type": "pie",
-              "radius": ["35%", "65%"],
-              "center": ["50%", "50%"],
-              "encode": { "itemName": "name", "value": "value" },
-              "label": { "show": true, "formatter": "{b}", "minShowLabelAngle": 15 },
-              "labelLine": { "show": true, "length": 8, "length2": 8 },
+              "radius": [
+                "35%",
+                "65%"
+              ],
+              "center": [
+                "50%",
+                "50%"
+              ],
+              "encode": {
+                "itemName": "name",
+                "value": "value"
+              },
+              "label": {
+                "show": true,
+                "formatter": "{b}",
+                "minShowLabelAngle": 15
+              },
+              "labelLine": {
+                "show": true,
+                "length": 8,
+                "length2": 8
+              },
               "emphasis": {
-                "label": { "show": true, "fontWeight": "bold", "formatter": "{b}\n{d}%" }
+                "label": {
+                  "show": true,
+                  "fontWeight": "bold",
+                  "formatter": "{b}\n{d}%"
+                }
               }
             }
           ]
@@ -133,7 +258,23 @@
             "accountContains": "{{data.account}}"
           }
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT REPLACE(account, 'Liabilities:', '') AS name, account, ROUND(SUM(CAST(amount AS REAL)) * -1, 2) AS value FROM postings WHERE account_type = 'Liabilities' AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     }
   ]
 }

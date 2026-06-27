@@ -1,24 +1,26 @@
 /**
- * Recipe Validation
+ * Recipe Validation (client)
  *
- * Pure validation functions for JSON widget and dashboard recipes.
- * Returns structured error lists — no side effects.
+ * Pure validation for JSON dashboard recipes (the only recipe type). Validates
+ * the steps/DAG shape: per-kind step fields, {{...}} reference resolution,
+ * acyclicity, unique step ids, no {{...}} inside sql.query, output presence,
+ * and schemaVersion. `fn`-name validity (compute/transform) is checked
+ * server-side (refactored-dashboard-recipes.md §3.6 G8 / §4.8). Returns
+ * structured error lists — no side effects.
  */
 
-import { SUPPORTED_CHART_TYPES, VALID_VALUE_FORMATS } from '@/types/recipes'
+import { SUPPORTED_CHART_TYPES, VALID_VALUE_FORMATS, STEP_KINDS } from '@/types/recipes'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface RecipeValidationError {
-  /** Path to the offending field, e.g. "visualization.chartType" */
+  /** Path to the offending field, e.g. "widgets[0].steps[1].fn" */
   field: string
   message: string
 }
 
 export interface RecipeFileError {
-  /** Path as it appears in manifest.json, e.g. "widgets/expense-treemap.json" */
   file: string
-  /** 'parse' = JSON.parse failed; 'schema' = content failed validation */
   kind: 'parse' | 'schema'
   errors: RecipeValidationError[]
 }
@@ -26,11 +28,11 @@ export interface RecipeFileError {
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 const VALID_VIZ_TYPES = ['kpi', 'chart', 'table', 'pivot'] as const
-const VALID_TRANSFORM_TYPES = ['sortBy', 'limit', 'pluck', 'pivot'] as const
-const VALID_SIMPLE_TRANSFORMS = ['none', 'firstRow', 'firstValue'] as const
 const VALID_PARAM_TYPES = ['date', 'select', 'number'] as const
-const VALID_FORMAT_COLUMNS = ['monthYear', 'yearMonth'] as const
-const VALID_SORT_ROWS_BY = ['total_desc', 'total_asc', 'label_asc', 'label_desc'] as const
+const CURRENT_SCHEMA_VERSION = 2
+
+const WHOLE_TOKEN_RE = /^\{\{\s*([^}]+?)\s*\}\}$/
+const ANY_TOKEN_RE = /\{\{\s*([^}]+?)\s*\}\}/g
 
 function isString(v: unknown): v is string {
   return typeof v === 'string' && v.trim() !== ''
@@ -38,6 +40,38 @@ function isString(v: unknown): v is string {
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+interface TokenRef {
+  scope: 'params' | 'steps' | 'dashboard.steps' | 'unknown'
+  id: string
+}
+
+/** Extract all {{...}} references from a string. */
+function extractRefs(str: string): TokenRef[] {
+  const refs: TokenRef[] = []
+  let m: RegExpExecArray | null
+  const re = new RegExp(ANY_TOKEN_RE.source, 'g')
+  while ((m = re.exec(str)) !== null) {
+    const path = m[1].trim()
+    if (path.startsWith('dashboard.steps.')) refs.push({ scope: 'dashboard.steps', id: path.slice('dashboard.steps.'.length).split('.')[0] })
+    else if (path.startsWith('steps.')) refs.push({ scope: 'steps', id: path.slice('steps.'.length).split('.')[0] })
+    else if (path.startsWith('params.')) refs.push({ scope: 'params', id: path.slice('params.'.length).split('.')[0] })
+    else refs.push({ scope: 'unknown', id: path })
+  }
+  return refs
+}
+
+/** Gather all reference tokens a step carries (in args / inputs). */
+function stepRefs(step: Record<string, unknown>): TokenRef[] {
+  const refs: TokenRef[] = []
+  if (step.kind === 'compute' && step.args !== undefined) {
+    refs.push(...extractRefs(JSON.stringify(step.args)))
+  }
+  if (step.kind === 'transform' && Array.isArray(step.inputs)) {
+    for (const inp of step.inputs) if (typeof inp === 'string') refs.push(...extractRefs(inp))
+  }
+  return refs
 }
 
 // ─── Parameter validation ─────────────────────────────────────────────────────
@@ -64,73 +98,116 @@ function validateParameters(params: unknown, prefix: string): RecipeValidationEr
   return errors
 }
 
-// ─── Transform validation ─────────────────────────────────────────────────────
+// ─── Steps validation ─────────────────────────────────────────────────────────
 
-function validateTransform(transform: unknown, prefix: string): RecipeValidationError[] {
-  if (transform === undefined) return []
-  const errors: RecipeValidationError[] = []
-
-  // Simple string transforms
-  if (typeof transform === 'string') {
-    if (!VALID_SIMPLE_TRANSFORMS.includes(transform as never)) {
-      errors.push({
-        field: prefix,
-        message: `unknown simple transform "${transform}"; must be one of: ${VALID_SIMPLE_TRANSFORMS.join(', ')}`,
-      })
-    }
-    return errors
-  }
-
-  if (!isPlainObject(transform)) {
-    errors.push({ field: prefix, message: 'must be a string or object' })
-    return errors
-  }
-
-  if (!VALID_TRANSFORM_TYPES.includes(transform.type as never)) {
-    errors.push({
-      field: `${prefix}.type`,
-      message: `must be one of: ${VALID_TRANSFORM_TYPES.join(', ')}`,
-    })
-    return errors
-  }
-
-  if (transform.type === 'sortBy') {
-    if (transform.field !== undefined && !isString(transform.field)) {
-      errors.push({ field: `${prefix}.field`, message: 'must be a non-empty string' })
-    }
-    if (transform.order !== undefined && !['asc', 'desc'].includes(String(transform.order))) {
-      errors.push({ field: `${prefix}.order`, message: 'must be "asc" or "desc"' })
-    }
-  }
-
-  if (transform.type === 'limit') {
-    if (transform.count !== undefined && (typeof transform.count !== 'number' || transform.count < 1)) {
-      errors.push({ field: `${prefix}.count`, message: 'must be a positive number' })
-    }
-  }
-
-  if (transform.type === 'pluck') {
-    if (!isString(transform.field)) {
-      errors.push({ field: `${prefix}.field`, message: 'required for pluck transform' })
-    }
-  }
-
-  if (transform.type === 'pivot') {
-    if (!isString(transform.rowField)) errors.push({ field: `${prefix}.rowField`, message: 'required for pivot transform' })
-    if (!isString(transform.columnField)) errors.push({ field: `${prefix}.columnField`, message: 'required for pivot transform' })
-    if (!isString(transform.valueField)) errors.push({ field: `${prefix}.valueField`, message: 'required for pivot transform' })
-    if (transform.formatColumn !== undefined && !VALID_FORMAT_COLUMNS.includes(transform.formatColumn as never)) {
-      errors.push({ field: `${prefix}.formatColumn`, message: `must be one of: ${VALID_FORMAT_COLUMNS.join(', ')}` })
-    }
-    if (transform.sortRowsBy !== undefined && !VALID_SORT_ROWS_BY.includes(transform.sortRowsBy as never)) {
-      errors.push({ field: `${prefix}.sortRowsBy`, message: `must be one of: ${VALID_SORT_ROWS_BY.join(', ')}` })
-    }
-  }
-
-  return errors
+interface StepsValidation {
+  errors: RecipeValidationError[]
+  stepIds: string[]
 }
 
-// ─── Visualization validation ─────────────────────────────────────────────────
+/**
+ * Validate a steps array: per-kind fields, unique ids, references resolve,
+ * acyclicity, no {{...}} in sql.query.
+ *
+ * @param knownDashboardStepIds - ids of dashboard shared steps a widget step may
+ *   reference via {{dashboard.steps.x}}. Empty for dashboard-level shared steps
+ *   (they may only reference each other).
+ */
+function validateSteps(
+  steps: unknown,
+  prefix: string,
+  knownDashboardStepIds: string[],
+): StepsValidation {
+  const errors: RecipeValidationError[] = []
+  if (!Array.isArray(steps) || steps.length === 0) {
+    errors.push({ field: prefix, message: 'required, must be a non-empty array of steps' })
+    return { errors, stepIds: [] }
+  }
+
+  const ids: string[] = []
+  const seen = new Set<string>()
+  steps.forEach((s, i) => {
+    const path = `${prefix}[${i}]`
+    if (!isPlainObject(s)) {
+      errors.push({ field: path, message: 'must be an object' })
+      return
+    }
+    if (!isString(s.id)) {
+      errors.push({ field: `${path}.id`, message: 'required, must be a non-empty string' })
+    } else {
+      if (seen.has(s.id)) errors.push({ field: `${path}.id`, message: `duplicate step id "${s.id}"` })
+      seen.add(s.id)
+      ids.push(s.id)
+    }
+    if (!STEP_KINDS.includes(s.kind as never)) {
+      errors.push({ field: `${path}.kind`, message: `required, must be one of: ${STEP_KINDS.join(', ')}` })
+      return
+    }
+    if (s.kind === 'sql') {
+      if (!isString(s.query)) errors.push({ field: `${path}.query`, message: 'required, must be a non-empty SQL string' })
+      else if (ANY_TOKEN_RE.test(s.query)) errors.push({ field: `${path}.query`, message: 'SQL steps cannot use {{...}} references — use :paramName for parameters; combine other steps in a transform' })
+    } else if (s.kind === 'compute') {
+      if (!isString(s.fn)) errors.push({ field: `${path}.fn`, message: 'required, must be a non-empty string' })
+      if (s.args !== undefined && !isPlainObject(s.args)) errors.push({ field: `${path}.args`, message: 'must be an object' })
+    } else if (s.kind === 'transform') {
+      if (!isString(s.fn)) errors.push({ field: `${path}.fn`, message: 'required, must be a non-empty string' })
+      if (!Array.isArray(s.inputs) || s.inputs.length === 0) {
+        errors.push({ field: `${path}.inputs`, message: 'required, must be a non-empty array of {{steps.x}} references' })
+      } else {
+        s.inputs.forEach((inp, j) => {
+          if (typeof inp !== 'string' || !WHOLE_TOKEN_RE.test(inp)) {
+            errors.push({ field: `${path}.inputs[${j}]`, message: 'must be a {{steps.x}} or {{dashboard.steps.x}} reference' })
+          }
+        })
+      }
+      if (s.config !== undefined && !isPlainObject(s.config)) errors.push({ field: `${path}.config`, message: 'must be an object' })
+    }
+  })
+
+  // Reference resolution + acyclicity (only meaningful when ids are well-formed)
+  const idSet = new Set(ids)
+  const dashSet = new Set(knownDashboardStepIds)
+  const adjacency = new Map<string, string[]>()
+  steps.forEach((s, i) => {
+    if (!isPlainObject(s) || !isString(s.id)) return
+    const path = `${prefix}[${i}]`
+    const localDeps: string[] = []
+    for (const ref of stepRefs(s)) {
+      if (ref.scope === 'steps') {
+        if (!idSet.has(ref.id)) errors.push({ field: path, message: `references unknown step "${ref.id}"` })
+        else localDeps.push(ref.id)
+      } else if (ref.scope === 'dashboard.steps') {
+        if (!dashSet.has(ref.id)) errors.push({ field: path, message: `references unknown dashboard shared step "${ref.id}"` })
+      } else if (ref.scope === 'unknown') {
+        errors.push({ field: path, message: `unknown reference scope in "{{${ref.id}}}" (use params / steps / dashboard.steps)` })
+      }
+    }
+    adjacency.set(s.id, localDeps)
+  })
+
+  // Cycle detection
+  const state = new Map<string, 'visiting' | 'done'>()
+  const visit = (id: string): boolean => {
+    if (state.get(id) === 'done') return false
+    if (state.get(id) === 'visiting') return true
+    state.set(id, 'visiting')
+    for (const dep of adjacency.get(id) ?? []) {
+      if (visit(dep)) return true
+    }
+    state.set(id, 'done')
+    return false
+  }
+  for (const id of ids) {
+    if (visit(id)) {
+      errors.push({ field: prefix, message: `cyclic step reference involving "${id}"` })
+      break
+    }
+  }
+
+  return { errors, stepIds: ids }
+}
+
+// ─── Visualization validation ──────────────────────────────────────────────────
 
 function validateValueFormat(value: unknown, field: string): RecipeValidationError[] {
   if (value === undefined) return []
@@ -202,27 +279,38 @@ function validateVisualization(viz: unknown, prefix: string): RecipeValidationEr
   return errors
 }
 
-// ─── Widget validation ────────────────────────────────────────────────────────
+// ─── Widget validation (inline only) ────────────────────────────────────────────
 
-/**
- * Validate the content of a parsed JSON widget recipe.
- * Returns an array of validation errors (empty = valid).
- */
-export function validateJsonWidgetRecipe(recipe: unknown): RecipeValidationError[] {
+function validateWidget(
+  widget: unknown,
+  prefix: string,
+  knownDashboardStepIds: string[],
+): RecipeValidationError[] {
   const errors: RecipeValidationError[] = []
-
-  if (!isPlainObject(recipe)) {
-    errors.push({ field: '(root)', message: 'recipe must be a JSON object' })
+  if (!isPlainObject(widget)) {
+    errors.push({ field: prefix, message: 'must be an object' })
     return errors
   }
 
-  if (!isString(recipe.id)) errors.push({ field: 'id', message: 'required, must be a non-empty string' })
-  if (!isString(recipe.title)) errors.push({ field: 'title', message: 'required, must be a non-empty string' })
-  if (!isString(recipe.query)) errors.push({ field: 'query', message: 'required, must be a non-empty string' })
+  if (!isString(widget.id)) errors.push({ field: `${prefix}.id`, message: 'required, must be a non-empty string' })
+  if (!isString(widget.title)) errors.push({ field: `${prefix}.title`, message: 'required, must be a non-empty string' })
 
-  errors.push(...validateVisualization(recipe.visualization, 'visualization'))
-  errors.push(...validateTransform(recipe.transform, 'transform'))
-  errors.push(...validateParameters(recipe.parameters, 'parameters'))
+  // Legacy single-query form — reject with a migration hint.
+  if (widget.query !== undefined || widget.transform !== undefined) {
+    errors.push({ field: `${prefix}`, message: 'legacy single-query widget (query/transform) is no longer supported — run the recipe migration to convert it to steps/output' })
+  }
+
+  const { errors: stepErrors, stepIds } = validateSteps(widget.steps, `${prefix}.steps`, knownDashboardStepIds)
+  errors.push(...stepErrors)
+
+  if (!isString(widget.output)) {
+    errors.push({ field: `${prefix}.output`, message: 'required, must name a step in this widget' })
+  } else if (stepIds.length > 0 && !stepIds.includes(widget.output)) {
+    errors.push({ field: `${prefix}.output`, message: `names unknown step "${widget.output}"` })
+  }
+
+  errors.push(...validateVisualization(widget.visualization, `${prefix}.visualization`))
+  errors.push(...validateParameters(widget.parameters, `${prefix}.parameters`))
 
   return errors
 }
@@ -230,8 +318,7 @@ export function validateJsonWidgetRecipe(recipe: unknown): RecipeValidationError
 // ─── Dashboard validation ─────────────────────────────────────────────────────
 
 /**
- * Validate the content of a parsed JSON dashboard recipe.
- * Also validates any inline widgets in the "widgets" array.
+ * Validate the content of a parsed JSON dashboard recipe (the only recipe type).
  * Returns an array of validation errors (empty = valid).
  */
 export function validateJsonDashboardRecipe(dashboard: unknown): RecipeValidationError[] {
@@ -242,9 +329,22 @@ export function validateJsonDashboardRecipe(dashboard: unknown): RecipeValidatio
     return errors
   }
 
+  // Format version gate — files without v2 are stale (legacy form / pre-migration).
+  if (dashboard.schemaVersion !== CURRENT_SCHEMA_VERSION) {
+    errors.push({ field: 'schemaVersion', message: `must be ${CURRENT_SCHEMA_VERSION} (run the recipe migration to upgrade legacy recipes)` })
+  }
+
   if (!isString(dashboard.id)) errors.push({ field: 'id', message: 'required, must be a non-empty string' })
   if (!isString(dashboard.title)) errors.push({ field: 'title', message: 'required, must be a non-empty string' })
   errors.push(...validateParameters(dashboard.parameters, 'parameters'))
+
+  // Dashboard shared steps (optional). They may reference only each other.
+  let dashboardStepIds: string[] = []
+  if (dashboard.steps !== undefined) {
+    const { errors: sharedErrors, stepIds } = validateSteps(dashboard.steps, 'steps', [])
+    errors.push(...sharedErrors)
+    dashboardStepIds = stepIds
+  }
 
   // Layout
   if (!isPlainObject(dashboard.layout)) {
@@ -265,18 +365,13 @@ export function validateJsonDashboardRecipe(dashboard: unknown): RecipeValidatio
     }
   }
 
-  // Inline widgets
-  if (dashboard.widgets !== undefined) {
-    if (!Array.isArray(dashboard.widgets)) {
-      errors.push({ field: 'widgets', message: 'must be an array' })
-    } else {
-      dashboard.widgets.forEach((w: unknown, i: number) => {
-        const widgetErrors = validateJsonWidgetRecipe(w)
-        widgetErrors.forEach((e) =>
-          errors.push({ field: `widgets[${i}].${e.field}`, message: e.message })
-        )
-      })
-    }
+  // Inline widgets (non-empty)
+  if (!Array.isArray(dashboard.widgets) || dashboard.widgets.length === 0) {
+    errors.push({ field: 'widgets', message: 'required, must be a non-empty array of inline widgets' })
+  } else {
+    dashboard.widgets.forEach((w: unknown, i: number) => {
+      errors.push(...validateWidget(w, `widgets[${i}]`, dashboardStepIds))
+    })
   }
 
   return errors

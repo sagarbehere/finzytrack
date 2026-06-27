@@ -9,6 +9,5 @@
 import type { RecipeRegistry } from '@/types/recipes'
 
 export const recipeRegistry: RecipeRegistry = {
-  widgets: {},
   dashboards: {},
 }

@@ -1,4 +1,5 @@
 {
+  "schemaVersion": 2,
   "id": "widget-gallery",
   "title": "Widget Gallery",
   "description": "Reference gallery with examples of every widget type the app supports. Useful both for humans creating dashboards manually and for the AI assistant — every widget here is known to validate and render correctly. Hover the ⓘ icons to see the per-type gotchas.",
@@ -7,14 +8,18 @@
       "name": "year",
       "label": "Year",
       "type": "select",
-      "default": { "$gen": "currentYear" },
+      "default": {
+        "$gen": "currentYear"
+      },
       "optionsFrom": "years"
     },
     {
       "name": "currency",
       "label": "Currency",
       "type": "select",
-      "default": { "$gen": "defaultCurrency" },
+      "default": {
+        "$gen": "defaultCurrency"
+      },
       "optionsFrom": "currencies"
     }
   ],
@@ -23,21 +28,66 @@
     "gap": "1.5rem",
     "rowHeight": "140px",
     "widgets": [
-      { "widgetId": "gallery-kpi",     "gridArea": "1 / 1 / 2 / 5" },
-      { "widgetId": "gallery-bar",     "gridArea": "2 / 1 / 5 / 13" },
-      { "widgetId": "gallery-line",    "gridArea": "5 / 1 / 8 / 7" },
-      { "widgetId": "gallery-area",    "gridArea": "5 / 7 / 8 / 13" },
-      { "widgetId": "gallery-pie",     "gridArea": "8 / 1 / 11 / 7" },
-      { "widgetId": "gallery-scatter", "gridArea": "8 / 7 / 11 / 13" },
-      { "widgetId": "gallery-treemap", "gridArea": "11 / 1 / 14 / 13" },
-      { "widgetId": "gallery-table",   "gridArea": "14 / 1 / 17 / 13" },
-      { "widgetId": "gallery-pivot",   "gridArea": "17 / 1 / 21 / 13" },
-      { "widgetId": "gallery-funnel",   "gridArea": "21 / 1 / 24 / 7" },
-      { "widgetId": "gallery-gauge",    "gridArea": "21 / 7 / 24 / 13" },
-      { "widgetId": "gallery-calendar", "gridArea": "24 / 1 / 27 / 13" },
-      { "widgetId": "gallery-sankey",   "gridArea": "27 / 1 / 31 / 13" },
-      { "widgetId": "gallery-radar",    "gridArea": "31 / 1 / 34 / 7" },
-      { "widgetId": "gallery-sunburst", "gridArea": "31 / 7 / 34 / 13" }
+      {
+        "widgetId": "gallery-kpi",
+        "gridArea": "1 / 1 / 2 / 5"
+      },
+      {
+        "widgetId": "gallery-bar",
+        "gridArea": "2 / 1 / 5 / 13"
+      },
+      {
+        "widgetId": "gallery-line",
+        "gridArea": "5 / 1 / 8 / 7"
+      },
+      {
+        "widgetId": "gallery-area",
+        "gridArea": "5 / 7 / 8 / 13"
+      },
+      {
+        "widgetId": "gallery-pie",
+        "gridArea": "8 / 1 / 11 / 7"
+      },
+      {
+        "widgetId": "gallery-scatter",
+        "gridArea": "8 / 7 / 11 / 13"
+      },
+      {
+        "widgetId": "gallery-treemap",
+        "gridArea": "11 / 1 / 14 / 13"
+      },
+      {
+        "widgetId": "gallery-table",
+        "gridArea": "14 / 1 / 17 / 13"
+      },
+      {
+        "widgetId": "gallery-pivot",
+        "gridArea": "17 / 1 / 21 / 13"
+      },
+      {
+        "widgetId": "gallery-funnel",
+        "gridArea": "21 / 1 / 24 / 7"
+      },
+      {
+        "widgetId": "gallery-gauge",
+        "gridArea": "21 / 7 / 24 / 13"
+      },
+      {
+        "widgetId": "gallery-calendar",
+        "gridArea": "24 / 1 / 27 / 13"
+      },
+      {
+        "widgetId": "gallery-sankey",
+        "gridArea": "27 / 1 / 31 / 13"
+      },
+      {
+        "widgetId": "gallery-radar",
+        "gridArea": "31 / 1 / 34 / 7"
+      },
+      {
+        "widgetId": "gallery-sunburst",
+        "gridArea": "31 / 7 / 34 / 13"
+      }
     ]
   },
   "widgets": [
@@ -45,7 +95,6 @@
       "id": "gallery-kpi",
       "title": "Total Income (KPI)",
       "helpText": "Single-value metric. Use multiCurrency:true when the query GROUPs BY currency — the runtime then displays one figure per currency. clickLink navigates to a filtered transactions view.",
-      "query": "SELECT currency, SUM(CAST(amount AS REAL)) * -1 AS amount FROM postings WHERE account_type = 'Income' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency",
       "visualization": {
         "type": "kpi",
         "icon": "↑",
@@ -59,13 +108,28 @@
             "dateTo": "{{dateTo}}"
           }
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT currency, SUM(CAST(amount AS REAL)) * -1 AS amount FROM postings WHERE account_type = 'Income' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "gallery-bar",
       "title": "Monthly Income & Expenses (Bar)",
       "helpText": "Multi-series bar chart. Each series has its own entry in options.series with type:'bar' and encode:{x,y} mapping column names from the query. seriesClickLinks lets each series navigate to a different filter; set a key to null to disable click-through for that series.",
-      "query": "SELECT year_month, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, ROUND(SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END), 2) AS income, ROUND(SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END), 2) AS expenses, ROUND(SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) - SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END), 2) AS savings FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses') GROUP BY year_month ORDER BY year_month",
       "visualization": {
         "type": "chart",
         "chartType": "bar",
@@ -74,42 +138,153 @@
         "seriesClickLinks": {
           "Income": {
             "name": "transactions",
-            "query": { "accountContains": "Income", "dateFrom": "{{data.dateFrom}}", "dateTo": "{{data.dateTo}}" }
+            "query": {
+              "accountContains": "Income",
+              "dateFrom": "{{data.dateFrom}}",
+              "dateTo": "{{data.dateTo}}"
+            }
           },
           "Expenses": {
             "name": "transactions",
-            "query": { "accountContains": "Expenses", "dateFrom": "{{data.dateFrom}}", "dateTo": "{{data.dateTo}}" }
+            "query": {
+              "accountContains": "Expenses",
+              "dateFrom": "{{data.dateFrom}}",
+              "dateTo": "{{data.dateTo}}"
+            }
           },
           "Savings": null
         },
         "options": {
-          "legend": { "data": ["Income", "Expenses", "Savings"], "top": 0, "left": "left", "itemGap": 20 },
-          "grid": { "top": 40, "bottom": 40, "left": 50, "right": 20 },
-          "xAxis": { "type": "category" },
-          "yAxis": { "type": "value", "splitLine": { "lineStyle": { "type": "dashed", "opacity": 0.6 } } },
+          "legend": {
+            "data": [
+              "Income",
+              "Expenses",
+              "Savings"
+            ],
+            "top": 0,
+            "left": "left",
+            "itemGap": 20
+          },
+          "grid": {
+            "top": 40,
+            "bottom": 40,
+            "left": 50,
+            "right": 20
+          },
+          "xAxis": {
+            "type": "category"
+          },
+          "yAxis": {
+            "type": "value",
+            "splitLine": {
+              "lineStyle": {
+                "type": "dashed",
+                "opacity": 0.6
+              }
+            }
+          },
           "series": [
-            { "name": "Income",   "type": "bar", "encode": { "x": "month_label", "y": "income"   }, "itemStyle": { "color": "#7DD3C0" }, "label": { "show": true, "position": "top", "fontSize": 10 } },
-            { "name": "Expenses", "type": "bar", "encode": { "x": "month_label", "y": "expenses" }, "itemStyle": { "color": "#E8A951" }, "label": { "show": true, "position": "top", "fontSize": 10 } },
-            { "name": "Savings",  "type": "bar", "encode": { "x": "month_label", "y": "savings"  }, "itemStyle": { "color": "#7B83AD" }, "label": { "show": true, "position": "top", "fontSize": 10 } }
+            {
+              "name": "Income",
+              "type": "bar",
+              "encode": {
+                "x": "month_label",
+                "y": "income"
+              },
+              "itemStyle": {
+                "color": "#7DD3C0"
+              },
+              "label": {
+                "show": true,
+                "position": "top",
+                "fontSize": 10
+              }
+            },
+            {
+              "name": "Expenses",
+              "type": "bar",
+              "encode": {
+                "x": "month_label",
+                "y": "expenses"
+              },
+              "itemStyle": {
+                "color": "#E8A951"
+              },
+              "label": {
+                "show": true,
+                "position": "top",
+                "fontSize": 10
+              }
+            },
+            {
+              "name": "Savings",
+              "type": "bar",
+              "encode": {
+                "x": "month_label",
+                "y": "savings"
+              },
+              "itemStyle": {
+                "color": "#7B83AD"
+              },
+              "label": {
+                "show": true,
+                "position": "top",
+                "fontSize": 10
+              }
+            }
           ]
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT year_month, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, ROUND(SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END), 2) AS income, ROUND(SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END), 2) AS expenses, ROUND(SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) - SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END), 2) AS savings FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses') GROUP BY year_month ORDER BY year_month"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "gallery-line",
       "title": "Income Trend (Line)",
       "helpText": "Line chart. Identical to bar except chartType:'line' and series[].type:'line'. Add 'smooth':true for curved lines, 'symbol':'circle' to mark each point. For single-series charts, set legend:{show:false} so ECharts doesn't add a redundant series-name strip below.",
-      "query": "SELECT year_month, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, ROUND(SUM(-CAST(amount AS REAL)), 2) AS income FROM postings WHERE account_type = 'Income' AND year = :year AND currency = :currency GROUP BY year_month ORDER BY year_month",
       "visualization": {
         "type": "chart",
         "chartType": "line",
         "yAxisLabelFormat": "compact",
         "options": {
-          "tooltip": { "trigger": "axis" },
-          "legend": { "show": false },
-          "grid": { "top": 16, "bottom": 24, "left": 50, "right": 20 },
-          "xAxis": { "type": "category" },
-          "yAxis": { "type": "value", "splitLine": { "lineStyle": { "type": "dashed", "opacity": 0.6 } } },
+          "tooltip": {
+            "trigger": "axis"
+          },
+          "legend": {
+            "show": false
+          },
+          "grid": {
+            "top": 16,
+            "bottom": 24,
+            "left": 50,
+            "right": 20
+          },
+          "xAxis": {
+            "type": "category"
+          },
+          "yAxis": {
+            "type": "value",
+            "splitLine": {
+              "lineStyle": {
+                "type": "dashed",
+                "opacity": 0.6
+              }
+            }
+          },
           "series": [
             {
               "name": "Income",
@@ -117,9 +292,16 @@
               "smooth": true,
               "symbol": "circle",
               "symbolSize": 6,
-              "encode": { "x": "month_label", "y": "income" },
-              "itemStyle": { "color": "#7DD3C0" },
-              "lineStyle": { "width": 2 }
+              "encode": {
+                "x": "month_label",
+                "y": "income"
+              },
+              "itemStyle": {
+                "color": "#7DD3C0"
+              },
+              "lineStyle": {
+                "width": 2
+              }
             }
           ]
         },
@@ -131,32 +313,75 @@
             "dateTo": "{{data.dateTo}}"
           }
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT year_month, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, ROUND(SUM(-CAST(amount AS REAL)), 2) AS income FROM postings WHERE account_type = 'Income' AND year = :year AND currency = :currency GROUP BY year_month ORDER BY year_month"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "gallery-area",
       "title": "Cumulative Net Cash Flow (Area)",
       "helpText": "Area chart. Set chartType:'area' but the series.type stays 'line' — area is just a line series with an 'areaStyle':{} object. Combine with smooth:true for a flowing fill. Good for cumulative / running-total visuals. Suppress the default legend on single-series charts.",
-      "query": "WITH monthly AS (SELECT year_month, SUM(CASE WHEN account_type = 'Income' THEN -amount WHEN account_type = 'Expenses' THEN -amount ELSE 0 END) AS delta FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses') GROUP BY year_month) SELECT year_month, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, ROUND(SUM(delta) OVER (ORDER BY year_month), 2) AS net FROM monthly ORDER BY year_month",
       "visualization": {
         "type": "chart",
         "chartType": "area",
         "yAxisLabelFormat": "compact",
         "options": {
-          "tooltip": { "trigger": "axis" },
-          "legend": { "show": false },
-          "grid": { "top": 16, "bottom": 24, "left": 50, "right": 20 },
-          "xAxis": { "type": "category" },
-          "yAxis": { "type": "value", "splitLine": { "lineStyle": { "type": "dashed", "opacity": 0.6 } } },
+          "tooltip": {
+            "trigger": "axis"
+          },
+          "legend": {
+            "show": false
+          },
+          "grid": {
+            "top": 16,
+            "bottom": 24,
+            "left": 50,
+            "right": 20
+          },
+          "xAxis": {
+            "type": "category"
+          },
+          "yAxis": {
+            "type": "value",
+            "splitLine": {
+              "lineStyle": {
+                "type": "dashed",
+                "opacity": 0.6
+              }
+            }
+          },
           "series": [
             {
               "name": "Net",
               "type": "line",
               "smooth": true,
-              "encode": { "x": "month_label", "y": "net" },
-              "itemStyle": { "color": "#6366f1" },
-              "areaStyle": { "opacity": 0.3 },
-              "lineStyle": { "width": 2 }
+              "encode": {
+                "x": "month_label",
+                "y": "net"
+              },
+              "itemStyle": {
+                "color": "#6366f1"
+              },
+              "areaStyle": {
+                "opacity": 0.3
+              },
+              "lineStyle": {
+                "width": 2
+              }
             }
           ]
         },
@@ -167,61 +392,143 @@
             "dateTo": "{{data.dateTo}}"
           }
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "WITH monthly AS (SELECT year_month, SUM(CASE WHEN account_type = 'Income' THEN -amount WHEN account_type = 'Expenses' THEN -amount ELSE 0 END) AS delta FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses') GROUP BY year_month) SELECT year_month, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, ROUND(SUM(delta) OVER (ORDER BY year_month), 2) AS net FROM monthly ORDER BY year_month"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "gallery-pie",
       "title": "Assets Breakdown (Pie)",
       "helpText": "Query MUST return columns named 'name' (slice label) and 'value' (slice size). Use HAVING value > 0 — pie cannot display negatives or zeros. radius:['35%','65%'] makes a donut; '50%' makes a solid pie.",
-      "query": "SELECT CASE WHEN account LIKE 'Assets:Liquid:%' THEN REPLACE(account, 'Assets:Liquid:', '') WHEN account LIKE 'Assets:Investments:%' THEN REPLACE(account, 'Assets:Investments:', '') ELSE REPLACE(account, 'Assets:', '') END AS name, account, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Assets' AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC",
       "visualization": {
         "type": "chart",
         "chartType": "pie",
         "options": {
-          "tooltip": { "trigger": "item" },
-          "legend": { "show": false },
+          "tooltip": {
+            "trigger": "item"
+          },
+          "legend": {
+            "show": false
+          },
           "series": [
             {
               "type": "pie",
-              "radius": ["35%", "65%"],
-              "center": ["50%", "50%"],
-              "encode": { "itemName": "name", "value": "value" },
-              "label": { "show": true, "formatter": "{b}", "minShowLabelAngle": 15 },
-              "labelLine": { "show": true, "length": 8, "length2": 8 },
+              "radius": [
+                "35%",
+                "65%"
+              ],
+              "center": [
+                "50%",
+                "50%"
+              ],
+              "encode": {
+                "itemName": "name",
+                "value": "value"
+              },
+              "label": {
+                "show": true,
+                "formatter": "{b}",
+                "minShowLabelAngle": 15
+              },
+              "labelLine": {
+                "show": true,
+                "length": 8,
+                "length2": 8
+              },
               "emphasis": {
-                "label": { "show": true, "fontWeight": "bold", "formatter": "{b}\n{d}%" }
+                "label": {
+                  "show": true,
+                  "fontWeight": "bold",
+                  "formatter": "{b}\n{d}%"
+                }
               }
             }
           ]
         },
         "clickLink": {
           "name": "transactions",
-          "query": { "accountContains": "{{data.account}}" }
+          "query": {
+            "accountContains": "{{data.account}}"
+          }
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT CASE WHEN account LIKE 'Assets:Liquid:%' THEN REPLACE(account, 'Assets:Liquid:', '') WHEN account LIKE 'Assets:Investments:%' THEN REPLACE(account, 'Assets:Investments:', '') ELSE REPLACE(account, 'Assets:', '') END AS name, account, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Assets' AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "gallery-scatter",
       "title": "Expense Distribution (Scatter)",
       "helpText": "Each row in the result is one point. encode:{x,y} maps columns to coordinates; symbolSize can also be encoded for variable-size points. Useful for distributions and outlier-spotting. Suppress the legend on single-series scatters.",
-      "query": "SELECT transaction_date, ROUND(amount, 2) AS amount, account FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency AND amount > 0 ORDER BY transaction_date",
       "visualization": {
         "type": "chart",
         "chartType": "scatter",
         "yAxisLabelFormat": "compact",
         "options": {
-          "tooltip": { "trigger": "item" },
-          "legend": { "show": false },
-          "grid": { "top": 16, "bottom": 24, "left": 50, "right": 20 },
-          "xAxis": { "type": "time" },
-          "yAxis": { "type": "value", "splitLine": { "lineStyle": { "type": "dashed", "opacity": 0.6 } } },
+          "tooltip": {
+            "trigger": "item"
+          },
+          "legend": {
+            "show": false
+          },
+          "grid": {
+            "top": 16,
+            "bottom": 24,
+            "left": 50,
+            "right": 20
+          },
+          "xAxis": {
+            "type": "time"
+          },
+          "yAxis": {
+            "type": "value",
+            "splitLine": {
+              "lineStyle": {
+                "type": "dashed",
+                "opacity": 0.6
+              }
+            }
+          },
           "series": [
             {
               "name": "Expense",
               "type": "scatter",
-              "encode": { "x": "transaction_date", "y": "amount" },
+              "encode": {
+                "x": "transaction_date",
+                "y": "amount"
+              },
               "symbolSize": 8,
-              "itemStyle": { "color": "#E8A951", "opacity": 0.7 }
+              "itemStyle": {
+                "color": "#E8A951",
+                "opacity": 0.7
+              }
             }
           ]
         },
@@ -233,49 +540,109 @@
             "dateTo": "{{data.transaction_date}}"
           }
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT transaction_date, ROUND(amount, 2) AS amount, account FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency AND amount > 0 ORDER BY transaction_date"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "gallery-treemap",
       "title": "Expenses by Category (Treemap)",
       "helpText": "Treemap is the trickiest chart type. Query MUST return columns named 'name' and 'value'. Do NOT set encode — the runtime injects rows directly into series[0].data. Use HAVING value > 0 (treemap rejects negatives and zeros). Skip label colour overrides — the component auto-adjusts label contrast against the box colour.",
-      "query": "SELECT REPLACE(account, 'Expenses:', '') AS name, account, SUM(CAST(amount AS REAL)) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC",
       "visualization": {
         "type": "chart",
         "chartType": "treemap",
         "options": {
-          "tooltip": { "trigger": "item" },
+          "tooltip": {
+            "trigger": "item"
+          },
           "series": [
             {
               "type": "treemap",
               "roam": false,
-              "breadcrumb": { "show": false },
-              "label": { "show": true, "formatter": "{b}" },
-              "upperLabel": { "show": false },
-              "itemStyle": { "borderColor": "#fff", "borderWidth": 2, "gapWidth": 2 },
+              "breadcrumb": {
+                "show": false
+              },
+              "label": {
+                "show": true,
+                "formatter": "{b}"
+              },
+              "upperLabel": {
+                "show": false
+              },
+              "itemStyle": {
+                "borderColor": "#fff",
+                "borderWidth": 2,
+                "gapWidth": 2
+              },
               "levels": [
-                { "itemStyle": { "borderColor": "#555", "borderWidth": 2, "gapWidth": 2 } }
+                {
+                  "itemStyle": {
+                    "borderColor": "#555",
+                    "borderWidth": 2,
+                    "gapWidth": 2
+                  }
+                }
               ]
             }
           ]
         },
         "clickLink": {
           "name": "transactions",
-          "query": { "accountContains": "{{data.account}}" }
+          "query": {
+            "accountContains": "{{data.account}}"
+          }
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT REPLACE(account, 'Expenses:', '') AS name, account, SUM(CAST(amount AS REAL)) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "gallery-table",
       "title": "Largest Expenses (Table)",
       "helpText": "Plain table. columns[].key matches a column name from the query. align is 'left'|'center'|'right'. format applies a predefined formatter (currency, compact, accountName, etc.). Use link for per-cell click-through; the runtime interpolates {{row.field}} from the row data.",
-      "query": "SELECT transaction_date, transaction_payee AS payee, REPLACE(account, 'Expenses:', '') AS category, ROUND(amount, 2) AS amount, account FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency ORDER BY amount DESC LIMIT 20",
       "visualization": {
         "type": "table",
         "columns": [
-          { "key": "transaction_date", "label": "Date" },
-          { "key": "payee",            "label": "Payee" },
-          { "key": "category",         "label": "Category" },
+          {
+            "key": "transaction_date",
+            "label": "Date"
+          },
+          {
+            "key": "payee",
+            "label": "Payee"
+          },
+          {
+            "key": "category",
+            "label": "Category"
+          },
           {
             "key": "amount",
             "label": "Amount",
@@ -283,23 +650,46 @@
             "format": "currency",
             "link": {
               "name": "transactions",
-              "query": { "accountContains": "{{row.account}}", "dateFrom": "{{row.transaction_date}}", "dateTo": "{{row.transaction_date}}" }
+              "query": {
+                "accountContains": "{{row.account}}",
+                "dateFrom": "{{row.transaction_date}}",
+                "dateTo": "{{row.transaction_date}}"
+              }
             }
           }
         ]
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT transaction_date, transaction_payee AS payee, REPLACE(account, 'Expenses:', '') AS category, ROUND(amount, 2) AS amount, account FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency ORDER BY amount DESC LIMIT 20"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "gallery-funnel",
       "title": "Income → Expenses → Savings (Funnel)",
       "helpText": "Funnel chart shows ranked stages, larger at top, narrowing down. Query MUST return columns named 'name' (stage label) and 'value' (stage size). Like pie/treemap, the runtime injects rows into series[0].data — do NOT use encode. Use HAVING value > 0 (negatives don't make sense for stages). Good for budget/savings allocation. Add a clickLink with `{{data.name}}` when stages map to real account categories; skip clickLink when stages are computed values (like 'After Expenses') that don't match a filterable name.",
-      "query": "WITH totals AS (SELECT SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) AS income, SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END) AS expenses FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses')) SELECT 'Income' AS name, income AS value FROM totals UNION ALL SELECT 'After Expenses', income - expenses FROM totals UNION ALL SELECT 'Net Savings', CASE WHEN income - expenses > 0 THEN income - expenses ELSE 0 END FROM totals",
       "visualization": {
         "type": "chart",
         "chartType": "funnel",
         "options": {
-          "tooltip": { "trigger": "item" },
-          "legend": { "show": false },
+          "tooltip": {
+            "trigger": "item"
+          },
+          "legend": {
+            "show": false
+          },
           "series": [
             {
               "type": "funnel",
@@ -309,24 +699,50 @@
               "bottom": 20,
               "sort": "descending",
               "gap": 2,
-              "label": { "show": true, "position": "inside", "formatter": "{b}" },
-              "labelLine": { "show": false },
-              "itemStyle": { "borderColor": "#fff", "borderWidth": 1 }
+              "label": {
+                "show": true,
+                "position": "inside",
+                "formatter": "{b}"
+              },
+              "labelLine": {
+                "show": false
+              },
+              "itemStyle": {
+                "borderColor": "#fff",
+                "borderWidth": 1
+              }
             }
           ]
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "WITH totals AS (SELECT SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) AS income, SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END) AS expenses FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses')) SELECT 'Income' AS name, income AS value FROM totals UNION ALL SELECT 'After Expenses', income - expenses FROM totals UNION ALL SELECT 'Net Savings', CASE WHEN income - expenses > 0 THEN income - expenses ELSE 0 END FROM totals"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "gallery-gauge",
       "title": "Savings Rate (Gauge)",
       "helpText": "Gauge shows a single value against a min/max range. Query should return ONE row with a numeric column. The runtime injects the first row into series[0].data — do NOT use encode. Set series.min, series.max, and use detail.formatter for the centered display. Great for budget progress (% used) and savings rate.",
-      "query": "WITH totals AS (SELECT SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) AS income, SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END) AS expenses FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses')) SELECT ROUND(MAX(0, MIN(100, CASE WHEN income > 0 THEN ((income - expenses) * 100.0 / income) ELSE 0 END)), 1) AS value, 'Savings Rate' AS name FROM totals",
       "visualization": {
         "type": "chart",
         "chartType": "gauge",
         "options": {
-          "tooltip": { "trigger": "item" },
+          "tooltip": {
+            "trigger": "item"
+          },
           "series": [
             {
               "type": "gauge",
@@ -337,36 +753,88 @@
               "axisLine": {
                 "lineStyle": {
                   "width": 16,
-                  "color": [[0.2, "#E8A951"], [0.5, "#F0D670"], [1, "#7DD3C0"]]
+                  "color": [
+                    [
+                      0.2,
+                      "#E8A951"
+                    ],
+                    [
+                      0.5,
+                      "#F0D670"
+                    ],
+                    [
+                      1,
+                      "#7DD3C0"
+                    ]
+                  ]
                 }
               },
-              "pointer": { "show": true, "length": "60%", "width": 4 },
-              "axisTick": { "show": false },
-              "splitLine": { "length": 8, "lineStyle": { "color": "#fff", "width": 2 } },
-              "axisLabel": { "fontSize": 10, "distance": -22 },
-              "title": { "show": false },
+              "pointer": {
+                "show": true,
+                "length": "60%",
+                "width": 4
+              },
+              "axisTick": {
+                "show": false
+              },
+              "splitLine": {
+                "length": 8,
+                "lineStyle": {
+                  "color": "#fff",
+                  "width": 2
+                }
+              },
+              "axisLabel": {
+                "fontSize": 10,
+                "distance": -22
+              },
+              "title": {
+                "show": false
+              },
               "detail": {
                 "valueAnimation": true,
                 "formatter": "{value}%",
                 "fontSize": 22,
-                "offsetCenter": [0, "60%"]
+                "offsetCenter": [
+                  0,
+                  "60%"
+                ]
               }
             }
           ]
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "WITH totals AS (SELECT SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) AS income, SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END) AS expenses FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses')) SELECT ROUND(MAX(0, MIN(100, CASE WHEN income > 0 THEN ((income - expenses) * 100.0 / income) ELSE 0 END)), 1) AS value, 'Savings Rate' AS name FROM totals"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "gallery-calendar",
       "title": "Daily Spending (Calendar Heatmap)",
       "helpText": "Calendar heatmap shows one cell per day across a year. Query MUST return columns named 'date' (YYYY-MM-DD) and 'value' (numeric). The runtime projects rows to ECharts heatmap data and auto-injects a tooltip formatter that shows DATE + currency-formatted value. The chart needs a top-level `calendar` option (`range` is auto-derived from data if you don't set it) and a `visualMap` for the colour scale. Always set legend:{show:false} — the global legend swatch is cosmetic and clashes with the visualMap colour ramp. ClickLinks work — the runtime exposes the original row's columns to template variables, so {{data.date}} resolves to the cell's date.",
-      "query": "SELECT transaction_date AS date, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency AND amount > 0 GROUP BY transaction_date ORDER BY transaction_date",
       "visualization": {
         "type": "chart",
         "chartType": "calendar",
         "options": {
-          "tooltip": { "trigger": "item" },
-          "legend": { "show": false },
+          "tooltip": {
+            "trigger": "item"
+          },
+          "legend": {
+            "show": false
+          },
           "visualMap": {
             "show": true,
             "min": 0,
@@ -376,18 +844,37 @@
             "left": "center",
             "top": 0,
             "calculable": true,
-            "inRange": { "color": ["#f3f4f6", "#7DD3C0", "#10b981", "#065f46"] }
+            "inRange": {
+              "color": [
+                "#f3f4f6",
+                "#7DD3C0",
+                "#10b981",
+                "#065f46"
+              ]
+            }
           },
           "calendar": {
             "top": 60,
             "left": 30,
             "right": 30,
-            "cellSize": ["auto", 14],
+            "cellSize": [
+              "auto",
+              14
+            ],
             "range": ":year",
-            "itemStyle": { "borderWidth": 0.5, "borderColor": "#fff" },
-            "yearLabel": { "show": false },
-            "dayLabel": { "fontSize": 9 },
-            "monthLabel": { "fontSize": 10 }
+            "itemStyle": {
+              "borderWidth": 0.5,
+              "borderColor": "#fff"
+            },
+            "yearLabel": {
+              "show": false
+            },
+            "dayLabel": {
+              "fontSize": 9
+            },
+            "monthLabel": {
+              "fontSize": 10
+            }
           },
           "series": [
             {
@@ -405,18 +892,36 @@
             "dateTo": "{{data.date}}"
           }
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT transaction_date AS date, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency AND amount > 0 GROUP BY transaction_date ORDER BY transaction_date"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "gallery-sankey",
       "title": "Money Flow: Income → Expenses (Sankey)",
       "helpText": "Sankey shows flow between source and target categories with link width proportional to value. Query MUST return 'source', 'target', and 'value'. Source/target are typically *display labels* (often with account prefixes stripped); to make clickLinks route correctly, also emit 'sourceAccount' and 'targetAccount' columns carrying the real account paths (NULL for synthetic intermediates like 'Total Income'). The runtime uses these to attach a realAccount to BOTH nodes (rectangles) and links (flows), so {{data.realAccount}} resolves correctly whether the user clicks a rectangle or a flow. Filter out value <= 0 in SQL — sankey can't show zero or negative flows.",
-      "query": "SELECT REPLACE(account, 'Income:', '') AS source, account AS sourceAccount, 'Total Income' AS target, NULL AS targetAccount, ROUND(SUM(-CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Income' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 UNION ALL SELECT 'Total Income' AS source, NULL AS sourceAccount, REPLACE(account, 'Expenses:', '') AS target, account AS targetAccount, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0",
       "visualization": {
         "type": "chart",
         "chartType": "sankey",
         "options": {
-          "tooltip": { "trigger": "item", "triggerOn": "mousemove" },
+          "tooltip": {
+            "trigger": "item",
+            "triggerOn": "mousemove"
+          },
           "series": [
             {
               "type": "sankey",
@@ -425,91 +930,195 @@
               "top": 16,
               "bottom": 16,
               "nodeAlign": "justify",
-              "lineStyle": { "color": "gradient", "curveness": 0.5, "opacity": 0.5 },
-              "label": { "fontSize": 10 },
-              "emphasis": { "focus": "adjacency" }
+              "lineStyle": {
+                "color": "gradient",
+                "curveness": 0.5,
+                "opacity": 0.5
+              },
+              "label": {
+                "fontSize": 10
+              },
+              "emphasis": {
+                "focus": "adjacency"
+              }
             }
           ]
         },
         "clickLink": {
           "name": "transactions",
-          "query": { "accountContains": "{{data.realAccount}}" }
+          "query": {
+            "accountContains": "{{data.realAccount}}"
+          }
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT REPLACE(account, 'Income:', '') AS source, account AS sourceAccount, 'Total Income' AS target, NULL AS targetAccount, ROUND(SUM(-CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Income' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 UNION ALL SELECT 'Total Income' AS source, NULL AS sourceAccount, REPLACE(account, 'Expenses:', '') AS target, account AS targetAccount, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "gallery-radar",
       "title": "Spending Profile by Category (Radar)",
       "helpText": "Radar compares values across multiple dimensions on a single shape. Query returns one row per dimension with columns 'category' (axis label) and 'value' (axis value). The runtime auto-builds the radar.indicator from the categories, scaled to 1.2× the max value. Override via series.indicatorMaxRatio. The recipe can supply a partial top-level `radar:` config to style the axes (axisName, splitLine, splitArea); the runtime merges with the derived indicator. Best for 4-8 dimensions; fewer feels sparse, more becomes hard to read. **No clickLink** — ECharts radar emits clicks at the subject (the whole row) level rather than the dimension level, so per-axis navigation isn't reliably expressible.",
-      "query": "SELECT REPLACE(account, 'Expenses:', '') AS category, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC LIMIT 6",
       "visualization": {
         "type": "chart",
         "chartType": "radar",
         "options": {
-          "tooltip": { "trigger": "item" },
-          "legend": { "show": false },
+          "tooltip": {
+            "trigger": "item"
+          },
+          "legend": {
+            "show": false
+          },
           "radar": {
             "shape": "polygon",
             "splitNumber": 4,
-            "axisName": { "color": "#9ca3af", "fontSize": 11 },
-            "splitLine": { "lineStyle": { "color": "rgba(156,163,175,0.2)" } },
-            "splitArea": { "show": false },
-            "axisLine": { "lineStyle": { "color": "rgba(156,163,175,0.3)" } }
+            "axisName": {
+              "color": "#9ca3af",
+              "fontSize": 11
+            },
+            "splitLine": {
+              "lineStyle": {
+                "color": "rgba(156,163,175,0.2)"
+              }
+            },
+            "splitArea": {
+              "show": false
+            },
+            "axisLine": {
+              "lineStyle": {
+                "color": "rgba(156,163,175,0.3)"
+              }
+            }
           },
           "series": [
             {
               "type": "radar",
-              "areaStyle": { "opacity": 0.4, "color": "#6366f1" },
-              "lineStyle": { "width": 2, "color": "#6366f1" },
-              "itemStyle": { "color": "#818cf8" },
+              "areaStyle": {
+                "opacity": 0.4,
+                "color": "#6366f1"
+              },
+              "lineStyle": {
+                "width": 2,
+                "color": "#6366f1"
+              },
+              "itemStyle": {
+                "color": "#818cf8"
+              },
               "symbol": "circle",
               "symbolSize": 6,
-              "label": { "show": false }
+              "label": {
+                "show": false
+              }
             }
           ]
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT REPLACE(account, 'Expenses:', '') AS category, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC LIMIT 6"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "gallery-sunburst",
       "title": "Hierarchical Expenses (Sunburst)",
       "helpText": "Sunburst shows nested hierarchies as concentric rings. Query returns rows with 'account' (colon-separated path like 'Expenses:Food:Restaurants') and 'value'. The runtime splits paths and builds the nested tree automatically — outer rings are deeper levels. Use when categories naturally nest (account hierarchies, time periods); prefer treemap for flat distributions. **No clickLink** — ECharts sunburst uses clicks for drill-down/zoom navigation; adding a clickLink would conflict with that built-in interaction.",
-      "query": "SELECT account, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC",
       "visualization": {
         "type": "chart",
         "chartType": "sunburst",
         "options": {
-          "tooltip": { "trigger": "item" },
+          "tooltip": {
+            "trigger": "item"
+          },
           "series": [
             {
               "type": "sunburst",
-              "radius": [0, "90%"],
-              "label": { "rotate": "tangential", "minAngle": 6, "fontSize": 10 },
-              "itemStyle": { "borderColor": "#fff", "borderWidth": 1 },
+              "radius": [
+                0,
+                "90%"
+              ],
+              "label": {
+                "rotate": "tangential",
+                "minAngle": 6,
+                "fontSize": 10
+              },
+              "itemStyle": {
+                "borderColor": "#fff",
+                "borderWidth": 1
+              },
               "levels": [
                 {},
-                { "r0": "15%", "r": "45%", "label": { "rotate": "tangential" } },
-                { "r0": "45%", "r": "75%", "label": { "rotate": "tangential" } },
-                { "r0": "75%", "r": "90%", "label": { "rotate": 0 } }
+                {
+                  "r0": "15%",
+                  "r": "45%",
+                  "label": {
+                    "rotate": "tangential"
+                  }
+                },
+                {
+                  "r0": "45%",
+                  "r": "75%",
+                  "label": {
+                    "rotate": "tangential"
+                  }
+                },
+                {
+                  "r0": "75%",
+                  "r": "90%",
+                  "label": {
+                    "rotate": 0
+                  }
+                }
               ]
             }
           ]
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT account, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "gallery-pivot",
       "title": "Expenses by Account × Month (Pivot)",
       "helpText": "Pivot needs a 'transform' of type 'pivot' that names rowField (the row-label column), columnField (which becomes column headers) and valueField (cell values). The visualization just consumes the pivoted result. Use formatColumn:'monthYear' to render YYYY-MM as 'January 2026'.",
-      "query": "SELECT account, year_month, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account, year_month ORDER BY account, year_month",
-      "transform": {
-        "type": "pivot",
-        "rowField": "account",
-        "columnField": "year_month",
-        "valueField": "amount",
-        "formatColumn": "monthYear",
-        "sortRowsBy": "total_desc"
-      },
       "visualization": {
         "type": "pivot",
         "rowHeader": "Account",
@@ -523,7 +1132,31 @@
             "dateTo": "{{columnMeta.endDate}}"
           }
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT account, year_month, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account, year_month ORDER BY account, year_month"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "pivot",
+          "inputs": [
+            "{{steps.main}}"
+          ],
+          "config": {
+            "type": "pivot",
+            "rowField": "account",
+            "columnField": "year_month",
+            "valueField": "amount",
+            "formatColumn": "monthYear",
+            "sortRowsBy": "total_desc"
+          }
+        }
+      ],
+      "output": "out"
     }
   ]
 }

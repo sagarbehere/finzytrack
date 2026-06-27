@@ -1,4 +1,5 @@
 {
+  "schemaVersion": 2,
   "id": "month-summary",
   "title": "Month Summary",
   "description": "Monthly financial summary with income, expenses, and expense treemap breakdown",
@@ -7,15 +8,21 @@
       "name": "year",
       "label": "Year",
       "type": "select",
-      "default": { "$gen": "currentYear" },
+      "default": {
+        "$gen": "currentYear"
+      },
       "optionsFrom": "years"
     },
     {
       "name": "month",
       "label": "Month",
       "type": "select",
-      "default": { "$gen": "currentMonth" },
-      "options": { "$gen": "monthOptions" }
+      "default": {
+        "$gen": "currentMonth"
+      },
+      "options": {
+        "$gen": "monthOptions"
+      }
     }
   ],
   "layout": {
@@ -45,10 +52,9 @@
     {
       "id": "monthly-income",
       "title": "Total Income",
-      "query": "SELECT currency, SUM(CAST(amount AS REAL)) * -1 AS amount FROM postings WHERE account_type = 'Income' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY currency",
       "visualization": {
         "type": "kpi",
-        "icon": "\u2191",
+        "icon": "↑",
         "iconColor": "green",
         "multiCurrency": true,
         "clickLink": {
@@ -59,15 +65,30 @@
             "dateTo": "{{dateTo}}"
           }
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT currency, SUM(CAST(amount AS REAL)) * -1 AS amount FROM postings WHERE account_type = 'Income' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY currency"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "monthly-expenses",
       "title": "Total Expenses",
-      "query": "SELECT currency, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY currency",
       "visualization": {
         "type": "kpi",
-        "icon": "\u2193",
+        "icon": "↓",
         "iconColor": "red",
         "multiCurrency": true,
         "clickLink": {
@@ -78,18 +99,149 @@
             "dateTo": "{{dateTo}}"
           }
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT currency, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY currency"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "monthly-savings",
       "title": "Savings",
-      "query": "SELECT currency, (SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END)) - (SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END)) AS amount FROM postings WHERE year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month AND account_type IN ('Income', 'Expenses') GROUP BY currency HAVING amount != 0 ORDER BY currency",
       "visualization": {
         "type": "kpi",
         "icon": "$",
         "iconColor": "blue",
         "multiCurrency": true
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT currency, (SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END)) - (SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END)) AS amount FROM postings WHERE year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month AND account_type IN ('Income', 'Expenses') GROUP BY currency HAVING amount != 0 ORDER BY currency"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
+    },
+    {
+      "id": "expense-treemap",
+      "title": "Expense Treemap",
+      "description": "Treemap visualization of expenses by account for a given month",
+      "helpText": "Only shows categories with net positive expenses",
+      "parameters": [
+        {
+          "name": "year",
+          "label": "Year",
+          "type": "select",
+          "default": {
+            "$gen": "currentYear"
+          },
+          "optionsFrom": "years"
+        },
+        {
+          "name": "month",
+          "label": "Month",
+          "type": "select",
+          "default": {
+            "$gen": "currentMonth"
+          },
+          "options": {
+            "$gen": "monthOptions"
+          }
+        },
+        {
+          "name": "currency",
+          "label": "Currency",
+          "type": "select",
+          "default": {
+            "$gen": "defaultCurrency"
+          },
+          "optionsFrom": "currencies"
+        }
+      ],
+      "visualization": {
+        "type": "chart",
+        "chartType": "treemap",
+        "options": {
+          "tooltip": {
+            "trigger": "item"
+          },
+          "series": [
+            {
+              "type": "treemap",
+              "roam": false,
+              "breadcrumb": {
+                "show": false
+              },
+              "label": {
+                "show": true,
+                "formatter": "{b}"
+              },
+              "upperLabel": {
+                "show": false
+              },
+              "itemStyle": {
+                "borderColor": "#fff",
+                "borderWidth": 2,
+                "gapWidth": 2
+              },
+              "levels": [
+                {
+                  "itemStyle": {
+                    "borderColor": "#555",
+                    "borderWidth": 2,
+                    "gapWidth": 2
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "clickLink": {
+          "name": "transactions",
+          "query": {
+            "accountContains": "{{data.account}}",
+            "dateFrom": "{{data.dateFrom}}",
+            "dateTo": "{{data.dateTo}}"
+          }
+        }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT REPLACE(account, 'Expenses:', '') AS name, account, SUM(CAST(amount AS REAL)) AS value, :year || '-' || printf('%02d', :month) || '-01' AS dateFrom, date(:year || '-' || printf('%02d', :month) || '-01', '+1 month', '-1 day') AS dateTo FROM postings WHERE account_type = 'Expenses' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     }
   ]
 }

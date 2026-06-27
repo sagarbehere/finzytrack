@@ -66,7 +66,6 @@ import type {
   WidgetRecipe,
   JsonWidgetRecipe,
 } from '@/types/recipes'
-import { useRecipeLoader } from '@/composables/useRecipeLoader'
 import { getStorageAdapter, STORAGE_KEYS } from '@/services/storage'
 import { resolveParameterValues } from '@/recipes/functions'
 import RecipeWidget from './RecipeWidget.vue'
@@ -83,7 +82,6 @@ const emit = defineEmits<{
   'update:parameters': [params: Record<string, string | number>]
 }>()
 
-const { getWidget } = useRecipeLoader()
 
 /**
  * The user's parameter *selections* — what they picked in the dropdowns.
@@ -101,15 +99,13 @@ const resolvedDashboardParameters = computed(() =>
 )
 
 /**
- * Get widget by ID.
- * Resolution order:
- * 1. Dashboard's embedded widgets array
- * 2. Global registry (built-in TypeScript + user JSON widgets)
- *
- * This allows JSON dashboards to reference TypeScript widgets by ID.
+ * Get widget by ID from the dashboard's own inline widgets[]. Widgets are
+ * inline-only — there is no standalone-widget registry to fall back to
+ * (refactored-dashboard-recipes.md §4.10b). A missing widgetId is an authoring
+ * error surfaced in place.
  */
 function getWidgetById(widgetId: string): WidgetRecipe | JsonWidgetRecipe | undefined {
-  return props.dashboard.widgets?.find((w) => w.id === widgetId) ?? getWidget(widgetId)
+  return props.dashboard.widgets?.find((w) => w.id === widgetId)
 }
 
 /**

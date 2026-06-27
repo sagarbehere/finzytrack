@@ -3,41 +3,31 @@
 /**
  * JSON shape of a dashboard or widget recipe authored by the AI assistant or by a user. Source of truth for both validation and the prompt-doc appendix. Function-typed fields (transform, getValueLink, etc.) on the runtime TypeScript types are deliberately excluded — only serialisable fields appear here.
  */
-export type FinzyTrackRecipe = JsonWidgetRecipe | JsonDashboardRecipe;
+export type FinzyTrackRecipe = JsonDashboardRecipe;
 /**
  * Lowercase letters, numbers, and hyphens. Must start and end alphanumeric (e.g. 'my-dashboard-name').
  */
 export type RecipeId = string;
-export type Transform = ("none" | "firstRow" | "firstValue") | TransformConfig;
-export type TransformConfig = {
-  [k: string]: unknown;
-} & {
-  type: "sortBy" | "limit" | "pluck" | "pivot";
-  /**
-   * For sortBy or pluck.
-   */
-  field?: string;
-  order?: "asc" | "desc";
-  /**
-   * For limit transform.
-   */
-  count?: number;
-  /**
-   * For pivot — column whose values become row labels.
-   */
-  rowField?: string;
-  /**
-   * For pivot — column whose values become column headers.
-   */
-  columnField?: string;
-  /**
-   * For pivot — column containing cell values.
-   */
-  valueField?: string;
-  formatColumn?: "monthYear" | "yearMonth";
-  sortRowsBy?: "total_desc" | "total_asc" | "label_asc" | "label_desc";
-  [k: string]: unknown;
-};
+/**
+ * The recipe's data pipeline as an array of named steps. Array order is for readability only; execution order is the topological sort of {{steps.*}} references. Step ids must be unique.
+ *
+ * @minItems 1
+ */
+export type Steps = [Step, ...Step[]];
+/**
+ * A single node in a recipe's data-pipeline DAG. Discriminated on `kind`.
+ */
+export type Step = SqlStep | ComputeStep | TransformStep;
+/**
+ * Step identifier, unique within a recipe. Referenced from other steps as {{steps.<id>}} (or {{dashboard.steps.<id>}} for a dashboard shared step). Lowercase letters, numbers, and hyphens.
+ */
+export type StepId = string;
+/**
+ * The recipe's data pipeline as an array of named steps. Array order is for readability only; execution order is the topological sort of {{steps.*}} references. Step ids must be unique.
+ *
+ * @minItems 1
+ */
+export type Steps1 = [Step, ...Step[]];
 export type JsonRecipeVisualization =
   | JsonChartVisualization
   | JsonKPIVisualization
@@ -70,25 +60,41 @@ export type ValueFormat =
   | "accountName"
   | "accountName2";
 
-export interface JsonWidgetRecipe {
+/**
+ * The only recipe type. Owns layout, parameters, optional shared steps, and an array of inline widget definitions.
+ */
+export interface JsonDashboardRecipe {
+  /**
+   * Recipe format version. Always 2 for the steps/DAG format. Files without it are rejected (run the migration).
+   */
+  schemaVersion: 2;
   id: RecipeId;
   title: string;
   description?: string;
-  /**
-   * Tooltip shown as ⓘ icon.
-   */
-  helpText?: string;
   parameters?: RecipeParameter[];
+  steps?: Steps;
+  layout: {
+    /**
+     * Total columns in the grid (12 typical).
+     */
+    columns: number;
+    /**
+     * CSS gap, e.g. '1.5rem'.
+     */
+    gap?: string;
+    /**
+     * CSS row height, e.g. '140px' or '200px'.
+     */
+    rowHeight?: string;
+    widgets: WidgetLayout[];
+    [k: string]: unknown;
+  };
   /**
-   * Query engine override (defaults to dashboard/view setting).
+   * Inline widget definitions (non-empty). Each widget's id is the layout.widgets[].widgetId target within this dashboard.
+   *
+   * @minItems 1
    */
-  dbType?: "sqlite" | "beanquery";
-  /**
-   * SQL SELECT (SQLite). Use :paramName for parameter placeholders.
-   */
-  query: string;
-  transform?: Transform;
-  visualization: JsonRecipeVisualization;
+  widgets: [JsonWidgetRecipe, ...JsonWidgetRecipe[]];
   [k: string]: unknown;
 }
 export interface RecipeParameter {
@@ -130,6 +136,80 @@ export interface RecipeParameter {
   optionsFrom?: "currencies" | "years";
   min?: number;
   max?: number;
+  [k: string]: unknown;
+}
+export interface SqlStep {
+  id: StepId;
+  kind: "sql";
+  /**
+   * SQL SELECT against the ledger mirror. Use :paramName for recipe-parameter placeholders. {{...}} step references are NOT allowed here — a SQL step is a leaf data source and cannot read another step's rows.
+   */
+  query: string;
+  /**
+   * Query engine for this step (defaults to sqlite).
+   */
+  dbType?: "sqlite" | "beanquery";
+}
+export interface ComputeStep {
+  id: StepId;
+  kind: "compute";
+  /**
+   * Name of a server-side compute function (fixed catalog; see get_compute_functions). Validated server-side.
+   */
+  fn: string;
+  /**
+   * Scalar arguments for the compute function. Values may be literals or {{params.x}} / {{steps.x}} / {{dashboard.steps.x}} template strings. Pass only small scalars — bulk data is read server-side by the function, not shuttled through the client.
+   */
+  args?: {
+    [k: string]: unknown;
+  };
+}
+export interface TransformStep {
+  id: StepId;
+  kind: "transform";
+  /**
+   * Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, pivot, joinBudgetActual, runningSum, envelopeRollover, ...). Validated server-side.
+   */
+  fn: string;
+  /**
+   * Ordered {{steps.<id>}} / {{dashboard.steps.<id>}} references to the step outputs this transform consumes.
+   *
+   * @minItems 1
+   */
+  inputs: [string, ...string[]];
+  /**
+   * Transform-specific configuration; the accepted shape depends on fn (see the transform catalog in the schema doc).
+   */
+  config?: {
+    [k: string]: unknown;
+  };
+}
+export interface WidgetLayout {
+  widgetId: string;
+  /**
+   * CSS grid-area: 'row-start / col-start / row-end / col-end' (1-based, e.g. '1 / 1 / 2 / 4').
+   */
+  gridArea: string;
+  [k: string]: unknown;
+}
+/**
+ * An inline widget inside a dashboard. Widgets are never stored or referenced standalone — each lives in its enclosing dashboard's widgets[]. schemaVersion is stamped on the dashboard, not here.
+ */
+export interface JsonWidgetRecipe {
+  id: RecipeId;
+  title: string;
+  description?: string;
+  /**
+   * Tooltip shown as ⓘ icon.
+   */
+  helpText?: string;
+  parameters?: RecipeParameter[];
+  steps: Steps1;
+  /**
+   * Id of the step whose output feeds the visualization. Required; must name a step in this widget's steps[].
+   */
+  output: string;
+  visualization: JsonRecipeVisualization;
   [k: string]: unknown;
 }
 export interface JsonChartVisualization {
@@ -212,40 +292,5 @@ export interface JsonPivotVisualization {
   showRowTotals?: boolean;
   showColumnTotals?: boolean;
   valueLink?: JsonValueLinkConfig;
-  [k: string]: unknown;
-}
-export interface JsonDashboardRecipe {
-  id: RecipeId;
-  title: string;
-  description?: string;
-  parameters?: RecipeParameter[];
-  layout: {
-    /**
-     * Total columns in the grid (12 typical).
-     */
-    columns: number;
-    /**
-     * CSS gap, e.g. '1.5rem'.
-     */
-    gap?: string;
-    /**
-     * CSS row height, e.g. '140px' or '200px'.
-     */
-    rowHeight?: string;
-    widgets: WidgetLayout[];
-    [k: string]: unknown;
-  };
-  /**
-   * Inline widget definitions. Empty [] when widgets are loaded by widgetId from the registry.
-   */
-  widgets: JsonWidgetRecipe[];
-  [k: string]: unknown;
-}
-export interface WidgetLayout {
-  widgetId: string;
-  /**
-   * CSS grid-area: 'row-start / col-start / row-end / col-end' (1-based, e.g. '1 / 1 / 2 / 4').
-   */
-  gridArea: string;
   [k: string]: unknown;
 }

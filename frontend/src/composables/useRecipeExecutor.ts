@@ -3,24 +3,42 @@ import type {
   WidgetRecipe,
   JsonWidgetRecipe,
   ValueFormat,
-  QueryEngineType,
+  Step,
+  StepKind,
+  TransformConfig,
+  TransformContext,
 } from '@/types/recipes'
 import { LedgerService } from '@/services/generated-api'
 import type { QueryRequest } from '@/services/generated-api'
 import { formatAmount, formatSignedAmount } from '@/utils/currencyFormat'
 import { errorHandler } from '@/utils/ErrorHandler'
-import { applyPredefinedTransform } from '@/composables/useRecipeTransforms'
+import { applyTransform } from '@/composables/useRecipeTransforms'
 
 /**
- * Union type for any widget recipe (TypeScript or JSON)
+ * Union type for any widget recipe (TypeScript or JSON). Both are now
+ * step/DAG-shaped (the standalone single-query form was removed).
  */
 export type AnyWidgetRecipe = WidgetRecipe | JsonWidgetRecipe
 
 /**
- * Check if a recipe is a JSON recipe (has string/object transform instead of function)
+ * Structured execution error. A failing step short-circuits its dependents;
+ * the widget renders its error state from `stepId`/`message` (which names the
+ * failed step). See refactored-dashboard-recipes.md §3.5.
  */
-function isJsonRecipe(recipe: AnyWidgetRecipe): recipe is JsonWidgetRecipe {
-  return typeof recipe.transform !== 'function'
+export interface StepError {
+  stepId: string
+  kind: StepKind | 'graph'
+  message: string
+}
+
+export function isStepError(e: unknown): e is StepError {
+  return (
+    typeof e === 'object' &&
+    e !== null &&
+    'stepId' in e &&
+    'kind' in e &&
+    'message' in e
+  )
 }
 
 // ============================================================================
@@ -125,94 +143,231 @@ export function getFormats(currency?: string): Record<ValueFormat, (value: unkno
 }
 
 /**
- * Composable for executing recipe queries and transforms.
- * Supports both TypeScript recipes (with function transforms) and
- * JSON recipes (with predefined transforms).
+ * Interpolate parameter values into a SQL string.
+ * Replaces :paramName placeholders with escaped values (string substitution,
+ * not bound params — inherited behaviour; see §3.6 G9). Exported for reuse and
+ * tests.
+ */
+export function interpolateParameters(
+  sql: string,
+  params: Record<string, string | number>
+): string {
+  let result = sql
+  for (const [key, value] of Object.entries(params)) {
+    const placeholder = `:${key}`
+    // Numbers don't need quotes, strings need escaped quotes
+    const escaped =
+      typeof value === 'number'
+        ? String(value)
+        : `'${String(value).replace(/'/g, "''")}'`
+    result = result.replaceAll(placeholder, escaped)
+  }
+  return result
+}
+
+// ── Step-reference interpolation ({{params|steps|dashboard.steps}}) ──────────
+
+const WHOLE_TOKEN_RE = /^\{\{\s*([^}]+?)\s*\}\}$/
+const ANY_TOKEN_RE = /\{\{\s*([^}]+?)\s*\}\}/g
+
+interface RefScope {
+  params: Record<string, string | number>
+  steps: Record<string, unknown>
+  dashboardSteps: Record<string, unknown>
+}
+
+/** Resolve a dotted reference path (`steps.actuals`, `params.x`, `dashboard.steps.y`). */
+function resolveRef(path: string, scope: RefScope): unknown {
+  const parts = path.split('.')
+  if (parts[0] === 'params') return scope.params[parts[1]]
+  if (parts[0] === 'steps') return scope.steps[parts[1]]
+  if (parts[0] === 'dashboard' && parts[1] === 'steps') return scope.dashboardSteps[parts[2]]
+  return undefined
+}
+
+/**
+ * Resolve `{{...}}` references in a value.
+ * - Whole-value mode: a string that is exactly one token resolves to the actual
+ *   value (object/array preserved).
+ * - String-interpolation mode: tokens embedded in a larger string resolve to
+ *   String(value).
+ * Objects/arrays are resolved recursively (for nested compute args).
+ */
+function interpolateValue(raw: unknown, scope: RefScope): unknown {
+  if (typeof raw === 'string') {
+    const whole = raw.match(WHOLE_TOKEN_RE)
+    if (whole) return resolveRef(whole[1], scope)
+    if (ANY_TOKEN_RE.test(raw)) {
+      return raw.replace(ANY_TOKEN_RE, (_m, p1: string) => String(resolveRef(p1.trim(), scope) ?? ''))
+    }
+    return raw
+  }
+  if (Array.isArray(raw)) return raw.map((v) => interpolateValue(v, scope))
+  if (raw && typeof raw === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(raw)) out[k] = interpolateValue(v, scope)
+    return out
+  }
+  return raw
+}
+
+// ── DAG ordering ─────────────────────────────────────────────────────────────
+
+/** Collect the step ids this step references via `{{steps.<id>}}`. */
+function stepDependencies(step: Step): string[] {
+  const deps = new Set<string>()
+  const scan = (s: string) => {
+    let m: RegExpExecArray | null
+    const re = new RegExp(ANY_TOKEN_RE.source, 'g')
+    while ((m = re.exec(s)) !== null) {
+      const path = m[1].trim()
+      if (path.startsWith('steps.')) deps.add(path.slice('steps.'.length).split('.')[0])
+    }
+  }
+  if (step.kind === 'compute' && step.args) scan(JSON.stringify(step.args))
+  if (step.kind === 'transform') step.inputs.forEach(scan)
+  return [...deps]
+}
+
+/**
+ * Topologically sort steps by their `{{steps.*}}` references. Throws a
+ * graph-level StepError on a cycle or a dangling reference.
+ */
+function topoSort(steps: Step[]): Step[] {
+  const byId = new Map(steps.map((s) => [s.id, s]))
+  const deps = new Map(steps.map((s) => [s.id, stepDependencies(s)]))
+  const ordered: Step[] = []
+  const state = new Map<string, 'visiting' | 'done'>()
+
+  const visit = (id: string, trail: string[]) => {
+    if (state.get(id) === 'done') return
+    if (state.get(id) === 'visiting') {
+      throw { stepId: id, kind: 'graph', message: `Cyclic step reference: ${[...trail, id].join(' → ')}` } as StepError
+    }
+    const step = byId.get(id)
+    if (!step) {
+      throw { stepId: id, kind: 'graph', message: `Step references unknown step "${id}"` } as StepError
+    }
+    state.set(id, 'visiting')
+    for (const dep of deps.get(id) ?? []) {
+      if (!byId.has(dep)) {
+        throw { stepId: id, kind: 'graph', message: `Step "${id}" references unknown step "${dep}"` } as StepError
+      }
+      visit(dep, [...trail, id])
+    }
+    state.set(id, 'done')
+    ordered.push(step)
+  }
+
+  for (const s of steps) visit(s.id, [])
+  return ordered
+}
+
+/**
+ * Composable for executing recipe DAGs.
+ *
+ * A widget is a graph of `sql` / `compute` / `transform` steps feeding a
+ * visualization. The executor is stateless and re-runs the whole graph on each
+ * call (no memoization — §3.5). Steps run as soon as their inputs are ready;
+ * independent steps run concurrently.
  */
 export function useRecipeExecutor() {
   const isLoading = ref(false)
   const error = ref<string | null>(null)
+  const stepError = ref<StepError | null>(null)
 
-  /**
-   * Interpolate parameter values into SQL query.
-   * Replaces :paramName placeholders with escaped values.
-   */
-  function interpolateParameters(
-    sql: string,
-    params: Record<string, string | number>
-  ): string {
-    let result = sql
-    for (const [key, value] of Object.entries(params)) {
-      const placeholder = `:${key}`
-      // Numbers don't need quotes, strings need escaped quotes
-      const escaped =
-        typeof value === 'number'
-          ? String(value)
-          : `'${String(value).replace(/'/g, "''")}'`
-      result = result.replaceAll(placeholder, escaped)
+  async function runSqlStep(
+    step: Extract<Step, { kind: 'sql' }>,
+    params: Record<string, string | number>,
+  ): Promise<unknown> {
+    const sql = interpolateParameters(step.query, params)
+    const queryRequest: QueryRequest = { query: sql }
+    const response = await LedgerService.executeQuery(queryRequest, step.dbType ?? 'sqlite')
+    if (!response.success || !response.data) {
+      throw { stepId: step.id, kind: 'sql', message: response.error?.message || 'Query failed: no data returned' } as StepError
     }
-    return result
+    return response.data.rows as Record<string, unknown>[]
   }
 
-  /**
-   * Apply transform to query results.
-   * Handles both function transforms (TypeScript) and predefined transforms (JSON).
-   */
-  function applyTransform(
-    recipe: AnyWidgetRecipe,
-    rows: Record<string, unknown>[]
+  async function runComputeStep(
+    step: Extract<Step, { kind: 'compute' }>,
+    _scope: RefScope,
+  ): Promise<unknown> {
+    // Wired to /api/compute (ComputeService) in Phase 3. Until then compute
+    // steps cannot run; surface a clear, named error. No seed recipe uses
+    // compute, so widget rendering is unaffected.
+    throw {
+      stepId: step.id,
+      kind: 'compute',
+      message: `Compute step "${step.fn}" requires the /api/compute endpoint (not yet available)`,
+    } as StepError
+  }
+
+  function runTransformStep(
+    step: Extract<Step, { kind: 'transform' }>,
+    scope: RefScope,
+    ctx: TransformContext,
   ): unknown {
-    if (!recipe.transform) {
-      // No transform specified - return rows as-is
-      return rows
+    const inputs = step.inputs.map((token) => interpolateValue(token, scope))
+    try {
+      return applyTransform(step.fn, inputs, step.config as TransformConfig | undefined, ctx)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : `Transform "${step.fn}" failed`
+      throw { stepId: step.id, kind: 'transform', message } as StepError
     }
-
-    if (typeof recipe.transform === 'function') {
-      // TypeScript recipe with function transform
-      return recipe.transform(rows)
-    }
-
-    // JSON recipe with predefined transform (simple or configurable)
-    return applyPredefinedTransform(recipe.id, recipe.transform, rows)
   }
 
   /**
-   * Execute a recipe with given parameters.
-   * Returns transformed data ready for visualization.
+   * Execute a widget recipe with given parameters.
+   * Returns the `output` step's result, ready for visualization.
+   *
+   * @param dashboardSteps - resolved outputs of dashboard shared steps,
+   *   referenced from widget steps via {{dashboard.steps.<id>}}.
    */
   async function executeRecipe(
     recipe: AnyWidgetRecipe,
     parameters: Record<string, string | number>,
-    dbType: QueryEngineType = 'sqlite'
+    dashboardSteps: Record<string, unknown> = {},
   ): Promise<unknown> {
     isLoading.value = true
     error.value = null
+    stepError.value = null
 
     try {
-      // Interpolate parameters into SQL
-      const sql = interpolateParameters(recipe.query, parameters)
-      console.log(`[Recipe: ${recipe.id}] Executing SQL:`, sql)
+      const ordered = topoSort(recipe.steps)
+      const stepOutputs: Record<string, unknown> = {}
+      const ctx: TransformContext = { params: parameters }
 
-      // Execute query via API
-      const queryRequest: QueryRequest = { query: sql }
-      const response = await LedgerService.executeQuery(queryRequest, dbType)
-
-      if (!response.success || !response.data) {
-        throw new Error(response.error?.message || 'Query failed: No data returned')
+      // Execute in dependency layers so independent steps run concurrently.
+      const remaining = new Set(ordered.map((s) => s.id))
+      const deps = new Map(ordered.map((s) => [s.id, stepDependencies(s)]))
+      while (remaining.size > 0) {
+        const ready = ordered.filter(
+          (s) => remaining.has(s.id) && (deps.get(s.id) ?? []).every((d) => !remaining.has(d)),
+        )
+        await Promise.all(
+          ready.map(async (step) => {
+            const scope: RefScope = { params: parameters, steps: stepOutputs, dashboardSteps }
+            if (step.kind === 'sql') stepOutputs[step.id] = await runSqlStep(step, parameters)
+            else if (step.kind === 'compute') stepOutputs[step.id] = await runComputeStep(step, scope)
+            else stepOutputs[step.id] = runTransformStep(step, scope, ctx)
+            remaining.delete(step.id)
+          }),
+        )
       }
 
-      const rows = response.data.rows as Record<string, unknown>[]
-      console.log(`[Recipe: ${recipe.id}] Query returned ${rows.length} rows`)
-
-      // Apply transform
-      const data = applyTransform(recipe, rows)
-
-      return data
+      if (!(recipe.output in stepOutputs)) {
+        throw { stepId: recipe.output, kind: 'graph', message: `output names unknown step "${recipe.output}"` } as StepError
+      }
+      return stepOutputs[recipe.output]
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to execute recipe'
-      error.value = message
+      const se: StepError = isStepError(err)
+        ? err
+        : { stepId: recipe.output, kind: 'graph', message: err instanceof Error ? err.message : 'Failed to execute recipe' }
+      stepError.value = se
+      error.value = se.message
       errorHandler.display(err)
-      throw err
+      throw se
     } finally {
       isLoading.value = false
     }
@@ -250,12 +405,10 @@ export function useRecipeExecutor() {
 
   return {
     executeRecipe,
-    interpolateParameters,
     getDefaultParameters,
-    applyTransform,
     getFormatFunction,
-    isJsonRecipe,
     isLoading,
     error,
+    stepError,
   }
 }

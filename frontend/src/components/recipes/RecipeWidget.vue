@@ -105,6 +105,9 @@ import RecipeParameters from './RecipeParameters.vue'
 interface Props {
   recipe: AnyWidgetRecipe
   dashboardParameters?: Record<string, string | number>
+  // Resolved outputs of dashboard shared steps, referenced from widget steps
+  // via {{dashboard.steps.<id>}} (populated by RecipeDashboard in Phase 4).
+  dashboardSteps?: Record<string, unknown>
 }
 
 const props = defineProps<Props>()
@@ -144,7 +147,7 @@ const data = ref<unknown>(null)
 // Execute query
 async function executeQuery() {
   try {
-    data.value = await executeRecipe(props.recipe, mergedParameters.value, props.recipe.dbType)
+    data.value = await executeRecipe(props.recipe, mergedParameters.value, props.dashboardSteps ?? {})
   } catch {
     // Error is already set by useRecipeExecutor
   }
@@ -162,6 +165,9 @@ watch(mergedParameters, () => executeQuery(), { deep: true })
 // after edits — same widgetId, new query/visualization). Without this watcher
 // Vue reuses the keyed instance and the panel keeps showing stale data.
 watch(() => props.recipe, () => executeQuery(), { deep: true })
+
+// Re-execute when dashboard shared-step outputs change (Phase 4).
+watch(() => props.dashboardSteps, () => executeQuery(), { deep: true })
 
 // Persist widget-level parameter selections (sentinels included) when they change.
 watch(localSelections, (newSelections) => {

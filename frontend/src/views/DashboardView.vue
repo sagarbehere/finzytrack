@@ -56,13 +56,10 @@
               :key="idx"
               class="text-xs text-amber-700 dark:text-amber-400"
             >
-              <template v-if="conflict.kind === 'widget'">Widget</template>
-              <template v-else-if="conflict.kind === 'dashboard'">Dashboard</template>
-              <template v-else>Widget</template>
+              Dashboard
               ID "<span class="font-mono font-semibold">{{ conflict.id }}</span>"
               is defined in both
               <span class="font-mono">{{ conflict.files[0] }}</span> and
-              <template v-if="conflict.kind === 'inline-widget'">inline in </template>
               <span class="font-mono">{{ conflict.files[1] }}</span>
             </li>
           </ul>

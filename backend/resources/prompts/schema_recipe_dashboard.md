@@ -369,17 +369,21 @@ full-width chart → pivot table.
 The following section is generated from the authoritative JSON Schema. Use it as the ground truth when the prose above is unclear. The top-level recipe must match either `JsonWidgetRecipe` or `JsonDashboardRecipe`.
 
 #### `JsonDashboardRecipe`
+The only recipe type. Owns layout, parameters, optional shared steps, and an array of inline widget definitions.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `schemaVersion` | `'2'` | yes | Recipe format version. Always 2 for the steps/DAG format. Files without it are rejected (run the migration). |
 | `id` | `RecipeId` | yes |  |
 | `title` | `string` | yes |  |
 | `description` | `string` | — |  |
 | `parameters` | `RecipeParameter[]` | — |  |
+| `steps` | `Steps` | — | Optional dashboard-level shared steps. Run once per dashboard render; widgets reference them via {{dashboard.steps.<id>}}. There is no dashboard-level output. |
 | `layout` | `object` | yes |  |
-| `widgets` | `JsonWidgetRecipe[]` | yes | Inline widget definitions. Empty [] when widgets are loaded by widgetId from the registry. |
+| `widgets` | `JsonWidgetRecipe[]` | yes | Inline widget definitions (non-empty). Each widget's id is the layout.widgets[].widgetId target within this dashboard. |
 
 #### `JsonWidgetRecipe`
+An inline widget inside a dashboard. Widgets are never stored or referenced standalone — each lives in its enclosing dashboard's widgets[]. schemaVersion is stamped on the dashboard, not here.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -388,14 +392,22 @@ The following section is generated from the authoritative JSON Schema. Use it as
 | `description` | `string` | — |  |
 | `helpText` | `string` | — | Tooltip shown as ⓘ icon. |
 | `parameters` | `RecipeParameter[]` | — |  |
-| `dbType` | `'sqlite' | 'beanquery'` | — | Query engine override (defaults to dashboard/view setting). |
-| `query` | `string` | yes | SQL SELECT (SQLite). Use :paramName for parameter placeholders. |
-| `transform` | `Transform` | — |  |
+| `steps` | `Steps` | yes |  |
+| `output` | `string` | yes | Id of the step whose output feeds the visualization. Required; must name a step in this widget's steps[]. |
 | `visualization` | `JsonRecipeVisualization` | yes |  |
 
 #### `ChartType`
 
 Type: `'bar' | 'line' | 'pie' | 'area' | 'scatter' | 'treemap' | 'funnel' | 'gauge' | 'calendar' | 'sankey' | 'radar' | 'sunburst'`
+
+#### `ComputeStep`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | `StepId` | yes |  |
+| `kind` | `'compute'` | yes |  |
+| `fn` | `string` | yes | Name of a server-side compute function (fixed catalog; see get_compute_functions). Validated server-side. |
+| `args` | `object` | — | Scalar arguments for the compute function. Values may be literals or {{params.x}} / {{steps.x}} / {{dashboard.steps.x}} template strings. Pass only small scalars — bulk data is read server-side by the function, not shuttled through the client. |
 
 #### `JsonChartVisualization`
 
@@ -483,23 +495,39 @@ Type: `string`
 | `min` | `number` | — |  |
 | `max` | `number` | — |  |
 
-#### `Transform`
-
-Type: `'none' | 'firstRow' | 'firstValue' | TransformConfig`
-
-#### `TransformConfig`
+#### `SqlStep`
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `type` | `'sortBy' | 'limit' | 'pluck' | 'pivot'` | yes |  |
-| `field` | `string` | — | For sortBy or pluck. |
-| `order` | `'asc' | 'desc'` | — |  |
-| `count` | `number` | — | For limit transform. |
-| `rowField` | `string` | — | For pivot — column whose values become row labels. |
-| `columnField` | `string` | — | For pivot — column whose values become column headers. |
-| `valueField` | `string` | — | For pivot — column containing cell values. |
-| `formatColumn` | `'monthYear' | 'yearMonth'` | — |  |
-| `sortRowsBy` | `'total_desc' | 'total_asc' | 'label_asc' | 'label_desc'` | — |  |
+| `id` | `StepId` | yes |  |
+| `kind` | `'sql'` | yes |  |
+| `query` | `string` | yes | SQL SELECT against the ledger mirror. Use :paramName for recipe-parameter placeholders. {{...}} step references are NOT allowed here — a SQL step is a leaf data source and cannot read another step's rows. |
+| `dbType` | `'sqlite' | 'beanquery'` | — | Query engine for this step (defaults to sqlite). |
+
+#### `Step`
+A single node in a recipe's data-pipeline DAG. Discriminated on `kind`.
+
+Type: `SqlStep | ComputeStep | TransformStep`
+
+#### `StepId`
+Step identifier, unique within a recipe. Referenced from other steps as {{steps.<id>}} (or {{dashboard.steps.<id>}} for a dashboard shared step). Lowercase letters, numbers, and hyphens.
+
+Type: `string`
+
+#### `Steps`
+The recipe's data pipeline as an array of named steps. Array order is for readability only; execution order is the topological sort of {{steps.*}} references. Step ids must be unique.
+
+Type: `Step[]`
+
+#### `TransformStep`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | `StepId` | yes |  |
+| `kind` | `'transform'` | yes |  |
+| `fn` | `string` | yes | Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, pivot, joinBudgetActual, runningSum, envelopeRollover, ...). Validated server-side. |
+| `inputs` | `string[]` | yes | Ordered {{steps.<id>}} / {{dashboard.steps.<id>}} references to the step outputs this transform consumes. |
+| `config` | `object` | — | Transform-specific configuration; the accepted shape depends on fn (see the transform catalog in the schema doc). |
 
 #### `ValueFormat`
 Predefined value formatter applied at render time.

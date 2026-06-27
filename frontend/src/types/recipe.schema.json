@@ -163,36 +163,70 @@
         { "$ref": "#/$defs/JsonPivotVisualization" }
       ]
     },
-    "TransformConfig": {
-      "type": "object",
-      "required": ["type"],
-      "properties": {
-        "type": { "type": "string", "enum": ["sortBy", "limit", "pluck", "pivot"] },
-        "field": { "type": "string", "minLength": 1, "description": "For sortBy or pluck." },
-        "order": { "type": "string", "enum": ["asc", "desc"] },
-        "count": { "type": "number", "minimum": 1, "description": "For limit transform." },
-        "rowField": { "type": "string", "minLength": 1, "description": "For pivot — column whose values become row labels." },
-        "columnField": { "type": "string", "minLength": 1, "description": "For pivot — column whose values become column headers." },
-        "valueField": { "type": "string", "minLength": 1, "description": "For pivot — column containing cell values." },
-        "formatColumn": { "type": "string", "enum": ["monthYear", "yearMonth"] },
-        "sortRowsBy": { "type": "string", "enum": ["total_desc", "total_asc", "label_asc", "label_desc"] }
-      },
-      "allOf": [
-        {
-          "if": { "properties": { "type": { "const": "pluck" } } },
-          "then": { "required": ["field"] }
-        },
-        {
-          "if": { "properties": { "type": { "const": "pivot" } } },
-          "then": { "required": ["rowField", "columnField", "valueField"] }
-        }
-      ]
+    "StepId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+      "description": "Step identifier, unique within a recipe. Referenced from other steps as {{steps.<id>}} (or {{dashboard.steps.<id>}} for a dashboard shared step). Lowercase letters, numbers, and hyphens."
     },
-    "Transform": {
+    "SqlStep": {
+      "type": "object",
+      "required": ["id", "kind", "query"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/StepId" },
+        "kind": { "const": "sql" },
+        "query": { "type": "string", "minLength": 1, "description": "SQL SELECT against the ledger mirror. Use :paramName for recipe-parameter placeholders. {{...}} step references are NOT allowed here — a SQL step is a leaf data source and cannot read another step's rows." },
+        "dbType": { "type": "string", "enum": ["sqlite", "beanquery"], "description": "Query engine for this step (defaults to sqlite)." }
+      }
+    },
+    "ComputeStep": {
+      "type": "object",
+      "required": ["id", "kind", "fn"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/StepId" },
+        "kind": { "const": "compute" },
+        "fn": { "type": "string", "minLength": 1, "description": "Name of a server-side compute function (fixed catalog; see get_compute_functions). Validated server-side." },
+        "args": {
+          "type": "object",
+          "description": "Scalar arguments for the compute function. Values may be literals or {{params.x}} / {{steps.x}} / {{dashboard.steps.x}} template strings. Pass only small scalars — bulk data is read server-side by the function, not shuttled through the client."
+        }
+      }
+    },
+    "TransformStep": {
+      "type": "object",
+      "required": ["id", "kind", "fn", "inputs"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/StepId" },
+        "kind": { "const": "transform" },
+        "fn": { "type": "string", "minLength": 1, "description": "Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, pivot, joinBudgetActual, runningSum, envelopeRollover, ...). Validated server-side." },
+        "inputs": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Ordered {{steps.<id>}} / {{dashboard.steps.<id>}} references to the step outputs this transform consumes."
+        },
+        "config": {
+          "type": "object",
+          "description": "Transform-specific configuration; the accepted shape depends on fn (see the transform catalog in the schema doc)."
+        }
+      }
+    },
+    "Step": {
       "oneOf": [
-        { "type": "string", "enum": ["none", "firstRow", "firstValue"] },
-        { "$ref": "#/$defs/TransformConfig" }
-      ]
+        { "$ref": "#/$defs/SqlStep" },
+        { "$ref": "#/$defs/ComputeStep" },
+        { "$ref": "#/$defs/TransformStep" }
+      ],
+      "description": "A single node in a recipe's data-pipeline DAG. Discriminated on `kind`."
+    },
+    "Steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Step" },
+      "description": "The recipe's data pipeline as an array of named steps. Array order is for readability only; execution order is the topological sort of {{steps.*}} references. Step ids must be unique."
     },
     "WidgetLayout": {
       "type": "object",
@@ -214,27 +248,33 @@
     },
     "JsonWidgetRecipe": {
       "type": "object",
-      "required": ["id", "title", "query", "visualization"],
+      "required": ["id", "title", "steps", "output", "visualization"],
+      "description": "An inline widget inside a dashboard. Widgets are never stored or referenced standalone — each lives in its enclosing dashboard's widgets[]. schemaVersion is stamped on the dashboard, not here.",
       "properties": {
         "id": { "$ref": "#/$defs/RecipeId" },
         "title": { "type": "string", "minLength": 1 },
         "description": { "type": "string" },
         "helpText": { "type": "string", "description": "Tooltip shown as ⓘ icon." },
         "parameters": { "type": "array", "items": { "$ref": "#/$defs/RecipeParameter" } },
-        "dbType": { "type": "string", "enum": ["sqlite", "beanquery"], "description": "Query engine override (defaults to dashboard/view setting)." },
-        "query": { "type": "string", "minLength": 1, "description": "SQL SELECT (SQLite). Use :paramName for parameter placeholders." },
-        "transform": { "$ref": "#/$defs/Transform" },
+        "steps": { "$ref": "#/$defs/Steps" },
+        "output": { "type": "string", "minLength": 1, "description": "Id of the step whose output feeds the visualization. Required; must name a step in this widget's steps[]." },
         "visualization": { "$ref": "#/$defs/JsonRecipeVisualization" }
       }
     },
     "JsonDashboardRecipe": {
       "type": "object",
-      "required": ["id", "title", "layout", "widgets"],
+      "required": ["schemaVersion", "id", "title", "layout", "widgets"],
+      "description": "The only recipe type. Owns layout, parameters, optional shared steps, and an array of inline widget definitions.",
       "properties": {
+        "schemaVersion": { "type": "integer", "const": 2, "description": "Recipe format version. Always 2 for the steps/DAG format. Files without it are rejected (run the migration)." },
         "id": { "$ref": "#/$defs/RecipeId" },
         "title": { "type": "string", "minLength": 1 },
         "description": { "type": "string" },
         "parameters": { "type": "array", "items": { "$ref": "#/$defs/RecipeParameter" } },
+        "steps": {
+          "$ref": "#/$defs/Steps",
+          "description": "Optional dashboard-level shared steps. Run once per dashboard render; widgets reference them via {{dashboard.steps.<id>}}. There is no dashboard-level output."
+        },
         "layout": {
           "type": "object",
           "required": ["columns", "widgets"],
@@ -247,14 +287,14 @@
         },
         "widgets": {
           "type": "array",
+          "minItems": 1,
           "items": { "$ref": "#/$defs/JsonWidgetRecipe" },
-          "description": "Inline widget definitions. Empty [] when widgets are loaded by widgetId from the registry."
+          "description": "Inline widget definitions (non-empty). Each widget's id is the layout.widgets[].widgetId target within this dashboard."
         }
       }
     }
   },
   "oneOf": [
-    { "$ref": "#/$defs/JsonWidgetRecipe" },
     { "$ref": "#/$defs/JsonDashboardRecipe" }
   ]
 }

@@ -1,4 +1,5 @@
 {
+  "schemaVersion": 2,
   "id": "year-summary",
   "title": "Year Summary",
   "description": "Annual financial summary with income, expenses, and savings breakdown",
@@ -7,7 +8,9 @@
       "name": "year",
       "label": "Year",
       "type": "select",
-      "default": { "$gen": "currentYear" },
+      "default": {
+        "$gen": "currentYear"
+      },
       "optionsFrom": "years"
     }
   ],
@@ -42,10 +45,9 @@
     {
       "id": "total-income",
       "title": "Total Income",
-      "query": "SELECT currency, SUM(CAST(amount AS REAL)) * -1 AS amount FROM postings WHERE account_type = 'Income' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency",
       "visualization": {
         "type": "kpi",
-        "icon": "\u2191",
+        "icon": "↑",
         "iconColor": "green",
         "multiCurrency": true,
         "clickLink": {
@@ -56,15 +58,30 @@
             "dateTo": "{{dateTo}}"
           }
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT currency, SUM(CAST(amount AS REAL)) * -1 AS amount FROM postings WHERE account_type = 'Income' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "total-expenses",
       "title": "Total Expenses",
-      "query": "SELECT currency, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency",
       "visualization": {
         "type": "kpi",
-        "icon": "\u2193",
+        "icon": "↓",
         "iconColor": "red",
         "multiCurrency": true,
         "clickLink": {
@@ -75,18 +92,49 @@
             "dateTo": "{{dateTo}}"
           }
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT currency, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "savings",
       "title": "Savings",
-      "query": "SELECT currency, (SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END)) - (SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END)) AS amount FROM postings WHERE year = :year AND account_type IN ('Income', 'Expenses') GROUP BY currency HAVING amount != 0 ORDER BY currency",
       "visualization": {
         "type": "kpi",
         "icon": "$",
         "iconColor": "blue",
         "multiCurrency": true
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT currency, (SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END)) - (SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END)) AS amount FROM postings WHERE year = :year AND account_type IN ('Income', 'Expenses') GROUP BY currency HAVING amount != 0 ORDER BY currency"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "monthly-income-expenses",
@@ -97,11 +145,12 @@
           "name": "currency",
           "label": "Currency",
           "type": "select",
-          "default": { "$gen": "defaultCurrency" },
+          "default": {
+            "$gen": "defaultCurrency"
+          },
           "optionsFrom": "currencies"
         }
       ],
-      "query": "SELECT year_month, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, ROUND(SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END), 2) AS income, ROUND(SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END), 2) AS expenses, ROUND(SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) - SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END), 2) AS savings FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses') GROUP BY year_month ORDER BY year_month",
       "visualization": {
         "type": "chart",
         "chartType": "bar",
@@ -128,7 +177,11 @@
         },
         "options": {
           "legend": {
-            "data": ["Expenses", "Income", "Savings"],
+            "data": [
+              "Expenses",
+              "Income",
+              "Savings"
+            ],
             "top": 0,
             "left": "left",
             "itemGap": 20
@@ -155,28 +208,71 @@
             {
               "name": "Expenses",
               "type": "bar",
-              "encode": { "x": "month_label", "y": "expenses" },
-              "itemStyle": { "color": "#E8A951" },
+              "encode": {
+                "x": "month_label",
+                "y": "expenses"
+              },
+              "itemStyle": {
+                "color": "#E8A951"
+              },
               "barGap": "10%",
-              "label": { "show": true, "position": "top", "fontSize": 10 }
+              "label": {
+                "show": true,
+                "position": "top",
+                "fontSize": 10
+              }
             },
             {
               "name": "Income",
               "type": "bar",
-              "encode": { "x": "month_label", "y": "income" },
-              "itemStyle": { "color": "#7DD3C0" },
-              "label": { "show": true, "position": "top", "fontSize": 10 }
+              "encode": {
+                "x": "month_label",
+                "y": "income"
+              },
+              "itemStyle": {
+                "color": "#7DD3C0"
+              },
+              "label": {
+                "show": true,
+                "position": "top",
+                "fontSize": 10
+              }
             },
             {
               "name": "Savings",
               "type": "bar",
-              "encode": { "x": "month_label", "y": "savings" },
-              "itemStyle": { "color": "#7B83AD" },
-              "label": { "show": true, "position": "top", "fontSize": 10 }
+              "encode": {
+                "x": "month_label",
+                "y": "savings"
+              },
+              "itemStyle": {
+                "color": "#7B83AD"
+              },
+              "label": {
+                "show": true,
+                "position": "top",
+                "fontSize": 10
+              }
             }
           ]
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT year_month, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, ROUND(SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END), 2) AS income, ROUND(SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END), 2) AS expenses, ROUND(SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) - SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END), 2) AS savings FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses') GROUP BY year_month ORDER BY year_month"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "none",
+          "inputs": [
+            "{{steps.main}}"
+          ]
+        }
+      ],
+      "output": "out"
     },
     {
       "id": "expenses-pivot-table",
@@ -187,19 +283,12 @@
           "name": "currency",
           "label": "Currency",
           "type": "select",
-          "default": { "$gen": "defaultCurrency" },
+          "default": {
+            "$gen": "defaultCurrency"
+          },
           "optionsFrom": "currencies"
         }
       ],
-      "query": "SELECT account, year_month, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account, year_month ORDER BY account, year_month",
-      "transform": {
-        "type": "pivot",
-        "rowField": "account",
-        "columnField": "year_month",
-        "valueField": "amount",
-        "formatColumn": "monthYear",
-        "sortRowsBy": "total_desc"
-      },
       "visualization": {
         "type": "pivot",
         "rowHeader": "Account",
@@ -213,7 +302,31 @@
             "dateTo": "{{columnMeta.endDate}}"
           }
         }
-      }
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "sql",
+          "query": "SELECT account, year_month, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account, year_month ORDER BY account, year_month"
+        },
+        {
+          "id": "out",
+          "kind": "transform",
+          "fn": "pivot",
+          "inputs": [
+            "{{steps.main}}"
+          ],
+          "config": {
+            "type": "pivot",
+            "rowField": "account",
+            "columnField": "year_month",
+            "valueField": "amount",
+            "formatColumn": "monthYear",
+            "sortRowsBy": "total_desc"
+          }
+        }
+      ],
+      "output": "out"
     }
   ]
 }

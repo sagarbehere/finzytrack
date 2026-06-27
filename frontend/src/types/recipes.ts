@@ -18,7 +18,7 @@ import type {
   JsonValueLinkConfig,
   JsonWidgetRecipe,
   RecipeParameter,
-  Transform,
+  Step,
   ValueFormat,
   WidgetLayout,
 } from './recipes.generated'
@@ -219,26 +219,61 @@ export type RecipeVisualization =
 // Query engine types
 export type QueryEngineType = 'sqlite' | 'beanquery'
 
-// Widget Recipe
+// ============================================================================
+// Recipe pipeline steps (DAG model)
+//
+// The three step kinds and their JSON shapes (Step, SqlStep, ComputeStep,
+// TransformStep, StepId, Steps) are generated from recipe.schema.json and
+// re-exported below. StepKind is the runtime const mirror of the schema's
+// `kind` discriminator — kept here because json-schema-to-typescript emits
+// only the type, not a runtime value to enumerate.
+// ============================================================================
+
+/** Runtime list of step kinds. Must match the `kind` consts in recipe.schema.json. */
+export const STEP_KINDS = ['sql', 'compute', 'transform'] as const
+export type StepKind = (typeof STEP_KINDS)[number]
+
+/**
+ * Transform-step configuration. The accepted shape depends on the transform
+ * `fn` (e.g. pivot needs rowField/columnField/valueField). Validated at the
+ * transform/server layer, so the type is intentionally open.
+ */
+export interface TransformConfig {
+  type?: string
+  [key: string]: unknown
+}
+
+/**
+ * Context passed to every transform-catalog function alongside its inputs.
+ * Carries the resolved recipe parameters so transforms can be time-aware
+ * (e.g. linear pace from the period fraction).
+ */
+export interface TransformContext {
+  params: Record<string, string | number>
+}
+
+// Widget Recipe — an inline widget inside a dashboard. A DAG of named steps
+// feeding a visualization (no standalone storage; see refactored-dashboard-recipes.md §3.0).
 export interface WidgetRecipe {
   id: string
   title: string
   description?: string
   helpText?: string // Shown as ⓘ tooltip in the widget header
   parameters?: RecipeParameter[]
-  dbType?: QueryEngineType // Query engine for this widget (defaults to dashboard/view setting)
-  query: string // SQL or BQL query with :paramName placeholders
-  transform?: (rows: Record<string, unknown>[]) => unknown // Transform query results
+  steps: Step[] // Data-pipeline DAG; execution order is the topo-sort of {{steps.*}} refs
+  output: string // Id of the step whose output feeds the visualization
   visualization: RecipeVisualization
 }
 
 // (WidgetLayout is generated from recipe.schema.json and re-exported below.)
 
 export interface DashboardRecipe {
+  schemaVersion?: number // Recipe format version (2 for the steps/DAG format)
   id: string
   title: string
   description?: string
   parameters?: RecipeParameter[] // Dashboard-level parameters shared by widgets
+  steps?: Step[] // Optional dashboard-level shared steps ({{dashboard.steps.*}})
   layout: {
     columns: number
     gap?: string
@@ -248,9 +283,8 @@ export interface DashboardRecipe {
   widgets: WidgetRecipe[]
 }
 
-// Registry for looking up recipes by ID
+// Registry for looking up dashboards by ID (dashboard is the only recipe type).
 export interface RecipeRegistry {
-  widgets: Record<string, WidgetRecipe>
   dashboards: Record<string, DashboardRecipe>
 }
 
@@ -305,6 +339,7 @@ export type SimpleTransformType = 'none' | 'firstRow' | 'firstValue'
 // importing from '@/types/recipes' transparently.
 export type {
   ChartType,
+  ComputeStep,
   JsonChartVisualization,
   JsonDashboardRecipe,
   JsonKPIVisualization,
@@ -316,31 +351,30 @@ export type {
   JsonWidgetRecipe,
   RecipeId,
   RecipeParameter,
-  Transform,
-  TransformConfig,
+  SqlStep,
+  Step,
+  StepId,
+  Steps,
+  TransformStep,
   ValueFormat,
   WidgetLayout,
 } from './recipes.generated'
 
-import type { Transform as _Transform, JsonWidgetRecipe as _JsonWidgetRecipe, JsonDashboardRecipe as _JsonDashboardRecipe } from './recipes.generated'
-
-/** Backwards-compat alias for the union. */
-export type TransformType = _Transform
+import type { JsonDashboardRecipe as _JsonDashboardRecipe } from './recipes.generated'
 
 /**
  * Manifest file structure for user recipes (path lists). Not in the JSON
- * recipe schema because it's not a recipe — it indexes recipes.
+ * recipe schema because it's not a recipe — it indexes recipes. Dashboards
+ * only — standalone widgets were removed in the DAG refactor.
  */
 export interface RecipeManifest {
-  widgets: string[]
   dashboards: string[]
 }
 
 /**
- * Combined registry that can hold both TypeScript code-defined recipes and
- * JSON recipes loaded at runtime.
+ * Registry of loaded dashboards (dashboard is the only recipe type). Holds
+ * both any TypeScript code-defined dashboards and JSON dashboards loaded at runtime.
  */
 export interface HybridRecipeRegistry {
-  widgets: Record<string, WidgetRecipe | _JsonWidgetRecipe>
   dashboards: Record<string, DashboardRecipe | _JsonDashboardRecipe>
 }
