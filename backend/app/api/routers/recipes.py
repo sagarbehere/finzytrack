@@ -9,8 +9,9 @@ Endpoints:
   DELETE /api/recipes/{path:path}             — delete a recipe file
 
 The manifest is auto-discovered from the filesystem on every request:
-any `widgets/*.json` or `dashboards/*.json` under the recipes directory
-is treated as a recipe. There is no on-disk manifest to maintain.
+any `dashboards/*.json` under the recipes directory is treated as a recipe
+(dashboards are the only recipe type; widgets are inline). There is no
+on-disk manifest to maintain.
 Per-file validation happens at the GET endpoint (and on the frontend
 loader); broken files surface as errors against the file path.
 """
@@ -30,7 +31,6 @@ from app.helpers.path_guard import guard_path
 from app.helpers.recipe_validation import (
     validate_dashboard,
     validate_id,
-    validate_widget,
 )
 from app.schemas.recipe_schemas import RecipeWriteRequest, RecipeWriteResponse
 from app.schemas.rule_write_schemas import RuleContentResponse
@@ -48,53 +48,38 @@ def _recipes_dir(config_manager: ConfigManager) -> Path:
     return Path(config.recipes_dir)
 
 
-def _recipe_type_from_path(file_path: str) -> str:
-    """Determine recipe type ('widget' or 'dashboard') from the file path prefix."""
-    if file_path.startswith("widgets/"):
-        return "widget"
-    elif file_path.startswith("dashboards/"):
-        return "dashboard"
-    else:
+def _require_dashboard_path(file_path: str) -> None:
+    """Recipes are dashboards only — the path must live under dashboards/."""
+    if not file_path.startswith("dashboards/"):
         raise APIError(
-            message="Recipe path must start with 'dashboards/' or 'widgets/'.",
+            message="Recipe path must start with 'dashboards/' (widgets are inline-only).",
             code=ec.VALIDATION_ERROR,
             status_code=400,
             details={"file_path": file_path},
         )
 
 
-def _validate_recipe(content: dict, recipe_type: str) -> list[str]:
-    """Run structural validation on a recipe dict. Returns list of error strings."""
-    if recipe_type == "widget":
-        errors = validate_widget(content, "(root)")
-    else:
-        errors = validate_dashboard(content)
-
+def _validate_recipe(content: dict) -> list[str]:
+    """Run structural validation on a dashboard recipe. Returns error strings."""
+    errors = validate_dashboard(content)
     recipe_id = content.get("id")
     if isinstance(recipe_id, str):
         errors.extend(validate_id(recipe_id))
-
     return errors
 
 
 def _discover_recipes(recipes_path: Path) -> dict[str, list[str]]:
-    """Glob the recipes directory for widget and dashboard files.
+    """Glob the recipes directory for dashboard files (the only recipe type).
 
     Returns paths relative to recipes_path, sorted alphabetically. Files
     that fail to parse or validate are still returned — the frontend (and
     the per-recipe GET endpoint) surface their errors against the path.
     """
-    def _scan(subdir: str) -> list[str]:
-        dir_path = recipes_path / subdir
-        if not dir_path.is_dir():
-            return []
-        files = sorted(p.name for p in dir_path.glob("*.json"))
-        return [f"{subdir}/{name}" for name in files]
-
-    return {
-        "widgets": _scan("widgets"),
-        "dashboards": _scan("dashboards"),
-    }
+    dir_path = recipes_path / "dashboards"
+    if not dir_path.is_dir():
+        return {"dashboards": []}
+    files = sorted(p.name for p in dir_path.glob("*.json"))
+    return {"dashboards": [f"dashboards/{name}" for name in files]}
 
 
 @router.get("/recipes/manifest.json")
@@ -103,10 +88,10 @@ async def get_manifest(
 ):
     """Return the auto-discovered recipe manifest.
 
-    Any `widgets/*.json` and `dashboards/*.json` under the recipes
-    directory is included. Paths are sorted alphabetically; the manifest
-    is recomputed on every request, so files added by `cp`, `mv`, or any
-    other out-of-band write are picked up immediately.
+    Any `dashboards/*.json` under the recipes directory is included. Paths
+    are sorted alphabetically; the manifest is recomputed on every request,
+    so files added by `cp`, `mv`, or any other out-of-band write are picked
+    up immediately.
     """
     recipes_path = _recipes_dir(config_manager)
     return JSONResponse(content=_discover_recipes(recipes_path))
@@ -169,12 +154,12 @@ async def write_recipe_file(
     # Prevent path traversal
     guard_path(target, recipes_path, "recipe path")
 
-    # Determine type and validate
-    recipe_type = _recipe_type_from_path(file_path)
-    errors = _validate_recipe(body.content, recipe_type)
+    # Recipes are dashboards only — enforce the path and validate.
+    _require_dashboard_path(file_path)
+    errors = _validate_recipe(body.content)
     if errors:
         raise APIError(
-            message=f"{'Widget' if recipe_type == 'widget' else 'Dashboard'} recipe validation failed.",
+            message="Dashboard recipe validation failed.",
             code=ec.VALIDATION_ERROR,
             status_code=400,
             details={"validation_errors": errors},

@@ -300,13 +300,15 @@ def _select_branch(err: ValidationError) -> list[ValidationError]:
         if sub.schema_path:
             sub_errors_by_branch.setdefault(sub.schema_path[0], []).append(sub)
 
-    # Strategy 1: type discriminator
-    if isinstance(inst, dict) and "type" in inst:
-        for i, branch in enumerate(branches):
-            target = _expand_ref(branch)
-            type_const = ((target.get("properties") or {}).get("type") or {}).get("const")
-            if type_const == inst["type"] and i in sub_errors_by_branch:
-                return sub_errors_by_branch[i]
+    # Strategy 1: discriminator on 'type' (visualizations) or 'kind' (steps)
+    if isinstance(inst, dict):
+        disc_key = "type" if "type" in inst else ("kind" if "kind" in inst else None)
+        if disc_key is not None:
+            for i, branch in enumerate(branches):
+                target = _expand_ref(branch)
+                const = ((target.get("properties") or {}).get(disc_key) or {}).get("const")
+                if const == inst[disc_key] and i in sub_errors_by_branch:
+                    return sub_errors_by_branch[i]
 
     # Strategy 2: object-vs-non-object disambiguation
     if isinstance(inst, dict):

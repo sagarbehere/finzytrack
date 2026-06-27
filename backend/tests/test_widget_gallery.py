@@ -95,19 +95,27 @@ def _postings_schema_conn() -> sqlite3.Connection:
     return con
 
 
+def _sql_steps(widget: dict):
+    """Yield (step_id, query) for every sql step in a widget's steps DAG."""
+    for step in widget.get("steps", []):
+        if isinstance(step, dict) and step.get("kind") == "sql" and step.get("query"):
+            yield step["id"], step["query"]
+
+
 def test_every_gallery_widget_sql_parses_against_postings_schema():
     """Catches typos in column names, syntax errors, and any drift between
-    the postings schema documented in prompts and the queries we ship."""
+    the postings schema documented in prompts and the queries we ship. Walks
+    each widget's sql steps (the DAG model — queries live on sql steps)."""
     con = _postings_schema_conn()
     failures = []
     for w in _gallery()["widgets"]:
-        q = w.get("query", "")
-        param_names = set(re.findall(r":(\w+)", q))
-        params = {n: "__test__" for n in param_names}
-        try:
-            con.execute(f"SELECT * FROM ({q}) LIMIT 0", params)
-        except Exception as e:
-            failures.append((w["id"], str(e)))
+        for step_id, q in _sql_steps(w):
+            param_names = set(re.findall(r":(\w+)", q))
+            params = {n: "__test__" for n in param_names}
+            try:
+                con.execute(f"SELECT * FROM ({q}) LIMIT 0", params)
+            except Exception as e:
+                failures.append((f"{w['id']}/{step_id}", str(e)))
     assert not failures, failures
 
 
