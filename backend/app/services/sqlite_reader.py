@@ -537,6 +537,35 @@ class SqliteReader:
 
         return self._query(query)
 
+    def get_custom_directives(self, directive_type: str) -> List[dict]:
+        """Return raw `custom` directives of a given type (e.g. 'budget'),
+        ordered by (date, source line) for deterministic last-wins resolution.
+
+        Each row: {date, values_json, source_file, source_lineno}. Parsing the
+        type-specific `values_json` shape is the caller's concern (e.g. the
+        budget resolver). Read-only.
+        """
+        def query(con: sqlite3.Connection) -> List[dict]:
+            rows = con.execute(
+                "SELECT date, values_json, metadata_json FROM custom_directives "
+                "WHERE type = ? ORDER BY date",
+                (directive_type,),
+            ).fetchall()
+            result = []
+            for r in rows:
+                meta = json.loads(r["metadata_json"]) if r["metadata_json"] else {}
+                result.append({
+                    "date": r["date"],
+                    "values_json": r["values_json"],
+                    "source_file": meta.get("filename"),
+                    "source_lineno": meta.get("lineno", 0),
+                })
+            # Stable secondary sort by source line for same-date last-wins (§4.3).
+            result.sort(key=lambda x: (x["date"], x["source_file"] or "", x["source_lineno"]))
+            return result
+
+        return self._query(query)
+
     # ── Documents (account-level) ─────────────────────────────────────────────
 
     def get_documents(self, account: Optional[str] = None) -> list:

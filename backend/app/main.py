@@ -25,7 +25,7 @@ from .config import (
     LOG_FORMAT, CORS_ORIGINS,
 )
 from .api.routers.importer import ofx_accounts, transaction, csv_rules, xls_rules, email as email_import_router, llm_parse, rule_templates
-from .api.routers import accounts, commodities, ledger_export, ledger_transactions, query, config as config_router, filesystem, notices, assistant, recipes, ai_services, setup as setup_router, documents
+from .api.routers import accounts, commodities, ledger_export, ledger_transactions, query, config as config_router, filesystem, notices, assistant, recipes, ai_services, setup as setup_router, documents, compute
 from .error_handler import setup_error_handlers
 from .service_factory import create_user_services, seed_config, startup_user_services
 from .service_registry import ServiceRegistry
@@ -203,6 +203,7 @@ def create_app(
     app.include_router(assistant.router, prefix="/api", tags=["assistant"])
     app.include_router(ai_services.router, prefix="/api", tags=["ai"])
     app.include_router(recipes.router, prefix="/api", tags=["recipes"])
+    app.include_router(compute.router, prefix="/api", tags=["compute"])
     app.include_router(setup_router.router, prefix="/api", tags=["setup"])
 
     # ── Static files (mounts only — SPA fallback registered last) ───────
