@@ -109,6 +109,30 @@
                       </div>
                     </section>
 
+                    <!-- Budget -->
+                    <section>
+                      <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Budget</h3>
+                        <router-link
+                          :to="{ path: '/budgets', query: { account: account.fullPath } }"
+                          class="text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
+                        >Manage</router-link>
+                      </div>
+                      <div v-if="accountBudgets.length > 0" class="space-y-2">
+                        <div
+                          v-for="b in accountBudgets"
+                          :key="b.id"
+                          class="flex justify-between items-center text-sm"
+                        >
+                          <span class="text-gray-500 dark:text-gray-400">{{ b.interval }} · {{ b.currency }}</span>
+                          <span class="font-medium tabular-nums text-gray-900 dark:text-white">
+                            {{ Number(b.amount).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) }} {{ b.currency }}
+                          </span>
+                        </div>
+                      </div>
+                      <p v-else class="text-sm text-gray-400 dark:text-gray-500">No budget set.</p>
+                    </section>
+
                     <!-- Banking Details -->
                     <section v-if="hasBankingDetails">
                       <h3 class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Banking Details</h3>
@@ -220,6 +244,7 @@ import { PaperClipIcon } from '@heroicons/vue/20/solid'
 import DocumentUploadZone from '@/components/documents/DocumentUploadZone.vue'
 import DocumentPreviewModal from '@/components/documents/DocumentPreviewModal.vue'
 import { useDocuments } from '@/composables/useDocuments'
+import { useBudgets } from '@/composables/useBudgets'
 import type { DocumentDetails } from '@/services/generated-api'
 import type { AccountTreeNode } from '@/types/accounts'
 import { typeColors, statusColors } from '@/types/accounts'
@@ -263,10 +288,17 @@ async function refreshDocuments() {
   }
 }
 
-// Fetch documents when the drawer opens or switches account.
+// Effective budget(s) for this account (§7.1).
+const { budgets: accountBudgets, load: loadBudgets } = useBudgets()
+async function refreshBudgets() {
+  if (!props.account) { accountBudgets.value = []; return }
+  await loadBudgets({ history: false, account: props.account.fullPath })
+}
+
+// Fetch documents + budgets when the drawer opens or switches account.
 watch(
   () => [props.open, props.account?.fullPath] as const,
-  ([open]) => { if (open) refreshDocuments() },
+  ([open]) => { if (open) { refreshDocuments(); refreshBudgets() } },
   { immediate: true },
 )
 
