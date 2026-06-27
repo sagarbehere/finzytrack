@@ -261,8 +261,13 @@ function getTableColumns(): TableColumn[] {
         align: jsonCol.align,
         format: jsonCol.format
           ? (value: unknown) => {
+              // Format numbers and numeric (Money) strings; Money flows through
+              // the data path as a decimal string and is display-formatted here.
               if (typeof value === 'number') {
                 return formats.value[jsonCol.format as ValueFormat](value)
+              }
+              if (typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Number(value))) {
+                return formats.value[jsonCol.format as ValueFormat](Number(value))
               }
               return String(value ?? '—')
             }
