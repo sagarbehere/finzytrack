@@ -83,6 +83,25 @@ describe('DAG executor', () => {
       .rejects.toMatchObject({ stepId: 'budgets', kind: 'compute' } as Partial<StepError>)
   })
 
+  it('executeSharedSteps runs the graph once and returns outputs keyed by id', async () => {
+    executeCompute.mockResolvedValue(ok({ result: [{ account: 'Expenses:Food', budget: '600' }] }))
+    const { executeSharedSteps } = useRecipeExecutor()
+    const out = await executeSharedSteps(
+      [{ id: 'budgets', kind: 'compute', fn: 'budget_for_range', args: { from: '{{params.from}}', to: '2026-06-30' } }],
+      { from: '2026-06-01' },
+    )
+    // Compute ran exactly once; output is keyed by step id (compute-once-feed-many).
+    expect(executeCompute).toHaveBeenCalledTimes(1)
+    expect(executeCompute.mock.calls[0][0].args).toEqual({ from: '2026-06-01', to: '2026-06-30' })
+    expect(out).toEqual({ budgets: [{ account: 'Expenses:Food', budget: '600' }] })
+  })
+
+  it('executeSharedSteps returns {} for no shared steps', async () => {
+    const { executeSharedSteps } = useRecipeExecutor()
+    expect(await executeSharedSteps(undefined, {})).toEqual({})
+    expect(await executeSharedSteps([], {})).toEqual({})
+  })
+
   it('rejects a cyclic graph with a graph-level StepError', async () => {
     const cyclic: AnyWidgetRecipe = {
       id: 'c', title: 'C',

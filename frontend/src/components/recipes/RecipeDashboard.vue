@@ -35,6 +35,7 @@
           v-if="getWidgetById(widgetLayout.widgetId)"
           :recipe="getWidgetById(widgetLayout.widgetId)!"
           :dashboardParameters="resolvedDashboardParameters"
+          :dashboardSteps="dashboardStepOutputs"
           :style="{ gridArea: widgetLayout.gridArea }"
         />
         <!-- Shown when a widgetId in the layout has no matching widget definition -->
@@ -67,6 +68,7 @@ import type {
   JsonWidgetRecipe,
 } from '@/types/recipes'
 import { getStorageAdapter, STORAGE_KEYS } from '@/services/storage'
+import { useRecipeExecutor } from '@/composables/useRecipeExecutor'
 import { resolveParameterValues } from '@/recipes/functions'
 import RecipeWidget from './RecipeWidget.vue'
 import RecipeParameters from './RecipeParameters.vue'
@@ -97,6 +99,27 @@ const dashboardSelections = ref<Record<string, string | number>>({})
 const resolvedDashboardParameters = computed(() =>
   resolveParameterValues(dashboardSelections.value),
 )
+
+// Dashboard shared steps (§3.3): run once per dashboard render, re-run on
+// dashboard-param change, and feed every widget via {{dashboard.steps.<id>}}.
+const { executeSharedSteps } = useRecipeExecutor()
+const dashboardStepOutputs = ref<Record<string, unknown>>({})
+
+async function runSharedSteps() {
+  const steps = (props.dashboard as JsonDashboardRecipe).steps
+  if (!steps || steps.length === 0) {
+    dashboardStepOutputs.value = {}
+    return
+  }
+  try {
+    dashboardStepOutputs.value = await executeSharedSteps(steps, resolvedDashboardParameters.value)
+  } catch {
+    // A failed shared step surfaces via each dependent widget's own error state.
+    dashboardStepOutputs.value = {}
+  }
+}
+
+watch(resolvedDashboardParameters, () => runSharedSteps(), { immediate: true, deep: true })
 
 /**
  * Get widget by ID from the dashboard's own inline widgets[]. Widgets are

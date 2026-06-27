@@ -321,6 +321,50 @@ export function useRecipeExecutor() {
   }
 
   /**
+   * Run a step graph to completion and return every step's output. Steps run as
+   * soon as their inputs are ready; independent steps run concurrently. Throws a
+   * StepError on cycle / dangling ref / step failure.
+   */
+  async function runStepGraph(
+    steps: Step[],
+    parameters: Record<string, string | number>,
+    dashboardSteps: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const ordered = topoSort(steps)
+    const stepOutputs: Record<string, unknown> = {}
+    const ctx: TransformContext = { params: parameters }
+    const remaining = new Set(ordered.map((s) => s.id))
+    const deps = new Map(ordered.map((s) => [s.id, stepDependencies(s)]))
+    while (remaining.size > 0) {
+      const ready = ordered.filter(
+        (s) => remaining.has(s.id) && (deps.get(s.id) ?? []).every((d) => !remaining.has(d)),
+      )
+      await Promise.all(
+        ready.map(async (step) => {
+          const scope: RefScope = { params: parameters, steps: stepOutputs, dashboardSteps }
+          if (step.kind === 'sql') stepOutputs[step.id] = await runSqlStep(step, parameters)
+          else if (step.kind === 'compute') stepOutputs[step.id] = await runComputeStep(step, scope)
+          else stepOutputs[step.id] = runTransformStep(step, scope, ctx)
+          remaining.delete(step.id)
+        }),
+      )
+    }
+    return stepOutputs
+  }
+
+  /**
+   * Execute dashboard shared steps once and return their outputs, keyed by id —
+   * consumed by widgets via {{dashboard.steps.<id>}}. (§3.3)
+   */
+  async function executeSharedSteps(
+    steps: Step[] | undefined,
+    parameters: Record<string, string | number>,
+  ): Promise<Record<string, unknown>> {
+    if (!steps || steps.length === 0) return {}
+    return runStepGraph(steps, parameters, {})
+  }
+
+  /**
    * Execute a widget recipe with given parameters.
    * Returns the `output` step's result, ready for visualization.
    *
@@ -337,28 +381,7 @@ export function useRecipeExecutor() {
     stepError.value = null
 
     try {
-      const ordered = topoSort(recipe.steps)
-      const stepOutputs: Record<string, unknown> = {}
-      const ctx: TransformContext = { params: parameters }
-
-      // Execute in dependency layers so independent steps run concurrently.
-      const remaining = new Set(ordered.map((s) => s.id))
-      const deps = new Map(ordered.map((s) => [s.id, stepDependencies(s)]))
-      while (remaining.size > 0) {
-        const ready = ordered.filter(
-          (s) => remaining.has(s.id) && (deps.get(s.id) ?? []).every((d) => !remaining.has(d)),
-        )
-        await Promise.all(
-          ready.map(async (step) => {
-            const scope: RefScope = { params: parameters, steps: stepOutputs, dashboardSteps }
-            if (step.kind === 'sql') stepOutputs[step.id] = await runSqlStep(step, parameters)
-            else if (step.kind === 'compute') stepOutputs[step.id] = await runComputeStep(step, scope)
-            else stepOutputs[step.id] = runTransformStep(step, scope, ctx)
-            remaining.delete(step.id)
-          }),
-        )
-      }
-
+      const stepOutputs = await runStepGraph(recipe.steps, parameters, dashboardSteps)
       if (!(recipe.output in stepOutputs)) {
         throw { stepId: recipe.output, kind: 'graph', message: `output names unknown step "${recipe.output}"` } as StepError
       }
@@ -408,6 +431,7 @@ export function useRecipeExecutor() {
 
   return {
     executeRecipe,
+    executeSharedSteps,
     getDefaultParameters,
     getFormatFunction,
     isLoading,
