@@ -143,6 +143,7 @@ describe('joinBudgetActual (remainder mode)', () => {
     const unbudgeted = find(out, 'Unbudgeted')
     expect(unbudgeted.overAllocated).toBe(true)
     expect(unbudgeted.budget).toBe('-200')
+    expect(unbudgeted.note).toMatch(/over-allocated/i)
   })
 
   it('reports noTotalBudget when the total node has no budget', () => {
@@ -157,6 +158,7 @@ describe('joinBudgetActual (remainder mode)', () => {
     const total = find(out, 'Total')
     expect(total.noTotalBudget).toBe(true)
     expect(total.budget).toBeNull()
+    expect(total.note).toMatch(/no total budget/i) // surfaced, not silent
     expect(find(out, 'Unbudgeted').budget).toBeNull()
     expect(total.actual).toBe('1200') // actuals still work
   })

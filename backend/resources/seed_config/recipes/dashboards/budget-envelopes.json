@@ -29,6 +29,7 @@
     {
       "id": "envelope",
       "title": "Envelope balance over time",
+      "helpText": "Unspent budget carries forward; overspending eats into next month. Empty? Set a budget for the chosen envelope account (Budgets view) and pick a date range with data.",
       "steps": [
         {
           "id": "actuals",
@@ -51,6 +52,7 @@
       "output": "rollover",
       "visualization": {
         "type": "table",
+        "emptyText": "No budget or spending for this envelope in this range. Set a budget for the account (Budgets view) and choose a date range with data.",
         "columns": [
           { "key": "period", "label": "Month" },
           { "key": "budget", "label": "Budget", "format": "currency", "align": "right" },

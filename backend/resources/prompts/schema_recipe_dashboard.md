@@ -501,6 +501,7 @@ Type: `JsonChartVisualization | JsonKPIVisualization | JsonTableVisualization | 
 |-------|------|----------|-------------|
 | `type` | `'table'` | yes |  |
 | `columns` | `JsonTableColumn[]` | yes |  |
+| `emptyText` | `string` | — | Message shown when the table has no rows (default: 'No data available'). |
 
 #### `JsonValueLinkConfig`
 

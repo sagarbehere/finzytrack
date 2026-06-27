@@ -39,6 +39,7 @@
     v-else-if="recipe.visualization.type === 'table'"
     :data="Array.isArray(data) ? data : []"
     :columns="getTableColumns()"
+    :emptyText="getTableEmptyText()"
   />
 
   <!-- Pivot Table -->
@@ -304,6 +305,13 @@ function getTableColumns(): TableColumn[] {
     // TypeScript column with function
     return col as TableColumn
   })
+}
+
+// Custom empty-state message for a table viz (JSON recipes).
+function getTableEmptyText(): string | undefined {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'table') return undefined
+  return (viz as { emptyText?: string }).emptyText
 }
 
 // Get pivot data (transform should return PivotData shape)

@@ -352,6 +352,7 @@ interface RemainderRow {
   kind: 'named' | 'unbudgeted' | 'total'
   overAllocated?: boolean
   noTotalBudget?: boolean
+  note?: string
 }
 
 function sumInclusive(actuals: Record<string, unknown>[], node: string, currency: string): Money {
@@ -432,10 +433,18 @@ function remainderMode(
     makeRemainderRow(String(b.account), currency, toMoneyOr0(b.budget), sumInclusive(actuals, String(b.account), currency), 'named'),
   )
 
+  // Surface the edge cases so they're not silent blank columns (§13.2 B2, edge cases).
+  const totalNote = noTotalBudget ? `No total budget set on ${totalAccount}` : undefined
+  const unbudgetedNote = noTotalBudget
+    ? 'Set a total budget to compute the remainder'
+    : overAllocated
+      ? 'Over-allocated: named budgets exceed the total'
+      : undefined
+
   return [
     ...namedRows,
-    makeRemainderRow('Unbudgeted', currency, remainderBudget, remainderActual, 'unbudgeted', { overAllocated }),
-    makeRemainderRow('Total', currency, totalBudget, totalActual, 'total', { noTotalBudget }),
+    makeRemainderRow('Unbudgeted', currency, remainderBudget, remainderActual, 'unbudgeted', { overAllocated, note: unbudgetedNote }),
+    makeRemainderRow('Total', currency, totalBudget, totalActual, 'total', { noTotalBudget, note: totalNote }),
   ]
 }
 

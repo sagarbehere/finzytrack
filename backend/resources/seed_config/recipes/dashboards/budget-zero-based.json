@@ -20,7 +20,7 @@
     {
       "id": "catch-all",
       "title": "Insurance — named carve-outs + Unbudgeted",
-      "helpText": "Named lines are inclusive; 'Unbudgeted' is the leftover (total budget − named budgets). Σ(named) + Unbudgeted = Total.",
+      "helpText": "Named lines are inclusive; 'Unbudgeted' is the leftover (total budget − named budgets). Σ(named) + Unbudgeted = Total. The Note column flags a missing total budget or over-allocation. Re-point totalAccount at one of your own accounts to use this on your data.",
       "steps": [
         {
           "id": "actuals",
@@ -44,12 +44,14 @@
       "output": "remainder",
       "visualization": {
         "type": "table",
+        "emptyText": "No spending under this total account for the selected month. Set a budget on the total account (Budgets view) and pick a populated month/currency.",
         "columns": [
           { "key": "account", "label": "Account", "format": "accountName2" },
           { "key": "budget", "label": "Budget", "format": "currency", "align": "right" },
           { "key": "actual", "label": "Actual", "format": "currency", "align": "right" },
           { "key": "remaining", "label": "Remaining", "format": "signedCurrency", "align": "right" },
-          { "key": "pctUsed", "label": "% Used", "format": "percent", "align": "right" }
+          { "key": "pctUsed", "label": "% Used", "format": "percent", "align": "right" },
+          { "key": "note", "label": "Note" }
         ]
       }
     }

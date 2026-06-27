@@ -53,7 +53,7 @@
             :colspan="columns.length"
             class="px-4 py-8 text-center text-gray-500 dark:text-gray-400"
           >
-            No data available
+            {{ emptyText || 'No data available' }}
           </td>
         </tr>
       </tbody>
@@ -68,6 +68,7 @@ import type { TableColumn, TableLinkContext } from '@/types/recipes'
 interface Props {
   data: Record<string, unknown>[]
   columns: TableColumn[]
+  emptyText?: string
 }
 
 defineProps<Props>()

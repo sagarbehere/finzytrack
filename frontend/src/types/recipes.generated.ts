@@ -272,6 +272,10 @@ export interface JsonKPIVisualization {
 export interface JsonTableVisualization {
   type: "table";
   columns: JsonTableColumn[];
+  /**
+   * Message shown when the table has no rows (default: 'No data available').
+   */
+  emptyText?: string;
   [k: string]: unknown;
 }
 export interface JsonTableColumn {

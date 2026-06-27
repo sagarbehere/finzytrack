@@ -20,7 +20,7 @@
     {
       "id": "variance-table",
       "title": "Budget vs Actual",
-      "helpText": "A budget on a parent account is compared inclusively against the parent and all its descendants.",
+      "helpText": "A budget on a parent account is compared inclusively against the parent and all its descendants. Empty? This demo needs budgets set (Budgets view) and a month/currency that has data.",
       "steps": [
         {
           "id": "actuals",
@@ -44,6 +44,7 @@
       "output": "variance",
       "visualization": {
         "type": "table",
+        "emptyText": "No budgets or spending for this month. Set budgets in the Budgets view, then pick a month and currency that have data.",
         "columns": [
           { "key": "account", "label": "Account", "format": "accountName2" },
           { "key": "budget", "label": "Budget", "format": "currency", "align": "right" },

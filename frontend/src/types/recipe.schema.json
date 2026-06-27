@@ -140,7 +140,8 @@
       "required": ["type", "columns"],
       "properties": {
         "type": { "const": "table" },
-        "columns": { "type": "array", "items": { "$ref": "#/$defs/JsonTableColumn" } }
+        "columns": { "type": "array", "items": { "$ref": "#/$defs/JsonTableColumn" } },
+        "emptyText": { "type": "string", "description": "Message shown when the table has no rows (default: 'No data available')." }
       }
     },
     "JsonPivotVisualization": {

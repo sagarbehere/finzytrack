@@ -29,6 +29,7 @@
     {
       "id": "burndown",
       "title": "Cumulative budget vs actual",
+      "helpText": "Cumulative actual crossing above cumulative budget means you're pacing over. Empty? Set a budget for the chosen account (Budgets view) and pick a date range with data.",
       "steps": [
         {
           "id": "actuals",
@@ -58,6 +59,7 @@
       "output": "cumulative",
       "visualization": {
         "type": "table",
+        "emptyText": "No budget or spending for this account in this range. Set a budget for the account (Budgets view) and choose a date range with data.",
         "columns": [
           { "key": "period", "label": "Month" },
           { "key": "budget", "label": "Budget", "format": "currency", "align": "right" },
