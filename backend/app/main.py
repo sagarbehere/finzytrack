@@ -354,6 +354,11 @@ def start_server(
     # chosen currency can be applied to the starter ledger.
     seed_config(Path('./config'))
 
+    # Upgrade on-disk user assets (recipes v1→v2, …) after seeding and before
+    # recipes load. Idempotent + best-effort; never blocks startup (§4.12).
+    from .migrations import run_startup_migrations
+    run_startup_migrations(Path('./config'))
+
     # Load environment variables from config/.env (secrets like IMAP credentials)
     from dotenv import load_dotenv
     load_dotenv(Path('./config/.env'))
