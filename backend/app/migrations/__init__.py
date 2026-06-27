@@ -4,15 +4,17 @@ Breaking changes to user assets are upgraded by a general versioned-migration
 runner (the standard Alembic/Rails pattern applied to user assets), not one-off
 scripts. The recipe v1→v2 migration is the first registered entry.
 
-See dev-docs/refactored-dashboard-recipes.md §4.12.
+Migrations are applied on user consent via the startup-task framework
+(app/startup_tasks), not automatically at launch. See dev-docs/upgrades.md and
+dev-docs/refactored-dashboard-recipes.md §4.12.
 
 Public surface:
-  - run_startup_migrations(config_dir, *, write_fn=None) — apply all registered
-    asset migrations to a config directory on launch (idempotent, safe).
-  - recipe_migration: the recipe v1→v2 conversion core (shared by the CLI at
-    scripts/migrate_recipes.py).
+  - apply_recipe_migration(recipes_dir) — apply the recipe v1→v2 migration with
+    backups (idempotent, safe). Called by the recipe startup task on consent.
+  - recipe_migration: the conversion core + read-only detect_pending (shared by
+    the CLI at scripts/migrate_recipes.py).
 """
 
-from .runner import run_startup_migrations
+from .runner import apply_recipe_migration
 
-__all__ = ["run_startup_migrations"]
+__all__ = ["apply_recipe_migration"]

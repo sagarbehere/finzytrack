@@ -1,14 +1,10 @@
-"""Versioned asset-migration runner (§4.12).
+"""Applying recipe migrations with backups (the gated apply path).
 
-A general registry of per-asset-class migrations, applied on startup after the
-config is located/seeded and before recipes load. Today it holds a single
-asset class (recipes, v1→v2); future breaking changes append entries.
-
-Safety guarantees (all required by §4.12):
-  - idempotent (already-at-target files are skipped),
-  - malformed files are skipped-and-reported, never crash startup,
-  - active-config writes go through an atomic+backup writer when available,
-  - a one-line summary is logged.
+Migrations are no longer applied automatically at startup. Instead the startup
+task framework (app/startup_tasks) detects pending migrations read-only, the
+user consents, and then `apply_recipe_migration` runs — with a timestamped
+backup of every changed or removed file, so nothing is mutated without a
+recoverable copy. See dev-docs/upgrades.md and §4.12.
 """
 
 from __future__ import annotations
@@ -18,9 +14,13 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from .recipe_migration import migrate_recipes_dir, WriteFn, RemoveFn
+from .recipe_migration import MigrationReport, migrate_recipes_dir, WriteFn, RemoveFn
 
 logger = logging.getLogger(__name__)
+
+# Backups of removed widget files go to a dedicated recovery folder under
+# recipes/ (their own directory is deleted, so they can't stay beside the file).
+BACKUP_DIRNAME = ".migration-backups"
 
 
 def _timestamped_backup(path: Path) -> None:
@@ -34,12 +34,8 @@ def _timestamped_backup(path: Path) -> None:
 
 
 def _backup_writer() -> WriteFn:
-    """A self-contained timestamped-backup writer.
-
-    Runs at startup *before* config/services exist, so it must not depend on
-    BackupManager (which needs a configured backup_dir/retention). It drops a
-    timestamped `.bak` copy next to the file before overwriting, then writes.
-    """
+    """A self-contained timestamped-backup writer (no BackupManager dependency:
+    it may run before services exist). Backs up in place, then writes."""
     def _write(path: Path, text: str) -> None:
         _timestamped_backup(path)
         path.write_text(text, encoding="utf-8")
@@ -50,8 +46,7 @@ def _backup_writer() -> WriteFn:
 def _backup_remover(backup_dir: Path) -> RemoveFn:
     """Copy a file into *backup_dir* (a recovery folder that survives the
     migration), then delete the original — so a migration never removes a widget
-    file without leaving a recoverable copy. Backups go to a dedicated dir rather
-    than beside the file, since the file's own directory (widgets/) is removed."""
+    file without leaving a recoverable copy."""
     def _remove(path: Path) -> None:
         if path.exists():
             try:
@@ -65,25 +60,21 @@ def _backup_remover(backup_dir: Path) -> RemoveFn:
     return _remove
 
 
-def run_startup_migrations(config_dir: Path, *, write_fn: WriteFn | None = None) -> None:
-    """Apply all registered asset migrations to *config_dir*. Best-effort and
-    safe to call on every launch (idempotent). Never raises — a failure to
-    migrate must not block startup; it is logged and surfaced per file."""
-    recipes_dir = config_dir / "recipes"
-    if not recipes_dir.is_dir():
-        return
-
-    writer = write_fn if write_fn is not None else _backup_writer()
-    remover = _backup_remover(recipes_dir / ".migration-backups")
-    try:
-        report = migrate_recipes_dir(recipes_dir, write=True, write_fn=writer, remove_fn=remover)
-    except Exception as e:  # noqa: BLE001 — never block startup
-        logger.warning("Recipe migration skipped due to error: %s", e)
-        return
-
+def apply_recipe_migration(recipes_dir: Path) -> MigrationReport:
+    """Apply the recipe v1→v2 migration to *recipes_dir*, backing up every
+    changed or removed file. Idempotent (already-v2 files are skipped). Returns
+    the report. Raises only on truly unexpected errors (per-file problems are
+    captured in `report.errors`)."""
+    report = migrate_recipes_dir(
+        recipes_dir,
+        write=True,
+        write_fn=_backup_writer(),
+        remove_fn=_backup_remover(recipes_dir / BACKUP_DIRNAME),
+    )
     if report.changed or report.errors:
         logger.info("Recipe migration (%s): %s", recipes_dir, report.summary())
         for oid, dash_id in report.rehomed_orphans:
             logger.info("  rehomed orphan widget '%s' → dashboard '%s'", oid, dash_id)
         for err in report.errors:
             logger.warning("  recipe migration: %s", err)
+    return report

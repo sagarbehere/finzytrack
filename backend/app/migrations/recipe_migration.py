@@ -175,6 +175,32 @@ def _load_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
+def detect_pending(recipes_dir: Path) -> dict[str, int]:
+    """Read-only: how many recipes are below the target format. NEVER writes.
+
+    Returns {legacy_dashboards, standalone_widgets, total}. Used by the startup
+    task to decide whether to surface an upgrade prompt — detection must not
+    mutate anything, so the user can consent first."""
+    dashboards_dir = recipes_dir / "dashboards"
+    widgets_dir = recipes_dir / "widgets"
+
+    legacy_dashboards = 0
+    if dashboards_dir.is_dir():
+        for df in dashboards_dir.glob("*.json"):
+            data = _load_json(df)
+            if data is not None and data.get("schemaVersion") != SCHEMA_VERSION:
+                legacy_dashboards += 1
+
+    standalone_widgets = (
+        sum(1 for _ in widgets_dir.glob("*.json")) if widgets_dir.is_dir() else 0
+    )
+    return {
+        "legacy_dashboards": legacy_dashboards,
+        "standalone_widgets": standalone_widgets,
+        "total": legacy_dashboards + standalone_widgets,
+    }
+
+
 def migrate_recipes_dir(
     recipes_dir: Path,
     *,

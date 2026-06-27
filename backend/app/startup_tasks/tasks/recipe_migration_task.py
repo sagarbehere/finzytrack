@@ -1,0 +1,70 @@
+"""Startup task: upgrade saved dashboards to the step-based format (v1 → v2).
+
+Data-driven (self-retiring): once every recipe is at the target version,
+`detect()` returns None and the task stops surfacing. `apply()` runs the
+migration with backups (and rehomes orphan widgets) only after the user consents.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from app.migrations.recipe_migration import detect_pending
+from app.migrations.runner import apply_recipe_migration
+from app.schemas.startup_schemas import StartupTaskInfo, SEVERITY_ACTION_REQUIRED
+from app.startup_tasks.base import StartupTask
+
+TASK_ID = "recipes-step-format"
+DOCS_PATH = "upgrade-notes/dashboards-step-format"
+
+
+class RecipeMigrationTask(StartupTask):
+    id = TASK_ID
+    one_shot = False  # detection is data-driven; no completion marker needed
+
+    def __init__(self, recipes_dir: Path) -> None:
+        self._recipes_dir = recipes_dir
+
+    def detect(self) -> StartupTaskInfo | None:
+        pending = detect_pending(self._recipes_dir)
+        if pending["total"] == 0:
+            return None
+
+        n = pending["legacy_dashboards"]
+        w = pending["standalone_widgets"]
+        parts = []
+        if n:
+            parts.append(f"{n} saved dashboard{'s' if n != 1 else ''}")
+        if w:
+            parts.append(f"{w} standalone widget{'s' if w != 1 else ''}")
+        what = " and ".join(parts) if parts else "your recipes"
+
+        summary = (
+            f"This version of Finzytrack uses a new dashboard format. {what} need to be "
+            "upgraded before your dashboards can be shown.\n\n"
+            "Nothing is changed until you choose to upgrade. When you do, a timestamped "
+            "backup of every changed file is saved first (changed dashboards keep a .bak "
+            "beside them; removed widget files are copied to config/recipes/.migration-backups/), "
+            "and any standalone widget not used by a dashboard is preserved as its own new dashboard."
+        )
+
+        return StartupTaskInfo(
+            id=self.id,
+            title="Upgrade saved dashboards",
+            summary=summary,
+            severity=SEVERITY_ACTION_REQUIRED,
+            requires_consent=True,
+            docs_path=DOCS_PATH,
+            details=pending,
+        )
+
+    def apply(self) -> dict[str, Any]:
+        report = apply_recipe_migration(self._recipes_dir)
+        return {
+            "migrated_dashboards": report.migrated_dashboards,
+            "inlined_widgets": report.inlined_widgets,
+            "rehomed_orphans": [{"widget": o, "dashboard": d} for o, d in report.rehomed_orphans],
+            "errors": report.errors,
+            "summary": report.summary(),
+        }
