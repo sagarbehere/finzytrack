@@ -14,29 +14,30 @@ Safety guarantees (all required by §4.12):
 from __future__ import annotations
 
 import logging
+import shutil
+from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 from .recipe_migration import migrate_recipes_dir, WriteFn
 
 logger = logging.getLogger(__name__)
 
 
-def _backup_writer() -> WriteFn | None:
-    """An atomic+backup write function for the active config, if BackupManager
-    is importable. Falls back to a plain write otherwise."""
-    try:
-        from app.core.backup_manager import BackupManager
-    except Exception:  # pragma: no cover - defensive
-        return None
+def _backup_writer() -> WriteFn:
+    """A self-contained timestamped-backup writer.
 
-    bm = BackupManager()
-
+    Runs at startup *before* config/services exist, so it must not depend on
+    BackupManager (which needs a configured backup_dir/retention). It drops a
+    timestamped `.bak` copy next to the file before overwriting, then writes.
+    """
     def _write(path: Path, text: str) -> None:
-        with bm.atomic_write(str(path)) as f:
-            f.seek(0)
-            f.write(text)
-            f.truncate()
+        if path.exists():
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            try:
+                shutil.copy2(path, path.with_suffix(path.suffix + f".{ts}.bak"))
+            except OSError:
+                logger.warning("Could not back up %s before migration", path)
+        path.write_text(text, encoding="utf-8")
 
     return _write
 
