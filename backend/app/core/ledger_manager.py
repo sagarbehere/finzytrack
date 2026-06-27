@@ -501,6 +501,56 @@ class LedgerManager:
         logger.info(f"Deleted account {account_name} and {txn_deleted} transaction(s)")
         return txn_deleted
 
+    # ── Budget management (custom "budget" directives) ──────────────────────
+
+    def create_budget_directive(
+        self, *, date_obj, account: str, interval: str, amount, currency: str,
+    ) -> None:
+        """Append a new `custom "budget"` directive to the root ledger file."""
+        from app.core.budget_directives import build_budget_custom
+        entries, errors, options = self._parse_ledger()
+        meta = {"filename": str(self.ledger_file), "lineno": 0}
+        entry = build_budget_custom(meta, date_obj, account, interval, amount, currency)
+        self._write_and_export(list(entries) + [entry], errors, options)
+
+    def _find_budget_index(self, entries, budget_id_str: str):
+        from app.core.budget_directives import parse_budget_entry
+        for i, e in enumerate(entries):
+            fields = parse_budget_entry(e)
+            if fields and fields["id"] == budget_id_str:
+                return i
+        return None
+
+    def update_budget_directive(
+        self, budget_id_str: str, *, date_obj, account: str, interval: str, amount, currency: str,
+    ) -> bool:
+        """Replace the budget directive identified by ``budget_id_str``, keeping
+        it in its original source file (via _carry_source_location). Returns
+        False if no such directive exists."""
+        from app.core.budget_directives import build_budget_custom
+        entries, errors, options = self._parse_ledger()
+        idx = self._find_budget_index(entries, budget_id_str)
+        if idx is None:
+            return False
+        original = entries[idx]
+        new_meta = self.engine._carry_source_location(original.meta, {})
+        new_entry = build_budget_custom(new_meta, date_obj, account, interval, amount, currency)
+        new_entries = list(entries)
+        new_entries[idx] = new_entry
+        self._write_and_export(new_entries, errors, options)
+        return True
+
+    def delete_budget_directive(self, budget_id_str: str) -> bool:
+        """Remove the budget directive identified by ``budget_id_str``. Returns
+        False if no such directive exists."""
+        entries, errors, options = self._parse_ledger()
+        idx = self._find_budget_index(entries, budget_id_str)
+        if idx is None:
+            return False
+        new_entries = [e for i, e in enumerate(entries) if i != idx]
+        self._write_and_export(new_entries, errors, options)
+        return True
+
     # ── Commodity management ────────────────────────────────────────────────
 
     def create_commodity_directive(self, request: CommodityCreateRequest) -> CommodityCreateData:
