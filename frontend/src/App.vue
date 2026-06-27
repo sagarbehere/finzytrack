@@ -1,9 +1,18 @@
 <template>
   <div id="app" class="h-full bg-white dark:bg-gray-900">
-    <!-- Wait for initial navigation to resolve before rendering.
-         This prevents AppShell from briefly mounting (and making API calls)
-         before the router guard redirects to /setup on first run. -->
-    <template v-if="routerReady">
+    <!-- Startup gate: a required upgrade (e.g. the dashboard-format migration)
+         blocks the whole app behind a consent dialog until the user applies it.
+         Detection is read-only; nothing on disk changes until they consent. -->
+    <StartupGate
+      v-if="startupChecked && gateTask"
+      :task="gateTask"
+      @applied="onStartupApplied"
+    />
+
+    <!-- Wait for the startup check AND initial navigation before rendering the
+         app. This also prevents AppShell from mounting (and loading recipes)
+         before a pending upgrade is resolved. -->
+    <template v-if="startupChecked && !gateTask && routerReady">
       <!-- Full-screen views (setup wizard) bypass AppShell -->
       <router-view v-if="$route.meta.layout === 'none'" />
 
@@ -27,10 +36,21 @@
   import { useRouter } from 'vue-router'
   import AppShell from './components/layout/AppShell.vue'
   import ToastNotifications from './components/common/ToastNotifications.vue'
+  import StartupGate from './components/common/StartupGate.vue'
+  import { useStartupTasks } from './composables/useStartupTasks'
 
   const router = useRouter()
   const routerReady = ref(false)
   router.isReady().then(() => { routerReady.value = true })
+
+  // Check for pending upgrades before the app renders (read-only).
+  const { checked: startupChecked, gateTask, checkStartupTasks } = useStartupTasks()
+  checkStartupTasks()
+
+  function onStartupApplied() {
+    // After a successful apply the task list is re-detected; the gate clears and
+    // the app proceeds to load (recipes are now at the current format).
+  }
 </script>
 
 <style>
