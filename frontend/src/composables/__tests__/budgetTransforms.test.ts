@@ -29,6 +29,21 @@ describe('joinBudgetActual (flat)', () => {
     expect(r.direction).toBe('under-good')
   })
 
+  it('rolls actuals up inclusively to a parent budget (§4.1)', () => {
+    // Expenses:Insurance is an aggregation node (no direct postings); its
+    // children carry the spend and must roll up into the parent's actual.
+    const out = applyTransform('joinBudgetActual', [
+      budgets([{ account: 'Expenses:Insurance', currency: 'USD', budget: '500' }]),
+      actuals([
+        { account: 'Expenses:Insurance:Health', currency: 'USD', actual: 450 },
+        { account: 'Expenses:Insurance:Dental', currency: 'USD', actual: 30 },
+        { account: 'Expenses:Food', currency: 'USD', actual: 999 }, // unrelated, excluded
+      ]),
+    ]) as Record<string, unknown>[]
+    expect(out[0].actual).toBe('480') // 450 + 30, Food excluded
+    expect(out[0].remaining).toBe('20')
+  })
+
   it('income accounts are over-good; missing actual is zero', () => {
     const out = applyTransform('joinBudgetActual', [
       budgets([{ account: 'Income:Salary', currency: 'USD', budget: '5000' }]),
@@ -56,33 +71,37 @@ describe('joinBudgetActual (flat)', () => {
 // ── joinBudgetActual: remainder mode (§13) ───────────────────────────────────
 
 describe('joinBudgetActual (remainder mode)', () => {
-  it('emits Unbudgeted + Total via the maximal-named-subtree rule', () => {
+  const find = (rows: Record<string, unknown>[], account: string) =>
+    rows.find((r) => r.account === account) as Record<string, unknown>
+
+  it('emits flat named + Unbudgeted + Total rows via the maximal-named-subtree rule', () => {
     const out = applyTransform(
       'joinBudgetActual',
       [
         budgets([
-          { account: 'Expenses', currency: 'USD', budget: '5000' },
-          { account: 'Expenses:Rent', currency: 'USD', budget: '1500' },
-          { account: 'Expenses:Food', currency: 'USD', budget: '600' },
+          { account: 'Expenses:Home', currency: 'USD', budget: '5000' },
+          { account: 'Expenses:Home:Rent', currency: 'USD', budget: '1500' },
+          { account: 'Expenses:Home:Food', currency: 'USD', budget: '600' },
         ]),
         actuals([
-          { account: 'Expenses:Rent', currency: 'USD', actual: 1500 },
-          { account: 'Expenses:Food', currency: 'USD', actual: 500 },
-          { account: 'Expenses:Misc', currency: 'USD', actual: 800 },
+          { account: 'Expenses:Home:Rent', currency: 'USD', actual: 1500 },
+          { account: 'Expenses:Home:Food', currency: 'USD', actual: 500 },
+          { account: 'Expenses:Home:Misc', currency: 'USD', actual: 800 },
         ]),
       ],
-      { totalAccount: 'Expenses' },
-    ) as { unbudgeted: any; total: any; overAllocated: boolean; noTotalBudget: boolean; rows: any[] }
+      { totalAccount: 'Expenses:Home' },
+    ) as Record<string, unknown>[]
 
-    expect(out.total.budget).toBe('5000')
-    expect(out.total.actual).toBe('2800') // 1500 + 500 + 800
+    const total = find(out, 'Total')
+    const unbudgeted = find(out, 'Unbudgeted')
+    expect(total.budget).toBe('5000')
+    expect(total.actual).toBe('2800') // 1500 + 500 + 800
     // remainder budget = 5000 − (1500+600) = 2900; remainder actual = 2800 − (1500+500) = 800
-    expect(out.unbudgeted.budget).toBe('2900')
-    expect(out.unbudgeted.actual).toBe('800')
-    expect(out.overAllocated).toBe(false)
-    expect(out.noTotalBudget).toBe(false)
-    // Σ(maximal named) + Unbudgeted = Total  →  (1500+600) + 2900 = 5000
-    expect(out.rows).toHaveLength(2)
+    expect(unbudgeted.budget).toBe('2900')
+    expect(unbudgeted.actual).toBe('800')
+    expect(unbudgeted.overAllocated).toBe(false)
+    // named rows are present (Rent, Food)
+    expect(out.filter((r) => r.kind === 'named')).toHaveLength(2)
   })
 
   it('nested named budgets do not double-count (maximal subtree only)', () => {
@@ -90,23 +109,23 @@ describe('joinBudgetActual (remainder mode)', () => {
       'joinBudgetActual',
       [
         budgets([
-          { account: 'Expenses', currency: 'USD', budget: '1000' },
-          { account: 'Expenses:Food', currency: 'USD', budget: '400' },
-          { account: 'Expenses:Food:Restaurants', currency: 'USD', budget: '150' },
+          { account: 'Expenses:Home', currency: 'USD', budget: '1000' },
+          { account: 'Expenses:Home:Food', currency: 'USD', budget: '400' },
+          { account: 'Expenses:Home:Food:Restaurants', currency: 'USD', budget: '150' },
         ]),
         actuals([
-          { account: 'Expenses:Food', currency: 'USD', actual: 200 },
-          { account: 'Expenses:Food:Restaurants', currency: 'USD', actual: 120 },
+          { account: 'Expenses:Home:Food', currency: 'USD', actual: 200 },
+          { account: 'Expenses:Home:Food:Restaurants', currency: 'USD', actual: 120 },
         ]),
       ],
-      { totalAccount: 'Expenses' },
-    ) as { unbudgeted: any; total: any }
+      { totalAccount: 'Expenses:Home' },
+    ) as Record<string, unknown>[]
 
-    // maximal named = {Expenses:Food} only (Restaurants is under Food).
+    // maximal named = {Expenses:Home:Food} (Restaurants is under Food).
     // named budget = 400; named actual = 200 + 120 = 320 (counted once via subtree).
-    expect(out.total.actual).toBe('320')
-    expect(out.unbudgeted.budget).toBe('600') // 1000 − 400
-    expect(out.unbudgeted.actual).toBe('0') // 320 − 320
+    expect(find(out, 'Total').actual).toBe('320')
+    expect(find(out, 'Unbudgeted').budget).toBe('600') // 1000 − 400
+    expect(find(out, 'Unbudgeted').actual).toBe('0') // 320 − 320
   })
 
   it('flags over-allocation (named budgets exceed the total)', () => {
@@ -114,30 +133,32 @@ describe('joinBudgetActual (remainder mode)', () => {
       'joinBudgetActual',
       [
         budgets([
-          { account: 'Expenses', currency: 'USD', budget: '1000' },
-          { account: 'Expenses:Rent', currency: 'USD', budget: '1200' },
+          { account: 'Expenses:Home', currency: 'USD', budget: '1000' },
+          { account: 'Expenses:Home:Rent', currency: 'USD', budget: '1200' },
         ]),
         actuals([]),
       ],
-      { totalAccount: 'Expenses' },
-    ) as { overAllocated: boolean; unbudgeted: any }
-    expect(out.overAllocated).toBe(true)
-    expect(out.unbudgeted.budget).toBe('-200')
+      { totalAccount: 'Expenses:Home' },
+    ) as Record<string, unknown>[]
+    const unbudgeted = find(out, 'Unbudgeted')
+    expect(unbudgeted.overAllocated).toBe(true)
+    expect(unbudgeted.budget).toBe('-200')
   })
 
   it('reports noTotalBudget when the total node has no budget', () => {
     const out = applyTransform(
       'joinBudgetActual',
       [
-        budgets([{ account: 'Expenses:Rent', currency: 'USD', budget: '1200' }]),
-        actuals([{ account: 'Expenses:Rent', currency: 'USD', actual: 1200 }]),
+        budgets([{ account: 'Expenses:Home:Rent', currency: 'USD', budget: '1200' }]),
+        actuals([{ account: 'Expenses:Home:Rent', currency: 'USD', actual: 1200 }]),
       ],
-      { totalAccount: 'Expenses' },
-    ) as { noTotalBudget: boolean; total: any; unbudgeted: any }
-    expect(out.noTotalBudget).toBe(true)
-    expect(out.total.budget).toBeNull()
-    expect(out.unbudgeted.budget).toBeNull()
-    expect(out.total.actual).toBe('1200') // actuals still work
+      { totalAccount: 'Expenses:Home' },
+    ) as Record<string, unknown>[]
+    const total = find(out, 'Total')
+    expect(total.noTotalBudget).toBe(true)
+    expect(total.budget).toBeNull()
+    expect(find(out, 'Unbudgeted').budget).toBeNull()
+    expect(total.actual).toBe('1200') // actuals still work
   })
 })
 

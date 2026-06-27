@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 2,
+  "id": "budget-zero-based",
+  "title": "Budget — Zero-based (catch-all)",
+  "description": "Top-down budgeting: a total budget on a node, explicit budgets for some children, and everything else collapsed into a single 'Unbudgeted' bucket. Demoed on Expenses:Insurance (total 500, named child Health 450, remainder = Dental + Vision). Beancount can't budget the bare Expenses root, so the total is scoped to a real subtree.",
+  "parameters": [
+    { "name": "monthStart", "label": "From", "type": "date", "default": { "$gen": "startOfMonth" } },
+    { "name": "monthEnd", "label": "To", "type": "date", "default": { "$gen": "endOfMonth" } },
+    { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" }
+  ],
+  "layout": {
+    "columns": 12,
+    "gap": "1.5rem",
+    "rowHeight": "320px",
+    "widgets": [
+      { "widgetId": "catch-all", "gridArea": "1 / 1 / 2 / 13" }
+    ]
+  },
+  "widgets": [
+    {
+      "id": "catch-all",
+      "title": "Insurance — named carve-outs + Unbudgeted",
+      "helpText": "Named lines are inclusive; 'Unbudgeted' is the leftover (total budget − named budgets). Σ(named) + Unbudgeted = Total.",
+      "steps": [
+        {
+          "id": "actuals",
+          "kind": "sql",
+          "query": "SELECT account, currency, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE account LIKE 'Expenses:Insurance%' AND transaction_date BETWEEN :monthStart AND :monthEnd AND currency = :currency GROUP BY account, currency"
+        },
+        {
+          "id": "budgets",
+          "kind": "compute",
+          "fn": "budget_for_range",
+          "args": { "from": "{{params.monthStart}}", "to": "{{params.monthEnd}}", "currency": "{{params.currency}}" }
+        },
+        {
+          "id": "remainder",
+          "kind": "transform",
+          "fn": "joinBudgetActual",
+          "inputs": ["{{steps.budgets}}", "{{steps.actuals}}"],
+          "config": { "totalAccount": "Expenses:Insurance" }
+        }
+      ],
+      "output": "remainder",
+      "visualization": {
+        "type": "table",
+        "columns": [
+          { "key": "account", "label": "Account", "format": "accountName2" },
+          { "key": "budget", "label": "Budget", "format": "currency", "align": "right" },
+          { "key": "actual", "label": "Actual", "format": "currency", "align": "right" },
+          { "key": "remaining", "label": "Remaining", "format": "signedCurrency", "align": "right" },
+          { "key": "pctUsed", "label": "% Used", "format": "percent", "align": "right" }
+        ]
+      }
+    }
+  ]
+}

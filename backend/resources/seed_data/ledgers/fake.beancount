@@ -43346,3 +43346,28 @@
   Expenses:Utilities                        69.87 USD
 
 
+
+;; ──────────────────────────────────────────────────────────────────────────
+;; Budget directives (demo) — see dev-docs/budget.md §15.1
+;; Calibrated against ~2025 monthly spend so the budget dashboards show a
+;; realistic mix of over- and under-budget. Effective from 2025-01-01 so both
+;; recent months and the trailing year have coverage.
+;; ──────────────────────────────────────────────────────────────────────────
+; Note: Beancount disallows a budget on the bare `Expenses` root (an account
+; needs >=1 subaccount), so a single all-expenses total isn't expressible. The
+; catch-all/zero-based demo scopes its total to a real nested subtree
+; (Expenses:Insurance below: parent 500, named child Health 450, remainder =
+; Dental+Vision) — same maximal-named-subtree logic, and it parses.
+2025-01-01 custom "budget" Expenses:HouseRent        "monthly" 4200 USD
+2025-01-01 custom "budget" Expenses:Groceries        "monthly"  950 USD
+2025-07-01 custom "budget" Expenses:Groceries        "monthly" 1050 USD   ; raised mid-span (effective-dating)
+2025-01-01 custom "budget" Expenses:EatingOut        "monthly"  600 USD   ; typically runs over (demo)
+2025-01-01 custom "budget" Expenses:Utilities        "monthly"  320 USD
+2025-01-01 custom "budget" Expenses:Phone            "monthly"   80 USD
+2025-01-01 custom "budget" Expenses:Internet         "monthly"   90 USD
+2025-01-01 custom "budget" Expenses:Healthcare       "monthly"   50 USD
+2025-01-01 custom "budget" Expenses:Entertainment    "monthly"   50 USD
+2025-01-01 custom "budget" Expenses:Insurance        "monthly"  500 USD   ; parent aggregation node (nested pair)
+2025-01-01 custom "budget" Expenses:Insurance:Health "monthly"  450 USD   ; nested child
+2025-01-01 custom "budget" Expenses:Travel           "yearly"  4800 USD   ; non-monthly interval
+2025-01-01 custom "budget" Expenses:Groceries        "monthly" 1300 INR   ; second currency (multi-currency)

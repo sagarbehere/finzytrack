@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 2,
+  "id": "budget-this-month",
+  "title": "Budget — This Month",
+  "description": "Monthly envelope budgeting (no rollover): budget vs actual per account for the selected month, with remaining and % used. Pick a populated month if the current one has no data yet.",
+  "parameters": [
+    { "name": "monthStart", "label": "From", "type": "date", "default": { "$gen": "startOfMonth" } },
+    { "name": "monthEnd", "label": "To", "type": "date", "default": { "$gen": "endOfMonth" } },
+    { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" }
+  ],
+  "layout": {
+    "columns": 12,
+    "gap": "1.5rem",
+    "rowHeight": "320px",
+    "widgets": [
+      { "widgetId": "variance-table", "gridArea": "1 / 1 / 2 / 13" }
+    ]
+  },
+  "widgets": [
+    {
+      "id": "variance-table",
+      "title": "Budget vs Actual",
+      "helpText": "A budget on a parent account is compared inclusively against the parent and all its descendants.",
+      "steps": [
+        {
+          "id": "actuals",
+          "kind": "sql",
+          "query": "SELECT account, currency, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE account_type = 'Expenses' AND transaction_date BETWEEN :monthStart AND :monthEnd AND currency = :currency GROUP BY account, currency"
+        },
+        {
+          "id": "budgets",
+          "kind": "compute",
+          "fn": "budget_for_range",
+          "args": { "from": "{{params.monthStart}}", "to": "{{params.monthEnd}}", "currency": "{{params.currency}}" }
+        },
+        {
+          "id": "variance",
+          "kind": "transform",
+          "fn": "joinBudgetActual",
+          "inputs": ["{{steps.budgets}}", "{{steps.actuals}}"],
+          "config": { "periodStart": "{{params.monthStart}}", "periodEnd": "{{params.monthEnd}}" }
+        }
+      ],
+      "output": "variance",
+      "visualization": {
+        "type": "table",
+        "columns": [
+          { "key": "account", "label": "Account", "format": "accountName2" },
+          { "key": "budget", "label": "Budget", "format": "currency", "align": "right" },
+          { "key": "actual", "label": "Actual", "format": "currency", "align": "right" },
+          { "key": "remaining", "label": "Remaining", "format": "signedCurrency", "align": "right" },
+          { "key": "pctUsed", "label": "% Used", "format": "percent", "align": "right" }
+        ]
+      }
+    }
+  ]
+}

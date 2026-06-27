@@ -310,8 +310,10 @@ export function useRecipeExecutor() {
     ctx: TransformContext,
   ): unknown {
     const inputs = step.inputs.map((token) => interpolateValue(token, scope))
+    // Resolve {{params/steps/...}} inside config too (e.g. pace period bounds).
+    const config = step.config ? (interpolateValue(step.config, scope) as TransformConfig) : undefined
     try {
-      return applyTransform(step.fn, inputs, step.config as TransformConfig | undefined, ctx)
+      return applyTransform(step.fn, inputs, config, ctx)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : `Transform "${step.fn}" failed`
       throw { stepId: step.id, kind: 'transform', message } as StepError

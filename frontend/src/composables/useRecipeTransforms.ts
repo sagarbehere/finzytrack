@@ -318,43 +318,84 @@ function joinBudgetActual(inputs: unknown[], config?: TransformConfig): unknown 
   const actuals = asRows(inputs[1])
   const frac = elapsedFraction(config)
 
-  const actualByKey = new Map<string, Money>()
-  for (const a of actuals) {
-    const k = key(String(a.account ?? ''), String(a.currency ?? ''))
-    actualByKey.set(k, add(actualByKey.get(k) ?? zero(), toMoneyOr0(a.actual)))
-  }
-
   if (config?.totalAccount) {
-    return remainderMode(budgets, actuals, actualByKey, String(config.totalAccount), frac)
+    return remainderMode(budgets, actuals, String(config.totalAccount))
   }
 
-  // Flat mode.
+  // Flat mode. Actuals roll up INCLUSIVELY to each budgeted account (§4.1
+  // inclusive-parent): a budget on a parent is compared against the parent's
+  // own spend and all descendants. Descendant budgets still get their own row.
   const rows: VarianceRow[] = []
   for (const b of budgets) {
     const account = String(b.account ?? '')
     const currency = String(b.currency ?? '')
     const budgetM = toMoneyOr0(b.budget)
-    const actualM = actualByKey.get(key(account, currency)) ?? zero()
+    let actualM = zero()
+    for (const a of actuals) {
+      if (String(a.currency ?? '') === currency && isUnderInclusive(String(a.account ?? ''), account)) {
+        actualM = add(actualM, toMoneyOr0(a.actual))
+      }
+    }
     rows.push(buildVarianceRow(account, currency, budgetM, actualM, frac))
   }
   return rows
 }
 
-interface RemainderResult {
-  rows: VarianceRow[]
-  unbudgeted: { account: string; budget: string | null; actual: string }
-  total: { account: string; budget: string | null; actual: string }
-  overAllocated: boolean
-  noTotalBudget: boolean
+/** A budget row plus the remainder-mode role/flags, as a flat renderable row. */
+interface RemainderRow {
+  account: string
+  currency: string
+  budget: string | null
+  actual: string
+  remaining: string | null
+  pctUsed: number | null
+  kind: 'named' | 'unbudgeted' | 'total'
+  overAllocated?: boolean
+  noTotalBudget?: boolean
 }
 
+function sumInclusive(actuals: Record<string, unknown>[], node: string, currency: string): Money {
+  let sum = zero()
+  for (const a of actuals) {
+    if (String(a.currency ?? '') === currency && isUnderInclusive(String(a.account ?? ''), node)) {
+      sum = add(sum, toMoneyOr0(a.actual))
+    }
+  }
+  return sum
+}
+
+function makeRemainderRow(
+  account: string,
+  currency: string,
+  budget: Money | null,
+  actual: Money,
+  kind: RemainderRow['kind'],
+  extra: Partial<RemainderRow> = {},
+): RemainderRow {
+  return {
+    account,
+    currency,
+    budget,
+    actual,
+    remaining: budget === null ? null : sub(budget, actual),
+    pctUsed: budget === null || budget === '0' ? null : toNumber(div(actual, budget)),
+    kind,
+    ...extra,
+  }
+}
+
+/**
+ * Remainder mode (§13): emits a FLAT rows array the generic table/gauge viz
+ * renders directly — one inclusive line per named account, a synthetic
+ * "Unbudgeted" line, and a "Total" line. The maximal-named-subtree rule keeps
+ * nested budgets from double-counting; overAllocated / noTotalBudget are
+ * row-level flags.
+ */
 function remainderMode(
   budgets: Record<string, unknown>[],
   actuals: Record<string, unknown>[],
-  actualByKey: Map<string, Money>,
   totalAccount: string,
-  frac: number | null,
-): RemainderResult {
+): RemainderRow[] {
   // Budgets strictly under the total node (the "named" carve-outs).
   const named = budgets.filter((b) => isStrictlyUnder(String(b.account ?? ''), totalAccount))
   const namedAccounts = named.map((b) => String(b.account))
@@ -366,18 +407,12 @@ function remainderMode(
   const totalBudgetRow = budgets.find((b) => String(b.account) === totalAccount)
   const currency = String((totalBudgetRow ?? named[0])?.currency ?? actuals[0]?.currency ?? '')
 
-  // Inclusive actual under the total node.
-  let totalActual = zero()
-  for (const a of actuals) {
-    if (isUnderInclusive(String(a.account ?? ''), totalAccount)) {
-      totalActual = add(totalActual, toMoneyOr0(a.actual))
-    }
-  }
+  const totalActual = sumInclusive(actuals, totalAccount, currency)
   // Named actual: spend under ANY maximal-named prefix (set membership → once).
   let namedActual = zero()
   for (const a of actuals) {
     const acct = String(a.account ?? '')
-    if (maximalNamed.some((n) => isUnderInclusive(acct, n))) {
+    if (String(a.currency ?? '') === currency && maximalNamed.some((n) => isUnderInclusive(acct, n))) {
       namedActual = add(namedActual, toMoneyOr0(a.actual))
     }
   }
@@ -392,21 +427,16 @@ function remainderMode(
   const remainderBudget = totalBudget === null ? null : sub(totalBudget, namedBudget)
   const overAllocated = remainderBudget !== null && lt(remainderBudget, zero())
 
-  // Per-named line (inclusive budget/actual — may overlap when nested, by §4.1).
-  const rows: VarianceRow[] = named.map((b) => {
-    const account = String(b.account)
-    const budgetM = toMoneyOr0(b.budget)
-    const actualM = actualByKey.get(key(account, currency)) ?? zero()
-    return buildVarianceRow(account, currency, budgetM, actualM, frac)
-  })
+  // One inclusive line per named account (may overlap when nested, by §4.1).
+  const namedRows: RemainderRow[] = named.map((b) =>
+    makeRemainderRow(String(b.account), currency, toMoneyOr0(b.budget), sumInclusive(actuals, String(b.account), currency), 'named'),
+  )
 
-  return {
-    rows,
-    unbudgeted: { account: 'Unbudgeted', budget: remainderBudget, actual: remainderActual },
-    total: { account: 'Total', budget: totalBudget, actual: totalActual },
-    overAllocated,
-    noTotalBudget,
-  }
+  return [
+    ...namedRows,
+    makeRemainderRow('Unbudgeted', currency, remainderBudget, remainderActual, 'unbudgeted', { overAllocated }),
+    makeRemainderRow('Total', currency, totalBudget, totalActual, 'total', { noTotalBudget }),
+  ]
 }
 
 /**
@@ -433,6 +463,26 @@ function runningSum(inputs: unknown[], config?: TransformConfig): unknown {
     }
     return out
   })
+}
+
+/**
+ * joinByPeriod — merge per-period budgets and per-period actuals into one row
+ * per period: { period, budget, actual }. The non-rollover building block for
+ * burn-down (→ runningSum) and historical month-by-month views.
+ */
+function joinByPeriod(inputs: unknown[]): unknown {
+  const budgets = asRows(inputs[0])
+  const actuals = asRows(inputs[1])
+  const budgetByPeriod = new Map<string, Money>()
+  for (const b of budgets) budgetByPeriod.set(String(b.period ?? ''), toMoneyOr0(b.budget))
+  const actualByPeriod = new Map<string, Money>()
+  for (const a of actuals) actualByPeriod.set(String(a.period ?? ''), toMoneyOr0(a.actual))
+  const periods = Array.from(new Set([...budgetByPeriod.keys(), ...actualByPeriod.keys()])).sort()
+  return periods.map((period) => ({
+    period,
+    budget: budgetByPeriod.get(period) ?? zero(),
+    actual: actualByPeriod.get(period) ?? zero(),
+  }))
 }
 
 /**
@@ -490,6 +540,7 @@ export const transformCatalog: Record<string, TransformFn> = {
   pluck: pluckTransform,
   pivot: pivotTransform,
   joinBudgetActual,
+  joinByPeriod,
   runningSum,
   envelopeRollover,
 }
