@@ -13,10 +13,10 @@ export class RecipesService {
      * Get Manifest
      * Return the auto-discovered recipe manifest.
      *
-     * Any `widgets*.json` and `dashboards*.json` under the recipes
-     * directory is included. Paths are sorted alphabetically; the manifest
-     * is recomputed on every request, so files added by `cp`, `mv`, or any
-     * other out-of-band write are picked up immediately.
+     * Any `dashboards*.json` under the recipes directory is included. Paths
+     * are sorted alphabetically; the manifest is recomputed on every request,
+     * so files added by `cp`, `mv`, or any other out-of-band write are picked
+     * up immediately.
      * @returns any Successful Response
      * @throws ApiError
      */

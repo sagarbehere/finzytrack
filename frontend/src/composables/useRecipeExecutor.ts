@@ -8,7 +8,7 @@ import type {
   TransformConfig,
   TransformContext,
 } from '@/types/recipes'
-import { LedgerService } from '@/services/generated-api'
+import { LedgerService, ComputeService } from '@/services/generated-api'
 import type { QueryRequest } from '@/services/generated-api'
 import { formatAmount, formatSignedAmount } from '@/utils/currencyFormat'
 import { errorHandler } from '@/utils/ErrorHandler'
@@ -291,16 +291,17 @@ export function useRecipeExecutor() {
 
   async function runComputeStep(
     step: Extract<Step, { kind: 'compute' }>,
-    _scope: RefScope,
+    scope: RefScope,
   ): Promise<unknown> {
-    // Wired to /api/compute (ComputeService) in Phase 3. Until then compute
-    // steps cannot run; surface a clear, named error. No seed recipe uses
-    // compute, so widget rendering is unaffected.
-    throw {
-      stepId: step.id,
-      kind: 'compute',
-      message: `Compute step "${step.fn}" requires the /api/compute endpoint (not yet available)`,
-    } as StepError
+    // Resolve {{params/steps/dashboard.steps}} references in the args, then call
+    // the server-side compute function. Args should be small scalars (G4).
+    const args = (interpolateValue(step.args ?? {}, scope) ?? {}) as Record<string, unknown>
+    const response = await ComputeService.executeCompute({ function: step.fn, args })
+    if (!response.success || !response.data) {
+      throw { stepId: step.id, kind: 'compute', message: response.error?.message || `Compute "${step.fn}" failed` } as StepError
+    }
+    // Unwrap the ApiResponse[ComputeData] envelope → the function's result (G7).
+    return response.data.result
   }
 
   function runTransformStep(
