@@ -25,10 +25,34 @@ VALID_DB_TYPES = {"sqlite", "beanquery"}
 # A write function: (path, text) -> None. Defaults to a plain write; the startup
 # runner injects an atomic+backup writer for the active config.
 WriteFn = Callable[[Path, str], None]
+# A removal function: (path) -> None. Defaults to a plain unlink; the startup
+# runner injects a backup-then-unlink remover so nothing is deleted without a copy.
+RemoveFn = Callable[[Path], None]
 
 
 def _plain_write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
+
+
+def _plain_remove(path: Path) -> None:
+    path.unlink(missing_ok=True)
+
+
+def _one_widget_dashboard(dash_id: str, widget: dict[str, Any]) -> dict[str, Any]:
+    """Wrap a single migrated widget in a v2 one-widget dashboard, so an orphan
+    standalone widget survives migration as a viewable dashboard rather than
+    being deleted."""
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "id": dash_id,
+        "title": widget.get("title") or dash_id,
+        "description": "Migrated from a standalone widget recipe.",
+        "layout": {
+            "columns": 6, "gap": "1.5rem", "rowHeight": "200px",
+            "widgets": [{"widgetId": widget["id"], "gridArea": "1 / 1 / 5 / 7"}],
+        },
+        "widgets": [widget],
+    }
 
 
 # ── Core conversion (pure) ───────────────────────────────────────────────────
@@ -126,19 +150,20 @@ class MigrationReport:
     migrated_dashboards: list[str] = field(default_factory=list)
     skipped_already_v2: list[str] = field(default_factory=list)
     inlined_widgets: list[str] = field(default_factory=list)
-    deleted_orphans: list[str] = field(default_factory=list)
+    #: orphan widget id → new wrapper-dashboard id it was rehomed into.
+    rehomed_orphans: list[tuple[str, str]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     @property
     def changed(self) -> bool:
-        return bool(self.migrated_dashboards or self.deleted_orphans or self.inlined_widgets)
+        return bool(self.migrated_dashboards or self.rehomed_orphans or self.inlined_widgets)
 
     def summary(self) -> str:
         return (
             f"migrated {len(self.migrated_dashboards)} dashboard(s), "
             f"skipped {len(self.skipped_already_v2)} (already v2), "
             f"inlined {len(self.inlined_widgets)} standalone widget(s), "
-            f"deleted {len(self.deleted_orphans)} orphan(s), "
+            f"rehomed {len(self.rehomed_orphans)} orphan widget(s), "
             f"{len(self.errors)} error(s)"
         )
 
@@ -155,11 +180,14 @@ def migrate_recipes_dir(
     *,
     write: bool = True,
     write_fn: WriteFn | None = None,
+    remove_fn: RemoveFn | None = None,
 ) -> MigrationReport:
     """Migrate a single `recipes/` directory (dashboards/ + optional widgets/).
     Best-effort per file — a malformed file is reported, never fatal. `write_fn`
-    lets the active-config path inject an atomic+backup writer."""
+    lets the active-config path inject an atomic+backup writer; `remove_fn` lets
+    it back up files before deletion (nothing is deleted without a copy)."""
     writer = write_fn or _plain_write
+    remover = remove_fn or _plain_remove
     report = MigrationReport()
     dashboards_dir = recipes_dir / "dashboards"
     widgets_dir = recipes_dir / "widgets"
@@ -197,15 +225,38 @@ def migrate_recipes_dir(
 
     report.inlined_widgets.extend(sorted(inlined))
 
+    # Orphans (referenced by no dashboard) are REHOMED into a new one-widget
+    # dashboard so nothing is lost, rather than deleted.
+    existing_dash_ids = {
+        d["id"] for df in dashboards_dir.glob("*.json")
+        if (d := _load_json(df)) and isinstance(d.get("id"), str)
+    } if dashboards_dir.is_dir() else set()
+
     orphans = sorted(set(standalone) - inlined)
     for oid in orphans:
-        report.deleted_orphans.append(oid)
+        try:
+            migrated_widget = migrate_widget(standalone[oid])
+        except Exception as e:  # noqa: BLE001 — best-effort per file
+            report.errors.append(f"could not rehome orphan widget '{oid}': {e}")
+            continue
+        # Derive a non-colliding dashboard id/filename for the wrapper.
+        dash_id = oid if oid not in existing_dash_ids else f"{oid}-widget"
+        while (dashboards_dir / f"{dash_id}.json").exists() or dash_id in existing_dash_ids:
+            dash_id = f"{dash_id}-widget"
+        existing_dash_ids.add(dash_id)
+        dashboard = _one_widget_dashboard(dash_id, migrated_widget)
         if write:
-            standalone_files[oid].unlink(missing_ok=True)
+            dashboards_dir.mkdir(parents=True, exist_ok=True)
+            writer(dashboards_dir / f"{dash_id}.json", json.dumps(dashboard, indent=2, ensure_ascii=False) + "\n")
+        report.rehomed_orphans.append((oid, dash_id))
 
+    # Remove the now-redundant standalone widget files (inlined + rehomed),
+    # backing each up first via remove_fn, then drop the empty widgets/ dir.
     if write and widgets_dir.is_dir():
-        for wid in inlined:
-            standalone_files.get(wid, Path("/nonexistent")).unlink(missing_ok=True)
+        for wid in list(inlined) + [oid for oid, _ in report.rehomed_orphans]:
+            f = standalone_files.get(wid)
+            if f is not None:
+                remover(f)
         if not list(widgets_dir.glob("*")):
             widgets_dir.rmdir()
 

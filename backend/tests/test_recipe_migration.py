@@ -16,6 +16,7 @@ from app.migrations.recipe_migration import (
     migrate_recipes_dir,
     migrate_widget,
 )
+from app.migrations.runner import run_startup_migrations
 from app.helpers.recipe_validation import validate_dashboard
 
 
@@ -130,19 +131,45 @@ def _legacy_tree(root: Path):
            {"id": "orphan", "title": "O", "query": "SELECT 3", "visualization": {"type": "kpi"}})
 
 
-def test_migrate_dir_inlines_removes_orphans_and_drops_widgets_dir(tmp_path: Path):
+def test_migrate_dir_inlines_rehomes_orphans_and_drops_widgets_dir(tmp_path: Path):
     root = tmp_path / "recipes"
     _legacy_tree(root)
     report = migrate_recipes_dir(root)
 
     assert report.migrated_dashboards == ["d.json"]
     assert report.inlined_widgets == ["standalone-w"]
-    assert report.deleted_orphans == ["orphan"]
-    assert not (root / "widgets").exists()  # dir dropped after inlining + orphan removal
+    # The orphan is rehomed into a new one-widget dashboard, not deleted.
+    assert report.rehomed_orphans == [("orphan", "orphan")]
+    assert not (root / "widgets").exists()  # dir dropped after inlining + rehoming
 
     migrated = json.loads((root / "dashboards" / "d.json").read_text())
     assert migrated["schemaVersion"] == 2
     assert validate_dashboard(migrated) == []
+
+    # The rehomed orphan is now a valid, viewable dashboard.
+    rehomed = json.loads((root / "dashboards" / "orphan.json").read_text())
+    assert rehomed["schemaVersion"] == 2
+    assert validate_dashboard(rehomed) == []
+    assert rehomed["widgets"][0]["id"] == "orphan"
+
+
+def test_orphan_rehome_avoids_dashboard_id_collision(tmp_path: Path):
+    root = tmp_path / "recipes"
+    # An orphan widget whose id collides with an existing dashboard id.
+    _write(root / "dashboards" / "report.json", {
+        "schemaVersion": 2, "id": "report", "title": "Report",
+        "layout": {"columns": 12, "widgets": []}, "widgets": [
+            {"id": "w", "title": "W", "steps": [{"id": "s", "kind": "sql", "query": "SELECT 1"}], "output": "s", "visualization": {"type": "kpi"}}
+        ],
+    })
+    _write(root / "widgets" / "report.json",
+           {"id": "report", "title": "Report Widget", "query": "SELECT 1", "visualization": {"type": "kpi"}})
+    report = migrate_recipes_dir(root)
+    # The wrapper got a non-colliding id; both dashboards exist.
+    oid, dash_id = report.rehomed_orphans[0]
+    assert oid == "report" and dash_id != "report"
+    assert (root / "dashboards" / "report.json").exists()
+    assert (root / "dashboards" / f"{dash_id}.json").exists()
 
 
 def test_migrate_dir_idempotent(tmp_path: Path):
@@ -152,7 +179,9 @@ def test_migrate_dir_idempotent(tmp_path: Path):
     before = (root / "dashboards" / "d.json").read_text()
     report2 = migrate_recipes_dir(root)
     assert report2.migrated_dashboards == []
-    assert report2.skipped_already_v2 == ["d.json"]
+    # Both the migrated dashboard and the rehomed orphan are already v2 → skipped.
+    assert "d.json" in report2.skipped_already_v2
+    assert "orphan.json" in report2.skipped_already_v2
     assert (root / "dashboards" / "d.json").read_text() == before  # byte-identical
 
 
@@ -171,3 +200,43 @@ def test_migrate_dir_skips_malformed_file_and_reports(tmp_path: Path):
     report = migrate_recipes_dir(root)
     assert any("broken.json" in e for e in report.errors)
     assert "good.json" in report.migrated_dashboards  # the good file still migrates
+
+
+# ── Startup runner: nothing deleted without a backup ─────────────────────────
+
+
+def test_startup_runner_backs_up_dashboards_and_removed_widgets(tmp_path: Path):
+    config = tmp_path / "config"
+    root = config / "recipes"
+    _legacy_tree(root)  # 1 dashboard, 1 referenced widget, 1 orphan widget
+
+    run_startup_migrations(config)
+
+    # Dashboard migrated in place, with a timestamped .bak beside it.
+    migrated = json.loads((root / "dashboards" / "d.json").read_text())
+    assert migrated["schemaVersion"] == 2
+    assert list((root / "dashboards").glob("d.json.*.bak")), "dashboard not backed up"
+
+    # The widgets/ dir is gone, but every removed widget left a .bak first.
+    assert not (root / "widgets").exists()
+    baks = list(tmp_path.rglob("*.json.*.bak"))
+    names = {b.name.split(".json")[0] for b in baks}
+    assert "standalone-w" in names  # inlined widget backed up before removal
+    assert "orphan" in names        # rehomed orphan's source backed up before removal
+
+    # The orphan survives as a viewable dashboard (rehomed, not lost).
+    assert (root / "dashboards" / "orphan.json").exists()
+
+
+def test_startup_runner_idempotent_and_safe_on_already_v2(tmp_path: Path):
+    config = tmp_path / "config"
+    root = config / "recipes"
+    _legacy_tree(root)
+    run_startup_migrations(config)
+    before = (root / "dashboards" / "d.json").read_text()
+    bak_count = len(list(tmp_path.rglob("*.bak")))
+
+    run_startup_migrations(config)  # second launch
+    assert (root / "dashboards" / "d.json").read_text() == before
+    # No new backups churned on the no-op second run.
+    assert len(list(tmp_path.rglob("*.bak"))) == bak_count

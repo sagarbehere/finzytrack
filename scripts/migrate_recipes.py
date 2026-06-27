@@ -40,8 +40,8 @@ def main(argv: list[str]) -> int:
             continue
         report = migrate_recipes_dir(path, write=write)
         print(f"[{path}] {report.summary()}")
-        for line in report.deleted_orphans:
-            print(f"  orphan removed: {line}")
+        for oid, dash_id in report.rehomed_orphans:
+            print(f"  orphan widget '{oid}' rehomed → dashboard '{dash_id}'")
         for line in report.errors:
             print(f"  ! {line}")
         overall_errors += len(report.errors)
