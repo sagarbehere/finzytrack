@@ -48,6 +48,9 @@ Each widget placement uses CSS Grid `gridArea`: `"row-start / col-start / row-en
 
 ### Widget structure (inline in dashboard)
 
+A widget is a **DAG of named steps** feeding a visualization. Each step is `sql`,
+`compute`, or `transform`; `output` names the step whose result the viz renders.
+
 ```json
 {
   "id": "widget-id",
@@ -55,13 +58,38 @@ Each widget placement uses CSS Grid `gridArea`: `"row-start / col-start / row-en
   "description": "Optional description",
   "helpText": "Optional tooltip shown as ⓘ icon",
   "parameters": [],
-  "query": "SELECT ... FROM postings WHERE ...",
-  "transform": "firstRow",
-  "visualization": { "type": "kpi", ... }
+  "steps": [
+    { "id": "rows", "kind": "sql", "query": "SELECT ... FROM postings WHERE ..." },
+    { "id": "out", "kind": "transform", "fn": "firstRow", "inputs": ["{{steps.rows}}"] }
+  ],
+  "output": "out",
+  "visualization": { "type": "kpi" }
 }
 ```
 
-**Required fields:** `id`, `title`, `query`, `visualization`
+**Required fields:** `id`, `title`, `steps`, `output`, `visualization`.
+
+**Step kinds:**
+- `sql` — `{ id, kind:"sql", query }`. A leaf data source over the SQLite mirror.
+  Uses `:paramName` placeholders only; it **cannot** reference other steps
+  (`{{...}}` is invalid in `query`). Combine sources in a `transform`.
+- `compute` — `{ id, kind:"compute", fn, args }`. Calls a server-side function
+  (fixed catalog — call `get_compute_functions`). `args` are small scalars; values
+  may be `{{params.x}}` / `{{steps.x}}` templates.
+- `transform` — `{ id, kind:"transform", fn, inputs, config? }`. Calls a client
+  transform (catalog below) over the outputs of the steps named in `inputs`
+  (each a `{{steps.<id>}}` or `{{dashboard.steps.<id>}}` reference).
+
+A simplest single-query widget is `[ {sql}, {transform fn:"none"} ]` with
+`output` on the transform. Step ids are lowercase-with-hyphens, unique per widget.
+
+**Dashboard shared steps:** the dashboard may declare a top-level `steps` array
+(no `output`). They run once and widgets reference them via `{{dashboard.steps.<id>}}`
+— use this to compute an expensive value once and feed many widgets.
+
+**Fixed-catalog rule:** `compute` functions and `transform`s are a fixed,
+server-provided catalog. You **select** from it — you cannot invent a `fn` name or
+emit code. If nothing fits, say so.
 
 ### Parameters
 
@@ -128,19 +156,27 @@ Use generators for dynamic default values and option lists:
 - Include `ORDER BY` when results have a natural ordering.
 - **Always test your SQL with `execute_query` before building the recipe.**
 
-### Transforms
+### Transform catalog (fixed)
 
-Transforms modify query results before visualization. Optional — most widgets don't need one.
+A `transform` step calls one of these by `fn` over its `inputs`. The first input
+is the primary rowset; `config` shapes behavior.
 
-**Simple transforms (string):**
-- `"firstRow"` — Use only the first row (for KPI from multi-row query)
-- `"firstValue"` — Extract the first value from the first row
-- `"none"` — No transform (default)
+| fn | inputs | config | output |
+|---|---|---|---|
+| `none` | `[rows]` | — | rows unchanged |
+| `firstRow` | `[rows]` | — | the first row object |
+| `firstValue` | `[rows]` | — | first value of the first row |
+| `sortBy` | `[rows]` | `{ field, order }` | sorted rows |
+| `limit` | `[rows]` | `{ count }` | first N rows |
+| `pluck` | `[rows]` | `{ field }` | array of one field |
+| `pivot` | `[rows]` | `{ rowField, columnField, valueField, formatColumn?, sortRowsBy? }` | PivotData |
+| `joinBudgetActual` | `[budgets, actuals]` | `{ totalAccount?, periodStart?, periodEnd? }` | variance rows (flat; remainder mode adds Unbudgeted+Total when `totalAccount` is set) |
+| `joinByPeriod` | `[budgetsByPeriod, actualsByPeriod]` | — | `[{ period, budget, actual }]` |
+| `runningSum` | `[rows]` | `{ fields:[…], orderBy }` | rows + cumulative<Field> columns |
+| `envelopeRollover` | `[budgetsByPeriod, actualsByPeriod]` | — | `[{ period, budget, actual, available, carryover, overspent }]` |
 
-**Object transforms:**
-- `{ "type": "sortBy", "field": "total", "order": "desc" }`
-- `{ "type": "limit", "count": 10 }`
-- `{ "type": "pivot", "rowField": "account", "columnField": "year_month", "valueField": "amount", "formatColumn": "monthYear", "sortRowsBy": "total_desc" }`
+Budget transforms pair with the `budget_for_range` compute function — see
+`get_budget_guide` and `get_compute_functions`.
 
 ### Visualization types
 
@@ -165,7 +201,7 @@ Transforms modify query results before visualization. Optional — most widgets 
 - `multiCurrency: true` — Query must return `currency` and `amount` columns. Groups amounts by currency.
 - `format`: `"currency"`, `"number"`, `"compact"`, `"percent"` (optional, auto-detected)
 - For single-value KPI, query should return one row with an `amount` or `value` column.
-  Use `transform: "firstRow"` if needed.
+  Use a `firstRow` transform step if needed.
 
 #### Bar chart
 
@@ -286,17 +322,13 @@ Add `"smooth": true` for smooth curves. Add `"areaStyle": {}` for area fill.
 }
 ```
 
-Requires a pivot transform on the widget:
+Requires a `pivot` transform step on the widget:
 ```json
-"transform": {
-  "type": "pivot",
-  "rowField": "account",
-  "columnField": "year_month",
-  "valueField": "amount",
-  "formatColumn": "monthYear",
-  "sortRowsBy": "total_desc"
-}
+{ "id": "pivoted", "kind": "transform", "fn": "pivot", "inputs": ["{{steps.rows}}"],
+  "config": { "rowField": "account", "columnField": "year_month", "valueField": "amount",
+              "formatColumn": "monthYear", "sortRowsBy": "total_desc" } }
 ```
+with `output: "pivoted"`.
 
 ### Tooltips — keep them simple
 

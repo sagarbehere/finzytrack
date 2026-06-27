@@ -17,7 +17,6 @@ from app.helpers.recipe_validation import (
     reference_shape as _reference_shape,
     validate_dashboard as _validate_dashboard,
     validate_id as _validate_id,
-    validate_widget as _validate_widget,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,15 +45,11 @@ class PreviewRecipeTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Validate a recipe and show a live preview in the sidebar. "
-            "Accepts both widget recipes and dashboard recipes. "
-            "This does NOT save to disk. After the user approves, call write_recipe. "
-            "Choosing recipe_type: use 'widget' when the user is designing a single "
-            "standalone widget (the preview will render it on its own, with any "
-            "widget-level parameters in the widget header). Use 'dashboard' only "
-            "when the recipe composes multiple widgets into a layout, or defines "
-            "dashboard-level parameters shared across widgets. Do NOT wrap a single "
-            "widget in a dashboard just to preview it — pass it as 'widget'."
+            "Validate a dashboard recipe and show a live preview in the sidebar. "
+            "The dashboard is the only recipe type — every widget is defined inline "
+            "in the dashboard's widgets[]. To preview a single widget, wrap it in a "
+            "one-widget dashboard. This does NOT save to disk. After the user "
+            "approves, call write_recipe."
         )
 
     @property
@@ -64,15 +59,10 @@ class PreviewRecipeTool(BaseTool):
             "properties": {
                 "content": {
                     "type": "object",
-                    "description": "The recipe JSON object (widget or dashboard).",
-                },
-                "recipe_type": {
-                    "type": "string",
-                    "enum": ["widget", "dashboard"],
-                    "description": "Type of recipe: 'widget' for a single widget, 'dashboard' for a multi-widget layout.",
+                    "description": "The dashboard recipe JSON object.",
                 },
             },
-            "required": ["content", "recipe_type"],
+            "required": ["content"],
         }
 
     def __init__(self, sqlite_path: str | None = None):
@@ -91,66 +81,31 @@ class PreviewRecipeTool(BaseTool):
                     "validation_errors": id_errors,
                 }
 
-        if recipe_type == "widget":
-            # Validate as a widget
-            errors = _validate_widget(content, "(root)")
-            if errors:
-                record_validation_failure("preview_recipe", errors, recipe_id=content.get("id"))
-                return {
-                    "success": False,
-                    "error": "Widget validation failed",
-                    "validation_errors": errors,
-                    "reference_shape": _reference_shape("JsonWidgetRecipe"),
-                }
-
-            # SQL dry-run for the single widget
-            sql_errors = _dry_run_queries(
-                {"widgets": [content]}, self._sqlite_path
-            )
-            if sql_errors:
-                record_validation_failure("preview_recipe.sql", sql_errors, recipe_id=content.get("id"))
-                return {
-                    "success": False,
-                    "error": "SQL query validation failed",
-                    "validation_errors": sql_errors,
-                }
-
-            _last_previewed_recipe = content
-            _last_previewed_type = "widget"
-
+        errors = _validate_dashboard(content)
+        if errors:
+            record_validation_failure("preview_recipe", errors, recipe_id=content.get("id"))
             return {
-                "success": True,
-                "message": "Widget validated. A live preview is showing in the sidebar.",
-                "recipe": content,
-                "recipe_type": "widget",
+                "success": False,
+                "error": "Dashboard validation failed",
+                "validation_errors": errors,
+                "reference_shape": _reference_shape("JsonDashboardRecipe"),
             }
-        else:
-            # Validate as a dashboard
-            errors = _validate_dashboard(content)
-            if errors:
-                record_validation_failure("preview_recipe", errors, recipe_id=content.get("id"))
-                return {
-                    "success": False,
-                    "error": "Dashboard validation failed",
-                    "validation_errors": errors,
-                    "reference_shape": _reference_shape("JsonDashboardRecipe"),
-                }
 
-            sql_errors = _dry_run_queries(content, self._sqlite_path)
-            if sql_errors:
-                record_validation_failure("preview_recipe.sql", sql_errors, recipe_id=content.get("id"))
-                return {
-                    "success": False,
-                    "error": "SQL query validation failed",
-                    "validation_errors": sql_errors,
-                }
-
-            _last_previewed_recipe = content
-            _last_previewed_type = "dashboard"
-
+        sql_errors = _dry_run_queries(content, self._sqlite_path)
+        if sql_errors:
+            record_validation_failure("preview_recipe.sql", sql_errors, recipe_id=content.get("id"))
             return {
-                "success": True,
-                "message": "Dashboard validated. A live preview is showing in the sidebar.",
-                "recipe": content,
-                "recipe_type": "dashboard",
+                "success": False,
+                "error": "Recipe step validation failed",
+                "validation_errors": sql_errors,
             }
+
+        _last_previewed_recipe = content
+        _last_previewed_type = "dashboard"
+
+        return {
+            "success": True,
+            "message": "Dashboard validated. A live preview is showing in the sidebar.",
+            "recipe": content,
+            "recipe_type": "dashboard",
+        }

@@ -19,7 +19,6 @@ from app.helpers.recipe_validation import (
     reference_shape as _reference_shape,
     validate_dashboard as _validate_dashboard,
     validate_id as _validate_id,
-    validate_widget as _validate_widget,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,63 +82,99 @@ def _detect_dollar_placeholders(query: str) -> list[str]:
     return sorted(set(_DOLLAR_PARAM_RE.findall(stripped)))
 
 
-def _dry_run_queries(dashboard: dict, sqlite_path: str | None) -> list[str]:
-    """Execute each widget's SQL query to check for errors. Returns list of errors."""
+# The client transform catalog (kept in sync with useRecipeTransforms.ts). The
+# server can't run the catalog, so fn-name validity is checked against this list
+# (§3.6 G8 / §4.11).
+KNOWN_TRANSFORMS = {
+    "none", "firstRow", "firstValue", "sortBy", "limit", "pluck", "pivot",
+    "joinBudgetActual", "joinByPeriod", "runningSum", "envelopeRollover",
+}
+
+_STEP_TOKEN_RE = re.compile(r"^\{\{\s*steps\.([a-z0-9-]+)")
+_ANY_TOKEN_RE = re.compile(r"\{\{\s*([^}]+?)\s*\}\}")
+
+
+def _dry_run_sql_step(query: str, wid: str, sidx: int, sqlite_path: str | None) -> list[str]:
+    """Dry-run one sql step's query (the existing single-query logic)."""
+    errors: list[str] = []
+    if not isinstance(query, str):
+        return errors
+    label = f"widget '{wid}' steps[{sidx}]"
+    if _ANY_TOKEN_RE.search(query):
+        errors.append(f"{label}: sql.query cannot contain {{{{...}}}} references — use :paramName for parameters")
+        return errors
+    dollar_names = _detect_dollar_placeholders(query)
+    if dollar_names:
+        tokens = ", ".join(f"${n}" for n in dollar_names)
+        errors.append(
+            f"{label}: invalid SQL parameter syntax — found {tokens}. SQL bindings "
+            f"must use ':name'. The '$name' syntax is for clickLink/formatters."
+        )
+        return errors
     if not sqlite_path:
-        return []
+        return errors
+    param_names = set(_PARAM_NAME_RE.findall(query))
+    params = {name: "__dry_run__" for name in param_names}
+    try:
+        con = sqlite3.connect(sqlite_path, uri=True)
+        con.execute("PRAGMA query_only = true")
+        con.execute(f"SELECT * FROM ({query}) LIMIT 0", params)
+        con.close()
+    except (sqlite3.OperationalError, Exception) as e:
+        kind = "SQL error" if isinstance(e, sqlite3.OperationalError) else "query validation failed"
+        msg = f"{label}: {kind} — {e}"
+        hint = _sql_error_hint(str(e))
+        if hint:
+            msg += f". Hint: {hint}"
+        errors.append(msg)
+    return errors
+
+
+def _dry_run_queries(dashboard: dict, sqlite_path: str | None) -> list[str]:
+    """Step-aware dry-run (§4.11): for each widget, dry-run sql steps, validate
+    that compute steps reference a real function with schema-valid args
+    (validation-only — not executed), and that transform steps reference a known
+    fn wired to declared steps. Returns a list of error strings."""
+    import jsonschema
+    from app.api.routers.compute import build_registry
+
     widgets = dashboard.get("widgets", [])
     if not isinstance(widgets, list):
         return []
 
-    errors = []
-    for i, w in enumerate(widgets):
+    registry = build_registry(None)
+    errors: list[str] = []
+    for w in widgets:
         if not isinstance(w, dict):
             continue
-        query = w.get("query")
-        if not isinstance(query, str):
+        wid = w.get("id", "?")
+        steps = w.get("steps", [])
+        if not isinstance(steps, list):
             continue
-
-        # Reject `$name` placeholders before SQLite sees them. SQLite would
-        # accept `$name` as a binding, but our recipe convention is `:name`
-        # for SQL — `$name` is the click-link / formatter template syntax
-        # for result columns. Mixing them is a common LLM mistake, and
-        # SQLite's error message normalises `$name` to `:name`, which makes
-        # the failure nearly impossible to debug from the error alone.
-        wid = w.get("id", f"index {i}")
-        dollar_names = _detect_dollar_placeholders(query)
-        if dollar_names:
-            tokens = ", ".join(f"${n}" for n in dollar_names)
-            errors.append(
-                f"widgets[{i}] ('{wid}'): invalid SQL parameter syntax — "
-                f"found {tokens}. SQL bindings must use ':name' (e.g. "
-                f":currency, :year). The '$name' syntax is for clickLink "
-                f"filters and formatters — those refer to result columns, "
-                f"not parameters. Replace each '$name' with ':name' in the "
-                f"query and ensure the parameter is declared in "
-                f"'parameters[]'."
-            )
-            continue
-
-        # Bind every :paramName placeholder to a dummy string. SQLite parses
-        # the query and only treats :name as a placeholder when it's outside
-        # string literals — so this also works for queries with colons inside
-        # quoted strings (e.g. 'Assets:Liquid:%').
-        param_names = set(_PARAM_NAME_RE.findall(query))
-        params = {name: "__dry_run__" for name in param_names}
-
-        try:
-            con = sqlite3.connect(sqlite_path, uri=True)
-            con.execute("PRAGMA query_only = true")
-            # Use LIMIT 0 wrapper to avoid actually fetching data
-            con.execute(f"SELECT * FROM ({query}) LIMIT 0", params)
-            con.close()
-        except (sqlite3.OperationalError, Exception) as e:
-            kind = "SQL error" if isinstance(e, sqlite3.OperationalError) else "query validation failed"
-            msg = f"widgets[{i}] ('{wid}'): {kind} — {e}"
-            hint = _sql_error_hint(str(e))
-            if hint:
-                msg += f". Hint: {hint}"
-            errors.append(msg)
+        step_ids = {s.get("id") for s in steps if isinstance(s, dict)}
+        for sidx, s in enumerate(steps):
+            if not isinstance(s, dict):
+                continue
+            kind = s.get("kind")
+            if kind == "sql":
+                errors.extend(_dry_run_sql_step(s.get("query", ""), wid, sidx, sqlite_path))
+            elif kind == "compute":
+                fn = registry.get(s.get("fn", ""))
+                if fn is None:
+                    errors.append(f"widget '{wid}' steps[{sidx}]: unknown compute function '{s.get('fn')}'. Call get_compute_functions to see what exists.")
+                    continue
+                try:
+                    jsonschema.validate(instance=s.get("args", {}), schema=fn.parameters_schema)
+                except jsonschema.ValidationError as e:
+                    errors.append(f"widget '{wid}' steps[{sidx}]: invalid args for '{s.get('fn')}' — {e.message}")
+            elif kind == "transform":
+                if s.get("fn") not in KNOWN_TRANSFORMS:
+                    errors.append(f"widget '{wid}' steps[{sidx}]: unknown transform '{s.get('fn')}'. Known: {sorted(KNOWN_TRANSFORMS)}.")
+                for inp in (s.get("inputs") or []):
+                    if isinstance(inp, str):
+                        m = _STEP_TOKEN_RE.match(inp)
+                        if m and m.group(1) not in step_ids:
+                            errors.append(f"widget '{wid}' steps[{sidx}]: input '{inp}' references unknown step")
 
     return errors
 
@@ -155,10 +190,9 @@ class WriteRecipeTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Save a recipe to disk. Saves widgets to widgets/ and dashboards to dashboards/. "
-            "If you already called preview_recipe, just pass the filename — the previewed "
-            "recipe is saved automatically (do NOT re-pass content). The recipe_type is also "
-            "remembered from the preview. "
+            "Save a dashboard recipe to disk (dashboards/). If you already called "
+            "preview_recipe, just pass the filename — the previewed recipe is saved "
+            "automatically (do NOT re-pass content). "
             "Pass overwrite: true to replace an existing file with the same name."
         )
 
@@ -169,24 +203,13 @@ class WriteRecipeTool(BaseTool):
             "properties": {
                 "filename": {
                     "type": "string",
-                    "description": (
-                        "JSON filename, e.g. 'net-worth-kpi.json'. Saved to widgets/ "
-                        "or dashboards/ based on recipe_type."
-                    ),
+                    "description": "JSON filename, e.g. 'net-worth.json'. Saved to dashboards/.",
                 },
                 "content": {
                     "type": "object",
                     "description": (
-                        "The recipe JSON object. OPTIONAL if you already called "
+                        "The dashboard recipe JSON object. OPTIONAL if you already called "
                         "preview_recipe — the previewed recipe is used automatically."
-                    ),
-                },
-                "recipe_type": {
-                    "type": "string",
-                    "enum": ["widget", "dashboard"],
-                    "description": (
-                        "Type of recipe. OPTIONAL if preview_recipe was called — "
-                        "remembered automatically. Otherwise required."
                     ),
                 },
                 "overwrite": {
@@ -214,14 +237,12 @@ class WriteRecipeTool(BaseTool):
         recipe_type: str | None = None,
         overwrite: bool = False,
     ) -> dict:
-        # Resolve content and type from preview cache if not provided
-        if content is None or recipe_type is None:
+        # Resolve content from preview cache if not provided. The dashboard is
+        # the only recipe type (§4.11); recipe_type is ignored if passed.
+        if content is None:
             from app.ai.tools.preview_recipe import get_last_previewed_recipe
-            cached_content, cached_type = get_last_previewed_recipe()
-            if content is None:
-                content = cached_content
-            if recipe_type is None:
-                recipe_type = cached_type
+            cached_content, _ = get_last_previewed_recipe()
+            content = cached_content
 
         if content is None:
             return {
@@ -231,46 +252,36 @@ class WriteRecipeTool(BaseTool):
                     "Either pass the recipe JSON as content, or call preview_recipe first."
                 ),
             }
-        if recipe_type is None:
-            recipe_type = "dashboard"  # default
 
         # Ensure .json extension
         if not filename.endswith(".json"):
             filename += ".json"
 
         # ── 1. Validation ───────────────────────────────────────────────
-        if recipe_type == "widget":
-            errors = _validate_widget(content, "(root)")
-        else:
-            errors = _validate_dashboard(content)
-
+        errors = _validate_dashboard(content)
         recipe_id = content.get("id")
         if isinstance(recipe_id, str):
             errors.extend(_validate_id(recipe_id))
 
         if errors:
-            ref_def = "JsonWidgetRecipe" if recipe_type == "widget" else "JsonDashboardRecipe"
             return {
                 "success": False,
-                "error": f"{'Widget' if recipe_type == 'widget' else 'Dashboard'} validation failed",
+                "error": "Dashboard validation failed",
                 "validation_errors": errors,
-                "reference_shape": _reference_shape(ref_def),
+                "reference_shape": _reference_shape("JsonDashboardRecipe"),
             }
 
-        # ── 2. SQL dry-run ──────────────────────────────────────────────
-        if recipe_type == "widget":
-            sql_errors = _dry_run_queries({"widgets": [content]}, self._sqlite_path)
-        else:
-            sql_errors = _dry_run_queries(content, self._sqlite_path)
+        # ── 2. Step-aware dry-run (SQL + compute + transform) ───────────
+        sql_errors = _dry_run_queries(content, self._sqlite_path)
         if sql_errors:
             return {
                 "success": False,
-                "error": "SQL query validation failed",
+                "error": "Recipe step validation failed",
                 "validation_errors": sql_errors,
             }
 
         # ── 3. Path safety + overwrite check ────────────────────────────
-        subfolder = "widgets" if recipe_type == "widget" else "dashboards"
+        subfolder = "dashboards"
         target_dir = self._recipes_dir / subfolder
         target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -299,7 +310,7 @@ class WriteRecipeTool(BaseTool):
         else:
             save_path.write_text(json_content, encoding="utf-8")
 
-        logger.info(f"Saved {recipe_type} recipe to {save_path}")
+        logger.info(f"Saved dashboard recipe to {save_path}")
 
         # Recipes are auto-discovered from the filesystem; no manifest to update.
         return {

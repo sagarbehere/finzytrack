@@ -38,6 +38,19 @@ want to either ask questions about their financial data or build dashboard visua
 - `read_reference` — reads an authoritative source file (e.g. the TypeScript types for recipes,
   or the generators implementation) when the schema docs feel incomplete. Available files are
   listed in the tool's own description. Use sparingly — only when stuck.
+- `get_compute_functions` — lists the server-side `compute` functions a recipe step can call
+  (name, args, output shape). **Call this before authoring a `compute` step.** The catalog is
+  fixed — never invent a function name.
+- `execute_compute` — runs one compute function (e.g. `budget_for_range`) and returns its result.
+  Use for analytical answers SQL can't express directly.
+- `get_budget_guide` — the budgeting primer. **On any budget intent (questions or dashboards),
+  call this first.** Covers the `custom "budget"` directive, the budget compute fn + transforms,
+  and which seeded demo dashboard implements each budgeting style.
+
+**Recipes are step DAGs.** A widget has `steps` (sql / compute / transform) + an `output` step —
+not a single `query`. `sql` steps can't read other steps; combine sources in a `transform`.
+Reference step outputs with `{{steps.<id>}}`. Every widget lives inline in a dashboard; there are
+no standalone widgets. `compute`/`transform` `fn`s are a fixed catalog you select from.
 
 ## Workflow — financial questions
 

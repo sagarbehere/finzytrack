@@ -46,6 +46,9 @@ from app.ai.tools.test_email_extraction import TestEmailExtractionTool
 from app.ai.tools.write_csv_rule import WriteCsvRuleTool
 from app.ai.tools.write_email_rule import WriteEmailRuleTool
 from app.ai.tools.execute_query import ExecuteQueryTool
+from app.ai.tools.execute_compute import ExecuteComputeTool
+from app.ai.tools.get_compute_functions import GetComputeFunctionsTool
+from app.ai.tools.get_budget_guide import GetBudgetGuideTool
 from app.ai.tools.get_ledger_context import GetLedgerContextTool
 from app.ai.tools.write_xls_rule import WriteXlsRuleTool
 from app.ai.tools.list_recipes import ListRecipesTool
@@ -224,6 +227,7 @@ def _build_registry(
         if sqlite_path:
             registry.register(ExecuteQueryTool(sqlite_path))
             registry.register(GetLedgerContextTool(sqlite_reader, sqlite_path))
+            registry.register(ExecuteComputeTool(sqlite_reader))
         if recipes_dir:
             registry.register(GetRecipeSchemaTool())
             registry.register(ListRecipesTool(recipes_dir))
@@ -232,6 +236,8 @@ def _build_registry(
             registry.register(WriteRecipeTool(recipes_dir, sqlite_path, backup_manager))
             registry.register(ReadReferenceTool())
             registry.register(GetExampleWidgetTool())
+            registry.register(GetComputeFunctionsTool())
+            registry.register(GetBudgetGuideTool())
 
     return registry
 
