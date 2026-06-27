@@ -1,7 +1,16 @@
 <template>
+  <!-- Shape guard (G1): the output step's data must match the viz's expected
+       shape. On mismatch, show a clear message instead of a blank panel. -->
+  <div
+    v-if="vizInputError"
+    class="flex h-full items-center justify-center p-4 text-center text-sm text-amber-700 dark:text-amber-400"
+  >
+    {{ vizInputError }}
+  </div>
+
   <!-- KPI -->
   <RecipeKPI
-    v-if="recipe.visualization.type === 'kpi'"
+    v-else-if="recipe.visualization.type === 'kpi'"
     :value="getKPIValue()"
     :icon="getKPIIcon()"
     :iconColor="getKPIIconColor()"
@@ -67,6 +76,7 @@ import {
   type AnyWidgetRecipe,
   getFormats,
 } from '@/composables/useRecipeExecutor'
+import { validateVizInput } from '@/recipes/vizRegistry'
 import RecipeChart from './RecipeChart.vue'
 import RecipeKPI from './RecipeKPI.vue'
 import RecipeTable from './RecipeTable.vue'
@@ -88,6 +98,13 @@ const currencyParam = computed<string | undefined>(() => {
 })
 
 const formats = computed(() => getFormats(currencyParam.value))
+
+// G1 shape guard: validate the output step's data against the viz's expected
+// shape (§4.5b). Skipped while data is still null/undefined (loading).
+const vizInputError = computed<string | null>(() => {
+  if (props.data === null || props.data === undefined) return null
+  return validateVizInput(props.recipe.visualization, props.data)
+})
 
 // Check if visualization is a JSON KPI (has format string instead of formatValue function)
 function isJsonKPIVisualization(
