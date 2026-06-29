@@ -24,7 +24,7 @@
       "steps": [
         {
           "id": "actuals",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT account, currency, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE account LIKE 'Expenses:Insurance%' AND transaction_date BETWEEN :monthStart AND :monthEnd AND currency = :currency GROUP BY account, currency"
         },
         {

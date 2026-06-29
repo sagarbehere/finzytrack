@@ -20,7 +20,7 @@ from app.helpers.recipe_validation import (
 
 def _steps():
     return [
-        {"id": "main", "kind": "sql", "query": "SELECT 1"},
+        {"id": "main", "kind": "query", "query": "SELECT 1"},
         {"id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"]},
     ]
 
@@ -76,7 +76,7 @@ def test_widget_missing_steps_reports_required():
 
 def test_sql_step_with_template_reference_rejected():
     w = _widget(steps=[
-        {"id": "main", "kind": "sql", "query": "SELECT * WHERE x = {{steps.other}}"},
+        {"id": "main", "kind": "query", "query": "SELECT * WHERE x = {{steps.other}}"},
         {"id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"]},
     ])
     errors = validate_widget(w, "(root)")
@@ -102,7 +102,7 @@ def test_cyclic_step_reference_rejected():
 
 def test_duplicate_step_ids_rejected():
     w = _widget(steps=[
-        {"id": "main", "kind": "sql", "query": "SELECT 1"},
+        {"id": "main", "kind": "query", "query": "SELECT 1"},
         {"id": "main", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"]},
     ], output="main")
     errors = validate_widget(w, "(root)")
@@ -123,7 +123,7 @@ def test_output_naming_nonexistent_step_rejected():
 
 def test_transform_step_missing_inputs_rejected():
     w = _widget(steps=[
-        {"id": "main", "kind": "sql", "query": "SELECT 1"},
+        {"id": "main", "kind": "query", "query": "SELECT 1"},
         {"id": "out", "kind": "transform", "fn": "none"},
     ])
     errors = validate_widget(w, "(root)")

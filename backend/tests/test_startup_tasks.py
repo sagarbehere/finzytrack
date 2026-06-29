@@ -49,7 +49,7 @@ def test_no_task_when_recipes_already_v2(tmp_path: Path):
     (recipes / "dashboards" / "d.json").write_text(json.dumps({
         "schemaVersion": 2, "id": "d", "title": "D",
         "layout": {"columns": 12, "widgets": []},
-        "widgets": [{"id": "w", "title": "W", "steps": [{"id": "s", "kind": "sql", "query": "SELECT 1"}], "output": "s", "visualization": {"type": "kpi"}}],
+        "widgets": [{"id": "w", "title": "W", "steps": [{"id": "s", "kind": "query", "query": "SELECT 1"}], "output": "s", "visualization": {"type": "kpi"}}],
     }), encoding="utf-8")
     assert build_startup_registry(config, recipes).detect() == []
 

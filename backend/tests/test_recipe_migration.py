@@ -23,12 +23,12 @@ from app.helpers.recipe_validation import validate_dashboard
 # ── Widget conversion ────────────────────────────────────────────────────────
 
 
-def test_query_only_widget_migrates_to_sql_plus_transform_none():
+def test_query_only_widget_migrates_to_query_plus_transform_none():
     w = {"id": "w", "title": "W", "query": "SELECT 1",
          "visualization": {"type": "kpi"}}
     out = migrate_widget(w)
     assert out["steps"] == [
-        {"id": "main", "kind": "sql", "query": "SELECT 1"},
+        {"id": "main", "kind": "query", "query": "SELECT 1"},
         {"id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"]},
     ]
     assert out["output"] == "out"
@@ -53,11 +53,12 @@ def test_string_transform_migrates_without_config():
     assert out["steps"][1] == {"id": "out", "kind": "transform", "fn": "firstRow", "inputs": ["{{steps.main}}"]}
 
 
-def test_dbtype_moves_to_sql_step():
+def test_dbtype_moves_to_query_step_engine():
     w = {"id": "w", "title": "W", "query": "SELECT 1", "dbType": "beanquery",
          "visualization": {"type": "kpi"}}
     out = migrate_widget(w)
-    assert out["steps"][0]["dbType"] == "beanquery"
+    assert out["steps"][0]["engine"] == "beanquery"
+    assert "dbType" not in out["steps"][0]
     assert "dbType" not in out
 
 
@@ -159,7 +160,7 @@ def test_orphan_rehome_avoids_dashboard_id_collision(tmp_path: Path):
     _write(root / "dashboards" / "report.json", {
         "schemaVersion": 2, "id": "report", "title": "Report",
         "layout": {"columns": 12, "widgets": []}, "widgets": [
-            {"id": "w", "title": "W", "steps": [{"id": "s", "kind": "sql", "query": "SELECT 1"}], "output": "s", "visualization": {"type": "kpi"}}
+            {"id": "w", "title": "W", "steps": [{"id": "s", "kind": "query", "query": "SELECT 1"}], "output": "s", "visualization": {"type": "kpi"}}
         ],
     })
     _write(root / "widgets" / "report.json",

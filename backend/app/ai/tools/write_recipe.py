@@ -94,20 +94,24 @@ _STEP_TOKEN_RE = re.compile(r"^\{\{\s*steps\.([a-z0-9-]+)")
 _ANY_TOKEN_RE = re.compile(r"\{\{\s*([^}]+?)\s*\}\}")
 
 
-def _dry_run_sql_step(query: str, wid: str, sidx: int, sqlite_path: str | None) -> list[str]:
-    """Dry-run one sql step's query (the existing single-query logic)."""
+def _dry_run_query_step(query: str, engine: str, wid: str, sidx: int, sqlite_path: str | None) -> list[str]:
+    """Dry-run one query step's text. The SQLite-mirror dry-run only applies to
+    the sqlite engine; beanquery (BQL) text is structurally validated but not
+    executed here (it isn't SQL)."""
     errors: list[str] = []
     if not isinstance(query, str):
         return errors
     label = f"widget '{wid}' steps[{sidx}]"
     if _ANY_TOKEN_RE.search(query):
-        errors.append(f"{label}: sql.query cannot contain {{{{...}}}} references — use :paramName for parameters")
+        errors.append(f"{label}: query cannot contain {{{{...}}}} references — use :paramName for parameters")
+        return errors
+    if engine == "beanquery":
         return errors
     dollar_names = _detect_dollar_placeholders(query)
     if dollar_names:
         tokens = ", ".join(f"${n}" for n in dollar_names)
         errors.append(
-            f"{label}: invalid SQL parameter syntax — found {tokens}. SQL bindings "
+            f"{label}: invalid query parameter syntax — found {tokens}. Bindings "
             f"must use ':name'. The '$name' syntax is for clickLink/formatters."
         )
         return errors
@@ -131,7 +135,7 @@ def _dry_run_sql_step(query: str, wid: str, sidx: int, sqlite_path: str | None) 
 
 
 def _dry_run_queries(dashboard: dict, sqlite_path: str | None) -> list[str]:
-    """Step-aware dry-run (§4.11): for each widget, dry-run sql steps, validate
+    """Step-aware dry-run (§4.11): for each widget, dry-run query steps, validate
     that compute steps reference a real function with schema-valid args
     (validation-only — not executed), and that transform steps reference a known
     fn wired to declared steps. Returns a list of error strings."""
@@ -156,8 +160,8 @@ def _dry_run_queries(dashboard: dict, sqlite_path: str | None) -> list[str]:
             if not isinstance(s, dict):
                 continue
             kind = s.get("kind")
-            if kind == "sql":
-                errors.extend(_dry_run_sql_step(s.get("query", ""), wid, sidx, sqlite_path))
+            if kind == "query":
+                errors.extend(_dry_run_query_step(s.get("query", ""), s.get("engine", "sqlite"), wid, sidx, sqlite_path))
             elif kind == "compute":
                 fn = registry.get(s.get("fn", ""))
                 if fn is None:

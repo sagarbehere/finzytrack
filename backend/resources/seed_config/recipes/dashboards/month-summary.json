@@ -69,7 +69,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT currency, SUM(CAST(amount AS REAL)) * -1 AS amount FROM postings WHERE account_type = 'Income' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY currency"
         },
         {
@@ -103,7 +103,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT currency, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month GROUP BY currency HAVING amount != 0 ORDER BY currency"
         },
         {
@@ -129,7 +129,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT currency, (SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END)) - (SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END)) AS amount FROM postings WHERE year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month AND account_type IN ('Income', 'Expenses') GROUP BY currency HAVING amount != 0 ORDER BY currency"
         },
         {
@@ -229,7 +229,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT REPLACE(account, 'Expenses:', '') AS name, account, SUM(CAST(amount AS REAL)) AS value, :year || '-' || printf('%02d', :month) || '-01' AS dateFrom, date(:year || '-' || printf('%02d', :month) || '-01', '+1 month', '-1 day') AS dateTo FROM postings WHERE account_type = 'Expenses' AND year = :year AND CAST(strftime('%m', transaction_date) AS INTEGER) = :month AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC"
         },
         {

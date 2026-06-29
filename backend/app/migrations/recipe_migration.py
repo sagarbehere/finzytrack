@@ -75,15 +75,17 @@ def migrate_widget(widget: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(query, str) or not query.strip():
         raise ValueError(f"widget '{widget.get('id', '?')}' has no usable query to migrate")
 
-    sql_step: dict[str, Any] = {"id": "main", "kind": "sql", "query": query}
+    # Legacy widgets carry the engine choice in a widget-level `dbType` field;
+    # v2 moves it onto the query step as `engine` (same value set).
+    query_step: dict[str, Any] = {"id": "main", "kind": "query", "query": query}
     db_type = widget.get("dbType")
     if db_type is not None:
         if db_type not in VALID_DB_TYPES:
             raise ValueError(
                 f"widget '{widget.get('id', '?')}' has dbType '{db_type}' "
-                f"outside the v2 enum {sorted(VALID_DB_TYPES)}"
+                f"outside the v2 engine enum {sorted(VALID_DB_TYPES)}"
             )
-        sql_step["dbType"] = db_type
+        query_step["engine"] = db_type
 
     transform = widget.get("transform")
     if transform is None:
@@ -107,7 +109,7 @@ def migrate_widget(widget: dict[str, Any]) -> dict[str, Any]:
     if config is not None:
         transform_step["config"] = config
 
-    out["steps"] = [sql_step, transform_step]
+    out["steps"] = [query_step, transform_step]
     out["output"] = "out"
     return out
 

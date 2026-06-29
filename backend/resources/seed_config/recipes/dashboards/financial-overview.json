@@ -42,7 +42,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT currency, SUM(CASE WHEN account_type IN ('Assets', 'Liabilities') THEN amount ELSE 0 END) AS amount FROM postings GROUP BY currency HAVING amount != 0 ORDER BY currency"
         },
         {
@@ -68,7 +68,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT currency, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Assets' GROUP BY currency HAVING amount != 0 ORDER BY currency"
         },
         {
@@ -94,7 +94,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT currency, SUM(CAST(amount AS REAL)) * -1 AS amount FROM postings WHERE account_type = 'Liabilities' GROUP BY currency HAVING amount != 0 ORDER BY currency"
         },
         {
@@ -178,7 +178,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT CASE WHEN account LIKE 'Assets:Liquid:%' THEN REPLACE(account, 'Assets:Liquid:', '') WHEN account LIKE 'Assets:Investments:%' THEN REPLACE(account, 'Assets:Investments:', '') ELSE REPLACE(account, 'Assets:', '') END AS name, account, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Assets' AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC"
         },
         {
@@ -262,7 +262,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT REPLACE(account, 'Liabilities:', '') AS name, account, ROUND(SUM(CAST(amount AS REAL)) * -1, 2) AS value FROM postings WHERE account_type = 'Liabilities' AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC"
         },
         {

@@ -448,7 +448,7 @@ def _oneof_allowed_types(err: ValidationError) -> set[str]:
 
 _ANY_TOKEN_RE = re.compile(r"\{\{\s*([^}]+?)\s*\}\}")
 _WHOLE_TOKEN_RE = re.compile(r"^\{\{\s*([^}]+?)\s*\}\}$")
-VALID_STEP_KINDS = {"sql", "compute", "transform"}
+VALID_STEP_KINDS = {"query", "compute", "transform"}
 
 
 def _extract_refs(text: str) -> list[tuple[str, str]]:
@@ -482,7 +482,7 @@ def _validate_steps_semantics(
     steps, prefix: str, known_dashboard_step_ids: set[str]
 ) -> tuple[list[str], list[str]]:
     """Cross-checks the JSON Schema can't express: unique step ids, references
-    resolve, acyclicity, and no {{...}} inside sql.query. Returns
+    resolve, acyclicity, and no {{...}} inside query.query. Returns
     (errors, step_ids). Assumes the structural (schema) pass already ran."""
     errors: list[str] = []
     if not isinstance(steps, list) or not steps:
@@ -499,9 +499,9 @@ def _validate_steps_semantics(
                 errors.append(f"{prefix}[{i}].id: duplicate step id '{sid}'")
             seen.add(sid)
             ids.append(sid)
-        if s.get("kind") == "sql" and isinstance(s.get("query"), str) and _ANY_TOKEN_RE.search(s["query"]):
+        if s.get("kind") == "query" and isinstance(s.get("query"), str) and _ANY_TOKEN_RE.search(s["query"]):
             errors.append(
-                f"{prefix}[{i}].query: SQL steps cannot use {{{{...}}}} references — "
+                f"{prefix}[{i}].query: query steps cannot use {{{{...}}}} references — "
                 f"use :paramName for parameters; combine other steps in a transform"
             )
 

@@ -222,7 +222,7 @@ export type QueryEngineType = 'sqlite' | 'beanquery'
 // ============================================================================
 // Recipe pipeline steps (DAG model)
 //
-// The three step kinds and their JSON shapes (Step, SqlStep, ComputeStep,
+// The three step kinds and their JSON shapes (Step, QueryStep, ComputeStep,
 // TransformStep, StepId, Steps) are generated from recipe.schema.json and
 // re-exported below. StepKind is the runtime const mirror of the schema's
 // `kind` discriminator — kept here because json-schema-to-typescript emits
@@ -230,7 +230,7 @@ export type QueryEngineType = 'sqlite' | 'beanquery'
 // ============================================================================
 
 /** Runtime list of step kinds. Must match the `kind` consts in recipe.schema.json. */
-export const STEP_KINDS = ['sql', 'compute', 'transform'] as const
+export const STEP_KINDS = ['query', 'compute', 'transform'] as const
 export type StepKind = (typeof STEP_KINDS)[number]
 
 /**
@@ -349,9 +349,9 @@ export type {
   JsonTableVisualization,
   JsonValueLinkConfig,
   JsonWidgetRecipe,
+  QueryStep,
   RecipeId,
   RecipeParameter,
-  SqlStep,
   Step,
   StepId,
   Steps,

@@ -33,7 +33,7 @@
       "steps": [
         {
           "id": "actuals",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT year_month AS period, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE account = :account AND transaction_date BETWEEN :from AND :to AND currency = :currency GROUP BY year_month ORDER BY year_month"
         },
         {

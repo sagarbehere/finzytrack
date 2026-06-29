@@ -276,15 +276,15 @@ export function useRecipeExecutor() {
   const error = ref<string | null>(null)
   const stepError = ref<StepError | null>(null)
 
-  async function runSqlStep(
-    step: Extract<Step, { kind: 'sql' }>,
+  async function runQueryStep(
+    step: Extract<Step, { kind: 'query' }>,
     params: Record<string, string | number>,
   ): Promise<unknown> {
-    const sql = interpolateParameters(step.query, params)
-    const queryRequest: QueryRequest = { query: sql }
-    const response = await LedgerService.executeQuery(queryRequest, step.dbType ?? 'sqlite')
+    const query = interpolateParameters(step.query, params)
+    const queryRequest: QueryRequest = { query }
+    const response = await LedgerService.executeQuery(queryRequest, step.engine ?? 'sqlite')
     if (!response.success || !response.data) {
-      throw { stepId: step.id, kind: 'sql', message: response.error?.message || 'Query failed: no data returned' } as StepError
+      throw { stepId: step.id, kind: 'query', message: response.error?.message || 'Query failed: no data returned' } as StepError
     }
     return response.data.rows as Record<string, unknown>[]
   }
@@ -342,7 +342,7 @@ export function useRecipeExecutor() {
       await Promise.all(
         ready.map(async (step) => {
           const scope: RefScope = { params: parameters, steps: stepOutputs, dashboardSteps }
-          if (step.kind === 'sql') stepOutputs[step.id] = await runSqlStep(step, parameters)
+          if (step.kind === 'query') stepOutputs[step.id] = await runQueryStep(step, parameters)
           else if (step.kind === 'compute') stepOutputs[step.id] = await runComputeStep(step, scope)
           else stepOutputs[step.id] = runTransformStep(step, scope, ctx)
           remaining.delete(step.id)

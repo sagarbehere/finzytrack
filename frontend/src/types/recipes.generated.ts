@@ -17,7 +17,7 @@ export type Steps = [Step, ...Step[]];
 /**
  * A single node in a recipe's data-pipeline DAG. Discriminated on `kind`.
  */
-export type Step = SqlStep | ComputeStep | TransformStep;
+export type Step = QueryStep | ComputeStep | TransformStep;
 /**
  * Step identifier, unique within a recipe. Referenced from other steps as {{steps.<id>}} (or {{dashboard.steps.<id>}} for a dashboard shared step). Lowercase letters, numbers, and hyphens.
  */
@@ -138,17 +138,17 @@ export interface RecipeParameter {
   max?: number;
   [k: string]: unknown;
 }
-export interface SqlStep {
+export interface QueryStep {
   id: StepId;
-  kind: "sql";
+  kind: "query";
   /**
-   * SQL SELECT against the ledger mirror. Use :paramName for recipe-parameter placeholders. {{...}} step references are NOT allowed here — a SQL step is a leaf data source and cannot read another step's rows.
+   * A read-only query against the ledger, in the dialect of the chosen `engine` (SQL for sqlite, BQL for beanquery). Use :paramName for recipe-parameter placeholders. {{...}} step references are NOT allowed here — a query step is a leaf data source and cannot read another step's rows.
    */
   query: string;
   /**
-   * Query engine for this step (defaults to sqlite).
+   * Query engine for this step. `sqlite` (default) runs SQL against the SQLite mirror; `beanquery` runs Beancount Query Language (BQL).
    */
-  dbType?: "sqlite" | "beanquery";
+  engine?: "sqlite" | "beanquery";
 }
 export interface ComputeStep {
   id: StepId;

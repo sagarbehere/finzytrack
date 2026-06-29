@@ -34,7 +34,7 @@ const budgetWidget: AnyWidgetRecipe = {
   id: 'budget-vs-actual',
   title: 'Budget vs Actual',
   steps: [
-    { id: 'actuals', kind: 'sql', query: "SELECT account, currency, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE date BETWEEN :monthStart AND :monthEnd GROUP BY account, currency" },
+    { id: 'actuals', kind: 'query', query: "SELECT account, currency, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE date BETWEEN :monthStart AND :monthEnd GROUP BY account, currency" },
     { id: 'budgets', kind: 'compute', fn: 'budget_for_range', args: { from: '{{params.monthStart}}', to: '{{params.monthEnd}}', currency: '{{params.currency}}' } },
     { id: 'variance', kind: 'transform', fn: 'joinBudgetActual', inputs: ['{{steps.budgets}}', '{{steps.actuals}}'] },
   ],

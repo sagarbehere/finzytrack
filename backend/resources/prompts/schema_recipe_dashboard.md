@@ -48,7 +48,7 @@ Each widget placement uses CSS Grid `gridArea`: `"row-start / col-start / row-en
 
 ### Widget structure (inline in dashboard)
 
-A widget is a **DAG of named steps** feeding a visualization. Each step is `sql`,
+A widget is a **DAG of named steps** feeding a visualization. Each step is `query`,
 `compute`, or `transform`; `output` names the step whose result the viz renders.
 
 ```json
@@ -59,7 +59,7 @@ A widget is a **DAG of named steps** feeding a visualization. Each step is `sql`
   "helpText": "Optional tooltip shown as ⓘ icon",
   "parameters": [],
   "steps": [
-    { "id": "rows", "kind": "sql", "query": "SELECT ... FROM postings WHERE ..." },
+    { "id": "rows", "kind": "query", "query": "SELECT ... FROM postings WHERE ..." },
     { "id": "out", "kind": "transform", "fn": "firstRow", "inputs": ["{{steps.rows}}"] }
   ],
   "output": "out",
@@ -70,9 +70,10 @@ A widget is a **DAG of named steps** feeding a visualization. Each step is `sql`
 **Required fields:** `id`, `title`, `steps`, `output`, `visualization`.
 
 **Step kinds:**
-- `sql` — `{ id, kind:"sql", query }`. A leaf data source over the SQLite mirror.
-  Uses `:paramName` placeholders only; it **cannot** reference other steps
-  (`{{...}}` is invalid in `query`). Combine sources in a `transform`.
+- `query` — `{ id, kind:"query", query, engine? }`. A leaf data source over the
+  ledger. `engine` is `"sqlite"` (default, SQL over the SQLite mirror) or
+  `"beanquery"` (BQL). Uses `:paramName` placeholders only; it **cannot** reference
+  other steps (`{{...}}` is invalid in `query`). Combine sources in a `transform`.
 - `compute` — `{ id, kind:"compute", fn, args }`. Calls a server-side function
   (fixed catalog — call `get_compute_functions`). `args` are small scalars; values
   may be `{{params.x}}` / `{{steps.x}}` templates.
@@ -80,7 +81,7 @@ A widget is a **DAG of named steps** feeding a visualization. Each step is `sql`
   transform (catalog below) over the outputs of the steps named in `inputs`
   (each a `{{steps.<id>}}` or `{{dashboard.steps.<id>}}` reference).
 
-A simplest single-query widget is `[ {sql}, {transform fn:"none"} ]` with
+A simplest single-query widget is `[ {query}, {transform fn:"none"} ]` with
 `output` on the transform. Step ids are lowercase-with-hyphens, unique per widget.
 
 **Dashboard shared steps:** the dashboard may declare a top-level `steps` array
@@ -510,6 +511,15 @@ Type: `JsonChartVisualization | JsonKPIVisualization | JsonTableVisualization | 
 | `name` | `string` | yes | Vue route name, e.g. 'transactions'. |
 | `query` | `Record<string, string>` | yes | Template strings interpolated with {{data.field}}, {{row.label}}, {{parameters.x}}, {{dateFrom}}, {{dateTo}}. |
 
+#### `QueryStep`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | `StepId` | yes |  |
+| `kind` | `'query'` | yes |  |
+| `query` | `string` | yes | A read-only query against the ledger, in the dialect of the chosen `engine` (SQL for sqlite, BQL for beanquery). Use :paramName for recipe-parameter placeholders. {{...}} step references are NOT allowed here — a query step is a leaf data source and cannot read another step's rows. |
+| `engine` | `'sqlite' | 'beanquery'` | — | Query engine for this step. `sqlite` (default) runs SQL against the SQLite mirror; `beanquery` runs Beancount Query Language (BQL). |
+
 #### `RecipeId`
 Lowercase letters, numbers, and hyphens. Must start and end alphanumeric (e.g. 'my-dashboard-name').
 
@@ -528,19 +538,10 @@ Type: `string`
 | `min` | `number` | — |  |
 | `max` | `number` | — |  |
 
-#### `SqlStep`
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | `StepId` | yes |  |
-| `kind` | `'sql'` | yes |  |
-| `query` | `string` | yes | SQL SELECT against the ledger mirror. Use :paramName for recipe-parameter placeholders. {{...}} step references are NOT allowed here — a SQL step is a leaf data source and cannot read another step's rows. |
-| `dbType` | `'sqlite' | 'beanquery'` | — | Query engine for this step (defaults to sqlite). |
-
 #### `Step`
 A single node in a recipe's data-pipeline DAG. Discriminated on `kind`.
 
-Type: `SqlStep | ComputeStep | TransformStep`
+Type: `QueryStep | ComputeStep | TransformStep`
 
 #### `StepId`
 Step identifier, unique within a recipe. Referenced from other steps as {{steps.<id>}} (or {{dashboard.steps.<id>}} for a dashboard shared step). Lowercase letters, numbers, and hyphens.

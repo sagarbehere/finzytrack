@@ -143,9 +143,9 @@ function validateSteps(
       errors.push({ field: `${path}.kind`, message: `required, must be one of: ${STEP_KINDS.join(', ')}` })
       return
     }
-    if (s.kind === 'sql') {
-      if (!isString(s.query)) errors.push({ field: `${path}.query`, message: 'required, must be a non-empty SQL string' })
-      else if (ANY_TOKEN_RE.test(s.query)) errors.push({ field: `${path}.query`, message: 'SQL steps cannot use {{...}} references — use :paramName for parameters; combine other steps in a transform' })
+    if (s.kind === 'query') {
+      if (!isString(s.query)) errors.push({ field: `${path}.query`, message: 'required, must be a non-empty query string' })
+      else if (ANY_TOKEN_RE.test(s.query)) errors.push({ field: `${path}.query`, message: 'query steps cannot use {{...}} references — use :paramName for parameters; combine other steps in a transform' })
     } else if (s.kind === 'compute') {
       if (!isString(s.fn)) errors.push({ field: `${path}.fn`, message: 'required, must be a non-empty string' })
       if (s.args !== undefined && !isPlainObject(s.args)) errors.push({ field: `${path}.args`, message: 'must be an object' })

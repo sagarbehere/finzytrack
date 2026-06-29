@@ -112,7 +112,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT currency, SUM(CAST(amount AS REAL)) * -1 AS amount FROM postings WHERE account_type = 'Income' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency"
         },
         {
@@ -238,7 +238,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT year_month, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, ROUND(SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END), 2) AS income, ROUND(SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END), 2) AS expenses, ROUND(SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) - SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END), 2) AS savings FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses') GROUP BY year_month ORDER BY year_month"
         },
         {
@@ -317,7 +317,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT year_month, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, ROUND(SUM(-CAST(amount AS REAL)), 2) AS income FROM postings WHERE account_type = 'Income' AND year = :year AND currency = :currency GROUP BY year_month ORDER BY year_month"
         },
         {
@@ -396,7 +396,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "WITH monthly AS (SELECT year_month, SUM(CASE WHEN account_type = 'Income' THEN -amount WHEN account_type = 'Expenses' THEN -amount ELSE 0 END) AS delta FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses') GROUP BY year_month) SELECT year_month, year_month || '-01' AS dateFrom, date(year_month || '-01', '+1 month', '-1 day') AS dateTo, SUBSTR('JanFebMarAprMayJunJulAugSepOctNovDec', (CAST(strftime('%m', year_month || '-01') AS INTEGER) - 1) * 3 + 1, 3) AS month_label, ROUND(SUM(delta) OVER (ORDER BY year_month), 2) AS net FROM monthly ORDER BY year_month"
         },
         {
@@ -469,7 +469,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT CASE WHEN account LIKE 'Assets:Liquid:%' THEN REPLACE(account, 'Assets:Liquid:', '') WHEN account LIKE 'Assets:Investments:%' THEN REPLACE(account, 'Assets:Investments:', '') ELSE REPLACE(account, 'Assets:', '') END AS name, account, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Assets' AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC"
         },
         {
@@ -544,7 +544,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT transaction_date, ROUND(amount, 2) AS amount, account FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency AND amount > 0 ORDER BY transaction_date"
         },
         {
@@ -610,7 +610,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT REPLACE(account, 'Expenses:', '') AS name, account, SUM(CAST(amount AS REAL)) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC"
         },
         {
@@ -662,7 +662,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT transaction_date, transaction_payee AS payee, REPLACE(account, 'Expenses:', '') AS category, ROUND(amount, 2) AS amount, account FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency ORDER BY amount DESC LIMIT 20"
         },
         {
@@ -718,7 +718,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "WITH totals AS (SELECT SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) AS income, SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END) AS expenses FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses')) SELECT 'Income' AS name, income AS value FROM totals UNION ALL SELECT 'After Expenses', income - expenses FROM totals UNION ALL SELECT 'Net Savings', CASE WHEN income - expenses > 0 THEN income - expenses ELSE 0 END FROM totals"
         },
         {
@@ -807,7 +807,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "WITH totals AS (SELECT SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END) AS income, SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END) AS expenses FROM postings WHERE year = :year AND currency = :currency AND account_type IN ('Income', 'Expenses')) SELECT ROUND(MAX(0, MIN(100, CASE WHEN income > 0 THEN ((income - expenses) * 100.0 / income) ELSE 0 END)), 1) AS value, 'Savings Rate' AS name FROM totals"
         },
         {
@@ -896,7 +896,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT transaction_date AS date, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency AND amount > 0 GROUP BY transaction_date ORDER BY transaction_date"
         },
         {
@@ -954,7 +954,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT REPLACE(account, 'Income:', '') AS source, account AS sourceAccount, 'Total Income' AS target, NULL AS targetAccount, ROUND(SUM(-CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Income' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 UNION ALL SELECT 'Total Income' AS source, NULL AS sourceAccount, REPLACE(account, 'Expenses:', '') AS target, account AS targetAccount, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0"
         },
         {
@@ -1029,7 +1029,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT REPLACE(account, 'Expenses:', '') AS category, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC LIMIT 6"
         },
         {
@@ -1101,7 +1101,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT account, ROUND(SUM(CAST(amount AS REAL)), 2) AS value FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account HAVING value > 0 ORDER BY value DESC"
         },
         {
@@ -1136,7 +1136,7 @@
       "steps": [
         {
           "id": "main",
-          "kind": "sql",
+          "kind": "query",
           "query": "SELECT account, year_month, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account, year_month ORDER BY account, year_month"
         },
         {
