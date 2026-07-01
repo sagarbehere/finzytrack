@@ -1,0 +1,57 @@
+name: Verify generated recipe artifacts
+
+# Belt-and-suspenders for the recipe-schema sync chain: the pre-commit hook is
+# opt-in per clone, so this CI job is the enforced backstop. It regenerates the
+# artifacts that are DERIVED from recipe.schema.json and fails if the committed
+# copies are stale. Mirrors the tracked files the pre-commit hook checks.
+#
+# Only the tracked generated files are verified here. The gitignored backend
+# copies (resources/{schemas,ai_reference}) are build/runtime artifacts, so they
+# are not part of the commit and nothing to diff.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    name: recipe.schema.json → generated files in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Regenerate schema-derived artifacts
+        run: |
+          npm run generate-recipe-types --prefix frontend
+          python scripts/generate_recipe_schema_doc.py
+
+      - name: Fail if any committed artifact is stale
+        run: |
+          FILES="frontend/src/types/recipes.generated.ts \
+                 frontend/src/types/recipes.enums.generated.ts \
+                 backend/resources/prompts/schema_recipe_dashboard.md"
+          if ! git diff --quiet -- $FILES; then
+            echo "::error::Generated recipe artifacts are out of date with recipe.schema.json."
+            echo "Run locally, then commit the result:"
+            echo "  (cd frontend && npm run generate-recipe-types) && python scripts/generate_recipe_schema_doc.py"
+            echo "----- drift -----"
+            git --no-pager diff -- $FILES
+            exit 1
+          fi
+          echo "Generated artifacts are in sync with the schema."
