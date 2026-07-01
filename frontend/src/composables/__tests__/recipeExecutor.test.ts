@@ -56,22 +56,45 @@ describe('DAG executor', () => {
     expect(out[0].remaining).toBe('288')
   })
 
-  it('interpolates :params into SQL and {{params}} into compute args', async () => {
+  it('binds :params for sqlite (placeholders untouched) and resolves {{params}} into compute args', async () => {
     executeQuery.mockResolvedValue(ok({ rows: [] }))
     executeCompute.mockResolvedValue(ok({ result: [] }))
 
     const { executeRecipe } = useRecipeExecutor()
     await executeRecipe(budgetWidget, { monthStart: '2026-06-01', monthEnd: '2026-06-30', currency: 'USD' })
 
-    // SQL :name interpolation (quoted strings).
-    const sql = executeQuery.mock.calls[0][0].query as string
-    expect(sql).toContain("'2026-06-01'")
-    expect(sql).toContain("'2026-06-30'")
+    // sqlite sends :name placeholders untouched + a bound parameters map (no substitution).
+    const req = executeQuery.mock.calls[0][0]
+    expect(req.query).toContain(':monthStart')
+    expect(req.query).not.toContain("'2026-06-01'")
+    expect(req.parameters).toEqual({ monthStart: '2026-06-01', monthEnd: '2026-06-30', currency: 'USD' })
+    expect(executeQuery.mock.calls[0][1]).toBe('sqlite')
     // Compute args resolved from {{params}}.
     expect(executeCompute.mock.calls[0][0]).toEqual({
       function: 'budget_for_range',
       args: { from: '2026-06-01', to: '2026-06-30', currency: 'USD' },
     })
+  })
+
+  it('interpolates :params into the query string for the beanquery engine (no binding API)', async () => {
+    executeQuery.mockResolvedValue(ok({ rows: [] }))
+    const beanWidget: AnyWidgetRecipe = {
+      id: 'bean', title: 'Bean',
+      steps: [
+        { id: 'rows', kind: 'query', engine: 'beanquery', query: 'SELECT account WHERE currency = :currency' },
+        { id: 'out', kind: 'transform', fn: 'none', inputs: ['{{steps.rows}}'] },
+      ],
+      output: 'out',
+      visualization: { type: 'table', columns: [] },
+    }
+
+    const { executeRecipe } = useRecipeExecutor()
+    await executeRecipe(beanWidget, { currency: 'USD' })
+
+    const req = executeQuery.mock.calls[0][0]
+    expect(req.query).toContain("'USD'") // interpolated into the string
+    expect(req.parameters).toBeUndefined()
+    expect(executeQuery.mock.calls[0][1]).toBe('beanquery')
   })
 
   it('surfaces a StepError naming the failed step and skips dependents', async () => {

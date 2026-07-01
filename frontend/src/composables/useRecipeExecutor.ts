@@ -143,10 +143,13 @@ export function getFormats(currency?: string): Record<ValueFormat, (value: unkno
 }
 
 /**
- * Interpolate parameter values into a SQL string.
- * Replaces :paramName placeholders with escaped values (string substitution,
- * not bound params — inherited behaviour; see §3.6 G9). Exported for reuse and
- * tests.
+ * Interpolate parameter values into a query string (escaped substitution).
+ *
+ * Used ONLY for the `beanquery` engine, which takes a complete query string and
+ * has no parameter-binding API. The `sqlite` engine does NOT use this — it sends
+ * the query with :name placeholders plus a `parameters` map that the database
+ * binds, so values can never be parsed as SQL (§3.6 G9). Exported for the
+ * beanquery path and tests.
  */
 export function interpolateParameters(
   sql: string,
@@ -280,9 +283,14 @@ export function useRecipeExecutor() {
     step: Extract<Step, { kind: 'query' }>,
     params: Record<string, string | number>,
   ): Promise<unknown> {
-    const query = interpolateParameters(step.query, params)
-    const queryRequest: QueryRequest = { query }
-    const response = await LedgerService.executeQuery(queryRequest, step.engine ?? 'sqlite')
+    const engine = step.engine ?? 'sqlite'
+    // sqlite: send :name placeholders + a parameters map the DB binds (injection-safe).
+    // beanquery: no binding API — interpolate into a complete query string.
+    const queryRequest: QueryRequest =
+      engine === 'beanquery'
+        ? { query: interpolateParameters(step.query, params) }
+        : { query: step.query, parameters: params }
+    const response = await LedgerService.executeQuery(queryRequest, engine)
     if (!response.success || !response.data) {
       throw { stepId: step.id, kind: 'query', message: response.error?.message || 'Query failed: no data returned' } as StepError
     }

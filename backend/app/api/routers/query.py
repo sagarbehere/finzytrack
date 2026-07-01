@@ -6,7 +6,7 @@ import logging
 import sqlite3
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Query, Body
 from fastapi.responses import PlainTextResponse
@@ -152,7 +152,7 @@ async def execute_query(
 
         try:
             result = await asyncio.wait_for(
-                asyncio.to_thread(_execute_sqlite_query, exporter.export_path, request.query),
+                asyncio.to_thread(_execute_sqlite_query, exporter.export_path, request.query, request.parameters),
                 timeout=30.0
             )
         except asyncio.TimeoutError:
@@ -219,8 +219,14 @@ async def get_postings_schema():
     )
 
 
-def _execute_sqlite_query(db_path: str, query_str: str) -> dict:
-    """Execute SQLite query (blocking I/O)."""
+def _execute_sqlite_query(db_path: str, query_str: str, parameters: Optional[Dict[str, Any]] = None) -> dict:
+    """Execute a read-only SQLite query (blocking I/O).
+
+    `parameters` are bound as :name placeholders by the database, so a value can
+    never be interpreted as SQL — the safe path for recipe parameters. Named
+    binding ignores dict keys the query doesn't reference, so passing the full
+    parameter set is fine. A `None`/empty dict runs the query as-is.
+    """
     start_time = time.time()
 
     con = sqlite3.connect(db_path, uri=True)
@@ -228,7 +234,7 @@ def _execute_sqlite_query(db_path: str, query_str: str) -> dict:
     con.row_factory = sqlite3.Row
 
     try:
-        cursor = con.execute(query_str)
+        cursor = con.execute(query_str, parameters or {})
 
         columns = []
         if cursor.description:
