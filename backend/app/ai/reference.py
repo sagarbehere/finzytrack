@@ -40,11 +40,11 @@ SCHEMA_DIR: Path = (
 # filename → one-line description shown to the model in the tool description.
 # Keep descriptions short and oriented around *when to read*, not *what's inside*.
 ALLOWED_REFERENCES: dict[str, str] = {
-    "recipes.ts": (
-        "TypeScript type definitions for dashboard/widget recipes — RecipeDashboard, "
-        "Widget, Visualization, Parameter, Transform, ClickLink, etc. Read this when "
-        "you need the authoritative shape of a field that the prompt schema doesn't fully spell out."
-    ),
+    # NOTE: recipes.ts is intentionally NOT exposed. The recipe format's source of
+    # truth is recipe.schema.json, which the model already receives as generated
+    # prose+types via get_recipe_schema. recipes.ts is a derived, partly-generated
+    # file that also declares CODE-defined recipe types (function-valued fields)
+    # invalid in the JSON the assistant authors — a net-negative reference.
     "generators.ts": (
         "Implementation of all $gen generators (currentYear, currentMonth, monthOptions, "
         "defaultCurrency, …). Read this to confirm exactly which generator names exist "
@@ -134,45 +134,52 @@ def log_readiness() -> dict:
     return state
 
 
-def autosync_dev() -> bool:
-    """In dev mode (not frozen), auto-run scripts/sync_ai_reference.py if any
-    required file is missing. This makes a fresh clone work without remembering
-    to run the sync script manually.
+# Backend-consumed artifacts derived from frontend/src/types/recipe.schema.json.
+# In dev they are regenerated at startup so an edit to the schema can never leave
+# a stale-but-present copy behind (the failure mode a presence-only check misses).
+# The frontend TS types are regenerated separately by the frontend's predev hook.
+_SYNC_SCRIPTS: tuple[tuple[str, ...], ...] = (
+    ("scripts", "sync_ai_reference.py"),          # copies schema + generators.ts into resources/
+    ("scripts", "generate_recipe_schema_doc.py"),  # regenerates the AI prose-doc appendix
+)
 
-    No-op in frozen mode — the desktop bundle ships pre-synced copies, so the
-    script and the source files don't exist at runtime. Returns True if a sync
-    was attempted, False otherwise.
+
+def autosync_dev() -> bool:
+    """In dev mode (not frozen), regenerate the backend copies derived from the
+    recipe schema so they can never go stale relative to the source.
+
+    Unlike a presence-only check, this runs on every dev startup: the sync scripts
+    are idempotent (a no-op write when the schema is unchanged), so the cost is a
+    couple of fast subprocesses and the payoff is that editing recipe.schema.json
+    needs no manual "remember to run the sync" step. Missing files are covered as a
+    subset of "stale".
+
+    No-op in frozen mode — the desktop bundle ships pre-synced copies and the
+    scripts/source don't exist at runtime. Returns True if a sync was attempted.
     """
     if getattr(sys, "frozen", False):
-        return False
-
-    state = get_readiness()
-    if state["ok"]:
         return False
 
     # The repo's scripts/ dir lives 3 parents up from this file:
     #   backend/app/ai/reference.py -> repo root
     repo_root = Path(__file__).resolve().parents[3]
-    script = repo_root / "scripts" / "sync_ai_reference.py"
-    if not script.is_file():
-        logger.warning("autosync_dev: sync script not found at %s", script)
-        return False
 
     import subprocess
-    logger.info("AI assistant files missing in dev — auto-running %s", script)
-    try:
-        result = subprocess.run(
-            [sys.executable, str(script)],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=str(repo_root),
-        )
-        if result.returncode != 0:
-            logger.warning("autosync_dev: sync script exited %d. stderr=%s",
-                           result.returncode, result.stderr.strip())
-            return True
-        logger.info("autosync_dev: sync complete. stdout=%s", result.stdout.strip())
-    except Exception as e:
-        logger.warning("autosync_dev: failed to run sync script: %s", e)
-    return True
+    attempted = False
+    for parts in _SYNC_SCRIPTS:
+        script = repo_root.joinpath(*parts)
+        if not script.is_file():
+            logger.warning("autosync_dev: sync script not found at %s", script)
+            continue
+        attempted = True
+        try:
+            result = subprocess.run(
+                [sys.executable, str(script)],
+                capture_output=True, text=True, timeout=30, cwd=str(repo_root),
+            )
+            if result.returncode != 0:
+                logger.warning("autosync_dev: %s exited %d. stderr=%s",
+                               script.name, result.returncode, result.stderr.strip())
+        except Exception as e:
+            logger.warning("autosync_dev: failed to run %s: %s", script.name, e)
+    return attempted

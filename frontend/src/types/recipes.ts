@@ -41,10 +41,9 @@ export interface RecipeParameterOption {
 
 // Visualization types
 export type VisualizationType = 'chart' | 'kpi' | 'table' | 'pivot'
-// Runtime const array of chart types (used by the Analysis chart picker etc.).
-// The corresponding `ChartType` *type* is generated from recipe.schema.json
-// and re-exported below; both must list the same values.
-export const SUPPORTED_CHART_TYPES = ['bar', 'line', 'pie', 'area', 'scatter', 'treemap', 'funnel', 'gauge', 'calendar', 'sankey', 'radar', 'sunburst'] as const
+// SUPPORTED_CHART_TYPES (and STEP_KINDS / VALID_VALUE_FORMATS / QUERY_ENGINES) are
+// generated from recipe.schema.json into recipes.enums.generated.ts and re-exported
+// at the bottom of this file — no hand-maintained value lists.
 
 /**
  * Context passed to getSeriesClickLink for chart click handling
@@ -229,8 +228,7 @@ export type QueryEngineType = 'sqlite' | 'beanquery'
 // only the type, not a runtime value to enumerate.
 // ============================================================================
 
-/** Runtime list of step kinds. Must match the `kind` consts in recipe.schema.json. */
-export const STEP_KINDS = ['query', 'compute', 'transform'] as const
+// STEP_KINDS is generated from recipe.schema.json (see re-exports below).
 export type StepKind = (typeof STEP_KINDS)[number]
 
 /**
@@ -309,22 +307,7 @@ export interface RecipeExecutionResult {
 // DashboardRecipe, etc.) cover code-defined recipes and runtime helpers.
 // ============================================================================
 
-/**
- * Runtime list of value-format identifiers, kept here as a const array because
- * `json-schema-to-typescript` only emits the `ValueFormat` *type* — not a
- * runtime value to enumerate. Must match the enum in recipe.schema.json.
- */
-export const VALID_VALUE_FORMATS = [
-  'currency',
-  'percent',
-  'number',
-  'compact',
-  'signedCurrency',
-  'date',
-  'dateShort',
-  'accountName',
-  'accountName2',
-] as const
+// VALID_VALUE_FORMATS is generated from recipe.schema.json (see re-exports below).
 
 /**
  * Simple transform types (no configuration needed)
@@ -333,6 +316,16 @@ export const VALID_VALUE_FORMATS = [
  * - 'firstValue': Extract first value from first row
  */
 export type SimpleTransformType = 'none' | 'firstRow' | 'firstValue'
+
+// Re-export the runtime enum consts generated from recipe.schema.json. The local
+// import keeps `typeof STEP_KINDS` (StepKind) resolvable in this module.
+import { STEP_KINDS } from './recipes.enums.generated'
+export {
+  STEP_KINDS,
+  SUPPORTED_CHART_TYPES,
+  VALID_VALUE_FORMATS,
+  QUERY_ENGINES,
+} from './recipes.enums.generated'
 
 // Re-export the JSON-recipe types generated from recipe.schema.json.
 // This is the single source of truth for the JSON shape; consumer code keeps

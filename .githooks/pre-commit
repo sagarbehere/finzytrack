@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Pre-commit: keep schema-derived, COMMITTED artifacts in lock-step with
+# recipe.schema.json. The gitignored copies (backend/resources/{schemas,ai_reference})
+# are regenerated at dev startup and build time; this guards only the tracked
+# generated files so a schema edit can't land with stale generated output.
+#
+# Install once per clone:  git config core.hooksPath .githooks
+#
+# Fast path: does nothing unless the schema or a generator is part of this commit.
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+
+# Only engage when the schema or a generator is staged.
+if ! git diff --cached --name-only \
+     | grep -qE 'recipe\.schema\.json|generate-recipe-types\.mjs|generate_recipe_schema_doc\.py'; then
+  exit 0
+fi
+
+# Need node + python3 to regenerate; skip with a loud warning rather than block.
+if ! command -v node >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+  echo "[pre-commit] node/python3 not found — SKIPPING recipe-artifact sync check." >&2
+  echo "             Verify generated files by hand before pushing." >&2
+  exit 0
+fi
+
+echo "[pre-commit] recipe schema/generator changed — verifying generated artifacts…"
+( cd "$ROOT/frontend" && node scripts/generate-recipe-types.mjs >/dev/null )
+python3 "$ROOT/scripts/generate_recipe_schema_doc.py" >/dev/null
+
+TRACKED=(
+  "frontend/src/types/recipes.generated.ts"
+  "frontend/src/types/recipes.enums.generated.ts"
+  "backend/resources/prompts/schema_recipe_dashboard.md"
+)
+CHANGED="$(git -C "$ROOT" diff --name-only -- "${TRACKED[@]}")"
+if [ -n "$CHANGED" ]; then
+  echo "✖ Generated files are out of date with recipe.schema.json:" >&2
+  echo "$CHANGED" | sed 's/^/    /' >&2
+  echo "  Regenerate + stage them, then re-commit:" >&2
+  echo "    (cd frontend && npm run generate-recipe-types) && python scripts/generate_recipe_schema_doc.py" >&2
+  echo "    git add ${TRACKED[*]}" >&2
+  exit 1
+fi
+echo "[pre-commit] generated artifacts are in sync."

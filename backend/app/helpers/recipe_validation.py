@@ -50,11 +50,36 @@ def _validator_for(definition_name: str) -> Draft202012Validator:
     )
 
 
-# ── Constants surfaced for backwards compat (some callers / tests import these) ──
+# ── Enum sets derived from the schema (never hand-mirrored) ───────────────────
+# These value lists ARE the schema's enums/discriminators. Reading them from the
+# already-loaded schema means they cannot drift from it — adding an engine or a
+# chart type in recipe.schema.json updates every validator here for free.
 
-VALID_VIZ_TYPES = {"kpi", "chart", "table", "pivot"}
-SUPPORTED_CHART_TYPES = {"bar", "line", "pie", "area", "scatter", "treemap", "funnel", "gauge", "calendar", "sankey", "radar", "sunburst"}
-VALID_PARAM_TYPES = {"date", "select", "number"}
+def _defs() -> dict:
+    return _load_schema()["$defs"]
+
+
+def _enum(def_name: str) -> set[str]:
+    """The `enum` list of a top-level $def (e.g. ChartType)."""
+    return set(_defs()[def_name]["enum"])
+
+
+def _discriminator_consts(union_def: str, prop: str) -> set[str]:
+    """The `prop` const from each variant of a discriminated-union $def."""
+    defs = _defs()
+    out: set[str] = set()
+    for variant in defs[union_def]["oneOf"]:
+        ref = variant["$ref"].rsplit("/", 1)[-1]
+        out.add(defs[ref]["properties"][prop]["const"])
+    return out
+
+
+VALID_VIZ_TYPES = _discriminator_consts("JsonRecipeVisualization", "type")
+SUPPORTED_CHART_TYPES = _enum("ChartType")
+VALID_PARAM_TYPES = set(_defs()["RecipeParameter"]["properties"]["type"]["enum"])
+VALID_QUERY_ENGINES = set(_defs()["QueryStep"]["properties"]["engine"]["enum"])
+VALID_STEP_KINDS = _discriminator_consts("Step", "kind")
+# Transform fn names are a code-side catalog, not a schema enum — not derived.
 VALID_SIMPLE_TRANSFORMS = {"none", "firstRow", "firstValue"}
 VALID_TRANSFORM_TYPES = {"sortBy", "limit", "pluck", "pivot"}
 
@@ -448,9 +473,6 @@ def _oneof_allowed_types(err: ValidationError) -> set[str]:
 
 _ANY_TOKEN_RE = re.compile(r"\{\{\s*([^}]+?)\s*\}\}")
 _WHOLE_TOKEN_RE = re.compile(r"^\{\{\s*([^}]+?)\s*\}\}$")
-VALID_STEP_KINDS = {"query", "compute", "transform"}
-
-
 def _extract_refs(text: str) -> list[tuple[str, str]]:
     """Return (scope, id) pairs for every {{...}} reference in a string."""
     refs: list[tuple[str, str]] = []

@@ -19,7 +19,6 @@ from app.ai.tools.read_reference import ReadReferenceTool
 def test_readiness_ok_in_healthy_install():
     state = ref_mod.get_readiness()
     assert state["ok"] is True, state
-    assert "recipes.ts" in state["references_present"]
     assert "generators.ts" in state["references_present"]
     assert "recipe.schema.json" in state["schemas_present"]
     assert state["remediation"] == ""
@@ -46,16 +45,14 @@ def test_readiness_flags_missing_schema(tmp_path: Path):
 
 
 def test_read_reference_enum_only_lists_present_files(tmp_path: Path):
-    """If only one allowlisted file is on disk, the tool's enum is restricted."""
+    """The tool's enum reflects the allowlisted files actually on disk."""
     partial = tmp_path / "ai_reference"
     partial.mkdir()
-    (partial / "recipes.ts").write_text("export type X = string\n")
-    # generators.ts intentionally missing
+    (partial / "generators.ts").write_text("export const x = 1\n")
     with patch.object(ref_mod, "REFERENCE_DIR", partial):
         tool = ReadReferenceTool()
         enum = tool.parameters_schema["properties"]["name"]["enum"]
-        assert enum == ["recipes.ts"]
-        assert "generators.ts" not in tool.description
+        assert enum == ["generators.ts"]
 
 
 def test_read_reference_logs_warning_when_file_missing(tmp_path, caplog):
@@ -67,7 +64,7 @@ def test_read_reference_logs_warning_when_file_missing(tmp_path, caplog):
     caplog.set_level("WARNING", logger="app.ai.tools.read_reference")
     with patch.object(ref_mod, "REFERENCE_DIR", empty):
         tool = ReadReferenceTool()
-        result = asyncio.run(tool.execute(name="recipes.ts"))
+        result = asyncio.run(tool.execute(name="generators.ts"))
     assert result["success"] is False
     assert "missing on disk" in caplog.text
     assert "sync_ai_reference" in caplog.text

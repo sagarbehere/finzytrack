@@ -20,6 +20,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 SCHEMA_VERSION = 2
+# The set of engine values a LEGACY (v1) widget's `dbType` was allowed to carry.
+# Deliberately a frozen snapshot, NOT derived from the live schema: this validates
+# historical input, so a future engine added to recipe.schema.json must not
+# retroactively become a valid v1 value. (Also keeps the seed-config CLI free of a
+# schema-load dependency on a fresh clone.) The v2 output field is `engine`.
 VALID_DB_TYPES = {"sqlite", "beanquery"}
 
 # A write function: (path, text) -> None. Defaults to a plain write; the startup

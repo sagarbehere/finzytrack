@@ -23,3 +23,12 @@ When a task involves both backend and frontend changes:
 ### Type checking
 - Frontend: `npx vue-tsc --noEmit` from `frontend/`
 - API codegen: `npm run generate-api` from `frontend/` (non-streaming endpoints only)
+
+### Recipe schema — one source of truth, generated everywhere else
+`frontend/src/types/recipe.schema.json` is the single source of truth for the recipe format. Its TS types, runtime enum consts (`recipes.enums.generated.ts`), the Python validator's enum sets, the byte-identical backend schema copy, and the AI prose-doc appendix are all **generated/derived** from it — never hand-edit those. In dev, the backend regenerates the backend-side copies at startup (`autosync_dev`); the frontend regenerates its TS/enums via the `predev`/`prebuild` hooks.
+
+**Install the pre-commit hook once per clone** so a schema edit can't be committed with stale generated artifacts:
+```
+git config core.hooksPath .githooks
+```
+The hook (`.githooks/pre-commit`) is a no-op unless the schema or a generator is staged, then it regenerates and blocks the commit if `recipes.generated.ts`, `recipes.enums.generated.ts`, or `schema_recipe_dashboard.md` would change.

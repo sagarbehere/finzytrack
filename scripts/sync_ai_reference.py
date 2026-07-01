@@ -4,8 +4,7 @@
 Two destinations:
 
   ai_reference/  — files read by the AI assistant's `read_reference` tool
-                   (recipes.ts, generators.ts, …) when its in-context schema
-                   docs aren't enough.
+                   (generators.ts) when its in-context schema docs aren't enough.
   schemas/       — JSON Schema files used by backend validators
                    (recipe.schema.json drives recipe_validation.py).
 
@@ -30,8 +29,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # (frontend_relative_src, dest_subdir_under_backend_resources, dest_filename)
 SYNC_ITEMS: list[tuple[str, str, str]] = [
-    # AI assistant reference files (allowlisted by app/ai/reference.py)
-    ("frontend/src/types/recipes.ts",                 "ai_reference", "recipes.ts"),
+    # AI assistant reference files (allowlisted by app/ai/reference.py).
+    # recipes.ts is intentionally NOT synced — see the NOTE in app/ai/reference.py.
     ("frontend/src/recipes/functions/generators.ts",  "ai_reference", "generators.ts"),
     # JSON Schemas authoritative for backend validators
     ("frontend/src/types/recipe.schema.json",         "schemas",      "recipe.schema.json"),
