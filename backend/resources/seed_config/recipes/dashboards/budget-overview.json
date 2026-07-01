@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 2,
+  "id": "budget-overview",
+  "title": "Budget — Overview",
+  "description": "One month at a glance: total spent, unbudgeted spending, and the biggest overspend up top, with a per-category breakdown and a budget-usage chart below. The budget resolve, actuals query, and variance join run ONCE at the dashboard level and feed every widget (dashboard shared steps).",
+  "parameters": [
+    { "name": "monthStart", "label": "From", "type": "date", "default": { "$gen": "startOfMonth" } },
+    { "name": "monthEnd", "label": "To", "type": "date", "default": { "$gen": "endOfMonth" } },
+    { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" }
+  ],
+
+  "steps": [
+    {
+      "id": "actuals",
+      "kind": "query",
+      "query": "SELECT account, currency, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE account_type = 'Expenses' AND transaction_date BETWEEN :monthStart AND :monthEnd AND currency = :currency GROUP BY account, currency"
+    },
+    {
+      "id": "budgets",
+      "kind": "compute",
+      "fn": "budget_for_range",
+      "args": { "from": "{{params.monthStart}}", "to": "{{params.monthEnd}}", "currency": "{{params.currency}}" }
+    },
+    {
+      "id": "flat",
+      "kind": "transform",
+      "fn": "joinBudgetActual",
+      "inputs": ["{{steps.budgets}}", "{{steps.actuals}}"],
+      "config": { "periodStart": "{{params.monthStart}}", "periodEnd": "{{params.monthEnd}}" }
+    },
+    {
+      "id": "totals",
+      "kind": "transform",
+      "fn": "joinBudgetActual",
+      "inputs": ["{{steps.budgets}}", "{{steps.actuals}}"],
+      "config": { "totalAccount": "Expenses" }
+    }
+  ],
+
+  "layout": {
+    "columns": 12,
+    "gap": "1.5rem",
+    "rowHeight": "150px",
+    "widgets": [
+      { "widgetId": "kpi-spent",       "gridArea": "1 / 1 / 2 / 5" },
+      { "widgetId": "kpi-unbudgeted",  "gridArea": "1 / 5 / 2 / 9" },
+      { "widgetId": "kpi-overspend",   "gridArea": "1 / 9 / 2 / 13" },
+      { "widgetId": "breakdown",       "gridArea": "2 / 1 / 4 / 8" },
+      { "widgetId": "usage-chart",     "gridArea": "2 / 8 / 4 / 13" },
+      { "widgetId": "reconciliation",  "gridArea": "4 / 1 / 5 / 13" }
+    ]
+  },
+
+  "widgets": [
+    {
+      "id": "kpi-spent",
+      "title": "Spent This Month",
+      "helpText": "Total expenses in the selected month and currency — the grand-total row from the shared variance.",
+      "steps": [
+        { "id": "row", "kind": "transform", "fn": "where", "inputs": ["{{dashboard.steps.totals}}"], "config": { "field": "kind", "equals": "total" } }
+      ],
+      "output": "row",
+      "visualization": { "type": "kpi", "icon": "$", "iconColor": "blue", "multiCurrency": true, "amountField": "actual", "currencyField": "currency" }
+    },
+    {
+      "id": "kpi-unbudgeted",
+      "title": "Unbudgeted",
+      "helpText": "Spending in categories with no budget set — the remainder the shared variance isolates. High values mean money is leaking outside your budgets.",
+      "steps": [
+        { "id": "row", "kind": "transform", "fn": "where", "inputs": ["{{dashboard.steps.totals}}"], "config": { "field": "kind", "equals": "unbudgeted" } }
+      ],
+      "output": "row",
+      "visualization": { "type": "kpi", "icon": "?", "iconColor": "amber", "multiCurrency": true, "amountField": "actual", "currencyField": "currency" }
+    },
+    {
+      "id": "kpi-overspend",
+      "title": "Most Over Budget",
+      "helpText": "The single category furthest over its budget this month (a negative amount means over). Sorted by remaining, lowest first.",
+      "steps": [
+        { "id": "sorted", "kind": "transform", "fn": "sortBy", "inputs": ["{{dashboard.steps.flat}}"], "config": { "field": "remaining", "order": "asc" } },
+        { "id": "worst",  "kind": "transform", "fn": "limit",  "inputs": ["{{steps.sorted}}"], "config": { "count": 1 } }
+      ],
+      "output": "worst",
+      "visualization": { "type": "kpi", "icon": "↓", "iconColor": "red", "multiCurrency": true, "amountField": "remaining", "currencyField": "currency" }
+    },
+    {
+      "id": "breakdown",
+      "title": "Budget vs Actual by Category",
+      "helpText": "Every budgeted category for the month, sorted so the biggest overspends surface first. A budget on a parent account is compared inclusively against its whole subtree.",
+      "steps": [
+        { "id": "rows", "kind": "transform", "fn": "sortBy", "inputs": ["{{dashboard.steps.flat}}"], "config": { "field": "remaining", "order": "asc" } }
+      ],
+      "output": "rows",
+      "visualization": {
+        "type": "table",
+        "emptyText": "No budgets or spending for this month. Set budgets in the Budgets view, then pick a month and currency that have data.",
+        "columns": [
+          { "key": "account",   "label": "Category",  "format": "accountName2" },
+          { "key": "budget",    "label": "Budget",    "format": "currency", "align": "right" },
+          { "key": "actual",    "label": "Actual",    "format": "currency", "align": "right" },
+          { "key": "remaining", "label": "Remaining", "format": "signedCurrency", "align": "right" },
+          { "key": "pctUsed",   "label": "% Used",    "format": "percent", "align": "right" }
+        ]
+      }
+    },
+    {
+      "id": "usage-chart",
+      "title": "% of Budget Used",
+      "helpText": "How much of each category's budget is used. Bars past 100% are over budget.",
+      "steps": [
+        { "id": "rows", "kind": "transform", "fn": "sortBy", "inputs": ["{{dashboard.steps.flat}}"], "config": { "field": "pctUsed", "order": "desc" } }
+      ],
+      "output": "rows",
+      "visualization": {
+        "type": "chart",
+        "chartType": "bar",
+        "yAxisLabelFormat": "percent",
+        "seriesLabelFormat": "percent",
+        "options": {
+          "grid": { "top": 20, "bottom": 60, "left": 55, "right": 20 },
+          "xAxis": { "type": "category", "axisLabel": { "rotate": 40, "fontSize": 10 } },
+          "yAxis": { "type": "value" },
+          "series": [
+            { "name": "% Used", "type": "bar", "encode": { "x": "account", "y": "pctUsed" }, "itemStyle": { "color": "#7B83AD" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "reconciliation",
+      "title": "Where It Went",
+      "helpText": "Total spending split into the part covered by budgets vs the unbudgeted remainder. Uses the same shared variance as everything above.",
+      "steps": [
+        { "id": "rows", "kind": "transform", "fn": "where", "inputs": ["{{dashboard.steps.totals}}"], "config": { "field": "kind", "in": ["unbudgeted", "total"] } }
+      ],
+      "output": "rows",
+      "visualization": {
+        "type": "table",
+        "columns": [
+          { "key": "account", "label": "",       "format": "accountName2" },
+          { "key": "actual",  "label": "Amount", "format": "currency", "align": "right" },
+          { "key": "note",    "label": "Note" }
+        ]
+      }
+    }
+  ]
+}
