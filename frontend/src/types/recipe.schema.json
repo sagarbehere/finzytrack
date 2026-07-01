@@ -202,7 +202,7 @@
       "properties": {
         "id": { "$ref": "#/$defs/StepId" },
         "kind": { "const": "transform" },
-        "fn": { "type": "string", "minLength": 1, "description": "Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, pivot, joinBudgetActual, runningSum, envelopeRollover, ...). Validated server-side." },
+        "fn": { "type": "string", "minLength": 1, "description": "Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, where, pivot, joinBudgetActual, joinByPeriod, runningSum, envelopeRollover). Validated server-side." },
         "inputs": {
           "type": "array",
           "minItems": 1,

@@ -86,7 +86,7 @@ def _detect_dollar_placeholders(query: str) -> list[str]:
 # server can't run the catalog, so fn-name validity is checked against this list
 # (§3.6 G8 / §4.11).
 KNOWN_TRANSFORMS = {
-    "none", "firstRow", "firstValue", "sortBy", "limit", "pluck", "pivot",
+    "none", "firstRow", "firstValue", "sortBy", "limit", "pluck", "where", "pivot",
     "joinBudgetActual", "joinByPeriod", "runningSum", "envelopeRollover",
 }
 

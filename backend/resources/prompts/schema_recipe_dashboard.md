@@ -170,6 +170,7 @@ is the primary rowset; `config` shapes behavior.
 | `sortBy` | `[rows]` | `{ field, order }` | sorted rows |
 | `limit` | `[rows]` | `{ count }` | first N rows |
 | `pluck` | `[rows]` | `{ field }` | array of one field |
+| `where` | `[rows]` | `{ field, equals? \| notEquals? \| in? }` | rows matching the predicate (chain `firstRow`/`limit` to reduce) |
 | `pivot` | `[rows]` | `{ rowField, columnField, valueField, formatColumn?, sortRowsBy? }` | PivotData |
 | `joinBudgetActual` | `[budgets, actuals]` | `{ totalAccount?, periodStart?, periodEnd? }` | variance rows (flat; remainder mode adds Unbudgeted+Total when `totalAccount` is set) |
 | `joinByPeriod` | `[budgetsByPeriod, actualsByPeriod]` | — | `[{ period, budget, actual }]` |
@@ -559,7 +560,7 @@ Type: `Step[]`
 |-------|------|----------|-------------|
 | `id` | `StepId` | yes |  |
 | `kind` | `'transform'` | yes |  |
-| `fn` | `string` | yes | Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, pivot, joinBudgetActual, runningSum, envelopeRollover, ...). Validated server-side. |
+| `fn` | `string` | yes | Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, where, pivot, joinBudgetActual, joinByPeriod, runningSum, envelopeRollover). Validated server-side. |
 | `inputs` | `string[]` | yes | Ordered {{steps.<id>}} / {{dashboard.steps.<id>}} references to the step outputs this transform consumes. |
 | `config` | `object` | — | Transform-specific configuration; the accepted shape depends on fn (see the transform catalog in the schema doc). |
 

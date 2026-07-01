@@ -100,14 +100,18 @@ function sortByTransform(inputs: unknown[], config?: TransformConfig): unknown {
     const aVal = a[field]
     const bVal = b[field]
 
-    // Handle numeric comparison
-    if (typeof aVal === 'number' && typeof bVal === 'number') {
-      return order === 'asc' ? aVal - bVal : bVal - aVal
+    // Numeric comparison — covers JS numbers AND decimal-string Money values
+    // (budget/actual/remaining are TEXT-decimal strings, so a naive string sort
+    // would order "-600" / "50" / "1200" wrongly). Compare numerically whenever
+    // both values parse as finite numbers; otherwise fall back to locale.
+    const aStr = String(aVal ?? '').trim()
+    const bStr = String(bVal ?? '').trim()
+    const aNum = Number(aStr)
+    const bNum = Number(bStr)
+    if (aStr !== '' && bStr !== '' && Number.isFinite(aNum) && Number.isFinite(bNum)) {
+      return order === 'asc' ? aNum - bNum : bNum - aNum
     }
 
-    // Handle string comparison
-    const aStr = String(aVal ?? '')
-    const bStr = String(bVal ?? '')
     const cmp = aStr.localeCompare(bStr)
     return order === 'asc' ? cmp : -cmp
   })
@@ -130,6 +134,30 @@ function pluckTransform(inputs: unknown[], config?: TransformConfig): unknown {
   const field = config?.field as string | undefined
   if (!field) return rows
   return rows.map((row) => row[field])
+}
+
+/**
+ * where — filter rows by a field predicate. Config: { field, equals? , notEquals?, in? }.
+ * Returns the matching rows (still an array — chain `firstRow`/`limit` to reduce).
+ * The common use is slicing a multi-row result (e.g. joinBudgetActual remainder
+ * mode) down to one role: `where(kind == "total")` → the grand-total row for a KPI.
+ * Comparisons are strict equality against the raw field value; with `in`, the
+ * value must be one of the listed values.
+ */
+function whereTransform(inputs: unknown[], config?: TransformConfig): unknown {
+  const rows = asRows(inputs[0])
+  const field = config?.field as string | undefined
+  if (!field) return rows
+  const hasEquals = config?.equals !== undefined
+  const hasNotEquals = config?.notEquals !== undefined
+  const inList = Array.isArray(config?.in) ? (config!.in as unknown[]) : undefined
+  return rows.filter((row) => {
+    const v = row[field]
+    if (inList) return inList.includes(v)
+    if (hasNotEquals) return v !== config!.notEquals
+    if (hasEquals) return v === config!.equals
+    return true
+  })
 }
 
 /**
@@ -547,6 +575,7 @@ export const transformCatalog: Record<string, TransformFn> = {
   sortBy: sortByTransform,
   limit: limitTransform,
   pluck: pluckTransform,
+  where: whereTransform,
   pivot: pivotTransform,
   joinBudgetActual,
   joinByPeriod,

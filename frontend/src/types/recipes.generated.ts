@@ -168,7 +168,7 @@ export interface TransformStep {
   id: StepId;
   kind: "transform";
   /**
-   * Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, pivot, joinBudgetActual, runningSum, envelopeRollover, ...). Validated server-side.
+   * Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, where, pivot, joinBudgetActual, joinByPeriod, runningSum, envelopeRollover). Validated server-side.
    */
   fn: string;
   /**
