@@ -12,6 +12,29 @@
  * supported-type list all read from here. `validateInput` codifies the contract
  * the existing RecipeChart/KPI/Table/PivotTable components already consume; it
  * does not invent a new one.
+ *
+ * ── To add a VISUALIZATION TYPE (checklist) ──────────────────────────────────
+ * A viz type spans several files; miss one and you get a blank panel or a false
+ * "unknown type". The coordinated edits:
+ *
+ *   New CHART TYPE (bar/line/…):
+ *     1. Add it to the `ChartType` enum in frontend/src/types/recipe.schema.json,
+ *        then `npm run generate-recipe-types` (updates SUPPORTED_CHART_TYPES).
+ *     2. It is picked up here automatically via `chartGrain()` — BUT it gets the
+ *        generic "array of row objects" validator. If its real input shape is
+ *        NOT plain rows (e.g. sankey nodes/links, treemap/sunburst hierarchy,
+ *        calendar date/value), add a dedicated grain + a case in `chartGrain()`,
+ *        or the guard will silently accept malformed data (see gaugeGrain).
+ *     3. Teach RecipeChart.vue how to render it; add one gallery example.
+ *
+ *   New TOP-LEVEL TYPE (a peer of kpi/table/pivot/chart):
+ *     1. Add a JsonXVisualization def + extend the RecipeVisualization oneOf in
+ *        recipe.schema.json, then regenerate types.
+ *     2. Add a grain to VIZ_REGISTRY below (top-level key). `validateVizInput`
+ *        derives its non-chart map from the registry, so no second edit there.
+ *     3. Add a v-else-if branch + component in RecipeWidgetRenderer.vue.
+ *     4. Add one widget-gallery.json example (one widget per grain).
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import { SUPPORTED_CHART_TYPES } from '@/types/recipes'
@@ -98,9 +121,14 @@ export const VIZ_REGISTRY = {
   ) as Record<string, VizGrain>,
 }
 
-/** All supported grain keys (kpi/table/pivot + every chart type). */
+/** Top-level grains that are NOT the `chart` family (kpi/table/pivot/…). */
+const NON_CHART_GRAINS: Record<string, VizGrain> = Object.fromEntries(
+  Object.entries(VIZ_REGISTRY).filter(([, g]) => 'validateInput' in g),
+) as Record<string, VizGrain>
+
+/** All supported grain keys (top-level non-chart grains + every chart type). */
 export function supportedGrains(): string[] {
-  return ['kpi', 'table', 'pivot', ...SUPPORTED_CHART_TYPES]
+  return [...Object.keys(NON_CHART_GRAINS), ...SUPPORTED_CHART_TYPES]
 }
 
 /**
@@ -117,12 +145,7 @@ export function validateVizInput(
     if (!ct || !(ct in VIZ_REGISTRY.chart)) return `unknown chartType "${ct}"`
     return VIZ_REGISTRY.chart[ct].validateInput(data)
   }
-  const nonChart: Record<string, VizGrain> = {
-    kpi: VIZ_REGISTRY.kpi,
-    table: VIZ_REGISTRY.table,
-    pivot: VIZ_REGISTRY.pivot,
-  }
-  const grain = nonChart[viz.type]
+  const grain = NON_CHART_GRAINS[viz.type]
   if (!grain) return `unknown visualization type "${viz.type}"`
   return grain.validateInput(data)
 }
