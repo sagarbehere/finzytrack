@@ -60,6 +60,7 @@ class SqliteReader:
         if self.sqlite_path.exists():
             try:
                 con = sqlite3.connect(str(self.sqlite_path))
+                con.execute("PRAGMA query_only = ON")  # read-only probe, consistent with _query
                 row = con.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'"
                 ).fetchone()
@@ -116,9 +117,17 @@ class SqliteReader:
 
         Developers adding new read methods use _query() to get their
         connection, so there's no way to forget the freshness check.
+
+        The connection is opened read-only (`PRAGMA query_only = ON`): every read
+        method — and every consumer handed this reader, notably the compute
+        registry (§3.6 G3) — is prevented from writing the mirror by the SQLite
+        engine itself, not merely by convention. Stale-recovery re-exports run
+        earlier through the exporter's own write connection (see `_ensure_fresh`),
+        so this never blocks a legitimate re-export.
         """
         self._ensure_fresh()
         con = sqlite3.connect(str(self.sqlite_path))
+        con.execute("PRAGMA query_only = ON")
         con.row_factory = sqlite3.Row
         try:
             return fn(con)
