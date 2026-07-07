@@ -35,7 +35,7 @@ def test_detect_is_read_only_and_surfaces_action_required(tmp_path: Path):
     assert (recipes / "dashboards" / "d.json").read_text() == before
     assert len(tasks) == 1
     t = tasks[0]
-    assert t.id == "recipes-step-format"
+    assert t.id == "recipes-upgrade"
     assert t.severity == SEVERITY_ACTION_REQUIRED
     assert t.requires_consent is True
     assert t.docs_path
@@ -61,7 +61,7 @@ def test_apply_runs_migration_and_then_self_retires(tmp_path: Path):
     registry = build_startup_registry(config, recipes)
 
     assert len(registry.detect()) == 1  # pending before
-    result = registry.apply("recipes-step-format")
+    result = registry.apply("recipes-upgrade")
     assert "d.json" in result["migrated_dashboards"]
 
     # Data-driven task self-retires once everything is at the target version.

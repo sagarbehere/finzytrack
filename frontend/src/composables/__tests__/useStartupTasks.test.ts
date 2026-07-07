@@ -20,7 +20,7 @@ vi.mock('@/services/generated-api', () => ({
 import { useStartupTasks } from '@/composables/useStartupTasks'
 
 const gateTaskInfo = {
-  id: 'recipes-step-format',
+  id: 'recipes-upgrade',
   title: 'Upgrade saved dashboards',
   summary: '3 dashboards will be upgraded.',
   severity: 'action_required',
@@ -44,7 +44,7 @@ describe('useStartupTasks', () => {
     const { checkStartupTasks, gateTask, checked } = useStartupTasks()
     await checkStartupTasks()
     expect(checked.value).toBe(true)
-    expect(gateTask.value?.id).toBe('recipes-step-format')
+    expect(gateTask.value?.id).toBe('recipes-upgrade')
   })
 
   it('builds a docs URL from docs_path', () => {
@@ -60,9 +60,9 @@ describe('useStartupTasks', () => {
     await s.checkStartupTasks()
     expect(s.gateTask.value).not.toBeNull()
 
-    applyStartupTask.mockResolvedValue(ok({ id: 'recipes-step-format', applied: true, message: 'done', result: {} }))
+    applyStartupTask.mockResolvedValue(ok({ id: 'recipes-upgrade', applied: true, message: 'done', result: {} }))
     getStartupTasks.mockResolvedValueOnce(ok({ tasks: [] })) // re-detect after apply
-    const applied = await s.applyStartupTask('recipes-step-format')
+    const applied = await s.applyStartupTask('recipes-upgrade')
     expect(applied).toBe(true)
     expect(s.gateTask.value).toBeNull()
   })

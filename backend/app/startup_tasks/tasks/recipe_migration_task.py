@@ -15,7 +15,11 @@ from app.migrations.runner import apply_recipe_migration
 from app.schemas.startup_schemas import StartupTaskInfo, SEVERITY_ACTION_REQUIRED
 from app.startup_tasks.base import StartupTask
 
-TASK_ID = "recipes-step-format"
+# Format-neutral, stable id: this one task migrates recipes to the CURRENT
+# format across every version hop (v1→v2 today, later steps appended to the same
+# chain), so the id names the invariant ("upgrade recipes") rather than any one
+# version's format. See dev-docs/upgrades.md §5.
+TASK_ID = "recipes-upgrade"
 DOCS_PATH = "upgrade-notes/dashboards-step-format"
 
 
