@@ -2,6 +2,7 @@ import { ref, computed, readonly } from 'vue'
 import { StartupService } from '@/services/generated-api'
 import type { StartupTaskInfo } from '@/services/generated-api'
 import { errorHandler } from '@/utils/ErrorHandler'
+import { useToast } from '@/composables/useNotifications'
 
 /**
  * Pending startup tasks (upgrades / notices) detected by the backend at launch.
@@ -55,6 +56,19 @@ async function applyStartupTask(taskId: string): Promise<boolean> {
     const resp = await StartupService.applyStartupTask(taskId)
     if (!resp.success) {
       throw new Error(resp.error?.message || 'Upgrade failed')
+    }
+    // Best-effort per file: surface any items that couldn't be upgraded as a
+    // dismissible warning. The gate still clears (the backend downgrades a
+    // consented-but-incomplete task to a non-blocking notice) so the app loads
+    // what succeeded instead of wedging on the failures.
+    const errors = (resp.data?.result?.errors as string[] | undefined) ?? []
+    if (errors.length > 0) {
+      useToast().warning(
+        'Some items could not be upgraded',
+        `${errors.length} recipe file${errors.length === 1 ? '' : 's'} couldn't be upgraded and ` +
+          "won't load until fixed. Edit or remove the affected file(s), or restore the original " +
+          'from its timestamped .backup.',
+      )
     }
     // Re-detect: a completed migration self-retires and the gate clears.
     const after = await StartupService.getStartupTasks()

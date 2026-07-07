@@ -31,7 +31,7 @@ class StartupTaskRegistry:
         for task in self._tasks.values():
             if task.one_shot and self._state.is_completed(task.id):
                 continue
-            info = task.detect()
+            info = task.detect(consented=self._state.is_consented(task.id))
             if info is not None:
                 pending.append(info)
         # Audit trail of what was surfaced to the user. INFO only when something
@@ -51,10 +51,13 @@ class StartupTaskRegistry:
         if task is None:
             raise KeyError(task_id)
         result = task.apply()
-        # Only retire a one-shot task once it applied cleanly. A result carrying
-        # `errors` means it partially failed — leave it pending so it re-surfaces
-        # (rather than being silently marked done and never retried).
-        if task.one_shot and not result.get("errors"):
+        if result.get("errors"):
+            # Partial failure (best-effort per file): record that the user
+            # consented so a data-driven task downgrades to a dismissible notice
+            # on the next detect instead of re-gating the app forever.
+            self._state.mark_consented(task_id)
+        elif task.one_shot:
+            # Clean apply: retire a one-shot so it doesn't surface again.
             self._state.mark_completed(task_id)
         return result
 

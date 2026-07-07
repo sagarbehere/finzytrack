@@ -26,47 +26,74 @@ STATE_FILENAME = ".upgrade-state.json"
 
 
 class UpgradeState:
+    """Two persisted id-sets:
+      - `completed` — one-shot tasks that have run (so they surface only once).
+      - `consented` — data-driven tasks the user has already applied at least
+        once. A consented task that still detects pending work (e.g. a migration
+        that left un-convertible files) downgrades from a hard gate to a
+        dismissible notice, so one broken file can't wedge the app forever.
+    """
+
     def __init__(self, config_dir: Path) -> None:
         self._path = config_dir / STATE_FILENAME
-        self._completed: set[str] = self._read_disk()
+        disk = self._read_disk()
+        self._completed: set[str] = disk["completed"]
+        self._consented: set[str] = disk["consented"]
 
-    def _read_disk(self) -> set[str]:
-        """The completed-id set currently on disk, or empty if absent/unreadable.
-        A bad file is never fatal — it degrades to 'nothing completed' (which can
-        re-fire one-shots, but never blocks startup)."""
+    def _read_disk(self) -> dict[str, set[str]]:
+        """The id-sets currently on disk, or empty if absent/unreadable. A bad
+        file is never fatal — it degrades to 'nothing recorded' (which can re-fire
+        a one-shot / re-gate a migration, but never blocks startup)."""
         try:
             if self._path.is_file():
                 data = json.loads(self._path.read_text(encoding="utf-8"))
-                return set(data.get("completed", []))
+                return {
+                    "completed": set(data.get("completed", [])),
+                    "consented": set(data.get("consented", [])),
+                }
         except Exception as e:  # noqa: BLE001 — never block on a bad state file
             logger.warning("Could not read upgrade state %s: %s", self._path, e)
-        return set()
+        return {"completed": set(), "consented": set()}
 
     def is_completed(self, task_id: str) -> bool:
         return task_id in self._completed
 
     def mark_completed(self, task_id: str) -> None:
         self._completed.add(task_id)
+        self._persist(f"one-shot task '{task_id}' completed")
+
+    def is_consented(self, task_id: str) -> bool:
+        return task_id in self._consented
+
+    def mark_consented(self, task_id: str) -> None:
+        self._consented.add(task_id)
+        self._persist(f"consent for task '{task_id}'")
+
+    def _persist(self, what: str) -> None:
         try:
             self._save()
-            logger.info("Recorded one-shot startup task '%s' as completed", task_id)
+            logger.info("Recorded %s", what)
         except Exception as e:  # noqa: BLE001 — persistence failure must not fail apply
-            # Loud, and named to the specific task, so the audit trail shows the
-            # task will re-surface next launch (nothing was persisted).
+            # Loud, and named, so the audit trail shows it will re-surface next
+            # launch (nothing was persisted).
             logger.warning(
-                "Could not persist completion of one-shot task '%s' to %s — it "
-                "will re-surface on next launch: %s", task_id, self._path, e
+                "Could not persist %s to %s — it will re-surface on next launch: %s",
+                what, self._path, e,
             )
 
     def _save(self) -> None:
-        """Durably write the completed set, merged with whatever is on disk.
+        """Durably write both id-sets, merged with whatever is on disk.
 
-        Raises on write failure (mark_completed handles it) so a silent failure
-        can't masquerade as a persisted completion."""
-        merged = self._completed | self._read_disk()
-        self._completed = merged
+        Raises on write failure (the caller handles it) so a silent failure
+        can't masquerade as a persisted record."""
+        disk = self._read_disk()
+        self._completed |= disk["completed"]
+        self._consented |= disk["consented"]
         self._path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(
             self._path,
-            json.dumps({"completed": sorted(merged)}, indent=2) + "\n",
+            json.dumps(
+                {"completed": sorted(self._completed), "consented": sorted(self._consented)},
+                indent=2,
+            ) + "\n",
         )

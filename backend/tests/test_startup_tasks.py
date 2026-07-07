@@ -68,6 +68,40 @@ def test_apply_runs_migration_and_then_self_retires(tmp_path: Path):
     assert build_startup_registry(config, recipes).detect() == []
 
 
+def test_partial_migration_downgrades_gate_to_dismissible_notice(tmp_path: Path):
+    """A migration that can't convert every file (e.g. a dashboard referencing a
+    widget that no longer exists) must NOT wedge the app: after the user consents
+    once, the still-pending task downgrades from an action-required gate to a
+    non-blocking, dismissible notice."""
+    config = tmp_path / "config"
+    recipes = config / "recipes"
+    (recipes / "dashboards").mkdir(parents=True)
+    # Legacy dashboard whose layout references a widget that isn't inline and has
+    # no standalone file → the migration reports an error and leaves it as-is.
+    (recipes / "dashboards" / "broken.json").write_text(json.dumps({
+        "id": "broken", "title": "B",
+        "layout": {"columns": 12, "widgets": [{"widgetId": "ghost", "gridArea": "1 / 1 / 2 / 2"}]},
+        "widgets": [],
+    }), encoding="utf-8")
+
+    # First launch: a hard gate.
+    before = build_startup_registry(config, recipes).detect()
+    assert len(before) == 1
+    assert before[0].requires_consent is True
+    assert before[0].severity == SEVERITY_ACTION_REQUIRED
+
+    # Consent + apply → the file can't be migrated (best-effort per file).
+    result = build_startup_registry(config, recipes).apply("recipes-upgrade")
+    assert result["errors"]  # partial failure recorded
+
+    # A fresh registry (reads persisted consent) now surfaces a NON-gating notice
+    # instead of re-blocking — the no-permanent-wedge guarantee.
+    after = build_startup_registry(config, recipes).detect()
+    assert len(after) == 1
+    assert after[0].requires_consent is False
+    assert after[0].severity == SEVERITY_INFO
+
+
 def test_apply_unknown_task_raises(tmp_path: Path):
     reg = build_startup_registry(tmp_path / "config", tmp_path / "config" / "recipes")
     try:
@@ -87,7 +121,7 @@ class _OneShotInfoTask(StartupTask):
     def __init__(self):
         self.applied = 0
 
-    def detect(self):
+    def detect(self, consented: bool = False):
         return StartupTaskInfo(id=self.id, title="Notice", summary="hi",
                                severity=SEVERITY_INFO, requires_consent=False)
 

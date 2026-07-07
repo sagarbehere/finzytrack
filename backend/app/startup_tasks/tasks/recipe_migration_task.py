@@ -12,7 +12,9 @@ from typing import Any
 
 from app.migrations.recipe_migration import detect_pending
 from app.migrations.runner import apply_recipe_migration
-from app.schemas.startup_schemas import StartupTaskInfo, SEVERITY_ACTION_REQUIRED
+from app.schemas.startup_schemas import (
+    StartupTaskInfo, SEVERITY_ACTION_REQUIRED, SEVERITY_INFO,
+)
 from app.startup_tasks.base import StartupTask
 
 # Format-neutral, stable id: this one task migrates recipes to the CURRENT
@@ -30,7 +32,7 @@ class RecipeMigrationTask(StartupTask):
     def __init__(self, recipes_dir: Path) -> None:
         self._recipes_dir = recipes_dir
 
-    def detect(self) -> StartupTaskInfo | None:
+    def detect(self, consented: bool = False) -> StartupTaskInfo | None:
         pending = detect_pending(self._recipes_dir)
         if pending["total"] == 0:
             return None
@@ -43,6 +45,26 @@ class RecipeMigrationTask(StartupTask):
         if w:
             parts.append(f"{w} standalone widget{'s' if w != 1 else ''}")
         what = " and ".join(parts) if parts else "your recipes"
+
+        # Already applied once, yet items remain → they couldn't be converted
+        # (e.g. a dashboard referencing a widget that no longer exists). Surface a
+        # dismissible notice instead of gating the app again; the un-converted
+        # files simply won't load until fixed. This is the no-permanent-wedge path.
+        if consented:
+            return StartupTaskInfo(
+                id=self.id,
+                title="Some dashboards couldn't be upgraded",
+                summary=(
+                    f"{what} couldn't be upgraded to the new format and won't be shown "
+                    "until fixed. This usually means a dashboard references a widget that "
+                    "no longer exists. Edit or remove the affected file(s), or restore the "
+                    "original from its timestamped .backup. See the Upgrade Notes."
+                ),
+                severity=SEVERITY_INFO,
+                requires_consent=False,
+                docs_path=DOCS_PATH,
+                details=pending,
+            )
 
         summary = (
             f"This version of Finzytrack uses a new dashboard format. {what} need to be "

@@ -20,9 +20,14 @@ class StartupTask(ABC):
     one_shot: bool = False
 
     @abstractmethod
-    def detect(self) -> StartupTaskInfo | None:
+    def detect(self, consented: bool = False) -> StartupTaskInfo | None:
         """Read-only. Return a pending task if action is needed, else None.
-        MUST NOT mutate anything."""
+        MUST NOT mutate anything.
+
+        `consented` is True when the user has already applied this task at least
+        once (persisted). A task that still has pending work should then return a
+        **non-blocking** notice (`requires_consent=False`) rather than re-gating —
+        so an un-resolvable item can't wedge the app on every launch."""
         raise NotImplementedError
 
     @abstractmethod
