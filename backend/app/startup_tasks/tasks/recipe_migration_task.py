@@ -48,7 +48,7 @@ class RecipeMigrationTask(StartupTask):
             f"This version of Finzytrack uses a new dashboard format. {what} need to be "
             "upgraded before your dashboards can be shown.\n\n"
             "Nothing is changed until you choose to upgrade. When you do, a timestamped "
-            "backup of every changed file is saved first (changed dashboards keep a .bak "
+            "backup of every changed file is saved first (changed dashboards keep a .backup "
             "beside them; removed widget files are copied to config/recipes/.migration-backups/), "
             "and any standalone widget not used by a dashboard is preserved as its own new dashboard."
         )

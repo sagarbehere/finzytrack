@@ -2,10 +2,15 @@ import os
 import shutil
 import logging
 import tempfile
-from datetime import datetime
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator, IO
+from typing import Generator, IO, Optional
+
+from app.core.atomic_backup import (
+    BACKUP_SUFFIX,
+    fsync_dir,
+    timestamped_backup,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -14,75 +19,65 @@ class BackupError(Exception):
     pass
 
 class BackupManager:
-    """Manages file backups with automatic cleanup and atomic writes."""
+    """Manages file backups with automatic cleanup and atomic writes.
 
-    def __init__(self, backup_dir: Path, retention_count: int):
+    Backups are stored under ``backup_dir``. When ``base_dir`` is given, each
+    file's backups live in a subdirectory that mirrors the file's path relative
+    to ``base_dir`` (e.g. ``config/recipes/dashboards/`` → ``<backup_dir>/config/
+    recipes/dashboards/``). This keeps retention per *source path* rather than per
+    *basename*, so two different files sharing a name (e.g. a dashboard and a
+    widget both called ``spending.json``) never share a retention bucket. Files
+    outside ``base_dir`` (e.g. a ledger at an arbitrary path) fall back to the
+    flat ``backup_dir``.
+    """
+
+    def __init__(self, backup_dir: Path, retention_count: int, base_dir: Optional[Path] = None):
         """Initializes the BackupManager.
 
         Args:
             backup_dir: The directory where backups will be stored.
             retention_count: The number of backups to retain for each file.
+            base_dir: Optional root; when set, backups are namespaced by the
+                source file's path relative to it (see class docstring).
         """
         self.backup_dir = backup_dir
         self.retention_count = retention_count
+        self.base_dir = base_dir
 
-    def _ensure_backup_dir(self) -> None:
-        """Create the backup directory on first use."""
-        if not self.backup_dir.exists():
-            self.backup_dir.mkdir(parents=True, exist_ok=True)
+    def _backup_dir_for(self, file_path: Path) -> Path:
+        """The directory a given file's backups live in — a path-mirrored
+        subdirectory under ``backup_dir`` when the file is inside ``base_dir``,
+        else the flat ``backup_dir``."""
+        if self.base_dir is not None:
+            try:
+                rel_parent = file_path.resolve().parent.relative_to(self.base_dir.resolve())
+                return self.backup_dir / rel_parent
+            except ValueError:
+                pass  # file is outside base_dir → flat fallback
+        return self.backup_dir
 
     def _create_backup(self, file_path: Path) -> Path:
-        """Create a timestamped backup of the file in the backup directory."""
-        self._ensure_backup_dir()
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            backup_filename = f"{file_path.name}.{timestamp}.backup"
-            backup_path = self.backup_dir / backup_filename
+        """Create a timestamped backup of the file in its namespaced backup dir."""
+        backup_path = timestamped_backup(file_path, self._backup_dir_for(file_path))
+        if backup_path is None:
+            raise BackupError(f"Failed to create backup for {file_path}")
+        logger.info("Created backup for %s at %s", file_path, backup_path)
+        return backup_path
 
-            shutil.copy(file_path, backup_path)
-            logger.info(f"Created backup for {file_path} at {backup_path}")
-            return backup_path
+    def _cleanup_old_backups(self, file_path: Path) -> None:
+        """Remove old backups of *file_path* beyond the retention limit. Sorted
+        by filename (which embeds the backup timestamp), so ordering is
+        independent of filesystem mtimes."""
+        try:
+            dest_dir = self._backup_dir_for(file_path)
+            backup_pattern = f"{file_path.name}.*{BACKUP_SUFFIX}"
+            backup_files = sorted(dest_dir.glob(backup_pattern), reverse=True)
+
+            for stale in backup_files[self.retention_count:]:
+                stale.unlink()
+                logger.info("Removed old backup: %s", stale)
         except Exception as e:
-            logger.error(f"Failed to create backup for {file_path}", exc_info=True)
-            raise BackupError(f"Failed to create backup for {file_path}: {e}") from e
-
-    def _cleanup_old_backups(self, original_filename: str) -> None:
-        """Remove old backup files for a given original file beyond the retention limit."""
-        try:
-            backup_pattern = f"{original_filename}.*.backup"
-            backup_files = sorted(
-                self.backup_dir.glob(backup_pattern),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True
-            )
-
-            if len(backup_files) > self.retention_count:
-                files_to_remove = backup_files[self.retention_count:]
-                for file_path in files_to_remove:
-                    file_path.unlink()
-                    logger.info(f"Removed old backup: {file_path}")
-        except Exception as e:
-            logger.warning(f"Failed to clean up old backups for {original_filename}: {e}", exc_info=True)
-
-    @staticmethod
-    def _fsync_dir(directory: Path) -> None:
-        """Flush a directory's entries to disk (POSIX). No-op on platforms
-        where directories can't be opened as file descriptors (Windows).
-        """
-        try:
-            dir_fd = os.open(str(directory), os.O_RDONLY)
-        except OSError:
-            return  # e.g. Windows — directory fsync isn't applicable
-        try:
-            try:
-                os.fsync(dir_fd)
-            except OSError as e:
-                # Some filesystems (e.g. tmpfs in containers) refuse fsync
-                # on directories. Logged, not fatal — the file data fsync
-                # is the durability-critical part.
-                logger.debug("Directory fsync on %s skipped: %s", directory, e)
-        finally:
-            os.close(dir_fd)
+            logger.warning(f"Failed to clean up old backups for {file_path.name}: {e}", exc_info=True)
 
     @contextmanager
     def atomic_write(self, file_path_str: str, encoding: str = 'utf-8') -> Generator[IO, None, None]:
@@ -129,7 +124,7 @@ class BackupManager:
             os.replace(temp_path, file_path)
             # The rename swap is now visible; flush the directory entry so
             # the swap itself survives a crash.
-            self._fsync_dir(file_path.parent)
+            fsync_dir(file_path.parent)
             success = True
             logger.info(f"Successfully wrote to {file_path}")
 
@@ -138,7 +133,7 @@ class BackupManager:
             raise
         finally:
             if success:
-                self._cleanup_old_backups(file_path.name)
+                self._cleanup_old_backups(file_path)
             elif temp_path is not None:
                 logger.warning(f"An error occurred during write operation. Cleaning up temporary file {temp_path}")
                 temp_path.unlink(missing_ok=True)

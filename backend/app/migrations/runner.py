@@ -5,15 +5,19 @@ task framework (app/startup_tasks) detects pending migrations read-only, the
 user consents, and then `apply_recipe_migration` runs — with a timestamped
 backup of every changed or removed file, so nothing is mutated without a
 recoverable copy. See dev-docs/upgrades.md and §4.12.
+
+The backup/write mechanics come from the shared, dependency-free primitives in
+`app.core.atomic_backup` (the same ones BackupManager uses), so a migration
+backup is named identically to every other backup and each rewrite is durable —
+without depending on BackupManager, which may not exist this early in startup.
 """
 
 from __future__ import annotations
 
 import logging
-import shutil
-from datetime import datetime
 from pathlib import Path
 
+from app.core.atomic_backup import atomic_write_text, timestamped_backup
 from .recipe_migration import MigrationReport, migrate_recipes_dir, WriteFn, RemoveFn
 
 logger = logging.getLogger(__name__)
@@ -23,22 +27,12 @@ logger = logging.getLogger(__name__)
 BACKUP_DIRNAME = ".migration-backups"
 
 
-def _timestamped_backup(path: Path) -> None:
-    """Copy *path* to a timestamped `.bak` beside it, best-effort."""
-    if path.exists():
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        try:
-            shutil.copy2(path, path.with_suffix(path.suffix + f".{ts}.bak"))
-        except OSError:
-            logger.warning("Could not back up %s before migration", path)
-
-
 def _backup_writer() -> WriteFn:
-    """A self-contained timestamped-backup writer (no BackupManager dependency:
-    it may run before services exist). Backs up in place, then writes."""
+    """A writer that snapshots the original in place, then durably overwrites it.
+    The timestamped backup lands beside the file; the write is atomic + fsynced."""
     def _write(path: Path, text: str) -> None:
-        _timestamped_backup(path)
-        path.write_text(text, encoding="utf-8")
+        timestamped_backup(path, path.parent)  # best-effort; None for new files
+        atomic_write_text(path, text)
 
     return _write
 
@@ -48,13 +42,7 @@ def _backup_remover(backup_dir: Path) -> RemoveFn:
     migration), then delete the original — so a migration never removes a widget
     file without leaving a recoverable copy."""
     def _remove(path: Path) -> None:
-        if path.exists():
-            try:
-                backup_dir.mkdir(parents=True, exist_ok=True)
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                shutil.copy2(path, backup_dir / f"{path.name}.{ts}.bak")
-            except OSError:
-                logger.warning("Could not back up %s before removal", path)
+        timestamped_backup(path, backup_dir)  # best-effort snapshot before delete
         path.unlink(missing_ok=True)
 
     return _remove

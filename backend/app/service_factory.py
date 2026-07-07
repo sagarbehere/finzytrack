@@ -66,10 +66,13 @@ def create_user_services(config: Config, user_id: str = "local") -> UserServices
     instantiation, extracted so that both desktop startup and the hosted
     ``ServiceRegistry`` share the same logic.
     """
-    # 1. BackupManager
+    # 1. BackupManager — base_dir namespaces backups by source path so files
+    # sharing a basename (e.g. a dashboard and a widget both "spending.json")
+    # keep independent retention buckets instead of colliding in one flat dir.
     backup_manager = BackupManager(
         backup_dir=Path(config.backup_dir),
         retention_count=config.backup.retention_count,
+        base_dir=Path(config.root_dir),
     )
 
     # 2. ConfigManager

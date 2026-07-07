@@ -78,13 +78,15 @@ def _txn_ids_in_file(root: Path, filename: str) -> list:
 
 
 def _backups(root: Path, filename: str) -> list:
+    # rglob: backups are namespaced by source path under data/backups/ in the
+    # production build (BackupManager base_dir), so search recursively.
     bdir = root / "data" / "backups"
-    return sorted(bdir.glob(f"{filename}.*.backup")) if bdir.exists() else []
+    return sorted(bdir.rglob(f"{filename}.*.backup")) if bdir.exists() else []
 
 
 def _all_backups(root: Path) -> list:
     bdir = root / "data" / "backups"
-    return sorted(bdir.glob("*.backup")) if bdir.exists() else []
+    return sorted(bdir.rglob("*.backup")) if bdir.exists() else []
 
 
 def _commit(client, *, date, payee, narration, postings, source_account="Assets:Bank:Checking"):

@@ -212,14 +212,14 @@ def test_apply_backs_up_dashboards_and_removed_widgets(tmp_path: Path):
 
     apply_recipe_migration(root)
 
-    # Dashboard migrated in place, with a timestamped .bak beside it.
+    # Dashboard migrated in place, with a timestamped .backup beside it.
     migrated = json.loads((root / "dashboards" / "d.json").read_text())
     assert migrated["schemaVersion"] == 2
-    assert list((root / "dashboards").glob("d.json.*.bak")), "dashboard not backed up"
+    assert list((root / "dashboards").glob("d.json.*.backup")), "dashboard not backed up"
 
-    # The widgets/ dir is gone, but every removed widget left a .bak first.
+    # The widgets/ dir is gone, but every removed widget left a .backup first.
     assert not (root / "widgets").exists()
-    names = {b.name.split(".json")[0] for b in tmp_path.rglob("*.json.*.bak")}
+    names = {b.name.split(".json")[0] for b in tmp_path.rglob("*.json.*.backup")}
     assert "standalone-w" in names  # inlined widget backed up before removal
     assert "orphan" in names        # rehomed orphan's source backed up before removal
 
@@ -232,9 +232,9 @@ def test_apply_idempotent_and_safe_on_already_v2(tmp_path: Path):
     _legacy_tree(root)
     apply_recipe_migration(root)
     before = (root / "dashboards" / "d.json").read_text()
-    bak_count = len(list(tmp_path.rglob("*.bak")))
+    bak_count = len(list(tmp_path.rglob("*.backup")))
 
     apply_recipe_migration(root)  # second launch
     assert (root / "dashboards" / "d.json").read_text() == before
     # No new backups churned on the no-op second run.
-    assert len(list(tmp_path.rglob("*.bak"))) == bak_count
+    assert len(list(tmp_path.rglob("*.backup"))) == bak_count
