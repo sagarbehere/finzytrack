@@ -14,8 +14,12 @@
  * does not invent a new one.
  *
  * ── To add a VISUALIZATION TYPE (checklist) ──────────────────────────────────
- * A viz type spans several files; miss one and you get a blank panel or a false
- * "unknown type". The coordinated edits:
+ * A viz type spans several files (schema, this registry, render components,
+ * ECharts internals, the backend gallery, tests); miss one and you get a blank
+ * panel, a false "unknown type", or a test failure. This is the
+ * registry/render-focused view; for the full cross-cutting map (backend gallery,
+ * generated-file automation, which tests catch a missed step) see
+ * dev-docs/adding-a-new-visualization-type.md.
  *
  *   New CHART TYPE (bar/line/…):
  *     1. Add it to the `ChartType` enum in frontend/src/types/recipe.schema.json,
@@ -25,7 +29,17 @@
  *        NOT plain rows (e.g. sankey nodes/links, treemap/sunburst hierarchy,
  *        calendar date/value), add a dedicated grain + a case in `chartGrain()`,
  *        or the guard will silently accept malformed data (see gaugeGrain).
- *     3. Teach RecipeChart.vue how to render it; add one gallery example.
+ *     3. Teach RecipeChart.vue to render it — THREE edits, not one:
+ *          a. register the ECharts series component in the `echarts.use([...])`
+ *             call (miss it → blank panel);
+ *          b. add it to `DATA_INJECTED_TYPES` if the runtime injects rows into
+ *             series[0].data instead of dataset.source (hierarchical/flow charts);
+ *          c. add it to `NON_CARTESIAN_TYPES` if it has no x/y axes.
+ *        (The chartType name isn't always the ECharts series type — e.g. `area`
+ *        is a line series with areaStyle.)
+ *     4. Add one widget-gallery.json example — ENFORCED by
+ *        backend/tests/test_widget_gallery.py (a schema type with no gallery
+ *        widget fails). `vizRegistry.test.ts` checks supportedGrains() coverage.
  *
  *   New TOP-LEVEL TYPE (a peer of kpi/table/pivot/chart):
  *     1. Add a JsonXVisualization def + extend the RecipeVisualization oneOf in
@@ -33,7 +47,8 @@
  *     2. Add a grain to VIZ_REGISTRY below (top-level key). `validateVizInput`
  *        derives its non-chart map from the registry, so no second edit there.
  *     3. Add a v-else-if branch + component in RecipeWidgetRenderer.vue.
- *     4. Add one widget-gallery.json example (one widget per grain).
+ *     4. Add one widget-gallery.json example (one widget per grain; enforced by
+ *        test_widget_gallery.py). Update vizRegistry.test.ts / golden tests.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
