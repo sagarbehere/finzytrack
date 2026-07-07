@@ -8,6 +8,14 @@ Personal finance app: Beancount backend + Vue 3 frontend.
 - See `frontend/CLAUDE.md` for frontend-specific rules (UI styles, generated API client, error handling)
 - See `backend/CLAUDE.md` for backend-specific rules (error patterns, config conventions)
 
+## Repository layout — where scripts live
+
+There are three `scripts/` directories, split by scope. Put a script in the one matching its reach; don't create a fourth or move a script across the boundary:
+
+- **`backend/scripts/`** — backend-internal Python dev/debug tools (e.g. ledger duplicate-finder, fake-ledger generator). Assume **cwd = `backend/`** and import `app.*` directly.
+- **`frontend/scripts/`** — frontend build tooling (Node `.mjs`), invoked via npm `predev`/`prebuild` hooks and `desktop/build.py`.
+- **`scripts/` (repo root)** — cross-cutting tools that span both packages or operate on repo-wide artifacts (e.g. `sync_ai_reference.py` syncs frontend→backend, `migrate_recipes.py`, schema-doc generation). Run from the repo root; they anchor to `ROOT = Path(__file__).resolve().parents[1]` and reach into `backend/…`/`frontend/…` by explicit path.
+
 ## Cross-Cutting Rules
 
 ### Money handling — single source of truth
