@@ -167,3 +167,59 @@ def test_endpoint_apply_logs_applying_then_applied(test_client, caplog):
     messages = [r.getMessage() for r in caplog.records]
     assert any("Applying startup task 'recipes-upgrade'" in m for m in messages)
     assert any("Startup task 'recipes-upgrade' applied" in m for m in messages)
+
+
+# ── One-shot completion persistence (durable, logged, merge-safe) ─────────────
+
+
+def test_completion_is_persisted_durably_and_readable(tmp_path: Path):
+    config = tmp_path / "config"
+    state = UpgradeState(config)
+    state.mark_completed("demo-notice")
+
+    # Written and reloadable by a fresh instance.
+    assert UpgradeState(config).is_completed("demo-notice")
+    # Durable write leaves no stray temp files beside the state file.
+    leftovers = [p.name for p in config.iterdir() if p.name != ".upgrade-state.json"]
+    assert leftovers == []
+
+
+def test_mark_completed_logs_the_persisted_task(tmp_path: Path, caplog):
+    import logging
+    state = UpgradeState(tmp_path / "config")
+    with caplog.at_level(logging.INFO):
+        state.mark_completed("demo-notice")
+    assert any(
+        "demo-notice" in r.getMessage() and "completed" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_save_failure_warns_and_does_not_raise(tmp_path: Path, caplog):
+    import logging
+    # config_dir's parent is a FILE, so mkdir(parents=True) raises NotADirectoryError.
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x", encoding="utf-8")
+    state = UpgradeState(blocker / "config")  # _read_disk on a bad path → empty
+
+    with caplog.at_level(logging.WARNING):
+        state.mark_completed("demo-notice")  # must not raise
+
+    assert any(
+        "demo-notice" in r.getMessage() and "re-surface" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_concurrent_instances_do_not_clobber_each_others_completions(tmp_path: Path):
+    config = tmp_path / "config"
+    # Two instances that both loaded before either wrote (the lost-update window).
+    a = UpgradeState(config)
+    b = UpgradeState(config)
+
+    a.mark_completed("task-a")
+    b.mark_completed("task-b")  # _save re-reads disk and merges, keeping task-a
+
+    fresh = UpgradeState(config)
+    assert fresh.is_completed("task-a")
+    assert fresh.is_completed("task-b")
