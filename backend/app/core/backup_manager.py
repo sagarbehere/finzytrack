@@ -85,8 +85,16 @@ class BackupManager:
         A context manager for atomic, backed-up file writes for both reading and writing.
 
         - Creates a backup of the original file.
-        - Creates a temporary file and copies the original content into it.
-        - Yields a file handle to this temporary file, ready for reading and writing.
+        - Creates a temporary file and copies the original content into it, so a
+          caller may *read* the current content (read-modify-write) as well as
+          overwrite it.
+        - Yields a file handle to this temporary file, positioned at 0.
+        - **On exit the file is truncated to the caller's final write position.**
+          This guarantees a full overwrite: writing content *shorter* than the
+          original never leaves trailing bytes from the old content, so a caller
+          does NOT need to call ``f.truncate()`` itself. (Callers may still do so
+          harmlessly.) This closes a class of corruption bug where a forgotten
+          truncate left a shorter JSON/YAML/ledger with a stale tail.
         - Before swapping, ``fsync`` flushes the temp file's data to disk and
           (on POSIX) the parent directory's entry change is fsynced after the
           rename. This makes the write durable across power loss — without
@@ -96,6 +104,11 @@ class BackupManager:
           file, or the new content depending on the filesystem.
         - On successful exit, the modified temporary file atomically replaces the original.
         - If an error occurs, the temporary file is discarded, leaving the original untouched.
+
+        Note: truncation is to the file position the caller leaves, which for
+        every write pattern in this codebase (write full content from the start;
+        or read → seek(0) → rewrite) is the end of the new content. This matches
+        the "every write is a full rewrite" architecture (backend/CLAUDE.md).
         """
         file_path = Path(file_path_str)
         temp_path = None
@@ -115,6 +128,11 @@ class BackupManager:
             with open(temp_path, 'r+', encoding=encoding) as f:
                 f.seek(0)
                 yield f
+                # Guarantee a full overwrite: drop any bytes of the original that
+                # the caller's (possibly shorter) new content didn't cover. Makes
+                # the primitive safe-by-default — no call site can corrupt a file
+                # by forgetting to truncate. See the docstring.
+                f.truncate()
                 # Flush Python's buffer, then push the kernel page cache to
                 # disk while we still have the fd open. Without this, the
                 # rename below can land before the data does.

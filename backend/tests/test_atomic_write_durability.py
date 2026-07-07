@@ -122,3 +122,38 @@ def test_content_is_correct_after_atomic_write(tmp_path, backup_manager):
     backups = list((tmp_path / "backups").glob("ledger.beancount.*.backup"))
     assert len(backups) == 1
     assert backups[0].read_text() == "original line 1\noriginal line 2\n"
+
+
+def test_shorter_content_without_caller_truncate_does_not_corrupt(tmp_path, backup_manager):
+    """Regression: writing content SHORTER than the original must not leave
+    trailing bytes from the old content, EVEN IF the caller never calls
+    ``f.truncate()``. The primitive guarantees a full overwrite, so no call
+    site can corrupt a file by forgetting to truncate.
+
+    Pre-fix this left ``"short\\n"`` followed by the tail of the long original
+    (invalid JSON); post-fix the CM truncates to the caller's write position.
+    """
+    target = tmp_path / "recipe.json"
+    target.write_text('{"note": "a considerably longer original document body"}\n')
+
+    with backup_manager.atomic_write(str(target)) as f:
+        f.write("short\n")  # deliberately no seek(0)/truncate()
+
+    assert target.read_text() == "short\n"
+
+
+def test_read_modify_write_is_still_supported(tmp_path, backup_manager):
+    """The CM copies the original into the temp handle, so a caller can read
+    the current content, modify it, and write back (the OFX-mapping insert path
+    in config_manager relies on this). The exit-truncate must not break it.
+    """
+    target = tmp_path / "mappings.yaml"
+    target.write_text("- one\n- two\n")
+
+    with backup_manager.atomic_write(str(target)) as f:
+        existing = f.read()          # pre-copy makes the original readable
+        assert "one" in existing
+        f.seek(0)
+        f.write("- zero\n" + existing)
+
+    assert target.read_text() == "- zero\n- one\n- two\n"
