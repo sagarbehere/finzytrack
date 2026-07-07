@@ -46,6 +46,7 @@ async def apply_startup_task(task_id: str, config_manager: ConfigManager = Depen
             code=ec.STARTUP_TASK_NOT_FOUND,
             status_code=404,
         )
+    logger.info("Applying startup task '%s'", task_id)
     try:
         result = registry.apply(task_id)
     except Exception as e:  # noqa: BLE001 — surface as a clean API error
@@ -54,4 +55,8 @@ async def apply_startup_task(task_id: str, config_manager: ConfigManager = Depen
 
     errors = result.get("errors") or []
     msg = result.get("summary", "Done.") if not errors else f"Completed with {len(errors)} issue(s)."
+    if errors:
+        logger.warning("Startup task '%s' applied with %d issue(s): %s", task_id, len(errors), msg)
+    else:
+        logger.info("Startup task '%s' applied: %s", task_id, msg)
     return success_json_response(StartupApplyData(id=task_id, applied=True, message=msg, result=result))

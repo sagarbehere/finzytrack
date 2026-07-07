@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,8 @@ from app.schemas.startup_schemas import StartupTaskInfo
 from .base import StartupTask
 from .upgrade_state import UpgradeState
 from .tasks.recipe_migration_task import RecipeMigrationTask
+
+logger = logging.getLogger(__name__)
 
 
 class StartupTaskRegistry:
@@ -31,6 +34,16 @@ class StartupTaskRegistry:
             info = task.detect()
             if info is not None:
                 pending.append(info)
+        # Audit trail of what was surfaced to the user. INFO only when something
+        # is pending — detection runs on every app load, so a "nothing pending"
+        # line would be pure noise (kept at DEBUG for deep troubleshooting).
+        if pending:
+            logger.info(
+                "Startup tasks pending: %s",
+                ", ".join(f"{i.id} ({i.severity})" for i in pending),
+            )
+        else:
+            logger.debug("No startup tasks pending")
         return pending
 
     def apply(self, task_id: str) -> dict[str, Any]:

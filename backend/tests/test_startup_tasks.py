@@ -128,3 +128,42 @@ def test_endpoint_apply_unknown_task_is_404(test_client):
     resp = test_client.post("/api/startup/tasks/does-not-exist/apply")
     assert resp.status_code == 404
     assert resp.json()["error"]["code"] == ec.STARTUP_TASK_NOT_FOUND
+
+
+# ── Lifecycle logging (audit trail: present → executed → succeeded/failed) ────
+
+
+def test_detect_logs_pending_task_ids_at_info(tmp_path: Path, caplog):
+    import logging
+    registry = StartupTaskRegistry(UpgradeState(tmp_path / "config"))
+    registry.register(_OneShotInfoTask())
+
+    with caplog.at_level(logging.INFO):
+        registry.detect()
+
+    assert any(
+        "Startup tasks pending" in r.getMessage() and "demo-notice" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_detect_is_quiet_at_info_when_nothing_pending(tmp_path: Path, caplog):
+    import logging
+    registry = StartupTaskRegistry(UpgradeState(tmp_path / "config"))  # no tasks
+
+    with caplog.at_level(logging.INFO):
+        assert registry.detect() == []
+
+    # Detection runs on every load — a "nothing pending" line must not spam INFO.
+    assert not any("Startup tasks pending" in r.getMessage() for r in caplog.records)
+
+
+def test_endpoint_apply_logs_applying_then_applied(test_client, caplog):
+    import logging
+    with caplog.at_level(logging.INFO):
+        resp = test_client.post("/api/startup/tasks/recipes-upgrade/apply")
+
+    assert resp.status_code == 200
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("Applying startup task 'recipes-upgrade'" in m for m in messages)
+    assert any("Startup task 'recipes-upgrade' applied" in m for m in messages)
