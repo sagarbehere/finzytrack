@@ -79,9 +79,8 @@ SUPPORTED_CHART_TYPES = _enum("ChartType")
 VALID_PARAM_TYPES = set(_defs()["RecipeParameter"]["properties"]["type"]["enum"])
 VALID_QUERY_ENGINES = set(_defs()["QueryStep"]["properties"]["engine"]["enum"])
 VALID_STEP_KINDS = _discriminator_consts("Step", "kind")
-# Transform fn names are a code-side catalog, not a schema enum — not derived.
-VALID_SIMPLE_TRANSFORMS = {"none", "firstRow", "firstValue"}
-VALID_TRANSFORM_TYPES = {"sortBy", "limit", "pluck", "pivot"}
+# Transform fn-name validity is a code-side catalog check (§3.6 G8) and lives in
+# the AI dry-run (write_recipe.KNOWN_TRANSFORMS), not here.
 
 
 # ── Error formatting ────────────────────────────────────────────────────────
@@ -493,10 +492,15 @@ def _step_refs(step: dict) -> list[tuple[str, str]]:
     refs: list[tuple[str, str]] = []
     if step.get("kind") == "compute" and step.get("args") is not None:
         refs.extend(_extract_refs(json.dumps(step["args"])))
-    if step.get("kind") == "transform" and isinstance(step.get("inputs"), list):
-        for inp in step["inputs"]:
-            if isinstance(inp, str):
-                refs.extend(_extract_refs(inp))
+    if step.get("kind") == "transform":
+        if isinstance(step.get("inputs"), list):
+            for inp in step["inputs"]:
+                if isinstance(inp, str):
+                    refs.extend(_extract_refs(inp))
+        # config may also carry {{steps.x}} refs (e.g. pace bounds) — scan it so
+        # those become graph edges for ref-resolution + cycle detection too.
+        if step.get("config") is not None:
+            refs.extend(_extract_refs(json.dumps(step["config"])))
     return refs
 
 
@@ -579,6 +583,20 @@ def _validate_against(definition_name: str, instance, prefix: str) -> list[str]:
     return [_format_error(prefix, e) for e in expanded]
 
 
+def _widget_step_checks(widget: dict, prefix: str, known_dashboard_step_ids: set[str]) -> list[str]:
+    """Cross-checks the JSON Schema can't express for one inline widget: step
+    semantics (unique ids, refs resolve, acyclicity, no {{...}} in query) + the
+    output naming a real step. Shared by validate_widget and validate_dashboard's
+    per-widget loop so the two can't diverge."""
+    errors, step_ids = _validate_steps_semantics(
+        widget.get("steps"), f"{prefix}.steps", known_dashboard_step_ids
+    )
+    output = widget.get("output")
+    if isinstance(output, str) and step_ids and output not in step_ids:
+        errors.append(f"{prefix}.output: names unknown step '{output}' (steps: {sorted(step_ids)})")
+    return errors
+
+
 def validate_widget(widget, prefix: str, known_dashboard_step_ids: set[str] | None = None) -> list[str]:
     """Validate a single inline widget recipe (steps/output form). Returns a
     list of error strings. `known_dashboard_step_ids` are the ids of dashboard
@@ -586,16 +604,7 @@ def validate_widget(widget, prefix: str, known_dashboard_step_ids: set[str] | No
     if not isinstance(widget, dict):
         return [f"{prefix}: must be a JSON object, {_describe(widget)}"]
     errors = _validate_against("JsonWidgetRecipe", widget, prefix)
-
-    # Cross-checks beyond the JSON Schema: step semantics + output names a step.
-    step_errors, step_ids = _validate_steps_semantics(
-        widget.get("steps"), f"{prefix}.steps", known_dashboard_step_ids or set()
-    )
-    errors.extend(step_errors)
-    output = widget.get("output")
-    if isinstance(output, str) and step_ids and output not in step_ids:
-        errors.append(f"{prefix}.output: names unknown step '{output}' (steps: {sorted(step_ids)})")
-
+    errors.extend(_widget_step_checks(widget, prefix, known_dashboard_step_ids or set()))
     _check_risky_tooltip_formatters(widget, errors)
     return errors
 
@@ -667,13 +676,7 @@ def validate_dashboard(dashboard) -> list[str]:
     if isinstance(inline_widgets, list):
         for i, w in enumerate(inline_widgets):
             if isinstance(w, dict):
-                step_errors, step_ids = _validate_steps_semantics(
-                    w.get("steps"), f"widgets[{i}].steps", dashboard_step_ids
-                )
-                errors.extend(step_errors)
-                output = w.get("output")
-                if isinstance(output, str) and step_ids and output not in step_ids:
-                    errors.append(f"widgets[{i}].output: names unknown step '{output}' (steps: {sorted(step_ids)})")
+                errors.extend(_widget_step_checks(w, f"widgets[{i}]", dashboard_step_ids))
 
     # Cross-check: every layout widgetId must resolve to an inline widget
     # (widgets are inline-only — there is no registry to fall back to).

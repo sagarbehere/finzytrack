@@ -24,6 +24,15 @@ from beancount.core.amount import Amount
 INTERVALS = ("daily", "weekly", "monthly", "quarterly", "yearly")
 
 
+def budget_fields_complete(
+    account: str | None, interval: str | None, amount: Decimal | None, currency: str | None
+) -> bool:
+    """A directive is well-formed iff it carries an account, a known interval, an
+    amount, and a currency. Shared by both parsers (mirror JSON + live entry) so
+    the completeness rule has one home."""
+    return bool(account and interval in INTERVALS and amount is not None and currency)
+
+
 def budget_id(source_file: str | None, lineno: int | None) -> str:
     """A stable, URL-safe identifier for a budget directive at a source
     location. Consistent between the mirror-backed read and the parsed write
@@ -67,7 +76,7 @@ def parse_budget_entry(entry: Any) -> dict | None:
         elif isinstance(value, str) and value in INTERVALS:
             interval = value
 
-    if not (account and interval and amount is not None and currency):
+    if not budget_fields_complete(account, interval, amount, currency):
         return None
 
     meta = entry.meta or {}

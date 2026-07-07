@@ -38,7 +38,7 @@
     <!-- Tab content -->
     <GeneralSettingsTab v-if="activeTab === 'general'" @restart-required="restartRequired = true" />
     <RulesTab v-else-if="activeTab === 'rules'" :initial-rule-type="initialRuleType" />
-    <DashboardsTab v-else-if="activeTab === 'dashboards'" :initial-recipe-type="initialRuleType" />
+    <DashboardsTab v-else-if="activeTab === 'dashboards'" />
     <AboutTab v-else-if="activeTab === 'about'" />
   </div>
 </template>

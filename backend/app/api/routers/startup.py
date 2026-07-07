@@ -51,7 +51,10 @@ async def apply_startup_task(task_id: str, config_manager: ConfigManager = Depen
         result = registry.apply(task_id)
     except Exception as e:  # noqa: BLE001 — surface as a clean API error
         logger.error("Startup task '%s' failed: %s", task_id, e, exc_info=True)
-        raise APIError(message=f"Upgrade failed: {e}", code=ec.STARTUP_TASK_FAILED, status_code=500)
+        raise APIError(
+            message="The upgrade could not be completed. See server logs for details.",
+            code=ec.STARTUP_TASK_FAILED, status_code=500,
+        )
 
     errors = result.get("errors") or []
     msg = result.get("summary", "Done.") if not errors else f"Completed with {len(errors)} issue(s)."

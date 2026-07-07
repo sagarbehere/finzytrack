@@ -9,7 +9,14 @@
  * structured error lists — no side effects.
  */
 
-import { SUPPORTED_CHART_TYPES, VALID_VALUE_FORMATS, STEP_KINDS } from '@/types/recipes'
+import {
+  SUPPORTED_CHART_TYPES,
+  VALID_VALUE_FORMATS,
+  STEP_KINDS,
+  VIZ_TYPES,
+  VALID_PARAM_TYPES,
+} from '@/types/recipes'
+import { WHOLE_TOKEN_RE, hasTokens, stepRefs } from '@/recipes/templating'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,12 +34,9 @@ export interface RecipeFileError {
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
-const VALID_VIZ_TYPES = ['kpi', 'chart', 'table', 'pivot'] as const
-const VALID_PARAM_TYPES = ['date', 'select', 'number'] as const
+// Viz types + param types are the schema-derived generated enums (no hand list).
+const VALID_VIZ_TYPES = VIZ_TYPES
 const CURRENT_SCHEMA_VERSION = 2
-
-const WHOLE_TOKEN_RE = /^\{\{\s*([^}]+?)\s*\}\}$/
-const ANY_TOKEN_RE = /\{\{\s*([^}]+?)\s*\}\}/g
 
 function isString(v: unknown): v is string {
   return typeof v === 'string' && v.trim() !== ''
@@ -40,38 +44,6 @@ function isString(v: unknown): v is string {
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
-}
-
-interface TokenRef {
-  scope: 'params' | 'steps' | 'dashboard.steps' | 'unknown'
-  id: string
-}
-
-/** Extract all {{...}} references from a string. */
-function extractRefs(str: string): TokenRef[] {
-  const refs: TokenRef[] = []
-  let m: RegExpExecArray | null
-  const re = new RegExp(ANY_TOKEN_RE.source, 'g')
-  while ((m = re.exec(str)) !== null) {
-    const path = m[1].trim()
-    if (path.startsWith('dashboard.steps.')) refs.push({ scope: 'dashboard.steps', id: path.slice('dashboard.steps.'.length).split('.')[0] })
-    else if (path.startsWith('steps.')) refs.push({ scope: 'steps', id: path.slice('steps.'.length).split('.')[0] })
-    else if (path.startsWith('params.')) refs.push({ scope: 'params', id: path.slice('params.'.length).split('.')[0] })
-    else refs.push({ scope: 'unknown', id: path })
-  }
-  return refs
-}
-
-/** Gather all reference tokens a step carries (in args / inputs). */
-function stepRefs(step: Record<string, unknown>): TokenRef[] {
-  const refs: TokenRef[] = []
-  if (step.kind === 'compute' && step.args !== undefined) {
-    refs.push(...extractRefs(JSON.stringify(step.args)))
-  }
-  if (step.kind === 'transform' && Array.isArray(step.inputs)) {
-    for (const inp of step.inputs) if (typeof inp === 'string') refs.push(...extractRefs(inp))
-  }
-  return refs
 }
 
 // ─── Parameter validation ─────────────────────────────────────────────────────
@@ -145,7 +117,7 @@ function validateSteps(
     }
     if (s.kind === 'query') {
       if (!isString(s.query)) errors.push({ field: `${path}.query`, message: 'required, must be a non-empty query string' })
-      else if (ANY_TOKEN_RE.test(s.query)) errors.push({ field: `${path}.query`, message: 'query steps cannot use {{...}} references — use :paramName for parameters; combine other steps in a transform' })
+      else if (hasTokens(s.query)) errors.push({ field: `${path}.query`, message: 'query steps cannot use {{...}} references — use :paramName for parameters; combine other steps in a transform' })
     } else if (s.kind === 'compute') {
       if (!isString(s.fn)) errors.push({ field: `${path}.fn`, message: 'required, must be a non-empty string' })
       if (s.args !== undefined && !isPlainObject(s.args)) errors.push({ field: `${path}.args`, message: 'must be an object' })

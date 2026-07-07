@@ -500,8 +500,7 @@ async def _run_agent_loop(
                     ui_message = f"Preview ready: {result['recipe'].get('title', 'Dashboard')}"
                 elif tc.name == "list_recipes" and "dashboards" in result:
                     n_d = len(result.get("dashboards", []))
-                    n_w = len(result.get("widgets", []))
-                    ui_message = f"Found {n_d} dashboards, {n_w} widgets"
+                    ui_message = f"Found {n_d} dashboard{'s' if n_d != 1 else ''}"
                 elif "relative_path" in result:
                     ui_message = f"Saved dashboard `{result['relative_path']}`"
                 elif "summary" in result and "all_fields_matched" in result.get("summary", {}):

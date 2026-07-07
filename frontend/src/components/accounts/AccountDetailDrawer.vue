@@ -126,7 +126,7 @@
                         >
                           <span class="text-gray-500 dark:text-gray-400">{{ b.interval }} · {{ b.currency }}</span>
                           <span class="font-medium tabular-nums text-gray-900 dark:text-white">
-                            {{ Number(b.amount).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) }} {{ b.currency }}
+                            {{ toNumber(toMoney(b.amount)).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) }} {{ b.currency }}
                           </span>
                         </div>
                       </div>
@@ -248,7 +248,8 @@ import { useBudgets } from '@/composables/useBudgets'
 import type { DocumentDetails } from '@/services/generated-api'
 import type { AccountTreeNode } from '@/types/accounts'
 import { typeColors, statusColors } from '@/types/accounts'
-import { sign, toNumber } from '@/utils/money'
+import { sign, toNumber, toMoney } from '@/utils/money'
+import { todayLocal } from '@/utils/date'
 
 const BANKING_KEYS = ['account_number', 'ifsc_code', 'swift_bic']
 const RESERVED_KEYS = new Set(['description', ...BANKING_KEYS])
@@ -302,19 +303,13 @@ watch(
   { immediate: true },
 )
 
-function today(): string {
-  // Local calendar date (YYYY-MM-DD) for the document directive.
-  const d = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
 
 async function onFiles(files: File[]) {
   if (!props.account) return
   const account = props.account.fullPath
   for (const file of files) {
-    const stored = await uploadDocument(file, { date: today(), narration: props.account.name })
-    await attachAccountDocument({ account, date: today(), path: stored.path })
+    const stored = await uploadDocument(file, { date: todayLocal(), narration: props.account.name })
+    await attachAccountDocument({ account, date: todayLocal(), path: stored.path })
   }
   await refreshDocuments()
   emit('documents-changed', account)

@@ -13,13 +13,13 @@ from typing import Any
 import jsonschema
 
 from app.compute.base import ComputeFunction
+from app.error_codes import (
+    COMPUTE_EXECUTION_ERROR,
+    COMPUTE_FUNCTION_NOT_FOUND,
+    COMPUTE_VALIDATION_ERROR,
+)
 
 logger = logging.getLogger(__name__)
-
-# Error codes mirror app/error_codes.py (kept as constants to avoid a cycle).
-COMPUTE_FUNCTION_NOT_FOUND = "COMPUTE_FUNCTION_NOT_FOUND"
-COMPUTE_VALIDATION_ERROR = "COMPUTE_VALIDATION_ERROR"
-COMPUTE_EXECUTION_ERROR = "COMPUTE_EXECUTION_ERROR"
 
 
 class FunctionRegistry:

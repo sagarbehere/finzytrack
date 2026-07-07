@@ -112,6 +112,28 @@ def test_one_shot_task_retires_after_apply(tmp_path: Path):
     assert fresh.detect() == []
 
 
+class _FailingOneShotTask(_OneShotInfoTask):
+    id = "flaky-notice"
+
+    def apply(self):
+        super().apply()
+        return {"errors": ["something went wrong"]}
+
+
+def test_failed_one_shot_apply_is_not_marked_completed(tmp_path: Path):
+    """A one-shot task that applies with errors must NOT retire — it stays
+    pending so it re-surfaces rather than being silently marked done."""
+    state = UpgradeState(tmp_path / "config")
+    registry = StartupTaskRegistry(state)
+    registry.register(_FailingOneShotTask())
+
+    assert len(registry.detect()) == 1
+    result = registry.apply("flaky-notice")
+    assert result["errors"]                       # apply reported failure
+    assert not state.is_completed("flaky-notice")  # NOT retired
+    assert len(registry.detect()) == 1            # still pending
+
+
 # ── Endpoint round-trip ──────────────────────────────────────────────────────
 
 

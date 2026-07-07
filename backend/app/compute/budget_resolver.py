@@ -20,7 +20,11 @@ from datetime import date, timedelta
 from decimal import Decimal
 from fractions import Fraction
 
-INTERVALS = {"daily", "weekly", "monthly", "quarterly", "yearly"}
+from app.core.budget_directives import INTERVALS, budget_fields_complete, budget_id
+
+# Precision floor for non-terminating daily-equivalents (~10 fractional digits);
+# the display formatter rounds further. Terminating fractions stay exact.
+_QUANTIZE = Decimal("0.0000000001")
 
 
 @dataclass(frozen=True)
@@ -32,6 +36,12 @@ class BudgetDirective:
     currency: str
     source_file: str | None = None
     source_lineno: int = 0
+
+    @property
+    def id(self) -> str:
+        """Stable id from the source location — the single hashing site
+        (app.core.budget_directives.budget_id)."""
+        return budget_id(self.source_file, self.source_lineno)
 
 
 # ── Directive parsing (from custom_directives.values_json) ───────────────────
@@ -68,7 +78,7 @@ def parse_budget_directive(row: dict) -> BudgetDirective | None:
         elif isinstance(v, str):
             account = v
 
-    if not (account and interval and amount is not None and currency):
+    if not budget_fields_complete(account, interval, amount, currency):
         return None
     try:
         d = date.fromisoformat(row["date"])
@@ -123,7 +133,7 @@ def _to_decimal_string(value: Fraction) -> str:
         # Exact terminating decimal.
         return str(Decimal(value.numerator) / Decimal(value.denominator))
     # Non-terminating: keep ~10 fractional digits of precision; display rounds.
-    return str((Decimal(value.numerator) / Decimal(value.denominator)).quantize(Decimal("0.0000000001")))
+    return str((Decimal(value.numerator) / Decimal(value.denominator)).quantize(_QUANTIZE))
 
 
 # ── Effective-directive selection (last-wins) ────────────────────────────────
@@ -163,6 +173,20 @@ def _effective_on(sorted_directives: list[BudgetDirective], d: date) -> BudgetDi
         else:
             break
     return active
+
+
+def effective_directives_as_of(
+    directives: list[BudgetDirective], as_of: date
+) -> list[BudgetDirective]:
+    """One directive per (account, currency): the latest effective on/before
+    ``as_of`` (last-wins). The single home of effective-directive selection —
+    the /api/budgets CRUD read path calls this rather than reimplementing it."""
+    out: list[BudgetDirective] = []
+    for sorted_directives in _by_account_currency(directives).values():
+        eff = _effective_on(sorted_directives, as_of)
+        if eff is not None:
+            out.append(eff)
+    return out
 
 
 def _range_total(sorted_directives: list[BudgetDirective], d_from: date, d_to: date) -> Fraction:

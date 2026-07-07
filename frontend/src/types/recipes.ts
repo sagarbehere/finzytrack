@@ -32,18 +32,18 @@ export interface CurrencyAmount {
 // Parameter helper types referenced only by the runtime ChartVisualization /
 // WidgetRecipe types defined later in this file. The richer RecipeParameter is
 // generated from recipe.schema.json and re-exported below.
-export type RecipeParameterType = 'date' | 'select' | 'number'
+export type RecipeParameterType = (typeof VALID_PARAM_TYPES)[number]
 
 export interface RecipeParameterOption {
   value: string | number
   label: string
 }
 
-// Visualization types
-export type VisualizationType = 'chart' | 'kpi' | 'table' | 'pivot'
-// SUPPORTED_CHART_TYPES (and STEP_KINDS / VALID_VALUE_FORMATS / QUERY_ENGINES) are
-// generated from recipe.schema.json into recipes.enums.generated.ts and re-exported
-// at the bottom of this file — no hand-maintained value lists.
+// Visualization types. The value lists (VIZ_TYPES, SUPPORTED_CHART_TYPES,
+// STEP_KINDS, VALID_VALUE_FORMATS, VALID_PARAM_TYPES, QUERY_ENGINES) are
+// generated from recipe.schema.json into recipes.enums.generated.ts and
+// re-exported below; these unions derive from them so nothing is hand-listed.
+export type VisualizationType = (typeof VIZ_TYPES)[number]
 
 /**
  * Context passed to getSeriesClickLink for chart click handling
@@ -215,8 +215,8 @@ export type RecipeVisualization =
   | TableVisualization
   | PivotVisualization
 
-// Query engine types
-export type QueryEngineType = 'sqlite' | 'beanquery'
+// Query engine types (derived from the generated QUERY_ENGINES const).
+export type QueryEngineType = (typeof QUERY_ENGINES)[number]
 
 // ============================================================================
 // Recipe pipeline steps (DAG model)
@@ -286,13 +286,6 @@ export interface RecipeRegistry {
   dashboards: Record<string, DashboardRecipe>
 }
 
-// Execution result types
-export interface RecipeExecutionResult {
-  data: unknown
-  loading: boolean
-  error: string | null
-}
-
 // ============================================================================
 // JSON Recipe Types (for user-defined recipes loaded at runtime)
 //
@@ -318,12 +311,20 @@ export interface RecipeExecutionResult {
 export type SimpleTransformType = 'none' | 'firstRow' | 'firstValue'
 
 // Re-export the runtime enum consts generated from recipe.schema.json. The local
-// import keeps `typeof STEP_KINDS` (StepKind) resolvable in this module.
-import { STEP_KINDS } from './recipes.enums.generated'
+// import keeps `typeof <CONST>` resolvable for the derived unions above
+// (StepKind, VisualizationType, RecipeParameterType, QueryEngineType).
+import {
+  STEP_KINDS,
+  VIZ_TYPES,
+  VALID_PARAM_TYPES,
+  QUERY_ENGINES,
+} from './recipes.enums.generated'
 export {
   STEP_KINDS,
+  VIZ_TYPES,
   SUPPORTED_CHART_TYPES,
   VALID_VALUE_FORMATS,
+  VALID_PARAM_TYPES,
   QUERY_ENGINES,
 } from './recipes.enums.generated'
 

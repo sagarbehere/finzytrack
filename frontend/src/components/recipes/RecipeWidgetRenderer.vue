@@ -78,6 +78,7 @@ import {
   getFormats,
 } from '@/composables/useRecipeExecutor'
 import { validateVizInput } from '@/recipes/vizRegistry'
+import { resolvePath, interpolateString } from '@/recipes/templating'
 import RecipeChart from './RecipeChart.vue'
 import RecipeKPI from './RecipeKPI.vue'
 import RecipeTable from './RecipeTable.vue'
@@ -225,7 +226,9 @@ function getTrendValue(): number | null {
 
 /**
  * Resolve a JSON template link config into a ValueLinkConfig by interpolating
- * template variables like {{row.fieldName}}, {{column}}, {{value}}.
+ * click-context variables like {{row.fieldName}}, {{column}}, {{value}}. Shares
+ * the {{...}} walker with the executor/validator (@/recipes/templating, G6);
+ * only the scope differs (click vars here vs step outputs at execution time).
  */
 function resolveTemplateLink(
   template: JsonValueLinkConfig,
@@ -233,15 +236,7 @@ function resolveTemplateLink(
 ): ValueLinkConfig | null {
   const query: Record<string, string> = {}
   for (const [key, tmpl] of Object.entries(template.query)) {
-    query[key] = tmpl.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_, path: string) => {
-      const parts = path.split('.')
-      let current: unknown = vars
-      for (const part of parts) {
-        if (current === null || current === undefined || typeof current !== 'object') return ''
-        current = (current as Record<string, unknown>)[part]
-      }
-      return current === null || current === undefined ? '' : String(current)
-    })
+    query[key] = interpolateString(tmpl, (path) => resolvePath(path, vars))
   }
   return { name: template.name, query }
 }

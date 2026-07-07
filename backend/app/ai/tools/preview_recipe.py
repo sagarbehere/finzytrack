@@ -1,8 +1,8 @@
 """
-preview_recipe tool — validates a recipe and returns it for live preview.
+preview_recipe tool — validates a dashboard recipe and returns it for live preview.
 
-Supports both widget recipes and dashboard recipes. The frontend renders each
-type with the appropriate component (widget standalone, dashboard with layout).
+The dashboard is the only recipe type; a single widget is previewed by wrapping
+it in a one-widget dashboard (the frontend authoring UI does this).
 
 The last successfully previewed recipe is cached so that write_recipe can save
 it without the LLM needing to re-output the entire JSON.
@@ -22,19 +22,16 @@ from app.helpers.recipe_validation import (
 logger = logging.getLogger(__name__)
 
 # Module-level cache for the last successfully previewed recipe.
-# Stores both the original content and its type.
 _last_previewed_recipe: dict | None = None
-_last_previewed_type: str | None = None  # "widget" or "dashboard"
 
 
-def get_last_previewed_recipe() -> tuple[dict | None, str | None]:
-    return _last_previewed_recipe, _last_previewed_type
+def get_last_previewed_recipe() -> dict | None:
+    return _last_previewed_recipe
 
 
 def clear_last_previewed_recipe() -> None:
-    global _last_previewed_recipe, _last_previewed_type
+    global _last_previewed_recipe
     _last_previewed_recipe = None
-    _last_previewed_type = None
 
 
 class PreviewRecipeTool(BaseTool):
@@ -68,8 +65,8 @@ class PreviewRecipeTool(BaseTool):
     def __init__(self, sqlite_path: str | None = None):
         self._sqlite_path = sqlite_path
 
-    async def execute(self, content: dict, recipe_type: str = "dashboard") -> dict:
-        global _last_previewed_recipe, _last_previewed_type
+    async def execute(self, content: dict) -> dict:
+        global _last_previewed_recipe
 
         recipe_id = content.get("id")
         if isinstance(recipe_id, str):
@@ -101,11 +98,9 @@ class PreviewRecipeTool(BaseTool):
             }
 
         _last_previewed_recipe = content
-        _last_previewed_type = "dashboard"
 
         return {
             "success": True,
             "message": "Dashboard validated. A live preview is showing in the sidebar.",
             "recipe": content,
-            "recipe_type": "dashboard",
         }

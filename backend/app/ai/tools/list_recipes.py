@@ -7,28 +7,6 @@ from app.ai.tools.base import BaseTool
 logger = logging.getLogger(__name__)
 
 
-def _summarise_widget(path: Path) -> dict:
-    """Extract id, title, description, and visualization shape from a widget file."""
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as e:
-        return {"path": str(path.name), "error": f"failed to read: {e}"}
-
-    viz = data.get("visualization") or {}
-    vtype = viz.get("type")
-    shape = vtype
-    if vtype == "chart":
-        ct = viz.get("chartType")
-        if ct:
-            shape = f"chart:{ct}"
-    return {
-        "id": data.get("id"),
-        "title": data.get("title"),
-        "description": data.get("description"),
-        "shape": shape,
-    }
-
-
 def _summarise_dashboard(path: Path) -> dict:
     """Extract id, title, description, parameters, and widget count from a dashboard."""
     try:
@@ -56,9 +34,9 @@ class ListRecipesTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "List all available dashboard and widget recipes with one-line summaries "
-            "(id, title, description, and shape). Use this to pick the closest "
-            "existing recipe(s) to model a new request on — read up to 3 with "
+            "List all available dashboard recipes with one-line summaries "
+            "(id, title, description, widget count, parameters). Use this to pick the "
+            "closest existing recipe(s) to model a new request on — read up to 3 with "
             "read_recipe before drafting. Cheaper than read_recipe; call this first."
         )
 
@@ -80,16 +58,10 @@ class ListRecipesTool(BaseTool):
                 return []
             return sorted(f"{subfolder}/{p.name}" for p in dir_path.glob("*.json"))
 
-        widgets = []
-        for rel in _scan("widgets"):
-            summary = _summarise_widget(self._recipes_dir / rel)
-            summary["path"] = rel
-            widgets.append(summary)
-
         dashboards = []
         for rel in _scan("dashboards"):
             summary = _summarise_dashboard(self._recipes_dir / rel)
             summary["path"] = rel
             dashboards.append(summary)
 
-        return {"success": True, "widgets": widgets, "dashboards": dashboards}
+        return {"success": True, "dashboards": dashboards}

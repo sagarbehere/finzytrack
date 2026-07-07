@@ -6,8 +6,6 @@ Money is a decimal string on the wire (money-types.md).
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
-INTERVALS = ["daily", "weekly", "monthly", "quarterly", "yearly"]
-
 
 class BudgetItem(BaseModel):
     """A single budget directive."""

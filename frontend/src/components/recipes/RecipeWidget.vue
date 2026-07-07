@@ -29,9 +29,9 @@
 
     <!-- Content -->
     <div class="flex-1 p-2 sm:p-4 min-h-0 overflow-hidden">
-      <!-- Loading state -->
+      <!-- Loading state (own query, or a dashboard shared step it depends on) -->
       <div
-        v-if="isLoading"
+        v-if="isLoading || dashboardStepsLoading"
         class="h-full flex items-center justify-center text-gray-400 dark:text-gray-500"
       >
         <svg
@@ -56,14 +56,15 @@
         </svg>
       </div>
 
-      <!-- Error state -->
+      <!-- Error state (own query failure, or a failed dashboard shared step) -->
       <div
-        v-else-if="error"
+        v-else-if="displayError"
         class="h-full flex flex-col items-center justify-center gap-2 px-4"
       >
         <p class="text-sm font-medium text-red-600 dark:text-red-400">Query failed</p>
-        <pre class="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 rounded px-3 py-2 max-w-full overflow-auto whitespace-pre-wrap break-all text-left">{{ error }}</pre>
+        <pre class="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 rounded px-3 py-2 max-w-full overflow-auto whitespace-pre-wrap break-all text-left">{{ displayError }}</pre>
         <button
+          v-if="!dashboardStepsError"
           @click="executeQuery"
           class="text-xs text-indigo-600 hover:text-indigo-800 dark:text-indigo-400"
         >
@@ -97,6 +98,7 @@ import { getStorageAdapter, STORAGE_KEYS } from '@/services/storage'
 import {
   useRecipeExecutor,
   type AnyWidgetRecipe,
+  type StepError,
 } from '@/composables/useRecipeExecutor'
 import { resolveParameterValues } from '@/recipes/functions'
 import RecipeWidgetRenderer from './RecipeWidgetRenderer.vue'
@@ -108,11 +110,26 @@ interface Props {
   // Resolved outputs of dashboard shared steps, referenced from widget steps
   // via {{dashboard.steps.<id>}} (populated by RecipeDashboard in Phase 4).
   dashboardSteps?: Record<string, unknown>
+  // Set by RecipeDashboard only for widgets that reference a shared step (§4.9):
+  // gate execution until the shared outputs resolve, and surface a shared-step
+  // failure here instead of executing against undefined refs. Independent
+  // widgets receive false/null and render immediately.
+  dashboardStepsLoading?: boolean
+  dashboardStepsError?: StepError | null
 }
 
 const props = defineProps<Props>()
 
 const { executeRecipe, getDefaultParameters, isLoading, error } = useRecipeExecutor()
+
+// A shared-step failure this widget depends on takes precedence over its own
+// error; name the failed shared step so the message is actionable.
+const displayError = computed<string | null>(() => {
+  if (props.dashboardStepsError) {
+    return `Shared step "${props.dashboardStepsError.stepId}" failed: ${props.dashboardStepsError.message}`
+  }
+  return error.value
+})
 
 const rendererRef = ref<InstanceType<typeof RecipeWidgetRenderer>>()
 
@@ -146,6 +163,10 @@ const data = ref<unknown>(null)
 
 // Execute query
 async function executeQuery() {
+  // Don't run against unresolved/failed dashboard shared steps (§4.9): a
+  // dependent widget waits (loading) or shows the shared-step error instead of
+  // executing with undefined {{dashboard.steps.*}} refs.
+  if (props.dashboardStepsLoading || props.dashboardStepsError) return
   try {
     data.value = await executeRecipe(props.recipe, mergedParameters.value, props.dashboardSteps ?? {})
   } catch {
@@ -168,6 +189,11 @@ watch(() => props.recipe, () => executeQuery(), { deep: true })
 
 // Re-execute when dashboard shared-step outputs change (Phase 4).
 watch(() => props.dashboardSteps, () => executeQuery(), { deep: true })
+
+// Re-execute once a depended-on shared step finishes loading (the gate lifts).
+watch(() => props.dashboardStepsLoading, (loading) => {
+  if (!loading) executeQuery()
+})
 
 // Persist widget-level parameter selections (sentinels included) when they change.
 watch(localSelections, (newSelections) => {

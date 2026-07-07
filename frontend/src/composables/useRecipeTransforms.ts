@@ -4,7 +4,7 @@ import type {
   PivotData,
   PivotRow,
 } from '@/types/recipes'
-import { add, sub, mul, div, toMoney, toNumber, zero, lt, type Money } from '@/utils/money'
+import { add, sub, mul, div, toMoney, toNumber, zero, lt, sign, type Money } from '@/utils/money'
 
 // ============================================================================
 // Transform catalog (DAG model)
@@ -102,14 +102,15 @@ function sortByTransform(inputs: unknown[], config?: TransformConfig): unknown {
 
     // Numeric comparison — covers JS numbers AND decimal-string Money values
     // (budget/actual/remaining are TEXT-decimal strings, so a naive string sort
-    // would order "-600" / "50" / "1200" wrongly). Compare numerically whenever
-    // both values parse as finite numbers; otherwise fall back to locale.
+    // would order "-600" / "50" / "1200" wrongly). When both parse as finite
+    // numbers, order by exact decimal.js comparison (not float subtraction) so
+    // large/precise Money strings can't misorder near float limits; otherwise
+    // fall back to locale.
     const aStr = String(aVal ?? '').trim()
     const bStr = String(bVal ?? '').trim()
-    const aNum = Number(aStr)
-    const bNum = Number(bStr)
-    if (aStr !== '' && bStr !== '' && Number.isFinite(aNum) && Number.isFinite(bNum)) {
-      return order === 'asc' ? aNum - bNum : bNum - aNum
+    if (aStr !== '' && bStr !== '' && Number.isFinite(Number(aStr)) && Number.isFinite(Number(bStr))) {
+      const cmp = sign(sub(toMoney(aStr), toMoney(bStr)))
+      return order === 'asc' ? cmp : -cmp
     }
 
     const cmp = aStr.localeCompare(bStr)
@@ -502,18 +503,18 @@ function runningSum(inputs: unknown[], config?: TransformConfig): unknown {
   })
 }
 
+interface PeriodRow { period: string; budget: Money; actual: Money }
+
 /**
- * joinByPeriod — merge per-period budgets and per-period actuals into one row
- * per period: { period, budget, actual }. The non-rollover building block for
- * burn-down (→ runningSum) and historical month-by-month views.
+ * Merge per-period budgets (inputs[0]) and per-period actuals (inputs[1]) into
+ * one row per period — the union of periods, sorted, zero-filled. Shared by
+ * joinByPeriod and envelopeRollover so the merge scaffold lives in one place.
  */
-function joinByPeriod(inputs: unknown[]): unknown {
-  const budgets = asRows(inputs[0])
-  const actuals = asRows(inputs[1])
+function mergePeriods(inputs: unknown[]): PeriodRow[] {
   const budgetByPeriod = new Map<string, Money>()
-  for (const b of budgets) budgetByPeriod.set(String(b.period ?? ''), toMoneyOr0(b.budget))
+  for (const b of asRows(inputs[0])) budgetByPeriod.set(String(b.period ?? ''), toMoneyOr0(b.budget))
   const actualByPeriod = new Map<string, Money>()
-  for (const a of actuals) actualByPeriod.set(String(a.period ?? ''), toMoneyOr0(a.actual))
+  for (const a of asRows(inputs[1])) actualByPeriod.set(String(a.period ?? ''), toMoneyOr0(a.actual))
   const periods = Array.from(new Set([...budgetByPeriod.keys(), ...actualByPeriod.keys()])).sort()
   return periods.map((period) => ({
     period,
@@ -523,27 +524,24 @@ function joinByPeriod(inputs: unknown[]): unknown {
 }
 
 /**
+ * joinByPeriod — merge per-period budgets and per-period actuals into one row
+ * per period: { period, budget, actual }. The non-rollover building block for
+ * burn-down (→ runningSum) and historical month-by-month views.
+ */
+function joinByPeriod(inputs: unknown[]): unknown {
+  return mergePeriods(inputs)
+}
+
+/**
  * envelopeRollover — stateless rollover (§14). Inputs: per-period budgets and
  * per-period actuals. Emits, per period: { period, budget, actual, available,
  * carryover, overspent }. Carryover is the cumulative (budget − actual);
  * negative carries forward (R2, no clamp).
  */
 function envelopeRollover(inputs: unknown[]): unknown {
-  const budgets = asRows(inputs[0])
-  const actuals = asRows(inputs[1])
-
-  const budgetByPeriod = new Map<string, Money>()
-  for (const b of budgets) budgetByPeriod.set(String(b.period ?? ''), toMoneyOr0(b.budget))
-  const actualByPeriod = new Map<string, Money>()
-  for (const a of actuals) actualByPeriod.set(String(a.period ?? ''), toMoneyOr0(a.actual))
-
-  const periods = Array.from(new Set([...budgetByPeriod.keys(), ...actualByPeriod.keys()])).sort()
-
   let carryover = zero() // carryover at end of previous period
   const out: Record<string, unknown>[] = []
-  for (const period of periods) {
-    const budget = budgetByPeriod.get(period) ?? zero()
-    const actual = actualByPeriod.get(period) ?? zero()
+  for (const { period, budget, actual } of mergePeriods(inputs)) {
     const available = add(carryover, budget) // what you can spend this period
     const endCarryover = sub(available, actual)
     out.push({

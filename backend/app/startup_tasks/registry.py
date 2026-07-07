@@ -51,7 +51,10 @@ class StartupTaskRegistry:
         if task is None:
             raise KeyError(task_id)
         result = task.apply()
-        if task.one_shot:
+        # Only retire a one-shot task once it applied cleanly. A result carrying
+        # `errors` means it partially failed — leave it pending so it re-surfaces
+        # (rather than being silently marked done and never retried).
+        if task.one_shot and not result.get("errors"):
             self._state.mark_completed(task_id)
         return result
 

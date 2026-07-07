@@ -36,6 +36,8 @@
           :recipe="getWidgetById(widgetLayout.widgetId)!"
           :dashboardParameters="resolvedDashboardParameters"
           :dashboardSteps="dashboardStepOutputs"
+          :dashboardStepsLoading="widgetDependsOnShared(widgetLayout.widgetId) && sharedStepsLoading"
+          :dashboardStepsError="widgetDependsOnShared(widgetLayout.widgetId) ? sharedStepsError : null"
           :style="{ gridArea: widgetLayout.gridArea }"
         />
         <!-- Shown when a widgetId in the layout has no matching widget definition -->
@@ -50,7 +52,7 @@
           <div class="flex-1 p-4 flex items-center justify-center">
             <p class="text-sm text-red-500 dark:text-red-400 text-center">
               No widget with id <code class="font-mono bg-red-50 dark:bg-red-900/30 px-1 rounded">{{ widgetLayout.widgetId }}</code> found.<br/>
-              <span class="text-xs text-gray-500 dark:text-gray-400 mt-1 block">Check that it is defined in the dashboard's widgets array or in the recipe manifest.</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400 mt-1 block">Check that it is defined in the dashboard's widgets array.</span>
             </p>
           </div>
         </div>
@@ -68,8 +70,9 @@ import type {
   JsonWidgetRecipe,
 } from '@/types/recipes'
 import { getStorageAdapter, STORAGE_KEYS } from '@/services/storage'
-import { useRecipeExecutor } from '@/composables/useRecipeExecutor'
+import { useRecipeExecutor, isStepError, type StepError } from '@/composables/useRecipeExecutor'
 import { resolveParameterValues } from '@/recipes/functions'
+import { stepRefs } from '@/recipes/templating'
 import RecipeWidget from './RecipeWidget.vue'
 import RecipeParameters from './RecipeParameters.vue'
 
@@ -104,18 +107,40 @@ const resolvedDashboardParameters = computed(() =>
 // dashboard-param change, and feed every widget via {{dashboard.steps.<id>}}.
 const { executeSharedSteps } = useRecipeExecutor()
 const dashboardStepOutputs = ref<Record<string, unknown>>({})
+const sharedStepsLoading = ref(false)
+const sharedStepsError = ref<StepError | null>(null)
+
+const sharedSteps = computed(() => (props.dashboard as JsonDashboardRecipe).steps ?? [])
+
+/** Does a widget reference any {{dashboard.steps.*}} — i.e. depend on a shared
+ * step? Only dependents are gated on / affected by shared-step load & failure
+ * (§4.9); independent widgets render immediately regardless. */
+function widgetDependsOnShared(widgetId: string): boolean {
+  if (sharedSteps.value.length === 0) return false
+  const widget = getWidgetById(widgetId) as JsonWidgetRecipe | undefined
+  return (widget?.steps ?? []).some((s) => stepRefs(s).some((r) => r.scope === 'dashboard.steps'))
+}
 
 async function runSharedSteps() {
-  const steps = (props.dashboard as JsonDashboardRecipe).steps
-  if (!steps || steps.length === 0) {
+  if (sharedSteps.value.length === 0) {
     dashboardStepOutputs.value = {}
+    sharedStepsError.value = null
+    sharedStepsLoading.value = false
     return
   }
+  sharedStepsLoading.value = true
+  sharedStepsError.value = null
   try {
-    dashboardStepOutputs.value = await executeSharedSteps(steps, resolvedDashboardParameters.value)
-  } catch {
-    // A failed shared step surfaces via each dependent widget's own error state.
+    dashboardStepOutputs.value = await executeSharedSteps(sharedSteps.value, resolvedDashboardParameters.value)
+  } catch (e) {
+    // A failed shared step errors only its *dependent* widgets (§4.9); widgets
+    // with no {{dashboard.steps.*}} reference are unaffected.
     dashboardStepOutputs.value = {}
+    sharedStepsError.value = isStepError(e)
+      ? e
+      : { stepId: 'dashboard.steps', kind: 'graph', message: e instanceof Error ? e.message : 'Shared step failed' }
+  } finally {
+    sharedStepsLoading.value = false
   }
 }
 

@@ -112,6 +112,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useBudgets } from '@/composables/useBudgets'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
+import { todayLocal } from '@/utils/date'
 import type { BudgetItem } from '@/services/generated-api'
 
 const INTERVALS = ['daily', 'weekly', 'monthly', 'quarterly', 'yearly']
@@ -128,11 +129,7 @@ const rows = ref<Row[]>([])
 const dirtyIds = ref<Set<string>>(new Set())
 const filter = ref('')
 
-const newRow = ref({ account: '', currency: 'USD', interval: 'monthly', amount: '', date: todayIso() })
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10)
-}
+const newRow = ref({ account: '', currency: 'USD', interval: 'monthly', amount: '', date: todayLocal() })
 
 function toRow(b: BudgetItem): Row {
   return { id: b.id, account: b.account, currency: b.currency, interval: b.interval, amount: b.amount, date: b.date }
@@ -168,7 +165,7 @@ async function addRow() {
     currency: newRow.value.currency.trim(),
   })
   if (created) {
-    newRow.value = { account: '', currency: newRow.value.currency, interval: 'monthly', amount: '', date: todayIso() }
+    newRow.value = { account: '', currency: newRow.value.currency, interval: 'monthly', amount: '', date: todayLocal() }
     await refresh()
   }
 }

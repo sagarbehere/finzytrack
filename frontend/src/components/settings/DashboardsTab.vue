@@ -1,23 +1,7 @@
 <template>
   <div class="pb-6">
-    <!-- Recipe type selector (pill tabs) -->
-    <div class="mb-2 flex flex-wrap gap-2 sm:space-x-4 sm:gap-0">
-      <button
-        v-for="rt in recipeTypes"
-        :key="rt.id"
-        @click="switchRecipeType(rt.id)"
-        :class="[
-          recipeType === rt.id
-            ? 'rounded-md bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300'
-            : 'rounded-md px-3 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
-        ]"
-      >
-        {{ rt.label }}
-      </button>
-    </div>
-
     <p class="mb-4 text-sm text-gray-500 dark:text-gray-400">
-      Manage dashboard and widget recipe files.
+      Manage dashboard recipe files.
       <a href="https://docs.finzytrack.com/reference/dashboard-recipes/" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300">View documentation</a>.
       To rename a recipe file, create a new one and delete the old.
     </p>
@@ -35,7 +19,7 @@
         class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 text-sm text-yellow-800 dark:text-yellow-200 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
       >
         <span>
-          No {{ recipeTypeLabel }} recipes found.
+          No dashboard recipes found.
           <a href="https://docs.finzytrack.com/reference/dashboard-recipes/" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 hover:text-yellow-900 dark:hover:text-yellow-100">
             Learn how to create recipes
           </a>.
@@ -139,7 +123,11 @@
                 spellcheck="false"
                 class="w-full font-mono text-sm rounded-md bg-white px-3 py-2 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500 resize-y"
                 style="min-height: 200px; height: 200px;"
-                :placeholder="`{\n  &quot;id&quot;: &quot;my-${recipeType === 'dashboards' ? 'dashboard' : 'widget'}&quot;,\n  &quot;title&quot;: &quot;My ${recipeTypeLabel}&quot;\n}`"
+                placeholder='{
+  "schemaVersion": 2,
+  "id": "my-dashboard",
+  "title": "My Dashboard"
+}'
               />
               <div v-else class="flex items-center justify-center py-12 text-sm text-gray-400 dark:text-gray-500">
                 Select a file from the list or create a new recipe
@@ -207,7 +195,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import RecipeDashboard from '@/components/recipes/RecipeDashboard.vue'
@@ -220,25 +208,6 @@ import { resolveRecipeGenerators } from '@/recipes/functions'
 import type { JsonDashboardRecipe } from '@/types/recipes'
 
 const { loadUserRecipes, checkIdConflict } = useRecipeLoader()
-
-const props = defineProps<{
-  initialRecipeType?: string
-}>()
-
-type RecipeTypeId = 'dashboards' | 'widgets'
-
-const recipeTypes = [
-  { id: 'dashboards' as const, label: 'Dashboards' },
-  { id: 'widgets' as const, label: 'Widgets' },
-]
-
-const recipeType = ref<RecipeTypeId>(
-  props.initialRecipeType === 'widgets' ? 'widgets' : 'dashboards'
-)
-
-const recipeTypeLabel = computed(() => {
-  return recipeType.value === 'dashboards' ? 'Dashboard' : 'Widget'
-})
 
 // --- File list state ---
 
@@ -291,6 +260,9 @@ const confirmDialog = useConfirmDialog()
 
 // --- Preview ---
 
+// Wrap a single inline widget in a throwaway one-widget dashboard so authors can
+// preview a widget in isolation (refactored-dashboard-recipes.md §4.10). This is
+// a preview-only affordance — there is no standalone widget *file*.
 function wrapWidgetAsDashboard(widget: Record<string, unknown>): JsonDashboardRecipe {
   const id = (widget.id as string) || 'widget'
   return {
@@ -321,12 +293,12 @@ function refreshPreview() {
   }
 
   try {
-    let dashboard: JsonDashboardRecipe
-    if (recipeType.value === 'widgets') {
-      dashboard = wrapWidgetAsDashboard(parsed)
-    } else {
-      dashboard = parsed as unknown as JsonDashboardRecipe
-    }
+    // Auto-detect: a pasted single widget (has a visualization but no dashboard
+    // layout) is wrapped for preview; a full dashboard renders as-is.
+    const isSingleWidget = !parsed.layout && !!parsed.visualization
+    const dashboard = isSingleWidget
+      ? wrapWidgetAsDashboard(parsed)
+      : (parsed as unknown as JsonDashboardRecipe)
     const resolved = resolveRecipeGenerators(dashboard)
     previewDashboard.value = resolved
     previewKey.value++
@@ -341,7 +313,7 @@ async function loadFileList() {
   isLoading.value = true
   try {
     const manifest = await RecipesService.getManifestApiRecipesManifestJsonGet()
-    const paths: string[] = manifest[recipeType.value] ?? []
+    const paths: string[] = manifest.dashboards ?? []
     files.value = paths.map((p: string) => ({
       path: p,
       displayName: p.split('/').pop() || p,
@@ -392,22 +364,6 @@ async function selectFile(filePath: string) {
   previewError.value = null
   selectedFile.value = filePath
   await loadFileContent(filePath)
-}
-
-async function switchRecipeType(newType: RecipeTypeId) {
-  if (newType === recipeType.value) return
-  if (!(await checkDirtyBeforeAction())) return
-
-  recipeType.value = newType
-  selectedFile.value = null
-  isCreating.value = false
-  newFilename.value = ''
-  editorContent.value = ''
-  originalContent.value = ''
-  jsonParseError.value = null
-  previewDashboard.value = null
-  previewError.value = null
-  await loadFileList()
 }
 
 async function startCreate() {
@@ -469,7 +425,7 @@ async function handleSave() {
     if (isCreating.value) {
       let filename = newFilename.value.trim()
       if (!filename.endsWith('.json')) filename += '.json'
-      const filePath = `${recipeType.value}/${filename}`
+      const filePath = `dashboards/${filename}`
       await RecipesService.writeRecipeFileApiRecipesFilePathPut(filePath, { content: parsed })
       isCreating.value = false
       await loadFileList()
@@ -535,12 +491,6 @@ onBeforeRouteLeave(async (_to, _from, next) => {
 
 // --- Lifecycle ---
 
-watch(() => props.initialRecipeType, (newType) => {
-  if (newType && recipeTypes.some(rt => rt.id === newType) && newType !== recipeType.value) {
-    switchRecipeType(newType as RecipeTypeId)
-  }
-})
-
-// Ensure the global widget registry is populated so external widget references resolve in previews
+// Load user recipes (for id-conflict detection) then the dashboard file list.
 loadUserRecipes().then(() => loadFileList())
 </script>

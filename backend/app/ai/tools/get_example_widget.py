@@ -54,10 +54,9 @@ def _viz_type_key(widget: dict) -> str | None:
 def _load_gallery() -> dict:
     if not GALLERY_PATH.is_file():
         raise FileNotFoundError(
-            f"widget-gallery.json not found at {GALLERY_PATH}. "
-            "Run scripts/sync_ai_reference.py — wait, no — this file is "
-            "checked in under backend/resources/seed_config/. If it's "
-            "missing, restore from git."
+            f"widget-gallery.json not found at {GALLERY_PATH}. This file is "
+            "checked in under backend/resources/seed_config/; if it's missing, "
+            "restore it from git."
         )
     return json.loads(GALLERY_PATH.read_text(encoding="utf-8"))
 

@@ -89,22 +89,23 @@ KNOWN_TRANSFORMS = {
     "none", "firstRow", "firstValue", "sortBy", "limit", "pluck", "where", "pivot",
     "joinBudgetActual", "joinByPeriod", "runningSum", "envelopeRollover",
 }
-
-_STEP_TOKEN_RE = re.compile(r"^\{\{\s*steps\.([a-z0-9-]+)")
-_ANY_TOKEN_RE = re.compile(r"\{\{\s*([^}]+?)\s*\}\}")
+# NOTE: hand-mirrors the client transform catalog in
+# frontend/src/composables/useRecipeTransforms.ts (transformCatalog). The server
+# can't run the catalog, so fn-name validity is checked here (§3.6 G8). Keep the
+# two lists in sync when adding a transform.
 
 
 def _dry_run_query_step(query: str, engine: str, wid: str, sidx: int, sqlite_path: str | None) -> list[str]:
     """Dry-run one query step's text. The SQLite-mirror dry-run only applies to
     the sqlite engine; beanquery (BQL) text is structurally validated but not
-    executed here (it isn't SQL)."""
+    executed here (it isn't SQL).
+
+    Assumes structural/semantic validation already passed (no {{...}} in query,
+    refs resolve) — this covers only *execution* concerns."""
     errors: list[str] = []
     if not isinstance(query, str):
         return errors
     label = f"widget '{wid}' steps[{sidx}]"
-    if _ANY_TOKEN_RE.search(query):
-        errors.append(f"{label}: query cannot contain {{{{...}}}} references — use :paramName for parameters")
-        return errors
     if engine == "beanquery":
         return errors
     dollar_names = _detect_dollar_placeholders(query)
@@ -155,7 +156,6 @@ def _dry_run_queries(dashboard: dict, sqlite_path: str | None) -> list[str]:
         steps = w.get("steps", [])
         if not isinstance(steps, list):
             continue
-        step_ids = {s.get("id") for s in steps if isinstance(s, dict)}
         for sidx, s in enumerate(steps):
             if not isinstance(s, dict):
                 continue
@@ -172,13 +172,11 @@ def _dry_run_queries(dashboard: dict, sqlite_path: str | None) -> list[str]:
                 except jsonschema.ValidationError as e:
                     errors.append(f"widget '{wid}' steps[{sidx}]: invalid args for '{s.get('fn')}' — {e.message}")
             elif kind == "transform":
+                # Transform input step-refs + acyclicity are checked by
+                # validate_dashboard (recipe_validation) before this dry-run; here
+                # we only confirm the fn exists in the (server-only) catalog.
                 if s.get("fn") not in KNOWN_TRANSFORMS:
                     errors.append(f"widget '{wid}' steps[{sidx}]: unknown transform '{s.get('fn')}'. Known: {sorted(KNOWN_TRANSFORMS)}.")
-                for inp in (s.get("inputs") or []):
-                    if isinstance(inp, str):
-                        m = _STEP_TOKEN_RE.match(inp)
-                        if m and m.group(1) not in step_ids:
-                            errors.append(f"widget '{wid}' steps[{sidx}]: input '{inp}' references unknown step")
 
     return errors
 
@@ -238,15 +236,12 @@ class WriteRecipeTool(BaseTool):
         self,
         filename: str,
         content: dict | None = None,
-        recipe_type: str | None = None,
         overwrite: bool = False,
     ) -> dict:
-        # Resolve content from preview cache if not provided. The dashboard is
-        # the only recipe type (§4.11); recipe_type is ignored if passed.
+        # Resolve content from preview cache if not provided.
         if content is None:
             from app.ai.tools.preview_recipe import get_last_previewed_recipe
-            cached_content, _ = get_last_previewed_recipe()
-            content = cached_content
+            content = get_last_previewed_recipe()
 
         if content is None:
             return {

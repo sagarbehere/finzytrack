@@ -48,8 +48,10 @@ const enums = [
   '// re-declaring the value lists by hand.',
   '',
   asConst('STEP_KINDS', unionConsts('Step', 'kind')),
+  asConst('VIZ_TYPES', unionConsts('JsonRecipeVisualization', 'type')),
   asConst('SUPPORTED_CHART_TYPES', defs.ChartType.enum),
   asConst('VALID_VALUE_FORMATS', defs.ValueFormat.enum),
+  asConst('VALID_PARAM_TYPES', defs.RecipeParameter.properties.type.enum),
   asConst('QUERY_ENGINES', defs.QueryStep.properties.engine.enum),
   '',
 ].join('\n');

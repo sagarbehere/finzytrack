@@ -13,6 +13,12 @@ import type { QueryRequest } from '@/services/generated-api'
 import { formatAmount, formatSignedAmount } from '@/utils/currencyFormat'
 import { errorHandler } from '@/utils/ErrorHandler'
 import { applyTransform } from '@/composables/useRecipeTransforms'
+import {
+  WHOLE_TOKEN_RE,
+  resolvePath,
+  interpolateString,
+  stepDependencies,
+} from '@/recipes/templating'
 
 /**
  * Union type for any widget recipe (TypeScript or JSON). Both are now
@@ -52,6 +58,12 @@ export function isStepError(e: unknown): e is StepError {
  */
 export const predefinedFormats: Record<ValueFormat, (value: unknown) => string> = getFormats()
 
+/** Coerce a display value to a number (the sanctioned float boundary — the
+ * value reaching a formatter may be a number or a decimal string). */
+function toNum(value: unknown): number {
+  return typeof value === 'number' ? value : parseFloat(String(value)) || 0
+}
+
 /**
  * Create a set of format functions with the given currency for locale-aware formatting.
  * Currency-dependent formats (currency, signedCurrency) use the specified currency code
@@ -64,17 +76,17 @@ export function getFormats(currency?: string): Record<ValueFormat, (value: unkno
   return {
     // Number formats
     currency: (value) => {
-      const num = typeof value === 'number' ? value : parseFloat(String(value)) || 0
+      const num = toNum(value)
       return formatAmount(num, curr)
     },
 
     signedCurrency: (value) => {
-      const num = typeof value === 'number' ? value : parseFloat(String(value)) || 0
+      const num = toNum(value)
       return formatSignedAmount(num, curr)
     },
 
     percent: (value) => {
-      const num = typeof value === 'number' ? value : parseFloat(String(value)) || 0
+      const num = toNum(value)
       return num.toLocaleString('en-US', {
         style: 'percent',
         minimumFractionDigits: 1,
@@ -83,7 +95,7 @@ export function getFormats(currency?: string): Record<ValueFormat, (value: unkno
     },
 
     number: (value) => {
-      const num = typeof value === 'number' ? value : parseFloat(String(value)) || 0
+      const num = toNum(value)
       return num.toLocaleString('en-US', {
         minimumFractionDigits: 0,
         maximumFractionDigits: 0,
@@ -91,7 +103,7 @@ export function getFormats(currency?: string): Record<ValueFormat, (value: unkno
     },
 
     compact: (value) => {
-      const num = typeof value === 'number' ? value : parseFloat(String(value)) || 0
+      const num = toNum(value)
       if (Math.abs(num) >= 1000000) {
         return (num / 1000000).toFixed(1) + 'M'
       }
@@ -169,9 +181,9 @@ export function interpolateParameters(
 }
 
 // ── Step-reference interpolation ({{params|steps|dashboard.steps}}) ──────────
-
-const WHOLE_TOKEN_RE = /^\{\{\s*([^}]+?)\s*\}\}$/
-const ANY_TOKEN_RE = /\{\{\s*([^}]+?)\s*\}\}/g
+//
+// The `{{...}}` walker + step-dependency scan live in @/recipes/templating (one
+// source of truth shared with the client validator and the renderer — G6).
 
 interface RefScope {
   params: Record<string, string | number>
@@ -179,13 +191,9 @@ interface RefScope {
   dashboardSteps: Record<string, unknown>
 }
 
-/** Resolve a dotted reference path (`steps.actuals`, `params.x`, `dashboard.steps.y`). */
-function resolveRef(path: string, scope: RefScope): unknown {
-  const parts = path.split('.')
-  if (parts[0] === 'params') return scope.params[parts[1]]
-  if (parts[0] === 'steps') return scope.steps[parts[1]]
-  if (parts[0] === 'dashboard' && parts[1] === 'steps') return scope.dashboardSteps[parts[2]]
-  return undefined
+/** Flatten a RefScope into the nested object the dotted-path resolver walks. */
+function scopeObject(scope: RefScope): Record<string, unknown> {
+  return { params: scope.params, steps: scope.steps, dashboard: { steps: scope.dashboardSteps } }
 }
 
 /**
@@ -198,12 +206,10 @@ function resolveRef(path: string, scope: RefScope): unknown {
  */
 function interpolateValue(raw: unknown, scope: RefScope): unknown {
   if (typeof raw === 'string') {
+    const obj = scopeObject(scope)
     const whole = raw.match(WHOLE_TOKEN_RE)
-    if (whole) return resolveRef(whole[1], scope)
-    if (ANY_TOKEN_RE.test(raw)) {
-      return raw.replace(ANY_TOKEN_RE, (_m, p1: string) => String(resolveRef(p1.trim(), scope) ?? ''))
-    }
-    return raw
+    if (whole) return resolvePath(whole[1], obj)
+    return interpolateString(raw, (path) => resolvePath(path, obj))
   }
   if (Array.isArray(raw)) return raw.map((v) => interpolateValue(v, scope))
   if (raw && typeof raw === 'object') {
@@ -215,22 +221,6 @@ function interpolateValue(raw: unknown, scope: RefScope): unknown {
 }
 
 // ── DAG ordering ─────────────────────────────────────────────────────────────
-
-/** Collect the step ids this step references via `{{steps.<id>}}`. */
-function stepDependencies(step: Step): string[] {
-  const deps = new Set<string>()
-  const scan = (s: string) => {
-    let m: RegExpExecArray | null
-    const re = new RegExp(ANY_TOKEN_RE.source, 'g')
-    while ((m = re.exec(s)) !== null) {
-      const path = m[1].trim()
-      if (path.startsWith('steps.')) deps.add(path.slice('steps.'.length).split('.')[0])
-    }
-  }
-  if (step.kind === 'compute' && step.args) scan(JSON.stringify(step.args))
-  if (step.kind === 'transform') step.inputs.forEach(scan)
-  return [...deps]
-}
 
 /**
  * Topologically sort steps by their `{{steps.*}}` references. Throws a
