@@ -13,7 +13,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Body
 
 from app.core.ledger_manager import LedgerManager
-from app.core.budget_directives import INTERVALS
+from app.core.budget_directives import BUDGET_END, INTERVALS
 from app.compute.budget_resolver import (
     BudgetDirective, parse_budget_directives, effective_directives_as_of,
 )
@@ -45,6 +45,7 @@ def _to_item(d: BudgetDirective) -> BudgetItem:
         interval=d.interval,
         amount=str(d.amount),
         currency=d.currency,
+        ended=d.is_end,
         source_file=d.source_file,
         source_lineno=d.source_lineno,
     )
@@ -64,15 +65,18 @@ def _find_written(
 
 
 def _validate_write(body: BudgetWriteRequest) -> tuple[date, Decimal]:
-    if body.interval not in INTERVALS:
+    if body.interval != BUDGET_END and body.interval not in INTERVALS:
         raise APIError(
-            message=f"interval must be one of {list(INTERVALS)}.",
+            message=f"interval must be one of {list(INTERVALS)} or '{BUDGET_END}' (end).",
             code=ec.BUDGET_VALIDATION_ERROR, status_code=400,
         )
     try:
         d = date.fromisoformat(body.date)
     except (ValueError, TypeError):
         raise APIError(message="date must be YYYY-MM-DD.", code=ec.BUDGET_VALIDATION_ERROR, status_code=400)
+    # A tombstone ignores the amount; write an inert 0 to carry the currency.
+    if body.interval == BUDGET_END:
+        return d, Decimal(0)
     try:
         amount = Decimal(body.amount)
     except (InvalidOperation, TypeError):

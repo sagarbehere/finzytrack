@@ -109,3 +109,46 @@ def test_multi_currency_side_by_side(test_client):
     eff = test_client.get("/api/budgets", params={"account": "Expenses:Phone"}).json()["data"]["budgets"]
     by_curr = {b["currency"]: b["amount"] for b in eff}
     assert by_curr == {"USD": "50", "INR": "1500"}
+
+
+# ── End budget (tombstone) — dev-docs/budget.md end-budget ───────────────────
+
+
+def _end(client, **over):
+    """Post a 'budget end' tombstone (interval='none', amount omitted)."""
+    body = {"date": "2026-04-01", "account": "Expenses:Food",
+            "interval": "none", "currency": "USD"}
+    body.update(over)
+    return client.post("/api/budgets", json=body)
+
+
+def test_end_budget_round_trips(test_client):
+    _create(test_client, date="2026-01-01", amount="500")
+    resp = _end(test_client)
+    assert resp.status_code == 200
+    assert resp.json()["data"]["budget"]["ended"] is True
+
+    # Effective before the end → the real budget; after → ended tombstone.
+    before = test_client.get("/api/budgets", params={"as_of": "2026-02-01"}).json()["data"]["budgets"]
+    food_before = [b for b in before if b["account"] == "Expenses:Food"]
+    assert len(food_before) == 1 and food_before[0]["ended"] is False and food_before[0]["amount"] == "500"
+
+    after = test_client.get("/api/budgets", params={"as_of": "2026-05-01"}).json()["data"]["budgets"]
+    food_after = [b for b in after if b["account"] == "Expenses:Food"]
+    assert len(food_after) == 1 and food_after[0]["ended"] is True
+
+
+def test_delete_tombstone_reverts_to_prior_budget(test_client):
+    _create(test_client, date="2026-01-01", amount="500")
+    ended = _end(test_client).json()["data"]["budget"]
+
+    # Ended as of May…
+    eff = test_client.get("/api/budgets", params={"as_of": "2026-05-01"}).json()["data"]["budgets"]
+    assert [b for b in eff if b["account"] == "Expenses:Food"][0]["ended"] is True
+
+    # …delete the tombstone (found by id → exercises parse of the tombstone) →
+    # the prior 500 budget is effective again.
+    assert test_client.delete(f"/api/budgets/{ended['id']}").status_code == 200
+    reverted = test_client.get("/api/budgets", params={"as_of": "2026-05-01"}).json()["data"]["budgets"]
+    food = [b for b in reverted if b["account"] == "Expenses:Food"]
+    assert len(food) == 1 and food[0]["ended"] is False and food[0]["amount"] == "500"

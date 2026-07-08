@@ -153,3 +153,90 @@ def test_parse_budget_directive_from_export_shape():
 def test_parse_rejects_non_budget_shape():
     row = {"date": "2026-01-01", "values_json": json.dumps([["just-a-string", "<class 'str'>"]])}
     assert parse_budget_directive(row) is None
+
+
+# ── Budget end (tombstone) — dev-docs/budget.md end-budget ───────────────────
+
+
+def test_tombstone_ends_budget_range_sums_only_active_days():
+    # 600/month from Jan, ended from Apr 1. Jan–Mar = 1800; Apr–Jun contributes 0.
+    directives = [
+        _d("Expenses:Food", "monthly", "600", d="2026-01-01"),
+        _d("Expenses:Food", "none", "0", d="2026-04-01"),  # tombstone
+    ]
+    rows, _ = resolve_budgets(directives, date(2026, 1, 1), date(2026, 6, 30))
+    assert rows == [{"account": "Expenses:Food", "currency": "USD", "budget": "1800"}]
+
+
+def test_fully_ended_group_is_omitted_from_range():
+    directives = [
+        _d("Expenses:Food", "monthly", "600", d="2026-01-01"),
+        _d("Expenses:Food", "none", "0", d="2026-04-01"),
+    ]
+    # A range entirely after the end → no real budget → account drops out.
+    rows, _ = resolve_budgets(directives, date(2026, 4, 1), date(2026, 6, 30))
+    assert rows == []
+
+
+def test_tombstone_is_per_currency():
+    # End USD but keep INR: a range after the end shows only INR.
+    directives = [
+        _d("Expenses:Phone", "monthly", "50", currency="USD", d="2026-01-01"),
+        _d("Expenses:Phone", "monthly", "1500", currency="INR", d="2026-01-01"),
+        _d("Expenses:Phone", "none", "0", currency="USD", d="2026-04-01"),
+    ]
+    rows, _ = resolve_budgets(directives, date(2026, 4, 1), date(2026, 4, 30))
+    assert rows == [{"account": "Expenses:Phone", "currency": "INR", "budget": "1500"}]
+
+
+def test_un_end_by_superseding_with_a_new_budget():
+    # 500 → end → 700. After the new budget the account is budgeted again.
+    directives = [
+        _d("Expenses:Food", "monthly", "500", d="2026-01-01"),
+        _d("Expenses:Food", "none", "0", d="2026-04-01"),
+        _d("Expenses:Food", "monthly", "700", d="2026-07-01"),
+    ]
+    ended, _ = resolve_budgets(directives, date(2026, 5, 1), date(2026, 5, 31))
+    assert ended == []  # still ended in May
+    active, _ = resolve_budgets(directives, date(2026, 7, 1), date(2026, 7, 31))
+    assert active == [{"account": "Expenses:Food", "currency": "USD", "budget": "700"}]
+
+
+def test_per_period_series_continues_through_an_end_with_zeros():
+    directives = [
+        _d("Expenses:Food", "monthly", "600", d="2026-01-01"),
+        _d("Expenses:Food", "none", "0", d="2026-03-01"),
+    ]
+    rows, _ = resolve_budgets(directives, date(2026, 1, 1), date(2026, 4, 30), group_by="period")
+    by_period = {r["period"]: r["budget"] for r in rows}
+    assert by_period == {"2026-01": "600", "2026-02": "600", "2026-03": "0", "2026-04": "0"}
+
+
+def test_parse_tombstone_from_export_shape():
+    row = {
+        "date": "2026-04-01",
+        "values_json": json.dumps([
+            ["Expenses:Food", "<AccountDummy>"],
+            ["none", "<class 'str'>"],
+            [["0", "USD"], "<class 'beancount.core.amount.Amount'>"],
+        ]),
+        "source_file": "main.beancount",
+        "source_lineno": 20,
+    }
+    parsed = parse_budget_directive(row)
+    assert parsed is not None
+    assert parsed.is_end is True
+    assert parsed.account == "Expenses:Food"
+    assert parsed.currency == "USD"
+
+
+def test_parse_tombstone_without_currency_is_rejected():
+    # No amount pair → no currency to scope the end → not a valid tombstone.
+    row = {
+        "date": "2026-04-01",
+        "values_json": json.dumps([
+            ["Expenses:Food", "<AccountDummy>"],
+            ["none", "<class 'str'>"],
+        ]),
+    }
+    assert parse_budget_directive(row) is None

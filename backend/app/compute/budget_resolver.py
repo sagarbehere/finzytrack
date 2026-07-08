@@ -20,7 +20,9 @@ from datetime import date, timedelta
 from decimal import Decimal
 from fractions import Fraction
 
-from app.core.budget_directives import INTERVALS, budget_fields_complete, budget_id
+from app.core.budget_directives import (
+    BUDGET_END, INTERVALS, budget_fields_complete, budget_id,
+)
 
 # Precision floor for non-terminating daily-equivalents (~10 fractional digits);
 # the display formatter rounds further. Terminating fractions stay exact.
@@ -42,6 +44,12 @@ class BudgetDirective:
         """Stable id from the source location — the single hashing site
         (app.core.budget_directives.budget_id)."""
         return budget_id(self.source_file, self.source_lineno)
+
+    @property
+    def is_end(self) -> bool:
+        """A tombstone: 'no budget from this date' (BUDGET_END sentinel). The
+        amount is inert; it contributes nothing to range/period totals."""
+        return self.interval == BUDGET_END
 
 
 # ── Directive parsing (from custom_directives.values_json) ───────────────────
@@ -75,10 +83,18 @@ def parse_budget_directive(row: dict) -> BudgetDirective | None:
             currency = str(v[1])
         elif isinstance(v, str) and v in INTERVALS:
             interval = v
+        elif isinstance(v, str) and v == BUDGET_END:  # tombstone, before account fallback
+            interval = BUDGET_END
         elif isinstance(v, str):
             account = v
 
-    if not budget_fields_complete(account, interval, amount, currency):
+    if interval == BUDGET_END:
+        # Tombstone: needs an account + currency (from the inert amount); the
+        # amount is ignored. See dev-docs/budget.md end-budget.
+        if not (account and currency):
+            return None
+        amount = Decimal(0)
+    elif not budget_fields_complete(account, interval, amount, currency):
         return None
     try:
         d = date.fromisoformat(row["date"])
@@ -194,10 +210,25 @@ def _range_total(sorted_directives: list[BudgetDirective], d_from: date, d_to: d
     day = d_from
     while day <= d_to:
         directive = _effective_on(sorted_directives, day)
-        if directive is not None:
+        if directive is not None and not directive.is_end:
             total += _daily_equivalent(directive, day)
         day += timedelta(days=1)
     return total
+
+
+def _has_real_budget_in_range(
+    sorted_directives: list[BudgetDirective], d_from: date, d_to: date
+) -> bool:
+    """True iff some day in [d_from, d_to] has a real (non-tombstone) active
+    budget. A group that is tombstoned (or unbudgeted) across the whole range is
+    omitted from budget results — 'no longer budgeted' drops out of dashboards."""
+    day = d_from
+    while day <= d_to:
+        directive = _effective_on(sorted_directives, day)
+        if directive is not None and not directive.is_end:
+            return True
+        day += timedelta(days=1)
+    return False
 
 
 def _iter_months(d_from: date, d_to: date):
@@ -246,6 +277,10 @@ def resolve_budgets(
 
     rows: list[dict] = []
     for (acct, curr), sorted_directives in sorted(groups.items()):
+        # A group with no real budget anywhere in range (fully ended, or only a
+        # tombstone) is not a budgeted account here — omit it entirely (§ end-budget).
+        if not _has_real_budget_in_range(sorted_directives, date_from, date_to):
+            continue
         if group_by == "period":
             for (y, m) in _iter_months(date_from, date_to):
                 m_start = date(y, m, 1)

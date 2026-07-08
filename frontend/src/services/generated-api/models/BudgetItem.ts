@@ -19,17 +19,21 @@ export type BudgetItem = {
      */
     account: string;
     /**
-     * daily | weekly | monthly | quarterly | yearly
+     * daily | weekly | monthly | quarterly | yearly (or 'none' for an end)
      */
     interval: string;
     /**
-     * Budget amount (decimal string)
+     * Budget amount (decimal string); '0' and ignored when ended
      */
     amount: string;
     /**
      * Currency code
      */
     currency: string;
+    /**
+     * True if this is a 'budget end' tombstone (no budget from here)
+     */
+    ended?: boolean;
     /**
      * File the directive lives in
      */

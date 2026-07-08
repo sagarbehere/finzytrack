@@ -118,19 +118,20 @@
                           class="text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
                         >Manage</router-link>
                       </div>
-                      <div v-if="accountBudgets.length > 0" class="space-y-2">
-                        <div
-                          v-for="b in accountBudgets"
-                          :key="b.id"
-                          class="flex justify-between items-center text-sm"
-                        >
-                          <span class="text-gray-500 dark:text-gray-400">{{ b.interval }} · {{ b.currency }}</span>
-                          <span class="font-medium tabular-nums text-gray-900 dark:text-white">
-                            {{ toNumber(toMoney(b.amount)).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 }) }} {{ b.currency }}
-                          </span>
+                      <div v-if="account && budgetsByCurrency.length > 0" class="space-y-4">
+                        <div v-for="[currency, directives] in budgetsByCurrency" :key="currency">
+                          <p v-if="budgetsByCurrency.length > 1" class="mb-1 text-xs font-medium text-gray-400 dark:text-gray-500">{{ currency }}</p>
+                          <BudgetHistoryPanel
+                            :account="account.fullPath"
+                            :currency="currency"
+                            :directives="directives"
+                            @changed="refreshBudgets"
+                          />
                         </div>
                       </div>
-                      <p v-else class="text-sm text-gray-400 dark:text-gray-500">No budget set.</p>
+                      <p v-else class="text-sm text-gray-400 dark:text-gray-500">
+                        No budget set. <router-link :to="{ path: '/budgets', query: { account: account?.fullPath } }" class="text-indigo-600 hover:text-indigo-500 dark:text-indigo-400">Add one</router-link>.
+                      </p>
                     </section>
 
                     <!-- Banking Details -->
@@ -245,10 +246,11 @@ import DocumentUploadZone from '@/components/documents/DocumentUploadZone.vue'
 import DocumentPreviewModal from '@/components/documents/DocumentPreviewModal.vue'
 import { useDocuments } from '@/composables/useDocuments'
 import { useBudgets } from '@/composables/useBudgets'
-import type { DocumentDetails } from '@/services/generated-api'
+import BudgetHistoryPanel from '@/components/budgets/BudgetHistoryPanel.vue'
+import type { DocumentDetails, BudgetItem } from '@/services/generated-api'
 import type { AccountTreeNode } from '@/types/accounts'
 import { typeColors, statusColors } from '@/types/accounts'
-import { sign, toNumber, toMoney } from '@/utils/money'
+import { sign, toNumber } from '@/utils/money'
 import { todayLocal } from '@/utils/date'
 
 const BANKING_KEYS = ['account_number', 'ifsc_code', 'swift_bic']
@@ -289,12 +291,27 @@ async function refreshDocuments() {
   }
 }
 
-// Effective budget(s) for this account (§7.1).
-const { budgets: accountBudgets, load: loadBudgets } = useBudgets()
+// Full budget-directive history for this account, grouped by currency, each
+// managed inline via BudgetHistoryPanel (§7.1 — the same editor as the Budgets view).
+const { fetch: fetchBudgets } = useBudgets()
+const accountBudgets = ref<BudgetItem[]>([])
 async function refreshBudgets() {
   if (!props.account) { accountBudgets.value = []; return }
-  await loadBudgets({ history: false, account: props.account.fullPath })
+  try {
+    accountBudgets.value = await fetchBudgets({ history: true, account: props.account.fullPath })
+  } catch {
+    accountBudgets.value = []
+  }
 }
+const budgetsByCurrency = computed(() => {
+  const m = new Map<string, BudgetItem[]>()
+  for (const b of accountBudgets.value) {
+    const list = m.get(b.currency)
+    if (list) list.push(b)
+    else m.set(b.currency, [b])
+  }
+  return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+})
 
 // Fetch documents + budgets when the drawer opens or switches account.
 watch(

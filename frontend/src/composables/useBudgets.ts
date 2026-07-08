@@ -13,21 +13,30 @@ export function useBudgets() {
   const isSaving = ref(false)
   const error = ref<string | null>(null)
 
-  /** Load budget directives. By default all raw directives (history) for editing. */
-  async function load(opts: { history?: boolean; account?: string; asOf?: string } = {}): Promise<void> {
+  type LoadOpts = { history?: boolean; account?: string; currency?: string; asOf?: string }
+
+  /** Fetch budget directives without mutating shared state — returns the list.
+   * Use when a caller needs more than one dataset (e.g. effective + history). */
+  async function fetch(opts: LoadOpts = {}): Promise<BudgetItem[]> {
+    const resp = await BudgetsService.getBudgets(
+      opts.account ?? null,
+      opts.currency ?? null,
+      opts.asOf ?? null,
+      opts.history ?? false,
+    )
+    if (!resp.success || !resp.data) {
+      throw new Error(resp.error?.message || 'Failed to load budgets')
+    }
+    return resp.data.budgets
+  }
+
+  /** Load budget directives into shared `budgets`. By default the effective set;
+   * pass `history: true` for all raw directives. */
+  async function load(opts: LoadOpts = {}): Promise<void> {
     isLoading.value = true
     error.value = null
     try {
-      const resp = await BudgetsService.getBudgets(
-        opts.account ?? null,
-        null,
-        opts.asOf ?? null,
-        opts.history ?? true,
-      )
-      if (!resp.success || !resp.data) {
-        throw new Error(resp.error?.message || 'Failed to load budgets')
-      }
-      budgets.value = resp.data.budgets
+      budgets.value = await fetch(opts)
     } catch (err: unknown) {
       error.value = err instanceof Error ? err.message : 'Failed to load budgets'
       errorHandler.display(err)
@@ -78,5 +87,5 @@ export function useBudgets() {
     }
   }
 
-  return { budgets, isLoading, isSaving, error, load, create, update, remove }
+  return { budgets, isLoading, isSaving, error, fetch, load, create, update, remove }
 }

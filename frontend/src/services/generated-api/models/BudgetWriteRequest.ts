@@ -4,6 +4,9 @@
 /* eslint-disable */
 /**
  * Body for POST/PUT — create or replace a budget directive.
+ *
+ * To end a budget (tombstone), send ``interval='none'``; ``amount`` is then
+ * optional and ignored (a ``0`` is written to carry the currency).
  */
 export type BudgetWriteRequest = {
     /**
@@ -15,13 +18,13 @@ export type BudgetWriteRequest = {
      */
     account: string;
     /**
-     * daily | weekly | monthly | quarterly | yearly
+     * daily | weekly | monthly | quarterly | yearly | none (end)
      */
     interval: string;
     /**
-     * Budget amount (decimal string)
+     * Budget amount (decimal string); omit/ignored when ending
      */
-    amount: string;
+    amount?: (string | null);
     /**
      * Currency code
      */

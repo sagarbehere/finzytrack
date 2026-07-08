@@ -23,6 +23,14 @@ from beancount.core.amount import Amount
 
 INTERVALS = ("daily", "weekly", "monthly", "quarterly", "yearly")
 
+# Sentinel interval marking a "budget end" tombstone: from this date the account
+# has *no* budget (distinct from a real budget of 0), without deleting the prior
+# directives. Written as e.g. `2026-07-01 custom "budget" Expenses:Food "none" 0 USD`
+# — the inert `0 CCY` amount exists only to scope the end to one (account, currency).
+# Still a valid Beancount `custom` directive (the file loads everywhere); only
+# budget-aware code interprets the sentinel. See dev-docs/budget.md.
+BUDGET_END = "none"
+
 
 def budget_fields_complete(
     account: str | None, interval: str | None, amount: Decimal | None, currency: str | None
@@ -75,8 +83,15 @@ def parse_budget_entry(entry: Any) -> dict | None:
             account = value
         elif isinstance(value, str) and value in INTERVALS:
             interval = value
+        elif isinstance(value, str) and value == BUDGET_END:
+            interval = BUDGET_END
 
-    if not budget_fields_complete(account, interval, amount, currency):
+    if interval == BUDGET_END:
+        # Tombstone: needs an account + a currency (carried by the inert amount);
+        # the amount itself is ignored (dev-docs/budget.md end-budget).
+        if not (account and currency):
+            return None
+    elif not budget_fields_complete(account, interval, amount, currency):
         return None
 
     meta = entry.meta or {}
