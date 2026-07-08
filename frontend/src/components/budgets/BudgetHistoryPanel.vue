@@ -9,7 +9,7 @@
         type="button"
         :disabled="isSaving"
         @click="endBudget"
-        class="rounded-md bg-white px-2.5 py-1 text-sm font-semibold text-gray-900 inset-ring inset-ring-gray-300 hover:bg-gray-50 disabled:opacity-50 dark:bg-white/10 dark:text-white dark:inset-ring-white/10"
+        class="rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-gray-900 inset-ring inset-ring-gray-300 hover:bg-gray-50 disabled:opacity-50 dark:bg-white/10 dark:text-white dark:inset-ring-white/10"
       >
         End budget
       </button>
@@ -18,68 +18,52 @@
     <!-- Manage history: the raw directives for this (account, currency), edited or
          deleted in place — the one place history is mutated. -->
     <p class="border-t border-gray-100 pt-3 text-sm font-semibold text-gray-900 dark:border-white/5 dark:text-white">Manage history</p>
-    <table class="min-w-full">
-      <thead>
-        <tr class="text-left text-xs font-medium tracking-wider text-gray-500 uppercase dark:text-gray-400">
-          <th class="py-1 pr-3">Effective</th>
-          <th class="py-1 pr-3">Interval</th>
-          <th class="py-1 pr-3 text-right">Amount</th>
-          <th class="py-1"></th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="row in sortedRows" :key="row.id" :class="dirty.has(row.id) ? 'bg-amber-50 dark:bg-amber-500/10' : ''">
-          <td class="py-1.5 pr-3">
-            <input v-model="row.date" type="date" @change="markDirty(row.id)" :class="inputClass" />
-          </td>
-          <td class="py-1.5 pr-3">
-            <template v-if="row.ended">
-              <span class="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-white/10 dark:text-gray-300">
-                Ended
-              </span>
-            </template>
-            <div v-else class="w-36">
-              <IntervalDropdown v-model="row.interval" @update:model-value="markDirty(row.id)" />
-            </div>
-          </td>
-          <td class="py-1.5 pr-3 text-right whitespace-nowrap">
-            <template v-if="!row.ended">
-              <input
-                v-model="row.amount"
-                @input="markDirty(row.id)"
-                :class="inputClass + ' text-right w-24'"
-              />
-              <span class="ml-1.5 text-sm text-gray-500 dark:text-gray-400">{{ currency }}</span>
-            </template>
-            <span v-else class="text-sm text-gray-400 dark:text-gray-500">—</span>
-          </td>
-          <td class="py-1.5 text-right whitespace-nowrap">
-            <button
-              v-if="dirty.has(row.id)"
-              type="button"
-              :disabled="isSaving"
-              @click="saveRow(row)"
-              class="mr-2 text-sm font-medium text-indigo-600 hover:text-indigo-500 disabled:opacity-50 dark:text-indigo-400"
-            >
-              Save
-            </button>
-            <button
-              type="button"
-              :disabled="isSaving"
-              @click="deleteRow(row)"
-              class="text-sm font-medium text-red-600 hover:text-red-500 disabled:opacity-50 dark:text-red-400"
-            >
-              Delete
-            </button>
-          </td>
-        </tr>
-        <tr v-if="sortedRows.length === 0">
-          <td colspan="4" class="py-3 text-center text-sm text-gray-500 dark:text-gray-400">
-            No budget history.
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <!-- One directive per row. Flex-wrap (not a fixed table) so it stays usable in
+         narrow containers — the account drawer and mobile cards — without the
+         actions running off-screen. -->
+    <div class="divide-y divide-gray-100 dark:divide-white/5">
+      <div
+        v-for="row in sortedRows"
+        :key="row.id"
+        class="flex flex-wrap items-center gap-x-3 gap-y-2 py-2"
+        :class="dirty.has(row.id) ? 'bg-amber-50 dark:bg-amber-500/10' : ''"
+      >
+        <input v-model="row.date" type="date" @change="markDirty(row.id)" :class="inputClass" />
+        <span
+          v-if="row.ended"
+          class="inline-flex items-center rounded bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600 dark:bg-white/10 dark:text-gray-300"
+        >Ended</span>
+        <div v-else class="w-36">
+          <IntervalDropdown v-model="row.interval" @update:model-value="markDirty(row.id)" />
+        </div>
+        <div v-if="!row.ended" class="flex items-center gap-1.5">
+          <input v-model="row.amount" @input="markDirty(row.id)" :class="inputClass + ' w-24 text-right'" />
+          <span class="text-sm text-gray-500 dark:text-gray-400">{{ currency }}</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <button
+            v-if="dirty.has(row.id)"
+            type="button"
+            :disabled="isSaving"
+            @click="saveRow(row)"
+            class="text-sm font-medium text-indigo-600 hover:text-indigo-500 disabled:opacity-50 dark:text-indigo-400"
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            :disabled="isSaving"
+            @click="deleteRow(row)"
+            class="text-sm font-medium text-red-600 hover:text-red-500 disabled:opacity-50 dark:text-red-400"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+      <div v-if="sortedRows.length === 0" class="py-3 text-center text-sm text-gray-500 dark:text-gray-400">
+        No budget history.
+      </div>
+    </div>
 
     <ConfirmDialog
       :is-open="confirmDialog.isOpen.value"
@@ -107,8 +91,10 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 const props = defineProps<{ account: string; currency: string; directives: BudgetItem[] }>()
 const emit = defineEmits<{ changed: [] }>()
 
+// Match the height of AccountDropdown/CommodityDropdown/IntervalDropdown:
+// py-1.5 + text-base sm:text-sm, so all fields in a row line up.
 const inputClass =
-  'rounded-md bg-white px-2 py-1 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10'
+  'rounded-md bg-white px-2 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm dark:bg-white/5 dark:text-white dark:outline-white/10'
 
 const { isSaving, create, update, remove } = useBudgets()
 const confirmDialog = useConfirmDialog()

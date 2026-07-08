@@ -103,7 +103,7 @@
                 type="button"
                 :disabled="!canAdd || isSaving"
                 @click="addRow"
-                class="rounded-md bg-white px-2.5 py-1 text-sm font-semibold text-gray-900 inset-ring inset-ring-gray-300 hover:bg-gray-50 disabled:opacity-50 dark:bg-white/10 dark:text-white dark:inset-ring-white/10"
+                class="rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-gray-900 inset-ring inset-ring-gray-300 hover:bg-gray-50 disabled:opacity-50 dark:bg-white/10 dark:text-white dark:inset-ring-white/10"
               >Add</button>
             </td>
           </tr>
@@ -310,8 +310,9 @@ import IntervalDropdown from '@/components/common/IntervalDropdown.vue'
 import BudgetHistoryPanel from '@/components/budgets/BudgetHistoryPanel.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 
+// Match the dropdown height (py-1.5 + text-base sm:text-sm) so every field in a row aligns.
 const inputClass =
-  'block rounded-md bg-white px-2 py-1 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10'
+  'block rounded-md bg-white px-2 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 sm:text-sm dark:bg-white/5 dark:text-white dark:outline-white/10'
 
 const { isSaving, isLoading, fetch: fetchBudgets, create } = useBudgets()
 const { isMd } = useBreakpoint()
