@@ -19,6 +19,9 @@
               {{ showItems ? 'Hide details' : `See details (${items.length})` }}
             </button>
             <ul v-if="showItems" class="mt-2 max-h-48 overflow-y-auto rounded-md bg-gray-50 p-3 text-xs dark:bg-white/5">
+              <li v-if="itemsBaseDir" class="mb-1 border-b border-gray-200 pb-1 text-gray-400 dark:border-white/10 dark:text-gray-500">
+                in <code>{{ itemsBaseDir }}</code>
+              </li>
               <li v-for="it in items" :key="it.path" class="flex items-baseline justify-between gap-3 py-0.5">
                 <code class="text-gray-700 dark:text-gray-300">{{ it.path }}</code>
                 <span v-if="it.note" class="shrink-0 text-gray-400 dark:text-gray-500">{{ it.note }}</span>
@@ -75,6 +78,9 @@
                 {{ showSucceeded ? 'Hide' : 'See details' }}
               </button>
               <ul v-if="showSucceeded" class="mt-1 max-h-40 overflow-y-auto rounded-md bg-gray-50 p-3 text-xs dark:bg-white/5">
+                <li v-if="resultBaseDir" class="mb-1 border-b border-gray-200 pb-1 text-gray-400 dark:border-white/10 dark:text-gray-500">
+                  in <code>{{ resultBaseDir }}</code>
+                </li>
                 <li v-for="it in succeeded" :key="it.path" class="flex items-baseline justify-between gap-3 py-0.5">
                   <code class="text-gray-700 dark:text-gray-300">{{ it.path }}</code>
                   <span v-if="it.note" class="shrink-0 text-gray-400 dark:text-gray-500">{{ it.note }}</span>
@@ -101,6 +107,9 @@
                 {{ showFailed ? 'Hide' : 'See details' }}
               </button>
               <ul v-if="showFailed" class="mt-1 max-h-40 overflow-y-auto rounded-md bg-red-50 p-3 text-xs dark:bg-red-500/10">
+                <li v-if="resultBaseDir" class="mb-1 border-b border-red-200 pb-1 text-gray-500 dark:border-red-500/20 dark:text-gray-400">
+                  in <code>{{ resultBaseDir }}</code>
+                </li>
                 <li v-for="f in failed" :key="f.path" class="py-0.5">
                   <code class="text-gray-700 dark:text-gray-300">{{ f.path }}</code>
                   <span class="text-red-600 dark:text-red-400"> — {{ f.reason }}</span>
@@ -158,6 +167,8 @@ const summaryHtml = computed(() => renderMarkdown(props.task.summary))
 const items = computed<AffectedItem[]>(
   () => (props.task.details?.items as AffectedItem[] | undefined) ?? [],
 )
+// Absolute directory the (config/recipes-relative) paths live under, shown once.
+const itemsBaseDir = computed(() => props.task.details?.baseDir as string | undefined)
 const showItems = ref(false)
 
 // Post-consent result.
@@ -167,6 +178,7 @@ const outcome = computed(
 )
 const succeeded = computed<AffectedItem[]>(() => outcome.value?.succeeded ?? [])
 const failed = computed<FailedItem[]>(() => outcome.value?.failed ?? [])
+const resultBaseDir = computed(() => applyResult.value?.baseDir as string | undefined)
 const resultSummary = computed(() => (applyResult.value?.summary as string | undefined) ?? 'Done.')
 const showSucceeded = ref(false)
 const showFailed = ref(false)

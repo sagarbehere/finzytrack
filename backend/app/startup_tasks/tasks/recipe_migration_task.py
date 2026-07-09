@@ -24,6 +24,18 @@ from app.startup_tasks.base import StartupTask
 TASK_ID = "recipes-upgrade"
 DOCS_PATH = "upgrade-notes/dashboards-step-format"
 
+# Recipes live under config_dir/recipes, and config_dir is always ./config
+# (backend/CLAUDE.md), so a recipes-relative path (e.g. "dashboards/x.json")
+# displays as "config/recipes/dashboards/x.json" — the folder the user can find
+# it in. The absolute anchor for these is `baseDir` (§ _base_dir), shown once.
+_DISPLAY_PREFIX = "config/recipes"
+
+
+def _display(rel_path: str) -> str:
+    """A recipes-relative path (`dashboards/x.json`) → the config-relative path
+    the modal shows (`config/recipes/dashboards/x.json`)."""
+    return f"{_DISPLAY_PREFIX}/{rel_path}"
+
 
 class RecipeMigrationTask(StartupTask):
     id = TASK_ID
@@ -32,10 +44,22 @@ class RecipeMigrationTask(StartupTask):
     def __init__(self, recipes_dir: Path) -> None:
         self._recipes_dir = recipes_dir
 
+    def _base_dir(self) -> str:
+        """The absolute app/working directory that `config/recipes` lives under —
+        the modal shows it once as the anchor for the config/recipes-relative
+        paths (joining the two gives the file's real location on this install)."""
+        return str(self._recipes_dir.resolve().parent.parent)
+
     def detect(self, consented: bool = False) -> StartupTaskInfo | None:
         pending = detect_pending(self._recipes_dir)
         if pending["total"] == 0:
             return None
+
+        # Decorate for the modal: config/recipes-relative paths + the absolute base.
+        pending["items"] = [
+            {"path": _display(it["path"]), "note": it.get("note")} for it in pending["items"]
+        ]
+        pending["baseDir"] = self._base_dir()
 
         n = pending["legacy_dashboards"]
         w = pending["standalone_widgets"]
@@ -67,7 +91,7 @@ class RecipeMigrationTask(StartupTask):
             )
 
         summary = (
-            f"This version of Finzytrack uses a new dashboard format. {what} need to be "
+            f"This version of Finzytrack uses a new dashboard recipe format. {what} need to be "
             "upgraded before your dashboards can be shown.\n\n"
             "Nothing is changed until you choose to upgrade. When you do, a timestamped "
             "backup of every changed file is saved first (changed dashboards keep a .backup "
@@ -88,17 +112,20 @@ class RecipeMigrationTask(StartupTask):
     def apply(self) -> dict[str, Any]:
         report = apply_recipe_migration(self._recipes_dir)
         # Normalized outcome the startup modal renders generically (base.py):
-        # succeeded/failed lists of {path, note?} / {path, reason}.
+        # succeeded/failed lists of {path, note?} / {path, reason}, with paths in
+        # the config/recipes-relative display form (anchored by `baseDir`).
         succeeded = (
-            [{"path": f"dashboards/{n}", "note": "upgraded"} for n in report.migrated_dashboards]
-            + [{"path": f"widgets/{n}", "note": "inlined into its dashboard"} for n in report.inlined_widgets]
-            + [{"path": f"widgets/{o}", "note": f"rehomed into '{d}'"} for o, d in report.rehomed_orphans]
+            [{"path": _display(f"dashboards/{n}"), "note": "upgraded"} for n in report.migrated_dashboards]
+            + [{"path": _display(f"widgets/{n}"), "note": "inlined into its dashboard"} for n in report.inlined_widgets]
+            + [{"path": _display(f"widgets/{o}"), "note": f"rehomed into '{d}'"} for o, d in report.rehomed_orphans]
         )
+        failed = [{"path": _display(e["path"]), "reason": e["reason"]} for e in report.errors]
         return {
             "migrated_dashboards": report.migrated_dashboards,
             "inlined_widgets": report.inlined_widgets,
             "rehomed_orphans": [{"widget": o, "dashboard": d} for o, d in report.rehomed_orphans],
-            "errors": report.errors,  # [{path, reason}] — also the outcome.failed list
-            "outcome": {"succeeded": succeeded, "failed": report.errors},
+            "errors": failed,  # [{path, reason}] — also the outcome.failed list
+            "outcome": {"succeeded": succeeded, "failed": failed},
+            "baseDir": self._base_dir(),
             "summary": report.summary(),
         }

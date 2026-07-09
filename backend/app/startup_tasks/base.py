@@ -21,15 +21,22 @@ class StartupTask(ABC):
     change is needed:
 
       detect() → StartupTaskInfo.details["items"] = [{"path": str, "note"?: str}]
+                 StartupTaskInfo.details["baseDir"] = str   # absolute anchor (optional)
           the affected files, shown behind "See details" before the user consents.
 
       apply()  → result["outcome"] = {
           "succeeded": [{"path": str, "note"?: str}],
           "failed":    [{"path": str, "reason": str}],   # same list as result["errors"]
       }
+                 result["baseDir"] = str   # absolute anchor (optional)
           what happened, shown after applying. Keep also returning `result["errors"]`
           (the failed list) — the registry uses it to record consent on partial
           failure.
+
+    `path` is a short, human-locatable relative path (e.g. "config/recipes/x.json");
+    `baseDir` is the absolute directory those paths are relative to, so the modal
+    can show it once as context (joining the two gives the real file location) —
+    useful on desktop where the config dir is buried in a platform data folder.
     """
 
     id: str
