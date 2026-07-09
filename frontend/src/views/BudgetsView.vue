@@ -12,12 +12,23 @@
     <div class="mb-4 flex flex-wrap items-end gap-4">
       <div>
         <label class="block text-xs font-medium text-gray-500 dark:text-gray-400">Filter by account</label>
-        <input
-          v-model="filter"
-          type="text"
-          placeholder="Account…"
-          class="mt-1 block w-64 rounded-md bg-white px-3 py-1.5 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10"
-        />
+        <div class="relative mt-1 w-64">
+          <input
+            v-model="filter"
+            type="text"
+            placeholder="Account…"
+            class="block w-full rounded-md bg-white py-1.5 pr-8 pl-3 text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500"
+          />
+          <button
+            v-if="filter"
+            type="button"
+            @click="filter = ''"
+            aria-label="Clear account filter"
+            class="absolute inset-y-0 right-0 flex items-center pr-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+          >
+            <XMarkIcon class="size-4" aria-hidden="true" />
+          </button>
+        </div>
       </div>
       <div>
         <label class="block text-xs font-medium text-gray-500 dark:text-gray-400">Current budget as of</label>
@@ -37,7 +48,7 @@
             <ChevronUpDownIcon class="col-start-1 row-start-1 size-5 self-center justify-self-end text-gray-500 sm:size-4 dark:text-gray-400" aria-hidden="true" />
           </ListboxButton>
           <ListboxOptions
-            class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline-1 outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10"
+            class="absolute z-30 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline-1 outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10"
           >
             <ListboxOption v-for="c in ['', ...currencies]" :key="c || 'all'" :value="c" as="template" v-slot="{ active, selected }">
               <li :class="[active ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'text-gray-900 dark:text-white', 'relative cursor-default py-2 pr-9 pl-3 select-none']">
@@ -296,7 +307,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import { Listbox, ListboxButton, ListboxOption, ListboxOptions } from '@headlessui/vue'
 import { ChevronUpDownIcon } from '@heroicons/vue/16/solid'
-import { CheckIcon, ChevronRightIcon } from '@heroicons/vue/20/solid'
+import { CheckIcon, ChevronRightIcon, XMarkIcon } from '@heroicons/vue/20/solid'
 import { PencilSquareIcon, CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/vue/24/solid'
 import { useBudgets } from '@/composables/useBudgets'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
