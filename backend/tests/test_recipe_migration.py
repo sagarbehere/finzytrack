@@ -199,7 +199,7 @@ def test_migrate_dir_skips_malformed_file_and_reports(tmp_path: Path):
     (root / "dashboards" / "good.json").write_text(json.dumps(good), encoding="utf-8")
 
     report = migrate_recipes_dir(root)
-    assert any("broken.json" in e for e in report.errors)
+    assert any("broken.json" in e["path"] for e in report.errors)  # errors are {path, reason}
     assert "good.json" in report.migrated_dashboards  # the good file still migrates
 
 

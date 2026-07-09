@@ -87,10 +87,18 @@ class RecipeMigrationTask(StartupTask):
 
     def apply(self) -> dict[str, Any]:
         report = apply_recipe_migration(self._recipes_dir)
+        # Normalized outcome the startup modal renders generically (base.py):
+        # succeeded/failed lists of {path, note?} / {path, reason}.
+        succeeded = (
+            [{"path": f"dashboards/{n}", "note": "upgraded"} for n in report.migrated_dashboards]
+            + [{"path": f"widgets/{n}", "note": "inlined into its dashboard"} for n in report.inlined_widgets]
+            + [{"path": f"widgets/{o}", "note": f"rehomed into '{d}'"} for o, d in report.rehomed_orphans]
+        )
         return {
             "migrated_dashboards": report.migrated_dashboards,
             "inlined_widgets": report.inlined_widgets,
             "rehomed_orphans": [{"widget": o, "dashboard": d} for o, d in report.rehomed_orphans],
-            "errors": report.errors,
+            "errors": report.errors,  # [{path, reason}] — also the outcome.failed list
+            "outcome": {"succeeded": succeeded, "failed": report.errors},
             "summary": report.summary(),
         }

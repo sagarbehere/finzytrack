@@ -40,6 +40,8 @@ def test_detect_is_read_only_and_surfaces_action_required(tmp_path: Path):
     assert t.requires_consent is True
     assert t.docs_path
     assert t.details["legacy_dashboards"] == 1
+    # Normalized affected-file list the modal shows behind "See details".
+    assert {"path": "dashboards/d.json", "note": "dashboard"} in t.details["items"]
 
 
 def test_no_task_when_recipes_already_v2(tmp_path: Path):
@@ -63,6 +65,9 @@ def test_apply_runs_migration_and_then_self_retires(tmp_path: Path):
     assert len(registry.detect()) == 1  # pending before
     result = registry.apply("recipes-upgrade")
     assert "d.json" in result["migrated_dashboards"]
+    # Normalized outcome the modal renders after applying.
+    assert {"path": "dashboards/d.json", "note": "upgraded"} in result["outcome"]["succeeded"]
+    assert result["outcome"]["failed"] == []
 
     # Data-driven task self-retires once everything is at the target version.
     assert build_startup_registry(config, recipes).detect() == []
@@ -93,6 +98,9 @@ def test_partial_migration_downgrades_gate_to_dismissible_notice(tmp_path: Path)
     # Consent + apply → the file can't be migrated (best-effort per file).
     result = build_startup_registry(config, recipes).apply("recipes-upgrade")
     assert result["errors"]  # partial failure recorded
+    # Failed items are normalized {path, reason} and mirror result["errors"].
+    assert result["outcome"]["failed"] == result["errors"]
+    assert any(f["path"] == "dashboards/broken.json" and f["reason"] for f in result["outcome"]["failed"])
 
     # A fresh registry (reads persisted consent) now surfaces a NON-gating notice
     # instead of re-blocking — the no-permanent-wedge guarantee.

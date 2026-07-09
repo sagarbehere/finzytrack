@@ -64,5 +64,5 @@ def apply_recipe_migration(recipes_dir: Path) -> MigrationReport:
         for oid, dash_id in report.rehomed_orphans:
             logger.info("  rehomed orphan widget '%s' → dashboard '%s'", oid, dash_id)
         for err in report.errors:
-            logger.warning("  recipe migration: %s", err)
+            logger.warning("  recipe migration: %s — %s", err["path"], err["reason"])
     return report

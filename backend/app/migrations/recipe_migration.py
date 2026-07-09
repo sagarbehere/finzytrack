@@ -159,7 +159,8 @@ class MigrationReport:
     inlined_widgets: list[str] = field(default_factory=list)
     #: orphan widget id → new wrapper-dashboard id it was rehomed into.
     rehomed_orphans: list[tuple[str, str]] = field(default_factory=list)
-    errors: list[str] = field(default_factory=list)
+    #: per-file failures, normalized as {path, reason} (see startup_tasks/base.py).
+    errors: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def changed(self) -> bool:
@@ -182,29 +183,37 @@ def _load_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def detect_pending(recipes_dir: Path) -> dict[str, int]:
-    """Read-only: how many recipes are below the target format. NEVER writes.
+def detect_pending(recipes_dir: Path) -> dict[str, Any]:
+    """Read-only: which recipes are below the target format. NEVER writes.
 
-    Returns {legacy_dashboards, standalone_widgets, total}. Used by the startup
-    task to decide whether to surface an upgrade prompt — detection must not
-    mutate anything, so the user can consent first."""
+    Returns {legacy_dashboards, standalone_widgets, total, items} where `items`
+    is the normalized affected-file list `[{path, note}]` the startup modal shows
+    behind "See details" (see app/startup_tasks/base.py for the shape). Detection
+    must not mutate anything, so the user can consent first."""
     dashboards_dir = recipes_dir / "dashboards"
     widgets_dir = recipes_dir / "widgets"
 
+    items: list[dict[str, str]] = []
+
     legacy_dashboards = 0
     if dashboards_dir.is_dir():
-        for df in dashboards_dir.glob("*.json"):
+        for df in sorted(dashboards_dir.glob("*.json")):
             data = _load_json(df)
             if data is not None and data.get("schemaVersion") != SCHEMA_VERSION:
                 legacy_dashboards += 1
+                items.append({"path": f"dashboards/{df.name}", "note": "dashboard"})
 
-    standalone_widgets = (
-        sum(1 for _ in widgets_dir.glob("*.json")) if widgets_dir.is_dir() else 0
-    )
+    standalone_widgets = 0
+    if widgets_dir.is_dir():
+        for wf in sorted(widgets_dir.glob("*.json")):
+            standalone_widgets += 1
+            items.append({"path": f"widgets/{wf.name}", "note": "standalone widget"})
+
     return {
         "legacy_dashboards": legacy_dashboards,
         "standalone_widgets": standalone_widgets,
         "total": legacy_dashboards + standalone_widgets,
+        "items": items,
     }
 
 
@@ -231,7 +240,7 @@ def migrate_recipes_dir(
         for wf in sorted(widgets_dir.glob("*.json")):
             data = _load_json(wf)
             if data is None or "id" not in data:
-                report.errors.append(f"skip unparseable widget {wf.name}")
+                report.errors.append({"path": f"widgets/{wf.name}", "reason": "unparseable or missing id"})
                 continue
             standalone[data["id"]] = data
             standalone_files[data["id"]] = wf
@@ -242,7 +251,7 @@ def migrate_recipes_dir(
         for df in sorted(dashboards_dir.glob("*.json")):
             data = _load_json(df)
             if data is None:
-                report.errors.append(f"skip unparseable dashboard {df.name}")
+                report.errors.append({"path": f"dashboards/{df.name}", "reason": "unparseable JSON"})
                 continue
             if data.get("schemaVersion") == SCHEMA_VERSION:
                 report.skipped_already_v2.append(df.name)
@@ -250,7 +259,7 @@ def migrate_recipes_dir(
             try:
                 migrated = migrate_dashboard(data, standalone, inlined)
             except Exception as e:  # noqa: BLE001 — best-effort per file
-                report.errors.append(f"error migrating {df.name}: {e}")
+                report.errors.append({"path": f"dashboards/{df.name}", "reason": str(e)})
                 continue
             if write:
                 writer(df, json.dumps(migrated, indent=2, ensure_ascii=False) + "\n")
@@ -270,7 +279,7 @@ def migrate_recipes_dir(
         try:
             migrated_widget = migrate_widget(standalone[oid])
         except Exception as e:  # noqa: BLE001 — best-effort per file
-            report.errors.append(f"could not rehome orphan widget '{oid}': {e}")
+            report.errors.append({"path": f"widgets/{oid}", "reason": f"could not rehome orphan widget: {e}"})
             continue
         # Derive a non-colliding dashboard id/filename for the wrapper.
         dash_id = oid if oid not in existing_dash_ids else f"{oid}-widget"

@@ -1,7 +1,7 @@
 /**
  * Startup-task gate logic (dev-docs/upgrades.md): read-only detection surfaces
- * an action_required task, applying it re-detects and clears the gate, and a
- * failed detection never blocks the app.
+ * an action_required task, applying it returns the result (the modal shows it,
+ * then re-detects to clear the gate), and a failed detection never blocks the app.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -54,16 +54,23 @@ describe('useStartupTasks', () => {
     )
   })
 
-  it('applying re-detects and clears the gate', async () => {
+  it('applying returns the result and leaves the gate up until re-detected', async () => {
     getStartupTasks.mockResolvedValueOnce(ok({ tasks: [gateTaskInfo] }))
     const s = useStartupTasks()
     await s.checkStartupTasks()
     expect(s.gateTask.value).not.toBeNull()
 
-    applyStartupTask.mockResolvedValue(ok({ id: 'recipes-upgrade', applied: true, message: 'done', result: {} }))
-    getStartupTasks.mockResolvedValueOnce(ok({ tasks: [] })) // re-detect after apply
-    const applied = await s.applyStartupTask('recipes-upgrade')
-    expect(applied).toBe(true)
+    // apply() returns the result payload (the modal renders it); it does NOT
+    // re-detect — the gate stays up so the result screen can show.
+    const outcome = { succeeded: [{ path: 'dashboards/d.json', note: 'upgraded' }], failed: [] }
+    applyStartupTask.mockResolvedValue(ok({ id: 'recipes-upgrade', applied: true, message: 'done', result: { outcome } }))
+    const result = await s.applyStartupTask('recipes-upgrade')
+    expect(result).toEqual({ outcome })
+    expect(s.gateTask.value).not.toBeNull() // still gating until the modal re-detects
+
+    // The modal re-detects on "Continue" → a self-retired task clears the gate.
+    getStartupTasks.mockResolvedValueOnce(ok({ tasks: [] }))
+    await s.checkStartupTasks()
     expect(s.gateTask.value).toBeNull()
   })
 

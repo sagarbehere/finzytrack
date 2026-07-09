@@ -2,7 +2,6 @@ import { ref, computed, readonly } from 'vue'
 import { StartupService } from '@/services/generated-api'
 import type { StartupTaskInfo } from '@/services/generated-api'
 import { errorHandler } from '@/utils/ErrorHandler'
-import { useToast } from '@/composables/useNotifications'
 
 /**
  * Pending startup tasks (upgrades / notices) detected by the backend at launch.
@@ -48,8 +47,15 @@ async function checkStartupTasks(): Promise<void> {
   }
 }
 
-/** Apply a task on user consent, then re-detect (a successful task disappears). */
-async function applyStartupTask(taskId: string): Promise<boolean> {
+/**
+ * Apply a task on user consent and return its result (the `outcome`/`errors`
+ * payload the modal renders). Returns null on failure (`applyError` is set).
+ *
+ * Does NOT re-detect — the caller (StartupGate) shows the result screen first,
+ * then calls `checkStartupTasks()` when the user dismisses it, so the gate stays
+ * up long enough to display what happened.
+ */
+async function applyStartupTask(taskId: string): Promise<Record<string, unknown> | null> {
   isApplying.value = true
   applyError.value = null
   try {
@@ -57,27 +63,11 @@ async function applyStartupTask(taskId: string): Promise<boolean> {
     if (!resp.success) {
       throw new Error(resp.error?.message || 'Upgrade failed')
     }
-    // Best-effort per file: surface any items that couldn't be upgraded as a
-    // dismissible warning. The gate still clears (the backend downgrades a
-    // consented-but-incomplete task to a non-blocking notice) so the app loads
-    // what succeeded instead of wedging on the failures.
-    const errors = (resp.data?.result?.errors as string[] | undefined) ?? []
-    if (errors.length > 0) {
-      useToast().warning(
-        'Some items could not be upgraded',
-        `${errors.length} recipe file${errors.length === 1 ? '' : 's'} couldn't be upgraded and ` +
-          "won't load until fixed. Edit or remove the affected file(s), or restore the original " +
-          'from its timestamped .backup.',
-      )
-    }
-    // Re-detect: a completed migration self-retires and the gate clears.
-    const after = await StartupService.getStartupTasks()
-    tasks.value = after.success && after.data ? after.data.tasks : []
-    return true
+    return (resp.data?.result as Record<string, unknown> | undefined) ?? {}
   } catch (err: unknown) {
     applyError.value = err instanceof Error ? err.message : 'Upgrade failed'
     errorHandler.display(err)
-    return false
+    return null
   } finally {
     isApplying.value = false
   }

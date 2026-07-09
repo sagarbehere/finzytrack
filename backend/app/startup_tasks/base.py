@@ -14,6 +14,22 @@ class StartupTask(ABC):
     `id` must be stable. `one_shot` tasks are recorded in the upgrade-state once
     applied/acknowledged so they don't re-surface; data-driven tasks (the
     default) self-retire when `detect()` returns None.
+
+    Normalized shapes the startup modal (StartupGate.vue) renders generically —
+    fill these so any task gets the "See details / N succeeded, M failed" UI for
+    free. They live inside the untyped `details`/`result` dicts, so no wire-schema
+    change is needed:
+
+      detect() → StartupTaskInfo.details["items"] = [{"path": str, "note"?: str}]
+          the affected files, shown behind "See details" before the user consents.
+
+      apply()  → result["outcome"] = {
+          "succeeded": [{"path": str, "note"?: str}],
+          "failed":    [{"path": str, "reason": str}],   # same list as result["errors"]
+      }
+          what happened, shown after applying. Keep also returning `result["errors"]`
+          (the failed list) — the registry uses it to record consent on partial
+          failure.
     """
 
     id: str
