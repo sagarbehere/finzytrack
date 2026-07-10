@@ -211,7 +211,79 @@ def test_ledger_is_currency_substituted_and_hash_matches(bundle):
     assert follow.would_change() is False
 
 
-# ── there is no force/overwrite path ─────────────────────────────────────────
+# ── demo ledgers are app-owned: replaced, not protected ──────────────────────
+
+
+def _bundle_ledger_bytes(relpath, currency):
+    f = next(x for x in walk_bundle() if x.relpath == relpath)
+    return f.target_bytes(currency)
+
+
+def test_user_modified_demo_ledger_is_replaced(bundle):
+    """Unlike a dashboard, an edited demo ledger is NOT protected — a newer bundle
+    replaces the on-disk copy (backing it up first), because the demo ledger is
+    ours, not user data."""
+    bundle.seed_all()
+    edited = bundle.target("ledgers/plain.beancount")
+    edited.write_text("2020-01-01 open Assets:Cash INR\n; my note\n")
+    # A new release ships a different demo ledger.
+    (bundle.seed_data / "ledgers" / "plain.beancount").write_text("2021-02-02 open Assets:New INR\n")
+
+    report = apply_seed_refresh(UpgradeState(bundle.config_dir), bundle.config_dir, bundle.data_dir, bundle.currency)
+
+    assert edited.read_text() == "2021-02-02 open Assets:New INR\n"     # replaced with bundle
+    assert [p["path"] for p in report.refreshed] == ["data/ledgers/plain.beancount"]
+    assert report.skipped == []                                         # never "kept your edits"
+    backups = list(bundle.data_dir.rglob("*.backup"))
+    assert any(b.read_text() == "2020-01-01 open Assets:Cash INR\n; my note\n" for b in backups)
+
+
+def test_untracked_demo_ledger_is_refreshed(bundle):
+    """The reported bug: a demo ledger seeded before provenance existed has NO
+    installed record. It must still be replaced with the current bundle (it's
+    ours) — not skipped as 'user-created' the way an untracked dashboard is."""
+    stale = bundle.target("ledgers/plain.beancount")
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text("2019-01-01 open Assets:Old INR\n")               # old seeded copy, nothing recorded
+
+    report = apply_seed_refresh(UpgradeState(bundle.config_dir), bundle.config_dir, bundle.data_dir, bundle.currency)
+
+    assert stale.read_bytes() == _bundle_ledger_bytes("ledgers/plain.beancount", bundle.currency)
+    assert "data/ledgers/plain.beancount" in [p["path"] for p in report.refreshed]
+
+
+def test_unchanged_release_keeps_demo_ledger_edit(bundle):
+    """We compare against last-delivered, not on-disk — so a demo user's edits are
+    NOT wiped on every launch; only a genuinely newer bundle replaces them."""
+    bundle.seed_all()
+    edited = bundle.target("ledgers/plain.beancount")
+    edited.write_text("2020-01-01 open Assets:Cash INR\n; exploring\n")
+
+    report = apply_seed_refresh(UpgradeState(bundle.config_dir), bundle.config_dir, bundle.data_dir, bundle.currency)
+
+    assert edited.read_text() == "2020-01-01 open Assets:Cash INR\n; exploring\n"   # kept — bundle unchanged
+    assert report.would_change() is False
+
+
+def test_result_notes_are_past_tense_preview_future(bundle):
+    """The apply RESULT describes completed actions in past tense (added/refreshed);
+    the pre-consent preview (to_details) keeps future tense (new/will refresh)."""
+    bundle.seed_all()
+    (bundle.seed_config / "recipes" / "dashboards" / "c.json").write_text('{"id":"c"}\n')   # new dashboard
+    (bundle.seed_data / "ledgers" / "plain.beancount").write_text("2099-01-01 open Assets:X INR\n")  # newer ledger
+
+    report = apply_seed_refresh(UpgradeState(bundle.config_dir), bundle.config_dir, bundle.data_dir, bundle.currency)
+
+    result_notes = {p["path"]: p["note"] for p in report.to_result()["outcome"]["succeeded"]}
+    assert result_notes["config/recipes/dashboards/c.json"] == "added"
+    assert result_notes["data/ledgers/plain.beancount"] == "refreshed"
+
+    preview_notes = {p["path"]: p["note"] for p in report.to_details()["items"]}
+    assert preview_notes["config/recipes/dashboards/c.json"] == "new"
+    assert preview_notes["data/ledgers/plain.beancount"] == "will refresh"
+
+
+# ── there is no force/overwrite path (for recipes) ───────────────────────────
 
 
 def test_apply_never_overwrites_a_user_edit(bundle):

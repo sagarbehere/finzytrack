@@ -1,13 +1,14 @@
-"""The refresh operation — provenance-safe delivery of bundled seed content.
+"""The refresh operation — ownership-aware delivery of bundled seed content.
 
 A single, idempotent, backup-aware pass (the analogue of
-`app/migrations/runner.apply_recipe_migration`): walk the bundle, classify each
-file against the provenance record, and write only the files that are safe to
-touch — `new` and `pristine`. `user-modified`, `user-created`, and `user-deleted`
-files are always respected. Every overwrite is preceded by a timestamped backup.
+`app/migrations/runner.apply_recipe_migration`): walk the bundle and decide, per
+file, whether to write it — by **ownership**, which splits into two rules.
 
-Provenance (§4) compares the on-disk file to **the hash of what we last wrote
-there** (`installed`), not to the current bundle — the dpkg-conffiles model:
+**Recipes (dashboards) are user-editable → provenance-protected (§4).** We
+overwrite only when we can prove the on-disk copy is exactly what *we* last wrote
+(`pristine`); any local change, or no record at all, means hands off. Compares
+the on-disk file to **the hash of what we last wrote there** (`installed`), not
+to the current bundle — the dpkg-conffiles model:
 
     | on disk | in installed | on-disk vs installed | state         | action        |
     |---------|--------------|----------------------|---------------|---------------|
@@ -17,11 +18,21 @@ there** (`installed`), not to the current bundle — the dpkg-conffiles model:
     | no      | yes          | —                    | user-deleted  | do not resurrect |
     | no      | no           | —                    | new           | write         |
 
-There is **no force/overwrite mode**: a file the user created, edited, or deleted
-is never touched here, so the app can never clobber a user's modifications. To
-restore a demo they changed, the user copies the original back by hand (see the
-"New demo content" doc) — there is deliberately no one-click "reset" that could
-destroy edits.
+There is **no force/overwrite mode for recipes**: a dashboard the user created,
+edited, or deleted is never touched here, so we can never clobber a user's tweaks
+(their loss would send them hunting for a backup). Upgrading a *tweaked* dashboard
+to a new format is the migration task's job (it preserves the tweaks); this
+refresh only delivers content to demos the user hasn't touched.
+
+**Demo ledgers are app-owned → replaced, not protected.** They are disposable
+scaffolding we regenerate with fresh dates each release, not user-authored data
+(the user's real ledger is a *different* file we never touch). So we skip the
+user-edit test on ledgers entirely and replace the on-disk copy with the current
+bundle whenever it differs from what we last delivered — even if a demo-mode user
+edited it. The replace is still **consent-gated** (the seed-content notice) and
+**backed up** first; and we compare against *last-delivered* (not on-disk), so an
+unchanged release never nags and a demo user's exploration isn't wiped every
+launch. A ledger deleted after we delivered our current version is not resurrected.
 
 See dev-docs/seed-content-refresh.md §4–§5.
 """
@@ -85,19 +96,33 @@ def _decide(
     target = f.target_path(config_dir, data_dir)
     target_hash = f.target_hash(currency)
     on_disk_hash = _hash_file(target)
+    last_delivered = installed.get(f.relpath)
 
-    state = classify(on_disk_hash, installed.get(f.relpath))
-    if state == NEW:
-        action = _ADD
-    elif state == PRISTINE:
-        action = _BASELINE if on_disk_hash == target_hash else _REFRESH
-    elif state in (USER_MODIFIED, USER_CREATED):
-        # Never overwrite a file the user made or changed. There is deliberately
-        # no force path (a file a user edited can only be restored by hand — see
-        # dev-docs/seed-content-refresh.md and the "New demo content" doc).
-        action = _SKIP
-    else:  # USER_DELETED
-        action = _IGNORE
+    if f.kind == "ledger":
+        # App-owned demo ledger: replace with the current bundle whenever it
+        # differs from what we last delivered, WITHOUT the user-edit test — the
+        # demo ledger is ours, not user data. Compare target vs last-delivered so
+        # an unchanged release is a no-op and a demo user's edits aren't wiped
+        # every launch. Don't resurrect one the user deleted (unless we've never
+        # delivered it). The replace itself is consent-gated + backed up (apply).
+        if target_hash == last_delivered:
+            action = _BASELINE
+        elif on_disk_hash is None:
+            action = _ADD if last_delivered is None else _IGNORE
+        else:
+            action = _REFRESH
+    else:
+        # User-editable dashboard: provenance-protected (§4). Overwrite only a
+        # provably pristine copy; never a file the user made, changed, or deleted.
+        state = classify(on_disk_hash, last_delivered)
+        if state == NEW:
+            action = _ADD
+        elif state == PRISTINE:
+            action = _BASELINE if on_disk_hash == target_hash else _REFRESH
+        elif state in (USER_MODIFIED, USER_CREATED):
+            action = _SKIP
+        else:  # USER_DELETED
+            action = _IGNORE
 
     return _Decision(
         file=f, action=action,
@@ -137,8 +162,14 @@ class RefreshReport:
 
     def to_result(self) -> dict:
         """The `apply()` return shape (base.py): succeeded/failed outcome plus the
-        skipped list and `errors` (== failed) for the registry."""
-        succeeded = self.added + self.refreshed
+        skipped list and `errors` (== failed) for the registry. Notes are relabeled
+        to PAST tense here — this describes a completed apply, whereas the same
+        item lists carry future-tense notes ("new"/"will refresh") in to_details()
+        for the pre-consent preview."""
+        succeeded = (
+            [{**p, "note": "added"} for p in self.added]
+            + [{**p, "note": "refreshed"} for p in self.refreshed]
+        )
         return {
             "outcome": {"succeeded": succeeded, "failed": self.failed},
             "skipped": self.skipped,

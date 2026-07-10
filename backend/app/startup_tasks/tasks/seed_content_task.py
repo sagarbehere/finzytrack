@@ -77,9 +77,10 @@ class SeedContentTask(StartupTask):
         summary = (
             f"This version of Finzytrack includes {what} (demo dashboards and/or demo "
             "ledger data). You can add them now.\n\n"
-            "Nothing is changed until you choose to apply. When you do, a timestamped "
-            "backup of every replaced file is saved first, and anything you've edited "
-            "yourself is left untouched."
+            "Nothing changes until you choose to apply, and a timestamped backup of every "
+            "replaced file is saved first. Your own ledger is never touched. Demo dashboards "
+            "you've customized are left as they are; the built-in demo ledger is refreshed to "
+            "the latest version (it's sample data we provide, so we keep it current)."
         )
 
         return StartupTaskInfo(
