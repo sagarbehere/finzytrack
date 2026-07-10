@@ -11,6 +11,19 @@ _SEED_DATA_DIR_DEV = Path(__file__).parents[2] / "resources" / "seed_data"
 _SEED_DATA_DIR_FROZEN = Path(getattr(sys, '_MEIPASS', '')) / "backend" / "seed_data"
 SEED_DATA_DIR = _SEED_DATA_DIR_FROZEN if getattr(sys, 'frozen', False) else _SEED_DATA_DIR_DEV
 
+# The single placeholder the bundled ledgers carry for the user's primary
+# currency; substituted at seed time (and at seed-content refresh time — the
+# same helper is reused there so the substitution lives in exactly one place).
+CURRENCY_PLACEHOLDER = "{default_currency}"
+
+
+def substitute_currency(content: str, currency: str) -> str:
+    """Replace the ``{default_currency}`` placeholder with the user's chosen
+    currency. The one substitution rule, shared by first-run seeding and the
+    seed-content refresh so a ledger's recorded provenance hash and its written
+    bytes always agree. Files without the placeholder pass through unchanged."""
+    return content.replace(CURRENCY_PLACEHOLDER, currency)
+
 
 def copy_fake_ledger(data_dir: Path) -> None:
     """Copy fake.beancount from seed data into data_dir/ledgers/.
@@ -46,6 +59,6 @@ def seed_data_with_currency(data_dir: Path, currency: str) -> None:
     # Substitute {default_currency} in all .beancount files
     for bc_file in data_dir.rglob("*.beancount"):
         content = bc_file.read_text(encoding="utf-8")
-        if "{default_currency}" in content:
-            bc_file.write_text(content.replace("{default_currency}", currency), encoding="utf-8")
+        if CURRENCY_PLACEHOLDER in content:
+            bc_file.write_text(substitute_currency(content, currency), encoding="utf-8")
     logger.info(f"Seeded data directory → {data_dir} (currency={currency})")

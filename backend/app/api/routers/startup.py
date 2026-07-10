@@ -26,7 +26,13 @@ router = APIRouter()
 
 def _registry(config_manager: ConfigManager):
     config = config_manager.get_config()
-    return build_startup_registry(config.config_dir, Path(config.recipes_dir))
+    return build_startup_registry(
+        config.config_dir,
+        Path(config.recipes_dir),
+        data_dir=config.root_dir / "data",
+        currency=config.accounts.default_currency,
+        setup_complete=config.setup_complete,
+    )
 
 
 @router.get("/startup/tasks", response_model=ApiResponse[StartupTasksData], operation_id="getStartupTasks")
@@ -63,3 +69,53 @@ async def apply_startup_task(task_id: str, config_manager: ConfigManager = Depen
     else:
         logger.info("Startup task '%s' applied: %s", task_id, msg)
     return success_json_response(StartupApplyData(id=task_id, applied=True, message=msg, result=result))
+
+
+@router.post("/startup/tasks/{task_id}/dismiss", response_model=ApiResponse[StartupApplyData], operation_id="dismissStartupTask")
+async def dismiss_startup_task(task_id: str, config_manager: ConfigManager = Depends(get_config_manager)):
+    """Dismiss a non-blocking notice without applying it. For the seed-content
+    notice this snoozes it for the current bundle (it reappears only when a later
+    release ships different content); for a one-shot notice it marks it seen."""
+    registry = _registry(config_manager)
+    if registry.get(task_id) is None:
+        raise APIError(
+            message=f"Unknown startup task '{task_id}'.",
+            code=ec.STARTUP_TASK_NOT_FOUND,
+            status_code=404,
+        )
+    registry.dismiss(task_id)
+    logger.info("Dismissed startup task '%s'", task_id)
+    return success_json_response(
+        StartupApplyData(id=task_id, applied=False, message="Dismissed.", result={"dismissed": True})
+    )
+
+
+@router.post("/startup/seed/reset", response_model=ApiResponse[StartupApplyData], operation_id="resetDemoData")
+async def reset_demo_data(config_manager: ConfigManager = Depends(get_config_manager)):
+    """Settings → "Reset demo data": restore the bundled demo dashboards and demo
+    ledgers to their shipped state, ignoring provenance (backing up whatever's
+    there first). The always-available manual path for a user who tinkered and
+    wants the shipped demo back. See dev-docs/seed-content-refresh.md §9.3."""
+    config = config_manager.get_config()
+    from app.seed_refresh import apply_seed_refresh
+    from app.startup_tasks.upgrade_state import UpgradeState
+
+    state = UpgradeState(config.config_dir)
+    try:
+        report = apply_seed_refresh(
+            state,
+            config.config_dir,
+            config.root_dir / "data",
+            config.accounts.default_currency,
+            reset=True,
+        )
+    except Exception as e:  # noqa: BLE001 — surface as a clean API error
+        logger.error("Reset demo data failed: %s", e, exc_info=True)
+        raise APIError(
+            message="Could not reset demo data. See server logs for details.",
+            code=ec.STARTUP_TASK_FAILED, status_code=500,
+        )
+    logger.info("Reset demo data: %s", report.summary())
+    return success_json_response(
+        StartupApplyData(id="seed-content", applied=True, message=report.summary(), result=report.to_result())
+    )

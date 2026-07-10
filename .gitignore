@@ -9,6 +9,11 @@ backend/config/
 backend/resources/ai_reference/
 backend/resources/schemas/
 
+# Demo ledger — a generated build artifact, NOT committed. Bootstrapped by the
+# standalone scripts/generate_fake.py (dev: run it once; CI: regenerated at build
+# time by desktop/finzytrack.spec; tests: conftest generates if missing).
+backend/resources/seed_data/ledgers/fake.beancount
+
 __pycache__/
 *.pyc
 *.pyo

@@ -55,6 +55,22 @@ clr_loader_datas, clr_loader_binaries, clr_loader_hidden = collect_all('clr_load
 BACKEND = ROOT / 'backend'
 FRONTEND_DIST = ROOT / 'frontend' / 'dist'
 
+# ── Regenerate the demo ledger, anchored to the build month ──────────────────
+# The bundled demo ledger (resources/seed_data/ledgers/fake.beancount) ships with
+# dates ending ~the build month (+ a small future buffer) so its demo dashboards
+# aren't empty when a fresh install is opened. Regenerate it here, BEFORE Analysis
+# bundles resources/seed_data below. The generator is a standalone build/dev
+# script (imports app.*) and is not itself shipped. See
+# dev-docs/seed-content-refresh.md §8, §14.4.
+import datetime as _dt
+_gen = BACKEND / 'scripts' / 'generate_fake.py'
+_seed_ledger = BACKEND / 'resources' / 'seed_data' / 'ledgers' / 'fake.beancount'
+_anchor = _dt.date.today().strftime('%Y-%m')
+_rc = os.system(f'"{sys.executable}" "{_gen}" --anchor {_anchor} --out "{_seed_ledger}"')
+if _rc != 0:
+    raise SystemExit(f'Demo-ledger regeneration failed (exit {_rc}); aborting build.')
+print(f'[finzytrack.spec] Regenerated demo ledger anchored to {_anchor}')
+
 block_cipher = None
 
 a = Analysis(

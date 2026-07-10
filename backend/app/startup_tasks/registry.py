@@ -10,6 +10,7 @@ from app.schemas.startup_schemas import StartupTaskInfo
 from .base import StartupTask
 from .upgrade_state import UpgradeState
 from .tasks.recipe_migration_task import RecipeMigrationTask
+from .tasks.seed_content_task import SeedContentTask
 
 logger = logging.getLogger(__name__)
 
@@ -61,11 +62,40 @@ class StartupTaskRegistry:
             self._state.mark_completed(task_id)
         return result
 
+    def dismiss(self, task_id: str) -> dict[str, Any]:
+        """Dismiss a non-blocking notice without applying it. A task that offers a
+        `snooze()` (the seed-content notice) records a per-content-digest snooze so
+        it reappears only when a later release changes the bundle; a plain one-shot
+        notice is marked completed so it shows exactly once."""
+        task = self._tasks.get(task_id)
+        if task is None:
+            raise KeyError(task_id)
+        snooze = getattr(task, "snooze", None)
+        if callable(snooze):
+            snooze()
+        elif task.one_shot:
+            self._state.mark_completed(task_id)
+        return {"dismissed": True}
 
-def build_startup_registry(config_dir: Path, recipes_dir: Path) -> StartupTaskRegistry:
+
+def build_startup_registry(
+    config_dir: Path,
+    recipes_dir: Path,
+    data_dir: Path | None = None,
+    currency: str = "USD",
+    setup_complete: bool = True,
+) -> StartupTaskRegistry:
     """Construct the registry with all tasks bound to their dependencies.
 
-    New asset migrations / notices register here as additional tasks."""
-    registry = StartupTaskRegistry(UpgradeState(config_dir))
+    New asset migrations / notices register here as additional tasks. The
+    seed-content notice needs the data dir + currency (for the demo ledgers) and
+    is only registered once those are known — the state object is shared so the
+    task and the registry read/write one `.upgrade-state.json`."""
+    state = UpgradeState(config_dir)
+    registry = StartupTaskRegistry(state)
     registry.register(RecipeMigrationTask(recipes_dir))
+    if data_dir is not None:
+        registry.register(
+            SeedContentTask(state, config_dir, data_dir, currency, setup_complete)
+        )
     return registry

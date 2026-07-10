@@ -23,6 +23,22 @@ from app.core.ledger_initializer import LedgerInitializer
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_demo_ledger() -> None:
+    """Bootstrap the demo ledger for the test session.
+
+    ``resources/seed_data/ledgers/fake.beancount`` is a generated build artifact
+    (gitignored, not committed), so a fresh clone / CI checkout won't have it. The
+    seeding paths and the bundle walk need it present, so we generate it if
+    missing — via the standalone ``scripts/generate_fake.py`` (a dev/build tool,
+    never app runtime code). Fixed anchor → deterministic, date-independent test
+    runs. No-op when the file already exists."""
+    from datetime import date
+    from scripts.generate_fake import ensure_seed_ledger
+
+    ensure_seed_ledger(anchor_month=date(2026, 7, 1))
+
+
 @pytest.fixture
 def fixtures_dir() -> Path:
     """Path to the test fixtures directory."""

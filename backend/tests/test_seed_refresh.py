@@ -1,0 +1,357 @@
+"""Seed-content refresh: the §4 provenance table, backup-aware apply, first-run
+baseline, reset, and idempotency (dev-docs/seed-content-refresh.md).
+
+Uses a small *synthetic* bundle (patched over the real seed trees) so the
+provenance states can be exercised precisely and fast, independent of the real
+demo content.
+"""
+
+import hashlib
+from pathlib import Path
+
+import pytest
+
+from app.seed_refresh import (
+    apply_seed_refresh,
+    content_digest,
+    preview_refresh,
+    record_seed_baseline,
+    walk_bundle,
+)
+from app.seed_refresh import bundle as bundle_mod
+from app.seed_refresh.refresh import (
+    classify, NEW, PRISTINE, USER_MODIFIED, USER_CREATED, USER_DELETED,
+)
+from app.startup_tasks.upgrade_state import UpgradeState
+
+
+def _sha(p: Path) -> str:
+    return hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+@pytest.fixture
+def bundle(tmp_path, monkeypatch):
+    """A synthetic bundle patched over the real seed trees, plus empty target
+    config/ and data/ dirs. Returns a small handle with helpers."""
+    seed_config = tmp_path / "bundle" / "seed_config"
+    seed_data = tmp_path / "bundle" / "seed_data"
+    (seed_config / "recipes" / "dashboards").mkdir(parents=True)
+    (seed_data / "ledgers").mkdir(parents=True)
+
+    (seed_config / "recipes" / "dashboards" / "a.json").write_text('{"id":"a","v":1}\n')
+    (seed_config / "recipes" / "dashboards" / "b.json").write_text('{"id":"b","v":1}\n')
+    # A ledger carrying the currency placeholder, and one without.
+    (seed_data / "ledgers" / "demo.beancount").write_text(
+        "2020-01-01 open Assets:Cash {default_currency}\n"
+    )
+    (seed_data / "ledgers" / "plain.beancount").write_text(
+        "2020-01-01 open Assets:Cash INR\n"
+    )
+
+    monkeypatch.setattr(bundle_mod, "SEED_CONFIG_DIR", seed_config)
+    monkeypatch.setattr(bundle_mod, "SEED_DATA_DIR", seed_data)
+
+    config_dir = tmp_path / "config"
+    data_dir = tmp_path / "data"
+    config_dir.mkdir()
+    data_dir.mkdir()
+
+    class Handle:
+        pass
+
+    h = Handle()
+    h.seed_config, h.seed_data = seed_config, seed_data
+    h.config_dir, h.data_dir = config_dir, data_dir
+    h.currency = "EUR"
+
+    def target(relpath: str) -> Path:
+        root = data_dir if relpath.startswith("ledgers/") else config_dir
+        return root / relpath
+
+    def seed_all():
+        """Simulate first-run seeding: write every bundle file to its target
+        (currency-substituted for the placeholder ledger), then baseline."""
+        for f in walk_bundle():
+            t = target(f.relpath)
+            t.parent.mkdir(parents=True, exist_ok=True)
+            t.write_bytes(f.target_bytes(h.currency))
+        record_seed_baseline(config_dir, data_dir)
+
+    h.target = target
+    h.seed_all = seed_all
+    return h
+
+
+# ── classify() — the §4 table, in isolation ─────────────────────────────────
+
+
+def test_classify_covers_every_state():
+    assert classify("h", "h") == PRISTINE          # on disk, recorded, equal
+    assert classify("h2", "h") == USER_MODIFIED     # on disk, recorded, differ
+    assert classify("h", None) == USER_CREATED      # on disk, not recorded
+    assert classify(None, "h") == USER_DELETED      # absent, recorded
+    assert classify(None, None) == NEW              # absent, not recorded
+
+
+# ── first-run baseline → nothing to refresh ──────────────────────────────────
+
+
+def test_baseline_makes_everything_pristine(bundle):
+    bundle.seed_all()
+    state = UpgradeState(bundle.config_dir)
+    report = preview_refresh(bundle.config_dir, bundle.data_dir, bundle.currency, state.installed_hashes())
+    assert report.would_change() is False
+    assert report.added == [] and report.refreshed == []
+    # Digest was recorded so the notice self-retires.
+    assert state.applied_content_digest() == content_digest(walk_bundle())
+
+
+# ── new file delivered; unrelated on-disk files preserved ───────────────────
+
+
+def test_new_file_is_added_and_recorded(bundle):
+    # Only a.json + the two ledgers on disk & baselined; b.json is "new".
+    for rel in ("recipes/dashboards/a.json", "ledgers/demo.beancount", "ledgers/plain.beancount"):
+        t = bundle.target(rel)
+        t.parent.mkdir(parents=True, exist_ok=True)
+        t.write_bytes(next(f for f in walk_bundle() if f.relpath == rel).target_bytes(bundle.currency))
+    record_seed_baseline(bundle.config_dir, bundle.data_dir)
+
+    state = UpgradeState(bundle.config_dir)
+    report = apply_seed_refresh(state, bundle.config_dir, bundle.data_dir, bundle.currency)
+
+    assert bundle.target("recipes/dashboards/b.json").is_file()
+    assert [p["path"] for p in report.added] == ["config/recipes/dashboards/b.json"]
+    assert report.refreshed == []
+    assert UpgradeState(bundle.config_dir).installed_hashes()["recipes/dashboards/b.json"] == \
+        _sha(bundle.target("recipes/dashboards/b.json"))
+
+
+# ── pristine refresh backs up then overwrites ────────────────────────────────
+
+
+def test_pristine_file_is_refreshed_with_backup(bundle):
+    bundle.seed_all()
+    # A new release improves a.json in the bundle.
+    (bundle.seed_config / "recipes" / "dashboards" / "a.json").write_text('{"id":"a","v":2}\n')
+
+    state = UpgradeState(bundle.config_dir)
+    report = apply_seed_refresh(state, bundle.config_dir, bundle.data_dir, bundle.currency)
+
+    assert [p["path"] for p in report.refreshed] == ["config/recipes/dashboards/a.json"]
+    assert bundle.target("recipes/dashboards/a.json").read_text() == '{"id":"a","v":2}\n'
+    # A timestamped backup of the previous version sits beside it.
+    backups = list((bundle.config_dir / "recipes" / "dashboards").glob("a.json.*.backup"))
+    assert len(backups) == 1
+    assert backups[0].read_text() == '{"id":"a","v":1}\n'
+
+
+# ── user edits are never clobbered ───────────────────────────────────────────
+
+
+def test_user_modified_file_is_left_alone(bundle):
+    bundle.seed_all()
+    edited = bundle.target("recipes/dashboards/a.json")
+    edited.write_text('{"id":"a","MINE":true}\n')
+    # Even though the bundle also changed a.json, the user's edit wins.
+    (bundle.seed_config / "recipes" / "dashboards" / "a.json").write_text('{"id":"a","v":9}\n')
+
+    state = UpgradeState(bundle.config_dir)
+    report = apply_seed_refresh(state, bundle.config_dir, bundle.data_dir, bundle.currency)
+
+    assert edited.read_text() == '{"id":"a","MINE":true}\n'   # untouched
+    assert [p["path"] for p in report.skipped] == ["config/recipes/dashboards/a.json"]
+    assert report.refreshed == []
+
+
+def test_user_deleted_file_is_not_resurrected(bundle):
+    bundle.seed_all()
+    deleted = bundle.target("recipes/dashboards/a.json")
+    deleted.unlink()
+
+    state = UpgradeState(bundle.config_dir)
+    report = apply_seed_refresh(state, bundle.config_dir, bundle.data_dir, bundle.currency)
+
+    assert not deleted.exists()                 # stays gone
+    assert report.added == [] and report.refreshed == []
+
+
+# ── idempotency ──────────────────────────────────────────────────────────────
+
+
+def test_reapply_is_a_noop_without_backup_churn(bundle):
+    bundle.seed_all()
+    state = UpgradeState(bundle.config_dir)
+    apply_seed_refresh(state, bundle.config_dir, bundle.data_dir, bundle.currency)  # nothing pending
+
+    def backups():
+        return list(bundle.config_dir.rglob("*.backup")) + list(bundle.data_dir.rglob("*.backup"))
+
+    assert backups() == []
+    report = apply_seed_refresh(UpgradeState(bundle.config_dir), bundle.config_dir, bundle.data_dir, bundle.currency)
+    assert report.would_change() is False
+    assert backups() == []   # no writes → no backups
+
+
+# ── currency substitution + hash agreement ───────────────────────────────────
+
+
+def test_ledger_is_currency_substituted_and_hash_matches(bundle):
+    state = UpgradeState(bundle.config_dir)
+    apply_seed_refresh(state, bundle.config_dir, bundle.data_dir, bundle.currency)  # first delivery
+
+    demo = bundle.target("ledgers/demo.beancount")
+    assert "{default_currency}" not in demo.read_text()
+    assert "EUR" in demo.read_text()
+    # The recorded installed hash is the post-substitution hash (so the file reads
+    # pristine, not user-modified, on the next run).
+    assert UpgradeState(bundle.config_dir).installed_hashes()["ledgers/demo.beancount"] == _sha(demo)
+    follow = preview_refresh(bundle.config_dir, bundle.data_dir, bundle.currency,
+                             UpgradeState(bundle.config_dir).installed_hashes())
+    assert follow.would_change() is False
+
+
+# ── reset restores everything, backing up first ──────────────────────────────
+
+
+def test_reset_restores_modified_and_deleted(bundle):
+    bundle.seed_all()
+    edited = bundle.target("recipes/dashboards/a.json")
+    edited.write_text('{"id":"a","MINE":true}\n')
+    bundle.target("recipes/dashboards/b.json").unlink()
+
+    state = UpgradeState(bundle.config_dir)
+    report = apply_seed_refresh(state, bundle.config_dir, bundle.data_dir, bundle.currency, reset=True)
+
+    assert edited.read_text() == '{"id":"a","v":1}\n'                 # restored
+    assert bundle.target("recipes/dashboards/b.json").is_file()       # resurrected
+    # The pre-reset edited file was backed up.
+    assert list((bundle.config_dir / "recipes" / "dashboards").glob("a.json.*.backup"))
+    assert report.would_change() is True
+
+
+# ── state file schema (D2) ───────────────────────────────────────────────────
+
+
+def test_apply_writes_nested_v1_state(bundle):
+    import json
+    bundle.seed_all()
+    raw = json.loads((bundle.config_dir / ".upgrade-state.json").read_text())
+    assert raw["schemaVersion"] == 1
+    assert set(raw["tasks"]) == {"completed", "consented"}
+    assert raw["seed"]["appliedContentDigest"] == content_digest(walk_bundle())
+    assert set(raw["seed"]["installed"]) == {f.relpath for f in walk_bundle()}
+
+
+def test_legacy_flat_state_is_migrated_in_place(tmp_path):
+    """A pre-seed `.upgrade-state.json` (flat {completed, consented}) is read, its
+    task records preserved, and the file rewritten to the nested v1 shape once a
+    seed record is added (D2)."""
+    import json
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / ".upgrade-state.json").write_text(
+        json.dumps({"completed": ["old-notice"], "consented": ["recipes-upgrade"]})
+    )
+    state = UpgradeState(config)
+    assert state.is_completed("old-notice")
+    assert state.is_consented("recipes-upgrade")
+
+    state.record_seed_apply({"recipes/x.json": "h"}, "digest123")
+
+    raw = json.loads((config / ".upgrade-state.json").read_text())
+    assert raw["schemaVersion"] == 1
+    assert raw["tasks"]["completed"] == ["old-notice"]
+    assert raw["tasks"]["consented"] == ["recipes-upgrade"]
+    assert raw["seed"]["installed"] == {"recipes/x.json": "h"}
+    assert raw["seed"]["appliedContentDigest"] == "digest123"
+
+
+# ── SeedContentTask (the info notice) ────────────────────────────────────────
+
+
+def _seed_task(bundle, setup_complete=True):
+    from app.startup_tasks.tasks.seed_content_task import SeedContentTask
+    state = UpgradeState(bundle.config_dir)
+    return state, SeedContentTask(state, bundle.config_dir, bundle.data_dir, bundle.currency, setup_complete)
+
+
+def test_task_silent_until_setup_complete(bundle):
+    _, task = _seed_task(bundle, setup_complete=False)
+    assert task.detect() is None   # pending content, but setup not done → quiet
+
+
+def test_task_surfaces_info_notice_read_only(bundle):
+    from app.schemas.startup_schemas import SEVERITY_INFO
+    before = {p: p.read_bytes() for p in bundle.seed_config.rglob("*") if p.is_file()}
+    _, task = _seed_task(bundle)
+    info = task.detect()
+    assert info is not None
+    assert info.severity == SEVERITY_INFO
+    assert info.requires_consent is False
+    assert info.details["changed"] > 0
+    # detect() mutated nothing on disk.
+    assert {p: p.read_bytes() for p in bundle.seed_config.rglob("*") if p.is_file()} == before
+
+
+def test_task_retires_once_current(bundle):
+    bundle.seed_all()
+    _, task = _seed_task(bundle)
+    assert task.detect() is None
+
+
+def test_task_apply_delivers_then_retires(bundle):
+    state, task = _seed_task(bundle)
+    result = task.apply()
+    assert result["outcome"]["succeeded"]          # something delivered
+    assert result["errors"] == []
+    # Fresh task over the same state now finds nothing pending.
+    _, task2 = _seed_task(bundle)
+    assert task2.detect() is None
+
+
+def test_task_snooze_suppresses_then_new_content_refires(bundle):
+    state, task = _seed_task(bundle)
+    assert task.detect() is not None
+    task.snooze()
+    # Re-read state (snooze persisted) and re-detect → suppressed.
+    _, task2 = _seed_task(bundle)
+    assert task2.detect() is None
+    # A new release changes the bundle → different digest → notice returns.
+    (bundle.seed_config / "recipes" / "dashboards" / "a.json").write_text('{"id":"a","v":2}\n')
+    _, task3 = _seed_task(bundle)
+    assert task3.detect() is not None
+
+
+def test_registry_dismiss_snoozes_seed_task(bundle):
+    from app.startup_tasks.registry import StartupTaskRegistry
+    state, task = _seed_task(bundle)
+    reg = StartupTaskRegistry(state)
+    reg.register(task)
+    assert len(reg.detect()) == 1
+    reg.dismiss("seed-content")
+    # Snooze persisted → a fresh registry over the same dir sees nothing.
+    _, task2 = _seed_task(bundle)
+    reg2 = StartupTaskRegistry(UpgradeState(bundle.config_dir))
+    reg2.register(task2)
+    assert reg2.detect() == []
+
+
+# ── Endpoint round-trip ──────────────────────────────────────────────────────
+
+
+def test_reset_endpoint_returns_applied(test_client):
+    resp = test_client.post("/api/startup/seed/reset")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["data"]["id"] == "seed-content"
+    assert body["data"]["applied"] is True
+    assert "outcome" in body["data"]["result"]
+
+
+def test_dismiss_unknown_task_is_404(test_client):
+    from app import error_codes as ec
+    resp = test_client.post("/api/startup/tasks/does-not-exist/dismiss")
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == ec.STARTUP_TASK_NOT_FOUND

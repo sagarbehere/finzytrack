@@ -73,6 +73,42 @@ async function applyStartupTask(taskId: string): Promise<Record<string, unknown>
   }
 }
 
+/**
+ * Dismiss a non-blocking notice without applying it (the seed-content notice
+ * snoozes for the current bundle; a one-shot notice is marked seen). Best-effort:
+ * a failure is surfaced but never blocks the app.
+ */
+async function dismissStartupTask(taskId: string): Promise<void> {
+  try {
+    await StartupService.dismissStartupTask(taskId)
+  } catch (err: unknown) {
+    errorHandler.display(err)
+  }
+}
+
+/**
+ * Restore all bundled demo dashboards and demo ledgers to their shipped state
+ * (Settings → "Reset demo data"), ignoring provenance. Returns the result
+ * payload (the `outcome`/`skipped` itemization) or null on failure.
+ */
+async function resetDemoData(): Promise<Record<string, unknown> | null> {
+  isApplying.value = true
+  applyError.value = null
+  try {
+    const resp = await StartupService.resetDemoData()
+    if (!resp.success) {
+      throw new Error(resp.error?.message || 'Could not reset demo data')
+    }
+    return (resp.data?.result as Record<string, unknown> | undefined) ?? {}
+  } catch (err: unknown) {
+    applyError.value = err instanceof Error ? err.message : 'Could not reset demo data'
+    errorHandler.display(err)
+    return null
+  } finally {
+    isApplying.value = false
+  }
+}
+
 export function useStartupTasks() {
   return {
     tasks: readonly(tasks),
@@ -83,6 +119,8 @@ export function useStartupTasks() {
     applyError: readonly(applyError),
     checkStartupTasks,
     applyStartupTask,
+    dismissStartupTask,
+    resetDemoData,
     docsUrlFor,
   }
 }

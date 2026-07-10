@@ -8,11 +8,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const getStartupTasks = vi.fn()
 const applyStartupTask = vi.fn()
+const dismissStartupTask = vi.fn()
+const resetDemoData = vi.fn()
 
 vi.mock('@/services/generated-api', () => ({
   StartupService: {
     getStartupTasks: () => getStartupTasks(),
     applyStartupTask: (id: string) => applyStartupTask(id),
+    dismissStartupTask: (id: string) => dismissStartupTask(id),
+    resetDemoData: () => resetDemoData(),
   },
   ApiError: class ApiError extends Error {},
 }))
@@ -33,9 +37,21 @@ function ok<T>(data: T) {
   return { success: true, data, error: null }
 }
 
+const seedNotice = {
+  id: 'seed-content',
+  title: 'New demo content available',
+  summary: '2 new demo files.',
+  severity: 'info',
+  requires_consent: false,
+  docs_path: 'upgrade-notes/seed-content',
+  details: { items: [{ path: 'config/recipes/dashboards/budget-overview.json', note: 'new' }], changed: 1 },
+}
+
 beforeEach(() => {
   getStartupTasks.mockReset()
   applyStartupTask.mockReset()
+  dismissStartupTask.mockReset()
+  resetDemoData.mockReset()
 })
 
 describe('useStartupTasks', () => {
@@ -80,5 +96,34 @@ describe('useStartupTasks', () => {
     await s.checkStartupTasks()
     expect(s.checked.value).toBe(true)
     expect(s.gateTask.value).toBeNull()
+  })
+
+  it('exposes an info notice via infoTasks, not as the gate', async () => {
+    getStartupTasks.mockResolvedValue(ok({ tasks: [seedNotice] }))
+    const s = useStartupTasks()
+    await s.checkStartupTasks()
+    expect(s.gateTask.value).toBeNull()
+    expect(s.infoTasks.value.map((t) => t.id)).toEqual(['seed-content'])
+  })
+
+  it('dismiss calls the dismiss endpoint (snooze) without throwing on failure', async () => {
+    dismissStartupTask.mockResolvedValue(ok({ id: 'seed-content', applied: false, message: 'Dismissed.', result: { dismissed: true } }))
+    const s = useStartupTasks()
+    await s.dismissStartupTask('seed-content')
+    expect(dismissStartupTask).toHaveBeenCalledWith('seed-content')
+
+    // A dismiss failure is surfaced but never rejects (must not block the app).
+    dismissStartupTask.mockRejectedValue(new Error('offline'))
+    await expect(s.dismissStartupTask('seed-content')).resolves.toBeUndefined()
+  })
+
+  it('resetDemoData returns the result payload and null on failure', async () => {
+    const result = { outcome: { succeeded: [{ path: 'config/recipes/dashboards/a.json', note: 'refreshed' }], failed: [] }, skipped: [], summary: 'Demo content: refreshed 1.' }
+    resetDemoData.mockResolvedValue(ok({ id: 'seed-content', applied: true, message: 'ok', result }))
+    const s = useStartupTasks()
+    expect(await s.resetDemoData()).toEqual(result)
+
+    resetDemoData.mockResolvedValue({ success: false, data: null, error: { message: 'boom' } })
+    expect(await s.resetDemoData()).toBeNull()
   })
 })

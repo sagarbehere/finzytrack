@@ -1,7 +1,21 @@
 #!/usr/bin/env python3
-"""Generate a fake beancount ledger for demo/screenshot purposes."""
+"""Generate a fake beancount ledger for demo/screenshot purposes.
 
+Build/dev script (imports ``app.*`` — NOT shipped in the app). Deterministic
+(``random.seed(42)``, re-seeded per ``generate()`` call). The demo ledger is
+regenerated at *build time* so each release ships dates ending ~the build month
+(see dev-docs/seed-content-refresh.md §8). The generation logic below builds the
+ledger on a fixed reference calendar (…→2026-04); ``generate()`` then applies one
+uniform whole-day **shift** so the last transaction lands at
+``anchor_month + buffer_months``. Currencies are hardcoded (USD + INR) — the demo
+is illustrative multi-currency data, not the user's ledger, so it is never
+currency-substituted (that's for the ``one.beancount`` starter ledger).
+"""
+
+import argparse
+import calendar
 import random
+import re
 import uuid
 import hashlib
 from datetime import date, timedelta
@@ -9,11 +23,87 @@ from pathlib import Path
 
 random.seed(42)
 
+# The fixed reference calendar the body below is authored against. `generate()`
+# shifts every emitted date so the span ends at the requested anchor + buffer;
+# this is the "end month" the shift is measured from.
+_REFERENCE_END = date(2026, 4, 15)
+
+# The demo ledger deliberately keeps its currencies **hardcoded** (USD primary +
+# INR secondary): it's illustrative multi-currency data, not the user's real
+# ledger, so it is never currency-substituted. (The `{default_currency}`
+# placeholder + seed-time substitution is for `one.beancount`, the starter ledger
+# a real-data user builds on — that one adopts the user's chosen currency.)
+
+# Budget directives (Beancount `custom "budget"`), authored on the reference
+# calendar so the uniform shift re-dates them relative to the anchor. Effective
+# ~15 months before the span end, with a mid-span Groceries raise (effective
+# dating), a nested parent/child pair, a non-monthly (yearly) line, and a second
+# currency (INR) line — so a calendar-aligned "this month" has both an effective
+# budget and actuals.
+BUDGET_DIRECTIVES = """
+; --- Budgets ---
+; Effective-dated: a later directive for the same account supersedes an earlier
+; one from its date. Demonstrates monthly/yearly intervals, a mid-span raise, a
+; nested parent/child pair, and a second currency.
+2025-01-01 custom "budget" Expenses:HouseRent        "monthly" 4200 USD
+2025-01-01 custom "budget" Expenses:Groceries        "monthly"  950 USD
+2025-07-01 custom "budget" Expenses:Groceries        "monthly" 1050 USD   ; raised mid-span (effective-dating)
+2025-01-01 custom "budget" Expenses:EatingOut        "monthly"  600 USD   ; typically runs over (demo)
+2025-01-01 custom "budget" Expenses:Utilities        "monthly"  320 USD
+2025-01-01 custom "budget" Expenses:Phone            "monthly"   80 USD
+2025-01-01 custom "budget" Expenses:Internet         "monthly"   90 USD
+2025-01-01 custom "budget" Expenses:Healthcare       "monthly"   50 USD
+2025-01-01 custom "budget" Expenses:Entertainment    "monthly"   50 USD
+2025-01-01 custom "budget" Expenses:Insurance        "monthly"  500 USD   ; parent aggregation node (nested pair)
+2025-01-01 custom "budget" Expenses:Insurance:Health "monthly"  450 USD   ; nested child
+2025-01-01 custom "budget" Expenses:Travel           "yearly"  4800 USD   ; non-monthly interval
+2025-01-01 custom "budget" Expenses:Groceries        "monthly" 1300 INR   ; second currency (multi-currency)
+""".strip()
+
+
+def _add_months(d: date, months: int) -> date:
+    """*d* plus *months* whole months, clamping the day to the target month."""
+    idx = (d.year * 12 + (d.month - 1)) + months
+    y, m0 = divmod(idx, 12)
+    m = m0 + 1
+    return date(y, m, min(d.day, calendar.monthrange(y, m)[1]))
+
+
+def _shift_days_for(anchor_month: date, buffer_months: int) -> int:
+    """The **day** offset to apply to every date so the reference span end
+    (``_REFERENCE_END``) lands at ``anchor_month + buffer_months``.
+
+    A whole-*day* shift (rather than a whole-month one) preserves every interval,
+    ordering, and weekday exactly — crucially it never collapses two distinct
+    days onto one, which a month-shift-with-day-clamp would (e.g. a `pad` on the
+    30th and its `balance` on the 31st must stay on different days). The end still
+    lands in the intended calendar month, so "this month / this year / trailing
+    12 months" stay populated."""
+    target_end = _add_months(anchor_month, buffer_months).replace(day=_REFERENCE_END.day)
+    return (target_end - _REFERENCE_END).days
+
+
+def _apply_day_shift(text: str, days: int) -> str:
+    """Shift every ``YYYY-MM-DD`` date token in *text* by *days*. All date tokens
+    in the output are real ledger dates (metadata carries ids/hashes, not dates),
+    so a uniform token shift re-anchors the ledger while preserving every relative
+    interval, ordering, and weekday."""
+    if days == 0:
+        return text
+
+    def _repl(m: re.Match) -> str:
+        d = date(int(m.group(1)), int(m.group(2)), int(m.group(3))) + timedelta(days=days)
+        return d.isoformat()
+
+    return re.sub(r"\b(\d{4})-(\d{2})-(\d{2})\b", _repl, text)
+
 def fake_id():
-    return str(uuid.uuid4())
+    # Derive from the *seeded* RNG (not uuid4, which is OS-random) so the whole
+    # ledger is byte-for-byte deterministic across runs — see §12 (determinism).
+    return str(uuid.UUID(int=random.getrandbits(128), version=4))
 
 def fake_hash():
-    return hashlib.sha256(uuid.uuid4().bytes).hexdigest()
+    return hashlib.sha256(random.getrandbits(256).to_bytes(32, "big")).hexdigest()
 
 def txn(dt, payee, narration, postings, source_account=None, external_id=None):
     """Generate a transaction string.
@@ -949,11 +1039,20 @@ def gen_unknown_expense(dt):
 
 # --- Main generation ---
 
-def generate():
+def generate(anchor_month: date = _REFERENCE_END.replace(day=1), buffer_months: int = 2):
+    """Return the demo ledger as a string.
+
+    ``anchor_month`` is the build/anchor month; the span is shifted so its last
+    transaction lands ``buffer_months`` months later (the small future buffer of
+    §8.3, so a calendar-aligned "this month" stays populated for the first stretch
+    of a release's life). Deterministic: the RNG is re-seeded on every call, so
+    the same ``(anchor_month, buffer_months)`` always yields byte-identical output.
+    """
+    random.seed(42)  # per-call reseed → deterministic across repeated calls
     all_txns = []  # list of (date, txn_string)
 
     start_date = date(2019, 1, 1)
-    end_date = date(2026, 4, 15)
+    end_date = _REFERENCE_END
 
     current = start_date
     while current <= end_date:
@@ -1278,20 +1377,91 @@ def generate():
     output.append("")
     output.append("")
 
+    # Budgets (custom "budget" directives)
+    output.append(BUDGET_DIRECTIVES)
+    output.append("")
+    output.append("")
+
     # Transactions
     for dt, t in all_txns:
         output.append(t)
         output.append("")
         output.append("")
 
-    return "\n".join(output)
+    text = "\n".join(output)
+
+    # Re-anchor: shift every date so the span ends at anchor_month + buffer_months.
+    text = _apply_day_shift(text, _shift_days_for(anchor_month, buffer_months))
+
+    return text
+
+
+# Where the CI build drops the regenerated ledger: the *bundled template*
+# (resources/seed_data/ledgers/), NOT the active data/ copy — the template is
+# what gets packaged and seeded. See dev-docs/seed-content-refresh.md §14.4.
+_BUNDLE_OUTPUT = (
+    Path(__file__).resolve().parent.parent
+    / "resources" / "seed_data" / "ledgers" / "fake.beancount"
+)
+
+
+def _parse_anchor(value: str) -> date:
+    """Parse a ``YYYY-MM`` (or ``YYYY-MM-DD``) build-anchor month."""
+    parts = value.split("-")
+    return date(int(parts[0]), int(parts[1]), 1)
+
+
+def ensure_seed_ledger(out: Path = _BUNDLE_OUTPUT, anchor_month: date | None = None,
+                       buffer_months: int = 2) -> Path:
+    """Generate the demo ledger at *out* **only if it's missing**, returning the
+    path. The demo ledger is a build artifact (gitignored, not committed), so a
+    fresh clone / CI / test run bootstraps it via this standalone script rather
+    than the app ever generating anything at runtime. Idempotent: a no-op when the
+    file already exists. Default anchor is the current month."""
+    if out.exists():
+        return out
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        generate(anchor_month=anchor_month or date.today().replace(day=1),
+                 buffer_months=buffer_months),
+        encoding="utf-8",
+    )
+    return out
+
 
 if __name__ == "__main__":
-    content = generate()
-    output_path = Path(__file__).resolve().parent.parent / "data" / "ledgers" / "fake.beancount"
-    with open(output_path, "w") as f:
+    parser = argparse.ArgumentParser(description="Generate the demo beancount ledger.")
+    parser.add_argument(
+        "--anchor", type=_parse_anchor, default=date.today().replace(day=1),
+        help="Build/anchor month YYYY-MM (default: current month). The span ends "
+             "at anchor + buffer.",
+    )
+    parser.add_argument(
+        "--buffer", type=int, default=2,
+        help="Future-buffer months added past the anchor (default: 2).",
+    )
+    parser.add_argument(
+        "--out", type=Path, default=_BUNDLE_OUTPUT,
+        help="Output path (default: the bundled seed_data template).",
+    )
+    parser.add_argument(
+        "--if-missing", action="store_true",
+        help="Generate only if the output file doesn't already exist (bootstrap).",
+    )
+    args = parser.parse_args()
+
+    if args.if_missing and args.out.exists():
+        print(f"Demo ledger already present → {args.out} (nothing to do)")
+        raise SystemExit(0)
+
+    content = generate(anchor_month=args.anchor, buffer_months=args.buffer)
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    with open(args.out, "w") as f:
         f.write(content)
     # Count stats
     lines = content.split("\n")
     txn_count = sum(1 for l in lines if l.startswith("20") and ' * "' in l)
-    print(f"Generated {len(lines)} lines, {txn_count} transactions")
+    last = max(
+        (l[:10] for l in lines if re.match(r"\d{4}-\d{2}-\d{2} ", l)), default="?"
+    )
+    print(f"Generated {len(lines)} lines, {txn_count} transactions, ending {last} → {args.out}")

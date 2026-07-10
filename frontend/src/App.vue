@@ -24,6 +24,10 @@
           </KeepAlive>
         </router-view>
       </AppShell>
+
+      <!-- Non-blocking notice: new/updated bundled demo content is available.
+           Only inside the loaded app (never over the setup wizard or the gate). -->
+      <SeedContentNotice v-if="$route.meta.layout !== 'none'" />
     </template>
 
     <!-- Add toast notifications component -->
@@ -37,6 +41,7 @@
   import AppShell from './components/layout/AppShell.vue'
   import ToastNotifications from './components/common/ToastNotifications.vue'
   import StartupGate from './components/common/StartupGate.vue'
+  import SeedContentNotice from './components/common/SeedContentNotice.vue'
   import { useStartupTasks } from './composables/useStartupTasks'
 
   const router = useRouter()

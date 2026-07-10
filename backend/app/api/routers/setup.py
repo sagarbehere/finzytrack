@@ -134,6 +134,16 @@ async def complete_setup(
         # (also copies fake.beancount into data/ledgers/ automatically)
         seed_data_with_currency(data_dir, currency)
 
+    # Record the seed-content provenance baseline now that both config (seeded at
+    # startup) and data (seeded just above) are on disk. Without this every
+    # first-run-seeded file would later look user-created and never get refreshed
+    # by a future release. Best-effort: a failure here must not fail setup.
+    try:
+        from app.seed_refresh import record_seed_baseline
+        record_seed_baseline(config.config_dir, data_dir)
+    except Exception as e:  # noqa: BLE001 — provenance baseline is not load-bearing for setup
+        logger.warning("Could not record seed-content baseline: %s", e)
+
     # AI config (if provided)
     if request.ai_config:
         ai_patch: Dict[str, Any] = {}
