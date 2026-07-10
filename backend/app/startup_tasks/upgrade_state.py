@@ -145,6 +145,13 @@ class UpgradeState:
         self._seed.setdefault("dismissed", {})["contentDigest"] = content_digest
         self._persist("seed content notice snoozed")
 
+    def clear_seed_snooze(self) -> None:
+        """Forget any seed-content snooze, so a dismissed notice re-surfaces on the
+        next detect. Drives Settings → "Show dismissed notices" (undo an accidental
+        dismiss). A no-op if nothing was snoozed."""
+        self._seed.setdefault("dismissed", {})["contentDigest"] = None
+        self._persist("seed content snooze cleared")
+
     # ── persistence ────────────────────────────────────────────────────────
 
     def _persist(self, what: str) -> None:
@@ -174,8 +181,10 @@ class UpgradeState:
         disk_seed = disk["seed"]
         merged_installed = {**disk_seed.get("installed", {}), **self._seed.get("installed", {})}
         merged_digest = self._seed.get("appliedContentDigest") or disk_seed.get("appliedContentDigest")
-        merged_dismissed = self._seed.get("dismissed", {}).get("contentDigest") \
-            or disk_seed.get("dismissed", {}).get("contentDigest")
+        # This instance's snooze value wins (it may be an explicit *clear* to None,
+        # which must stick — a `... or disk` fallback would resurrect the old
+        # snooze and defeat "Show dismissed notices").
+        merged_dismissed = self._seed.get("dismissed", {}).get("contentDigest")
         self._seed = {
             "appliedContentDigest": merged_digest,
             "installed": merged_installed,

@@ -107,3 +107,9 @@ class SeedContentTask(StartupTask):
         ).content_digest
         self._state.snooze_seed(digest)
         return digest
+
+    def reopen(self) -> None:
+        """Undo a dismissal so the notice re-surfaces on the next detect (if
+        content is still pending). Drives Settings → "Show dismissed notices".
+        The registry calls this on tasks that offer it."""
+        self._state.clear_seed_snooze()

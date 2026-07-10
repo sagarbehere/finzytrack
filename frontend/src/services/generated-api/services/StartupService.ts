@@ -65,18 +65,20 @@ export class StartupService {
         });
     }
     /**
-     * Reset Demo Data
-     * Settings → "Reset demo data": restore the bundled demo dashboards and demo
-     * ledgers to their shipped state, ignoring provenance (backing up whatever's
-     * there first). The always-available manual path for a user who tinkered and
-     * wants the shipped demo back. See dev-docs/seed-content-refresh.md §9.3.
-     * @returns ApiResponse_StartupApplyData_ Successful Response
+     * Reopen Dismissed Notices
+     * Settings → "Show dismissed notices": clear the dismissal/snooze on
+     * non-gating startup notices (today the seed-content demo-content offer), then
+     * return the freshly-detected pending tasks. The app re-surfaces any that are
+     * now pending. This never re-opens gating migrations — they self-manage — and
+     * it only re-shows notices; it does not apply anything. See
+     * dev-docs/seed-content-refresh.md §9.3.
+     * @returns ApiResponse_StartupTasksData_ Successful Response
      * @throws ApiError
      */
-    public static resetDemoData(): CancelablePromise<ApiResponse_StartupApplyData_> {
+    public static reopenDismissedNotices(): CancelablePromise<ApiResponse_StartupTasksData_> {
         return __request(OpenAPI, {
             method: 'POST',
-            url: '/api/startup/seed/reset',
+            url: '/api/startup/notices/reopen',
         });
     }
 }

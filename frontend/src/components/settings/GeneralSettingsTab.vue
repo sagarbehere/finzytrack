@@ -458,6 +458,26 @@
     <!-- ── Documents maintenance (orphan sweep) ───────────────────────────── -->
     <DocumentMaintenanceSection />
 
+    <!-- ── Notices ────────────────────────────────────────────────────────── -->
+    <div class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10">
+      <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
+        <h3 class="text-lg font-medium text-gray-900 dark:text-white">Notices</h3>
+        <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Startup notices Finzytrack shows you — like an offer of new demo dashboards or data.</p>
+      </div>
+      <div class="p-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <p class="text-sm text-gray-600 dark:text-gray-400">
+          Dismissed a notice by mistake? Bring back any startup notices you've dismissed so you can review them again.
+        </p>
+        <button
+          @click="handleShowDismissed"
+          :disabled="isReopening"
+          class="shrink-0 self-start sm:self-auto rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+        >
+          {{ isReopening ? 'Checking…' : 'Show dismissed notices' }}
+        </button>
+      </div>
+    </div>
+
     <!-- Shared file picker modal -->
     <FilePickerModal
       :open="filePicker.open"
@@ -484,6 +504,7 @@ import { useConfig } from '@/composables/useConfig'
 import { useAccounts } from '@/composables/useAccounts'
 import { useCommodities } from '@/composables/useCommodities'
 import { useToast } from '@/composables/useNotifications'
+import { useStartupTasks } from '@/composables/useStartupTasks'
 import { patchConfig } from '@/composables/useConfigPatch'
 
 const emit = defineEmits<{ 'restart-required': [] }>()
@@ -492,6 +513,33 @@ const { config, updateConfig } = useConfig()
 const { invalidateCache: invalidateAccounts } = useAccounts()
 const { invalidateCache: invalidateCommodities } = useCommodities()
 const toast = useToast()
+
+// ─── Notices: re-open startup notices the user dismissed ──────────────────────
+// Un-snoozes non-gating notices (e.g. the new-demo-content offer) and refreshes
+// the task list; the notice card (mounted in App.vue) then re-appears. Never
+// re-opens gating migrations and never applies anything on its own.
+
+const { reopenDismissedNotices } = useStartupTasks()
+const isReopening = ref(false)
+
+async function handleShowDismissed() {
+  isReopening.value = true
+  try {
+    const count = await reopenDismissedNotices()
+    if (count > 0) {
+      toast.info(
+        'Notices re-opened',
+        count === 1
+          ? 'A dismissed notice is shown again — see the bottom-right of the screen.'
+          : `${count} dismissed notices are shown again.`,
+      )
+    } else {
+      toast.info('No dismissed notices', "You're all caught up — there's nothing to re-open.")
+    }
+  } finally {
+    isReopening.value = false
+  }
+}
 
 // ─── Shared UI classes ────────────────────────────────────────────────────────
 

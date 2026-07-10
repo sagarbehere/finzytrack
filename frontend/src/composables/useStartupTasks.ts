@@ -87,25 +87,21 @@ async function dismissStartupTask(taskId: string): Promise<void> {
 }
 
 /**
- * Restore all bundled demo dashboards and demo ledgers to their shipped state
- * (Settings → "Reset demo data"), ignoring provenance. Returns the result
- * payload (the `outcome`/`skipped` itemization) or null on failure.
+ * Undo any accidental dismissal of non-gating startup notices (today the
+ * seed-content demo-content offer), then refresh the task list so a re-opened
+ * notice surfaces again. Generic — future info notices re-open the same way; it
+ * never re-opens gating migrations and never applies anything. Returns the count
+ * of notices now pending (so the caller can say "1 re-opened" vs "all caught up").
+ * Best-effort: a failure is surfaced but never blocks the app.
  */
-async function resetDemoData(): Promise<Record<string, unknown> | null> {
-  isApplying.value = true
-  applyError.value = null
+async function reopenDismissedNotices(): Promise<number> {
   try {
-    const resp = await StartupService.resetDemoData()
-    if (!resp.success) {
-      throw new Error(resp.error?.message || 'Could not reset demo data')
-    }
-    return (resp.data?.result as Record<string, unknown> | undefined) ?? {}
+    await StartupService.reopenDismissedNotices()
+    await checkStartupTasks() // refresh so the re-opened notice(s) render
+    return infoTasks.value.length
   } catch (err: unknown) {
-    applyError.value = err instanceof Error ? err.message : 'Could not reset demo data'
     errorHandler.display(err)
-    return null
-  } finally {
-    isApplying.value = false
+    return 0
   }
 }
 
@@ -120,7 +116,7 @@ export function useStartupTasks() {
     checkStartupTasks,
     applyStartupTask,
     dismissStartupTask,
-    resetDemoData,
+    reopenDismissedNotices,
     docsUrlFor,
   }
 }

@@ -77,6 +77,16 @@ class StartupTaskRegistry:
             self._state.mark_completed(task_id)
         return {"dismissed": True}
 
+    def reopen_dismissed(self) -> None:
+        """Undo dismissals on notices that support it (the seed-content notice),
+        so an accidentally-dismissed notice re-surfaces on the next detect. Drives
+        Settings → "Show dismissed notices". Gating migrations are deliberately
+        untouched — they self-manage and must never be forced to re-gate."""
+        for task in self._tasks.values():
+            reopen = getattr(task, "reopen", None)
+            if callable(reopen):
+                reopen()
+
 
 def build_startup_registry(
     config_dir: Path,

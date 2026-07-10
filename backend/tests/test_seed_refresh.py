@@ -211,23 +211,19 @@ def test_ledger_is_currency_substituted_and_hash_matches(bundle):
     assert follow.would_change() is False
 
 
-# ── reset restores everything, backing up first ──────────────────────────────
+# ── there is no force/overwrite path ─────────────────────────────────────────
 
 
-def test_reset_restores_modified_and_deleted(bundle):
+def test_apply_never_overwrites_a_user_edit(bundle):
+    """The core has no reset/force mode — a modified file is preserved on every
+    apply, no matter how many times a newer bundle changes it."""
     bundle.seed_all()
     edited = bundle.target("recipes/dashboards/a.json")
     edited.write_text('{"id":"a","MINE":true}\n')
-    bundle.target("recipes/dashboards/b.json").unlink()
-
-    state = UpgradeState(bundle.config_dir)
-    report = apply_seed_refresh(state, bundle.config_dir, bundle.data_dir, bundle.currency, reset=True)
-
-    assert edited.read_text() == '{"id":"a","v":1}\n'                 # restored
-    assert bundle.target("recipes/dashboards/b.json").is_file()       # resurrected
-    # The pre-reset edited file was backed up.
-    assert list((bundle.config_dir / "recipes" / "dashboards").glob("a.json.*.backup"))
-    assert report.would_change() is True
+    for v in (2, 3, 4):  # successive releases keep changing the bundled a.json
+        (bundle.seed_config / "recipes" / "dashboards" / "a.json").write_text(f'{{"id":"a","v":{v}}}\n')
+        apply_seed_refresh(UpgradeState(bundle.config_dir), bundle.config_dir, bundle.data_dir, bundle.currency)
+        assert edited.read_text() == '{"id":"a","MINE":true}\n'   # untouched every time
 
 
 # ── state file schema (D2) ───────────────────────────────────────────────────
@@ -337,17 +333,40 @@ def test_registry_dismiss_snoozes_seed_task(bundle):
     assert reg2.detect() == []
 
 
+def test_reopen_dismissed_resurfaces_snoozed_notice(bundle):
+    from app.startup_tasks.registry import StartupTaskRegistry
+    # Dismiss → snoozed → nothing pending.
+    state, task = _seed_task(bundle)
+    reg = StartupTaskRegistry(state)
+    reg.register(task)
+    reg.dismiss("seed-content")
+    assert reg.detect() == []
+
+    # Re-open (undo the accidental dismiss) → the notice comes back.
+    _, task2 = _seed_task(bundle)
+    reg2 = StartupTaskRegistry(UpgradeState(bundle.config_dir))
+    reg2.register(task2)
+    reg2.reopen_dismissed()
+    assert [t.id for t in reg2.detect()] == ["seed-content"]
+
+
+def test_task_reopen_clears_snooze(bundle):
+    state, task = _seed_task(bundle)
+    task.snooze()
+    assert task.detect() is None
+    task.reopen()
+    assert task.detect() is not None
+
+
 # ── Endpoint round-trip ──────────────────────────────────────────────────────
 
 
-def test_reset_endpoint_returns_applied(test_client):
-    resp = test_client.post("/api/startup/seed/reset")
+def test_reopen_endpoint_returns_pending_tasks(test_client):
+    resp = test_client.post("/api/startup/notices/reopen")
     assert resp.status_code == 200
     body = resp.json()
     assert body["success"] is True
-    assert body["data"]["id"] == "seed-content"
-    assert body["data"]["applied"] is True
-    assert "outcome" in body["data"]["result"]
+    assert isinstance(body["data"]["tasks"], list)
 
 
 def test_dismiss_unknown_task_is_404(test_client):

@@ -48,8 +48,8 @@ import { ChevronRightIcon } from '@heroicons/vue/20/solid'
 /**
  * One collapsible "See details" list of affected files — the itemization the
  * startup framework produces for any task (`{path, note?}` + an absolute
- * `baseDir` anchor). Shared by the gating modal (StartupGate), the seed-content
- * notice, and the "Reset demo data" result, so the list is defined once. See
+ * `baseDir` anchor). Shared by the gating modal (StartupGate) and the
+ * seed-content notice, so the list is defined once. See
  * dev-docs/seed-content-refresh.md §9.5.
  */
 export interface AffectedItem {

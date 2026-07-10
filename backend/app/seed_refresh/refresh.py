@@ -17,9 +17,11 @@ there** (`installed`), not to the current bundle — the dpkg-conffiles model:
     | no      | yes          | —                    | user-deleted  | do not resurrect |
     | no      | no           | —                    | new           | write         |
 
-`reset=True` (Settings → "Reset demo data") ignores provenance and restores every
-bundled file (backing up whatever's there first) — the escape hatch for a user
-who tinkered and wants the shipped demo back.
+There is **no force/overwrite mode**: a file the user created, edited, or deleted
+is never touched here, so the app can never clobber a user's modifications. To
+restore a demo they changed, the user copies the original back by hand (see the
+"New demo content" doc) — there is deliberately no one-click "reset" that could
+destroy edits.
 
 See dev-docs/seed-content-refresh.md §4–§5.
 """
@@ -78,30 +80,24 @@ class _Decision:
 
 def _decide(
     f: SeedFile, config_dir: Path, data_dir: Path, currency: str,
-    installed: dict[str, str], *, reset: bool,
+    installed: dict[str, str],
 ) -> _Decision:
     target = f.target_path(config_dir, data_dir)
     target_hash = f.target_hash(currency)
     on_disk_hash = _hash_file(target)
 
-    if reset:
-        # Restore the shipped demo regardless of provenance.
-        if on_disk_hash == target_hash:
-            action = _BASELINE
-        elif on_disk_hash is None:
-            action = _ADD
-        else:
-            action = _REFRESH
-    else:
-        state = classify(on_disk_hash, installed.get(f.relpath))
-        if state == NEW:
-            action = _ADD
-        elif state == PRISTINE:
-            action = _BASELINE if on_disk_hash == target_hash else _REFRESH
-        elif state in (USER_MODIFIED, USER_CREATED):
-            action = _SKIP
-        else:  # USER_DELETED
-            action = _IGNORE
+    state = classify(on_disk_hash, installed.get(f.relpath))
+    if state == NEW:
+        action = _ADD
+    elif state == PRISTINE:
+        action = _BASELINE if on_disk_hash == target_hash else _REFRESH
+    elif state in (USER_MODIFIED, USER_CREATED):
+        # Never overwrite a file the user made or changed. There is deliberately
+        # no force path (a file a user edited can only be restored by hand — see
+        # dev-docs/seed-content-refresh.md and the "New demo content" doc).
+        action = _SKIP
+    else:  # USER_DELETED
+        action = _IGNORE
 
     return _Decision(
         file=f, action=action,
@@ -169,20 +165,17 @@ def _base_dir(config_dir: Path) -> str:
 
 def _plan(
     config_dir: Path, data_dir: Path, currency: str, installed: dict[str, str],
-    *, reset: bool,
 ) -> tuple[list[_Decision], RefreshReport]:
     """Classify every bundled file (read-only). Returns the write plan and a
     report describing it, both derived from the same single bundle walk."""
     files = walk_bundle()
-    decisions = [
-        _decide(f, config_dir, data_dir, currency, installed, reset=reset) for f in files
-    ]
+    decisions = [_decide(f, config_dir, data_dir, currency, installed) for f in files]
     report = RefreshReport(base_dir=_base_dir(config_dir), content_digest=content_digest(files))
     for d in decisions:
         if d.action == _ADD:
-            report.added.append({"path": d.display, "note": "added" if reset else "new"})
+            report.added.append({"path": d.display, "note": "new"})
         elif d.action == _REFRESH:
-            report.refreshed.append({"path": d.display, "note": "refreshed" if reset else "will refresh"})
+            report.refreshed.append({"path": d.display, "note": "will refresh"})
         elif d.action == _SKIP:
             report.skipped.append({"path": d.display, "note": "kept your edits"})
     return decisions, report
@@ -191,9 +184,9 @@ def _plan(
 def preview_refresh(
     config_dir: Path, data_dir: Path, currency: str, installed: dict[str, str]
 ) -> RefreshReport:
-    """Read-only classification of what a (non-reset) refresh would do — for the
-    detect() preview. Reads bundle + on-disk files; writes nothing."""
-    _, report = _plan(config_dir, data_dir, currency, installed, reset=False)
+    """Read-only classification of what a refresh would do — for the detect()
+    preview. Reads bundle + on-disk files; writes nothing."""
+    _, report = _plan(config_dir, data_dir, currency, installed)
     return report
 
 
@@ -202,15 +195,15 @@ def apply_seed_refresh(
     config_dir: Path,
     data_dir: Path,
     currency: str,
-    *,
-    reset: bool = False,
 ) -> RefreshReport:
-    """Deliver bundled content per the §4 provenance rules (or restore all, when
-    `reset`). Backs up every file before overwrite/restore, writes atomically,
-    re-records the installed hashes + the delivered content-digest, and returns a
-    report. Idempotent: a run with nothing to do writes no files and creates no
-    backups. Per-file failures are captured in `report.failed`, never raised."""
-    decisions, report = _plan(config_dir, data_dir, currency, state.installed_hashes(), reset=reset)
+    """Deliver bundled content per the §4 provenance rules: add new files and
+    refresh pristine ones; never touch files the user created, edited, or deleted.
+    Backs up every file before overwrite, writes atomically, re-records the
+    installed hashes + the delivered content-digest, and returns a report.
+    Idempotent: a run with nothing to do writes no files and creates no backups.
+    Per-file failures are captured in `report.failed`, never raised. There is no
+    force/overwrite mode — a user's edits can never be clobbered here."""
+    decisions, report = _plan(config_dir, data_dir, currency, state.installed_hashes())
 
     installed_updates: dict[str, str] = {}
     for d in decisions:

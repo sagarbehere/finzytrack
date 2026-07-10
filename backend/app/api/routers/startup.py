@@ -90,32 +90,16 @@ async def dismiss_startup_task(task_id: str, config_manager: ConfigManager = Dep
     )
 
 
-@router.post("/startup/seed/reset", response_model=ApiResponse[StartupApplyData], operation_id="resetDemoData")
-async def reset_demo_data(config_manager: ConfigManager = Depends(get_config_manager)):
-    """Settings → "Reset demo data": restore the bundled demo dashboards and demo
-    ledgers to their shipped state, ignoring provenance (backing up whatever's
-    there first). The always-available manual path for a user who tinkered and
-    wants the shipped demo back. See dev-docs/seed-content-refresh.md §9.3."""
-    config = config_manager.get_config()
-    from app.seed_refresh import apply_seed_refresh
-    from app.startup_tasks.upgrade_state import UpgradeState
-
-    state = UpgradeState(config.config_dir)
-    try:
-        report = apply_seed_refresh(
-            state,
-            config.config_dir,
-            config.root_dir / "data",
-            config.accounts.default_currency,
-            reset=True,
-        )
-    except Exception as e:  # noqa: BLE001 — surface as a clean API error
-        logger.error("Reset demo data failed: %s", e, exc_info=True)
-        raise APIError(
-            message="Could not reset demo data. See server logs for details.",
-            code=ec.STARTUP_TASK_FAILED, status_code=500,
-        )
-    logger.info("Reset demo data: %s", report.summary())
-    return success_json_response(
-        StartupApplyData(id="seed-content", applied=True, message=report.summary(), result=report.to_result())
-    )
+@router.post("/startup/notices/reopen", response_model=ApiResponse[StartupTasksData], operation_id="reopenDismissedNotices")
+async def reopen_dismissed_notices(config_manager: ConfigManager = Depends(get_config_manager)):
+    """Settings → "Show dismissed notices": clear the dismissal/snooze on
+    non-gating startup notices (today the seed-content demo-content offer), then
+    return the freshly-detected pending tasks. The app re-surfaces any that are
+    now pending. This never re-opens gating migrations — they self-manage — and
+    it only re-shows notices; it does not apply anything. See
+    dev-docs/seed-content-refresh.md §9.3."""
+    registry = _registry(config_manager)
+    registry.reopen_dismissed()
+    tasks = registry.detect()
+    logger.info("Re-opened dismissed notices; %d task(s) now pending", len(tasks))
+    return success_json_response(StartupTasksData(tasks=tasks))

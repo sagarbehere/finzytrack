@@ -179,27 +179,6 @@
       </div>
     </template>
 
-    <!-- Reset demo data -->
-    <div class="mt-8 rounded-lg bg-white shadow-sm ring-1 ring-gray-200 p-4 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10">
-      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-        <div class="min-w-0">
-          <h3 class="text-sm font-medium text-gray-900 dark:text-white">Reset demo data</h3>
-          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Restore the bundled demo dashboards and demo ledgers to their shipped state. A
-            timestamped backup of each replaced file is saved first. This <strong>replaces demo
-            files you've edited</strong> — your own ledger is never touched.
-          </p>
-        </div>
-        <button
-          @click="handleResetDemo"
-          :disabled="isResetting"
-          class="shrink-0 self-start sm:self-auto rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
-        >
-          {{ isResetting ? 'Resetting…' : 'Reset demo data' }}
-        </button>
-      </div>
-    </div>
-
     <!-- Confirm dialog -->
     <ConfirmDialog
       :is-open="confirmDialog.isOpen.value"
@@ -221,8 +200,6 @@ import { onBeforeRouteLeave } from 'vue-router'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import RecipeDashboard from '@/components/recipes/RecipeDashboard.vue'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
-import { useStartupTasks } from '@/composables/useStartupTasks'
-import { useToast } from '@/composables/useNotifications'
 import { RecipesService } from '@/services/generated-api'
 import { errorHandler } from '@/utils/ErrorHandler'
 import { getStorageAdapter, STORAGE_KEYS } from '@/services/storage'
@@ -280,39 +257,6 @@ const canSave = computed(() => {
 })
 
 const confirmDialog = useConfirmDialog()
-
-// --- Reset demo data ---
-
-const { resetDemoData } = useStartupTasks()
-const toast = useToast()
-const isResetting = ref(false)
-
-async function handleResetDemo() {
-  const confirmed = await confirmDialog.showConfirm({
-    title: 'Reset demo data',
-    message:
-      'Restore all bundled demo dashboards and demo ledgers to their shipped state? This ' +
-      'replaces demo files you may have edited (a timestamped backup of each is saved first). ' +
-      'Your own ledger is not affected.',
-    confirmText: 'Reset',
-    cancelText: 'Cancel',
-    variant: 'warning',
-  })
-  if (!confirmed) return
-
-  isResetting.value = true
-  try {
-    const result = await resetDemoData()
-    if (!result) return // failure already surfaced by the composable
-    const summary = (result.summary as string | undefined) ?? 'Demo data restored.'
-    toast.success('Demo data reset', summary)
-    // Refresh the dashboard file list so restored/added demos appear.
-    await loadUserRecipes()
-    await loadFileList()
-  } finally {
-    isResetting.value = false
-  }
-}
 
 // --- Preview ---
 

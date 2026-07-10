@@ -9,14 +9,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const getStartupTasks = vi.fn()
 const applyStartupTask = vi.fn()
 const dismissStartupTask = vi.fn()
-const resetDemoData = vi.fn()
+const reopenDismissedNotices = vi.fn()
 
 vi.mock('@/services/generated-api', () => ({
   StartupService: {
     getStartupTasks: () => getStartupTasks(),
     applyStartupTask: (id: string) => applyStartupTask(id),
     dismissStartupTask: (id: string) => dismissStartupTask(id),
-    resetDemoData: () => resetDemoData(),
+    reopenDismissedNotices: () => reopenDismissedNotices(),
   },
   ApiError: class ApiError extends Error {},
 }))
@@ -51,7 +51,7 @@ beforeEach(() => {
   getStartupTasks.mockReset()
   applyStartupTask.mockReset()
   dismissStartupTask.mockReset()
-  resetDemoData.mockReset()
+  reopenDismissedNotices.mockReset()
 })
 
 describe('useStartupTasks', () => {
@@ -117,13 +117,20 @@ describe('useStartupTasks', () => {
     await expect(s.dismissStartupTask('seed-content')).resolves.toBeUndefined()
   })
 
-  it('resetDemoData returns the result payload and null on failure', async () => {
-    const result = { outcome: { succeeded: [{ path: 'config/recipes/dashboards/a.json', note: 'refreshed' }], failed: [] }, skipped: [], summary: 'Demo content: refreshed 1.' }
-    resetDemoData.mockResolvedValue(ok({ id: 'seed-content', applied: true, message: 'ok', result }))
+  it('reopenDismissedNotices un-snoozes, re-detects, and returns the pending count', async () => {
+    reopenDismissedNotices.mockResolvedValue(ok({ tasks: [seedNotice] }))
+    getStartupTasks.mockResolvedValue(ok({ tasks: [seedNotice] }))
     const s = useStartupTasks()
-    expect(await s.resetDemoData()).toEqual(result)
+    const count = await s.reopenDismissedNotices()
+    expect(reopenDismissedNotices).toHaveBeenCalled()
+    expect(count).toBe(1)                                    // the re-opened notice
+    expect(s.infoTasks.value.map((t) => t.id)).toEqual(['seed-content'])
+  })
 
-    resetDemoData.mockResolvedValue({ success: false, data: null, error: { message: 'boom' } })
-    expect(await s.resetDemoData()).toBeNull()
+  it('reopenDismissedNotices returns 0 when nothing is pending', async () => {
+    reopenDismissedNotices.mockResolvedValue(ok({ tasks: [] }))
+    getStartupTasks.mockResolvedValue(ok({ tasks: [] }))
+    const s = useStartupTasks()
+    expect(await s.reopenDismissedNotices()).toBe(0)
   })
 })
