@@ -121,7 +121,12 @@ function widgetDependsOnShared(widgetId: string): boolean {
   return (widget?.steps ?? []).some((s) => stepRefs(s).some((r) => r.scope === 'dashboard.steps'))
 }
 
+// Monotonic token so a slow/stale run can never overwrite a newer one's
+// result or error (param changes re-run the graph; async completions can race).
+let sharedStepsRunId = 0
+
 async function runSharedSteps() {
+  const runId = ++sharedStepsRunId
   if (sharedSteps.value.length === 0) {
     dashboardStepOutputs.value = {}
     sharedStepsError.value = null
@@ -131,8 +136,11 @@ async function runSharedSteps() {
   sharedStepsLoading.value = true
   sharedStepsError.value = null
   try {
-    dashboardStepOutputs.value = await executeSharedSteps(sharedSteps.value, resolvedDashboardParameters.value)
+    const outputs = await executeSharedSteps(sharedSteps.value, resolvedDashboardParameters.value)
+    if (runId !== sharedStepsRunId) return // a newer run superseded this one
+    dashboardStepOutputs.value = outputs
   } catch (e) {
+    if (runId !== sharedStepsRunId) return // a newer run superseded this one
     // A failed shared step errors only its *dependent* widgets (§4.9); widgets
     // with no {{dashboard.steps.*}} reference are unaffected.
     dashboardStepOutputs.value = {}
@@ -140,9 +148,14 @@ async function runSharedSteps() {
       ? e
       : { stepId: 'dashboard.steps', kind: 'graph', message: e instanceof Error ? e.message : 'Shared step failed' }
   } finally {
-    sharedStepsLoading.value = false
+    if (runId === sharedStepsRunId) sharedStepsLoading.value = false
   }
 }
+
+// Initialize parameter selections BEFORE registering the shared-steps watch, so
+// its `immediate` run sees resolved $gen defaults (not empty params). Otherwise
+// the first run fires with no monthStart/currency and 400s. See initializeParameters.
+initializeParameters()
 
 watch(resolvedDashboardParameters, () => runSharedSteps(), { immediate: true, deep: true })
 
@@ -193,9 +206,10 @@ function initializeParameters() {
   dashboardSelections.value = params
 }
 
-// Initialize selections synchronously during setup so child RecipeWidgets
-// receive correct dashboardParameters on first render (before their onMounted fires).
-initializeParameters()
+// (Selections are initialized above, before the shared-steps watch — see the
+// initializeParameters() call there. Doing it synchronously during setup also
+// ensures child RecipeWidgets receive correct dashboardParameters on first
+// render, before their onMounted fires.)
 
 // Persist selections (sentinels included) and emit upward for URL sync.
 watch(dashboardSelections, (newSelections) => {

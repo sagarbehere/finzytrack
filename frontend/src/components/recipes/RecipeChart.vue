@@ -28,6 +28,7 @@ import {
   CalendarComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
+import { LegacyGridContainLabel } from 'echarts/features'
 import type { EChartsOption } from 'echarts'
 import type { ECharts as EChartsInstance } from 'echarts/core'
 import { formatAmount } from '@/utils/currencyFormat'
@@ -55,6 +56,10 @@ echarts.use([
   VisualMapComponent,
   CalendarComponent,
   CanvasRenderer,
+  // ECharts 6 moved grid.containLabel behind an opt-in legacy feature; register
+  // it so our `grid.containLabel: true` default keeps working without the
+  // deprecation warning. (Alternative would be migrating to grid.outerBounds.)
+  LegacyGridContainLabel,
 ])
 
 interface Props {
