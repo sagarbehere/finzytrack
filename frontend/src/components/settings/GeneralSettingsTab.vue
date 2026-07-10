@@ -462,7 +462,7 @@
     <div class="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-200 dark:bg-gray-800/50 dark:shadow-none dark:ring-white/10">
       <div class="px-6 py-4 border-b border-gray-200 dark:border-white/10">
         <h3 class="text-lg font-medium text-gray-900 dark:text-white">Notices</h3>
-        <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Startup notices Finzytrack shows you — like an offer of new demo dashboards or data.</p>
+        <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">Startup notices Finzytrack shows you.</p>
       </div>
       <div class="p-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <p class="text-sm text-gray-600 dark:text-gray-400">
