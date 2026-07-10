@@ -478,6 +478,67 @@ function remainderMode(
 }
 
 /**
+ * budgetSummary — collapse budgets + actuals into ONE aggregate row for a ring /
+ * KPIs: { account:"All budgets", currency, budget, actual, remaining, pctUsed
+ * (0-1), pctUsedPct (0-100) }. Uses the maximal-named-subtree rule (§13.2) so a
+ * nested pair (Insurance parent + Insurance:Health child) is not double-counted:
+ * only the top-most budgeted accounts contribute, and actuals are summed once by
+ * set membership under those prefixes. Currency-scoped inputs (the dashboard
+ * filters by currency) → one row; the currency is taken from the first row.
+ */
+function budgetSummary(inputs: unknown[]): unknown {
+  const budgets = asRows(inputs[0])
+  const actuals = asRows(inputs[1])
+  if (budgets.length === 0) return []
+  const currency = String(budgets[0].currency ?? actuals[0]?.currency ?? '')
+  const named = budgets.map((b) => String(b.account ?? ''))
+  const maximalNamed = named.filter((n) => !named.some((m) => m !== n && isStrictlyUnder(n, m)))
+
+  const budget = maximalNamed.reduce((s: Money, n) => {
+    const row = budgets.find((b) => String(b.account) === n)
+    return add(s, toMoneyOr0(row?.budget))
+  }, zero())
+  let actual = zero()
+  for (const a of actuals) {
+    if (String(a.currency ?? '') === currency && maximalNamed.some((n) => isUnderInclusive(String(a.account ?? ''), n))) {
+      actual = add(actual, toMoneyOr0(a.actual))
+    }
+  }
+  const remaining = sub(budget, actual)
+  const pctUsed = budget === '0' ? 0 : toNumber(div(actual, budget))
+  const pctUsedPct = Math.round(pctUsed * 100)
+  return [{
+    account: 'All budgets',
+    currency,
+    budget,
+    actual,
+    remaining,
+    pctUsed,
+    pctUsedPct,
+    // `value`/`name` alias so a gauge chart (reads .value) can render the ring directly.
+    value: pctUsedPct,
+    name: 'Used',
+  }]
+}
+
+/**
+ * unbudgetedSpending — the "leak" list: actual rows for accounts NOT covered by
+ * any budget, sorted by spend descending. Inclusive-parent aware (§4.1): an
+ * account is "covered" if it, or any ancestor, is budgeted in the same currency —
+ * so a budget on Expenses:Insurance covers Insurance:Health. Inputs: [budgets,
+ * actuals]. Chain a `limit` for a top-N. Output rows keep { account, currency,
+ * actual } for a table / list.
+ */
+function unbudgetedSpending(inputs: unknown[]): unknown {
+  const budgets = asRows(inputs[0])
+  const actuals = asRows(inputs[1])
+  const covered = (acct: string, cur: string): boolean =>
+    budgets.some((b) => String(b.currency ?? '') === cur && isUnderInclusive(acct, String(b.account ?? '')))
+  const rows = actuals.filter((a) => !covered(String(a.account ?? ''), String(a.currency ?? '')))
+  return [...rows].sort((x, y) => sign(sub(toMoneyOr0(y.actual), toMoneyOr0(x.actual))))
+}
+
+/**
  * runningSum — burn-down / cumulative. Config: { fields: string[], orderBy }.
  * Accumulates each named field over rows sorted by orderBy, appending a
  * `cumulative<Field>` column per field.
@@ -577,6 +638,8 @@ export const transformCatalog: Record<string, TransformFn> = {
   pivot: pivotTransform,
   joinBudgetActual,
   joinByPeriod,
+  budgetSummary,
+  unbudgetedSpending,
   runningSum,
   envelopeRollover,
 }

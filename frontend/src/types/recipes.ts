@@ -334,6 +334,7 @@ export {
 export type {
   ChartType,
   ComputeStep,
+  JsonBudgetProgressVisualization,
   JsonChartVisualization,
   JsonDashboardRecipe,
   JsonKPIVisualization,

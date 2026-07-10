@@ -107,6 +107,13 @@ const pivotGrain: VizGrain = {
       : `pivot expects a PivotData object with columns[] and rows[]; got ${describe(data)}`,
 }
 
+// budget-progress renders one fill bar per row (the flat joinBudgetActual output:
+// { account, budget, actual, remaining, pctUsed, pace, ... }).
+const budgetProgressGrain: VizGrain = {
+  expectedShape: 'an array of budget rows ({ account, budget, actual, pctUsed, … })',
+  validateInput: rowsValidator('budget-progress'),
+}
+
 // Gauge renders a single scalar/row; the other chart types consume a row array
 // (ECharts dataset.source, or series[0].data for hierarchical/flow charts).
 const gaugeGrain: VizGrain = {
@@ -131,6 +138,7 @@ export const VIZ_REGISTRY = {
   kpi: kpiGrain,
   table: tableGrain,
   pivot: pivotGrain,
+  'budget-progress': budgetProgressGrain,
   chart: Object.fromEntries(
     SUPPORTED_CHART_TYPES.map((ct) => [ct, chartGrain(ct)]),
   ) as Record<string, VizGrain>,

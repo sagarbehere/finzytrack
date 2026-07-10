@@ -32,7 +32,8 @@ export type JsonRecipeVisualization =
   | JsonChartVisualization
   | JsonKPIVisualization
   | JsonTableVisualization
-  | JsonPivotVisualization;
+  | JsonPivotVisualization
+  | JsonBudgetProgressVisualization;
 export type ChartType =
   | "bar"
   | "line"
@@ -266,6 +267,10 @@ export interface JsonKPIVisualization {
   multiCurrency?: boolean;
   amountField?: string;
   currencyField?: string;
+  /**
+   * Colour the value (and icon) by sign — green when ≥ 0, red when negative. Use for figures where negative is bad, e.g. a Remaining/over-budget KPI.
+   */
+  colorBySign?: boolean;
   clickLink?: JsonValueLinkConfig;
   [k: string]: unknown;
 }
@@ -296,5 +301,74 @@ export interface JsonPivotVisualization {
   showRowTotals?: boolean;
   showColumnTotals?: boolean;
   valueLink?: JsonValueLinkConfig;
+  [k: string]: unknown;
+}
+/**
+ * Budget-vs-actual progress list: one row per budgeted account with a fill bar (spent vs budget, over-budget in red) and amounts. Consumes the flat rows from the joinBudgetActual transform. Not an ECharts chart — a purpose-built Vue component.
+ */
+export interface JsonBudgetProgressVisualization {
+  type: "budget-progress";
+  /**
+   * Row field for the account label (default: 'account').
+   */
+  accountField?: string;
+  /**
+   * Row field for the budget amount (default: 'budget').
+   */
+  budgetField?: string;
+  /**
+   * Row field for the actual spend (default: 'actual').
+   */
+  actualField?: string;
+  /**
+   * Row field for remaining = budget - actual (default: 'remaining').
+   */
+  remainingField?: string;
+  /**
+   * Row field for the fraction of budget used, e.g. 1.23 = 123% (default: 'pctUsed').
+   */
+  pctUsedField?: string;
+  /**
+   * Row field for the currency code (default: 'currency').
+   */
+  currencyField?: string;
+  /**
+   * Row field holding 'under-good' | 'over-good' (expense vs income). Default 'direction'; absent → under-good.
+   */
+  directionField?: string;
+  /**
+   * Predefined value formatter applied at render time.
+   */
+  accountFormat?:
+    | "currency"
+    | "percent"
+    | "number"
+    | "compact"
+    | "signedCurrency"
+    | "date"
+    | "dateShort"
+    | "accountName"
+    | "accountName2";
+  link?: JsonValueLinkConfig1;
+  /**
+   * Message shown when there are no rows.
+   */
+  emptyText?: string;
+  [k: string]: unknown;
+}
+/**
+ * Optional per-row click-through (interpolates {{row.<field>}}), e.g. to the category's transactions.
+ */
+export interface JsonValueLinkConfig1 {
+  /**
+   * Vue route name, e.g. 'transactions'.
+   */
+  name: string;
+  /**
+   * Template strings interpolated with {{data.field}}, {{row.label}}, {{parameters.x}}, {{dateFrom}}, {{dateTo}}.
+   */
+  query: {
+    [k: string]: string;
+  };
   [k: string]: unknown;
 }

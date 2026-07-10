@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "budget-overview",
   "title": "Budget — Overview",
-  "description": "One month at a glance: total spent, unbudgeted spending, and the biggest overspend up top, with a per-category breakdown and a budget-usage chart below. The budget resolve, actuals query, and variance join run ONCE at the dashboard level and feed every widget (dashboard shared steps).",
+  "description": "Your budget at a glance for the selected date range: the budgeted / spent / remaining totals up top, a per-account progress list, and the spending that falls outside any budget. Defaults to the current month; adjust From/To for any range. Pick a populated month if the current one has no data yet.",
   "parameters": [
     { "name": "monthStart", "label": "From", "type": "date", "default": { "$gen": "startOfMonth" } },
     { "name": "monthEnd", "label": "To", "type": "date", "default": { "$gen": "endOfMonth" } },
@@ -25,15 +25,20 @@
       "id": "flat",
       "kind": "transform",
       "fn": "joinBudgetActual",
-      "inputs": ["{{steps.budgets}}", "{{steps.actuals}}"],
-      "config": { "periodStart": "{{params.monthStart}}", "periodEnd": "{{params.monthEnd}}" }
+      "inputs": ["{{steps.budgets}}", "{{steps.actuals}}"]
     },
     {
-      "id": "totals",
+      "id": "ranked",
       "kind": "transform",
-      "fn": "joinBudgetActual",
-      "inputs": ["{{steps.budgets}}", "{{steps.actuals}}"],
-      "config": { "totalAccount": "Expenses" }
+      "fn": "sortBy",
+      "inputs": ["{{steps.flat}}"],
+      "config": { "field": "pctUsed", "order": "desc" }
+    },
+    {
+      "id": "summary",
+      "kind": "transform",
+      "fn": "budgetSummary",
+      "inputs": ["{{steps.budgets}}", "{{steps.actuals}}"]
     }
   ],
 
@@ -42,105 +47,83 @@
     "gap": "1.5rem",
     "rowHeight": "150px",
     "widgets": [
-      { "widgetId": "kpi-spent",       "gridArea": "1 / 1 / 2 / 5" },
-      { "widgetId": "kpi-unbudgeted",  "gridArea": "1 / 5 / 2 / 9" },
-      { "widgetId": "kpi-overspend",   "gridArea": "1 / 9 / 2 / 13" },
-      { "widgetId": "breakdown",       "gridArea": "2 / 1 / 4 / 8" },
-      { "widgetId": "usage-chart",     "gridArea": "2 / 8 / 4 / 13" },
-      { "widgetId": "reconciliation",  "gridArea": "4 / 1 / 5 / 13" }
+      { "widgetId": "kpi-budgeted",  "gridArea": "1 / 1 / 2 / 5" },
+      { "widgetId": "kpi-spent",     "gridArea": "1 / 5 / 2 / 9" },
+      { "widgetId": "kpi-remaining", "gridArea": "1 / 9 / 2 / 13" },
+      { "widgetId": "unbudgeted",    "gridArea": "2 / 1 / 6 / 5" },
+      { "widgetId": "by-account",    "gridArea": "2 / 5 / 6 / 13" }
     ]
   },
 
   "widgets": [
     {
+      "id": "kpi-budgeted",
+      "title": "Budgeted",
+      "helpText": "Your total budget for the selected period, across all budgeted accounts. A nested budget (a parent and its child) is counted once.",
+      "steps": [
+        { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.summary}}"] }
+      ],
+      "output": "row",
+      "visualization": { "type": "kpi", "icon": "◎", "iconColor": "blue", "multiCurrency": true, "amountField": "budget", "currencyField": "currency" }
+    },
+    {
       "id": "kpi-spent",
-      "title": "Spent This Month",
-      "helpText": "Total expenses in the selected month and currency — the grand-total row from the shared variance.",
+      "title": "Spent",
+      "helpText": "Total spending in budgeted accounts over the selected period.",
       "steps": [
-        { "id": "row", "kind": "transform", "fn": "where", "inputs": ["{{dashboard.steps.totals}}"], "config": { "field": "kind", "equals": "total" } }
+        { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.summary}}"] }
       ],
       "output": "row",
-      "visualization": { "type": "kpi", "icon": "$", "iconColor": "blue", "multiCurrency": true, "amountField": "actual", "currencyField": "currency" }
+      "visualization": { "type": "kpi", "icon": "$", "iconColor": "purple", "multiCurrency": true, "amountField": "actual", "currencyField": "currency" }
     },
     {
-      "id": "kpi-unbudgeted",
-      "title": "Unbudgeted",
-      "helpText": "Spending in categories with no budget set — the remainder the shared variance isolates. High values mean money is leaking outside your budgets.",
+      "id": "kpi-remaining",
+      "title": "Remaining",
+      "helpText": "Budget minus spending — how much of your total budget is still available. Negative means you're over budget overall.",
       "steps": [
-        { "id": "row", "kind": "transform", "fn": "where", "inputs": ["{{dashboard.steps.totals}}"], "config": { "field": "kind", "equals": "unbudgeted" } }
+        { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.summary}}"] }
       ],
       "output": "row",
-      "visualization": { "type": "kpi", "icon": "?", "iconColor": "amber", "multiCurrency": true, "amountField": "actual", "currencyField": "currency" }
+      "visualization": { "type": "kpi", "icon": "✓", "iconColor": "green", "multiCurrency": true, "amountField": "remaining", "currencyField": "currency", "colorBySign": true }
     },
     {
-      "id": "kpi-overspend",
-      "title": "Most Over Budget",
-      "helpText": "The single category furthest over its budget this month (a negative amount means over). Sorted by remaining, lowest first.",
+      "id": "unbudgeted",
+      "title": "Unbudgeted spending",
+      "helpText": "Accounts you're spending on that aren't covered by any budget, biggest first — money leaking outside your budgets. A budget on a parent account covers its whole subtree, so those don't appear here. Click a row for that account's transactions.",
       "steps": [
-        { "id": "sorted", "kind": "transform", "fn": "sortBy", "inputs": ["{{dashboard.steps.flat}}"], "config": { "field": "remaining", "order": "asc" } },
-        { "id": "worst",  "kind": "transform", "fn": "limit",  "inputs": ["{{steps.sorted}}"], "config": { "count": 1 } }
+        { "id": "leaks", "kind": "transform", "fn": "unbudgetedSpending", "inputs": ["{{dashboard.steps.budgets}}", "{{dashboard.steps.actuals}}"] },
+        { "id": "top", "kind": "transform", "fn": "limit", "inputs": ["{{steps.leaks}}"], "config": { "count": 10 } }
       ],
-      "output": "worst",
-      "visualization": { "type": "kpi", "icon": "↓", "iconColor": "red", "multiCurrency": true, "amountField": "remaining", "currencyField": "currency" }
-    },
-    {
-      "id": "breakdown",
-      "title": "Budget vs Actual by Category",
-      "helpText": "Every budgeted category for the month, sorted so the biggest overspends surface first. A budget on a parent account is compared inclusively against its whole subtree.",
-      "steps": [
-        { "id": "rows", "kind": "transform", "fn": "sortBy", "inputs": ["{{dashboard.steps.flat}}"], "config": { "field": "remaining", "order": "asc" } }
-      ],
-      "output": "rows",
+      "output": "top",
       "visualization": {
         "type": "table",
-        "emptyText": "No budgets or spending for this month. Set budgets in the Budgets view, then pick a month and currency that have data.",
+        "emptyText": "Nothing's leaking — every account with spending is covered by a budget.",
         "columns": [
-          { "key": "account",   "label": "Category",  "format": "accountName2" },
-          { "key": "budget",    "label": "Budget",    "format": "currency", "align": "right" },
-          { "key": "actual",    "label": "Actual",    "format": "currency", "align": "right" },
-          { "key": "remaining", "label": "Remaining", "format": "signedCurrency", "align": "right" },
-          { "key": "pctUsed",   "label": "% Used",    "format": "percent", "align": "right" }
+          { "key": "account", "label": "Account", "format": "accountName2", "link": { "name": "transactions", "query": { "accountContains": "{{row.account}}", "dateFrom": "{{parameters.monthStart}}", "dateTo": "{{parameters.monthEnd}}" } } },
+          { "key": "actual", "label": "Spent", "format": "currency", "align": "right" }
         ]
       }
     },
     {
-      "id": "usage-chart",
-      "title": "% of Budget Used",
-      "helpText": "How much of each category's budget is used. Bars past 100% are over budget.",
+      "id": "by-account",
+      "title": "By Account",
+      "helpText": "Every budgeted account, sorted so the fullest budgets surface first. Spent vs budget, over-budget in red. A budget on a parent account is compared against the parent and all its descendants. Click a row for that account's transactions.",
       "steps": [
-        { "id": "rows", "kind": "transform", "fn": "sortBy", "inputs": ["{{dashboard.steps.flat}}"], "config": { "field": "pctUsed", "order": "desc" } }
+        { "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.ranked}}"] }
       ],
       "output": "rows",
       "visualization": {
-        "type": "chart",
-        "chartType": "bar",
-        "yAxisLabelFormat": "percent",
-        "seriesLabelFormat": "percent",
-        "options": {
-          "grid": { "top": 20, "bottom": 60, "left": 55, "right": 20 },
-          "xAxis": { "type": "category", "axisLabel": { "rotate": 40, "fontSize": 10 } },
-          "yAxis": { "type": "value" },
-          "series": [
-            { "name": "% Used", "type": "bar", "encode": { "x": "account", "y": "pctUsed" }, "itemStyle": { "color": "#7B83AD" } }
-          ]
+        "type": "budget-progress",
+        "accountFormat": "accountName2",
+        "emptyText": "No budgets or spending for this range. Set budgets in the Budgets view, then pick a date range and currency that have data.",
+        "link": {
+          "name": "transactions",
+          "query": {
+            "accountContains": "{{row.account}}",
+            "dateFrom": "{{parameters.monthStart}}",
+            "dateTo": "{{parameters.monthEnd}}"
+          }
         }
-      }
-    },
-    {
-      "id": "reconciliation",
-      "title": "Where It Went",
-      "helpText": "Total spending split into the part covered by budgets vs the unbudgeted remainder. Uses the same shared variance as everything above.",
-      "steps": [
-        { "id": "rows", "kind": "transform", "fn": "where", "inputs": ["{{dashboard.steps.totals}}"], "config": { "field": "kind", "in": ["unbudgeted", "total"] } }
-      ],
-      "output": "rows",
-      "visualization": {
-        "type": "table",
-        "columns": [
-          { "key": "account", "label": "",       "format": "accountName2" },
-          { "key": "actual",  "label": "Amount", "format": "currency", "align": "right" },
-          { "key": "note",    "label": "Note" }
-        ]
       }
     }
   ]

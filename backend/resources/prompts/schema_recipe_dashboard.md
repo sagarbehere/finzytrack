@@ -443,6 +443,23 @@ Type: `'bar' | 'line' | 'pie' | 'area' | 'scatter' | 'treemap' | 'funnel' | 'gau
 | `fn` | `string` | yes | Name of a server-side compute function (fixed catalog; see get_compute_functions). Validated server-side. |
 | `args` | `object` | — | Scalar arguments for the compute function. Values may be literals or {{params.x}} / {{steps.x}} / {{dashboard.steps.x}} template strings. Pass only small scalars — bulk data is read server-side by the function, not shuttled through the client. |
 
+#### `JsonBudgetProgressVisualization`
+Budget-vs-actual progress list: one row per budgeted account with a fill bar (spent vs budget, over-budget in red) and amounts. Consumes the flat rows from the joinBudgetActual transform. Not an ECharts chart — a purpose-built Vue component.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `'budget-progress'` | yes |  |
+| `accountField` | `string` | — | Row field for the account label (default: 'account'). |
+| `budgetField` | `string` | — | Row field for the budget amount (default: 'budget'). |
+| `actualField` | `string` | — | Row field for the actual spend (default: 'actual'). |
+| `remainingField` | `string` | — | Row field for remaining = budget - actual (default: 'remaining'). |
+| `pctUsedField` | `string` | — | Row field for the fraction of budget used, e.g. 1.23 = 123% (default: 'pctUsed'). |
+| `currencyField` | `string` | — | Row field for the currency code (default: 'currency'). |
+| `directionField` | `string` | — | Row field holding 'under-good' | 'over-good' (expense vs income). Default 'direction'; absent → under-good. |
+| `accountFormat` | `ValueFormat` | — | Optional format for the category label (e.g. 'accountName2'). |
+| `link` | `JsonValueLinkConfig` | — | Optional per-row click-through (interpolates {{row.<field>}}), e.g. to the category's transactions. |
+| `emptyText` | `string` | — | Message shown when there are no rows. |
+
 #### `JsonChartVisualization`
 
 | Field | Type | Required | Description |
@@ -470,6 +487,7 @@ Type: `'bar' | 'line' | 'pie' | 'area' | 'scatter' | 'treemap' | 'funnel' | 'gau
 | `multiCurrency` | `boolean` | — | Group amounts by currency. Query must return currency and amount columns. |
 | `amountField` | `string` | — |  |
 | `currencyField` | `string` | — |  |
+| `colorBySign` | `boolean` | — | Colour the value (and icon) by sign — green when ≥ 0, red when negative. Use for figures where negative is bad, e.g. a Remaining/over-budget KPI. |
 | `clickLink` | `JsonValueLinkConfig` | — |  |
 
 #### `JsonPivotVisualization`
@@ -485,7 +503,7 @@ Type: `'bar' | 'line' | 'pie' | 'area' | 'scatter' | 'treemap' | 'funnel' | 'gau
 
 #### `JsonRecipeVisualization`
 
-Type: `JsonChartVisualization | JsonKPIVisualization | JsonTableVisualization | JsonPivotVisualization`
+Type: `JsonChartVisualization | JsonKPIVisualization | JsonTableVisualization | JsonPivotVisualization | JsonBudgetProgressVisualization`
 
 #### `JsonTableColumn`
 

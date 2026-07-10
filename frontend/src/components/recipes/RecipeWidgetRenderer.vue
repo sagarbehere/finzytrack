@@ -18,6 +18,7 @@
     :showTrend="recipe.visualization.showTrend"
     :trend="getTrendValue()"
     :values="getKPIValues()"
+    :colorBySign="isJsonKPIVisualization(recipe.visualization) && !!recipe.visualization.colorBySign"
   />
 
   <!-- Chart -->
@@ -52,11 +53,21 @@
     :showColumnTotals="recipe.visualization.showColumnTotals"
     :getValueLink="getPivotGetValueLink()"
   />
+
+  <!-- Budget progress -->
+  <RecipeBudgetProgress
+    v-else-if="recipe.visualization.type === 'budget-progress'"
+    :rows="Array.isArray(data) ? (data as Record<string, unknown>[]) : []"
+    :fields="getBudgetProgressFields()"
+    :accountFormat="getBudgetProgressAccountFormat()"
+    :getRowLink="getBudgetProgressRowLink()"
+    :emptyText="recipe.visualization.emptyText"
+  />
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, type RouteLocationRaw } from 'vue-router'
 import type {
   KPIVisualization,
   JsonKPIVisualization,
@@ -72,6 +83,7 @@ import type {
   PivotLinkContext,
   ValueLinkConfig,
   CurrencyAmount,
+  JsonBudgetProgressVisualization,
 } from '@/types/recipes'
 import {
   type AnyWidgetRecipe,
@@ -83,6 +95,7 @@ import RecipeChart from './RecipeChart.vue'
 import RecipeKPI from './RecipeKPI.vue'
 import RecipeTable from './RecipeTable.vue'
 import RecipePivotTable from './RecipePivotTable.vue'
+import RecipeBudgetProgress, { type BudgetProgressFields } from './RecipeBudgetProgress.vue'
 
 interface Props {
   recipe: AnyWidgetRecipe
@@ -112,7 +125,18 @@ const vizInputError = computed<string | null>(() => {
 function isJsonKPIVisualization(
   viz: KPIVisualization | JsonKPIVisualization
 ): viz is JsonKPIVisualization {
-  return 'format' in viz || 'valueField' in viz
+  // JSON KPI viz is identified by any of its JSON-only fields. `amountField` /
+  // `currencyField` / `iconColor` matter as much as `format` / `valueField`:
+  // multi-currency KPIs (e.g. the budget dashboards) set the former but not the
+  // latter, and omitting them here made amountField silently default to
+  // 'amount', zeroing every value.
+  return (
+    'format' in viz ||
+    'valueField' in viz ||
+    'amountField' in viz ||
+    'currencyField' in viz ||
+    'iconColor' in viz
+  )
 }
 
 // Helper to extract KPI value from data
@@ -276,6 +300,7 @@ function getTableColumns(): TableColumn[] {
             row: context.row,
             value: context.value,
             column: context.column.key,
+            parameters: props.mergedParameters,
           })
       }
       return result
@@ -294,6 +319,7 @@ function getTableColumns(): TableColumn[] {
           row: context.row,
           value: context.value,
           column: context.column.key,
+          parameters: props.mergedParameters,
         })
       return result
     }
@@ -369,6 +395,40 @@ function getPivotGetValueLink(): ((context: PivotLinkContext) => ValueLinkConfig
   }
 
   return undefined
+}
+
+// ── budget-progress helpers ─────────────────────────────────────────────────
+// Field-name mapping (defaults match the joinBudgetActual flat output).
+function getBudgetProgressFields(): BudgetProgressFields {
+  const viz = props.recipe.visualization
+  const v = viz.type === 'budget-progress' ? (viz as JsonBudgetProgressVisualization) : undefined
+  return {
+    account: v?.accountField ?? 'account',
+    budget: v?.budgetField ?? 'budget',
+    actual: v?.actualField ?? 'actual',
+    remaining: v?.remainingField ?? 'remaining',
+    pctUsed: v?.pctUsedField ?? 'pctUsed',
+    currency: v?.currencyField ?? 'currency',
+    direction: v?.directionField ?? 'direction',
+  }
+}
+
+function getBudgetProgressAccountFormat(): ((value: unknown) => string) | undefined {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'budget-progress' || !viz.accountFormat) return undefined
+  return formats.value[viz.accountFormat as ValueFormat]
+}
+
+function getBudgetProgressRowLink(): ((row: Record<string, unknown>) => RouteLocationRaw | null) | undefined {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'budget-progress' || !viz.link) return undefined
+  const linkTemplate = viz.link
+  return (row: Record<string, unknown>) => {
+    // Scope: the row's fields ({{row.account}}, …) plus the dashboard params
+    // ({{parameters.monthStart}}, {{parameters.year}}-01-01, …).
+    const cfg = resolveTemplateLink(linkTemplate, { row, parameters: props.mergedParameters })
+    return cfg ? { name: cfg.name, query: cfg.query } : null
+  }
 }
 
 // Check if chart visualization has a click handler

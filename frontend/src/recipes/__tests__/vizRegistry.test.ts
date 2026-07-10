@@ -49,6 +49,6 @@ describe('validateVizInput', () => {
     for (const ct of SUPPORTED_CHART_TYPES) {
       expect(ct in VIZ_REGISTRY.chart).toBe(true)
     }
-    expect(supportedGrains()).toEqual(['kpi', 'table', 'pivot', ...SUPPORTED_CHART_TYPES])
+    expect(supportedGrains()).toEqual(['kpi', 'table', 'pivot', 'budget-progress', ...SUPPORTED_CHART_TYPES])
   })
 })

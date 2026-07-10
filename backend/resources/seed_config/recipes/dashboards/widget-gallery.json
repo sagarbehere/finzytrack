@@ -87,6 +87,10 @@
       {
         "widgetId": "gallery-sunburst",
         "gridArea": "31 / 7 / 34 / 13"
+      },
+      {
+        "widgetId": "gallery-budget-progress",
+        "gridArea": "34 / 1 / 38 / 13"
       }
     ]
   },
@@ -1157,6 +1161,63 @@
         }
       ],
       "output": "out"
+    },
+    {
+      "id": "gallery-budget-progress",
+      "title": "Budget Progress (budget-progress)",
+      "helpText": "One fill bar per budgeted account — spent vs budget, over-budget in red, with $spent / $budget and the amount remaining. A purpose-built budget widget (a Vue component, not an ECharts chart). Click a row to open that account's transactions.",
+      "steps": [
+        {
+          "id": "actuals",
+          "kind": "query",
+          "query": "SELECT account, currency, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE account_type = 'Expenses' AND year = :year AND currency = :currency GROUP BY account, currency"
+        },
+        {
+          "id": "budgets",
+          "kind": "compute",
+          "fn": "budget_for_range",
+          "args": {
+            "from": "{{params.year}}-01-01",
+            "to": "{{params.year}}-12-31",
+            "currency": "{{params.currency}}"
+          }
+        },
+        {
+          "id": "variance",
+          "kind": "transform",
+          "fn": "joinBudgetActual",
+          "inputs": [
+            "{{steps.budgets}}",
+            "{{steps.actuals}}"
+          ]
+        },
+        {
+          "id": "sorted",
+          "kind": "transform",
+          "fn": "sortBy",
+          "inputs": [
+            "{{steps.variance}}"
+          ],
+          "config": {
+            "field": "pctUsed",
+            "order": "desc"
+          }
+        }
+      ],
+      "output": "sorted",
+      "visualization": {
+        "type": "budget-progress",
+        "accountFormat": "accountName2",
+        "emptyText": "No budgets for this year. Set budgets in the Budgets view, then pick a year that has both budgets and spending.",
+        "link": {
+          "name": "transactions",
+          "query": {
+            "accountContains": "{{row.account}}",
+            "dateFrom": "{{parameters.year}}-01-01",
+            "dateTo": "{{parameters.year}}-12-31"
+          }
+        }
+      }
     }
   ]
 }

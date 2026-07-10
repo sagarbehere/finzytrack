@@ -20,7 +20,8 @@
         <p
           v-for="(item, index) in values"
           :key="index"
-          class="kpi-value font-bold text-gray-900 dark:text-white whitespace-nowrap"
+          class="kpi-value font-bold whitespace-nowrap"
+          :class="colorBySign ? signClass(item.amount) : 'text-gray-900 dark:text-white'"
           :style="{ '--kpi-max-fs': maxFontSize(values.length) }"
         >
           {{ formatCurrencyAmount(item) }}
@@ -29,7 +30,8 @@
       <!-- Single value (backward compatible) -->
       <p
         v-else
-        class="kpi-value font-bold text-gray-900 dark:text-white whitespace-nowrap"
+        class="kpi-value font-bold whitespace-nowrap"
+        :class="colorBySign ? signClass(value) : 'text-gray-900 dark:text-white'"
         :style="{ '--kpi-max-fs': maxFontSize(1) }"
       >
         {{ formattedValue }}
@@ -61,6 +63,8 @@ interface Props {
   showTrend?: boolean
   trend?: number | null
   values?: CurrencyAmount[]
+  /** Colour the value + icon by sign (green ≥ 0, red < 0). */
+  colorBySign?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -68,7 +72,19 @@ const props = withDefaults(defineProps<Props>(), {
   iconColor: 'blue',
   showTrend: false,
   trend: null,
+  colorBySign: false,
 })
+
+function signClass(n: number): string {
+  return n < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'
+}
+
+/** Representative sign for the icon: negative if any shown amount is negative. */
+const isNegative = computed(() =>
+  props.values && props.values.length > 0
+    ? props.values.some((v) => v.amount < 0)
+    : props.value < 0,
+)
 
 // Max font sizes per currency count: 1 → 26px, 2 → 22px, 3+ → 18px
 const maxSizes: Record<number, number> = { 1: 26, 2: 22, 3: 18 }
@@ -78,6 +94,7 @@ function maxFontSize(count: number): string {
 }
 
 const iconBgClass = computed(() => {
+  if (props.colorBySign) return isNegative.value ? 'bg-red-500' : 'bg-emerald-500'
   const colors = {
     blue: 'bg-indigo-500',
     green: 'bg-green-500',

@@ -98,6 +98,7 @@
         "multiCurrency": { "type": "boolean", "description": "Group amounts by currency. Query must return currency and amount columns." },
         "amountField": { "type": "string" },
         "currencyField": { "type": "string" },
+        "colorBySign": { "type": "boolean", "description": "Colour the value (and icon) by sign — green when ≥ 0, red when negative. Use for figures where negative is bad, e.g. a Remaining/over-budget KPI." },
         "clickLink": { "$ref": "#/$defs/JsonValueLinkConfig" }
       }
     },
@@ -156,12 +157,31 @@
         "valueLink": { "$ref": "#/$defs/JsonValueLinkConfig" }
       }
     },
+    "JsonBudgetProgressVisualization": {
+      "type": "object",
+      "required": ["type"],
+      "description": "Budget-vs-actual progress list: one row per budgeted account with a fill bar (spent vs budget, over-budget in red) and amounts. Consumes the flat rows from the joinBudgetActual transform. Not an ECharts chart — a purpose-built Vue component.",
+      "properties": {
+        "type": { "const": "budget-progress" },
+        "accountField": { "type": "string", "description": "Row field for the account label (default: 'account')." },
+        "budgetField": { "type": "string", "description": "Row field for the budget amount (default: 'budget')." },
+        "actualField": { "type": "string", "description": "Row field for the actual spend (default: 'actual')." },
+        "remainingField": { "type": "string", "description": "Row field for remaining = budget - actual (default: 'remaining')." },
+        "pctUsedField": { "type": "string", "description": "Row field for the fraction of budget used, e.g. 1.23 = 123% (default: 'pctUsed')." },
+        "currencyField": { "type": "string", "description": "Row field for the currency code (default: 'currency')." },
+        "directionField": { "type": "string", "description": "Row field holding 'under-good' | 'over-good' (expense vs income). Default 'direction'; absent → under-good." },
+        "accountFormat": { "$ref": "#/$defs/ValueFormat", "description": "Optional format for the category label (e.g. 'accountName2')." },
+        "link": { "$ref": "#/$defs/JsonValueLinkConfig", "description": "Optional per-row click-through (interpolates {{row.<field>}}), e.g. to the category's transactions." },
+        "emptyText": { "type": "string", "description": "Message shown when there are no rows." }
+      }
+    },
     "JsonRecipeVisualization": {
       "oneOf": [
         { "$ref": "#/$defs/JsonChartVisualization" },
         { "$ref": "#/$defs/JsonKPIVisualization" },
         { "$ref": "#/$defs/JsonTableVisualization" },
-        { "$ref": "#/$defs/JsonPivotVisualization" }
+        { "$ref": "#/$defs/JsonPivotVisualization" },
+        { "$ref": "#/$defs/JsonBudgetProgressVisualization" }
       ]
     },
     "StepId": {
