@@ -46,7 +46,8 @@
           <td
             v-for="(col, colIndex) in data.columns"
             :key="col"
-            class="px-3 py-2 whitespace-nowrap text-right text-gray-600 dark:text-gray-400"
+            class="px-3 py-2 whitespace-nowrap text-right text-gray-700 dark:text-gray-200"
+            :style="cellStyle(row.values[col])"
           >
             <template v-if="row.values[col] !== undefined && row.values[col] !== 0">
               <!-- Clickable link if available -->
@@ -114,6 +115,7 @@
 <script setup lang="ts">
 import type { RouteLocationRaw } from 'vue-router'
 import type { PivotData, PivotRow, PivotLinkContext, ValueLinkConfig } from '@/types/recipes'
+import { budgetStatusOf, budgetStatusColor, hexToRgba, type BudgetStatusColors } from '@/utils/budgetStatus'
 
 interface Props {
   data: PivotData
@@ -126,6 +128,10 @@ interface Props {
    * Return null/undefined for no link.
    */
   getValueLink?: (context: PivotLinkContext) => ValueLinkConfig | null | undefined
+  /** Budget-adherence heat-map: tint each cell by its value read as a usage fraction. */
+  colorByValue?: boolean
+  warnAt?: number
+  colors?: BudgetStatusColors
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -133,6 +139,14 @@ const props = withDefaults(defineProps<Props>(), {
   showRowTotals: true,
   showColumnTotals: true,
 })
+
+// A moderate tint so the number stays legible on the heat cell (light + dark).
+const CELL_TINT_ALPHA = 0.22
+function cellStyle(value: number | undefined): Record<string, string> | undefined {
+  if (!props.colorByValue || value === undefined || value === 0) return undefined
+  const status = budgetStatusOf(value, { warnAt: props.warnAt })
+  return { backgroundColor: hexToRgba(budgetStatusColor(status, props.colors), CELL_TINT_ALPHA) }
+}
 
 function formatValue(value: number): string {
   if (props.valueFormat) {

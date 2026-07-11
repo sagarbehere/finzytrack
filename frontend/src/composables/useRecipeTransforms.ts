@@ -539,6 +539,40 @@ function unbudgetedSpending(inputs: unknown[]): unknown {
 }
 
 /**
+ * groupBy — collapse rows to one per distinct `key` value, summing each field in
+ * `sum` exactly (Money). The key field(s) are carried through (first-seen value);
+ * first-seen order is preserved. Config: { key: string | string[], sum: string[] }.
+ * The catalog primitive for "totals over time or category" — e.g. roll
+ * budget_for_range(groupBy:"period") per-account-per-period rows up to a per-period
+ * total budget (`{ key: "period", sum: ["budget"] }`) for a trailing-months chart.
+ */
+function groupBy(inputs: unknown[], config?: TransformConfig): unknown {
+  const rows = asRows(inputs[0])
+  const keys = Array.isArray(config?.key)
+    ? (config!.key as string[])
+    : config?.key
+      ? [String(config.key)]
+      : []
+  const sumFields = Array.isArray(config?.sum) ? (config!.sum as string[]) : []
+  if (keys.length === 0) return rows
+  const groups = new Map<string, Record<string, unknown>>()
+  const order: string[] = []
+  for (const row of rows) {
+    const gk = keys.map((k) => String(row[k] ?? '')).join(' ')
+    let g = groups.get(gk)
+    if (!g) {
+      g = {}
+      for (const k of keys) g[k] = row[k]
+      for (const f of sumFields) g[f] = zero()
+      groups.set(gk, g)
+      order.push(gk)
+    }
+    for (const f of sumFields) g[f] = add(g[f] as Money, toMoneyOr0(row[f]))
+  }
+  return order.map((gk) => groups.get(gk)!)
+}
+
+/**
  * appendTotal — append a grand-total row summing `field` over ALL input rows,
  * then (optionally) keep only the first `count` data rows above it. Computing the
  * total before slicing means a "top N + Total" table still totals the full set,
@@ -660,6 +694,7 @@ export const transformCatalog: Record<string, TransformFn> = {
   budgetSummary,
   unbudgetedSpending,
   appendTotal,
+  groupBy,
   runningSum,
   envelopeRollover,
 }

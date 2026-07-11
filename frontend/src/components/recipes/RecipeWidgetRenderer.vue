@@ -52,6 +52,9 @@
     :showRowTotals="recipe.visualization.showRowTotals"
     :showColumnTotals="recipe.visualization.showColumnTotals"
     :getValueLink="getPivotGetValueLink()"
+    :colorByValue="isJsonPivot(recipe.visualization) ? recipe.visualization.colorByValue : undefined"
+    :warnAt="isJsonPivot(recipe.visualization) ? recipe.visualization.warnAt : undefined"
+    :colors="isJsonPivot(recipe.visualization) ? recipe.visualization.colors : undefined"
   />
 
   <!-- Budget progress -->
@@ -402,6 +405,10 @@ function getPivotGetValueLink(): ((context: PivotLinkContext) => ValueLinkConfig
   }
 
   return undefined
+}
+
+function isJsonPivot(viz: { type?: string }): viz is JsonPivotVisualization {
+  return viz.type === 'pivot'
 }
 
 // ── budget-progress helpers ─────────────────────────────────────────────────

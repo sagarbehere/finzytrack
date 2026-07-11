@@ -54,3 +54,57 @@ describe('sortBy over decimal-string Money fields', () => {
     expect(out[out.length - 1].account).toBe('Unbudgeted')
   })
 })
+
+describe('groupBy transform', () => {
+  const periodRows = [
+    { account: 'A', period: '2026-01', budget: '100' },
+    { account: 'B', period: '2026-01', budget: '50.5' },
+    { account: 'A', period: '2026-02', budget: '100' },
+    { account: 'B', period: '2026-02', budget: '50.5' },
+  ]
+
+  it('sums a field per key, exactly, preserving first-seen order', () => {
+    const out = applyTransform('groupBy', [periodRows], { key: 'period', sum: ['budget'] }) as Record<string, unknown>[]
+    expect(out).toEqual([
+      { period: '2026-01', budget: '150.5' },
+      { period: '2026-02', budget: '150.5' },
+    ])
+  })
+
+  it('supports a composite key and multiple sum fields', () => {
+    const r = [
+      { account: 'A', period: 'p1', budget: '10', actual: '4' },
+      { account: 'A', period: 'p1', budget: '5', actual: '1' },
+      { account: 'A', period: 'p2', budget: '7', actual: '3' },
+    ]
+    const out = applyTransform('groupBy', [r], { key: ['account', 'period'], sum: ['budget', 'actual'] }) as Record<string, unknown>[]
+    expect(out).toEqual([
+      { account: 'A', period: 'p1', budget: '15', actual: '5' },
+      { account: 'A', period: 'p2', budget: '7', actual: '3' },
+    ])
+  })
+
+  it('returns [] for empty input', () => {
+    expect(applyTransform('groupBy', [[]], { key: 'period', sum: ['budget'] })).toEqual([])
+  })
+})
+
+describe('appendTotal transform', () => {
+  const r = [
+    { account: 'A', actual: '10' },
+    { account: 'B', actual: '5.25' },
+    { account: 'C', actual: '4' },
+  ]
+
+  it('appends a total row summing all input (isTotal), keeping data rows', () => {
+    const out = applyTransform('appendTotal', [r], { field: 'actual', label: 'Total' }) as Record<string, unknown>[]
+    expect(out).toHaveLength(4)
+    expect(out[3]).toEqual({ account: 'Total', actual: '19.25', isTotal: true })
+  })
+
+  it('totals ALL rows even when sliced to top count', () => {
+    const out = applyTransform('appendTotal', [r], { field: 'actual', count: 2 }) as Record<string, unknown>[]
+    expect(out.map((x) => x.account)).toEqual(['A', 'B', 'Total'])
+    expect(out[2].actual).toBe('19.25') // full total, not just the shown two
+  })
+})

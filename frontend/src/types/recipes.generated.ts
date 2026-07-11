@@ -300,6 +300,24 @@ export interface JsonPivotVisualization {
   format?: ValueFormat;
   showRowTotals?: boolean;
   showColumnTotals?: boolean;
+  /**
+   * Tint each cell by its numeric value read as a budget-usage fraction (e.g. pctUsed) — a budget-adherence heat-map. Uses the same green/amber/blue/red status scale as budget-progress.
+   */
+  colorByValue?: boolean;
+  /**
+   * With colorByValue: fraction where a cell turns amber ('approaching'). Default 0.85.
+   */
+  warnAt?: number;
+  /**
+   * With colorByValue: override the status colours (hex), same keys as budget-progress. Omitted statuses keep the default palette.
+   */
+  colors?: {
+    under?: string;
+    approaching?: string;
+    exact?: string;
+    over?: string;
+    [k: string]: unknown;
+  };
   valueLink?: JsonValueLinkConfig;
   [k: string]: unknown;
 }

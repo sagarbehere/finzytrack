@@ -47,6 +47,13 @@ import { computed } from 'vue'
 import type { RouteLocationRaw } from 'vue-router'
 import { RouterLink } from 'vue-router'
 import { formatAmount } from '@/utils/currencyFormat'
+import {
+  budgetStatusOf,
+  hexToRgba,
+  BUDGET_STATUS_KEY,
+  type BudgetStatus,
+  type BudgetStatusColors,
+} from '@/utils/budgetStatus'
 
 export interface BudgetProgressFields {
   account: string
@@ -58,13 +65,8 @@ export interface BudgetProgressFields {
   direction: string
 }
 
-/** Per-status colour overrides (any CSS/hex colour); omitted → default palette. */
-export interface BudgetProgressColors {
-  under?: string
-  approaching?: string
-  exact?: string
-  over?: string
-}
+/** Per-status colour overrides (shared with the pivot heat-map). */
+export type BudgetProgressColors = BudgetStatusColors
 
 interface Props {
   rows: Record<string, unknown>[]
@@ -92,50 +94,20 @@ const warnAt = computed(() =>
   typeof props.warnAt === 'number' && props.warnAt > 0 && props.warnAt <= 1 ? props.warnAt : 0.85,
 )
 
-type Status = 'good' | 'warn' | 'exact' | 'bad'
-
-// Default palette (Tailwind classes). Fills softened uniformly so they read calm
-// on both the white light-mode card and the dark card; text stays saturated for
-// legibility. Custom `colors` override these via inline style (below).
-const DEFAULT_CLASSES: Record<Status, { fill: string; track: string; text: string }> = {
+// Default palette (Tailwind classes, per light/dark mode). Fills softened so they
+// read calm on both the white light-mode card and the dark card; text stays
+// saturated for legibility. Kept identical to BUDGET_STATUS_HEX (budgetStatus.ts)
+// so the bars and the pivot heat-map match. Custom `colors` override via inline style.
+const DEFAULT_CLASSES: Record<BudgetStatus, { fill: string; track: string; text: string }> = {
   good: { fill: 'bg-emerald-500/85 dark:bg-emerald-400/70', track: 'bg-emerald-500/10 dark:bg-emerald-400/10', text: 'text-emerald-600/90 dark:text-emerald-400/90' },
   warn: { fill: 'bg-amber-500/85 dark:bg-amber-400/70', track: 'bg-amber-500/12 dark:bg-amber-400/12', text: 'text-amber-600 dark:text-amber-400' },
   exact: { fill: 'bg-blue-500/85 dark:bg-blue-400/70', track: 'bg-blue-500/12 dark:bg-blue-400/12', text: 'text-blue-600 dark:text-blue-400' },
   bad: { fill: 'bg-red-500/85 dark:bg-red-400/70', track: 'bg-red-500/12 dark:bg-red-400/12', text: 'text-red-600 dark:text-red-400' },
 }
-const CONFIG_KEY: Record<Status, keyof BudgetProgressColors> = {
-  good: 'under', warn: 'approaching', exact: 'exact', bad: 'over',
-}
-
-/** Status by usage & direction: expenses good when under, income good when over.
- * Expenses: green (room) → amber (approaching) → blue (exactly on budget) → red
- * (strictly over). Red only when EXCEEDED, so a fixed expense paid in full at
- * exactly 100% is "on the mark" (blue), not an alarm. */
-function statusOf(pctUsed: number, overGood: boolean): Status {
-  if (overGood) {
-    if (pctUsed >= 1) return 'good'
-    if (pctUsed >= warnAt.value) return 'warn'
-    return 'bad'
-  }
-  if (pctUsed > 1) return 'bad'
-  if (pctUsed === 1) return 'exact'
-  if (pctUsed >= warnAt.value) return 'warn'
-  return 'good'
-}
-
-function hexToRgba(color: string, alpha: number): string {
-  const h = color.trim().replace('#', '')
-  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
-  const r = parseInt(full.slice(0, 2), 16)
-  const g = parseInt(full.slice(2, 4), 16)
-  const b = parseInt(full.slice(4, 6), 16)
-  if ([r, g, b].some((n) => Number.isNaN(n))) return color // non-hex (e.g. "rebeccapurple") → use as-is
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
-}
 
 /** Class-based default, or inline-style override when a custom colour is set. */
-function styleFor(status: Status) {
-  const hex = props.colors?.[CONFIG_KEY[status]]
+function styleFor(status: BudgetStatus) {
+  const hex = props.colors?.[BUDGET_STATUS_KEY[status]]
   if (hex) {
     return {
       fillClass: undefined as string | undefined,
@@ -168,7 +140,7 @@ const viewRows = computed(() =>
     const overGood = String(row[f.direction] ?? 'under-good') === 'over-good'
     const label = props.accountFormat ? props.accountFormat(row[f.account]) : String(row[f.account] ?? '')
 
-    const st = styleFor(statusOf(pctUsed, overGood))
+    const st = styleFor(budgetStatusOf(pctUsed, { overGood, warnAt: warnAt.value }))
     // Over an expense budget → surface the overage; otherwise show what's left.
     const isOver = !overGood && remaining < 0
     const statusText = isOver

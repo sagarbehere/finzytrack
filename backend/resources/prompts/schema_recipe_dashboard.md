@@ -501,6 +501,9 @@ Budget-vs-actual progress list: one row per budgeted account with a fill bar (sp
 | `format` | `ValueFormat` | — |  |
 | `showRowTotals` | `boolean` | — |  |
 | `showColumnTotals` | `boolean` | — |  |
+| `colorByValue` | `boolean` | — | Tint each cell by its numeric value read as a budget-usage fraction (e.g. pctUsed) — a budget-adherence heat-map. Uses the same green/amber/blue/red status scale as budget-progress. |
+| `warnAt` | `number` | — | With colorByValue: fraction where a cell turns amber ('approaching'). Default 0.85. |
+| `colors` | `object` | — | With colorByValue: override the status colours (hex), same keys as budget-progress. Omitted statuses keep the default palette. |
 | `valueLink` | `JsonValueLinkConfig` | — |  |
 
 #### `JsonRecipeVisualization`

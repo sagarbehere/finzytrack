@@ -88,7 +88,7 @@ def _detect_dollar_placeholders(query: str) -> list[str]:
 KNOWN_TRANSFORMS = {
     "none", "firstRow", "firstValue", "sortBy", "limit", "pluck", "where", "pivot",
     "joinBudgetActual", "joinByPeriod", "budgetSummary", "unbudgetedSpending",
-    "appendTotal", "runningSum", "envelopeRollover",
+    "appendTotal", "groupBy", "runningSum", "envelopeRollover",
 }
 # NOTE: hand-mirrors the client transform catalog in
 # frontend/src/composables/useRecipeTransforms.ts (transformCatalog). The server

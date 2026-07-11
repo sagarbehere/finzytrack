@@ -154,6 +154,18 @@
         "format": { "$ref": "#/$defs/ValueFormat" },
         "showRowTotals": { "type": "boolean" },
         "showColumnTotals": { "type": "boolean" },
+        "colorByValue": { "type": "boolean", "description": "Tint each cell by its numeric value read as a budget-usage fraction (e.g. pctUsed) — a budget-adherence heat-map. Uses the same green/amber/blue/red status scale as budget-progress." },
+        "warnAt": { "type": "number", "description": "With colorByValue: fraction where a cell turns amber ('approaching'). Default 0.85." },
+        "colors": {
+          "type": "object",
+          "description": "With colorByValue: override the status colours (hex), same keys as budget-progress. Omitted statuses keep the default palette.",
+          "properties": {
+            "under": { "type": "string" },
+            "approaching": { "type": "string" },
+            "exact": { "type": "string" },
+            "over": { "type": "string" }
+          }
+        },
         "valueLink": { "$ref": "#/$defs/JsonValueLinkConfig" }
       }
     },
