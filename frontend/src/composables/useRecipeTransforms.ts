@@ -539,6 +539,25 @@ function unbudgetedSpending(inputs: unknown[]): unknown {
 }
 
 /**
+ * appendTotal — append a grand-total row summing `field` over ALL input rows,
+ * then (optionally) keep only the first `count` data rows above it. Computing the
+ * total before slicing means a "top N + Total" table still totals the full set,
+ * not just the rows shown. Config: { field (default "actual"), labelField
+ * (default "account"), label (default "Total"), count? }. The total row carries
+ * `isTotal: true`.
+ */
+function appendTotal(inputs: unknown[], config?: TransformConfig): unknown {
+  const rows = asRows(inputs[0])
+  const field = String(config?.field ?? 'actual')
+  const labelField = String(config?.labelField ?? 'account')
+  const label = String(config?.label ?? 'Total')
+  const count = config?.count as number | undefined
+  const total = rows.reduce((s: Money, r) => add(s, toMoneyOr0(r[field])), zero())
+  const shown = typeof count === 'number' ? rows.slice(0, count) : rows
+  return [...shown, { [labelField]: label, [field]: total, isTotal: true }]
+}
+
+/**
  * runningSum — burn-down / cumulative. Config: { fields: string[], orderBy }.
  * Accumulates each named field over rows sorted by orderBy, appending a
  * `cumulative<Field>` column per field.
@@ -640,6 +659,7 @@ export const transformCatalog: Record<string, TransformFn> = {
   joinByPeriod,
   budgetSummary,
   unbudgetedSpending,
+  appendTotal,
   runningSum,
   envelopeRollover,
 }

@@ -92,9 +92,9 @@
       "helpText": "Accounts you're spending on that aren't covered by any budget, biggest first — money leaking outside your budgets. A budget on a parent account covers its whole subtree, so those don't appear here. Click a row for that account's transactions.",
       "steps": [
         { "id": "leaks", "kind": "transform", "fn": "unbudgetedSpending", "inputs": ["{{dashboard.steps.budgets}}", "{{dashboard.steps.actuals}}"] },
-        { "id": "top", "kind": "transform", "fn": "limit", "inputs": ["{{steps.leaks}}"], "config": { "count": 10 } }
+        { "id": "with-total", "kind": "transform", "fn": "appendTotal", "inputs": ["{{steps.leaks}}"], "config": { "field": "actual", "label": "Total" } }
       ],
-      "output": "top",
+      "output": "with-total",
       "visualization": {
         "type": "table",
         "emptyText": "Nothing's leaking — every account with spending is covered by a budget.",
