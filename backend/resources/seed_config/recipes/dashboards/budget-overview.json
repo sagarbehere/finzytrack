@@ -84,7 +84,7 @@
         { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.summary}}"] }
       ],
       "output": "row",
-      "visualization": { "type": "kpi", "icon": "✓", "iconColor": "green", "multiCurrency": true, "amountField": "remaining", "currencyField": "currency", "colorBySign": true }
+      "visualization": { "type": "kpi", "icon": "=", "multiCurrency": true, "amountField": "remaining", "currencyField": "currency", "colorBySign": true }
     },
     {
       "id": "unbudgeted",
