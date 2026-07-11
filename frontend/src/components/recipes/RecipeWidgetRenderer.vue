@@ -298,12 +298,15 @@ function getTableColumns(): TableColumn[] {
       if (jsonCol.link) {
         const linkTemplate = jsonCol.link
         result.getLink = (context) =>
-          resolveTemplateLink(linkTemplate, {
-            row: context.row,
-            value: context.value,
-            column: context.column.key,
-            parameters: props.mergedParameters,
-          })
+          // A grand-total / summary row (isTotal) isn't a real entity — no link.
+          context.row?.isTotal
+            ? null
+            : resolveTemplateLink(linkTemplate, {
+                row: context.row,
+                value: context.value,
+                column: context.column.key,
+                parameters: props.mergedParameters,
+              })
       }
       return result
     }
@@ -317,12 +320,14 @@ function getTableColumns(): TableColumn[] {
       }
       const linkTemplate = jsonCol.link!
       result.getLink = (context) =>
-        resolveTemplateLink(linkTemplate, {
-          row: context.row,
-          value: context.value,
-          column: context.column.key,
-          parameters: props.mergedParameters,
-        })
+        context.row?.isTotal
+          ? null
+          : resolveTemplateLink(linkTemplate, {
+              row: context.row,
+              value: context.value,
+              column: context.column.key,
+              parameters: props.mergedParameters,
+            })
       return result
     }
     // TypeScript column with function
