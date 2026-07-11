@@ -16,17 +16,21 @@
               <span class="text-sm text-gray-500 dark:text-gray-400">
                 {{ r.actualText }} <span class="text-gray-300 dark:text-gray-600">/</span> {{ r.budgetText }}
               </span>
-              <span class="text-sm font-semibold" :class="r.statusTextClass">{{ r.statusText }}</span>
+              <span class="text-sm font-semibold" :class="r.textClass" :style="r.textStyle">{{ r.statusText }}</span>
             </span>
           </div>
 
           <!-- Two-tone bar: spent solid, remaining a faint tint of the same hue.
                Full width; clamped at 100% (over-budget shows red). -->
-          <div class="relative mt-1.5 h-2.5 w-full overflow-hidden rounded-full" :class="r.trackClass">
+          <div
+            class="relative mt-1.5 h-2.5 w-full overflow-hidden rounded-full"
+            :class="r.trackClass"
+            :style="r.trackStyle"
+          >
             <div
               class="absolute inset-y-0 left-0 rounded-full transition-[width]"
               :class="r.fillClass"
-              :style="{ width: r.fillPct + '%' }"
+              :style="{ width: r.fillPct + '%', ...r.fillStyle }"
             />
           </div>
         </component>
@@ -54,6 +58,14 @@ export interface BudgetProgressFields {
   direction: string
 }
 
+/** Per-status colour overrides (any CSS/hex colour); omitted → default palette. */
+export interface BudgetProgressColors {
+  under?: string
+  approaching?: string
+  exact?: string
+  over?: string
+}
+
 interface Props {
   rows: Record<string, unknown>[]
   fields: BudgetProgressFields
@@ -62,6 +74,10 @@ interface Props {
   /** Optional per-row click-through, resolved by the renderer from the JSON link. */
   getRowLink?: (row: Record<string, unknown>) => RouteLocationRaw | null
   emptyText?: string
+  /** Fraction of budget where the bar turns amber ("approaching"). Default 0.85. */
+  warnAt?: number
+  /** Per-status colour overrides; omitted statuses keep the default palette. */
+  colors?: BudgetProgressColors
 }
 
 const props = defineProps<Props>()
@@ -72,31 +88,73 @@ function num(v: unknown): number {
   return 0
 }
 
-/** A budget line is "healthy" per its direction: expenses good when under, income good when over. */
-function classifyColor(pctUsed: number, overGood: boolean): { fill: string; track: string; text: string } {
-  // Traffic-light on how much of the target is used, flipped for income. `track`
-  // is a faint tint of the same hue so the bar reads as used|remaining in one colour.
-  // Fills softened uniformly (transparency) so they read calm on BOTH the white
-  // light-mode card and the dark card — the hue carries the status; full
-  // saturation looked neon on white. Text stays saturated for legibility.
-  const good = { fill: 'bg-emerald-500/85 dark:bg-emerald-400/70', track: 'bg-emerald-500/10 dark:bg-emerald-400/10', text: 'text-emerald-600/90 dark:text-emerald-400/90' }
-  const warn = { fill: 'bg-amber-500/85 dark:bg-amber-400/70', track: 'bg-amber-500/12 dark:bg-amber-400/12', text: 'text-amber-600 dark:text-amber-400' }
-  // "On the mark" — spent exactly the budget (e.g. rent paid in full). Its own
-  // calm colour, distinct from amber's "approaching" and red's "over".
-  const exact = { fill: 'bg-blue-500/85 dark:bg-blue-400/70', track: 'bg-blue-500/12 dark:bg-blue-400/12', text: 'text-blue-600 dark:text-blue-400' }
-  const bad = { fill: 'bg-red-500/85 dark:bg-red-400/70', track: 'bg-red-500/12 dark:bg-red-400/12', text: 'text-red-600 dark:text-red-400' }
+const warnAt = computed(() =>
+  typeof props.warnAt === 'number' && props.warnAt > 0 && props.warnAt <= 1 ? props.warnAt : 0.85,
+)
+
+type Status = 'good' | 'warn' | 'exact' | 'bad'
+
+// Default palette (Tailwind classes). Fills softened uniformly so they read calm
+// on both the white light-mode card and the dark card; text stays saturated for
+// legibility. Custom `colors` override these via inline style (below).
+const DEFAULT_CLASSES: Record<Status, { fill: string; track: string; text: string }> = {
+  good: { fill: 'bg-emerald-500/85 dark:bg-emerald-400/70', track: 'bg-emerald-500/10 dark:bg-emerald-400/10', text: 'text-emerald-600/90 dark:text-emerald-400/90' },
+  warn: { fill: 'bg-amber-500/85 dark:bg-amber-400/70', track: 'bg-amber-500/12 dark:bg-amber-400/12', text: 'text-amber-600 dark:text-amber-400' },
+  exact: { fill: 'bg-blue-500/85 dark:bg-blue-400/70', track: 'bg-blue-500/12 dark:bg-blue-400/12', text: 'text-blue-600 dark:text-blue-400' },
+  bad: { fill: 'bg-red-500/85 dark:bg-red-400/70', track: 'bg-red-500/12 dark:bg-red-400/12', text: 'text-red-600 dark:text-red-400' },
+}
+const CONFIG_KEY: Record<Status, keyof BudgetProgressColors> = {
+  good: 'under', warn: 'approaching', exact: 'exact', bad: 'over',
+}
+
+/** Status by usage & direction: expenses good when under, income good when over.
+ * Expenses: green (room) → amber (approaching) → blue (exactly on budget) → red
+ * (strictly over). Red only when EXCEEDED, so a fixed expense paid in full at
+ * exactly 100% is "on the mark" (blue), not an alarm. */
+function statusOf(pctUsed: number, overGood: boolean): Status {
   if (overGood) {
-    if (pctUsed >= 1) return good // hit/beat the income target
-    if (pctUsed >= 0.85) return warn
-    return bad // well short of target
+    if (pctUsed >= 1) return 'good'
+    if (pctUsed >= warnAt.value) return 'warn'
+    return 'bad'
   }
-  // green (room) → amber (approaching) → blue (exactly on budget) → red (over).
-  // Red only when EXCEEDED (> 100%); exactly 100% is the ideal for a fixed
-  // expense, so it gets its own "on the mark" colour, not an alarm.
-  if (pctUsed > 1) return bad
-  if (pctUsed === 1) return exact
-  if (pctUsed >= 0.85) return warn
-  return good
+  if (pctUsed > 1) return 'bad'
+  if (pctUsed === 1) return 'exact'
+  if (pctUsed >= warnAt.value) return 'warn'
+  return 'good'
+}
+
+function hexToRgba(color: string, alpha: number): string {
+  const h = color.trim().replace('#', '')
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
+  const r = parseInt(full.slice(0, 2), 16)
+  const g = parseInt(full.slice(2, 4), 16)
+  const b = parseInt(full.slice(4, 6), 16)
+  if ([r, g, b].some((n) => Number.isNaN(n))) return color // non-hex (e.g. "rebeccapurple") → use as-is
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+/** Class-based default, or inline-style override when a custom colour is set. */
+function styleFor(status: Status) {
+  const hex = props.colors?.[CONFIG_KEY[status]]
+  if (hex) {
+    return {
+      fillClass: undefined as string | undefined,
+      trackClass: undefined as string | undefined,
+      textClass: undefined as string | undefined,
+      fillStyle: { backgroundColor: hexToRgba(hex, 0.85) } as Record<string, string> | undefined,
+      trackStyle: { backgroundColor: hexToRgba(hex, 0.12) } as Record<string, string> | undefined,
+      textStyle: { color: hex } as Record<string, string> | undefined,
+    }
+  }
+  const d = DEFAULT_CLASSES[status]
+  return {
+    fillClass: d.fill,
+    trackClass: d.track,
+    textClass: d.text,
+    fillStyle: undefined as Record<string, string> | undefined,
+    trackStyle: undefined as Record<string, string> | undefined,
+    textStyle: undefined as Record<string, string> | undefined,
+  }
 }
 
 const viewRows = computed(() =>
@@ -110,7 +168,7 @@ const viewRows = computed(() =>
     const overGood = String(row[f.direction] ?? 'under-good') === 'over-good'
     const label = props.accountFormat ? props.accountFormat(row[f.account]) : String(row[f.account] ?? '')
 
-    const color = classifyColor(pctUsed, overGood)
+    const st = styleFor(statusOf(pctUsed, overGood))
     // Over an expense budget → surface the overage; otherwise show what's left.
     const isOver = !overGood && remaining < 0
     const statusText = isOver
@@ -121,9 +179,7 @@ const viewRows = computed(() =>
       actualText: formatAmount(actual, currency),
       budgetText: formatAmount(budget, currency),
       statusText,
-      statusTextClass: color.text,
-      fillClass: color.fill,
-      trackClass: color.track,
+      ...st,
       fillPct: Math.min(100, Math.max(0, pctUsed * 100)),
       link: props.getRowLink ? props.getRowLink(row) : null,
     }

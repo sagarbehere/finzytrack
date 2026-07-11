@@ -170,8 +170,19 @@
         "pctUsedField": { "type": "string", "description": "Row field for the fraction of budget used, e.g. 1.23 = 123% (default: 'pctUsed')." },
         "currencyField": { "type": "string", "description": "Row field for the currency code (default: 'currency')." },
         "directionField": { "type": "string", "description": "Row field holding 'under-good' | 'over-good' (expense vs income). Default 'direction'; absent → under-good." },
-        "accountFormat": { "$ref": "#/$defs/ValueFormat", "description": "Optional format for the category label (e.g. 'accountName2')." },
-        "link": { "$ref": "#/$defs/JsonValueLinkConfig", "description": "Optional per-row click-through (interpolates {{row.<field>}}), e.g. to the category's transactions." },
+        "accountFormat": { "$ref": "#/$defs/ValueFormat", "description": "Optional format for the account label (e.g. 'accountName2')." },
+        "warnAt": { "type": "number", "description": "Fraction of budget where a bar turns amber ('approaching'). Default 0.85 (85%)." },
+        "colors": {
+          "type": "object",
+          "description": "Override the status bar colours (any CSS/hex colour, applied in both light and dark mode). Omitted statuses keep the default palette (green/amber/blue/red).",
+          "properties": {
+            "under": { "type": "string", "description": "Under budget (default green)." },
+            "approaching": { "type": "string", "description": "Approaching the limit (default amber)." },
+            "exact": { "type": "string", "description": "Exactly on budget (default blue)." },
+            "over": { "type": "string", "description": "Over budget (default red)." }
+          }
+        },
+        "link": { "$ref": "#/$defs/JsonValueLinkConfig", "description": "Optional per-row click-through (interpolates {{row.<field>}}), e.g. to the account's transactions." },
         "emptyText": { "type": "string", "description": "Message shown when there are no rows." }
       }
     },

@@ -75,16 +75,19 @@ const props = withDefaults(defineProps<Props>(), {
   colorBySign: false,
 })
 
+// Three-way by sign: red < 0, blue exactly 0 ("on the mark" — mirrors the
+// budget-progress bars), green > 0.
 function signClass(n: number): string {
-  return n < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'
+  if (n < 0) return 'text-red-600 dark:text-red-400'
+  if (n === 0) return 'text-blue-600 dark:text-blue-400'
+  return 'text-emerald-600 dark:text-emerald-400'
 }
 
-/** Representative sign for the icon: negative if any shown amount is negative. */
-const isNegative = computed(() =>
-  props.values && props.values.length > 0
-    ? props.values.some((v) => v.amount < 0)
-    : props.value < 0,
+const shownAmounts = computed<number[]>(() =>
+  props.values && props.values.length > 0 ? props.values.map((v) => v.amount) : [props.value],
 )
+const isNegative = computed(() => shownAmounts.value.some((n) => n < 0))
+const isExactlyZero = computed(() => !isNegative.value && shownAmounts.value.every((n) => n === 0))
 
 // Max font sizes per currency count: 1 → 26px, 2 → 22px, 3+ → 18px
 const maxSizes: Record<number, number> = { 1: 26, 2: 22, 3: 18 }
@@ -94,7 +97,11 @@ function maxFontSize(count: number): string {
 }
 
 const iconBgClass = computed(() => {
-  if (props.colorBySign) return isNegative.value ? 'bg-red-500' : 'bg-emerald-500'
+  if (props.colorBySign) {
+    if (isNegative.value) return 'bg-red-500'
+    if (isExactlyZero.value) return 'bg-blue-500'
+    return 'bg-emerald-500'
+  }
   const colors = {
     blue: 'bg-indigo-500',
     green: 'bg-green-500',

@@ -62,6 +62,8 @@
     :accountFormat="getBudgetProgressAccountFormat()"
     :getRowLink="getBudgetProgressRowLink()"
     :emptyText="recipe.visualization.emptyText"
+    :warnAt="isJsonBudgetProgress(recipe.visualization) ? recipe.visualization.warnAt : undefined"
+    :colors="isJsonBudgetProgress(recipe.visualization) ? recipe.visualization.colors : undefined"
   />
 </template>
 
@@ -398,6 +400,12 @@ function getPivotGetValueLink(): ((context: PivotLinkContext) => ValueLinkConfig
 }
 
 // ── budget-progress helpers ─────────────────────────────────────────────────
+function isJsonBudgetProgress(
+  viz: { type?: string },
+): viz is JsonBudgetProgressVisualization {
+  return viz.type === 'budget-progress'
+}
+
 // Field-name mapping (defaults match the joinBudgetActual flat output).
 function getBudgetProgressFields(): BudgetProgressFields {
   const viz = props.recipe.visualization

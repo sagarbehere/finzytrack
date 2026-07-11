@@ -349,6 +349,32 @@ export interface JsonBudgetProgressVisualization {
     | "dateShort"
     | "accountName"
     | "accountName2";
+  /**
+   * Fraction of budget where a bar turns amber ('approaching'). Default 0.85 (85%).
+   */
+  warnAt?: number;
+  /**
+   * Override the status bar colours (any CSS/hex colour, applied in both light and dark mode). Omitted statuses keep the default palette (green/amber/blue/red).
+   */
+  colors?: {
+    /**
+     * Under budget (default green).
+     */
+    under?: string;
+    /**
+     * Approaching the limit (default amber).
+     */
+    approaching?: string;
+    /**
+     * Exactly on budget (default blue).
+     */
+    exact?: string;
+    /**
+     * Over budget (default red).
+     */
+    over?: string;
+    [k: string]: unknown;
+  };
   link?: JsonValueLinkConfig1;
   /**
    * Message shown when there are no rows.
@@ -357,7 +383,7 @@ export interface JsonBudgetProgressVisualization {
   [k: string]: unknown;
 }
 /**
- * Optional per-row click-through (interpolates {{row.<field>}}), e.g. to the category's transactions.
+ * Optional per-row click-through (interpolates {{row.<field>}}), e.g. to the account's transactions.
  */
 export interface JsonValueLinkConfig1 {
   /**

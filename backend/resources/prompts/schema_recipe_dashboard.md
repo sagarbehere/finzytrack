@@ -456,8 +456,10 @@ Budget-vs-actual progress list: one row per budgeted account with a fill bar (sp
 | `pctUsedField` | `string` | — | Row field for the fraction of budget used, e.g. 1.23 = 123% (default: 'pctUsed'). |
 | `currencyField` | `string` | — | Row field for the currency code (default: 'currency'). |
 | `directionField` | `string` | — | Row field holding 'under-good' | 'over-good' (expense vs income). Default 'direction'; absent → under-good. |
-| `accountFormat` | `ValueFormat` | — | Optional format for the category label (e.g. 'accountName2'). |
-| `link` | `JsonValueLinkConfig` | — | Optional per-row click-through (interpolates {{row.<field>}}), e.g. to the category's transactions. |
+| `accountFormat` | `ValueFormat` | — | Optional format for the account label (e.g. 'accountName2'). |
+| `warnAt` | `number` | — | Fraction of budget where a bar turns amber ('approaching'). Default 0.85 (85%). |
+| `colors` | `object` | — | Override the status bar colours (any CSS/hex colour, applied in both light and dark mode). Omitted statuses keep the default palette (green/amber/blue/red). |
+| `link` | `JsonValueLinkConfig` | — | Optional per-row click-through (interpolates {{row.<field>}}), e.g. to the account's transactions. |
 | `emptyText` | `string` | — | Message shown when there are no rows. |
 
 #### `JsonChartVisualization`
