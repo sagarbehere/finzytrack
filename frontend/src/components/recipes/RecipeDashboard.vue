@@ -39,6 +39,7 @@
           :dashboardStepsLoading="widgetDependsOnShared(widgetLayout.widgetId) && sharedStepsLoading"
           :dashboardStepsError="widgetDependsOnShared(widgetLayout.widgetId) ? sharedStepsError : null"
           :style="{ gridArea: widgetLayout.gridArea }"
+          @select="onWidgetSelect"
         />
         <!-- Shown when a widgetId in the layout has no matching widget definition -->
         <div
@@ -158,6 +159,26 @@ async function runSharedSteps() {
 initializeParameters()
 
 watch(resolvedDashboardParameters, () => runSharedSteps(), { immediate: true, deep: true })
+
+/**
+ * A widget "select" click (master-detail drill-down): merge the resolved params
+ * into the dashboard's selections. Only keys that are actual dashboard
+ * parameters are applied, so a widget can't invent unknown params. The existing
+ * `dashboardSelections` watch persists + emits, and the resolved-params watch
+ * re-runs shared steps + dependent widgets — same path as a dropdown change.
+ */
+function onWidgetSelect(params: Record<string, string>) {
+  const known = new Set((props.dashboard.parameters ?? []).map((p) => p.name))
+  const next = { ...dashboardSelections.value }
+  let changed = false
+  for (const [k, v] of Object.entries(params)) {
+    if (known.has(k) && next[k] !== v) {
+      next[k] = v
+      changed = true
+    }
+  }
+  if (changed) dashboardSelections.value = next
+}
 
 /**
  * Get widget by ID from the dashboard's own inline widgets[]. Widgets are

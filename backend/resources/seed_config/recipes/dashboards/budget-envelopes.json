@@ -2,64 +2,170 @@
   "schemaVersion": 2,
   "id": "budget-envelopes",
   "title": "Budget — Envelopes (rollover)",
-  "description": "Envelope budgeting with rollover: unspent budget carries forward to the next month, and overspending eats into it. 'Available' is last month's carryover plus this month's budget; 'Carryover' is what's left at month end.",
+  "description": "Envelope budgeting with rollover: unspent budget carries forward and overspending eats into it. The top list is every budgeted envelope with what's left in it — click any envelope to drill into its month-by-month trend below (available → spent → left). Defaults to the current year; choose a range with data.",
   "parameters": [
     { "name": "from", "label": "From", "type": "date", "default": { "$gen": "startOfYear" } },
     { "name": "to", "label": "To", "type": "date", "default": { "$gen": "endOfYear" } },
     { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" },
+    { "name": "account", "label": "Envelope", "type": "select", "default": "Expenses:Groceries", "hidden": true }
+  ],
+
+  "steps": [
     {
-      "name": "account", "label": "Envelope", "type": "select", "default": "Expenses:Groceries",
-      "options": [
-        { "value": "Expenses:Groceries", "label": "Groceries" },
-        { "value": "Expenses:EatingOut", "label": "Eating Out" },
-        { "value": "Expenses:Entertainment", "label": "Entertainment" },
-        { "value": "Expenses:Travel", "label": "Travel" }
-      ]
+      "id": "actuals-all",
+      "kind": "query",
+      "query": "SELECT account, currency, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE account_type = 'Expenses' AND transaction_date BETWEEN :from AND :to AND currency = :currency GROUP BY account, currency"
+    },
+    {
+      "id": "budgets-all",
+      "kind": "compute",
+      "fn": "budget_for_range",
+      "args": { "from": "{{params.from}}", "to": "{{params.to}}", "currency": "{{params.currency}}" }
+    },
+    {
+      "id": "flat",
+      "kind": "transform",
+      "fn": "joinBudgetActual",
+      "inputs": ["{{steps.budgets-all}}", "{{steps.actuals-all}}"]
+    },
+    {
+      "id": "ranked",
+      "kind": "transform",
+      "fn": "sortBy",
+      "inputs": ["{{steps.flat}}"],
+      "config": { "field": "pctUsed", "order": "desc" }
+    },
+
+    {
+      "id": "actuals-acct",
+      "kind": "query",
+      "query": "SELECT year_month AS period, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE (account = :account OR account LIKE :account || ':%') AND transaction_date BETWEEN :from AND :to AND currency = :currency GROUP BY year_month ORDER BY year_month"
+    },
+    {
+      "id": "budgets-acct",
+      "kind": "compute",
+      "fn": "budget_for_range",
+      "args": { "from": "{{params.from}}", "to": "{{params.to}}", "currency": "{{params.currency}}", "account": "{{params.account}}", "groupBy": "period" }
+    },
+    {
+      "id": "rollover",
+      "kind": "transform",
+      "fn": "envelopeRollover",
+      "inputs": ["{{steps.budgets-acct}}", "{{steps.actuals-acct}}"]
+    },
+    {
+      "id": "sorted-desc",
+      "kind": "transform",
+      "fn": "sortBy",
+      "inputs": ["{{steps.rollover}}"],
+      "config": { "field": "period", "order": "desc" }
+    },
+    {
+      "id": "latest",
+      "kind": "transform",
+      "fn": "limit",
+      "inputs": ["{{steps.sorted-desc}}"],
+      "config": { "count": 1 }
     }
   ],
+
   "layout": {
     "columns": 12,
     "gap": "1.5rem",
-    "rowHeight": "320px",
+    "rowHeight": "150px",
     "widgets": [
-      { "widgetId": "envelope", "gridArea": "1 / 1 / 2 / 13" }
+      { "widgetId": "overview",      "gridArea": "1 / 1 / 4 / 13" },
+      { "widgetId": "kpi-available", "gridArea": "4 / 1 / 5 / 5" },
+      { "widgetId": "kpi-spent",     "gridArea": "4 / 5 / 5 / 9" },
+      { "widgetId": "kpi-balance",   "gridArea": "4 / 9 / 5 / 13" },
+      { "widgetId": "carryover",     "gridArea": "5 / 1 / 8 / 13" }
     ]
   },
+
   "widgets": [
     {
-      "id": "envelope",
-      "title": "Envelope balance over time",
-      "helpText": "Unspent budget carries forward; overspending eats into next month. Empty? Set a budget for the chosen envelope account (Budgets view) and pick a date range with data.",
+      "id": "overview",
+      "title": "✉ Envelope balances",
+      "helpText": "Every budgeted envelope over the selected range: the bar is spent vs budget, and the amount on the right is what's left in the envelope (unspent budget that carries forward; red = overspent). Click an envelope to drill into its month-by-month trend below.",
       "steps": [
-        {
-          "id": "actuals",
-          "kind": "query",
-          "query": "SELECT year_month AS period, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE account = :account AND transaction_date BETWEEN :from AND :to AND currency = :currency GROUP BY year_month ORDER BY year_month"
-        },
-        {
-          "id": "budgets",
-          "kind": "compute",
-          "fn": "budget_for_range",
-          "args": { "from": "{{params.from}}", "to": "{{params.to}}", "currency": "{{params.currency}}", "account": "{{params.account}}", "groupBy": "period" }
-        },
-        {
-          "id": "rollover",
-          "kind": "transform",
-          "fn": "envelopeRollover",
-          "inputs": ["{{steps.budgets}}", "{{steps.actuals}}"]
-        }
+        { "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.ranked}}"] }
       ],
-      "output": "rollover",
+      "output": "rows",
       "visualization": {
-        "type": "table",
-        "emptyText": "No budget or spending for this envelope in this range. Set a budget for the account (Budgets view) and choose a date range with data.",
-        "columns": [
-          { "key": "period", "label": "Month" },
-          { "key": "budget", "label": "Budget", "format": "currency", "align": "right" },
-          { "key": "actual", "label": "Spent", "format": "currency", "align": "right" },
-          { "key": "available", "label": "Available", "format": "currency", "align": "right" },
-          { "key": "carryover", "label": "Carryover", "format": "signedCurrency", "align": "right" }
-        ]
+        "type": "budget-progress",
+        "accountFormat": "accountName2",
+        "emptyText": "No budgets or spending for this range. Set budgets in the Budgets view, then pick a range and currency that have data.",
+        "link": { "select": { "account": "{{row.account}}" } }
+      }
+    },
+    {
+      "id": "kpi-available",
+      "title": "{{params.account:accountName}} — Available",
+      "helpText": "The selected envelope's opening balance for the most recent month in range: last month's carryover plus this month's budget — what you had to spend.",
+      "steps": [
+        { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.latest}}"] }
+      ],
+      "output": "row",
+      "visualization": { "type": "kpi", "icon": "◎", "iconColor": "blue", "multiCurrency": true, "amountField": "available", "currencyField": "currency" }
+    },
+    {
+      "id": "kpi-spent",
+      "title": "{{params.account:accountName}} — Spent",
+      "helpText": "What you actually spent from the selected envelope in the most recent month in range.",
+      "steps": [
+        { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.latest}}"] }
+      ],
+      "output": "row",
+      "visualization": { "type": "kpi", "icon": "$", "iconColor": "purple", "multiCurrency": true, "amountField": "actual", "currencyField": "currency" }
+    },
+    {
+      "id": "kpi-balance",
+      "title": "{{params.account:accountName}} — In envelope now",
+      "helpText": "The selected envelope's closing balance after this month's spending (available − spent) — unspent budget that carries forward. Negative (red) means you overspent and the shortfall carries into next month.",
+      "steps": [
+        { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.latest}}"] }
+      ],
+      "output": "row",
+      "visualization": { "type": "kpi", "icon": "✉", "multiCurrency": true, "amountField": "carryover", "currencyField": "currency", "colorBySign": true }
+    },
+    {
+      "id": "carryover",
+      "title": "{{params.account:accountName}} — Balance over time",
+      "helpText": "The selected envelope's balance (carryover) at the end of each month. A rising line means you're banking unspent budget; dipping below zero means you overspent and are carrying a shortfall forward. Click a month's point to see that month's transactions.",
+      "steps": [
+        { "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.rollover}}"] }
+      ],
+      "output": "rows",
+      "visualization": {
+        "type": "chart",
+        "chartType": "area",
+        "yAxisLabelFormat": "compact",
+        "options": {
+          "tooltip": { "trigger": "axis" },
+          "legend": { "show": false },
+          "grid": { "top": 16, "bottom": 24, "left": 56, "right": 20 },
+          "xAxis": { "type": "category" },
+          "yAxis": { "type": "value", "splitLine": { "lineStyle": { "type": "dashed", "opacity": 0.6 } } },
+          "series": [
+            {
+              "name": "Carryover",
+              "type": "line",
+              "smooth": true,
+              "encode": { "x": "period", "y": "carryover" },
+              "itemStyle": { "color": "#6366f1" },
+              "areaStyle": { "opacity": 0.25 },
+              "lineStyle": { "width": 2 }
+            }
+          ]
+        },
+        "clickLink": {
+          "name": "transactions",
+          "query": {
+            "accountContains": "{{parameters.account}}",
+            "dateFrom": "{{data.dateFrom}}",
+            "dateTo": "{{data.dateTo}}"
+          }
+        }
       }
     }
   ]

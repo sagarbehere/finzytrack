@@ -220,4 +220,24 @@ describe('envelopeRollover', () => {
     expect(out[1].available).toBe('70') // 100 + (-30)
     expect(out[1].carryover).toBe('20')
   })
+
+  it('carries currency through from the budgets input (for a latest-row KPI)', () => {
+    const out = applyTransform('envelopeRollover', [
+      [
+        { period: '2026-01', currency: 'INR', budget: '100' },
+        { period: '2026-02', currency: 'INR', budget: '100' },
+      ],
+      [{ period: '2026-01', actual: '60' }],
+    ]) as Record<string, unknown>[]
+    expect(out.every((r) => r.currency === 'INR')).toBe(true)
+  })
+
+  it('emits month bounds per period (for per-point chart click-through)', () => {
+    const out = applyTransform('envelopeRollover', [
+      [{ period: '2026-02', currency: 'USD', budget: '100' }],
+      [{ period: '2026-02', actual: '60' }],
+    ]) as Record<string, unknown>[]
+    expect(out[0].dateFrom).toBe('2026-02-01')
+    expect(out[0].dateTo).toBe('2026-02-28') // last day of Feb 2026
+  })
 })

@@ -58,6 +58,15 @@
               >
                 {{ formatValue(row.values[col]) }}
               </router-link>
+              <!-- Select action (drives another widget) otherwise -->
+              <button
+                v-else-if="getCellSelect(row, col, colIndex)"
+                type="button"
+                class="text-indigo-600 hover:text-indigo-800 hover:underline dark:text-indigo-400 dark:hover:text-indigo-300"
+                @click="emit('select', getCellSelect(row, col, colIndex)!)"
+              >
+                {{ formatValue(row.values[col]) }}
+              </button>
               <!-- Plain value otherwise -->
               <span v-else>
                 {{ formatValue(row.values[col]) }}
@@ -114,7 +123,7 @@
 
 <script setup lang="ts">
 import type { RouteLocationRaw } from 'vue-router'
-import type { PivotData, PivotRow, PivotLinkContext, ValueLinkConfig } from '@/types/recipes'
+import type { PivotData, PivotRow, PivotLinkContext, ValueLinkConfig, SelectParams } from '@/types/recipes'
 import { budgetStatusOf, budgetStatusColor, hexToRgba, type BudgetStatusColors } from '@/utils/budgetStatus'
 
 interface Props {
@@ -128,6 +137,8 @@ interface Props {
    * Return null/undefined for no link.
    */
   getValueLink?: (context: PivotLinkContext) => ValueLinkConfig | null | undefined
+  /** Function to resolve a cell "select" action (dashboard params to set on click). */
+  getValueSelect?: (context: PivotLinkContext) => SelectParams | null | undefined
   /** Budget-adherence heat-map: tint each cell by its value read as a usage fraction. */
   colorByValue?: boolean
   warnAt?: number
@@ -139,6 +150,7 @@ const props = withDefaults(defineProps<Props>(), {
   showRowTotals: true,
   showColumnTotals: true,
 })
+const emit = defineEmits<{ select: [params: SelectParams] }>()
 
 // A moderate tint so the number stays legible on the heat cell (light + dark).
 const CELL_TINT_ALPHA = 0.22
@@ -190,5 +202,12 @@ function getCellLink(row: PivotRow, column: string, columnIndex: number): RouteL
   }
 
   return null
+}
+
+/** Resolve a cell's "select" action (dashboard params to set on click), if any. */
+function getCellSelect(row: PivotRow, column: string, columnIndex: number): SelectParams | null {
+  const value = row.values[column]
+  if (value === undefined || value === 0 || !props.getValueSelect) return null
+  return props.getValueSelect({ rowLabel: row.label, rowData: row, column, columnIndex, value }) ?? null
 }
 </script>

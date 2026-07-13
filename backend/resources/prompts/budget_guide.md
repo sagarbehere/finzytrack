@@ -49,12 +49,12 @@ Each common style is "just a recipe". The seeded demos (list them with
 
 | Style | Demo dashboard id | Transform |
 |---|---|---|
-| Monthly envelope, no rollover | `budget-this-month` | `joinBudgetActual` (flat) |
+| Monthly, no rollover (at a glance) | `budget-overview` | `joinBudgetActual` (flat) + `budgetSummary` |
 | Top-down / zero-based catch-all | `budget-zero-based` | `joinBudgetActual` (remainder mode) |
 | Burn-down / pace | `budget-burndown` | `joinByPeriod` + `runningSum` |
 | Envelope with rollover | `budget-envelopes` | `envelopeRollover` |
 
-(50/30/20 and pay-yourself-first are the same machinery as `budget-this-month`
+(50/30/20 and pay-yourself-first are the same machinery as `budget-overview`
 with different budgeted numbers/labels.)
 
 ## Answering vs. authoring

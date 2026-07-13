@@ -65,16 +65,19 @@
         },
         "optionsFrom": {
           "type": "string",
-          "enum": ["currencies", "years"],
-          "description": "Populate options dynamically from the user's ledger."
+          "enum": ["currencies", "years", "accounts", "expenseAccounts", "incomeAccounts"],
+          "description": "Populate options dynamically from the user's ledger. 'accounts' = all accounts; 'expenseAccounts'/'incomeAccounts' = only that type. Each option's value is the full account path; its label is the path below the type root (e.g. 'Expenses:Insurance:Health' → 'Insurance:Health')."
         },
         "min": { "type": "number" },
-        "max": { "type": "number" }
+        "max": { "type": "number" },
+        "hidden": { "type": "boolean", "description": "When true, the parameter is functional (its default applies, it can be set by a `select` click or the URL, and steps read it) but renders NO control in the parameter bar. Use for a parameter driven only by click-to-select master-detail." }
       }
     },
-    "JsonValueLinkConfig": {
+    "JsonRouteLinkConfig": {
       "type": "object",
       "required": ["name", "query"],
+      "additionalProperties": false,
+      "description": "NAVIGATE click action: clicking the value/row/series routes to a Vue route with a templated query.",
       "properties": {
         "name": { "type": "string", "minLength": 1, "description": "Vue route name, e.g. 'transactions'." },
         "query": {
@@ -83,6 +86,27 @@
           "description": "Template strings interpolated with {{data.field}}, {{row.label}}, {{parameters.x}}, {{dateFrom}}, {{dateTo}}."
         }
       }
+    },
+    "JsonSelectLinkConfig": {
+      "type": "object",
+      "required": ["select"],
+      "additionalProperties": false,
+      "description": "SELECT click action: clicking sets dashboard parameters from the clicked context INSTEAD of navigating, re-running the widgets that depend on them (master-detail drill-down).",
+      "properties": {
+        "select": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": "string" },
+          "description": "Dashboard-parameter name → template ({{row.field}}, {{data.field}}, {{parameters.x}}). E.g. {\"account\": \"{{row.account}}\"} makes a row click drive an account-scoped drill-down widget."
+        }
+      }
+    },
+    "JsonValueLinkConfig": {
+      "description": "A click action on a widget value/row/series: either NAVIGATE to a route or SELECT dashboard parameters (master-detail).",
+      "oneOf": [
+        { "$ref": "#/$defs/JsonRouteLinkConfig" },
+        { "$ref": "#/$defs/JsonSelectLinkConfig" }
+      ]
     },
     "JsonKPIVisualization": {
       "type": "object",

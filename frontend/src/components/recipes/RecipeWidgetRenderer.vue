@@ -41,6 +41,7 @@
     :data="Array.isArray(data) ? data : []"
     :columns="getTableColumns()"
     :emptyText="getTableEmptyText()"
+    @select="emit('select', $event)"
   />
 
   <!-- Pivot Table -->
@@ -52,9 +53,11 @@
     :showRowTotals="recipe.visualization.showRowTotals"
     :showColumnTotals="recipe.visualization.showColumnTotals"
     :getValueLink="getPivotGetValueLink()"
+    :getValueSelect="getPivotGetValueSelect()"
     :colorByValue="isJsonPivot(recipe.visualization) ? recipe.visualization.colorByValue : undefined"
     :warnAt="isJsonPivot(recipe.visualization) ? recipe.visualization.warnAt : undefined"
     :colors="isJsonPivot(recipe.visualization) ? recipe.visualization.colors : undefined"
+    @select="emit('select', $event)"
   />
 
   <!-- Budget progress -->
@@ -64,9 +67,12 @@
     :fields="getBudgetProgressFields()"
     :accountFormat="getBudgetProgressAccountFormat()"
     :getRowLink="getBudgetProgressRowLink()"
+    :getRowSelect="getBudgetProgressRowSelect()"
+    :activeParams="getBudgetProgressActiveParams()"
     :emptyText="recipe.visualization.emptyText"
     :warnAt="isJsonBudgetProgress(recipe.visualization) ? recipe.visualization.warnAt : undefined"
     :colors="isJsonBudgetProgress(recipe.visualization) ? recipe.visualization.colors : undefined"
+    @select="emit('select', $event)"
   />
 </template>
 
@@ -79,6 +85,7 @@ import type {
   ChartVisualization,
   ChartClickContext,
   TableColumn,
+  TableLinkContext,
   JsonTableColumn,
   JsonValueLinkConfig,
   JsonPivotVisualization,
@@ -89,6 +96,8 @@ import type {
   ValueLinkConfig,
   CurrencyAmount,
   JsonBudgetProgressVisualization,
+  JsonSelectLinkConfig,
+  SelectParams,
 } from '@/types/recipes'
 import {
   type AnyWidgetRecipe,
@@ -109,6 +118,10 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+
+// A "select" click action bubbles the resolved dashboard params up to
+// RecipeDashboard, which merges them into its selections (master-detail).
+const emit = defineEmits<{ select: [params: SelectParams] }>()
 
 const router = useRouter()
 
@@ -263,11 +276,33 @@ function resolveTemplateLink(
   template: JsonValueLinkConfig,
   vars: Record<string, unknown>,
 ): ValueLinkConfig | null {
+  // A select action is not a route — callers handle it via resolveSelectParams.
+  if (isSelectLink(template)) return null
   const query: Record<string, string> = {}
   for (const [key, tmpl] of Object.entries(template.query)) {
     query[key] = interpolateString(tmpl, (path) => resolvePath(path, vars))
   }
   return { name: template.name, query }
+}
+
+/** A link config is a "select" action (writes dashboard params) vs a route. */
+function isSelectLink(template: JsonValueLinkConfig): template is JsonSelectLinkConfig {
+  return 'select' in template
+}
+
+/**
+ * Resolve a select link's { param: template } map into concrete { param: value }
+ * by interpolating the click-context vars ({{row.*}}, {{data.*}}, {{parameters.*}}).
+ */
+function resolveSelectParams(
+  template: JsonSelectLinkConfig,
+  vars: Record<string, unknown>,
+): SelectParams {
+  const out: SelectParams = {}
+  for (const [param, tmpl] of Object.entries(template.select)) {
+    out[param] = interpolateString(tmpl, (path) => resolvePath(path, vars))
+  }
+  return out
 }
 
 // Get table columns (handles both TypeScript and JSON recipes)
@@ -300,21 +335,24 @@ function getTableColumns(): TableColumn[] {
       }
       if (jsonCol.link) {
         const linkTemplate = jsonCol.link
+        const scope = (context: TableLinkContext) => ({
+          row: context.row,
+          value: context.value,
+          column: context.column.key,
+          parameters: props.mergedParameters,
+        })
+        // A grand-total / summary row (isTotal) isn't a real entity — no action.
         result.getLink = (context) =>
-          // A grand-total / summary row (isTotal) isn't a real entity — no link.
-          context.row?.isTotal
-            ? null
-            : resolveTemplateLink(linkTemplate, {
-                row: context.row,
-                value: context.value,
-                column: context.column.key,
-                parameters: props.mergedParameters,
-              })
+          context.row?.isTotal ? null : resolveTemplateLink(linkTemplate, scope(context))
+        if (isSelectLink(linkTemplate)) {
+          result.getSelect = (context) =>
+            context.row?.isTotal ? null : resolveSelectParams(linkTemplate, scope(context))
+        }
       }
       return result
     }
-    // Check for JSON column without format but with link
-    if ('link' in col && col.link && typeof col.link === 'object' && 'name' in col.link) {
+    // Check for JSON column without format but with a link/select action
+    if ('link' in col && col.link && typeof col.link === 'object' && ('name' in col.link || 'select' in col.link)) {
       const jsonCol = col as JsonTableColumn
       const result: TableColumn = {
         key: jsonCol.key,
@@ -322,15 +360,18 @@ function getTableColumns(): TableColumn[] {
         align: jsonCol.align,
       }
       const linkTemplate = jsonCol.link!
+      const scope = (context: TableLinkContext) => ({
+        row: context.row,
+        value: context.value,
+        column: context.column.key,
+        parameters: props.mergedParameters,
+      })
       result.getLink = (context) =>
-        context.row?.isTotal
-          ? null
-          : resolveTemplateLink(linkTemplate, {
-              row: context.row,
-              value: context.value,
-              column: context.column.key,
-              parameters: props.mergedParameters,
-            })
+        context.row?.isTotal ? null : resolveTemplateLink(linkTemplate, scope(context))
+      if (isSelectLink(linkTemplate)) {
+        result.getSelect = (context) =>
+          context.row?.isTotal ? null : resolveSelectParams(linkTemplate, scope(context))
+      }
       return result
     }
     // TypeScript column with function
@@ -407,6 +448,26 @@ function getPivotGetValueLink(): ((context: PivotLinkContext) => ValueLinkConfig
   return undefined
 }
 
+// Pivot cell "select" action (parallel to getPivotGetValueLink for navigation).
+function getPivotGetValueSelect(): ((context: PivotLinkContext) => SelectParams | null) | undefined {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'pivot') return undefined
+  const jsonViz = viz as unknown as JsonPivotVisualization
+  if (!jsonViz.valueLink || !isSelectLink(jsonViz.valueLink)) return undefined
+  const linkTemplate = jsonViz.valueLink
+  return (context: PivotLinkContext) => {
+    const pivotData = props.data as PivotData | null
+    const colMeta = pivotData?.columnMeta?.[context.columnIndex] ?? {}
+    return resolveSelectParams(linkTemplate, {
+      row: { label: context.rowLabel, ...context.rowData.meta },
+      column: context.column,
+      columnIndex: context.columnIndex,
+      value: context.value,
+      columnMeta: colMeta,
+    })
+  }
+}
+
 function isJsonPivot(viz: { type?: string }): viz is JsonPivotVisualization {
   return viz.type === 'pivot'
 }
@@ -441,7 +502,7 @@ function getBudgetProgressAccountFormat(): ((value: unknown) => string) | undefi
 
 function getBudgetProgressRowLink(): ((row: Record<string, unknown>) => RouteLocationRaw | null) | undefined {
   const viz = props.recipe.visualization
-  if (viz.type !== 'budget-progress' || !viz.link) return undefined
+  if (viz.type !== 'budget-progress' || !viz.link || isSelectLink(viz.link)) return undefined
   const linkTemplate = viz.link
   return (row: Record<string, unknown>) => {
     // Scope: the row's fields ({{row.account}}, …) plus the dashboard params
@@ -449,6 +510,33 @@ function getBudgetProgressRowLink(): ((row: Record<string, unknown>) => RouteLoc
     const cfg = resolveTemplateLink(linkTemplate, { row, parameters: props.mergedParameters })
     return cfg ? { name: cfg.name, query: cfg.query } : null
   }
+}
+
+// Budget-progress row "select" action (drives a drill-down widget on click).
+function getBudgetProgressRowSelect(): ((row: Record<string, unknown>) => SelectParams | null) | undefined {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'budget-progress' || !viz.link || !isSelectLink(viz.link)) return undefined
+  const linkTemplate = viz.link
+  return (row: Record<string, unknown>) =>
+    resolveSelectParams(linkTemplate, { row, parameters: props.mergedParameters })
+}
+
+/**
+ * The dashboard-parameter values a budget-progress "select" writes for the
+ * currently-highlighted row — used to mark the active (drilled-in) row. We
+ * compare the *current* param values against what each row would select, so the
+ * row that matches the live selection is highlighted. Returns the target
+ * param→value map of the live selection, or null when the viz doesn't select.
+ */
+function getBudgetProgressActiveParams(): SelectParams | null {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'budget-progress' || !viz.link || !isSelectLink(viz.link)) return null
+  const active: SelectParams = {}
+  for (const param of Object.keys(viz.link.select)) {
+    const v = props.mergedParameters[param]
+    if (v !== undefined) active[param] = String(v)
+  }
+  return active
 }
 
 // Check if chart visualization has a click handler
@@ -504,28 +592,31 @@ function handleChartSeriesClick(clickData: { seriesName: string; seriesIndex: nu
 
   // JSON recipe with template-based click link (global or per-series)
   if (chartViz.clickLink || chartViz.seriesClickLinks) {
+    const scope = {
+      data: clickData.data,
+      seriesName: clickData.seriesName,
+      parameters: props.mergedParameters,
+    }
     // Per-series config takes precedence; null means explicitly no link for this series
     if (chartViz.seriesClickLinks && clickData.seriesName in chartViz.seriesClickLinks) {
       const seriesLink = chartViz.seriesClickLinks[clickData.seriesName]
       if (seriesLink === null) return // Explicitly disabled for this series
-      const link = resolveTemplateLink(seriesLink, {
-        data: clickData.data,
-        seriesName: clickData.seriesName,
-        parameters: props.mergedParameters,
-      })
-      if (link) router.push({ name: link.name, query: link.query })
+      runLinkAction(seriesLink, scope)
       return
     }
     // Fall back to global clickLink
-    if (chartViz.clickLink) {
-      const link = resolveTemplateLink(chartViz.clickLink, {
-        data: clickData.data,
-        seriesName: clickData.seriesName,
-        parameters: props.mergedParameters,
-      })
-      if (link) router.push({ name: link.name, query: link.query })
-    }
+    if (chartViz.clickLink) runLinkAction(chartViz.clickLink, scope)
   }
+}
+
+/** Dispatch a resolved link action: emit a select, or navigate to a route. */
+function runLinkAction(template: JsonValueLinkConfig, vars: Record<string, unknown>) {
+  if (isSelectLink(template)) {
+    emit('select', resolveSelectParams(template, vars))
+    return
+  }
+  const link = resolveTemplateLink(template, vars)
+  if (link) router.push({ name: link.name, query: link.query })
 }
 
 // Check if KPI visualization has a click link
@@ -559,15 +650,7 @@ function handleKPIClick() {
     dateTo = `${year}-12-31`
   }
 
-  const link = resolveTemplateLink(clickLink, {
-    parameters: params,
-    dateFrom,
-    dateTo,
-  })
-
-  if (link) {
-    router.push({ name: link.name, query: link.query })
-  }
+  runLinkAction(clickLink, { parameters: params, dateFrom, dateTo })
 }
 
 defineExpose({ hasKPIClickLink, handleKPIClick })

@@ -108,6 +108,12 @@ export interface KPIVisualization {
   clickLink?: JsonValueLinkConfig
 }
 
+/**
+ * Resolved dashboard-parameter assignments a "select" click writes (param name →
+ * value), used for master-detail drill-down. See the `select` link action.
+ */
+export type SelectParams = Record<string, string>
+
 export interface TableColumn {
   key: string
   label: string
@@ -118,6 +124,12 @@ export interface TableColumn {
    * Return null/undefined for no link.
    */
   getLink?: (context: TableLinkContext) => ValueLinkConfig | null | undefined
+  /**
+   * Function to resolve a "select" action (dashboard params to set on click)
+   * for cell values in this column — the alternative to getLink (navigation).
+   * Return null/undefined for no action.
+   */
+  getSelect?: (context: TableLinkContext) => SelectParams | null | undefined
 }
 
 export interface TableVisualization {
@@ -343,6 +355,8 @@ export type {
   JsonTableColumn,
   JsonTableVisualization,
   JsonValueLinkConfig,
+  JsonRouteLinkConfig,
+  JsonSelectLinkConfig,
   JsonWidgetRecipe,
   QueryStep,
   RecipeId,

@@ -648,23 +648,33 @@ function joinByPeriod(inputs: unknown[]): unknown {
 
 /**
  * envelopeRollover — stateless rollover (§14). Inputs: per-period budgets and
- * per-period actuals. Emits, per period: { period, budget, actual, available,
- * carryover, overspent }. Carryover is the cumulative (budget − actual);
- * negative carries forward (R2, no clamp).
+ * per-period actuals. Emits, per period: { period, currency, budget, actual,
+ * available, carryover, overspent }. Carryover is the cumulative (budget −
+ * actual); negative carries forward (R2, no clamp). `currency` is carried
+ * through (both inputs are currency-scoped, so it's uniform) so a single-value
+ * KPI over the latest row can format/label the amount — matching the other
+ * budget transforms, which all emit currency.
  */
 function envelopeRollover(inputs: unknown[]): unknown {
+  const currency = String(asRows(inputs[0])[0]?.currency ?? asRows(inputs[1])[0]?.currency ?? '')
   let carryover = zero() // carryover at end of previous period
   const out: Record<string, unknown>[] = []
   for (const { period, budget, actual } of mergePeriods(inputs)) {
     const available = add(carryover, budget) // what you can spend this period
     const endCarryover = sub(available, actual)
+    // Month bounds for the period (YYYY-MM) so a per-point chart click can link
+    // to that single month's transactions ({{data.dateFrom}}/{{data.dateTo}}).
+    const isYearMonth = /^\d{4}-\d{2}$/.test(period)
     out.push({
       period,
+      currency,
       budget,
       actual,
       available,
       carryover: endCarryover,
       overspent: lt(endCarryover, zero()),
+      dateFrom: isYearMonth ? `${period}-01` : period,
+      dateTo: isYearMonth ? monthEndDate(period) : period,
     })
     carryover = endCarryover
   }

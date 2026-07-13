@@ -170,9 +170,41 @@ def test_kpi_unknown_icon_color_lists_options():
     assert any("iconColor" in e and "got 'orange'" in e and "'amber'" in e for e in errors)
 
 
-def test_pivot_value_link_missing_name_reports_path():
+def test_pivot_value_link_malformed_reports_path():
+    # A link is a route ({name, query}) OR a select ({select}); a link with
+    # neither (here: only query) matches no allowed shape and is reported on the
+    # valueLink path.
     errors = validate_visualization({"type": "pivot", "valueLink": {"query": {}}}, "viz")
-    assert any("viz.valueLink.name" in e for e in errors), errors
+    assert any("viz.valueLink" in e for e in errors), errors
+
+
+def test_value_link_route_and_select_both_valid():
+    # Route link.
+    assert (
+        validate_visualization(
+            {"type": "pivot", "valueLink": {"name": "transactions", "query": {"a": "{{row.label}}"}}},
+            "viz",
+        )
+        == []
+    )
+    # Select link (master-detail drill-down).
+    assert (
+        validate_visualization(
+            {"type": "pivot", "valueLink": {"select": {"account": "{{row.label}}"}}},
+            "viz",
+        )
+        == []
+    )
+
+
+def test_value_link_cannot_mix_route_and_select():
+    # additionalProperties:false on each branch → a link carrying both a route
+    # and a select matches neither closed shape and is rejected.
+    errors = validate_visualization(
+        {"type": "pivot", "valueLink": {"name": "transactions", "query": {}, "select": {"account": "x"}}},
+        "viz",
+    )
+    assert any("viz.valueLink" in e for e in errors), errors
 
 
 # ── Dashboard cross-checks ──────────────────────────────────────────────────

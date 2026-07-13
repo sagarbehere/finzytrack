@@ -11,7 +11,7 @@
       class="px-3 py-2 sm:px-4 sm:py-3 border-b border-gray-200 dark:border-white/10 flex flex-wrap items-center justify-between gap-1"
     >
       <h3 class="text-sm font-medium text-gray-900 dark:text-white flex items-center gap-1.5">
-        {{ recipe.title }}
+        {{ displayTitle }}
         <span v-if="getHelpText()" class="group relative">
           <span class="text-gray-400 dark:text-gray-500 text-xs cursor-help select-none">ⓘ</span>
           <span class="invisible group-hover:visible absolute left-0 top-full mt-1 z-30 px-2.5 py-1.5 text-xs font-normal text-white bg-gray-800 dark:bg-gray-900 rounded shadow-lg w-64">
@@ -79,6 +79,7 @@
         :recipe="recipe"
         :data="data"
         :mergedParameters="mergedParameters"
+        @select="emit('select', $event)"
       />
 
       <!-- Empty state -->
@@ -101,6 +102,9 @@ import {
   type StepError,
 } from '@/composables/useRecipeExecutor'
 import { resolveParameterValues } from '@/recipes/functions'
+import { interpolateString, resolvePath } from '@/recipes/templating'
+import { getFormats } from '@/composables/useRecipeExecutor'
+import type { ValueFormat } from '@/types/recipes'
 import RecipeWidgetRenderer from './RecipeWidgetRenderer.vue'
 import RecipeParameters from './RecipeParameters.vue'
 
@@ -119,6 +123,9 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+
+// Forward a widget's "select" click (master-detail) up to RecipeDashboard.
+const emit = defineEmits<{ select: [params: Record<string, string>] }>()
 
 const { executeRecipe, getDefaultParameters, isLoading, error } = useRecipeExecutor()
 
@@ -157,6 +164,25 @@ const mergedParameters = computed(() => ({
   ...resolveParameterValues(localSelections.value),
   ...(props.dashboardParameters || {}),
 }))
+
+// Widget title with {{params.<name>}} interpolation so a title can reflect the
+// live selection (e.g. "{{params.account:accountName}} — Available" → the drilled-in
+// account). An optional ":<format>" suffix applies a value format (e.g.
+// accountName → leaf segment). Plain titles (no {{...}}) pass through unchanged.
+const displayTitle = computed(() => {
+  const title = props.recipe.title ?? ''
+  if (!title.includes('{{')) return title
+  const currency = mergedParameters.value.currency
+  const formats = getFormats(typeof currency === 'string' ? currency : undefined)
+  return interpolateString(title, (token) => {
+    const [path, fmt] = token.split(':')
+    const value = resolvePath(path.trim(), { params: mergedParameters.value })
+    if (fmt && formats[fmt.trim() as ValueFormat]) {
+      return String(formats[fmt.trim() as ValueFormat](value as never))
+    }
+    return value === undefined || value === null ? '' : String(value)
+  })
+})
 
 // Data from query execution
 const data = ref<unknown>(null)

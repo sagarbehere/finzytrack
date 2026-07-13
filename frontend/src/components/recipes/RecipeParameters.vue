@@ -1,7 +1,7 @@
 <template>
   <div class="flex flex-wrap items-center gap-2 sm:gap-4">
     <div
-      v-for="param in parameters"
+      v-for="param in visibleParameters"
       :key="param.name"
       class="flex items-center gap-2"
     >
@@ -65,13 +65,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { Listbox, ListboxButton, ListboxLabel, ListboxOption, ListboxOptions } from '@headlessui/vue'
 import { ChevronUpDownIcon } from '@heroicons/vue/16/solid'
 import { CheckIcon } from '@heroicons/vue/20/solid'
 import type { RecipeParameter, RecipeParameterOption } from '@/types/recipes'
 import { useCommodities } from '@/composables/useCommodities'
 import { useAvailableYears } from '@/composables/useAvailableYears'
+import { useAccounts } from '@/composables/useAccounts'
 import {
   isGenSelection,
   genSelectionName,
@@ -91,10 +92,35 @@ interface Emits {
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
+// Hidden params stay functional (default, select-target, URL) but render no
+// control — they're driven only by a `select` click or the URL.
+const visibleParameters = computed(() => props.parameters.filter((p) => !p.hidden))
+
 const { commodityDetails, fetchCommodities } = useCommodities()
 const dynamicCurrencyOptions = ref<RecipeParameterOption[]>([])
 
 const { years: dynamicYearOptions, fetchYears } = useAvailableYears()
+
+const { accountNames, fetchAccounts } = useAccounts()
+
+// optionsFrom values that populate from the accounts list, mapped to the type
+// root each restricts to (undefined = all types).
+const ACCOUNT_OPTION_TYPES: Record<string, string | undefined> = {
+  accounts: undefined,
+  expenseAccounts: 'Expenses',
+  incomeAccounts: 'Income',
+}
+
+/** Options from the ledger's accounts: value = full path, label = path below its
+ * type root (e.g. 'Expenses:Insurance:Health' → 'Insurance:Health'). */
+function accountOptions(filterType: string | undefined): RecipeParameterOption[] {
+  return accountNames.value
+    .filter((n) => !filterType || n === filterType || n.startsWith(filterType + ':'))
+    .map((n) => {
+      const below = n.split(':').slice(1).join(':')
+      return { value: n, label: below || n }
+    })
+}
 
 function getRawOptions(param: RecipeParameter): RecipeParameterOption[] {
   if (param.optionsFrom === 'currencies') {
@@ -102,6 +128,9 @@ function getRawOptions(param: RecipeParameter): RecipeParameterOption[] {
   }
   if (param.optionsFrom === 'years') {
     return dynamicYearOptions.value
+  }
+  if (param.optionsFrom && param.optionsFrom in ACCOUNT_OPTION_TYPES) {
+    return accountOptions(ACCOUNT_OPTION_TYPES[param.optionsFrom])
   }
   // `options` is typed as `RecipeParameterOption[] | { $gen: ... }` per the
   // JSON schema. resolveGenerators (run by useRecipeLoader on every JSON
@@ -155,8 +184,9 @@ function updateParam(name: string, value: string | number) {
 }
 
 onMounted(async () => {
-  const hasDynamicCurrencies = props.parameters.some((p) => p.optionsFrom === 'currencies')
-  const hasDynamicYears = props.parameters.some((p) => p.optionsFrom === 'years')
+  // Only visible params need their dropdown options fetched.
+  const hasDynamicCurrencies = visibleParameters.value.some((p) => p.optionsFrom === 'currencies')
+  const hasDynamicYears = visibleParameters.value.some((p) => p.optionsFrom === 'years')
 
   const fetches: Promise<void>[] = []
 
@@ -172,6 +202,13 @@ onMounted(async () => {
 
   if (hasDynamicYears) {
     fetches.push(fetchYears())
+  }
+
+  const hasDynamicAccounts = visibleParameters.value.some(
+    (p) => p.optionsFrom !== undefined && p.optionsFrom in ACCOUNT_OPTION_TYPES,
+  )
+  if (hasDynamicAccounts) {
+    fetches.push(fetchAccounts())
   }
 
   await Promise.all(fetches)

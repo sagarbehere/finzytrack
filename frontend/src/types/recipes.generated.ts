@@ -48,6 +48,10 @@ export type ChartType =
   | "radar"
   | "sunburst";
 /**
+ * A click action on a widget value/row/series: either NAVIGATE to a route or SELECT dashboard parameters (master-detail).
+ */
+export type JsonValueLinkConfig = JsonRouteLinkConfig | JsonSelectLinkConfig;
+/**
  * Predefined value formatter applied at render time.
  */
 export type ValueFormat =
@@ -132,11 +136,15 @@ export interface RecipeParameter {
         [k: string]: unknown;
       };
   /**
-   * Populate options dynamically from the user's ledger.
+   * Populate options dynamically from the user's ledger. 'accounts' = all accounts; 'expenseAccounts'/'incomeAccounts' = only that type. Each option's value is the full account path; its label is the path below the type root (e.g. 'Expenses:Insurance:Health' → 'Insurance:Health').
    */
-  optionsFrom?: "currencies" | "years";
+  optionsFrom?: "currencies" | "years" | "accounts" | "expenseAccounts" | "incomeAccounts";
   min?: number;
   max?: number;
+  /**
+   * When true, the parameter is functional (its default applies, it can be set by a `select` click or the URL, and steps read it) but renders NO control in the parameter bar. Use for a parameter driven only by click-to-select master-detail.
+   */
+  hidden?: boolean;
   [k: string]: unknown;
 }
 export interface QueryStep {
@@ -234,7 +242,10 @@ export interface JsonChartVisualization {
   xAxisLabelFormat?: ValueFormat;
   [k: string]: unknown;
 }
-export interface JsonValueLinkConfig {
+/**
+ * NAVIGATE click action: clicking the value/row/series routes to a Vue route with a templated query.
+ */
+export interface JsonRouteLinkConfig {
   /**
    * Vue route name, e.g. 'transactions'.
    */
@@ -245,7 +256,17 @@ export interface JsonValueLinkConfig {
   query: {
     [k: string]: string;
   };
-  [k: string]: unknown;
+}
+/**
+ * SELECT click action: clicking sets dashboard parameters from the clicked context INSTEAD of navigating, re-running the widgets that depend on them (master-detail drill-down).
+ */
+export interface JsonSelectLinkConfig {
+  /**
+   * Dashboard-parameter name → template ({{row.field}}, {{data.field}}, {{parameters.x}}). E.g. {"account": "{{row.account}}"} makes a row click drive an account-scoped drill-down widget.
+   */
+  select: {
+    [k: string]: string;
+  };
 }
 export interface JsonKPIVisualization {
   type: "kpi";
@@ -393,26 +414,13 @@ export interface JsonBudgetProgressVisualization {
     over?: string;
     [k: string]: unknown;
   };
-  link?: JsonValueLinkConfig1;
+  /**
+   * A click action on a widget value/row/series: either NAVIGATE to a route or SELECT dashboard parameters (master-detail).
+   */
+  link?: JsonRouteLinkConfig | JsonSelectLinkConfig;
   /**
    * Message shown when there are no rows.
    */
   emptyText?: string;
-  [k: string]: unknown;
-}
-/**
- * Optional per-row click-through (interpolates {{row.<field>}}), e.g. to the account's transactions.
- */
-export interface JsonValueLinkConfig1 {
-  /**
-   * Vue route name, e.g. 'transactions'.
-   */
-  name: string;
-  /**
-   * Template strings interpolated with {{data.field}}, {{row.label}}, {{parameters.x}}, {{dateFrom}}, {{dateTo}}.
-   */
-  query: {
-    [k: string]: string;
-  };
   [k: string]: unknown;
 }

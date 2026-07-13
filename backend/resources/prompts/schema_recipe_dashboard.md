@@ -510,6 +510,21 @@ Budget-vs-actual progress list: one row per budgeted account with a fill bar (sp
 
 Type: `JsonChartVisualization | JsonKPIVisualization | JsonTableVisualization | JsonPivotVisualization | JsonBudgetProgressVisualization`
 
+#### `JsonRouteLinkConfig`
+NAVIGATE click action: clicking the value/row/series routes to a Vue route with a templated query.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | `string` | yes | Vue route name, e.g. 'transactions'. |
+| `query` | `Record<string, string>` | yes | Template strings interpolated with {{data.field}}, {{row.label}}, {{parameters.x}}, {{dateFrom}}, {{dateTo}}. |
+
+#### `JsonSelectLinkConfig`
+SELECT click action: clicking sets dashboard parameters from the clicked context INSTEAD of navigating, re-running the widgets that depend on them (master-detail drill-down).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `select` | `Record<string, string>` | yes | Dashboard-parameter name → template ({{row.field}}, {{data.field}}, {{parameters.x}}). E.g. {"account": "{{row.account}}"} makes a row click drive an account-scoped drill-down widget. |
+
 #### `JsonTableColumn`
 
 | Field | Type | Required | Description |
@@ -529,11 +544,9 @@ Type: `JsonChartVisualization | JsonKPIVisualization | JsonTableVisualization | 
 | `emptyText` | `string` | — | Message shown when the table has no rows (default: 'No data available'). |
 
 #### `JsonValueLinkConfig`
+A click action on a widget value/row/series: either NAVIGATE to a route or SELECT dashboard parameters (master-detail).
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | `string` | yes | Vue route name, e.g. 'transactions'. |
-| `query` | `Record<string, string>` | yes | Template strings interpolated with {{data.field}}, {{row.label}}, {{parameters.x}}, {{dateFrom}}, {{dateTo}}. |
+Type: `JsonRouteLinkConfig | JsonSelectLinkConfig`
 
 #### `QueryStep`
 
@@ -558,9 +571,10 @@ Type: `string`
 | `type` | `'date' | 'select' | 'number'` | yes |  |
 | `default` | `string | number | object` | — | Default value, or a generator object {"$gen": "name"} resolved at runtime. |
 | `options` | `object[] | object` | — | Either a literal array of {value, label} options, or a generator reference like {"$gen": "monthOptions"} resolved to an array at runtime. |
-| `optionsFrom` | `'currencies' | 'years'` | — | Populate options dynamically from the user's ledger. |
+| `optionsFrom` | `'currencies' | 'years' | 'accounts' | 'expenseAccounts' | 'incomeAccounts'` | — | Populate options dynamically from the user's ledger. 'accounts' = all accounts; 'expenseAccounts'/'incomeAccounts' = only that type. Each option's value is the full account path; its label is the path below the type root (e.g. 'Expenses:Insurance:Health' → 'Insurance:Health'). |
 | `min` | `number` | — |  |
 | `max` | `number` | — |  |
+| `hidden` | `boolean` | — | When true, the parameter is functional (its default applies, it can be set by a `select` click or the URL, and steps read it) but renders NO control in the parameter bar. Use for a parameter driven only by click-to-select master-detail. |
 
 #### `Step`
 A single node in a recipe's data-pipeline DAG. Discriminated on `kind`.

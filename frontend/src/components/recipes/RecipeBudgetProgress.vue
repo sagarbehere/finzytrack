@@ -3,10 +3,15 @@
     <ul v-if="viewRows.length > 0" role="list" class="divide-y divide-gray-100 dark:divide-white/5">
       <li v-for="(r, i) in viewRows" :key="i">
         <component
-          :is="r.link ? 'RouterLink' : 'div'"
+          :is="r.link ? 'RouterLink' : r.select ? 'button' : 'div'"
           :to="r.link ?? undefined"
-          class="block px-1 py-2.5 rounded-md"
-          :class="r.link ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-white/5' : ''"
+          :type="r.select ? 'button' : undefined"
+          class="block w-full text-left px-1 py-2.5 rounded-md"
+          :class="[
+            r.link || r.select ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-white/5' : '',
+            r.active ? 'bg-indigo-50 ring-1 ring-indigo-200 dark:bg-indigo-500/10 dark:ring-indigo-500/30' : '',
+          ]"
+          @click="r.select ? emit('select', r.select) : undefined"
         >
           <!-- Top line: account (left) · spent/budget (magnitude) + remaining
                (action) on the right. No % — the bar already carries the ratio. -->
@@ -47,6 +52,7 @@ import { computed } from 'vue'
 import type { RouteLocationRaw } from 'vue-router'
 import { RouterLink } from 'vue-router'
 import { formatAmount } from '@/utils/currencyFormat'
+import type { SelectParams } from '@/types/recipes'
 import {
   budgetStatusOf,
   hexToRgba,
@@ -75,6 +81,10 @@ interface Props {
   accountFormat?: (value: unknown) => string
   /** Optional per-row click-through, resolved by the renderer from the JSON link. */
   getRowLink?: (row: Record<string, unknown>) => RouteLocationRaw | null
+  /** Optional per-row "select" action (dashboard params to set on click). */
+  getRowSelect?: (row: Record<string, unknown>) => SelectParams | null
+  /** The live selection's param→value map, to highlight the drilled-in row. */
+  activeParams?: SelectParams | null
   emptyText?: string
   /** Fraction of budget where the bar turns amber ("approaching"). Default 0.85. */
   warnAt?: number
@@ -83,6 +93,7 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+const emit = defineEmits<{ select: [params: SelectParams] }>()
 
 function num(v: unknown): number {
   if (typeof v === 'number') return v
@@ -146,6 +157,13 @@ const viewRows = computed(() =>
     const statusText = isOver
       ? `over ${formatAmount(Math.abs(remaining), currency)}`
       : `${formatAmount(remaining, currency)} left`
+    const select = props.getRowSelect ? props.getRowSelect(row) : null
+    // Active when this row's would-be selection matches the live one (all keys).
+    const active =
+      !!select &&
+      !!props.activeParams &&
+      Object.keys(select).length > 0 &&
+      Object.entries(select).every(([k, v]) => props.activeParams![k] === v)
     return {
       label,
       actualText: formatAmount(actual, currency),
@@ -154,6 +172,8 @@ const viewRows = computed(() =>
       ...st,
       fillPct: Math.min(100, Math.max(0, pctUsed * 100)),
       link: props.getRowLink ? props.getRowLink(row) : null,
+      select,
+      active,
     }
   }),
 )

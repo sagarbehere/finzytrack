@@ -42,6 +42,15 @@
             >
               {{ formatCell(row, column) }}
             </router-link>
+            <!-- Select action (drives another widget) otherwise -->
+            <button
+              v-else-if="getCellSelect(row, rowIndex, column)"
+              type="button"
+              class="text-indigo-600 hover:text-indigo-800 hover:underline dark:text-indigo-400 dark:hover:text-indigo-300"
+              @click="emit('select', getCellSelect(row, rowIndex, column)!)"
+            >
+              {{ formatCell(row, column) }}
+            </button>
             <!-- Plain value otherwise -->
             <span v-else>
               {{ formatCell(row, column) }}
@@ -63,7 +72,7 @@
 
 <script setup lang="ts">
 import type { RouteLocationRaw } from 'vue-router'
-import type { TableColumn, TableLinkContext } from '@/types/recipes'
+import type { TableColumn, TableLinkContext, SelectParams } from '@/types/recipes'
 
 interface Props {
   data: Record<string, unknown>[]
@@ -72,6 +81,7 @@ interface Props {
 }
 
 defineProps<Props>()
+const emit = defineEmits<{ select: [params: SelectParams] }>()
 
 function formatCell(row: Record<string, unknown>, column: TableColumn): string {
   const value = row[column.key]
@@ -109,5 +119,15 @@ function getCellLink(
   }
 
   return null
+}
+
+/** Resolve a cell's "select" action (dashboard params to set on click), if any. */
+function getCellSelect(
+  row: Record<string, unknown>,
+  rowIndex: number,
+  column: TableColumn,
+): SelectParams | null {
+  if (!column.getSelect) return null
+  return column.getSelect({ row, rowIndex, column, value: row[column.key] }) ?? null
 }
 </script>
