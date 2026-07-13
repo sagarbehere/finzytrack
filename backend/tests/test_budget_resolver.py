@@ -72,6 +72,36 @@ def test_per_period_reflects_directive_change():
     assert by_period == {"2026-03": "500", "2026-04": "600"}
 
 
+# ── from omitted (None) → each account from its own inception ─────────────────
+
+
+def test_per_period_from_none_starts_at_inception_no_leading_zeros():
+    # Budget starts 2026-03; asking with from=None → the series begins at 2026-03
+    # (no empty pre-inception months), not at some caller-supplied floor.
+    directives = [_d("Expenses:Food", "monthly", "500", d="2026-03-01")]
+    rows, _ = resolve_budgets(directives, None, date(2026, 5, 31), group_by="period")
+    by_period = {r["period"]: r["budget"] for r in rows}
+    assert by_period == {"2026-03": "500", "2026-04": "500", "2026-05": "500"}
+
+
+def test_range_from_none_totals_from_inception():
+    directives = [_d("Expenses:Food", "monthly", "500", d="2026-03-01")]
+    rows, _ = resolve_budgets(directives, None, date(2026, 5, 31))
+    assert rows[0]["budget"] == "1500"  # Mar+Apr+May at 500
+
+
+def test_from_none_uses_each_accounts_own_inception():
+    directives = [
+        _d("Expenses:Food", "monthly", "500", d="2026-01-01"),
+        _d("Expenses:Rent", "monthly", "1000", d="2026-03-01"),
+    ]
+    rows, _ = resolve_budgets(directives, None, date(2026, 4, 30), group_by="period")
+    food = sorted(r["period"] for r in rows if r["account"] == "Expenses:Food")
+    rent = sorted(r["period"] for r in rows if r["account"] == "Expenses:Rent")
+    assert food == ["2026-01", "2026-02", "2026-03", "2026-04"]
+    assert rent == ["2026-03", "2026-04"]  # starts at its own, later, inception
+
+
 # ── Multi-currency isolation ─────────────────────────────────────────────────
 
 

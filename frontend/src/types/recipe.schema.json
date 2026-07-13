@@ -29,7 +29,7 @@
       "properties": {
         "name": { "type": "string", "minLength": 1, "description": "SQL placeholder name (referenced as :name in queries)." },
         "label": { "type": "string", "minLength": 1, "description": "Human-readable label shown in the parameter UI." },
-        "type": { "type": "string", "enum": ["date", "select", "number"] },
+        "type": { "type": "string", "enum": ["date", "select", "number", "boolean"] },
         "default": {
           "description": "Default value, or a generator object {\"$gen\": \"name\"} resolved at runtime.",
           "oneOf": [
@@ -70,7 +70,19 @@
         },
         "min": { "type": "number" },
         "max": { "type": "number" },
-        "hidden": { "type": "boolean", "description": "When true, the parameter is functional (its default applies, it can be set by a `select` click or the URL, and steps read it) but renders NO control in the parameter bar. Use for a parameter driven only by click-to-select master-detail." }
+        "minParam": { "type": "string", "description": "For a `date` (or `number`) control: bind the input's minimum to another parameter's current value (e.g. a 'to' date whose minimum is the 'from' date). Reactive." },
+        "maxParam": { "type": "string", "description": "For a `date` (or `number`) control: bind the input's maximum to another parameter's current value (e.g. a 'from' date that can't exceed the 'as of' date). Reactive." },
+        "hidden": { "type": "boolean", "description": "When true, the parameter is functional (its default applies, it can be set by a `select` click or the URL, and steps read it) but renders NO control in the parameter bar. Use for a parameter driven only by click-to-select master-detail." },
+        "showWhen": {
+          "type": "object",
+          "required": ["param", "equals"],
+          "additionalProperties": false,
+          "description": "Conditional visibility: this parameter's control is shown only when another parameter's current value equals `equals`. Use e.g. to reveal a date only when a boolean toggle is on. The parameter stays functional when hidden by this rule (its default/last value still feeds steps).",
+          "properties": {
+            "param": { "type": "string", "minLength": 1, "description": "Name of the parameter this one depends on." },
+            "equals": { "type": ["string", "number", "boolean"], "description": "Value that `param` must have for this control to show." }
+          }
+        }
       }
     },
     "JsonRouteLinkConfig": {
@@ -269,7 +281,7 @@
       "properties": {
         "id": { "$ref": "#/$defs/StepId" },
         "kind": { "const": "transform" },
-        "fn": { "type": "string", "minLength": 1, "description": "Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, where, pivot, joinBudgetActual, joinByPeriod, runningSum, envelopeRollover). Validated server-side." },
+        "fn": { "type": "string", "minLength": 1, "description": "Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, where, pivot, joinBudgetActual, joinByPeriod, budgetSummary, unbudgetedSpending, appendTotal, groupBy, runningSum, envelopeRollover, envelopeBalances). Validated server-side." },
         "inputs": {
           "type": "array",
           "minItems": 1,

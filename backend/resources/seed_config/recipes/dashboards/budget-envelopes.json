@@ -2,56 +2,59 @@
   "schemaVersion": 2,
   "id": "budget-envelopes",
   "title": "Budget — Envelopes (rollover)",
-  "description": "Envelope budgeting with rollover: unspent budget carries forward and overspending eats into it. The top list is every budgeted envelope with what's left in it — click any envelope to drill into its month-by-month trend below (available → spent → left). Defaults to the current year; choose a range with data.",
+  "description": "Envelope budgeting with rollover: unspent budget carries forward and overspending eats into it. Balances accumulate from each envelope's first budget (its inception), so what's shown is the real balance — not a window that resets. The top list is every envelope's balance; click one to drill into its month-by-month trend. Use 'As of' to evaluate at a past date, and tick 'Start fresh' to deliberately reset an envelope to empty on a chosen date.",
   "parameters": [
-    { "name": "from", "label": "From", "type": "date", "default": { "$gen": "startOfYear" } },
-    { "name": "to", "label": "To", "type": "date", "default": { "$gen": "endOfYear" } },
+    { "name": "asOf", "label": "As of", "type": "date", "default": { "$gen": "endOfMonth" } },
+    { "name": "fresh", "label": "Start fresh", "type": "boolean", "default": "false" },
+    { "name": "freshDate", "label": "From", "type": "date", "default": { "$gen": "startOfYear" }, "showWhen": { "param": "fresh", "equals": true }, "maxParam": "asOf" },
     { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" },
     { "name": "account", "label": "Envelope", "type": "select", "default": "Expenses:Groceries", "hidden": true }
   ],
 
   "steps": [
     {
-      "id": "actuals-all",
-      "kind": "query",
-      "query": "SELECT account, currency, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE account_type = 'Expenses' AND transaction_date BETWEEN :from AND :to AND currency = :currency GROUP BY account, currency"
-    },
-    {
-      "id": "budgets-all",
+      "id": "pp-budgets",
       "kind": "compute",
       "fn": "budget_for_range",
-      "args": { "from": "{{params.from}}", "to": "{{params.to}}", "currency": "{{params.currency}}" }
+      "args": { "to": "{{params.asOf}}", "currency": "{{params.currency}}", "groupBy": "period" }
     },
     {
-      "id": "flat",
+      "id": "pp-actuals",
+      "kind": "query",
+      "query": "SELECT account, currency, year_month AS period, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE account_type = 'Expenses' AND transaction_date <= :asOf AND currency = :currency GROUP BY account, currency, year_month"
+    },
+    {
+      "id": "balances",
       "kind": "transform",
-      "fn": "joinBudgetActual",
-      "inputs": ["{{steps.budgets-all}}", "{{steps.actuals-all}}"]
+      "fn": "envelopeBalances",
+      "inputs": ["{{steps.pp-budgets}}", "{{steps.pp-actuals}}"],
+      "config": { "reset": "{{params.fresh}}", "resetFrom": "{{params.freshDate}}" }
     },
     {
       "id": "ranked",
       "kind": "transform",
       "fn": "sortBy",
-      "inputs": ["{{steps.flat}}"],
+      "inputs": ["{{steps.balances}}"],
       "config": { "field": "pctUsed", "order": "desc" }
     },
 
     {
-      "id": "actuals-acct",
+      "id": "d-actuals",
       "kind": "query",
-      "query": "SELECT year_month AS period, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE (account = :account OR account LIKE :account || ':%') AND transaction_date BETWEEN :from AND :to AND currency = :currency GROUP BY year_month ORDER BY year_month"
+      "query": "SELECT year_month AS period, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE (account = :account OR account LIKE :account || ':%') AND transaction_date <= :asOf AND currency = :currency GROUP BY year_month ORDER BY year_month"
     },
     {
-      "id": "budgets-acct",
+      "id": "d-budgets",
       "kind": "compute",
       "fn": "budget_for_range",
-      "args": { "from": "{{params.from}}", "to": "{{params.to}}", "currency": "{{params.currency}}", "account": "{{params.account}}", "groupBy": "period" }
+      "args": { "to": "{{params.asOf}}", "currency": "{{params.currency}}", "account": "{{params.account}}", "groupBy": "period" }
     },
     {
       "id": "rollover",
       "kind": "transform",
       "fn": "envelopeRollover",
-      "inputs": ["{{steps.budgets-acct}}", "{{steps.actuals-acct}}"]
+      "inputs": ["{{steps.d-budgets}}", "{{steps.d-actuals}}"],
+      "config": { "reset": "{{params.fresh}}", "resetFrom": "{{params.freshDate}}" }
     },
     {
       "id": "sorted-desc",
@@ -86,7 +89,7 @@
     {
       "id": "overview",
       "title": "✉ Envelope balances",
-      "helpText": "Every budgeted envelope over the selected range: the bar is spent vs budget, and the amount on the right is what's left in the envelope (unspent budget that carries forward; red = overspent). Click an envelope to drill into its month-by-month trend below.",
+      "helpText": "Every budgeted envelope and what's left in it right now (as of the selected date) — unspent budget accumulated from the envelope's first budget, carrying forward month to month. Red means overspent (negative balance). Click an envelope to drill into its month-by-month trend below.",
       "steps": [
         { "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.ranked}}"] }
       ],
@@ -94,14 +97,14 @@
       "visualization": {
         "type": "budget-progress",
         "accountFormat": "accountName2",
-        "emptyText": "No budgets or spending for this range. Set budgets in the Budgets view, then pick a range and currency that have data.",
+        "emptyText": "No budgets or spending for this currency. Set budgets in the Budgets view, then pick a currency and 'As of' date that have data.",
         "link": { "select": { "account": "{{row.account}}" } }
       }
     },
     {
       "id": "kpi-available",
       "title": "{{params.account:accountName}} — Available",
-      "helpText": "The selected envelope's opening balance for the most recent month in range: last month's carryover plus this month's budget — what you had to spend.",
+      "helpText": "The selected envelope's opening balance for the 'As of' month: last month's carryover plus this month's budget — what you had to spend.",
       "steps": [
         { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.latest}}"] }
       ],
@@ -111,7 +114,7 @@
     {
       "id": "kpi-spent",
       "title": "{{params.account:accountName}} — Spent",
-      "helpText": "What you actually spent from the selected envelope in the most recent month in range.",
+      "helpText": "What you actually spent from the selected envelope in the 'As of' month.",
       "steps": [
         { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.latest}}"] }
       ],
@@ -121,7 +124,7 @@
     {
       "id": "kpi-balance",
       "title": "{{params.account:accountName}} — In envelope now",
-      "helpText": "The selected envelope's closing balance after this month's spending (available − spent) — unspent budget that carries forward. Negative (red) means you overspent and the shortfall carries into next month.",
+      "helpText": "The selected envelope's closing balance after the 'As of' month's spending (available − spent) — unspent budget that carries forward. Negative (red) means you overspent and the shortfall carries into next month.",
       "steps": [
         { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.latest}}"] }
       ],
@@ -131,7 +134,7 @@
     {
       "id": "carryover",
       "title": "{{params.account:accountName}} — Balance over time",
-      "helpText": "The selected envelope's balance (carryover) at the end of each month. A rising line means you're banking unspent budget; dipping below zero means you overspent and are carrying a shortfall forward. Click a month's point to see that month's transactions.",
+      "helpText": "The selected envelope's balance (carryover) at the end of each month. A rising line means you're banking unspent budget; dipping below zero means you overspent. The line starts where accumulation begins — the envelope's first budget by default, or your 'Start fresh' date. Click a month's point to see that month's transactions.",
       "steps": [
         { "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.rollover}}"] }
       ],

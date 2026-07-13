@@ -240,4 +240,134 @@ describe('envelopeRollover', () => {
     expect(out[0].dateFrom).toBe('2026-02-01')
     expect(out[0].dateTo).toBe('2026-02-28') // last day of Feb 2026
   })
+
+  it('starts at inception: skips leading zero-budget months and ignores pre-inception spend', () => {
+    const out = applyTransform('envelopeRollover', [
+      [
+        { period: '2025-04', currency: 'USD', budget: '0' }, // before any directive
+        { period: '2025-05', currency: 'USD', budget: '0' },
+        { period: '2025-06', currency: 'USD', budget: '100' }, // inception
+        { period: '2025-07', currency: 'USD', budget: '100' },
+      ],
+      [
+        { period: '2025-04', actual: '999' }, // pre-inception spend — must NOT count
+        { period: '2025-06', actual: '60' },
+        { period: '2025-07', actual: '80' },
+      ],
+    ]) as Record<string, unknown>[]
+    expect(out.map((r) => r.period)).toEqual(['2025-06', '2025-07'])
+    expect(out.map((r) => r.carryover)).toEqual(['40', '60']) // 999 ignored
+  })
+
+  it('reset (start fresh) restarts accumulation from the chosen month', () => {
+    const budgets = [
+      { period: '2025-06', currency: 'USD', budget: '100' }, // inception
+      { period: '2025-07', currency: 'USD', budget: '100' },
+      { period: '2025-08', currency: 'USD', budget: '100' },
+    ]
+    const actuals = [
+      { period: '2025-06', actual: '60' },
+      { period: '2025-07', actual: '60' },
+      { period: '2025-08', actual: '60' },
+    ]
+    const out = applyTransform('envelopeRollover', [budgets, actuals], {
+      reset: 'true',
+      resetFrom: '2025-07-15',
+    }) as Record<string, unknown>[]
+    expect(out.map((r) => r.period)).toEqual(['2025-07', '2025-08']) // June's 40 carryover discarded
+    expect(out.map((r) => r.carryover)).toEqual(['40', '80'])
+  })
+
+  it('ignores resetFrom when reset is off (unchecking Start fresh reverts to inception)', () => {
+    const budgets = [
+      { period: '2025-06', currency: 'USD', budget: '100' }, // inception
+      { period: '2025-07', currency: 'USD', budget: '100' },
+    ]
+    const actuals = [
+      { period: '2025-06', actual: '60' },
+      { period: '2025-07', actual: '60' },
+    ]
+    const out = applyTransform('envelopeRollover', [budgets, actuals], {
+      reset: 'false',
+      resetFrom: '2025-07-01', // present but ignored because reset is off
+    }) as Record<string, unknown>[]
+    expect(out.map((r) => r.period)).toEqual(['2025-06', '2025-07']) // from inception
+    expect(out.map((r) => r.carryover)).toEqual(['40', '80'])
+  })
+
+  it('reset never predates inception (clamped)', () => {
+    const out = applyTransform(
+      'envelopeRollover',
+      [
+        [{ period: '2025-06', currency: 'USD', budget: '100' }],
+        [{ period: '2025-06', actual: '60' }],
+      ],
+      { reset: 'true', resetFrom: '2025-01-01' }, // before inception → clamp to inception
+    ) as Record<string, unknown>[]
+    expect(out.map((r) => r.period)).toEqual(['2025-06'])
+    expect(out[0].carryover).toBe('40')
+  })
+})
+
+// ── envelopeBalances (multi-envelope overview, inception-aware) ───────────────
+
+describe('envelopeBalances', () => {
+  it('computes each envelope balance from its own inception (ignoring earlier spend)', () => {
+    const out = applyTransform('envelopeBalances', [
+      [
+        { account: 'Expenses:Groceries', currency: 'USD', period: '2025-05', budget: '0' },
+        { account: 'Expenses:Groceries', currency: 'USD', period: '2025-06', budget: '100' }, // inception 06
+        { account: 'Expenses:Groceries', currency: 'USD', period: '2025-07', budget: '100' },
+        { account: 'Expenses:Rent', currency: 'USD', period: '2025-06', budget: '0' },
+        { account: 'Expenses:Rent', currency: 'USD', period: '2025-07', budget: '200' }, // inception 07
+      ],
+      [
+        { account: 'Expenses:Groceries', currency: 'USD', period: '2025-04', actual: '50' }, // pre-inception → ignored
+        { account: 'Expenses:Groceries', currency: 'USD', period: '2025-06', actual: '60' },
+        { account: 'Expenses:Groceries', currency: 'USD', period: '2025-07', actual: '70' },
+        { account: 'Expenses:Rent', currency: 'USD', period: '2025-07', actual: '150' },
+      ],
+    ]) as Record<string, unknown>[]
+    const g = out.find((r) => r.account === 'Expenses:Groceries')!
+    expect(g.budget).toBe('200')
+    expect(g.actual).toBe('130') // 60 + 70, the 50 in April is before inception
+    expect(g.remaining).toBe('70')
+    const r = out.find((r) => r.account === 'Expenses:Rent')!
+    expect(r.budget).toBe('200')
+    expect(r.actual).toBe('150')
+    expect(r.remaining).toBe('50')
+  })
+
+  it('rolls a parent budget up over its subtree (inclusive-parent)', () => {
+    const out = applyTransform('envelopeBalances', [
+      [{ account: 'Expenses:Insurance', currency: 'USD', period: '2025-06', budget: '500' }],
+      [
+        { account: 'Expenses:Insurance:Health', currency: 'USD', period: '2025-06', actual: '450' },
+        { account: 'Expenses:Insurance:Dental', currency: 'USD', period: '2025-06', actual: '30' },
+      ],
+    ]) as Record<string, unknown>[]
+    expect(out).toHaveLength(1)
+    expect(out[0].actual).toBe('480') // 450 + 30, inclusive
+    expect(out[0].remaining).toBe('20')
+  })
+
+  it('reset (start fresh) recomputes each balance from the chosen month', () => {
+    const out = applyTransform(
+      'envelopeBalances',
+      [
+        [
+          { account: 'Expenses:Groceries', currency: 'USD', period: '2025-06', budget: '100' },
+          { account: 'Expenses:Groceries', currency: 'USD', period: '2025-07', budget: '100' },
+        ],
+        [
+          { account: 'Expenses:Groceries', currency: 'USD', period: '2025-06', actual: '60' },
+          { account: 'Expenses:Groceries', currency: 'USD', period: '2025-07', actual: '70' },
+        ],
+      ],
+      { reset: 'true', resetFrom: '2025-07-01' },
+    ) as Record<string, unknown>[]
+    expect(out[0].budget).toBe('100') // only July
+    expect(out[0].actual).toBe('70')
+    expect(out[0].remaining).toBe('30')
+  })
 })

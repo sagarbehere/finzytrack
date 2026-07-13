@@ -248,7 +248,7 @@ def _iter_months(d_from: date, d_to: date):
 
 def resolve_budgets(
     directives: list[BudgetDirective],
-    date_from: date,
+    date_from: date | None,
     date_to: date,
     *,
     currency: str | None = None,
@@ -256,6 +256,11 @@ def resolve_budgets(
     group_by: str | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Resolve budgets over [date_from, date_to].
+
+    `date_from` may be **None**, meaning "from each account's inception" — every
+    group starts at its own first real budget directive (so an envelope's balance
+    reflects its whole history without a caller-supplied floor, and no empty
+    pre-inception months are emitted).
 
     Returns (rows, warnings):
       - range mode (group_by None): one row per budgeted (account, currency) in
@@ -265,8 +270,6 @@ def resolve_budgets(
         period is the full calendar-month budget (for envelope rollover, §14).
     budget is a Decimal string (money-types.md).
     """
-    if date_to < date_from:
-        return [], []
     if group_by not in (None, "period"):
         raise ValueError("group_by must be None or 'period'")
 
@@ -277,12 +280,19 @@ def resolve_budgets(
 
     rows: list[dict] = []
     for (acct, curr), sorted_directives in sorted(groups.items()):
+        # `from` omitted → start this group at its inception (its first real,
+        # non-tombstone directive), rather than a shared caller-supplied floor.
+        group_from = date_from
+        if group_from is None:
+            group_from = next((d.date for d in sorted_directives if not d.is_end), sorted_directives[0].date)
+        if date_to < group_from:
+            continue
         # A group with no real budget anywhere in range (fully ended, or only a
         # tombstone) is not a budgeted account here — omit it entirely (§ end-budget).
-        if not _has_real_budget_in_range(sorted_directives, date_from, date_to):
+        if not _has_real_budget_in_range(sorted_directives, group_from, date_to):
             continue
         if group_by == "period":
-            for (y, m) in _iter_months(date_from, date_to):
+            for (y, m) in _iter_months(group_from, date_to):
                 m_start = date(y, m, 1)
                 m_end = date(y, m, calendar.monthrange(y, m)[1])
                 total = _range_total(sorted_directives, m_start, m_end)
@@ -293,7 +303,7 @@ def resolve_budgets(
                     "budget": _to_decimal_string(total),
                 })
         else:
-            total = _range_total(sorted_directives, date_from, date_to)
+            total = _range_total(sorted_directives, group_from, date_to)
             rows.append({
                 "account": acct,
                 "currency": curr,

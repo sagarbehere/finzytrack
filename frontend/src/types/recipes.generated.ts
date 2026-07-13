@@ -111,7 +111,7 @@ export interface RecipeParameter {
    * Human-readable label shown in the parameter UI.
    */
   label: string;
-  type: "date" | "select" | "number";
+  type: "date" | "select" | "number" | "boolean";
   /**
    * Default value, or a generator object {"$gen": "name"} resolved at runtime.
    */
@@ -142,9 +142,30 @@ export interface RecipeParameter {
   min?: number;
   max?: number;
   /**
+   * For a `date` (or `number`) control: bind the input's minimum to another parameter's current value (e.g. a 'to' date whose minimum is the 'from' date). Reactive.
+   */
+  minParam?: string;
+  /**
+   * For a `date` (or `number`) control: bind the input's maximum to another parameter's current value (e.g. a 'from' date that can't exceed the 'as of' date). Reactive.
+   */
+  maxParam?: string;
+  /**
    * When true, the parameter is functional (its default applies, it can be set by a `select` click or the URL, and steps read it) but renders NO control in the parameter bar. Use for a parameter driven only by click-to-select master-detail.
    */
   hidden?: boolean;
+  /**
+   * Conditional visibility: this parameter's control is shown only when another parameter's current value equals `equals`. Use e.g. to reveal a date only when a boolean toggle is on. The parameter stays functional when hidden by this rule (its default/last value still feeds steps).
+   */
+  showWhen?: {
+    /**
+     * Name of the parameter this one depends on.
+     */
+    param: string;
+    /**
+     * Value that `param` must have for this control to show.
+     */
+    equals: string | number | boolean;
+  };
   [k: string]: unknown;
 }
 export interface QueryStep {
@@ -177,7 +198,7 @@ export interface TransformStep {
   id: StepId;
   kind: "transform";
   /**
-   * Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, where, pivot, joinBudgetActual, joinByPeriod, runningSum, envelopeRollover). Validated server-side.
+   * Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, where, pivot, joinBudgetActual, joinByPeriod, budgetSummary, unbudgetedSpending, appendTotal, groupBy, runningSum, envelopeRollover, envelopeBalances). Validated server-side.
    */
   fn: string;
   /**

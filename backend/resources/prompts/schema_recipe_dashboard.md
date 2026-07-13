@@ -568,13 +568,16 @@ Type: `string`
 |-------|------|----------|-------------|
 | `name` | `string` | yes | SQL placeholder name (referenced as :name in queries). |
 | `label` | `string` | yes | Human-readable label shown in the parameter UI. |
-| `type` | `'date' | 'select' | 'number'` | yes |  |
+| `type` | `'date' | 'select' | 'number' | 'boolean'` | yes |  |
 | `default` | `string | number | object` | — | Default value, or a generator object {"$gen": "name"} resolved at runtime. |
 | `options` | `object[] | object` | — | Either a literal array of {value, label} options, or a generator reference like {"$gen": "monthOptions"} resolved to an array at runtime. |
 | `optionsFrom` | `'currencies' | 'years' | 'accounts' | 'expenseAccounts' | 'incomeAccounts'` | — | Populate options dynamically from the user's ledger. 'accounts' = all accounts; 'expenseAccounts'/'incomeAccounts' = only that type. Each option's value is the full account path; its label is the path below the type root (e.g. 'Expenses:Insurance:Health' → 'Insurance:Health'). |
 | `min` | `number` | — |  |
 | `max` | `number` | — |  |
+| `minParam` | `string` | — | For a `date` (or `number`) control: bind the input's minimum to another parameter's current value (e.g. a 'to' date whose minimum is the 'from' date). Reactive. |
+| `maxParam` | `string` | — | For a `date` (or `number`) control: bind the input's maximum to another parameter's current value (e.g. a 'from' date that can't exceed the 'as of' date). Reactive. |
 | `hidden` | `boolean` | — | When true, the parameter is functional (its default applies, it can be set by a `select` click or the URL, and steps read it) but renders NO control in the parameter bar. Use for a parameter driven only by click-to-select master-detail. |
+| `showWhen` | `object` | — | Conditional visibility: this parameter's control is shown only when another parameter's current value equals `equals`. Use e.g. to reveal a date only when a boolean toggle is on. The parameter stays functional when hidden by this rule (its default/last value still feeds steps). |
 
 #### `Step`
 A single node in a recipe's data-pipeline DAG. Discriminated on `kind`.
@@ -597,7 +600,7 @@ Type: `Step[]`
 |-------|------|----------|-------------|
 | `id` | `StepId` | yes |  |
 | `kind` | `'transform'` | yes |  |
-| `fn` | `string` | yes | Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, where, pivot, joinBudgetActual, joinByPeriod, runningSum, envelopeRollover). Validated server-side. |
+| `fn` | `string` | yes | Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, where, pivot, joinBudgetActual, joinByPeriod, budgetSummary, unbudgetedSpending, appendTotal, groupBy, runningSum, envelopeRollover, envelopeBalances). Validated server-side. |
 | `inputs` | `string[]` | yes | Ordered {{steps.<id>}} / {{dashboard.steps.<id>}} references to the step outputs this transform consumes. |
 | `config` | `object` | — | Transform-specific configuration; the accepted shape depends on fn (see the transform catalog in the schema doc). |
 

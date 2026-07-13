@@ -44,8 +44,8 @@
           :id="`param-${param.name}`"
           type="number"
           :value="resolveParameterValue(modelValue[param.name])"
-          :min="param.min"
-          :max="param.max"
+          :min="boundFor(param, 'min') ?? param.min"
+          :max="boundFor(param, 'max') ?? param.max"
           @input="updateParam(param.name, Number(($event.target as HTMLInputElement).value))"
           class="block w-24 rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
         />
@@ -56,8 +56,20 @@
           :id="`param-${param.name}`"
           type="date"
           :value="resolveParameterValue(modelValue[param.name])"
+          :min="boundFor(param, 'min')"
+          :max="boundFor(param, 'max')"
           @input="updateParam(param.name, ($event.target as HTMLInputElement).value)"
           class="block rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
+        />
+
+        <!-- Boolean input (checkbox); stored as 'true'/'false' strings -->
+        <input
+          v-else-if="param.type === 'boolean'"
+          :id="`param-${param.name}`"
+          type="checkbox"
+          :checked="isChecked(modelValue[param.name])"
+          @change="updateParam(param.name, ($event.target as HTMLInputElement).checked ? 'true' : 'false')"
+          class="size-4 rounded border-gray-300 text-indigo-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 dark:border-white/20 dark:bg-white/5"
         />
       </template>
     </div>
@@ -93,8 +105,32 @@ const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
 // Hidden params stay functional (default, select-target, URL) but render no
-// control — they're driven only by a `select` click or the URL.
-const visibleParameters = computed(() => props.parameters.filter((p) => !p.hidden))
+// control. A `showWhen` param renders only while another param has the given
+// value (e.g. a date revealed by a checkbox); it stays functional when hidden.
+const visibleParameters = computed(() =>
+  props.parameters.filter((p) => {
+    if (p.hidden) return false
+    if (p.showWhen) {
+      return String(props.modelValue[p.showWhen.param] ?? '') === String(p.showWhen.equals)
+    }
+    return true
+  }),
+)
+
+/** A boolean param stores 'true'/'false'; treat either the string or a real bool. */
+function isChecked(value: unknown): boolean {
+  return value === 'true' || value === true
+}
+
+/** Resolve a min/max bound from a referenced parameter's current value (minParam/
+ * maxParam), so e.g. a 'from' date can't exceed the 'as of' date. Reactive. */
+function boundFor(param: RecipeParameter, which: 'min' | 'max'): string | number | undefined {
+  const ref = which === 'min' ? param.minParam : param.maxParam
+  if (!ref) return undefined
+  const raw = props.modelValue[ref]
+  if (raw === undefined || raw === '') return undefined
+  return resolveParameterValue(raw)
+}
 
 const { commodityDetails, fetchCommodities } = useCommodities()
 const dynamicCurrencyOptions = ref<RecipeParameterOption[]>([])

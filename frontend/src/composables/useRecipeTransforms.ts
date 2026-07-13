@@ -617,6 +617,24 @@ function runningSum(inputs: unknown[], config?: TransformConfig): unknown {
   })
 }
 
+/** Truthy interpretation for a config flag that may arrive as a bool or string. */
+function isTruthy(v: unknown): boolean {
+  return v === true || v === 'true' || v === 1 || v === '1'
+}
+
+/**
+ * The month (YYYY-MM) at which an envelope should *restart* accumulating, or null
+ * for "from inception". `config.reset` gates it (the "Start fresh" toggle);
+ * `config.resetFrom` is the chosen date. A reset never predates inception — the
+ * caller clamps with max(inception, resetMonth).
+ */
+function resetMonthFrom(config?: TransformConfig): string | null {
+  if (!isTruthy(config?.reset)) return null
+  const from = config?.resetFrom
+  if (from === undefined || from === null || from === '') return null
+  return String(from).slice(0, 7)
+}
+
 interface PeriodRow { period: string; budget: Money; actual: Money }
 
 /**
@@ -649,21 +667,49 @@ function joinByPeriod(inputs: unknown[]): unknown {
 /**
  * envelopeRollover — stateless rollover (§14). Inputs: per-period budgets and
  * per-period actuals. Emits, per period: { period, currency, budget, actual,
- * available, carryover, overspent }. Carryover is the cumulative (budget −
- * actual); negative carries forward (R2, no clamp). `currency` is carried
- * through (both inputs are currency-scoped, so it's uniform) so a single-value
- * KPI over the latest row can format/label the amount — matching the other
- * budget transforms, which all emit currency.
+ * available, carryover, overspent, dateFrom, dateTo }.
+ *
+ * **Accumulation begins at the envelope's inception** (budget.md §14 R1): the
+ * timeline is driven off the *budget* series, and leading months with no budget
+ * are skipped, so the cumulative scan starts at the first real budget and
+ * pre-inception spending is NOT counted against a zero budget. Actuals are
+ * left-joined onto the budgeted periods (a month's spend only counts once the
+ * envelope exists). Feed budgets from an early floor for a from-inception view,
+ * or from a later date to model a deliberate "start fresh" reset.
+ *
+ * Carryover is the cumulative (budget − actual); negative carries forward (R2,
+ * no clamp). `currency` is carried through; `dateFrom`/`dateTo` are the period's
+ * month bounds (for a per-point chart click-through).
+ *
+ * Config (optional): `reset` (truthy) + `resetFrom` (a date) restart the
+ * envelope from that month instead of inception (a deliberate "start fresh"),
+ * clamped so it never predates inception.
  */
-function envelopeRollover(inputs: unknown[]): unknown {
-  const currency = String(asRows(inputs[0])[0]?.currency ?? asRows(inputs[1])[0]?.currency ?? '')
+function envelopeRollover(inputs: unknown[], config?: TransformConfig): unknown {
+  const budgetRows = asRows(inputs[0])
+  const currency = String(budgetRows[0]?.currency ?? asRows(inputs[1])[0]?.currency ?? '')
+  const actualByPeriod = new Map<string, Money>()
+  for (const a of asRows(inputs[1])) actualByPeriod.set(String(a.period ?? ''), toMoneyOr0(a.actual))
+
+  const periods = budgetRows
+    .map((b) => ({ period: String(b.period ?? ''), budget: toMoneyOr0(b.budget) }))
+    .sort((x, y) => x.period.localeCompare(y.period))
+  const resetMonth = resetMonthFrom(config)
+
+  let started = false
   let carryover = zero() // carryover at end of previous period
   const out: Record<string, unknown>[] = []
-  for (const { period, budget, actual } of mergePeriods(inputs)) {
+  for (const { period, budget } of periods) {
+    // Start accumulating (and counting spend) at inception — the first month
+    // with a real budget — or later if a "start fresh" reset asks for it.
+    if (!started) {
+      if (sign(budget) <= 0) continue
+      if (resetMonth !== null && period < resetMonth) continue
+      started = true
+    }
+    const actual = actualByPeriod.get(period) ?? zero()
     const available = add(carryover, budget) // what you can spend this period
     const endCarryover = sub(available, actual)
-    // Month bounds for the period (YYYY-MM) so a per-point chart click can link
-    // to that single month's transactions ({{data.dateFrom}}/{{data.dateTo}}).
     const isYearMonth = /^\d{4}-\d{2}$/.test(period)
     out.push({
       period,
@@ -677,6 +723,82 @@ function envelopeRollover(inputs: unknown[]): unknown {
       dateTo: isYearMonth ? monthEndDate(period) : period,
     })
     carryover = endCarryover
+  }
+  return out
+}
+
+/**
+ * envelopeBalances — the multi-envelope overview counterpart of envelopeRollover.
+ * Inputs: per-period budgets for ALL budgeted accounts (budget_for_range
+ * groupBy:"period", no account filter) + per-period actuals (leaf accounts).
+ * Emits one row per budgeted (account, currency) with the **inception-aware
+ * running balance as of the last period** — `remaining` (= carryover / "what's
+ * in the envelope") plus the cumulative `budget`/`actual` behind it, shaped for
+ * the budget-progress viz.
+ *
+ * Each envelope has its OWN inception (first month with a real budget), so we
+ * cannot sum actuals over a single shared window — that would count spend from
+ * before an envelope existed (budget.md §14 R1). For each budgeted account we
+ * find its inception, then sum budget and (inclusive-parent) actual only from
+ * that month onward. `remaining` here equals envelopeRollover's final carryover
+ * for the same account, so the overview, the chart's last point, and the
+ * "in the envelope now" KPI all agree.
+ */
+function envelopeBalances(inputs: unknown[], config?: TransformConfig): unknown {
+  const budgetRows = asRows(inputs[0])
+  const actualRows = asRows(inputs[1])
+  const resetMonth = resetMonthFrom(config)
+
+  // Group the per-period budgets by (account, currency).
+  const byAccount = new Map<string, { account: string; currency: string; periods: string[]; budgetByPeriod: Map<string, Money> }>()
+  for (const b of budgetRows) {
+    const account = String(b.account ?? '')
+    const currency = String(b.currency ?? '')
+    const k = key(account, currency)
+    let g = byAccount.get(k)
+    if (!g) {
+      g = { account, currency, periods: [], budgetByPeriod: new Map() }
+      byAccount.set(k, g)
+    }
+    const period = String(b.period ?? '')
+    g.periods.push(period)
+    g.budgetByPeriod.set(period, toMoneyOr0(b.budget))
+  }
+
+  const out: Record<string, unknown>[] = []
+  for (const { account, currency, periods, budgetByPeriod } of byAccount.values()) {
+    const sortedPeriods = [...periods].sort()
+    // Inception = first month with a real (> 0) budget; skip if never budgeted.
+    const inception = sortedPeriods.find((p) => sign(budgetByPeriod.get(p) ?? zero()) > 0)
+    if (inception === undefined) continue
+    // A "start fresh" reset moves the start later (never before inception).
+    const start = resetMonth !== null && resetMonth > inception ? resetMonth : inception
+
+    let cumBudget = zero()
+    for (const p of sortedPeriods) {
+      if (p >= start) cumBudget = add(cumBudget, budgetByPeriod.get(p) ?? zero())
+    }
+    // Inclusive-parent actual from inception onward (a parent budget is compared
+    // against its whole subtree; spend before inception doesn't count).
+    let cumActual = zero()
+    for (const a of actualRows) {
+      if (
+        String(a.currency ?? '') === currency &&
+        isUnderInclusive(String(a.account ?? ''), account) &&
+        String(a.period ?? '') >= start
+      ) {
+        cumActual = add(cumActual, toMoneyOr0(a.actual))
+      }
+    }
+    out.push({
+      account,
+      currency,
+      budget: cumBudget,
+      actual: cumActual,
+      remaining: sub(cumBudget, cumActual),
+      pctUsed: sign(cumBudget) === 0 ? null : toNumber(div(cumActual, cumBudget)),
+      direction: directionFor(account),
+    })
   }
   return out
 }
@@ -707,6 +829,7 @@ export const transformCatalog: Record<string, TransformFn> = {
   groupBy,
   runningSum,
   envelopeRollover,
+  envelopeBalances,
 }
 
 /** Names of all registered transforms (for validation / discoverability). */

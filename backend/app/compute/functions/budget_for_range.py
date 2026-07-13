@@ -34,9 +34,9 @@ class BudgetForRangeFunction(ComputeFunction):
     parameters_schema = {
         "type": "object",
         "additionalProperties": False,
-        "required": ["from", "to"],
+        "required": ["to"],
         "properties": {
-            "from": {"type": "string", "description": "Inclusive range start, YYYY-MM-DD."},
+            "from": {"type": "string", "description": "Inclusive range start, YYYY-MM-DD. Omit to start each account at its own inception (its first budget directive) — the natural 'from the beginning' for envelope balances."},
             "to": {"type": "string", "description": "Inclusive range end, YYYY-MM-DD."},
             "currency": {"type": "string", "description": "Restrict to one currency; omit for all."},
             "account": {"type": "string", "description": "Restrict to one account; omit for all budgeted accounts."},
@@ -49,10 +49,12 @@ class BudgetForRangeFunction(ComputeFunction):
 
     async def execute(self, **args: Any) -> list[dict]:
         try:
-            date_from = date.fromisoformat(str(args["from"]))
             date_to = date.fromisoformat(str(args["to"]))
+            raw_from = args.get("from")
+            # Omitted/empty `from` → None → each account starts at its inception.
+            date_from = date.fromisoformat(str(raw_from)) if raw_from else None
         except (ValueError, KeyError) as e:
-            raise ValueError(f"'from' and 'to' must be YYYY-MM-DD dates: {e}")
+            raise ValueError(f"'to' (and 'from' if given) must be YYYY-MM-DD dates: {e}")
 
         rows = self._reader.get_custom_directives("budget")
         directives = parse_budget_directives(rows)
