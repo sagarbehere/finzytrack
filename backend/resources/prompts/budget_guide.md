@@ -62,7 +62,7 @@ Each common style is "just a recipe". The seeded demos (list them with
 | Monthly, no rollover (at a glance) | `budget-overview` | `joinBudgetActual` (flat) + `budgetSummary` |
 | Envelope with rollover | `budget-envelopes` | `envelopeRollover` + `envelopeBalances` |
 | Top-down / zero-based catch-all | `budget-zero-based` | `joinBudgetActual` (remainder mode) |
-| Historical / trailing months | `budget-trailing` | `joinBudgetActualByPeriod` + `pivot` (colorByValue); `groupBy` + `joinByPeriod` |
+| Month-by-month history | `budget-history` | `joinBudgetActualByPeriod` + `pivot` (colorByValue); `groupBy` + `joinByPeriod` |
 
 Four seeded dashboards, one per genuinely distinct style. Two more styles are
 **recipes to compose, not seeded dashboards** (same catalog, no new machinery):

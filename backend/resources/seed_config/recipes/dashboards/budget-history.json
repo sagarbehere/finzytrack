@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
-  "id": "budget-trailing",
-  "title": "Budget — Trailing 12 Months",
-  "description": "A retrospective look at budget vs actual over the last twelve months: total budget vs total spend month by month, and a per-account adherence heat-map (green = under, red = over). Defaults to the trailing year; adjust From/To for any window.",
+  "id": "budget-history",
+  "title": "Budget — History",
+  "description": "Budget vs actual on a monthly time series: total budget vs total spend month by month, and a per-account adherence heat-map (green = under, red = over). Defaults to the trailing twelve months; adjust From/To for any window.",
   "parameters": [
     { "name": "from", "label": "From", "type": "date", "default": { "$gen": "startOfMonth", "offset": -11 } },
     { "name": "to", "label": "To", "type": "date", "default": { "$gen": "endOfMonth" } },
