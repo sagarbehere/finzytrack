@@ -44,20 +44,28 @@ BUDGET_DIRECTIVES = """
 ; --- Budgets ---
 ; Effective-dated: a later directive for the same account supersedes an earlier
 ; one from its date. Demonstrates monthly/yearly intervals, a mid-span raise, a
-; nested parent/child pair, and a second currency.
-2025-01-01 custom "budget" Expenses:HouseRent        "monthly" 4200 USD
-2025-01-01 custom "budget" Expenses:Groceries        "monthly"  950 USD
-2025-07-01 custom "budget" Expenses:Groceries        "monthly" 1050 USD   ; raised mid-span (effective-dating)
-2025-01-01 custom "budget" Expenses:EatingOut        "monthly"  600 USD   ; typically runs over (demo)
-2025-01-01 custom "budget" Expenses:Utilities        "monthly"  320 USD
-2025-01-01 custom "budget" Expenses:Phone            "monthly"   80 USD
-2025-01-01 custom "budget" Expenses:Internet         "monthly"   90 USD
-2025-01-01 custom "budget" Expenses:Healthcare       "monthly"   50 USD
-2025-01-01 custom "budget" Expenses:Entertainment    "monthly"   50 USD
-2025-01-01 custom "budget" Expenses:Insurance        "monthly"  500 USD   ; parent aggregation node (nested pair)
-2025-01-01 custom "budget" Expenses:Insurance:Health "monthly"  450 USD   ; nested child
-2025-01-01 custom "budget" Expenses:Travel           "yearly"  4800 USD   ; non-monthly interval
-2025-01-01 custom "budget" Expenses:Groceries        "monthly" 1300 INR   ; second currency (multi-currency)
+; nested parent/child pair, and a second currency. The quoted "Expenses" total
+; is a top-down (zero-based) budget on the root — quoting the account keeps it
+; parseable by Beancount and readable by Fava.
+2025-01-01 custom "budget" "Expenses"                     "monthly" 9000 USD   ; total (quoted root) → zero-based catch-all
+2025-01-01 custom "budget" Expenses:HouseRent             "monthly" 4200 USD
+2025-01-01 custom "budget" Expenses:Groceries             "monthly"  950 USD
+2025-07-01 custom "budget" Expenses:Groceries             "monthly" 1050 USD   ; raised mid-span (effective-dating)
+2025-01-01 custom "budget" Expenses:EatingOut             "monthly"  600 USD   ; group total (carves into children + remainder)
+2025-01-01 custom "budget" Expenses:EatingOut:Restaurants "monthly"  350 USD   ; named carve-out
+2025-01-01 custom "budget" Expenses:EatingOut:Coffee      "monthly"  120 USD   ; named carve-out (Delivery = the remainder)
+2025-01-01 custom "budget" Expenses:Utilities             "monthly"  350 USD   ; group total
+2025-01-01 custom "budget" Expenses:Utilities:Electric    "monthly"  220 USD   ; named carve-out
+2025-01-01 custom "budget" Expenses:Utilities:Water       "monthly"   70 USD   ; named carve-out (Gas = the remainder)
+2025-01-01 custom "budget" Expenses:Phone                 "monthly"   80 USD
+2025-01-01 custom "budget" Expenses:Internet              "monthly"   90 USD
+2025-01-01 custom "budget" Expenses:Healthcare            "monthly"   50 USD
+2025-01-01 custom "budget" Expenses:Entertainment         "monthly"   50 USD
+2025-01-01 custom "budget" Expenses:Insurance             "monthly"  550 USD   ; group total (nested pair)
+2025-01-01 custom "budget" Expenses:Insurance:Health      "monthly"  450 USD   ; named carve-out
+2025-01-01 custom "budget" Expenses:Insurance:Dental      "monthly"   40 USD   ; named carve-out (Vision = the remainder)
+2025-01-01 custom "budget" Expenses:Travel                "yearly"  4800 USD   ; non-monthly interval
+2025-01-01 custom "budget" Expenses:Groceries             "monthly" 1300 INR   ; second currency (multi-currency)
 """.strip()
 
 
@@ -177,6 +185,9 @@ ACCOUNTS = """
 2015-12-31 open Expenses:Groceries
 2015-12-31 open Expenses:Gas
 2015-12-31 open Expenses:EatingOut
+2015-12-31 open Expenses:EatingOut:Restaurants
+2015-12-31 open Expenses:EatingOut:Coffee
+2015-12-31 open Expenses:EatingOut:Delivery
 2015-12-31 open Expenses:Entertainment
 2015-12-31 open Expenses:Hobbies
 2015-12-31 open Expenses:PersonalItems
@@ -188,6 +199,9 @@ ACCOUNTS = """
 2015-12-31 open Expenses:Gifts
 2015-12-31 open Expenses:Miscellaneous
 2015-12-31 open Expenses:Utilities
+2015-12-31 open Expenses:Utilities:Electric
+2015-12-31 open Expenses:Utilities:Water
+2015-12-31 open Expenses:Utilities:Gas
 2015-12-31 open Expenses:Car
 2015-12-31 open Expenses:Car:Lease
 2015-12-31 open Expenses:Gadgets
@@ -335,9 +349,19 @@ def gen_usd_restaurant(dt):
     rest, narr = random.choice(RESTAURANTS)
     amt = round(random.uniform(8, 95), 2)
     cc = random.choice(USD_CC)
+    # Split dining into sub-accounts of EatingOut: mostly restaurants, some
+    # coffee (small tickets), some delivery — so the group budget carves into
+    # named children + a remainder in the zero-based view.
+    roll = random.random()
+    if roll < 0.20:
+        sub, amt = "Expenses:EatingOut:Coffee", round(random.uniform(4, 12), 2)
+    elif roll < 0.40:
+        sub, amt = "Expenses:EatingOut:Delivery", round(random.uniform(18, 55), 2)
+    else:
+        sub = "Expenses:EatingOut:Restaurants"
     return txn(dt, rest, narr, [
         (cc, -amt, "USD"),
-        ("Expenses:EatingOut", amt, "USD"),
+        (sub, amt, "USD"),
     ], source_account=cc)
 
 def gen_usd_gas(dt):
@@ -384,19 +408,27 @@ def gen_rent(dt):
 
 def gen_utilities(dt):
     txns = []
-    # Electric
+    # Electric (sub-account of Utilities)
     elec = round(random.uniform(80, 350), 2)
     txns.append(txn(dt, "Pacific Gas & Electric", "", [
         ("Assets:Liquid:Checking:ValleyCU", -elec, "USD"),
-        ("Expenses:Utilities", elec, "USD"),
+        ("Expenses:Utilities:Electric", elec, "USD"),
     ], source_account="Assets:Liquid:Checking:ValleyCU"))
     # Water (every other month)
     if dt.month % 2 == 0:
         water = round(random.uniform(60, 180), 2)
         txns.append(txn(dt + timedelta(days=2), "Bay Area Water Company", "", [
             ("Liabilities:CreditCards:Citi:DoubleCash", -water, "USD"),
-            ("Expenses:Utilities", water, "USD"),
+            ("Expenses:Utilities:Water", water, "USD"),
         ], source_account="Liabilities:CreditCards:Citi:DoubleCash"))
+    # Natural gas (heating season, Nov–Mar) — leaves the rest of the Utilities
+    # budget as an "Unbudgeted" remainder the zero-based view surfaces.
+    if dt.month in (11, 12, 1, 2, 3):
+        gas = round(random.uniform(40, 130), 2)
+        txns.append(txn(dt + timedelta(days=4), "Bay Area Gas Co", "", [
+            ("Assets:Liquid:Checking:ValleyCU", -gas, "USD"),
+            ("Expenses:Utilities:Gas", gas, "USD"),
+        ], source_account="Assets:Liquid:Checking:ValleyCU"))
     return txns
 
 def gen_internet(dt):

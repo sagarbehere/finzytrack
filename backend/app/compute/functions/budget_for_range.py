@@ -41,6 +41,7 @@ class BudgetForRangeFunction(ComputeFunction):
             "currency": {"type": "string", "description": "Restrict to one currency; omit for all."},
             "account": {"type": "string", "description": "Restrict to one account; omit for all budgeted accounts."},
             "groupBy": {"type": "string", "enum": ["period"], "description": "'period' → per-calendar-month series."},
+            "includeRoots": {"type": "boolean", "description": "Include bare-root total budgets (a quoted account like \"Expenses\" with no sub-component). Excluded by default — they are top-down totals, not per-account budgets. The zero-based/hierarchical view sets this true."},
         },
     }
 
@@ -65,6 +66,7 @@ class BudgetForRangeFunction(ComputeFunction):
             currency=args.get("currency"),
             account=args.get("account"),
             group_by=args.get("groupBy"),
+            include_roots=bool(args.get("includeRoots")),
         )
         for w in warnings:
             logger.warning("budget_for_range: %s", w)

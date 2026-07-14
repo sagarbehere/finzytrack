@@ -254,6 +254,7 @@ def resolve_budgets(
     currency: str | None = None,
     account: str | None = None,
     group_by: str | None = None,
+    include_roots: bool = False,
 ) -> tuple[list[dict], list[str]]:
     """Resolve budgets over [date_from, date_to].
 
@@ -261,6 +262,12 @@ def resolve_budgets(
     group starts at its own first real budget directive (so an envelope's balance
     reflects its whole history without a caller-supplied floor, and no empty
     pre-inception months are emitted).
+
+    Bare-**root** budgets (an account with no `:` sub-component, e.g. a quoted
+    `"Expenses"` total) are **excluded by default** — they are top-down totals,
+    not per-account budgets, and would double-count / appear as an inclusive peer
+    in bottom-up views. Set `include_roots=True` (or request a specific `account`)
+    to include them; the zero-based/hierarchical view opts in this way.
 
     Returns (rows, warnings):
       - range mode (group_by None): one row per budgeted (account, currency) in
@@ -273,8 +280,10 @@ def resolve_budgets(
     if group_by not in (None, "period"):
         raise ValueError("group_by must be None or 'period'")
 
+    keep_roots = include_roots or account is not None
     filtered = [d for d in directives if (currency is None or d.currency == currency)
-                and (account is None or d.account == account)]
+                and (account is None or d.account == account)
+                and (keep_roots or ":" in d.account)]
     warnings = _ambiguity_warnings(filtered)
     groups = _by_account_currency(filtered)
 

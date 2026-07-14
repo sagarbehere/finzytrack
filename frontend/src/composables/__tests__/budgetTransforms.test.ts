@@ -102,6 +102,10 @@ describe('joinBudgetActual (remainder mode)', () => {
     expect(unbudgeted.overAllocated).toBe(false)
     // named rows are present (Rent, Food)
     expect(out.filter((r) => r.kind === 'named')).toHaveLength(2)
+    // synthetic rows are flagged non-linkable; real carve-outs are not.
+    expect(unbudgeted.noLink).toBe(true)
+    expect(total.noLink).toBe(true)
+    expect(find(out, 'Expenses:Home:Rent').noLink).toBeUndefined()
   })
 
   it('nested named budgets do not double-count (maximal subtree only)', () => {
@@ -369,5 +373,75 @@ describe('envelopeBalances', () => {
     expect(out[0].budget).toBe('100') // only July
     expect(out[0].actual).toBe('70')
     expect(out[0].remaining).toBe('30')
+  })
+})
+
+// ── joinBudgetActualByPeriod (account × period adherence heat-map) ────────────
+
+describe('joinBudgetActualByPeriod', () => {
+  it('joins per (account, period), inclusive-parent, with pctUsed per cell', () => {
+    const out = applyTransform('joinBudgetActualByPeriod', [
+      [
+        { account: 'Expenses:Food', currency: 'USD', period: '2026-01', budget: '400' },
+        { account: 'Expenses:Food', currency: 'USD', period: '2026-02', budget: '400' },
+        { account: 'Expenses:Insurance', currency: 'USD', period: '2026-01', budget: '500' },
+      ],
+      [
+        { account: 'Expenses:Food', currency: 'USD', period: '2026-01', actual: '300' },
+        { account: 'Expenses:Food:Restaurants', currency: 'USD', period: '2026-01', actual: '100' }, // under Food
+        { account: 'Expenses:Insurance:Health', currency: 'USD', period: '2026-01', actual: '450' }, // under Insurance
+      ],
+    ]) as Record<string, unknown>[]
+    const foodJan = out.find((r) => r.account === 'Expenses:Food' && r.period === '2026-01')!
+    expect(foodJan.actual).toBe('400') // 300 + 100 inclusive
+    expect(foodJan.pctUsed).toBe(1)
+    const foodFeb = out.find((r) => r.account === 'Expenses:Food' && r.period === '2026-02')!
+    expect(foodFeb.actual).toBe('0') // no Feb spend
+    expect(foodFeb.pctUsed).toBe(0)
+    const insJan = out.find((r) => r.account === 'Expenses:Insurance' && r.period === '2026-01')!
+    expect(insJan.actual).toBe('450') // inclusive Health
+    expect(insJan.pctUsed).toBe(0.9)
+  })
+})
+
+// ── budgetTree (hierarchical zero-based allocation for a sunburst) ────────────
+
+describe('budgetTree', () => {
+  it('decomposes each budgeted node into children + a remainder leaf, recursively', () => {
+    const out = applyTransform(
+      'budgetTree',
+      [
+        [
+          { account: 'Expenses', currency: 'USD', budget: '6000' }, // root total
+          { account: 'Expenses:Food', currency: 'USD', budget: '600' },
+          { account: 'Expenses:Insurance', currency: 'USD', budget: '500' },
+          { account: 'Expenses:Insurance:Health', currency: 'USD', budget: '450' },
+        ],
+      ],
+      { totalAccount: 'Expenses' },
+    ) as Record<string, unknown>[]
+    const byAccount = Object.fromEntries(out.map((r) => [r.account, r.value]))
+    expect(byAccount).toEqual({
+      'Expenses:Food': '600',
+      'Expenses:Insurance:Health': '450',
+      'Expenses:Insurance:Unbudgeted': '50', // 500 − 450
+      'Expenses:Unbudgeted': '4900', // 6000 − (600 + 500)
+    })
+  })
+
+  it('drops an over-allocated (negative) remainder', () => {
+    const out = applyTransform(
+      'budgetTree',
+      [
+        [
+          { account: 'Expenses', currency: 'USD', budget: '1000' },
+          { account: 'Expenses:Food', currency: 'USD', budget: '700' },
+          { account: 'Expenses:Rent', currency: 'USD', budget: '500' }, // 700+500 > 1000
+        ],
+      ],
+      { totalAccount: 'Expenses' },
+    ) as Record<string, unknown>[]
+    // No "Expenses:Unbudgeted" row (remainder would be −200).
+    expect(out.map((r) => r.account).sort()).toEqual(['Expenses:Food', 'Expenses:Rent'])
   })
 })

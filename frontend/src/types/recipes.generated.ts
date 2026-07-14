@@ -136,9 +136,9 @@ export interface RecipeParameter {
         [k: string]: unknown;
       };
   /**
-   * Populate options dynamically from the user's ledger. 'accounts' = all accounts; 'expenseAccounts'/'incomeAccounts' = only that type. Each option's value is the full account path; its label is the path below the type root (e.g. 'Expenses:Insurance:Health' → 'Insurance:Health').
+   * Populate options dynamically from the user's ledger. 'accounts' = all accounts; 'expenseAccounts'/'incomeAccounts' = only that type (value = full account path, label = path below the type root, e.g. 'Expenses:Insurance:Health' → 'Insurance:Health'). 'budgetTotals' = accounts that carry a budget AND have a budgeted descendant — i.e. valid top-down 'total' accounts for a zero-based/catch-all view (includes quoted roots like 'Expenses').
    */
-  optionsFrom?: "currencies" | "years" | "accounts" | "expenseAccounts" | "incomeAccounts";
+  optionsFrom?: "currencies" | "years" | "accounts" | "expenseAccounts" | "incomeAccounts" | "budgetTotals";
   min?: number;
   max?: number;
   /**
@@ -198,7 +198,7 @@ export interface TransformStep {
   id: StepId;
   kind: "transform";
   /**
-   * Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, where, pivot, joinBudgetActual, joinByPeriod, budgetSummary, unbudgetedSpending, appendTotal, groupBy, runningSum, envelopeRollover, envelopeBalances). Validated server-side.
+   * Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, where, pivot, joinBudgetActual, joinByPeriod, joinBudgetActualByPeriod, budgetSummary, unbudgetedSpending, appendTotal, groupBy, runningSum, envelopeRollover, envelopeBalances, budgetTree). Validated server-side.
    */
   fn: string;
   /**

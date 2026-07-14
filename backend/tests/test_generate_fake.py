@@ -54,8 +54,13 @@ def test_budget_directives_present_and_dated_relative_to_anchor():
     anchor, buffer = date(2026, 6, 1), 2
     text = gen.generate(anchor_month=anchor, buffer_months=buffer)
     budgets = _budget_lines(text)
-    # 13 directives: monthly + a mid-span raise + nested pair + yearly + INR line.
-    assert len(budgets) == 13
+    # 19 directives: a quoted-root total + per-account monthly + a mid-span raise +
+    # three nested group/child sets (EatingOut, Utilities, Insurance) + yearly + INR.
+    assert len(budgets) == 19
+    assert any('custom "budget" "Expenses" ' in l for l in budgets)  # quoted-root total (zero-based)
+    # A group total with a budgeted child under it (hierarchical zero-based).
+    assert any("Expenses:Utilities " in l for l in budgets)
+    assert any("Expenses:Utilities:Electric" in l for l in budgets)
     assert any(' "yearly" ' in l for l in budgets)               # non-monthly interval
     assert any(l.rstrip().endswith("INR   ; second currency (multi-currency)") or
                "1300 INR" in l for l in budgets)                 # second currency

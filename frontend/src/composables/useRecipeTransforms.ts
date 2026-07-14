@@ -382,6 +382,9 @@ interface RemainderRow {
   overAllocated?: boolean
   noTotalBudget?: boolean
   note?: string
+  // Synthetic rows (Unbudgeted, Total) aren't real accounts — a per-row click
+  // link is suppressed for them (a viz reads this to skip its link).
+  noLink?: boolean
 }
 
 function sumInclusive(actuals: Record<string, unknown>[], node: string, currency: string): Money {
@@ -472,8 +475,8 @@ function remainderMode(
 
   return [
     ...namedRows,
-    makeRemainderRow('Unbudgeted', currency, remainderBudget, remainderActual, 'unbudgeted', { overAllocated, note: unbudgetedNote }),
-    makeRemainderRow('Total', currency, totalBudget, totalActual, 'total', { noTotalBudget, note: totalNote }),
+    makeRemainderRow('Unbudgeted', currency, remainderBudget, remainderActual, 'unbudgeted', { overAllocated, note: unbudgetedNote, noLink: true }),
+    makeRemainderRow('Total', currency, totalBudget, totalActual, 'total', { noTotalBudget, note: totalNote, noLink: true }),
   ]
 }
 
@@ -803,6 +806,99 @@ function envelopeBalances(inputs: unknown[], config?: TransformConfig): unknown 
   return out
 }
 
+/**
+ * joinBudgetActualByPeriod — per-(account, period) budget-vs-actual, for an
+ * account×period adherence heat-map (Trailing-12). Inputs: per-period budgets
+ * for all budgeted accounts (budget_for_range groupBy:"period") + per-period
+ * actuals for leaf accounts (SQL GROUP BY account, period). Emits one row per
+ * budgeted (account, currency, period) — { account, currency, period, budget,
+ * actual, remaining, pctUsed } — with **inclusive-parent** actual (a parent
+ * budget's cell sums its whole subtree for that month). Feed `pctUsed` into a
+ * `pivot` with `colorByValue` (accounts × months). Unlike `joinBudgetActual`
+ * (one account over a whole range) and `joinByPeriod` (one account over
+ * periods), this keys on the composite (account, period).
+ */
+function joinBudgetActualByPeriod(inputs: unknown[]): unknown {
+  const budgets = asRows(inputs[0])
+  const actuals = asRows(inputs[1])
+  const rows: Record<string, unknown>[] = []
+  for (const b of budgets) {
+    const account = String(b.account ?? '')
+    const currency = String(b.currency ?? '')
+    const period = String(b.period ?? '')
+    const budgetM = toMoneyOr0(b.budget)
+    let actualM = zero()
+    for (const a of actuals) {
+      if (
+        String(a.currency ?? '') === currency &&
+        String(a.period ?? '') === period &&
+        isUnderInclusive(String(a.account ?? ''), account)
+      ) {
+        actualM = add(actualM, toMoneyOr0(a.actual))
+      }
+    }
+    rows.push({
+      account,
+      currency,
+      period,
+      budget: budgetM,
+      actual: actualM,
+      remaining: sub(budgetM, actualM),
+      pctUsed: sign(budgetM) === 0 ? null : toNumber(div(actualM, budgetM)),
+    })
+  }
+  return rows
+}
+
+/**
+ * budgetTree — hierarchical zero-based allocation, shaped for a sunburst.
+ * Input: [budgets] (range-mode `{account, currency, budget}`, INCLUDING the
+ * total node — e.g. a quoted-root `"Expenses"` budget). Config: `{ totalAccount }`.
+ *
+ * Recursively decomposes each budgeted node into its **maximal budgeted
+ * children** plus a synthetic `"<node>:Unbudgeted"` remainder leaf (= node
+ * budget − Σ children budgets), all the way down. Emits FLAT `{ account, value }`
+ * rows (value = budget) — the sunburst's `buildAccountTree` reassembles the
+ * hierarchy from the account paths, so the total sits in the centre and each
+ * ring carves it into named budgets + an Unbudgeted slice. Over-allocated
+ * (negative) remainders are dropped (a positive slice can't represent them).
+ */
+function budgetTree(inputs: unknown[], config?: TransformConfig): unknown {
+  const budgets = asRows(inputs[0])
+  const totalAccount = String(config?.totalAccount ?? '')
+  if (!totalAccount) return []
+
+  const budgetOf = new Map<string, Money>()
+  for (const b of budgets) budgetOf.set(String(b.account ?? ''), toMoneyOr0(b.budget))
+  const budgetedAccounts = [...budgetOf.keys()]
+
+  // Top-most budgeted accounts strictly under `node` (no budgeted account sits
+  // between them and `node`).
+  const maximalChildren = (node: string): string[] => {
+    const under = budgetedAccounts.filter((a) => isStrictlyUnder(a, node))
+    return under.filter((a) => !under.some((m) => m !== a && isStrictlyUnder(a, m)))
+  }
+
+  const out: Record<string, unknown>[] = []
+  const emit = (node: string): void => {
+    const nodeBudget = budgetOf.get(node) ?? zero()
+    const children = maximalChildren(node)
+    if (children.length === 0) {
+      out.push({ account: node, value: nodeBudget })
+      return
+    }
+    let childSum = zero()
+    for (const c of children) {
+      emit(c)
+      childSum = add(childSum, budgetOf.get(c) ?? zero())
+    }
+    const remainder = sub(nodeBudget, childSum)
+    if (sign(remainder) > 0) out.push({ account: `${node}:Unbudgeted`, value: remainder })
+  }
+  emit(totalAccount)
+  return out
+}
+
 // ============================================================================
 // Catalog + dispatch
 // ============================================================================
@@ -830,6 +926,8 @@ export const transformCatalog: Record<string, TransformFn> = {
   runningSum,
   envelopeRollover,
   envelopeBalances,
+  joinBudgetActualByPeriod,
+  budgetTree,
 }
 
 /** Names of all registered transforms (for validation / discoverability). */

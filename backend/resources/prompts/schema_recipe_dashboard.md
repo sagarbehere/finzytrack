@@ -571,7 +571,7 @@ Type: `string`
 | `type` | `'date' | 'select' | 'number' | 'boolean'` | yes |  |
 | `default` | `string | number | object` | — | Default value, or a generator object {"$gen": "name"} resolved at runtime. |
 | `options` | `object[] | object` | — | Either a literal array of {value, label} options, or a generator reference like {"$gen": "monthOptions"} resolved to an array at runtime. |
-| `optionsFrom` | `'currencies' | 'years' | 'accounts' | 'expenseAccounts' | 'incomeAccounts'` | — | Populate options dynamically from the user's ledger. 'accounts' = all accounts; 'expenseAccounts'/'incomeAccounts' = only that type. Each option's value is the full account path; its label is the path below the type root (e.g. 'Expenses:Insurance:Health' → 'Insurance:Health'). |
+| `optionsFrom` | `'currencies' | 'years' | 'accounts' | 'expenseAccounts' | 'incomeAccounts' | 'budgetTotals'` | — | Populate options dynamically from the user's ledger. 'accounts' = all accounts; 'expenseAccounts'/'incomeAccounts' = only that type (value = full account path, label = path below the type root, e.g. 'Expenses:Insurance:Health' → 'Insurance:Health'). 'budgetTotals' = accounts that carry a budget AND have a budgeted descendant — i.e. valid top-down 'total' accounts for a zero-based/catch-all view (includes quoted roots like 'Expenses'). |
 | `min` | `number` | — |  |
 | `max` | `number` | — |  |
 | `minParam` | `string` | — | For a `date` (or `number`) control: bind the input's minimum to another parameter's current value (e.g. a 'to' date whose minimum is the 'from' date). Reactive. |
@@ -600,7 +600,7 @@ Type: `Step[]`
 |-------|------|----------|-------------|
 | `id` | `StepId` | yes |  |
 | `kind` | `'transform'` | yes |  |
-| `fn` | `string` | yes | Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, where, pivot, joinBudgetActual, joinByPeriod, budgetSummary, unbudgetedSpending, appendTotal, groupBy, runningSum, envelopeRollover, envelopeBalances). Validated server-side. |
+| `fn` | `string` | yes | Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, where, pivot, joinBudgetActual, joinByPeriod, joinBudgetActualByPeriod, budgetSummary, unbudgetedSpending, appendTotal, groupBy, runningSum, envelopeRollover, envelopeBalances, budgetTree). Validated server-side. |
 | `inputs` | `string[]` | yes | Ordered {{steps.<id>}} / {{dashboard.steps.<id>}} references to the step outputs this transform consumes. |
 | `config` | `object` | — | Transform-specific configuration; the accepted shape depends on fn (see the transform catalog in the schema doc). |
 

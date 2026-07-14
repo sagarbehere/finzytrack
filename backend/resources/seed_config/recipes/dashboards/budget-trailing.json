@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 2,
+  "id": "budget-trailing",
+  "title": "Budget — Trailing 12 Months",
+  "description": "A retrospective look at budget vs actual over the last twelve months: total budget vs total spend month by month, and a per-account adherence heat-map (green = under, red = over). Defaults to the trailing year; adjust From/To for any window.",
+  "parameters": [
+    { "name": "from", "label": "From", "type": "date", "default": { "$gen": "startOfMonth", "offset": -11 } },
+    { "name": "to", "label": "To", "type": "date", "default": { "$gen": "endOfMonth" } },
+    { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" }
+  ],
+
+  "steps": [
+    {
+      "id": "budgets-pp",
+      "kind": "compute",
+      "fn": "budget_for_range",
+      "args": { "from": "{{params.from}}", "to": "{{params.to}}", "currency": "{{params.currency}}", "groupBy": "period" }
+    },
+    {
+      "id": "budget-by-month",
+      "kind": "transform",
+      "fn": "groupBy",
+      "inputs": ["{{steps.budgets-pp}}"],
+      "config": { "key": "period", "sum": ["budget"] }
+    },
+    {
+      "id": "actuals-by-month",
+      "kind": "query",
+      "query": "SELECT year_month AS period, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE account_type = 'Expenses' AND transaction_date BETWEEN :from AND :to AND currency = :currency GROUP BY year_month"
+    },
+    {
+      "id": "by-period",
+      "kind": "transform",
+      "fn": "joinByPeriod",
+      "inputs": ["{{steps.budget-by-month}}", "{{steps.actuals-by-month}}"]
+    },
+    {
+      "id": "actuals-pp",
+      "kind": "query",
+      "query": "SELECT account, currency, year_month AS period, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE account_type = 'Expenses' AND transaction_date BETWEEN :from AND :to AND currency = :currency GROUP BY account, currency, year_month"
+    },
+    {
+      "id": "adherence",
+      "kind": "transform",
+      "fn": "joinBudgetActualByPeriod",
+      "inputs": ["{{steps.budgets-pp}}", "{{steps.actuals-pp}}"]
+    }
+  ],
+
+  "layout": {
+    "columns": 12,
+    "gap": "1.5rem",
+    "rowHeight": "150px",
+    "widgets": [
+      { "widgetId": "trend",   "gridArea": "1 / 1 / 4 / 13" },
+      { "widgetId": "heatmap", "gridArea": "4 / 1 / 9 / 13" }
+    ]
+  },
+
+  "widgets": [
+    {
+      "id": "trend",
+      "title": "Total budget vs actual, by month",
+      "helpText": "Every budgeted account's total budget vs total spend, month by month. Bars where actual towers over budget are the months you ran over overall.",
+      "steps": [{ "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.by-period}}"] }],
+      "output": "rows",
+      "visualization": {
+        "type": "chart",
+        "chartType": "bar",
+        "yAxisLabelFormat": "compact",
+        "options": {
+          "tooltip": { "trigger": "axis" },
+          "legend": { "show": true },
+          "grid": { "top": 30, "bottom": 24, "left": 56, "right": 20 },
+          "xAxis": { "type": "category" },
+          "yAxis": { "type": "value", "splitLine": { "lineStyle": { "type": "dashed", "opacity": 0.6 } } },
+          "series": [
+            { "name": "Budget", "type": "bar", "encode": { "x": "period", "y": "budget" }, "itemStyle": { "color": "#94a3b8" } },
+            { "name": "Actual", "type": "bar", "encode": { "x": "period", "y": "actual" }, "itemStyle": { "color": "#6366f1" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "heatmap",
+      "title": "Adherence heat-map",
+      "helpText": "Each budgeted account (rows) across the months (columns), coloured by how much of that month's budget was used: green under, amber approaching, blue on the nose, red over. Blank cells had no budget that month. Click a cell for that account-month's transactions.",
+      "steps": [
+        {
+          "id": "pivoted",
+          "kind": "transform",
+          "fn": "pivot",
+          "inputs": ["{{dashboard.steps.adherence}}"],
+          "config": { "rowField": "account", "columnField": "period", "valueField": "pctUsed", "formatColumn": "monthYear", "sortRowsBy": "label_asc" }
+        }
+      ],
+      "output": "pivoted",
+      "visualization": {
+        "type": "pivot",
+        "rowHeader": "Account",
+        "format": "percent",
+        "showRowTotals": false,
+        "showColumnTotals": false,
+        "colorByValue": true,
+        "valueLink": {
+          "name": "transactions",
+          "query": {
+            "accountContains": "{{row.label}}",
+            "dateFrom": "{{columnMeta.startDate}}",
+            "dateTo": "{{columnMeta.endDate}}"
+          }
+        }
+      }
+    }
+  ]
+}

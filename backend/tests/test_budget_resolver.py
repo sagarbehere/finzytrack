@@ -90,6 +90,30 @@ def test_range_from_none_totals_from_inception():
     assert rows[0]["budget"] == "1500"  # Mar+Apr+May at 500
 
 
+def test_bare_root_budget_excluded_by_default():
+    # A quoted-root total like "Expenses" is a top-down total; the default
+    # per-account stream omits it so it can't double-count / appear as a peer.
+    dirs = [
+        _d("Expenses", "monthly", "6000"),          # bare root (no ':')
+        _d("Expenses:Food", "monthly", "600"),
+    ]
+    rows, _ = resolve_budgets(dirs, date(2026, 6, 1), date(2026, 6, 30))
+    assert [r["account"] for r in rows] == ["Expenses:Food"]
+
+
+def test_bare_root_budget_included_with_flag_or_explicit_account():
+    dirs = [
+        _d("Expenses", "monthly", "6000"),
+        _d("Expenses:Food", "monthly", "600"),
+    ]
+    with_flag, _ = resolve_budgets(dirs, date(2026, 6, 1), date(2026, 6, 30), include_roots=True)
+    assert {r["account"] for r in with_flag} == {"Expenses", "Expenses:Food"}
+    # Requesting the root explicitly also returns it.
+    explicit, _ = resolve_budgets(dirs, date(2026, 6, 1), date(2026, 6, 30), account="Expenses")
+    assert [r["account"] for r in explicit] == ["Expenses"]
+    assert explicit[0]["budget"] == "6000"
+
+
 def test_from_none_uses_each_accounts_own_inception():
     directives = [
         _d("Expenses:Food", "monthly", "500", d="2026-01-01"),

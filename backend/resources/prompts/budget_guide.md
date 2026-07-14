@@ -36,8 +36,18 @@ Budgets are **not** a SQL table. A budget widget is a DAG of steps:
     account; **remainder mode** via `config.totalAccount` adds synthetic
     `Unbudgeted` + `Total` rows for catch-all/zero-based).
   - `runningSum` — cumulative/burn-down columns.
-  - `envelopeRollover` — per-period rollover (unspent carries forward).
-  - `joinByPeriod` — merge per-period budgets+actuals into `{period, budget, actual}`.
+  - `envelopeRollover` / `envelopeBalances` — per-period rollover (unspent carries
+    forward) / inception-aware balances for an all-envelopes overview.
+  - `joinByPeriod` / `joinBudgetActualByPeriod` — merge per-period budgets+actuals
+    (by period, or by the composite (account, period) for an adherence heat-map).
+  - `budgetTree` — hierarchical zero-based allocation (nested carve-outs +
+    Unbudgeted remainder at each level) for a sunburst.
+
+**Total budgets.** A top-down total on a whole area is a budget on the grouping
+account. A bare root (`Expenses`) must be **quoted** — `custom "budget" "Expenses"
+"monthly" 9000 USD` — which Beancount and Fava both read. Such root totals are
+excluded from `budget_for_range` by default (they'd double-count bottom-up); the
+zero-based view passes `includeRoots: true`.
 
 You use this fixed catalog — you cannot invent compute functions or transforms.
 If the catalog can't express a budgeting style, say so.
@@ -50,12 +60,15 @@ Each common style is "just a recipe". The seeded demos (list them with
 | Style | Demo dashboard id | Transform |
 |---|---|---|
 | Monthly, no rollover (at a glance) | `budget-overview` | `joinBudgetActual` (flat) + `budgetSummary` |
+| Envelope with rollover | `budget-envelopes` | `envelopeRollover` + `envelopeBalances` |
 | Top-down / zero-based catch-all | `budget-zero-based` | `joinBudgetActual` (remainder mode) |
-| Burn-down / pace | `budget-burndown` | `joinByPeriod` + `runningSum` |
-| Envelope with rollover | `budget-envelopes` | `envelopeRollover` |
+| Historical / trailing months | `budget-trailing` | `joinBudgetActualByPeriod` + `pivot` (colorByValue); `groupBy` + `joinByPeriod` |
 
-(50/30/20 and pay-yourself-first are the same machinery as `budget-overview`
-with different budgeted numbers/labels.)
+Four seeded dashboards, one per genuinely distinct style. Two more styles are
+**recipes to compose, not seeded dashboards** (same catalog, no new machinery):
+burn-down/pace (`joinByPeriod` + `runningSum` → a cumulative line) and 50/30/20
+(budgets on Needs/Wants/Savings group accounts + a proportion pie) — both are
+the same no-rollover math as `budget-overview` with a different viz/labels.
 
 ## Answering vs. authoring
 

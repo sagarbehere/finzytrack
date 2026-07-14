@@ -2,57 +2,137 @@
   "schemaVersion": 2,
   "id": "budget-zero-based",
   "title": "Budget — Zero-based (catch-all)",
-  "description": "Top-down budgeting: a total budget on a node, explicit budgets for some children, and everything else collapsed into a single 'Unbudgeted' bucket. Demoed on Expenses:Insurance (total 500, named child Health 450, remainder = Dental + Vision). Beancount can't budget the bare Expenses root, so the total is scoped to a real subtree.",
+  "description": "Top-down 'every dollar a job' budgeting: one total budget on an umbrella account, explicit budgets for a few children, and everything else collapsed into an 'Unbudgeted' bucket (total − named). The KPIs track the whole total, the sunburst shows how it's carved all the way down (with an Unbudgeted slice at each level), and the list breaks out each carve-out plus the top-level Unbudgeted bucket. Defaults to the whole-Expenses total; the total is a quoted-root budget (`custom \"budget\" \"Expenses\" …`) that Beancount and Fava both read. Pick a populated month.",
   "parameters": [
+    { "name": "totalAccount", "label": "Total account", "type": "select", "default": "Expenses", "optionsFrom": "budgetTotals" },
     { "name": "monthStart", "label": "From", "type": "date", "default": { "$gen": "startOfMonth" } },
     { "name": "monthEnd", "label": "To", "type": "date", "default": { "$gen": "endOfMonth" } },
     { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" }
   ],
+
+  "steps": [
+    {
+      "id": "actuals",
+      "kind": "query",
+      "query": "SELECT account, currency, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE (account = :totalAccount OR account LIKE :totalAccount || ':%') AND transaction_date BETWEEN :monthStart AND :monthEnd AND currency = :currency GROUP BY account, currency"
+    },
+    {
+      "id": "budgets",
+      "kind": "compute",
+      "fn": "budget_for_range",
+      "args": { "from": "{{params.monthStart}}", "to": "{{params.monthEnd}}", "currency": "{{params.currency}}", "includeRoots": true }
+    },
+    {
+      "id": "flat",
+      "kind": "transform",
+      "fn": "joinBudgetActual",
+      "inputs": ["{{steps.budgets}}", "{{steps.actuals}}"],
+      "config": { "totalAccount": "{{params.totalAccount}}" }
+    },
+    {
+      "id": "carve-outs",
+      "kind": "transform",
+      "fn": "where",
+      "inputs": ["{{steps.flat}}"],
+      "config": { "field": "kind", "notEquals": "total" }
+    },
+    {
+      "id": "total-row",
+      "kind": "transform",
+      "fn": "where",
+      "inputs": ["{{steps.flat}}"],
+      "config": { "field": "kind", "equals": "total" }
+    }
+  ],
+
   "layout": {
     "columns": 12,
     "gap": "1.5rem",
-    "rowHeight": "320px",
+    "rowHeight": "150px",
     "widgets": [
-      { "widgetId": "catch-all", "gridArea": "1 / 1 / 2 / 13" }
+      { "widgetId": "kpi-total",  "gridArea": "1 / 1 / 2 / 5" },
+      { "widgetId": "kpi-spent",  "gridArea": "1 / 5 / 2 / 9" },
+      { "widgetId": "kpi-left",   "gridArea": "1 / 9 / 2 / 13" },
+      { "widgetId": "sunburst",   "gridArea": "2 / 1 / 7 / 8" },
+      { "widgetId": "carve-outs", "gridArea": "2 / 8 / 7 / 13" }
     ]
   },
+
   "widgets": [
     {
-      "id": "catch-all",
-      "title": "Insurance — named carve-outs + Unbudgeted",
-      "helpText": "Named lines are inclusive; 'Unbudgeted' is the leftover (total budget − named budgets). Σ(named) + Unbudgeted = Total. The Note column flags a missing total budget or over-allocation. Re-point totalAccount at one of your own accounts to use this on your data.",
-      "steps": [
-        {
-          "id": "actuals",
-          "kind": "query",
-          "query": "SELECT account, currency, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE account LIKE 'Expenses:Insurance%' AND transaction_date BETWEEN :monthStart AND :monthEnd AND currency = :currency GROUP BY account, currency"
-        },
-        {
-          "id": "budgets",
-          "kind": "compute",
-          "fn": "budget_for_range",
-          "args": { "from": "{{params.monthStart}}", "to": "{{params.monthEnd}}", "currency": "{{params.currency}}" }
-        },
-        {
-          "id": "remainder",
-          "kind": "transform",
-          "fn": "joinBudgetActual",
-          "inputs": ["{{steps.budgets}}", "{{steps.actuals}}"],
-          "config": { "totalAccount": "Expenses:Insurance" }
-        }
-      ],
-      "output": "remainder",
+      "id": "kpi-total",
+      "title": "Total budget",
+      "helpText": "The total budget for the umbrella account — the pot you're carving up. For 'All Expenses' this is the quoted-root total.",
+      "steps": [{ "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.total-row}}"] }],
+      "output": "row",
+      "visualization": { "type": "kpi", "icon": "◎", "iconColor": "blue", "multiCurrency": true, "amountField": "budget", "currencyField": "currency" }
+    },
+    {
+      "id": "kpi-spent",
+      "title": "Spent",
+      "helpText": "Total spending under the umbrella account (all its children) over the period. Click to see those transactions.",
+      "steps": [{ "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.total-row}}"] }],
+      "output": "row",
       "visualization": {
-        "type": "table",
+        "type": "kpi", "icon": "$", "iconColor": "purple", "multiCurrency": true, "amountField": "actual", "currencyField": "currency",
+        "clickLink": {
+          "name": "transactions",
+          "query": { "accountContains": "{{parameters.totalAccount}}", "dateFrom": "{{parameters.monthStart}}", "dateTo": "{{parameters.monthEnd}}" }
+        }
+      }
+    },
+    {
+      "id": "kpi-left",
+      "title": "Left",
+      "helpText": "Total budget minus total spending. Negative (red) means you've overspent the whole total.",
+      "steps": [{ "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.total-row}}"] }],
+      "output": "row",
+      "visualization": { "type": "kpi", "icon": "=", "multiCurrency": true, "amountField": "remaining", "currencyField": "currency", "colorBySign": true }
+    },
+    {
+      "id": "sunburst",
+      "title": "How the total is carved",
+      "helpText": "The total budget in the centre, carved into named budgets and an 'Unbudgeted' slice — all the way down. Where a carve-out has its own budgeted children (e.g. Insurance → Health), an inner ring splits it further, with its own leftover slice. Every ring sums to its parent.",
+      "steps": [
+        { "id": "tree", "kind": "transform", "fn": "budgetTree", "inputs": ["{{dashboard.steps.budgets}}"], "config": { "totalAccount": "{{params.totalAccount}}" } }
+      ],
+      "output": "tree",
+      "visualization": {
+        "type": "chart",
+        "chartType": "sunburst",
+        "options": {
+          "tooltip": { "trigger": "item" },
+          "series": [
+            {
+              "type": "sunburst",
+              "radius": [0, "92%"],
+              "label": { "rotate": "tangential", "minAngle": 6, "fontSize": 10 },
+              "itemStyle": { "borderColor": "#fff", "borderWidth": 1 },
+              "levels": [
+                {},
+                { "r0": "12%", "r": "48%", "label": { "rotate": "tangential" } },
+                { "r0": "48%", "r": "80%", "label": { "rotate": "tangential" } },
+                { "r0": "80%", "r": "92%", "label": { "position": "outside", "padding": 3, "silent": false } }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "carve-outs",
+      "title": "Carve-outs + Unbudgeted",
+      "helpText": "Each named carve-out (inclusive of its subtree) plus the synthetic top-level 'Unbudgeted' bucket, whose budget is the leftover (total − named). Over-budget shows red. Together they reconcile to the total. Click a named bar for its transactions (the Unbudgeted bucket isn't a real account, so it's not clickable).",
+      "steps": [{ "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.carve-outs}}"] }],
+      "output": "rows",
+      "visualization": {
+        "type": "budget-progress",
+        "accountFormat": "accountName2",
         "emptyText": "No spending under this total account for the selected month. Set a budget on the total account (Budgets view) and pick a populated month/currency.",
-        "columns": [
-          { "key": "account", "label": "Account", "format": "accountName2" },
-          { "key": "budget", "label": "Budget", "format": "currency", "align": "right" },
-          { "key": "actual", "label": "Actual", "format": "currency", "align": "right" },
-          { "key": "remaining", "label": "Remaining", "format": "signedCurrency", "align": "right" },
-          { "key": "pctUsed", "label": "% Used", "format": "percent", "align": "right" },
-          { "key": "note", "label": "Note" }
-        ]
+        "link": {
+          "name": "transactions",
+          "query": { "accountContains": "{{row.account}}", "dateFrom": "{{parameters.monthStart}}", "dateTo": "{{parameters.monthEnd}}" }
+        }
       }
     }
   ]

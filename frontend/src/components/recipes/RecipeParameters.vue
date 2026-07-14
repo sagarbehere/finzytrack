@@ -85,6 +85,7 @@ import type { RecipeParameter, RecipeParameterOption } from '@/types/recipes'
 import { useCommodities } from '@/composables/useCommodities'
 import { useAvailableYears } from '@/composables/useAvailableYears'
 import { useAccounts } from '@/composables/useAccounts'
+import { useBudgets } from '@/composables/useBudgets'
 import {
   isGenSelection,
   genSelectionName,
@@ -139,12 +140,31 @@ const { years: dynamicYearOptions, fetchYears } = useAvailableYears()
 
 const { accountNames, fetchAccounts } = useAccounts()
 
+const { fetch: fetchBudgets } = useBudgets()
+// Total-account options (optionsFrom: 'budgetTotals'), derived from the ledger's
+// budget directives at mount.
+const dynamicBudgetTotalOptions = ref<RecipeParameterOption[]>([])
+
 // optionsFrom values that populate from the accounts list, mapped to the type
 // root each restricts to (undefined = all types).
 const ACCOUNT_OPTION_TYPES: Record<string, string | undefined> = {
   accounts: undefined,
   expenseAccounts: 'Expenses',
   incomeAccounts: 'Income',
+}
+
+/** Budgeted accounts that have at least one budgeted descendant — the valid
+ * top-down "total" accounts (they have carve-outs under them). Includes quoted
+ * roots like 'Expenses'. value = account path; label = "All <Root>" for a root,
+ * else the path below the type root. */
+function deriveBudgetTotals(budgetAccounts: string[]): RecipeParameterOption[] {
+  const distinct = [...new Set(budgetAccounts)]
+  const totals = distinct.filter((a) => distinct.some((b) => b !== a && b.startsWith(a + ':')))
+  totals.sort()
+  return totals.map((a) => {
+    const below = a.split(':').slice(1).join(':')
+    return { value: a, label: below === '' ? `All ${a}` : below }
+  })
 }
 
 /** Options from the ledger's accounts: value = full path, label = path below its
@@ -167,6 +187,9 @@ function getRawOptions(param: RecipeParameter): RecipeParameterOption[] {
   }
   if (param.optionsFrom && param.optionsFrom in ACCOUNT_OPTION_TYPES) {
     return accountOptions(ACCOUNT_OPTION_TYPES[param.optionsFrom])
+  }
+  if (param.optionsFrom === 'budgetTotals') {
+    return dynamicBudgetTotalOptions.value
   }
   // `options` is typed as `RecipeParameterOption[] | { $gen: ... }` per the
   // JSON schema. resolveGenerators (run by useRecipeLoader on every JSON
@@ -245,6 +268,19 @@ onMounted(async () => {
   )
   if (hasDynamicAccounts) {
     fetches.push(fetchAccounts())
+  }
+
+  const hasBudgetTotals = visibleParameters.value.some((p) => p.optionsFrom === 'budgetTotals')
+  if (hasBudgetTotals) {
+    fetches.push(
+      fetchBudgets()
+        .then((items) => {
+          dynamicBudgetTotalOptions.value = deriveBudgetTotals(items.map((b) => b.account))
+        })
+        .catch(() => {
+          dynamicBudgetTotalOptions.value = []
+        }),
+    )
   }
 
   await Promise.all(fetches)

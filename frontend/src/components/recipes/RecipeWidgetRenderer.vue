@@ -505,6 +505,9 @@ function getBudgetProgressRowLink(): ((row: Record<string, unknown>) => RouteLoc
   if (viz.type !== 'budget-progress' || !viz.link || isSelectLink(viz.link)) return undefined
   const linkTemplate = viz.link
   return (row: Record<string, unknown>) => {
+    // Synthetic rows (e.g. the remainder "Unbudgeted"/"Total" rows) aren't real
+    // accounts — no click-through.
+    if (row.noLink) return null
     // Scope: the row's fields ({{row.account}}, …) plus the dashboard params
     // ({{parameters.monthStart}}, {{parameters.year}}-01-01, …).
     const cfg = resolveTemplateLink(linkTemplate, { row, parameters: props.mergedParameters })
