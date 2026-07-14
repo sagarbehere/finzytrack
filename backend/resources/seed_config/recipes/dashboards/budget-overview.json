@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "budget-overview",
   "title": "Budget — Overview",
-  "description": "Your budget at a glance for the selected date range: the budgeted / spent / remaining totals up top, a per-account progress list, and the spending that falls outside any budget. Defaults to the current month; adjust From/To for any range. Pick a populated month if the current one has no data yet.",
+  "description": "Your budget at a glance — budgeted vs spent for each account, plus the spending outside any budget.",
   "parameters": [
     { "name": "monthStart", "label": "From", "type": "date", "default": { "$gen": "startOfMonth" } },
     { "name": "monthEnd", "label": "To", "type": "date", "default": { "$gen": "endOfMonth" } },

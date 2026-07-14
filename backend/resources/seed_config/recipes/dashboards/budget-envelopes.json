@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "budget-envelopes",
   "title": "Budget — Envelopes (rollover)",
-  "description": "Envelope budgeting with rollover: unspent budget carries forward and overspending eats into it. Balances accumulate from each envelope's first budget (its inception), so what's shown is the real balance — not a window that resets. The top list is every envelope's balance; click one to drill into its month-by-month trend. Use 'As of' to evaluate at a past date, and tick 'Start fresh' to deliberately reset an envelope to empty on a chosen date.",
+  "description": "Envelope budgeting with rollover — each envelope's carried-forward balance, with a drill-down into its month-by-month trend.",
   "parameters": [
     { "name": "asOf", "label": "As of", "type": "date", "default": { "$gen": "endOfMonth" } },
     { "name": "fresh", "label": "Start fresh", "type": "boolean", "default": "false" },

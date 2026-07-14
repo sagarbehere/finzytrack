@@ -2,10 +2,10 @@
   "schemaVersion": 2,
   "id": "budget-history",
   "title": "Budget — History",
-  "description": "Budget vs actual on a monthly time series: total budget vs total spend month by month, and a per-account adherence heat-map (green = under, red = over). Defaults to the trailing twelve months; adjust From/To for any window.",
+  "description": "Budget vs actual, month by month — the trend and a per-account adherence heat-map.",
   "parameters": [
-    { "name": "from", "label": "From", "type": "date", "default": { "$gen": "startOfMonth", "offset": -11 } },
-    { "name": "to", "label": "To", "type": "date", "default": { "$gen": "endOfMonth" } },
+    { "name": "from", "label": "From (month)", "type": "date", "default": { "$gen": "startOfMonth", "offset": -11 } },
+    { "name": "to", "label": "To (month)", "type": "date", "default": { "$gen": "endOfMonth" } },
     { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" }
   ],
 
@@ -26,7 +26,7 @@
     {
       "id": "actuals-by-month",
       "kind": "query",
-      "query": "SELECT year_month AS period, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE account_type = 'Expenses' AND transaction_date BETWEEN :from AND :to AND currency = :currency GROUP BY year_month"
+      "query": "SELECT year_month AS period, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE account_type = 'Expenses' AND year_month BETWEEN substr(:from, 1, 7) AND substr(:to, 1, 7) AND currency = :currency GROUP BY year_month"
     },
     {
       "id": "by-period",
@@ -37,7 +37,7 @@
     {
       "id": "actuals-pp",
       "kind": "query",
-      "query": "SELECT account, currency, year_month AS period, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE account_type = 'Expenses' AND transaction_date BETWEEN :from AND :to AND currency = :currency GROUP BY account, currency, year_month"
+      "query": "SELECT account, currency, year_month AS period, SUM(CAST(amount AS REAL)) AS actual FROM postings WHERE account_type = 'Expenses' AND year_month BETWEEN substr(:from, 1, 7) AND substr(:to, 1, 7) AND currency = :currency GROUP BY account, currency, year_month"
     },
     {
       "id": "adherence",
@@ -70,8 +70,8 @@
         "yAxisLabelFormat": "compact",
         "options": {
           "tooltip": { "trigger": "axis" },
-          "legend": { "show": true },
-          "grid": { "top": 30, "bottom": 24, "left": 56, "right": 20 },
+          "legend": { "show": true, "top": 0, "left": "center" },
+          "grid": { "top": 40, "bottom": 28, "left": 56, "right": 20 },
           "xAxis": { "type": "category" },
           "yAxis": { "type": "value", "splitLine": { "lineStyle": { "type": "dashed", "opacity": 0.6 } } },
           "series": [
