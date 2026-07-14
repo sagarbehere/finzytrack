@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
   "id": "budget-history",
-  "title": "Budget — History",
-  "description": "Budget vs actual, month by month — the trend and a per-account adherence heat-map.",
+  "title": "Budget: History",
+  "description": "Budget vs actual, month by month: the trend and a per-account adherence heat-map.",
   "parameters": [
     { "name": "from", "label": "From (month)", "type": "date", "default": { "$gen": "startOfMonth", "offset": -11 } },
     { "name": "to", "label": "To (month)", "type": "date", "default": { "$gen": "endOfMonth" } },
@@ -61,7 +61,7 @@
     {
       "id": "trend",
       "title": "Total budget vs actual, by month",
-      "helpText": "Every budgeted account's total budget vs total spend, month by month. Bars where actual towers over budget are the months you ran over overall.",
+      "helpText": "Total budget vs total spend each month. Tall actual bars are the months you ran over.",
       "steps": [{ "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.by-period}}"] }],
       "output": "rows",
       "visualization": {
@@ -84,7 +84,7 @@
     {
       "id": "heatmap",
       "title": "Adherence heat-map",
-      "helpText": "Each budgeted account (rows) across the months (columns), coloured by how much of that month's budget was used: green under, amber approaching, blue on the nose, red over. Blank cells had no budget that month. Click a cell for that account-month's transactions.",
+      "helpText": "How much of each account's monthly budget was used: green under, amber close, blue on the nose, red over. Blank = no budget that month. Click a cell for its transactions.",
       "steps": [
         {
           "id": "pivoted",

@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
   "id": "budget-zero-based",
-  "title": "Budget — Zero-based (catch-all)",
-  "description": "Top-down 'every dollar a job' — a total carved into named budgets and an Unbudgeted remainder, all the way down.",
+  "title": "Budget: Zero-based",
+  "description": "Top-down 'every dollar a job': a total carved into named budgets and an Unbudgeted remainder, all the way down.",
   "parameters": [
     { "name": "totalAccount", "label": "Total account", "type": "select", "default": "Expenses", "optionsFrom": "budgetTotals" },
     { "name": "monthStart", "label": "From", "type": "date", "default": { "$gen": "startOfMonth" } },
@@ -62,7 +62,7 @@
     {
       "id": "kpi-total",
       "title": "Total budget",
-      "helpText": "The total budget for the umbrella account — the pot you're carving up. For 'All Expenses' this is the quoted-root total.",
+      "helpText": "The total budget for the account you picked.",
       "steps": [{ "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.total-row}}"] }],
       "output": "row",
       "visualization": { "type": "kpi", "icon": "◎", "iconColor": "blue", "multiCurrency": true, "amountField": "budget", "currencyField": "currency" }
@@ -70,7 +70,7 @@
     {
       "id": "kpi-spent",
       "title": "Spent",
-      "helpText": "Total spending under the umbrella account (all its children) over the period. Click to see those transactions.",
+      "helpText": "Total spending under that account. Click to see the transactions.",
       "steps": [{ "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.total-row}}"] }],
       "output": "row",
       "visualization": {
@@ -84,7 +84,7 @@
     {
       "id": "kpi-left",
       "title": "Left",
-      "helpText": "Total budget minus total spending. Negative (red) means you've overspent the whole total.",
+      "helpText": "Total budget minus spending. Negative (red) means you've overspent the total.",
       "steps": [{ "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.total-row}}"] }],
       "output": "row",
       "visualization": { "type": "kpi", "icon": "=", "multiCurrency": true, "amountField": "remaining", "currencyField": "currency", "colorBySign": true }
@@ -92,7 +92,7 @@
     {
       "id": "sunburst",
       "title": "How the total is carved",
-      "helpText": "The total budget in the centre, carved into named budgets and an 'Unbudgeted' slice — all the way down. Where a carve-out has its own budgeted children (e.g. Insurance → Health), an inner ring splits it further, with its own leftover slice. Every ring sums to its parent.",
+      "helpText": "The total carved into named budgets and an Unbudgeted remainder at each level. Every ring sums to its parent.",
       "steps": [
         { "id": "tree", "kind": "transform", "fn": "budgetTree", "inputs": ["{{dashboard.steps.budgets}}"], "config": { "totalAccount": "{{params.totalAccount}}" } }
       ],
@@ -122,7 +122,7 @@
     {
       "id": "carve-outs",
       "title": "Carve-outs + Unbudgeted",
-      "helpText": "Each named carve-out (inclusive of its subtree) plus the synthetic top-level 'Unbudgeted' bucket, whose budget is the leftover (total − named). Over-budget shows red. Together they reconcile to the total. Click a named bar for its transactions (the Unbudgeted bucket isn't a real account, so it's not clickable).",
+      "helpText": "Each named carve-out plus the leftover Unbudgeted bucket (total − named); over-budget in red. Click a named bar for its transactions.",
       "steps": [{ "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.carve-outs}}"] }],
       "output": "rows",
       "visualization": {

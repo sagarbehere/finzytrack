@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
   "id": "budget-overview",
-  "title": "Budget — Overview",
-  "description": "Your budget at a glance — budgeted vs spent for each account, plus the spending outside any budget.",
+  "title": "Budget: Overview",
+  "description": "Your budget at a glance: budgeted vs spent for each account, plus the spending outside any budget.",
   "parameters": [
     { "name": "monthStart", "label": "From", "type": "date", "default": { "$gen": "startOfMonth" } },
     { "name": "monthEnd", "label": "To", "type": "date", "default": { "$gen": "endOfMonth" } },
@@ -59,7 +59,7 @@
     {
       "id": "kpi-budgeted",
       "title": "Budgeted",
-      "helpText": "Your total budget for the selected period, across all budgeted accounts. A nested budget (a parent and its child) is counted once.",
+      "helpText": "Total budget across all budgeted accounts; a nested parent and child count once.",
       "steps": [
         { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.summary}}"] }
       ],
@@ -69,7 +69,7 @@
     {
       "id": "kpi-spent",
       "title": "Spent",
-      "helpText": "Total spending in budgeted accounts over the selected period.",
+      "helpText": "Total spending in budgeted accounts.",
       "steps": [
         { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.summary}}"] }
       ],
@@ -79,7 +79,7 @@
     {
       "id": "kpi-remaining",
       "title": "Remaining",
-      "helpText": "Budget minus spending — how much of your total budget is still available. Negative means you're over budget overall.",
+      "helpText": "Budget minus spending. Negative (red) means you're over budget overall.",
       "steps": [
         { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.summary}}"] }
       ],
@@ -89,7 +89,7 @@
     {
       "id": "unbudgeted",
       "title": "Unbudgeted spending",
-      "helpText": "Accounts you're spending on that aren't covered by any budget, biggest first — money leaking outside your budgets. A budget on a parent account covers its whole subtree, so those don't appear here. Click a row for that account's transactions.",
+      "helpText": "Accounts with spending but no budget, biggest first. A budget on a parent covers its subtree, so those don't show here. Click a row for its transactions.",
       "steps": [
         { "id": "leaks", "kind": "transform", "fn": "unbudgetedSpending", "inputs": ["{{dashboard.steps.budgets}}", "{{dashboard.steps.actuals}}"] },
         { "id": "with-total", "kind": "transform", "fn": "appendTotal", "inputs": ["{{steps.leaks}}"], "config": { "field": "actual", "label": "Total" } }
@@ -107,7 +107,7 @@
     {
       "id": "by-account",
       "title": "By Account",
-      "helpText": "Every budgeted account, sorted so the fullest budgets surface first. Spent vs budget, over-budget in red. A budget on a parent account is compared against the parent and all its descendants. Click a row for that account's transactions.",
+      "helpText": "Spent vs budget for each account, fullest first; over-budget in red. A parent's budget covers its whole subtree. Click a row for its transactions.",
       "steps": [
         { "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.ranked}}"] }
       ],

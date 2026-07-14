@@ -1,8 +1,8 @@
 {
   "schemaVersion": 2,
   "id": "budget-envelopes",
-  "title": "Budget — Envelopes (rollover)",
-  "description": "Envelope budgeting with rollover — each envelope's carried-forward balance, with a drill-down into its month-by-month trend.",
+  "title": "Budget: Envelopes",
+  "description": "Envelope budgeting with rollover: each envelope's carried-forward balance, with a drill-down into its month-by-month trend.",
   "parameters": [
     { "name": "asOf", "label": "As of", "type": "date", "default": { "$gen": "endOfMonth" } },
     { "name": "fresh", "label": "Start fresh", "type": "boolean", "default": "false" },
@@ -89,7 +89,7 @@
     {
       "id": "overview",
       "title": "✉ Envelope balances",
-      "helpText": "Every budgeted envelope and what's left in it right now (as of the selected date) — unspent budget accumulated from the envelope's first budget, carrying forward month to month. Red means overspent (negative balance). Click an envelope to drill into its month-by-month trend below.",
+      "helpText": "What's left in each envelope now: unspent budget carried forward. Red means overspent. Click one to drill into its trend.",
       "steps": [
         { "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.ranked}}"] }
       ],
@@ -103,8 +103,8 @@
     },
     {
       "id": "kpi-available",
-      "title": "{{params.account:accountName}} — Available",
-      "helpText": "The selected envelope's opening balance for the 'As of' month: last month's carryover plus this month's budget — what you had to spend.",
+      "title": "{{params.account:accountName}}: Available",
+      "helpText": "This month's opening balance: last month's carryover plus this month's budget.",
       "steps": [
         { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.latest}}"] }
       ],
@@ -113,8 +113,8 @@
     },
     {
       "id": "kpi-spent",
-      "title": "{{params.account:accountName}} — Spent",
-      "helpText": "What you actually spent from the selected envelope in the 'As of' month.",
+      "title": "{{params.account:accountName}}: Spent",
+      "helpText": "Spent from this envelope this month.",
       "steps": [
         { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.latest}}"] }
       ],
@@ -123,8 +123,8 @@
     },
     {
       "id": "kpi-balance",
-      "title": "{{params.account:accountName}} — In envelope now",
-      "helpText": "The selected envelope's closing balance after the 'As of' month's spending (available − spent) — unspent budget that carries forward. Negative (red) means you overspent and the shortfall carries into next month.",
+      "title": "{{params.account:accountName}}: In envelope now",
+      "helpText": "This month's closing balance (available − spent). Negative (red) means overspent.",
       "steps": [
         { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.latest}}"] }
       ],
@@ -133,8 +133,8 @@
     },
     {
       "id": "carryover",
-      "title": "{{params.account:accountName}} — Balance over time",
-      "helpText": "The selected envelope's balance (carryover) at the end of each month. A rising line means you're banking unspent budget; dipping below zero means you overspent. The line starts where accumulation begins — the envelope's first budget by default, or your 'Start fresh' date. Click a month's point to see that month's transactions.",
+      "title": "{{params.account:accountName}}: Balance over time",
+      "helpText": "The envelope's month-end balance over time. Rising means you're banking budget; below zero means overspent. Click a point for that month's transactions.",
       "steps": [
         { "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.rollover}}"] }
       ],
