@@ -445,3 +445,30 @@ describe('budgetTree', () => {
     expect(out.map((r) => r.account).sort()).toEqual(['Expenses:Food', 'Expenses:Rent'])
   })
 })
+
+// ── joinByPeriod: carries calendar bounds for period click-through ────────────
+
+describe('joinByPeriod', () => {
+  it('merges per-period budget + actual and adds YYYY-MM date bounds', () => {
+    const out = applyTransform('joinByPeriod', [
+      budgets([{ period: '2025-08', budget: '9000' }]),
+      actuals([{ period: '2025-08', actual: 10250 }]),
+    ]) as Record<string, unknown>[]
+    expect(out).toHaveLength(1)
+    const r = out[0]
+    expect(r.period).toBe('2025-08')
+    expect(r.budget).toBe('9000')
+    expect(r.actual).toBe('10250')
+    // Bounds let a chart series click through to that month's transactions.
+    expect(r.dateFrom).toBe('2025-08-01')
+    expect(r.dateTo).toBe('2025-08-31')
+  })
+
+  it('computes the correct end-of-month for a short (leap Feb) month', () => {
+    const out = applyTransform('joinByPeriod', [
+      budgets([{ period: '2024-02', budget: '100' }]),
+      actuals([]),
+    ]) as Record<string, unknown>[]
+    expect(out[0].dateTo).toBe('2024-02-29')
+  })
+})

@@ -68,6 +68,17 @@
         "type": "chart",
         "chartType": "bar",
         "yAxisLabelFormat": "compact",
+        "seriesClickLinks": {
+          "Actual": {
+            "name": "transactions",
+            "query": {
+              "accountContains": "Expenses",
+              "dateFrom": "{{data.dateFrom}}",
+              "dateTo": "{{data.dateTo}}"
+            }
+          },
+          "Budget": null
+        },
         "options": {
           "tooltip": { "trigger": "axis" },
           "legend": { "show": true, "top": 0, "left": "center" },

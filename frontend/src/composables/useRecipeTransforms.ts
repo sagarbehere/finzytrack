@@ -638,12 +638,14 @@ function resetMonthFrom(config?: TransformConfig): string | null {
   return String(from).slice(0, 7)
 }
 
-interface PeriodRow { period: string; budget: Money; actual: Money }
+interface PeriodRow { period: string; budget: Money; actual: Money; dateFrom: string; dateTo: string }
 
 /**
  * Merge per-period budgets (inputs[0]) and per-period actuals (inputs[1]) into
  * one row per period — the union of periods, sorted, zero-filled. Shared by
  * joinByPeriod and envelopeRollover so the merge scaffold lives in one place.
+ * Each row also carries `dateFrom`/`dateTo` (the calendar bounds of a `YYYY-MM`
+ * period) so a chart series can click through to that month's transactions.
  */
 function mergePeriods(inputs: unknown[]): PeriodRow[] {
   const budgetByPeriod = new Map<string, Money>()
@@ -651,17 +653,22 @@ function mergePeriods(inputs: unknown[]): PeriodRow[] {
   const actualByPeriod = new Map<string, Money>()
   for (const a of asRows(inputs[1])) actualByPeriod.set(String(a.period ?? ''), toMoneyOr0(a.actual))
   const periods = Array.from(new Set([...budgetByPeriod.keys(), ...actualByPeriod.keys()])).sort()
-  return periods.map((period) => ({
-    period,
-    budget: budgetByPeriod.get(period) ?? zero(),
-    actual: actualByPeriod.get(period) ?? zero(),
-  }))
+  return periods.map((period) => {
+    const isYearMonth = /^\d{4}-\d{2}$/.test(period)
+    return {
+      period,
+      budget: budgetByPeriod.get(period) ?? zero(),
+      actual: actualByPeriod.get(period) ?? zero(),
+      dateFrom: isYearMonth ? `${period}-01` : period,
+      dateTo: isYearMonth ? monthEndDate(period) : period,
+    }
+  })
 }
 
 /**
  * joinByPeriod — merge per-period budgets and per-period actuals into one row
- * per period: { period, budget, actual }. The non-rollover building block for
- * burn-down (→ runningSum) and historical month-by-month views.
+ * per period: { period, budget, actual, dateFrom, dateTo }. The non-rollover
+ * building block for burn-down (→ runningSum) and historical month-by-month views.
  */
 function joinByPeriod(inputs: unknown[]): unknown {
   return mergePeriods(inputs)
