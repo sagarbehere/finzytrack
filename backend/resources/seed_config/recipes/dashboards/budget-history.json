@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "budget-history",
   "title": "Budget: History",
-  "description": "Budget vs actual, month by month: the trend and a per-account adherence heat-map.",
+  "description": "Budget vs actual, month by month: the trend and a per-account adherence heat-map. Only the month of the From/To dates is used — the day is ignored.",
   "parameters": [
     { "name": "from", "label": "From (month)", "type": "date", "default": { "$gen": "startOfMonth", "offset": -11 } },
     { "name": "to", "label": "To (month)", "type": "date", "default": { "$gen": "endOfMonth" } },
