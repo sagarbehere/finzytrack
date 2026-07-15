@@ -173,7 +173,7 @@ is the primary rowset; `config` shapes behavior.
 | `where` | `[rows]` | `{ field, equals? \| notEquals? \| in? }` | rows matching the predicate (chain `firstRow`/`limit` to reduce) |
 | `pivot` | `[rows]` | `{ rowField, columnField, valueField, formatColumn?, sortRowsBy? }` | PivotData |
 | `joinBudgetActual` | `[budgets, actuals]` | `{ totalAccount?, periodStart?, periodEnd? }` | variance rows (flat; remainder mode adds Unbudgeted+Total when `totalAccount` is set) |
-| `joinByPeriod` | `[budgetsByPeriod, actualsByPeriod]` | — | `[{ period, budget, actual }]` |
+| `joinByPeriod` | `[budgetsByPeriod, actualsByPeriod]` | — | `[{ period, budget, actual, dateFrom, dateTo }]` (`dateFrom`/`dateTo` are the month's calendar bounds — use in a series click link to drill to that period) |
 | `runningSum` | `[rows]` | `{ fields:[…], orderBy }` | rows + cumulative<Field> columns |
 | `envelopeRollover` | `[budgetsByPeriod, actualsByPeriod]` | — | `[{ period, budget, actual, available, carryover, overspent }]` |
 
