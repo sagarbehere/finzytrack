@@ -1,9 +1,11 @@
 /**
- * Shared budget status → colour logic, so the `budget-progress` bars and the
- * `pivot` colour-by-value heat-map stay identical (no drift). The scale:
- * green (under) → amber (approaching, ≥ warnAt) → blue (exactly on budget, = 1)
- * → red (over, > 1); flipped for income (`overGood`), where hitting the target
- * is good. See dev-docs/budget-dashboards.md §2a.
+ * Shared budget-status *logic* (which band a usage fraction falls in), so the
+ * `budget-progress` bars and the `pivot` heat-map classify identically. The
+ * scale: good (under) → warn (approaching, ≥ warnAt) → exact (on budget, = 1)
+ * → bad (over, > 1); flipped for income (`overGood`), where hitting the target
+ * is good. **Colors are NOT here** — they come from the active theme's valence
+ * band (`useDashboardTheme().valenceColor`), the single source of truth. See
+ * dev-docs/dashboard-color-system.md.
  */
 
 export type BudgetStatus = 'good' | 'warn' | 'exact' | 'bad'
@@ -24,15 +26,6 @@ export const BUDGET_STATUS_KEY: Record<BudgetStatus, keyof BudgetStatusColors> =
   bad: 'over',
 }
 
-/** Default palette as hex — the exact Tailwind *-500 shades the class palette
- * uses, so inline (pivot cells / custom overrides) and class-based (bars) match. */
-export const BUDGET_STATUS_HEX: Record<BudgetStatus, string> = {
-  good: '#10b981', // emerald-500
-  warn: '#f59e0b', // amber-500
-  exact: '#3b82f6', // blue-500
-  bad: '#ef4444', // red-500
-}
-
 /** The status of a usage fraction. `warnAt` (default 0.85) is the amber onset. */
 export function budgetStatusOf(
   pctUsed: number,
@@ -48,12 +41,6 @@ export function budgetStatusOf(
   if (pctUsed === 1) return 'exact' // exactly on budget (e.g. rent paid in full)
   if (pctUsed >= warnAt) return 'warn'
   return 'good'
-}
-
-/** Resolve a status to a CSS colour: a custom override for its role, else the
- * default hex. Use with `rgba()` for a fill/tint. */
-export function budgetStatusColor(status: BudgetStatus, colors?: BudgetStatusColors): string {
-  return colors?.[BUDGET_STATUS_KEY[status]] ?? BUDGET_STATUS_HEX[status]
 }
 
 /** `#rgb`/`#rrggbb` → `rgba(...)`; non-hex (e.g. "rebeccapurple") passes through. */

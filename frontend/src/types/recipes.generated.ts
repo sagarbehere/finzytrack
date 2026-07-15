@@ -295,7 +295,10 @@ export interface JsonKPIVisualization {
    * Single character (↑ ↓ $ % # or any Unicode).
    */
   icon?: string;
-  iconColor?: "blue" | "green" | "red" | "purple" | "amber";
+  /**
+   * A theme token ('{{theme.brand}}', '{{theme.valence.good}}', …), a hex/CSS color, or a legacy named color (blue/green/red/purple/amber). Prefer theme tokens.
+   */
+  iconColor?: string;
   /**
    * Column to read the value from (default: 'value').
    */

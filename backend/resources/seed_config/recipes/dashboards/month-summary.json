@@ -55,7 +55,7 @@
       "visualization": {
         "type": "kpi",
         "icon": "↑",
-        "iconColor": "green",
+        "iconColor": "{{theme.series.income}}",
         "multiCurrency": true,
         "clickLink": {
           "name": "transactions",
@@ -89,7 +89,7 @@
       "visualization": {
         "type": "kpi",
         "icon": "↓",
-        "iconColor": "red",
+        "iconColor": "{{theme.series.expense}}",
         "multiCurrency": true,
         "clickLink": {
           "name": "transactions",
@@ -123,7 +123,7 @@
       "visualization": {
         "type": "kpi",
         "icon": "$",
-        "iconColor": "blue",
+        "iconColor": "{{theme.series.savings}}",
         "multiCurrency": true
       },
       "steps": [

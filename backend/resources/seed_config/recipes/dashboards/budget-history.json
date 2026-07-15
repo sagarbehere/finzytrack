@@ -60,8 +60,8 @@
   "widgets": [
     {
       "id": "trend",
-      "title": "Total budget vs actual, by month",
-      "helpText": "Total budget vs total spend each month. Tall actual bars are the months you ran over.",
+      "title": "Total budget vs actual",
+      "helpText": "Total budget vs total spending each month. A taller Actual bar than Budget bar means you went over that month.",
       "steps": [{ "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.by-period}}"] }],
       "output": "rows",
       "visualization": {
@@ -75,8 +75,8 @@
           "xAxis": { "type": "category" },
           "yAxis": { "type": "value", "splitLine": { "lineStyle": { "type": "dashed", "opacity": 0.6 } } },
           "series": [
-            { "name": "Budget", "type": "bar", "encode": { "x": "period", "y": "budget" }, "itemStyle": { "color": "#94a3b8" } },
-            { "name": "Actual", "type": "bar", "encode": { "x": "period", "y": "actual" }, "itemStyle": { "color": "#6366f1" } }
+            { "name": "Budget", "type": "bar", "encode": { "x": "period", "y": "budget" }, "itemStyle": { "color": "{{theme.series.budget}}" } },
+            { "name": "Actual", "type": "bar", "encode": { "x": "period", "y": "actual" }, "itemStyle": { "color": "{{theme.series.actual}}" } }
           ]
         }
       }
@@ -84,7 +84,7 @@
     {
       "id": "heatmap",
       "title": "Adherence heat-map",
-      "helpText": "How much of each account's monthly budget was used: green under, amber close, blue on the nose, red over. Blank = no budget that month. Click a cell for its transactions.",
+      "helpText": "How much of each account's monthly budget was used: green under, amber close, blue exactly on budget, red over. Blank = no budget that month. Click a cell for its transactions.",
       "steps": [
         {
           "id": "pivoted",

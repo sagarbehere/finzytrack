@@ -34,6 +34,7 @@ import type { ECharts as EChartsInstance } from 'echarts/core'
 import { formatAmount } from '@/utils/currencyFormat'
 import { getFormats } from '@/composables/useRecipeExecutor'
 import type { ValueFormat } from '@/types/recipes'
+import { useDashboardTheme } from '@/composables/useDashboardTheme'
 
 // Register ECharts components
 echarts.use([
@@ -281,9 +282,14 @@ type Row = Record<string, unknown>
 
 /** Build a node tree from rows whose `pathField` is a colon-separated path
  *  (e.g. 'Expenses:Food:Restaurants'). Each leaf carries the row's value. */
-function buildAccountTree(rows: Row[], pathField: string, valueField: string) {
-  type Node = { name: string; value: number; children: Node[] }
-  const root: Node = { name: '__root__', value: 0, children: [] }
+function buildAccountTree(
+  rows: Row[],
+  pathField: string,
+  valueField: string,
+  colorFn?: (fullPath: string) => string,
+) {
+  type Node = { name: string; fullPath: string; value: number; children: Node[] }
+  const root: Node = { name: '__root__', fullPath: '', value: 0, children: [] }
 
   for (const row of rows) {
     const path = String(row[pathField] ?? '')
@@ -295,7 +301,7 @@ function buildAccountTree(rows: Row[], pathField: string, valueField: string) {
       const seg = segments[i]
       let child = cur.children.find((c) => c.name === seg)
       if (!child) {
-        child = { name: seg, value: 0, children: [] }
+        child = { name: seg, fullPath: segments.slice(0, i + 1).join(':'), value: 0, children: [] }
         cur.children.push(child)
       }
       // Only the leaf carries the row's value; parents are summed below.
@@ -315,10 +321,13 @@ function buildAccountTree(rows: Row[], pathField: string, valueField: string) {
   }
   rollup(root)
   // Strip leaves with zero/missing children arrays for cleaner ECharts data.
+  // When a colorFn is given, stamp each node's itemStyle.color by its full path
+  // (hierarchical stickiness: hue = family, lightness = depth).
   function clean(n: Node): unknown {
+    const style = colorFn ? { itemStyle: { color: colorFn(n.fullPath) } } : {}
     return n.children.length === 0
-      ? { name: n.name, value: n.value }
-      : { name: n.name, value: n.value, children: n.children.map(clean) }
+      ? { name: n.name, value: n.value, ...style }
+      : { name: n.name, value: n.value, ...style, children: n.children.map(clean) }
   }
   return root.children.map(clean)
 }
@@ -443,15 +452,42 @@ function injectSeriesData(series: EChartsOption['series']): EChartsOption['serie
     }
 
     if (t === 'sunburst') {
-      // Build a tree from colon-separated account paths.
+      // Build a tree from colon-separated account paths. Color by family+depth
+      // unless the recipe dictates its own colors (escape hatch).
       const pathField = (s as { pathField?: string }).pathField || 'account'
       const valueField = (s as { valueField?: string }).valueField || 'value'
-      return { ...s, data: buildAccountTree(rows, pathField, valueField) } as typeof s
+      const colorFn = recipeSetsColor(s) ? undefined : (p: string) => familyColor(p, isDarkMode())
+      return { ...s, data: buildAccountTree(rows, pathField, valueField, colorFn) } as typeof s
     }
 
-    // Default: drop rows directly into series.data (treemap, funnel, gauge).
+    if (t === 'treemap' && !recipeSetsColor(s)) {
+      // Sticky identity color per tile by its label (family+depth); the recipe's
+      // own colors still win via recipeSetsColor().
+      const dark = isDarkMode()
+      return {
+        ...s,
+        data: rows.map((r) => {
+          const name = String(r.name ?? r.account ?? '')
+          const existing = (r as { itemStyle?: Record<string, unknown> }).itemStyle ?? {}
+          return { ...r, itemStyle: { ...existing, color: familyColor(name, dark) } }
+        }),
+      } as typeof s
+    }
+
+    // Default: drop rows directly into series.data (treemap w/ explicit colors, funnel, gauge).
     return { ...s, data: props.data } as typeof s
   })
+}
+
+const { categoricalPalette, resolveTokensDeep, familyColor } = useDashboardTheme()
+
+/** True when the recipe already dictates fill colors for this series (an explicit
+ * `itemStyle.color`) or the whole chart (`options.color`) — the value-level escape
+ * hatch. Sticky auto-coloring stands down when it's set. */
+function recipeSetsColor(s: unknown): boolean {
+  const it = (s as { itemStyle?: { color?: unknown } } | null)?.itemStyle
+  const topColor = (props.chartOptions as Record<string, unknown>).color
+  return it?.color != null || topColor != null
 }
 
 // Build final chart options with data and theme
@@ -459,6 +495,11 @@ const finalOptions = computed<EChartsOption>(() => {
   const dark = isDarkMode()
   const textColor = dark ? '#e5e7eb' : '#374151'
   const axisLineColor = dark ? '#4b5563' : '#d1d5db'
+  // Categorical identity palette from the active dashboard theme. Applied as
+  // the default series color cycle (pies/treemaps/unstyled series). A recipe's
+  // explicit top-level `options.color` still wins (value-level escape hatch);
+  // series that set their own `itemStyle.color` are unaffected either way.
+  const themePalette = categoricalPalette(dark)
   const treemap = isTreemapChart()
   const pie = isPieChart()
   const needsAxes = needsCartesianAxes()
@@ -489,6 +530,7 @@ const finalOptions = computed<EChartsOption>(() => {
 
   const result: EChartsOption = {
     backgroundColor: 'transparent',
+    color: resolveTokensDeep(((props.chartOptions as Record<string, unknown>).color as string[]) ?? themePalette, dark),
     textStyle: {
       color: textColor,
     },
@@ -564,7 +606,7 @@ const finalOptions = computed<EChartsOption>(() => {
       textStyle: { color: textColor },
       ...((props.chartOptions.legend as object) || {}),
     },
-    series: finalSeries,
+    series: resolveTokensDeep(finalSeries, dark),
   }
 
   // Pass through chart-type-specific top-level options that the runtime

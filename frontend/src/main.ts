@@ -6,6 +6,7 @@ import './style.css'
 import { OpenAPI } from './services/generated-api'
 import { ConfigService } from './services/generated-api'
 import { useConfig } from './composables/useConfig'
+import { useDashboardTheme } from './composables/useDashboardTheme'
 async function initApp() {
   // Empty string = relative URLs, works when frontend is served by the backend (packaged app).
   // In development, VITE_API_BASE_URL can be set, or the Vite dev proxy routes /api to the backend.
@@ -22,6 +23,11 @@ async function initApp() {
   } catch (e) {
     console.warn('Could not load initial config from backend.', e)
   }
+
+  // Load the active dashboard color theme (self-handles errors; falls back to
+  // the built-in default). Not awaited — the default is already applied, so
+  // first paint is correct and a user-customized theme swaps in when ready.
+  void useDashboardTheme().loadTheme()
 
   const app = createApp(App)
   app.use(router)

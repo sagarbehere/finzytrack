@@ -180,6 +180,34 @@ is the primary rowset; `config` shapes behavior.
 Budget transforms pair with the `budget_for_range` compute function — see
 `get_budget_guide` and `get_compute_functions`.
 
+### Colors & theming (prefer theme tokens)
+
+Dashboard colors come from the **active dashboard theme** (one editable file). Reference theme
+colors anywhere a color is accepted using a **`{{theme.*}}` token** — never hand-pick hex when a
+token fits. This keeps every dashboard consistent and re-themeable from one place.
+
+Token vocabulary (the fixed set — do not invent others):
+
+- `{{theme.brand}}` — the app's focus/accent color. Use for single-series emphasis (a lone bar/line),
+  primary/magnitude KPI icons, and highlights.
+- `{{theme.baseline}}` — a muted grey for the "target/budget" a value is measured against.
+- `{{theme.valence.good | warn | bad | complete}}` — favorability: under / approaching / over /
+  exactly-on-budget. The **only** place green/amber/red should appear.
+- `{{theme.series.<name>}}` — a named recurring series (`budget`, `actual`, `income`, `expense`,
+  `savings`). Use these for those series so a chart and its KPI match.
+- `{{theme.categorical}}` (let the theme assign) or `{{theme.categorical.N}}` (a specific 0-based
+  slot) — identity colors for pie/treemap categories.
+
+Rules:
+- **Pie and treemap charts get the theme's categorical palette automatically** — do **not** set
+  colors on them unless you have a reason.
+- **Budget-progress bars and the pivot heat-map are colored by the theme automatically** (by
+  favorability) — no color config needed.
+- **KPI `iconColor`**: use `{{theme.brand}}` for a magnitude (Spent, Total, Assets); use
+  `colorBySign: true` for a signed value (Remaining, Net change) so it's green/red by sign. Don't use
+  green/red on a magnitude.
+- A **raw hex/CSS color still works** as a value-level override, but prefer a token.
+
 ### Visualization types
 
 #### KPI — Single metric display
@@ -188,7 +216,7 @@ Budget transforms pair with the `budget_for_range` compute function — see
 {
   "type": "kpi",
   "icon": "↑",
-  "iconColor": "green",
+  "iconColor": "{{theme.series.income}}",
   "multiCurrency": true,
   "format": "currency",
   "clickLink": {
@@ -199,7 +227,9 @@ Budget transforms pair with the `budget_for_range` compute function — see
 ```
 
 - `icon`: Single character (↑ ↓ $ % # or any Unicode)
-- `iconColor`: `"blue"`, `"green"`, `"red"`, `"purple"`, `"amber"`
+- `iconColor`: prefer a **theme token** (`"{{theme.brand}}"` for magnitudes, `"{{theme.series.*}}"`
+  to match a series). A hex or a legacy name (`"blue"`/`"green"`/`"red"`/`"purple"`/`"amber"`) also
+  works. For a signed figure, use `colorBySign: true` instead.
 - `multiCurrency: true` — Query must return `currency` and `amount` columns. Groups amounts by currency.
 - `format`: `"currency"`, `"number"`, `"compact"`, `"percent"` (optional, auto-detected)
 - For single-value KPI, query should return one row with an `amount` or `value` column.
@@ -223,7 +253,7 @@ Budget transforms pair with the `budget_for_range` compute function — see
         "name": "Expenses",
         "type": "bar",
         "encode": { "x": "month_label", "y": "expenses" },
-        "itemStyle": { "color": "#E8A951" },
+        "itemStyle": { "color": "{{theme.series.expense}}" },
         "label": { "show": true, "position": "top", "fontSize": 10 }
       }
     ]
@@ -481,7 +511,7 @@ Budget-vs-actual progress list: one row per budgeted account with a fill bar (sp
 |-------|------|----------|-------------|
 | `type` | `'kpi'` | yes |  |
 | `icon` | `string` | — | Single character (↑ ↓ $ % # or any Unicode). |
-| `iconColor` | `'blue' | 'green' | 'red' | 'purple' | 'amber'` | — |  |
+| `iconColor` | `string` | — | A theme token ('{{theme.brand}}', '{{theme.valence.good}}', …), a hex/CSS color, or a legacy named color (blue/green/red/purple/amber). Prefer theme tokens. |
 | `valueField` | `string` | — | Column to read the value from (default: 'value'). |
 | `format` | `ValueFormat` | — |  |
 | `showTrend` | `boolean` | — |  |

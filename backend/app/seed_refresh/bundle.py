@@ -45,6 +45,9 @@ def _kinds() -> list[_Kind]:
     return [
         _Kind("recipe", SEED_CONFIG_DIR, "recipes", needs_currency=False),
         _Kind("ledger", SEED_DATA_DIR, "ledgers", needs_currency=True),
+        # Dashboard color themes — user-editable, so provenance-protected like
+        # recipes (a non-ledger kind → the §4 pristine-only rule in refresh._decide).
+        _Kind("dashboard-theme", SEED_CONFIG_DIR, "dashboard-themes", needs_currency=False),
     ]
 
 

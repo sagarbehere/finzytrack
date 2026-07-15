@@ -56,10 +56,11 @@ import type { SelectParams } from '@/types/recipes'
 import {
   budgetStatusOf,
   hexToRgba,
-  BUDGET_STATUS_KEY,
   type BudgetStatus,
   type BudgetStatusColors,
 } from '@/utils/budgetStatus'
+import { useDashboardTheme } from '@/composables/useDashboardTheme'
+import { useTheme } from '@/composables/useTheme'
 
 export interface BudgetProgressFields {
   account: string
@@ -101,42 +102,25 @@ function num(v: unknown): number {
   return 0
 }
 
+const { valenceColor, warnAtDefault } = useDashboardTheme()
+const { isDarkMode } = useTheme()
+
 const warnAt = computed(() =>
-  typeof props.warnAt === 'number' && props.warnAt > 0 && props.warnAt <= 1 ? props.warnAt : 0.85,
+  typeof props.warnAt === 'number' && props.warnAt > 0 && props.warnAt <= 1 ? props.warnAt : warnAtDefault(),
 )
 
-// Default palette (Tailwind classes, per light/dark mode). Fills softened so they
-// read calm on both the white light-mode card and the dark card; text stays
-// saturated for legibility. Kept identical to BUDGET_STATUS_HEX (budgetStatus.ts)
-// so the bars and the pivot heat-map match. Custom `colors` override via inline style.
-const DEFAULT_CLASSES: Record<BudgetStatus, { fill: string; track: string; text: string }> = {
-  good: { fill: 'bg-emerald-500/85 dark:bg-emerald-400/70', track: 'bg-emerald-500/10 dark:bg-emerald-400/10', text: 'text-emerald-600/90 dark:text-emerald-400/90' },
-  warn: { fill: 'bg-amber-500/85 dark:bg-amber-400/70', track: 'bg-amber-500/12 dark:bg-amber-400/12', text: 'text-amber-600 dark:text-amber-400' },
-  exact: { fill: 'bg-blue-500/85 dark:bg-blue-400/70', track: 'bg-blue-500/12 dark:bg-blue-400/12', text: 'text-blue-600 dark:text-blue-400' },
-  bad: { fill: 'bg-red-500/85 dark:bg-red-400/70', track: 'bg-red-500/12 dark:bg-red-400/12', text: 'text-red-600 dark:text-red-400' },
-}
-
-/** Class-based default, or inline-style override when a custom colour is set. */
+/** Bar colors, sourced from the active theme's valence band (mode-aware). A
+ * recipe `colors` override (token or hex) still wins, inside `valenceColor`.
+ * Fill softened to read calm; track faint; text at full strength. */
 function styleFor(status: BudgetStatus) {
-  const hex = props.colors?.[BUDGET_STATUS_KEY[status]]
-  if (hex) {
-    return {
-      fillClass: undefined as string | undefined,
-      trackClass: undefined as string | undefined,
-      textClass: undefined as string | undefined,
-      fillStyle: { backgroundColor: hexToRgba(hex, 0.85) } as Record<string, string> | undefined,
-      trackStyle: { backgroundColor: hexToRgba(hex, 0.12) } as Record<string, string> | undefined,
-      textStyle: { color: hex } as Record<string, string> | undefined,
-    }
-  }
-  const d = DEFAULT_CLASSES[status]
+  const c = valenceColor(status, isDarkMode.value, props.colors)
   return {
-    fillClass: d.fill,
-    trackClass: d.track,
-    textClass: d.text,
-    fillStyle: undefined as Record<string, string> | undefined,
-    trackStyle: undefined as Record<string, string> | undefined,
-    textStyle: undefined as Record<string, string> | undefined,
+    fillClass: undefined as string | undefined,
+    trackClass: undefined as string | undefined,
+    textClass: undefined as string | undefined,
+    fillStyle: { backgroundColor: hexToRgba(c, 0.85) } as Record<string, string> | undefined,
+    trackStyle: { backgroundColor: hexToRgba(c, 0.12) } as Record<string, string> | undefined,
+    textStyle: { color: c } as Record<string, string> | undefined,
   }
 }
 

@@ -20,6 +20,10 @@ export type Config = {
      * Path to main Beancount ledger
      */
     ledger_file?: string;
+    /**
+     * Active dashboard color theme (filename without .json)
+     */
+    active_dashboard_theme?: string;
     server?: ServerConfig;
     accounts?: AccountsConfig;
     backup?: BackupConfig;

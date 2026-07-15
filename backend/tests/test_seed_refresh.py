@@ -446,3 +446,46 @@ def test_dismiss_unknown_task_is_404(test_client):
     resp = test_client.post("/api/startup/tasks/does-not-exist/dismiss")
     assert resp.status_code == 404
     assert resp.json()["error"]["code"] == ec.STARTUP_TASK_NOT_FOUND
+
+
+# ── Dashboard themes: user-editable content, delivered + provenance-protected ──
+
+
+def _add_theme_to_bundle(bundle, body='{"id":"dusty","v":1}\n'):
+    d = bundle.seed_config / "dashboard-themes"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "dusty.json").write_text(body)
+    return "dashboard-themes/dusty.json"
+
+
+def test_dashboard_theme_is_walked_and_targets_config(bundle):
+    rel = _add_theme_to_bundle(bundle)
+    sf = next(f for f in walk_bundle() if f.relpath == rel)
+    assert sf.kind == "dashboard-theme"
+    # User-editable → lands under config/, never data/.
+    assert sf.target_path(bundle.config_dir, bundle.data_dir) == bundle.config_dir / rel
+
+
+def test_dashboard_theme_delivered_to_existing_install(bundle):
+    # Install seeded before the theme shipped (baseline has no theme entry).
+    bundle.seed_all()
+    rel = _add_theme_to_bundle(bundle)  # a later release adds the theme file
+    report = apply_seed_refresh(
+        UpgradeState(bundle.config_dir), bundle.config_dir, bundle.data_dir, bundle.currency
+    )
+    assert (bundle.config_dir / rel).read_text() == '{"id":"dusty","v":1}\n'
+    assert "config/dashboard-themes/dusty.json" in [p["path"] for p in report.added]
+
+
+def test_user_edited_theme_is_never_clobbered(bundle):
+    _add_theme_to_bundle(bundle)
+    bundle.seed_all()  # baselines the theme as pristine
+    edited = bundle.config_dir / "dashboard-themes" / "dusty.json"
+    edited.write_text('{"id":"dusty","MINE":true}\n')
+    # A later release improves the bundled theme — the user's edit still wins.
+    _add_theme_to_bundle(bundle, '{"id":"dusty","v":2}\n')
+    report = apply_seed_refresh(
+        UpgradeState(bundle.config_dir), bundle.config_dir, bundle.data_dir, bundle.currency
+    )
+    assert edited.read_text() == '{"id":"dusty","MINE":true}\n'  # untouched
+    assert "config/dashboard-themes/dusty.json" in [p["path"] for p in report.skipped]

@@ -1,0 +1,39 @@
+{
+  "id": "dusty-spectrum",
+  "name": "Dusty Spectrum",
+  "description": "Calm valence with a fresh, well-differentiated identity palette. The default.",
+  "version": 1,
+
+  "readme": "To recolor: (1) edit 'valence' (the budget bars), 'categorical' (pie/treemap identity), and 'brand'. (2) Optionally 'baseline', 'series', 'accountPins'. (3) The rest — 'thresholds', 'stickiness', 'overflow', 'states', 'tints' — are fine knobs with sensible defaults; touch only if you really want to. Every color has a 'light' and a 'dark' variant.",
+
+  "brand":    { "light": "#4f6bb0", "dark": "#7b93d6" },
+  "baseline": { "light": "#9aa5b1", "dark": "#8a95a3" },
+
+  "valence": {
+    "good":     { "light": "#4e8f66", "dark": "#5faf7f" },
+    "warn":     { "light": "#b8863a", "dark": "#d8a24a" },
+    "bad":      { "light": "#bf5b52", "dark": "#d97066" },
+    "complete": { "light": "#3f8d82", "dark": "#56b0a4" }
+  },
+
+  "categorical": {
+    "light": ["#3f89c3", "#ce724d", "#32a281", "#cba243", "#826dc1", "#c96d97", "#47a8af", "#7db04f", "#ae8157", "#976ec1", "#ca606b", "#6b94c1"],
+    "dark":  ["#4ba3e8", "#f5885c", "#3cc199", "#f2c150", "#9b82e6", "#ef82b4", "#54c8d0", "#95d15e", "#cf9a68", "#b483e6", "#f0727f", "#7fb0e6"]
+  },
+
+  "series": {
+    "budget":  "{{theme.baseline}}",
+    "actual":  "{{theme.brand}}",
+    "income":  "{{theme.categorical.0}}",
+    "expense": "{{theme.categorical.5}}",
+    "savings": "{{theme.brand}}"
+  },
+
+  "accountPins": {},
+
+  "thresholds": { "warnAt": 0.85 },
+  "stickiness": { "hierarchical": "family-depth", "flat": "hash", "depthLightenStep": 0.18 },
+  "overflow": { "mode": "lightness-cycle", "lightenStep": 0.15 },
+  "states": { "hoverLighten": 0.12, "muteOpacity": 0.35, "selectedLighten": 0.08 },
+  "tints": { "heatmapAlpha": 0.30 }
+}

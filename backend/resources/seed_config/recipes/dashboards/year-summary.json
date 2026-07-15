@@ -48,7 +48,7 @@
       "visualization": {
         "type": "kpi",
         "icon": "↑",
-        "iconColor": "green",
+        "iconColor": "{{theme.series.income}}",
         "multiCurrency": true,
         "clickLink": {
           "name": "transactions",
@@ -82,7 +82,7 @@
       "visualization": {
         "type": "kpi",
         "icon": "↓",
-        "iconColor": "red",
+        "iconColor": "{{theme.series.expense}}",
         "multiCurrency": true,
         "clickLink": {
           "name": "transactions",
@@ -116,7 +116,7 @@
       "visualization": {
         "type": "kpi",
         "icon": "$",
-        "iconColor": "blue",
+        "iconColor": "{{theme.series.savings}}",
         "multiCurrency": true
       },
       "steps": [
@@ -213,7 +213,7 @@
                 "y": "expenses"
               },
               "itemStyle": {
-                "color": "#E8A951"
+                "color": "{{theme.series.expense}}"
               },
               "barGap": "10%",
               "label": {
@@ -230,7 +230,7 @@
                 "y": "income"
               },
               "itemStyle": {
-                "color": "#7DD3C0"
+                "color": "{{theme.series.income}}"
               },
               "label": {
                 "show": true,
@@ -246,7 +246,7 @@
                 "y": "savings"
               },
               "itemStyle": {
-                "color": "#7B83AD"
+                "color": "{{theme.series.savings}}"
               },
               "label": {
                 "show": true,

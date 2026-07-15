@@ -3,7 +3,7 @@
     <div v-if="icon" class="flex-shrink-0 mr-4">
       <div
         class="w-12 h-12 rounded-full flex items-center justify-center"
-        :class="iconBgClass"
+        :style="{ backgroundColor: iconColorHex }"
       >
         <span class="text-white text-xl font-semibold">{{ icon }}</span>
       </div>
@@ -21,8 +21,10 @@
           v-for="(item, index) in values"
           :key="index"
           class="kpi-value font-bold whitespace-nowrap"
-          :class="colorBySign ? signClass(item.amount) : 'text-gray-900 dark:text-white'"
-          :style="{ '--kpi-max-fs': maxFontSize(values.length) }"
+          :class="colorBySign ? '' : 'text-gray-900 dark:text-white'"
+          :style="colorBySign
+            ? { color: signColor(item.amount), '--kpi-max-fs': maxFontSize(values.length) }
+            : { '--kpi-max-fs': maxFontSize(values.length) }"
         >
           {{ formatCurrencyAmount(item) }}
         </p>
@@ -31,8 +33,10 @@
       <p
         v-else
         class="kpi-value font-bold whitespace-nowrap"
-        :class="colorBySign ? signClass(value) : 'text-gray-900 dark:text-white'"
-        :style="{ '--kpi-max-fs': maxFontSize(1) }"
+        :class="colorBySign ? '' : 'text-gray-900 dark:text-white'"
+        :style="colorBySign
+          ? { color: signColor(value), '--kpi-max-fs': maxFontSize(1) }
+          : { '--kpi-max-fs': maxFontSize(1) }"
       >
         {{ formattedValue }}
       </p>
@@ -53,12 +57,16 @@
 import { computed } from 'vue'
 import type { CurrencyAmount } from '@/types/recipes'
 import { formatAmount } from '@/utils/currencyFormat'
+import { useDashboardTheme } from '@/composables/useDashboardTheme'
+import { useTheme } from '@/composables/useTheme'
+import type { BudgetStatus } from '@/utils/budgetStatus'
 
 interface Props {
   value: number
   label?: string
   icon?: string
-  iconColor?: 'blue' | 'green' | 'red' | 'purple' | 'amber'
+  /** A `{{theme.*}}` token, a hex, or a legacy named color (blue/green/red/purple/amber). */
+  iconColor?: string
   formatValue?: (value: number) => string
   showTrend?: boolean
   trend?: number | null
@@ -75,12 +83,26 @@ const props = withDefaults(defineProps<Props>(), {
   colorBySign: false,
 })
 
-// Three-way by sign: red < 0, blue exactly 0 ("on the mark" — mirrors the
-// budget-progress bars), green > 0.
-function signClass(n: number): string {
-  if (n < 0) return 'text-red-600 dark:text-red-400'
-  if (n === 0) return 'text-blue-600 dark:text-blue-400'
-  return 'text-emerald-600 dark:text-emerald-400'
+const { valenceColor, resolveThemeColor } = useDashboardTheme()
+const { isDarkMode } = useTheme()
+
+// Three-way by sign, from the theme's valence band: bad < 0, complete (on the
+// mark) at 0, good > 0 — mirrors the budget-progress bars.
+function signStatus(n: number): BudgetStatus {
+  return n < 0 ? 'bad' : n === 0 ? 'exact' : 'good'
+}
+function signColor(n: number): string {
+  return valenceColor(signStatus(n), isDarkMode.value)
+}
+
+// Legacy named icon colors → theme roles (orphan 'purple'/'blue' → brand; the
+// collision-fix default is "accent = brand unless the number is signed").
+const NAMED_ICON: Record<string, string> = {
+  blue: '{{theme.brand}}',
+  purple: '{{theme.brand}}',
+  green: '{{theme.valence.good}}',
+  red: '{{theme.valence.bad}}',
+  amber: '{{theme.valence.warn}}',
 }
 
 const shownAmounts = computed<number[]>(() =>
@@ -96,20 +118,15 @@ function maxFontSize(count: number): string {
   return `${maxSizes[Math.min(count, 3)]}px`
 }
 
-const iconBgClass = computed(() => {
+const iconColorHex = computed<string>(() => {
   if (props.colorBySign) {
-    if (isNegative.value) return 'bg-red-500'
-    if (isExactlyZero.value) return 'bg-blue-500'
-    return 'bg-emerald-500'
+    if (isNegative.value) return valenceColor('bad', isDarkMode.value)
+    if (isExactlyZero.value) return valenceColor('exact', isDarkMode.value)
+    return valenceColor('good', isDarkMode.value)
   }
-  const colors = {
-    blue: 'bg-indigo-500',
-    green: 'bg-green-500',
-    red: 'bg-red-500',
-    purple: 'bg-purple-500',
-    amber: 'bg-amber-500',
-  }
-  return colors[props.iconColor]
+  // A token or hex resolves directly; a legacy named color maps to a theme role.
+  const ic = props.iconColor
+  return resolveThemeColor(NAMED_ICON[ic] ?? ic, isDarkMode.value)
 })
 
 const formattedValue = computed(() => {

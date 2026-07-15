@@ -89,7 +89,7 @@
     {
       "id": "overview",
       "title": "✉ Envelope balances",
-      "helpText": "What's left in each envelope now: unspent budget carried forward. Red means overspent. Click one to drill into its trend.",
+      "helpText": "What's left in each envelope now: unspent budget carried forward. Red means overspent. Click one to see its trend.",
       "steps": [
         { "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.ranked}}"] }
       ],
@@ -109,7 +109,7 @@
         { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.latest}}"] }
       ],
       "output": "row",
-      "visualization": { "type": "kpi", "icon": "◎", "iconColor": "blue", "multiCurrency": true, "amountField": "available", "currencyField": "currency" }
+      "visualization": { "type": "kpi", "icon": "◎", "iconColor": "{{theme.brand}}", "multiCurrency": true, "amountField": "available", "currencyField": "currency" }
     },
     {
       "id": "kpi-spent",
@@ -119,12 +119,12 @@
         { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.latest}}"] }
       ],
       "output": "row",
-      "visualization": { "type": "kpi", "icon": "$", "iconColor": "purple", "multiCurrency": true, "amountField": "actual", "currencyField": "currency" }
+      "visualization": { "type": "kpi", "icon": "$", "iconColor": "{{theme.brand}}", "multiCurrency": true, "amountField": "actual", "currencyField": "currency" }
     },
     {
       "id": "kpi-balance",
       "title": "{{params.account:accountName}}: In envelope now",
-      "helpText": "This month's closing balance (available − spent). Negative (red) means overspent.",
+      "helpText": "This month's closing balance: available minus spent. Negative (red) means overspent.",
       "steps": [
         { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.latest}}"] }
       ],
@@ -134,7 +134,7 @@
     {
       "id": "carryover",
       "title": "{{params.account:accountName}}: Balance over time",
-      "helpText": "The envelope's month-end balance over time. Rising means you're banking budget; below zero means overspent. Click a point for that month's transactions.",
+      "helpText": "The envelope's month-end balance over time. Rising means you're saving unspent budget; below zero means overspent. Click a point for that month's transactions.",
       "steps": [
         { "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.rollover}}"] }
       ],
@@ -155,7 +155,7 @@
               "type": "line",
               "smooth": true,
               "encode": { "x": "period", "y": "carryover" },
-              "itemStyle": { "color": "#6366f1" },
+              "itemStyle": { "color": "{{theme.brand}}" },
               "areaStyle": { "opacity": 0.25 },
               "lineStyle": { "width": 2 }
             }

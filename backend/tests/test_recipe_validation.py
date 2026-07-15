@@ -165,9 +165,15 @@ def test_unknown_viz_type_returns_single_error_with_got():
     assert "got 'graph'" in errors[0]
 
 
-def test_kpi_unknown_icon_color_lists_options():
-    errors = validate_visualization({"type": "kpi", "iconColor": "orange"}, "viz")
-    assert any("iconColor" in e and "got 'orange'" in e and "'amber'" in e for e in errors)
+def test_kpi_icon_color_accepts_tokens_hex_and_names():
+    # iconColor is a free string now (theme token, hex, or legacy name) — no enum.
+    for c in ["{{theme.brand}}", "{{theme.valence.good}}", "#3f89c3", "blue", "orange"]:
+        assert validate_visualization({"type": "kpi", "iconColor": c}, "viz") == [], c
+
+
+def test_kpi_icon_color_must_be_a_string():
+    errors = validate_visualization({"type": "kpi", "iconColor": 123}, "viz")
+    assert any("iconColor" in e for e in errors)
 
 
 def test_pivot_value_link_malformed_reports_path():

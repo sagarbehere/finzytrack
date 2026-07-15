@@ -225,11 +225,8 @@ function validateVisualization(viz: unknown, prefix: string): RecipeValidationEr
     if (viz.format !== undefined) {
       errors.push(...validateValueFormat(viz.format, `${prefix}.format`))
     }
-    if (viz.iconColor !== undefined) {
-      const validColors = ['blue', 'green', 'red', 'purple', 'amber']
-      if (!validColors.includes(String(viz.iconColor))) {
-        errors.push({ field: `${prefix}.iconColor`, message: `must be one of: ${validColors.join(', ')}` })
-      }
+    if (viz.iconColor !== undefined && typeof viz.iconColor !== 'string') {
+      errors.push({ field: `${prefix}.iconColor`, message: 'must be a string (a {{theme.*}} token, a hex/CSS color, or a legacy named color)' })
     }
   }
 

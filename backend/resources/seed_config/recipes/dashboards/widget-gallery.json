@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "widget-gallery",
   "title": "Widget Gallery",
-  "description": "Reference gallery with examples of every widget type the app supports. Useful both for humans creating dashboards manually and for the AI assistant — every widget here is known to validate and render correctly. Hover the ⓘ icons to see the per-type gotchas.",
+  "description": "Reference gallery with examples of every widget type the app supports. Useful both for humans creating dashboards manually and for the AI assistant — every widget here is known to validate and render correctly. Colors use {{theme.*}} tokens (brand, series.*, valence.*, categorical.*) so they follow the active dashboard theme; a raw hex/CSS color still works as an override (see the calendar heatmap). Hover the ⓘ icons to see the per-type gotchas.",
   "parameters": [
     {
       "name": "year",
@@ -102,7 +102,7 @@
       "visualization": {
         "type": "kpi",
         "icon": "↑",
-        "iconColor": "green",
+        "iconColor": "{{theme.series.income}}",
         "multiCurrency": true,
         "clickLink": {
           "name": "transactions",
@@ -196,7 +196,7 @@
                 "y": "income"
               },
               "itemStyle": {
-                "color": "#7DD3C0"
+                "color": "{{theme.series.income}}"
               },
               "label": {
                 "show": true,
@@ -212,7 +212,7 @@
                 "y": "expenses"
               },
               "itemStyle": {
-                "color": "#E8A951"
+                "color": "{{theme.series.expense}}"
               },
               "label": {
                 "show": true,
@@ -228,7 +228,7 @@
                 "y": "savings"
               },
               "itemStyle": {
-                "color": "#7B83AD"
+                "color": "{{theme.series.savings}}"
               },
               "label": {
                 "show": true,
@@ -301,7 +301,7 @@
                 "y": "income"
               },
               "itemStyle": {
-                "color": "#7DD3C0"
+                "color": "{{theme.series.income}}"
               },
               "lineStyle": {
                 "width": 2
@@ -378,7 +378,7 @@
                 "y": "net"
               },
               "itemStyle": {
-                "color": "#6366f1"
+                "color": "{{theme.brand}}"
               },
               "areaStyle": {
                 "opacity": 0.3
@@ -530,7 +530,7 @@
               },
               "symbolSize": 8,
               "itemStyle": {
-                "color": "#E8A951",
+                "color": "{{theme.categorical.1}}",
                 "opacity": 0.7
               }
             }
@@ -760,15 +760,15 @@
                   "color": [
                     [
                       0.2,
-                      "#E8A951"
+                      "{{theme.valence.bad}}"
                     ],
                     [
                       0.5,
-                      "#F0D670"
+                      "{{theme.valence.warn}}"
                     ],
                     [
                       1,
-                      "#7DD3C0"
+                      "{{theme.valence.good}}"
                     ]
                   ]
                 }
@@ -828,7 +828,7 @@
     {
       "id": "gallery-calendar",
       "title": "Daily Spending (Calendar Heatmap)",
-      "helpText": "Calendar heatmap shows one cell per day across a year. Query MUST return columns named 'date' (YYYY-MM-DD) and 'value' (numeric). The runtime projects rows to ECharts heatmap data and auto-injects a tooltip formatter that shows DATE + currency-formatted value. The chart needs a top-level `calendar` option (`range` is auto-derived from data if you don't set it) and a `visualMap` for the colour scale. Always set legend:{show:false} — the global legend swatch is cosmetic and clashes with the visualMap colour ramp. ClickLinks work — the runtime exposes the original row's columns to template variables, so {{data.date}} resolves to the cell's date.",
+      "helpText": "Calendar heatmap shows one cell per day across a year. Query MUST return columns named 'date' (YYYY-MM-DD) and 'value' (numeric). The runtime projects rows to ECharts heatmap data and auto-injects a tooltip formatter that shows DATE + currency-formatted value. The chart needs a top-level `calendar` option (`range` is auto-derived from data if you don't set it) and a `visualMap` for the colour scale. Always set legend:{show:false} — the global legend swatch is cosmetic and clashes with the visualMap colour ramp. ClickLinks work — the runtime exposes the original row's columns to template variables, so {{data.date}} resolves to the cell's date. This widget uses explicit hex colors for its value gradient (a legit escape hatch): a raw hex/CSS color always overrides the theme, so you can dictate colors yourself when a token doesn't fit — most other widgets here use {{theme.*}} tokens instead.",
       "visualization": {
         "type": "chart",
         "chartType": "calendar",
@@ -1012,14 +1012,14 @@
               "type": "radar",
               "areaStyle": {
                 "opacity": 0.4,
-                "color": "#6366f1"
+                "color": "{{theme.brand}}"
               },
               "lineStyle": {
                 "width": 2,
-                "color": "#6366f1"
+                "color": "{{theme.brand}}"
               },
               "itemStyle": {
-                "color": "#818cf8"
+                "color": "{{theme.categorical.0}}"
               },
               "symbol": "circle",
               "symbolSize": 6,

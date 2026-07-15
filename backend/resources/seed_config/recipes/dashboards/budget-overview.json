@@ -59,12 +59,12 @@
     {
       "id": "kpi-budgeted",
       "title": "Budgeted",
-      "helpText": "Total budget across all budgeted accounts; a nested parent and child count once.",
+      "helpText": "Total budget across all budgeted accounts. A parent and its budgeted child count once, not twice.",
       "steps": [
         { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.summary}}"] }
       ],
       "output": "row",
-      "visualization": { "type": "kpi", "icon": "◎", "iconColor": "blue", "multiCurrency": true, "amountField": "budget", "currencyField": "currency" }
+      "visualization": { "type": "kpi", "icon": "◎", "iconColor": "{{theme.brand}}", "multiCurrency": true, "amountField": "budget", "currencyField": "currency" }
     },
     {
       "id": "kpi-spent",
@@ -74,7 +74,7 @@
         { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.summary}}"] }
       ],
       "output": "row",
-      "visualization": { "type": "kpi", "icon": "$", "iconColor": "purple", "multiCurrency": true, "amountField": "actual", "currencyField": "currency" }
+      "visualization": { "type": "kpi", "icon": "$", "iconColor": "{{theme.brand}}", "multiCurrency": true, "amountField": "actual", "currencyField": "currency" }
     },
     {
       "id": "kpi-remaining",
@@ -89,7 +89,7 @@
     {
       "id": "unbudgeted",
       "title": "Unbudgeted spending",
-      "helpText": "Accounts with spending but no budget, biggest first. A budget on a parent covers its subtree, so those don't show here. Click a row for its transactions.",
+      "helpText": "Accounts with spending but no budget, biggest first. A budget on a parent account also covers its sub-accounts, so those are not shown. Click a row for its transactions.",
       "steps": [
         { "id": "leaks", "kind": "transform", "fn": "unbudgetedSpending", "inputs": ["{{dashboard.steps.budgets}}", "{{dashboard.steps.actuals}}"] },
         { "id": "with-total", "kind": "transform", "fn": "appendTotal", "inputs": ["{{steps.leaks}}"], "config": { "field": "actual", "label": "Total" } }
@@ -107,7 +107,7 @@
     {
       "id": "by-account",
       "title": "By Account",
-      "helpText": "Spent vs budget for each account, fullest first; over-budget in red. A parent's budget covers its whole subtree. Click a row for its transactions.",
+      "helpText": "Spent vs budget for each account, most-used first; over budget in red. A parent's budget covers all its sub-accounts. Click a row for its transactions.",
       "steps": [
         { "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.ranked}}"] }
       ],

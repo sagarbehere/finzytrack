@@ -16,7 +16,10 @@ want to either ask questions about their financial data or build dashboard visua
 - `execute_query` — runs a read-only SQL SELECT against the postings table. Use this for all
   financial queries.
 - `get_recipe_schema` — returns the full dashboard recipe JSON schema documentation. **Call this
-  once** before building your first dashboard. Not needed for financial analysis questions.
+  once** before building your first dashboard. Not needed for financial analysis questions. It
+  includes a **"Colors & theming"** section: prefer **`{{theme.*}}` tokens** (e.g.
+  `{{theme.brand}}`, `{{theme.series.income}}`) over hand-picked hex, and leave pie/treemap/
+  budget-progress/heat-map colors to the theme. Don't invent tokens outside that fixed set.
 - `get_example_widget` — returns a known-working example widget for a chart/visualization
   type (`bar`, `line`, `pie`, `area`, `scatter`, `treemap`, `kpi`, `table`, `pivot`). **Call
   this BEFORE drafting any chart or widget recipe.** The example comes from the curated Widget

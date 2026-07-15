@@ -126,7 +126,7 @@
       "properties": {
         "type": { "const": "kpi" },
         "icon": { "type": "string", "description": "Single character (↑ ↓ $ % # or any Unicode)." },
-        "iconColor": { "type": "string", "enum": ["blue", "green", "red", "purple", "amber"] },
+        "iconColor": { "type": "string", "description": "A theme token ('{{theme.brand}}', '{{theme.valence.good}}', …), a hex/CSS color, or a legacy named color (blue/green/red/purple/amber). Prefer theme tokens." },
         "valueField": { "type": "string", "description": "Column to read the value from (default: 'value')." },
         "format": { "$ref": "#/$defs/ValueFormat" },
         "showTrend": { "type": "boolean" },

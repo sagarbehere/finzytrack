@@ -65,7 +65,7 @@
       "helpText": "The total budget for the account you picked.",
       "steps": [{ "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.total-row}}"] }],
       "output": "row",
-      "visualization": { "type": "kpi", "icon": "◎", "iconColor": "blue", "multiCurrency": true, "amountField": "budget", "currencyField": "currency" }
+      "visualization": { "type": "kpi", "icon": "◎", "iconColor": "{{theme.brand}}", "multiCurrency": true, "amountField": "budget", "currencyField": "currency" }
     },
     {
       "id": "kpi-spent",
@@ -74,7 +74,7 @@
       "steps": [{ "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.total-row}}"] }],
       "output": "row",
       "visualization": {
-        "type": "kpi", "icon": "$", "iconColor": "purple", "multiCurrency": true, "amountField": "actual", "currencyField": "currency",
+        "type": "kpi", "icon": "$", "iconColor": "{{theme.brand}}", "multiCurrency": true, "amountField": "actual", "currencyField": "currency",
         "clickLink": {
           "name": "transactions",
           "query": { "accountContains": "{{parameters.totalAccount}}", "dateFrom": "{{parameters.monthStart}}", "dateTo": "{{parameters.monthEnd}}" }
@@ -92,7 +92,7 @@
     {
       "id": "sunburst",
       "title": "How the total is carved",
-      "helpText": "The total carved into named budgets and an Unbudgeted remainder at each level. Every ring sums to its parent.",
+      "helpText": "The total split into named budgets and an Unbudgeted remainder at each level. Each ring sums to the one inside it.",
       "steps": [
         { "id": "tree", "kind": "transform", "fn": "budgetTree", "inputs": ["{{dashboard.steps.budgets}}"], "config": { "totalAccount": "{{params.totalAccount}}" } }
       ],
@@ -122,7 +122,7 @@
     {
       "id": "carve-outs",
       "title": "Carve-outs + Unbudgeted",
-      "helpText": "Each named carve-out plus the leftover Unbudgeted bucket (total − named); over-budget in red. Click a named bar for its transactions.",
+      "helpText": "Each named budget plus the leftover Unbudgeted amount (total minus named); over budget in red. Click a named bar for its transactions.",
       "steps": [{ "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.carve-outs}}"] }],
       "output": "rows",
       "visualization": {

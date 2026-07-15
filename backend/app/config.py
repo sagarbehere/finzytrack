@@ -192,6 +192,13 @@ class Config(BaseModel):
     # File paths
     ledger_file: str = Field(default="./data/ledgers/one.beancount", description="Path to main Beancount ledger")
 
+    # Dashboard color theme (see dev-docs/dashboard-color-system.md). Names a
+    # theme file (without .json) under config/dashboard-themes/.
+    active_dashboard_theme: str = Field(
+        default="dusty-spectrum",
+        description="Active dashboard color theme (filename without .json)",
+    )
+
     # Nested configuration sections
     server: ServerConfig = Field(default_factory=ServerConfig)
     accounts: AccountsConfig = Field(default_factory=AccountsConfig)
@@ -264,6 +271,10 @@ class Config(BaseModel):
     @property
     def recipes_dir(self) -> str:
         return str(self.config_dir / 'recipes')
+
+    @property
+    def dashboard_themes_dir(self) -> str:
+        return str(self.config_dir / 'dashboard-themes')
 
     @property
     def email_rules_dir(self) -> str:

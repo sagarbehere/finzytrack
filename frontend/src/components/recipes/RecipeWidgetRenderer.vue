@@ -223,8 +223,8 @@ function getKPIIcon(): string | undefined {
   return viz.icon
 }
 
-// Get KPI icon color (for JSON recipes)
-function getKPIIconColor(): 'blue' | 'green' | 'red' | 'purple' | 'amber' {
+// Get KPI icon color (for JSON recipes) — a theme token, hex, or legacy name.
+function getKPIIconColor(): string {
   const viz = props.recipe.visualization
   if (viz.type !== 'kpi') return 'blue'
   if (isJsonKPIVisualization(viz) && viz.iconColor) {

@@ -124,7 +124,9 @@
 <script setup lang="ts">
 import type { RouteLocationRaw } from 'vue-router'
 import type { PivotData, PivotRow, PivotLinkContext, ValueLinkConfig, SelectParams } from '@/types/recipes'
-import { budgetStatusOf, budgetStatusColor, hexToRgba, type BudgetStatusColors } from '@/utils/budgetStatus'
+import { budgetStatusOf, hexToRgba, type BudgetStatusColors } from '@/utils/budgetStatus'
+import { useDashboardTheme } from '@/composables/useDashboardTheme'
+import { useTheme } from '@/composables/useTheme'
 
 interface Props {
   data: PivotData
@@ -152,12 +154,13 @@ const props = withDefaults(defineProps<Props>(), {
 })
 const emit = defineEmits<{ select: [params: SelectParams] }>()
 
-// A moderate tint so the number stays legible on the heat cell (light + dark).
-const CELL_TINT_ALPHA = 0.22
+// Cell tint from the active theme's valence band; strength = theme tints.heatmapAlpha.
+const { valenceColor, heatmapAlpha, warnAtDefault } = useDashboardTheme()
+const { isDarkMode } = useTheme()
 function cellStyle(value: number | undefined): Record<string, string> | undefined {
   if (!props.colorByValue || value === undefined || value === 0) return undefined
-  const status = budgetStatusOf(value, { warnAt: props.warnAt })
-  return { backgroundColor: hexToRgba(budgetStatusColor(status, props.colors), CELL_TINT_ALPHA) }
+  const status = budgetStatusOf(value, { warnAt: props.warnAt ?? warnAtDefault() })
+  return { backgroundColor: hexToRgba(valenceColor(status, isDarkMode.value, props.colors), heatmapAlpha()) }
 }
 
 function formatValue(value: number): string {
