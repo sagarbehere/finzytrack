@@ -118,15 +118,28 @@
                           class="text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
                         >Manage</router-link>
                       </div>
-                      <div v-if="account && budgetsByCurrency.length > 0" class="space-y-4">
-                        <div v-for="[currency, directives] in budgetsByCurrency" :key="currency">
-                          <p v-if="budgetsByCurrency.length > 1" class="mb-1 text-xs font-medium text-gray-400 dark:text-gray-500">{{ currency }}</p>
-                          <BudgetHistoryPanel
-                            :account="account.fullPath"
-                            :currency="currency"
-                            :directives="directives"
-                            @changed="refreshBudgets"
-                          />
+                      <!-- Read-only: the effective budget per currency, with past
+                           directives muted below. Editing lives in the Budgets view
+                           (the "Manage" link) so this stays a clean summary. -->
+                      <div v-if="account && budgetSummaryByCurrency.length > 0" class="space-y-3">
+                        <div v-for="grp in budgetSummaryByCurrency" :key="grp.currency" class="text-sm">
+                          <div class="flex items-baseline justify-between gap-3">
+                            <span v-if="grp.current" class="font-medium text-gray-900 dark:text-white">
+                              {{ grp.current.amount }} {{ grp.currency }} · {{ grp.current.interval }}
+                            </span>
+                            <span v-else class="text-gray-500 dark:text-gray-400">
+                              {{ grp.currency }} · ended {{ grp.endedDate }}
+                            </span>
+                            <span v-if="grp.current" class="shrink-0 text-xs text-gray-400 dark:text-gray-500">since {{ grp.current.date }}</span>
+                          </div>
+                          <div
+                            v-for="p in grp.past"
+                            :key="p.id"
+                            class="mt-0.5 flex items-baseline justify-between gap-3 text-xs text-gray-400 dark:text-gray-500"
+                          >
+                            <span>{{ p.ended ? 'ended' : `${p.amount} ${grp.currency} · ${p.interval}` }}</span>
+                            <span class="shrink-0">{{ p.date }}</span>
+                          </div>
                         </div>
                       </div>
                       <p v-else class="text-sm text-gray-400 dark:text-gray-500">
@@ -246,7 +259,6 @@ import DocumentUploadZone from '@/components/documents/DocumentUploadZone.vue'
 import DocumentPreviewModal from '@/components/documents/DocumentPreviewModal.vue'
 import { useDocuments } from '@/composables/useDocuments'
 import { useBudgets } from '@/composables/useBudgets'
-import BudgetHistoryPanel from '@/components/budgets/BudgetHistoryPanel.vue'
 import type { DocumentDetails, BudgetItem } from '@/services/generated-api'
 import type { AccountTreeNode } from '@/types/accounts'
 import { typeColors, statusColors } from '@/types/accounts'
@@ -291,8 +303,10 @@ async function refreshDocuments() {
   }
 }
 
-// Full budget-directive history for this account, grouped by currency, each
-// managed inline via BudgetHistoryPanel (§7.1 — the same editor as the Budgets view).
+// Full budget-directive history for this account, shown read-only (grouped by
+// currency: the effective budget today + past directives). Editing is deferred
+// to the Budgets view via the "Manage" link (§7.1), so the drawer stays a clean
+// summary and doesn't duplicate the editor.
 const { fetch: fetchBudgets } = useBudgets()
 const accountBudgets = ref<BudgetItem[]>([])
 async function refreshBudgets() {
@@ -303,14 +317,35 @@ async function refreshBudgets() {
     accountBudgets.value = []
   }
 }
-const budgetsByCurrency = computed(() => {
-  const m = new Map<string, BudgetItem[]>()
+
+// Per currency: the effective directive as of today (`current`, or `endedDate`
+// when it's a "budget end" tombstone) and the remaining directives (`past`),
+// newest first.
+type BudgetGroup = { currency: string; current: BudgetItem | null; endedDate: string | null; past: BudgetItem[] }
+const budgetSummaryByCurrency = computed<BudgetGroup[]>(() => {
+  const today = todayLocal()
+  const byCurrency = new Map<string, BudgetItem[]>()
   for (const b of accountBudgets.value) {
-    const list = m.get(b.currency)
+    const list = byCurrency.get(b.currency)
     if (list) list.push(b)
-    else m.set(b.currency, [b])
+    else byCurrency.set(b.currency, [b])
   }
-  return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+  return [...byCurrency.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([currency, directives]) => {
+      // Newest first; same-day ties resolve by source order (last wins, §4.3).
+      const sorted = [...directives].sort(
+        (a, b) => b.date.localeCompare(a.date) || (b.source_lineno ?? 0) - (a.source_lineno ?? 0),
+      )
+      const effective = sorted.find((d) => d.date <= today) ?? null
+      const ended = !!effective?.ended
+      return {
+        currency,
+        current: effective && !ended ? effective : null,
+        endedDate: ended ? effective!.date : null,
+        past: sorted.filter((d) => d !== effective),
+      }
+    })
 })
 
 // Fetch documents + budgets when the drawer opens or switches account.
