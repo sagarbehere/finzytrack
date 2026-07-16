@@ -21,7 +21,7 @@ from decimal import Decimal
 from fractions import Fraction
 
 from app.core.budget_directives import (
-    BUDGET_END, INTERVALS, budget_fields_complete, budget_id,
+    BUDGET_END, INTERVALS, budget_fields_complete, budget_id, is_budget_account,
 )
 
 # Precision floor for non-terminating daily-equivalents (~10 fractional digits);
@@ -85,7 +85,11 @@ def parse_budget_directive(row: dict) -> BudgetDirective | None:
             interval = v
         elif isinstance(v, str) and v == BUDGET_END:  # tombstone, before account fallback
             interval = BUDGET_END
-        elif isinstance(v, str):
+        # Account: an account-typed token or a quoted root both arrive here as a
+        # string (the dtype tag is dropped in the JSON mirror). Require it to look
+        # like a real account/root and take the first (first-wins, so a stray
+        # trailing string can't clobber a real account). See is_budget_account.
+        elif isinstance(v, str) and account is None and is_budget_account(v):
             account = v
 
     if interval == BUDGET_END:

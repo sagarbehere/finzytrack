@@ -18,10 +18,29 @@ from decimal import Decimal
 from typing import Any
 
 from beancount.core import account as bc_account
+from beancount.core import account_types as bc_account_types
 from beancount.core import data
 from beancount.core.amount import Amount
 
 INTERVALS = ("daily", "weekly", "monthly", "quarterly", "yearly")
+
+# The bare root type names (Assets, Liabilities, …). A budget can target a root
+# (e.g. a zero-based total on the whole `Expenses` tree, dev-docs/budget.md §13),
+# but Beancount rejects a bare root as an account *token* — it only parses when
+# written as a quoted *string* (`custom "budget" "Expenses" …`). So on the wire a
+# root account is a plain string, not an account-typed value; see
+# ``build_budget_custom`` (quotes roots) and ``is_budget_account`` (reads them).
+_ROOT_TYPES = frozenset(bc_account_types.DEFAULT_ACCOUNT_TYPES)
+
+
+def is_budget_account(value: str) -> bool:
+    """Whether a bare string value in a budget directive is the *account* — a
+    valid multi-segment account (`Expenses:Food`) or a root type name
+    (`Expenses`). Excludes stray strings (notes, typos) so a string fallback in
+    the parsers can't misread them as the account. Colon'd accounts normally
+    arrive as account-typed values; roots (and any hand-quoted account) as
+    strings."""
+    return bc_account.is_valid(value) or value in _ROOT_TYPES
 
 # Sentinel interval marking a "budget end" tombstone: from this date the account
 # has *no* budget (distinct from a real budget of 0), without deleting the prior
@@ -57,9 +76,15 @@ def build_budget_custom(
     amount: Decimal,
     currency: str,
 ) -> data.Custom:
-    """Construct a `custom "budget"` directive entry ready for the writer."""
+    """Construct a `custom "budget"` directive entry ready for the writer.
+
+    A root account (no ``:`` — e.g. ``Expenses``) is emitted as a quoted *string*
+    value, because Beancount rejects a bare root as an account token (`Invalid
+    token: 'Expenses'`). Multi-segment accounts print bare via ``bc_account.TYPE``.
+    Both forms read back through ``is_budget_account``. See dev-docs/budget.md §13.1."""
+    account_value = (account, str) if ":" not in account else (account, bc_account.TYPE)
     values = [
-        (account, bc_account.TYPE),
+        account_value,
         (interval, str),
         (Amount(amount, currency), Amount),
     ]
@@ -85,6 +110,12 @@ def parse_budget_entry(entry: Any) -> dict | None:
             interval = value
         elif isinstance(value, str) and value == BUDGET_END:
             interval = BUDGET_END
+        # A quoted root (e.g. "Expenses") arrives as a plain string, not an
+        # account-typed value. Accept it as the account only if it's a real
+        # account/root (not a stray note) and none has been set yet (first-wins,
+        # so a later stray string can't clobber a real account).
+        elif isinstance(value, str) and account is None and is_budget_account(value):
+            account = value
 
     if interval == BUDGET_END:
         # Tombstone: needs an account + a currency (carried by the inert amount);

@@ -32,6 +32,37 @@ def test_create_budget_round_trips(test_client):
     assert match[0]["id"] == created["id"]
 
 
+def test_root_account_budget_round_trips(test_client):
+    """A budget on a bare root (e.g. `Expenses`, no `:`) must survive the full
+    write→re-parse→read cycle. Beancount rejects a bare root as an account
+    *token*, so the writer emits it as a quoted string; a regression here would
+    silently drop the directive (or leave an unparseable ledger line).
+    See dev-docs/budget.md §13.1."""
+    resp = _create(test_client, account="Expenses", amount="9000")
+    assert resp.status_code == 200
+    created = resp.json()["data"]["budget"]
+    assert created["account"] == "Expenses"
+    assert created["amount"] == "9000"
+
+    # Read-back proves it re-parsed (not dropped on the post-write export).
+    budgets = _history(test_client)
+    match = [b for b in budgets if b["account"] == "Expenses"]
+    assert len(match) == 1 and match[0]["id"] == created["id"]
+
+    # Edit-by-id and delete-by-id exercise the live-entry parser recovering the
+    # quoted-root account (the path that previously couldn't locate it).
+    upd = test_client.put(f"/api/budgets/{created['id']}", json={
+        "date": "2026-01-01", "account": "Expenses",
+        "interval": "monthly", "amount": "8000", "currency": "USD",
+    })
+    assert upd.status_code == 200
+    after_upd = [b for b in _history(test_client) if b["account"] == "Expenses"]
+    assert len(after_upd) == 1 and after_upd[0]["amount"] == "8000"
+
+    assert test_client.delete(f"/api/budgets/{after_upd[0]['id']}").status_code == 200
+    assert not [b for b in _history(test_client) if b["account"] == "Expenses"]
+
+
 def test_effective_set_picks_latest_as_of(test_client):
     _create(test_client, date="2026-01-01", amount="500")
     _create(test_client, date="2026-07-01", amount="720")

@@ -131,6 +131,11 @@ interface Props {
   disabled?: boolean
   customClass?: string
   allowCustom?: boolean
+  // Also offer grouping nodes and roots (e.g. `Expenses`, `Expenses:Insurance`)
+  // derived from the account tree — the budgetable-subtree set — as selectable
+  // options, without allowing arbitrary free-text (see AccountDropdown usage in
+  // BudgetsView / dev-docs/budget.md §13.1).
+  includeGroups?: boolean
   // Filtering options
   includePattern?: string | RegExp
   excludePattern?: string | RegExp
@@ -144,6 +149,7 @@ const props = withDefaults(defineProps<Props>(), {
   disabled: false,
   customClass: '',
   allowCustom: false,
+  includeGroups: false,
   openOnly: true
 })
 
@@ -197,6 +203,21 @@ const filteredAccounts = computed(() => {
       .filter(account => !account.close_date)
       .map(account => account.name)
     accounts = accounts.filter(name => openAccountNames.includes(name))
+  }
+
+  // Expand to the full subtree: every ancestor prefix of a listed account is a
+  // valid budget/grouping target (incl. the bare root), even if not itself an
+  // `open` account. Derived from the already-filtered set, so it inherits the
+  // filters above and never introduces arbitrary/non-existent names.
+  if (props.includeGroups) {
+    const withGroups = new Set<string>()
+    for (const name of accounts) {
+      const parts = name.split(':')
+      for (let i = 1; i <= parts.length; i++) {
+        withGroups.add(parts.slice(0, i).join(':'))
+      }
+    }
+    accounts = [...withGroups]
   }
 
   // Apply search query filter

@@ -85,7 +85,7 @@
           <tr class="bg-gray-50 dark:bg-white/5">
             <td class="px-2 py-3"></td>
             <td class="px-4 py-3">
-              <AccountDropdown v-model="newRow.account" :allow-custom="false" placeholder="Account…" />
+              <AccountDropdown v-model="newRow.account" :allow-custom="false" :include-groups="true" placeholder="Account…" />
             </td>
             <td class="px-4 py-3">
               <div class="w-32">
@@ -192,7 +192,7 @@
       <div class="rounded-lg bg-gray-50 p-3 ring-1 ring-gray-200 dark:bg-white/5 dark:ring-white/10">
         <p class="mb-2 text-xs font-medium tracking-wider text-gray-500 uppercase dark:text-gray-400">Add a budget</p>
         <div class="space-y-2">
-          <AccountDropdown v-model="newRow.account" :allow-custom="false" placeholder="Account…" />
+          <AccountDropdown v-model="newRow.account" :allow-custom="false" :include-groups="true" placeholder="Account…" />
           <div class="flex gap-2">
             <div class="flex-1">
               <CommodityDropdown v-model="newRow.currency" :allow-custom="false" :show-details="false" placeholder="Currency…" />
