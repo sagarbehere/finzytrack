@@ -26,29 +26,38 @@
         v-for="row in sortedRows"
         :key="row.id"
         class="flex flex-wrap items-center gap-x-3 gap-y-2 py-2"
-        :class="dirty.has(row.id) ? 'bg-amber-50 dark:bg-amber-500/10' : ''"
+        :class="isDirty(row) ? 'bg-amber-50 dark:bg-amber-500/10' : ''"
       >
-        <input v-model="row.date" type="date" @change="markDirty(row.id)" :class="inputClass" />
+        <input v-model="row.date" type="date" :class="inputClass" />
         <span
           v-if="row.ended"
           class="inline-flex items-center rounded bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600 dark:bg-white/10 dark:text-gray-300"
         >Ended</span>
         <div v-else class="w-36">
-          <IntervalDropdown v-model="row.interval" @update:model-value="markDirty(row.id)" />
+          <IntervalDropdown v-model="row.interval" />
         </div>
         <div v-if="!row.ended" class="flex items-center gap-1.5">
-          <input v-model="row.amount" @input="markDirty(row.id)" :class="inputClass + ' w-24 text-right'" />
+          <input v-model="row.amount" :class="inputClass + ' w-24 text-right'" />
           <span class="text-sm text-gray-500 dark:text-gray-400">{{ currency }}</span>
         </div>
         <div class="flex items-center gap-3">
           <button
-            v-if="dirty.has(row.id)"
+            v-if="isDirty(row)"
             type="button"
             :disabled="isSaving"
             @click="saveRow(row)"
             class="text-sm font-medium text-indigo-600 hover:text-indigo-500 disabled:opacity-50 dark:text-indigo-400"
           >
             Save
+          </button>
+          <button
+            v-if="isDirty(row)"
+            type="button"
+            :disabled="isSaving"
+            @click="revertRow(row)"
+            class="text-sm font-medium text-gray-600 hover:text-gray-500 disabled:opacity-50 dark:text-gray-300"
+          >
+            Cancel
           </button>
           <button
             type="button"
@@ -101,7 +110,9 @@ const confirmDialog = useConfirmDialog()
 
 type Row = { id: string; date: string; interval: string; amount: string; ended: boolean }
 const rows = ref<Row[]>([])
-const dirty = ref<Set<string>>(new Set())
+// The pristine values keyed by id, so a row is "dirty" only while it differs from
+// the source directive — editing back to the original clears the dirty state.
+const originals = ref<Map<string, { date: string; interval: string; amount: string }>>(new Map())
 const endDate = ref(todayLocal())
 
 // Rebuild the editable copy whenever the source directives change (after a write
@@ -116,15 +127,31 @@ watch(
       amount: d.amount,
       ended: d.ended ?? false,
     }))
-    dirty.value = new Set()
+    originals.value = new Map(ds.map((d) => [d.id, { date: d.date, interval: d.interval, amount: d.amount }]))
   },
   { immediate: true },
 )
 
 const sortedRows = computed(() => [...rows.value].sort((a, b) => b.date.localeCompare(a.date)))
 
-function markDirty(id: string) {
-  dirty.value = new Set(dirty.value).add(id)
+/** A row is dirty while any editable field differs from the source directive. */
+function isDirty(row: Row): boolean {
+  const orig = originals.value.get(row.id)
+  if (!orig) return false
+  return (
+    row.date !== orig.date ||
+    row.interval !== orig.interval ||
+    row.amount.trim() !== orig.amount.trim()
+  )
+}
+
+/** Discard this row's edits, restoring the source directive's values. */
+function revertRow(row: Row) {
+  const orig = originals.value.get(row.id)
+  if (!orig) return
+  row.date = orig.date
+  row.interval = orig.interval
+  row.amount = orig.amount
 }
 
 async function saveRow(row: Row) {
