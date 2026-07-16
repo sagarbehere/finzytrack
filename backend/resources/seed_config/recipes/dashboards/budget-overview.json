@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "budget-overview",
   "title": "Budget: Overview",
-  "description": "Your budget at a glance: budgeted vs spent for each account, plus the spending outside any budget.",
+  "description": "Your per-account budget at a glance: budgeted vs spent for each account, plus the spending outside any budget.",
   "parameters": [
     { "name": "monthStart", "label": "From", "type": "date", "default": { "$gen": "startOfMonth" } },
     { "name": "monthEnd", "label": "To", "type": "date", "default": { "$gen": "endOfMonth" } },
@@ -59,7 +59,7 @@
     {
       "id": "kpi-budgeted",
       "title": "Budgeted",
-      "helpText": "Total budget across all budgeted accounts. A parent and its budgeted child count once, not twice.",
+      "helpText": "Sum of your per-account budgets (a parent and its budgeted child count once). A total set on a top-level account like Expenses is not counted here.",
       "steps": [
         { "id": "row", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.summary}}"] }
       ],
