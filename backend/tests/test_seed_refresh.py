@@ -36,15 +36,18 @@ def bundle(tmp_path, monkeypatch):
     seed_config = tmp_path / "bundle" / "seed_config"
     seed_data = tmp_path / "bundle" / "seed_data"
     (seed_config / "recipes" / "dashboards").mkdir(parents=True)
-    (seed_data / "ledgers").mkdir(parents=True)
+    (seed_data / "ledgers" / "fake-multi").mkdir(parents=True)
 
     (seed_config / "recipes" / "dashboards" / "a.json").write_text('{"id":"a","v":1}\n')
     (seed_config / "recipes" / "dashboards" / "b.json").write_text('{"id":"b","v":1}\n')
-    # A ledger carrying the currency placeholder, and one without.
-    (seed_data / "ledgers" / "demo.beancount").write_text(
+    # The two app-owned demo ledgers (the only refreshable ones): the single-file
+    # `fake.beancount` carrying the currency placeholder, and a file in the
+    # `fake-multi/` tree without it. A non-demo ledger (e.g. `one.beancount`) is
+    # excluded from the bundle — see test_non_demo_ledger_excluded_from_bundle.
+    (seed_data / "ledgers" / "fake.beancount").write_text(
         "2020-01-01 open Assets:Cash {default_currency}\n"
     )
-    (seed_data / "ledgers" / "plain.beancount").write_text(
+    (seed_data / "ledgers" / "fake-multi" / "plain.beancount").write_text(
         "2020-01-01 open Assets:Cash INR\n"
     )
 
@@ -111,7 +114,7 @@ def test_baseline_makes_everything_pristine(bundle):
 
 def test_new_file_is_added_and_recorded(bundle):
     # Only a.json + the two ledgers on disk & baselined; b.json is "new".
-    for rel in ("recipes/dashboards/a.json", "ledgers/demo.beancount", "ledgers/plain.beancount"):
+    for rel in ("recipes/dashboards/a.json", "ledgers/fake.beancount", "ledgers/fake-multi/plain.beancount"):
         t = bundle.target(rel)
         t.parent.mkdir(parents=True, exist_ok=True)
         t.write_bytes(next(f for f in walk_bundle() if f.relpath == rel).target_bytes(bundle.currency))
@@ -200,12 +203,12 @@ def test_ledger_is_currency_substituted_and_hash_matches(bundle):
     state = UpgradeState(bundle.config_dir)
     apply_seed_refresh(state, bundle.config_dir, bundle.data_dir, bundle.currency)  # first delivery
 
-    demo = bundle.target("ledgers/demo.beancount")
+    demo = bundle.target("ledgers/fake.beancount")
     assert "{default_currency}" not in demo.read_text()
     assert "EUR" in demo.read_text()
     # The recorded installed hash is the post-substitution hash (so the file reads
     # pristine, not user-modified, on the next run).
-    assert UpgradeState(bundle.config_dir).installed_hashes()["ledgers/demo.beancount"] == _sha(demo)
+    assert UpgradeState(bundle.config_dir).installed_hashes()["ledgers/fake.beancount"] == _sha(demo)
     follow = preview_refresh(bundle.config_dir, bundle.data_dir, bundle.currency,
                              UpgradeState(bundle.config_dir).installed_hashes())
     assert follow.would_change() is False
@@ -224,15 +227,15 @@ def test_user_modified_demo_ledger_is_replaced(bundle):
     replaces the on-disk copy (backing it up first), because the demo ledger is
     ours, not user data."""
     bundle.seed_all()
-    edited = bundle.target("ledgers/plain.beancount")
+    edited = bundle.target("ledgers/fake-multi/plain.beancount")
     edited.write_text("2020-01-01 open Assets:Cash INR\n; my note\n")
     # A new release ships a different demo ledger.
-    (bundle.seed_data / "ledgers" / "plain.beancount").write_text("2021-02-02 open Assets:New INR\n")
+    (bundle.seed_data / "ledgers" / "fake-multi" / "plain.beancount").write_text("2021-02-02 open Assets:New INR\n")
 
     report = apply_seed_refresh(UpgradeState(bundle.config_dir), bundle.config_dir, bundle.data_dir, bundle.currency)
 
     assert edited.read_text() == "2021-02-02 open Assets:New INR\n"     # replaced with bundle
-    assert [p["path"] for p in report.refreshed] == ["data/ledgers/plain.beancount"]
+    assert [p["path"] for p in report.refreshed] == ["data/ledgers/fake-multi/plain.beancount"]
     assert report.skipped == []                                         # never "kept your edits"
     backups = list(bundle.data_dir.rglob("*.backup"))
     assert any(b.read_text() == "2020-01-01 open Assets:Cash INR\n; my note\n" for b in backups)
@@ -242,21 +245,40 @@ def test_untracked_demo_ledger_is_refreshed(bundle):
     """The reported bug: a demo ledger seeded before provenance existed has NO
     installed record. It must still be replaced with the current bundle (it's
     ours) — not skipped as 'user-created' the way an untracked dashboard is."""
-    stale = bundle.target("ledgers/plain.beancount")
+    stale = bundle.target("ledgers/fake-multi/plain.beancount")
     stale.parent.mkdir(parents=True, exist_ok=True)
     stale.write_text("2019-01-01 open Assets:Old INR\n")               # old seeded copy, nothing recorded
 
     report = apply_seed_refresh(UpgradeState(bundle.config_dir), bundle.config_dir, bundle.data_dir, bundle.currency)
 
-    assert stale.read_bytes() == _bundle_ledger_bytes("ledgers/plain.beancount", bundle.currency)
-    assert "data/ledgers/plain.beancount" in [p["path"] for p in report.refreshed]
+    assert stale.read_bytes() == _bundle_ledger_bytes("ledgers/fake-multi/plain.beancount", bundle.currency)
+    assert "data/ledgers/fake-multi/plain.beancount" in [p["path"] for p in report.refreshed]
+
+
+def test_non_demo_ledger_excluded_from_bundle(bundle):
+    """A ledger in seed_data/ledgers/ that isn't an app-owned demo (only
+    `fake.beancount` and `fake-multi/` are) must be entirely out of the refresh's
+    scope — never walked, delivered, or overwritten. This is the guard against the
+    2026-07-10 regression where the refresh clobbered a user's real ledger that
+    happened to share the `one.beancount` starter's name. See §7.3a."""
+    (bundle.seed_data / "ledgers" / "one.beancount").write_text(
+        "1970-01-01 open Assets:Cash {default_currency}\n"
+    )
+    # Not in the walked bundle at all…
+    assert not any(f.relpath == "ledgers/one.beancount" for f in walk_bundle())
+
+    # …and a full refresh never creates it on disk (the fixture data_dir is empty).
+    state = UpgradeState(bundle.config_dir)
+    report = apply_seed_refresh(state, bundle.config_dir, bundle.data_dir, bundle.currency)
+    assert not bundle.target("ledgers/one.beancount").exists()
+    assert "data/ledgers/one.beancount" not in [p["path"] for p in report.added + report.refreshed]
 
 
 def test_unchanged_release_keeps_demo_ledger_edit(bundle):
     """We compare against last-delivered, not on-disk — so a demo user's edits are
     NOT wiped on every launch; only a genuinely newer bundle replaces them."""
     bundle.seed_all()
-    edited = bundle.target("ledgers/plain.beancount")
+    edited = bundle.target("ledgers/fake-multi/plain.beancount")
     edited.write_text("2020-01-01 open Assets:Cash INR\n; exploring\n")
 
     report = apply_seed_refresh(UpgradeState(bundle.config_dir), bundle.config_dir, bundle.data_dir, bundle.currency)
@@ -270,17 +292,17 @@ def test_result_notes_are_past_tense_preview_future(bundle):
     the pre-consent preview (to_details) keeps future tense (new/will refresh)."""
     bundle.seed_all()
     (bundle.seed_config / "recipes" / "dashboards" / "c.json").write_text('{"id":"c"}\n')   # new dashboard
-    (bundle.seed_data / "ledgers" / "plain.beancount").write_text("2099-01-01 open Assets:X INR\n")  # newer ledger
+    (bundle.seed_data / "ledgers" / "fake-multi" / "plain.beancount").write_text("2099-01-01 open Assets:X INR\n")  # newer ledger
 
     report = apply_seed_refresh(UpgradeState(bundle.config_dir), bundle.config_dir, bundle.data_dir, bundle.currency)
 
     result_notes = {p["path"]: p["note"] for p in report.to_result()["outcome"]["succeeded"]}
     assert result_notes["config/recipes/dashboards/c.json"] == "added"
-    assert result_notes["data/ledgers/plain.beancount"] == "refreshed"
+    assert result_notes["data/ledgers/fake-multi/plain.beancount"] == "refreshed"
 
     preview_notes = {p["path"]: p["note"] for p in report.to_details()["items"]}
     assert preview_notes["config/recipes/dashboards/c.json"] == "new"
-    assert preview_notes["data/ledgers/plain.beancount"] == "will refresh"
+    assert preview_notes["data/ledgers/fake-multi/plain.beancount"] == "will refresh"
 
 
 # ── there is no force/overwrite path (for recipes) ───────────────────────────

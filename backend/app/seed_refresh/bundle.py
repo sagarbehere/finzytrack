@@ -7,8 +7,11 @@ never stored. The only thing we persist is the record of what we last wrote to
 the user's disk (`installed`, in the upgrade-state) — the one value that can't be
 recomputed. See dev-docs/seed-content-refresh.md §3.
 
-Scope (design §11): recipes (`seed_config/recipes/**`) and ledgers
-(`seed_data/ledgers/**`, all three demo ledgers incl. the `fake-multi/` tree).
+Scope (design §11): recipes (`seed_config/recipes/**`) and the app-owned **demo**
+ledgers only — `fake.beancount` and the whole `fake-multi/` tree. Other ledgers
+under `seed_data/ledgers/**` (notably the `one.beancount` starter, whose name a
+real user's ledger can take) are NOT refreshable content and are excluded from the
+walk via the `demo_only` allowlist — see §7.3a and the walk's gate.
 Import rules / ofx mappings are Phase S4 — add a `_KINDS` entry when the need
 arises and they flow through the same detect→notice→apply path (§7.4), no new
 task. Living app config (config.yaml, .env) is deliberately **not** walked: it's
@@ -37,6 +40,19 @@ class _Kind:
     root: Path            # SEED_CONFIG_DIR or SEED_DATA_DIR
     prefix: str           # "recipes" | "ledgers" — top of the relpath key
     needs_currency: bool
+    # If set, an *allowlist* of the top-level entries under the sub-tree this kind
+    # owns; anything else in the tree is ignored by the refresh. Used for ledgers:
+    # only the throwaway *demo* ledgers are app-owned and overwritable. The
+    # starter `one.beancount` (and any other real ledger a user keeps under
+    # data/ledgers/) is NOT a demo — it becomes user data once seeded — so it must
+    # never be walked, hashed, or overwritten. None = include the whole tree.
+    demo_only: frozenset[str] | None = None
+
+
+# The only app-owned demo ledgers: the single-file `fake.beancount` and the whole
+# multi-file `fake-multi/` tree. Everything else under seed_data/ledgers/ (notably
+# the `one.beancount` starter template) is out of the refresh's scope by design.
+_DEMO_LEDGERS = frozenset({"fake.beancount", "fake-multi"})
 
 
 def _kinds() -> list[_Kind]:
@@ -44,7 +60,7 @@ def _kinds() -> list[_Kind]:
     # call time — they resolve differently frozen vs. dev, and tests monkeypatch.
     return [
         _Kind("recipe", SEED_CONFIG_DIR, "recipes", needs_currency=False),
-        _Kind("ledger", SEED_DATA_DIR, "ledgers", needs_currency=True),
+        _Kind("ledger", SEED_DATA_DIR, "ledgers", needs_currency=True, demo_only=_DEMO_LEDGERS),
         # Dashboard color themes — user-editable, so provenance-protected like
         # recipes (a non-ledger kind → the §4 pristine-only rule in refresh._decide).
         _Kind("dashboard-theme", SEED_CONFIG_DIR, "dashboard-themes", needs_currency=False),
@@ -111,6 +127,12 @@ def walk_bundle() -> list[SeedFile]:
                 continue
             rel = path.relative_to(k.root)
             if any(part.startswith(".") for part in rel.parts):
+                continue
+            # Allowlist gate (ledgers): only the app-owned demos are refreshable.
+            # A non-demo ledger (the `one.beancount` starter, or any real ledger a
+            # user keeps under data/ledgers/) is left entirely out of the bundle, so
+            # the refresh never hashes, delivers, or overwrites it. See §7.3a.
+            if k.demo_only is not None and path.relative_to(subtree).parts[0] not in k.demo_only:
                 continue
             files.append(
                 SeedFile(
