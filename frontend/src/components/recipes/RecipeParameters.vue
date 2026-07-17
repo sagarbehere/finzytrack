@@ -3,7 +3,7 @@
     <div
       v-for="param in visibleParameters"
       :key="param.name"
-      class="flex items-center gap-2"
+      class="flex shrink-0 items-center gap-2"
     >
       <!-- Select input -->
       <template v-if="param.type === 'select'">

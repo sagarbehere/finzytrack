@@ -1,8 +1,15 @@
 <template>
   <div class="space-y-6">
-    <!-- Dashboard header -->
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-      <div>
+    <!-- Dashboard header. Stacked below md (title/description full width, params
+         wrap below); side-by-side at md+ with flex-wrap so params drop below
+         instead of overflowing (never a horizontal scrollbar). -->
+    <div class="flex flex-col gap-x-6 gap-y-3 md:flex-row md:flex-wrap md:items-start md:justify-between">
+      <!-- At md+ the block grows to fill but keeps a basis floor (~20rem) so line
+           layout reserves it a readable width: the params wrap *below* once the
+           description can't keep that width, rather than the description squishing
+           to a sliver (basis, not the description's max-content length, drives the
+           break — so a long description no longer forces params below at every width). -->
+      <div class="md:min-w-0 md:grow md:basis-80">
         <h1 class="text-2xl font-bold text-gray-900 dark:text-white">
           {{ dashboard.title }}
         </h1>
