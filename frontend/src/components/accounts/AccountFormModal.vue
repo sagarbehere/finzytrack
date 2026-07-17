@@ -333,7 +333,14 @@ watch(() => props.account, (account) => {
     formData.name = account.fullPath
     formData.openDate = account.openDate || new Date().toISOString().split('T')[0]
     formData.closeDate = account.closeDate || ''
-    formData.currencies = [...account.currencyBadges]
+    // Edit the DECLARED currency constraint (the `open` directive), which is
+    // period-independent — NOT the currencies that happen to have postings in the
+    // current date filter (currencyBadges), which is both misleading and would
+    // silently rewrite the open's constraint on save. Fall back to observed
+    // currencies only for an unconstrained open (no declared currencies).
+    formData.currencies = account.declaredCurrencies.length > 0
+      ? [...account.declaredCurrencies]
+      : [...account.currencyBadges]
     formData.description = account.notes || ''
     formData.accountNumber = account.metadata['account_number'] || ''
     formData.ifscCode = account.metadata['ifsc_code'] || ''
