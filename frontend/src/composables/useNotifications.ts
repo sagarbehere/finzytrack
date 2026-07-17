@@ -12,6 +12,7 @@ export interface Notification {
   errorCode?: string | null
   errorDetails?: unknown | null
   isPersistent?: boolean // Errors from Tier 2/3 are persistent
+  count?: number // How many identical occurrences have been coalesced into this one
 }
 
 export interface NotificationInput {
@@ -29,18 +30,39 @@ const notificationIdCounter = ref(0)
 
 export function useNotifications() {
   const addNotification = (notification: NotificationInput): number => {
+    const type = notification.type || 'info'
+    const errorCode = notification.errorCode || null
+    // Coalesce identical notifications (same type/title/message/errorCode) into a
+    // single entry with a count, instead of stacking duplicates. A ledger with N
+    // parse errors — or any burst of the same error — then shows ONE toast (×N),
+    // not N separate toasts the user must dismiss one by one.
+    const existing = notifications.value.find(
+      (n) =>
+        n.type === type &&
+        n.title === notification.title &&
+        n.message === notification.message &&
+        n.errorCode === errorCode,
+    )
+    if (existing) {
+      existing.count = (existing.count ?? 1) + 1
+      existing.timestamp = new Date()
+      existing.read = false
+      return existing.id
+    }
+
     const id = ++notificationIdCounter.value
     const newNotification: Notification = {
       id,
-      type: notification.type || 'info',
+      type,
       title: notification.title,
       message: notification.message,
       timestamp: new Date(),
       read: false,
       // Enhanced error details for debugging
-      errorCode: notification.errorCode || null,
+      errorCode,
       errorDetails: notification.errorDetails || null,
       isPersistent: notification.isPersistent || false,
+      count: 1,
     }
 
     notifications.value.unshift(newNotification) // Add to beginning

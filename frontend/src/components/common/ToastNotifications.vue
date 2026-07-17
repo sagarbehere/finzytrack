@@ -3,6 +3,15 @@
     class="fixed top-4 right-4 left-4 sm:left-auto z-50 space-y-2 w-full sm:w-auto max-w-md sm:max-w-lg md:max-w-xl"
     style="min-width: 320px"
   >
+    <!-- Bulk dismiss when several toasts stack up (distinct errors). -->
+    <div v-if="toastNotifications.length > 1" class="flex justify-end">
+      <button
+        @click="dismissAll"
+        class="pointer-events-auto rounded-md bg-white/90 px-2.5 py-1 text-xs font-medium text-gray-600 shadow-sm outline-1 outline-black/5 hover:bg-white dark:bg-gray-800/90 dark:text-gray-300 dark:outline-offset-1 dark:outline-white/10 dark:hover:bg-gray-800"
+      >
+        Dismiss all ({{ toastNotifications.length }})
+      </button>
+    </div>
     <TransitionGroup name="toast" tag="div" class="space-y-2">
       <div
         v-for="notification in toastNotifications"
@@ -24,6 +33,10 @@
             <div class="ml-3 flex-1 pt-0.5 min-w-0">
               <p class="text-sm font-medium text-gray-900 dark:text-white break-words">
                 {{ notification.title }}
+                <span
+                  v-if="notification.count && notification.count > 1"
+                  class="ml-1.5 inline-flex items-center rounded-full bg-gray-200 px-1.5 py-0.5 text-xs font-semibold text-gray-700 align-middle dark:bg-white/10 dark:text-gray-200"
+                >×{{ notification.count }}</span>
               </p>
               <p
                 v-if="notification.message"
@@ -90,6 +103,13 @@
   const handleToastDismiss = (id) => {
     markAsRead(id)
     visibleToastIds.value = visibleToastIds.value.filter((tid) => tid !== id)
+  }
+
+  // Dismiss every currently-visible toast at once (matches the per-toast X:
+  // removes them from the notification list, not just the toast layer).
+  const dismissAll = () => {
+    for (const id of [...visibleToastIds.value]) clearNotification(id)
+    visibleToastIds.value = []
   }
 
   const getNotificationIcon = (type) => {
