@@ -515,17 +515,32 @@ const finalOptions = computed<EChartsOption>(() => {
   // `radar` config (ECharts requires it there). Strip the temp field from the
   // series after lifting so it doesn't leak into the rendered options.
   let radarConfig: { indicator: Array<{ name: string; max: number }> } | null = null
+  // A radar series whose runtime indicators are empty means the query returned no
+  // rows. ECharts crashes in radarLayout on a radar series with no coordinate axes
+  // (and can brick navigation, since the throw surfaces during teardown), so drop
+  // the empty series here — and its radar coordinate block below — to render an
+  // empty chart instead.
+  let droppedEmptyRadar = false
   if (Array.isArray(finalSeries)) {
-    finalSeries = finalSeries.map((s) => {
-      if (typeof s === 'object' && s !== null && '_runtimeIndicators' in s) {
-        const { _runtimeIndicators, ...rest } = s as unknown as Record<string, unknown>
-        if (Array.isArray(_runtimeIndicators)) {
-          radarConfig = { indicator: _runtimeIndicators as Array<{ name: string; max: number }> }
+    finalSeries = finalSeries
+      .filter((s) => {
+        if (typeof s === 'object' && s !== null && '_runtimeIndicators' in s) {
+          const inds = (s as unknown as Record<string, unknown>)._runtimeIndicators
+          if (!Array.isArray(inds) || inds.length === 0) {
+            droppedEmptyRadar = true
+            return false
+          }
         }
-        return rest as unknown as typeof s
-      }
-      return s
-    })
+        return true
+      })
+      .map((s) => {
+        if (typeof s === 'object' && s !== null && '_runtimeIndicators' in s) {
+          const { _runtimeIndicators, ...rest } = s as unknown as Record<string, unknown>
+          radarConfig = { indicator: _runtimeIndicators as Array<{ name: string; max: number }> }
+          return rest as unknown as typeof s
+        }
+        return s
+      })
   }
 
   const result: EChartsOption = {
@@ -633,18 +648,23 @@ const finalOptions = computed<EChartsOption>(() => {
       ...existing,
       indicator: existing.indicator ?? derived.indicator,
     }
+  } else if (droppedEmptyRadar) {
+    // No indicators to render — drop the axis-less radar block the passthrough
+    // copied, so ECharts doesn't build a degenerate radar coordinate system.
+    delete (result as Record<string, unknown>).radar
   }
 
   // For calendar-coordinate heatmaps, derive `calendar.range` from the data's
   // date column when the recipe didn't set a literal range (ECharts requires
   // an explicit range — recipes can't compute this via the SQL parameter
   // system because :year only substitutes inside SQL, not chart options).
-  if (
-    _firstSeriesType() === 'heatmap' &&
-    Array.isArray(props.data) && props.data.length > 0
-  ) {
+  if (_firstSeriesType() === 'heatmap') {
     const cal = (result as { calendar?: Record<string, unknown> }).calendar
-    if (cal && (cal.range === undefined || typeof cal.range === 'string' && cal.range.startsWith(':'))) {
+    if (
+      cal &&
+      Array.isArray(props.data) && props.data.length > 0 &&
+      (cal.range === undefined || (typeof cal.range === 'string' && cal.range.startsWith(':')))
+    ) {
       const dates = (props.data as Record<string, unknown>[])
         .map((r) => r.date)
         .filter((d): d is string => typeof d === 'string')
@@ -652,6 +672,17 @@ const finalOptions = computed<EChartsOption>(() => {
       if (dates.length > 0) {
         cal.range = [dates[0], dates[dates.length - 1]]
       }
+    }
+    // If the range is still unresolved (empty data, or an un-substituted `:param`
+    // placeholder), ECharts throws "Invalid date range" and crashes calendar
+    // layout. Drop the calendar + its series so the widget renders empty instead
+    // — graceful degradation, mirroring the empty-radar guard above.
+    const range = cal?.range
+    const rangeOk = Array.isArray(range) || (typeof range === 'string' && !range.startsWith(':'))
+    if (cal && !rangeOk) {
+      delete (result as Record<string, unknown>).calendar
+      delete (result as Record<string, unknown>).visualMap
+      result.series = []
     }
   }
 

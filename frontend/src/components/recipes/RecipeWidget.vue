@@ -72,6 +72,16 @@
         </button>
       </div>
 
+      <!-- Render failure isolated to this widget (onErrorCaptured), so a single
+           widget's error can't break the dashboard or app navigation. -->
+      <div
+        v-else-if="renderError"
+        class="h-full flex flex-col items-center justify-center gap-2 px-4"
+      >
+        <p class="text-sm font-medium text-red-600 dark:text-red-400">Couldn't display this widget</p>
+        <pre class="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 rounded px-3 py-2 max-w-full overflow-auto whitespace-pre-wrap break-all text-left">{{ renderError }}</pre>
+      </div>
+
       <!-- Visualization -->
       <RecipeWidgetRenderer
         v-else-if="data !== null"
@@ -94,7 +104,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onErrorCaptured } from 'vue'
 import { getStorageAdapter, STORAGE_KEYS } from '@/services/storage'
 import {
   useRecipeExecutor,
@@ -186,6 +196,19 @@ const displayTitle = computed(() => {
 
 // Data from query execution
 const data = ref<unknown>(null)
+
+// Error-boundary for the widget's *render* (not its query — that's `displayError`).
+// A viz that throws while rendering (e.g. a bad chart option or a formatting edge
+// case) is caught here and shown as this widget's own error state; returning false
+// stops the error propagating, so one widget can never brick the dashboard or app
+// navigation. Cleared on new data so the widget recovers on the next successful run.
+const renderError = ref<string | null>(null)
+onErrorCaptured((err) => {
+  renderError.value = err instanceof Error ? err.message : String(err)
+  console.error('[RecipeWidget] isolated render error:', err)
+  return false
+})
+watch(data, () => { renderError.value = null })
 
 // Execute query
 async function executeQuery() {
