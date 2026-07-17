@@ -166,6 +166,7 @@
     <AccountDetailDrawer
       v-model:open="showDetailDrawer"
       :account="detailAccount"
+      :date-filter="dateFilter"
       @edit="handleEditFromDrawer"
       @documents-changed="loadDocumentCounts"
     />

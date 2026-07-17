@@ -91,7 +91,8 @@
 
                     <!-- Balance -->
                     <section v-if="account.aggregatedBalances.length > 0">
-                      <h3 class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">Balance</h3>
+                      <h3 :class="['text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider', balanceRangeNote ? 'mb-1' : 'mb-3']">Balance</h3>
+                      <p v-if="balanceRangeNote" class="mb-3 text-xs text-gray-400 italic dark:text-gray-500">{{ balanceRangeNote }}</p>
                       <div class="space-y-2">
                         <div
                           v-for="bal in account.aggregatedBalances"
@@ -259,6 +260,7 @@ import DocumentUploadZone from '@/components/documents/DocumentUploadZone.vue'
 import DocumentPreviewModal from '@/components/documents/DocumentPreviewModal.vue'
 import { useDocuments } from '@/composables/useDocuments'
 import { useBudgets } from '@/composables/useBudgets'
+import type { AccountDateFilter } from '@/composables/useAccounts'
 import type { DocumentDetails, BudgetItem } from '@/services/generated-api'
 import type { AccountTreeNode } from '@/types/accounts'
 import { typeColors, statusColors } from '@/types/accounts'
@@ -271,6 +273,9 @@ const RESERVED_KEYS = new Set(['description', ...BANKING_KEYS])
 interface Props {
   open: boolean
   account: AccountTreeNode | null
+  // The Accounts view's active date filter — the balances shown are scoped to it,
+  // so the drawer notes the range so a period balance isn't mistaken for all-time.
+  dateFilter?: AccountDateFilter
 }
 
 interface Emits {
@@ -282,6 +287,18 @@ interface Emits {
 
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
+
+// One-line caveat under Balance: the figures are scoped to the Accounts view's
+// active date range, so a period balance isn't read as an all-time total. Null
+// (no note) when no range is set — the balance is then genuinely all-time.
+const balanceRangeNote = computed<string | null>(() => {
+  const f = props.dateFilter
+  if (!f) return null
+  if (f.startDate && f.endDate) return `For ${f.startDate} to ${f.endDate}`
+  if (f.startDate) return `From ${f.startDate}`
+  if (f.endDate) return `Through ${f.endDate}`
+  return null
+})
 
 const {
   uploadDocument, openDocument, listAccountDocuments,
