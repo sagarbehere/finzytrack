@@ -435,7 +435,13 @@ function injectSeriesData(series: EChartsOption['series']): EChartsOption['serie
         cats.push(c)
         values.push(v)
       }
-      const max = values.length ? Math.max(...values) * indicatorMaxRatio : 100
+      // Round the axis max up to one significant figure (e.g. 5423.76 → 6000) so
+      // the radar's ring ticks land on readable numbers — a raw max also makes
+      // ECharts warn "ticks may be not readable". `indicatorMaxRatio` is the
+      // pre-rounding headroom; falls back to 100 when there's no data.
+      const rawMax = values.length ? Math.max(...values) * indicatorMaxRatio : 0
+      const mag = rawMax > 0 ? Math.pow(10, Math.floor(Math.log10(rawMax))) : 1
+      const max = rawMax > 0 ? Math.ceil(rawMax / mag) * mag : 100
       // Push the indicator config onto the *series* so it can be lifted to
       // the top-level radar config below by the renderer.
       const indicators = cats.map((name) => ({ name, max }))
