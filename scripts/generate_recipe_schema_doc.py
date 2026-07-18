@@ -22,10 +22,43 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "frontend" / "src" / "types" / "recipe.schema.json"
+CATALOG_PATH = ROOT / "frontend" / "src" / "types" / "transforms.catalog.json"
 DOC_PATH = ROOT / "backend" / "resources" / "prompts" / "schema_recipe_dashboard.md"
 
 START_MARKER = "<!-- BEGIN AUTO-GENERATED FROM recipe.schema.json — do not edit by hand -->"
 END_MARKER = "<!-- END AUTO-GENERATED -->"
+
+# The transform-catalog table is generated from transforms.catalog.json (its SoT)
+# into a block bounded by these markers, which live in the hand-written prose.
+TRANSFORM_START_MARKER = "<!-- BEGIN AUTO-GENERATED TRANSFORM CATALOG from transforms.catalog.json — do not edit by hand -->"
+TRANSFORM_END_MARKER = "<!-- END AUTO-GENERATED TRANSFORM CATALOG -->"
+
+
+def _code(expr: str) -> str:
+    """Wrap a signature fragment in backticks, leaving the em-dash placeholder bare."""
+    return expr if expr.strip() == "—" else f"`{expr}`"
+
+
+def _render_transform_table(catalog: dict) -> str:
+    """The `fn | inputs | config | output` table, one row per cataloged transform."""
+    lines = ["| fn | inputs | config | output |", "|---|---|---|---|"]
+    for t in catalog["transforms"]:
+        lines.append(
+            f"| `{t['name']}` | {_code(t['inputs'])} | {_code(t['config'])} | {t['output']} |"
+        )
+    return "\n".join(lines)
+
+
+def _replace_marked_block(doc: str, start: str, end: str, inner: str) -> str:
+    """Replace the content between `start` and `end` with `inner`. The markers must
+    already be present in the doc (raises if not — they anchor generated content in
+    the hand-written prose)."""
+    if start not in doc or end not in doc:
+        raise ValueError(f"markers not found in doc: {start}")
+    before, _, rest = doc.partition(start)
+    _, _, after = rest.partition(end)
+    block = f"{start}\n\n{inner}\n\n{end}"
+    return before + block + after
 
 
 def _format_type(node: dict) -> str:
@@ -104,34 +137,40 @@ def _render_appendix(schema: dict) -> str:
 
 
 def main() -> int:
-    if not SCHEMA_PATH.is_file():
-        print(f"ERROR: schema not found at {SCHEMA_PATH}", file=sys.stderr)
-        return 1
+    for label, p in (("schema", SCHEMA_PATH), ("catalog", CATALOG_PATH)):
+        if not p.is_file():
+            print(f"ERROR: {label} not found at {p}", file=sys.stderr)
+            return 1
     if not DOC_PATH.is_file():
         print(f"ERROR: doc not found at {DOC_PATH}", file=sys.stderr)
         return 1
 
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-    appendix = _render_appendix(schema)
+    catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
 
     doc = DOC_PATH.read_text(encoding="utf-8")
-    block = f"{START_MARKER}\n\n{appendix}\n{END_MARKER}\n"
+    new_doc = doc
 
-    if START_MARKER in doc and END_MARKER in doc:
-        before, _, rest = doc.partition(START_MARKER)
+    # 1. Transform catalog table (markers must already be in the prose).
+    new_doc = _replace_marked_block(
+        new_doc, TRANSFORM_START_MARKER, TRANSFORM_END_MARKER, _render_transform_table(catalog)
+    )
+
+    # 2. Type-reference appendix (replace in place, or append on first run).
+    appendix_block = f"{START_MARKER}\n\n{_render_appendix(schema)}\n{END_MARKER}\n"
+    if START_MARKER in new_doc and END_MARKER in new_doc:
+        before, _, rest = new_doc.partition(START_MARKER)
         _, _, after = rest.partition(END_MARKER)
-        # `after` starts with the trailing newline already present after END_MARKER
-        new_doc = before + block + after.lstrip("\n")
+        new_doc = before + appendix_block + after.lstrip("\n")
     else:
-        # First run — append at end with one blank line of separation
-        sep = "" if doc.endswith("\n\n") else ("\n" if doc.endswith("\n") else "\n\n")
-        new_doc = doc + sep + block
+        sep = "" if new_doc.endswith("\n\n") else ("\n" if new_doc.endswith("\n") else "\n\n")
+        new_doc = new_doc + sep + appendix_block
 
     if new_doc != doc:
         DOC_PATH.write_text(new_doc, encoding="utf-8")
-        print(f"  generated appendix in {DOC_PATH.relative_to(ROOT)}")
+        print(f"  generated transform catalog + appendix in {DOC_PATH.relative_to(ROOT)}")
     else:
-        print(f"  appendix already up to date in {DOC_PATH.relative_to(ROOT)}")
+        print(f"  transform catalog + appendix already up to date in {DOC_PATH.relative_to(ROOT)}")
     return 0
 
 

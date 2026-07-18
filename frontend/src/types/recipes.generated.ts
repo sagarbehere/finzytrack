@@ -198,7 +198,7 @@ export interface TransformStep {
   id: StepId;
   kind: "transform";
   /**
-   * Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, where, pivot, joinBudgetActual, joinByPeriod, joinBudgetActualByPeriod, budgetSummary, unbudgetedSpending, appendTotal, groupBy, runningSum, envelopeRollover, envelopeBalances, budgetTree). Validated server-side.
+   * Name of a client-side transform from the fixed catalog — see the Transform catalog in the schema doc (get_recipe_schema) for the names and each transform's inputs/config/output. The catalog's single source of truth is transforms.catalog.json; validated server-side against it.
    */
   fn: string;
   /**

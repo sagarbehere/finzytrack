@@ -1,0 +1,24 @@
+{
+  "$comment": "SINGLE SOURCE OF TRUTH for the client-side transform catalog. A `transform` step's `fn` must name one of these. Derived artifacts (never hand-edit the list elsewhere): the 'Transform catalog' table in backend/resources/prompts/schema_recipe_dashboard.md is GENERATED from this file (scripts/generate_recipe_schema_doc.py); backend KNOWN_TRANSFORMS is READ from the synced copy at runtime (backend/app/ai/tools/write_recipe.py); and the runtime registry `transformCatalog` in frontend/src/composables/useRecipeTransforms.ts is ASSERTED equal to these names by a unit test. To add a transform: implement it + register it in transformCatalog, then add its row here — that's it.",
+  "transforms": [
+    { "name": "none", "inputs": "[rows]", "config": "—", "output": "rows unchanged" },
+    { "name": "firstRow", "inputs": "[rows]", "config": "—", "output": "the first row object" },
+    { "name": "firstValue", "inputs": "[rows]", "config": "—", "output": "first value of the first row" },
+    { "name": "sortBy", "inputs": "[rows]", "config": "{ field, order }", "output": "sorted rows" },
+    { "name": "limit", "inputs": "[rows]", "config": "{ count }", "output": "first N rows" },
+    { "name": "pluck", "inputs": "[rows]", "config": "{ field }", "output": "array of one field" },
+    { "name": "where", "inputs": "[rows]", "config": "{ field, equals? | notEquals? | in? }", "output": "rows matching the predicate (chain firstRow/limit to reduce)" },
+    { "name": "pivot", "inputs": "[rows]", "config": "{ rowField, columnField, valueField, formatColumn?, sortRowsBy? }", "output": "PivotData" },
+    { "name": "joinBudgetActual", "inputs": "[budgets, actuals]", "config": "{ totalAccount?, periodStart?, periodEnd? }", "output": "variance rows (flat; remainder mode adds Unbudgeted+Total when `totalAccount` is set)" },
+    { "name": "joinByPeriod", "inputs": "[budgetsByPeriod, actualsByPeriod]", "config": "—", "output": "`[{ period, budget, actual, dateFrom, dateTo }]` (`dateFrom`/`dateTo` are the month's calendar bounds — use in a series click link to drill to that period)" },
+    { "name": "joinBudgetActualByPeriod", "inputs": "[budgetsByPeriod, actualsByPeriod]", "config": "—", "output": "one row per budgeted `(account, currency, period)` — `{ budget, actual, remaining, pctUsed }`, inclusive-parent; feed `pctUsed` into a `pivot` with `colorByValue` for an accounts×months heat-map" },
+    { "name": "budgetSummary", "inputs": "[budgets, actuals]", "config": "—", "output": "one aggregate row `{ budget, actual, remaining, pctUsed, pctUsedPct, value }` (maximal-named-subtree, so nested budgets don't double-count) — feeds a ring / KPIs" },
+    { "name": "unbudgetedSpending", "inputs": "[budgets, actuals]", "config": "—", "output": "actual rows for accounts covered by no budget, sorted desc (inclusive-parent aware) — the 'leak' list; chain `limit` for a top-N" },
+    { "name": "appendTotal", "inputs": "[rows]", "config": "{ field?, labelField?, label?, count? }", "output": "rows (+ optional top-`count`) plus a grand-total row (`isTotal: true`) summing the FULL input, not just the shown rows" },
+    { "name": "groupBy", "inputs": "[rows]", "config": "{ key: string | string[], sum: string[] }", "output": "one row per distinct `key`, each `sum` field totalled exactly (Money), first-seen order — 'totals over time/category'" },
+    { "name": "runningSum", "inputs": "[rows]", "config": "{ fields: […], orderBy }", "output": "rows + `cumulative<Field>` columns (burn-down / cumulative)" },
+    { "name": "envelopeRollover", "inputs": "[budgetsByPeriod, actualsByPeriod]", "config": "{ reset?, resetFrom? }", "output": "`[{ period, budget, actual, available, carryover, overspent, dateFrom, dateTo }]` — stateless rollover; `reset`+`resetFrom` is the 'start fresh' toggle" },
+    { "name": "envelopeBalances", "inputs": "[budgetsByPeriod, actualsByPeriod]", "config": "{ reset?, resetFrom? }", "output": "one row per envelope `{ account, currency, budget, actual, remaining, pctUsed, direction }` — inception-aware running balance; pairs with `budget-progress`" },
+    { "name": "budgetTree", "inputs": "[budgets]", "config": "{ totalAccount }", "output": "flat `{ account, value }` rows decomposing the total into maximal budgeted children + synthetic `:Unbudgeted` remainder leaves — for a sunburst" }
+  ]
+}

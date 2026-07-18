@@ -55,7 +55,7 @@ ALLOWED_REFERENCES: dict[str, str] = {
 # Files the assistant or its validators *require* — not user-facing, but
 # checked at startup so a missed sync step fails loudly instead of silently
 # breaking the assistant.
-REQUIRED_SCHEMA_FILES: tuple[str, ...] = ("recipe.schema.json",)
+REQUIRED_SCHEMA_FILES: tuple[str, ...] = ("recipe.schema.json", "transforms.catalog.json")
 
 
 def list_available_references() -> list[dict]:

@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import sqlite3
+from functools import lru_cache
 from pathlib import Path
 
 from app.ai.tools.base import BaseTool
@@ -82,19 +83,20 @@ def _detect_dollar_placeholders(query: str) -> list[str]:
     return sorted(set(_DOLLAR_PARAM_RE.findall(stripped)))
 
 
-# The client transform catalog (kept in sync with useRecipeTransforms.ts). The
-# server can't run the catalog, so fn-name validity is checked against this list
-# (§3.6 G8 / §4.11).
-KNOWN_TRANSFORMS = {
-    "none", "firstRow", "firstValue", "sortBy", "limit", "pluck", "where", "pivot",
-    "joinBudgetActual", "joinByPeriod", "joinBudgetActualByPeriod", "budgetSummary",
-    "unbudgetedSpending", "appendTotal", "groupBy", "runningSum", "envelopeRollover",
-    "envelopeBalances", "budgetTree",
-}
-# NOTE: hand-mirrors the client transform catalog in
-# frontend/src/composables/useRecipeTransforms.ts (transformCatalog). The server
-# can't run the catalog, so fn-name validity is checked here (§3.6 G8). Keep the
-# two lists in sync when adding a transform.
+# The client transform catalog. The server can't run the catalog, so `fn`-name
+# validity is checked against these names (§3.6 G8 / §4.11). The single source of
+# truth is frontend/src/types/transforms.catalog.json — synced into
+# resources/schemas/ (sync_ai_reference.py) and read here at runtime, so there is
+# no hand-maintained copy to drift from the client registry. Loaded lazily +
+# cached (like recipe_validation._load_schema) so import order vs the startup sync
+# can't leave it empty.
+@lru_cache(maxsize=1)
+def known_transforms() -> frozenset[str]:
+    from app.ai.reference import SCHEMA_DIR
+
+    path = SCHEMA_DIR / "transforms.catalog.json"
+    catalog = json.loads(path.read_text(encoding="utf-8"))
+    return frozenset(t["name"] for t in catalog["transforms"])
 
 
 def _dry_run_query_step(query: str, engine: str, wid: str, sidx: int, sqlite_path: str | None) -> list[str]:
@@ -177,8 +179,9 @@ def _dry_run_queries(dashboard: dict, sqlite_path: str | None) -> list[str]:
                 # Transform input step-refs + acyclicity are checked by
                 # validate_dashboard (recipe_validation) before this dry-run; here
                 # we only confirm the fn exists in the (server-only) catalog.
-                if s.get("fn") not in KNOWN_TRANSFORMS:
-                    errors.append(f"widget '{wid}' steps[{sidx}]: unknown transform '{s.get('fn')}'. Known: {sorted(KNOWN_TRANSFORMS)}.")
+                known = known_transforms()
+                if s.get("fn") not in known:
+                    errors.append(f"widget '{wid}' steps[{sidx}]: unknown transform '{s.get('fn')}'. Known: {sorted(known)}.")
 
     return errors
 

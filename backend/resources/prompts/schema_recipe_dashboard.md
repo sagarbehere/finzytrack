@@ -162,6 +162,8 @@ Use generators for dynamic default values and option lists:
 A `transform` step calls one of these by `fn` over its `inputs`. The first input
 is the primary rowset; `config` shapes behavior.
 
+<!-- BEGIN AUTO-GENERATED TRANSFORM CATALOG from transforms.catalog.json — do not edit by hand -->
+
 | fn | inputs | config | output |
 |---|---|---|---|
 | `none` | `[rows]` | — | rows unchanged |
@@ -170,12 +172,21 @@ is the primary rowset; `config` shapes behavior.
 | `sortBy` | `[rows]` | `{ field, order }` | sorted rows |
 | `limit` | `[rows]` | `{ count }` | first N rows |
 | `pluck` | `[rows]` | `{ field }` | array of one field |
-| `where` | `[rows]` | `{ field, equals? \| notEquals? \| in? }` | rows matching the predicate (chain `firstRow`/`limit` to reduce) |
+| `where` | `[rows]` | `{ field, equals? | notEquals? | in? }` | rows matching the predicate (chain firstRow/limit to reduce) |
 | `pivot` | `[rows]` | `{ rowField, columnField, valueField, formatColumn?, sortRowsBy? }` | PivotData |
 | `joinBudgetActual` | `[budgets, actuals]` | `{ totalAccount?, periodStart?, periodEnd? }` | variance rows (flat; remainder mode adds Unbudgeted+Total when `totalAccount` is set) |
 | `joinByPeriod` | `[budgetsByPeriod, actualsByPeriod]` | — | `[{ period, budget, actual, dateFrom, dateTo }]` (`dateFrom`/`dateTo` are the month's calendar bounds — use in a series click link to drill to that period) |
-| `runningSum` | `[rows]` | `{ fields:[…], orderBy }` | rows + cumulative<Field> columns |
-| `envelopeRollover` | `[budgetsByPeriod, actualsByPeriod]` | — | `[{ period, budget, actual, available, carryover, overspent }]` |
+| `joinBudgetActualByPeriod` | `[budgetsByPeriod, actualsByPeriod]` | — | one row per budgeted `(account, currency, period)` — `{ budget, actual, remaining, pctUsed }`, inclusive-parent; feed `pctUsed` into a `pivot` with `colorByValue` for an accounts×months heat-map |
+| `budgetSummary` | `[budgets, actuals]` | — | one aggregate row `{ budget, actual, remaining, pctUsed, pctUsedPct, value }` (maximal-named-subtree, so nested budgets don't double-count) — feeds a ring / KPIs |
+| `unbudgetedSpending` | `[budgets, actuals]` | — | actual rows for accounts covered by no budget, sorted desc (inclusive-parent aware) — the 'leak' list; chain `limit` for a top-N |
+| `appendTotal` | `[rows]` | `{ field?, labelField?, label?, count? }` | rows (+ optional top-`count`) plus a grand-total row (`isTotal: true`) summing the FULL input, not just the shown rows |
+| `groupBy` | `[rows]` | `{ key: string | string[], sum: string[] }` | one row per distinct `key`, each `sum` field totalled exactly (Money), first-seen order — 'totals over time/category' |
+| `runningSum` | `[rows]` | `{ fields: […], orderBy }` | rows + `cumulative<Field>` columns (burn-down / cumulative) |
+| `envelopeRollover` | `[budgetsByPeriod, actualsByPeriod]` | `{ reset?, resetFrom? }` | `[{ period, budget, actual, available, carryover, overspent, dateFrom, dateTo }]` — stateless rollover; `reset`+`resetFrom` is the 'start fresh' toggle |
+| `envelopeBalances` | `[budgetsByPeriod, actualsByPeriod]` | `{ reset?, resetFrom? }` | one row per envelope `{ account, currency, budget, actual, remaining, pctUsed, direction }` — inception-aware running balance; pairs with `budget-progress` |
+| `budgetTree` | `[budgets]` | `{ totalAccount }` | flat `{ account, value }` rows decomposing the total into maximal budgeted children + synthetic `:Unbudgeted` remainder leaves — for a sunburst |
+
+<!-- END AUTO-GENERATED TRANSFORM CATALOG -->
 
 Budget transforms pair with the `budget_for_range` compute function — see
 `get_budget_guide` and `get_compute_functions`.
@@ -630,7 +641,7 @@ Type: `Step[]`
 |-------|------|----------|-------------|
 | `id` | `StepId` | yes |  |
 | `kind` | `'transform'` | yes |  |
-| `fn` | `string` | yes | Name of a client-side transform from the fixed catalog (none, firstRow, firstValue, sortBy, limit, pluck, where, pivot, joinBudgetActual, joinByPeriod, joinBudgetActualByPeriod, budgetSummary, unbudgetedSpending, appendTotal, groupBy, runningSum, envelopeRollover, envelopeBalances, budgetTree). Validated server-side. |
+| `fn` | `string` | yes | Name of a client-side transform from the fixed catalog — see the Transform catalog in the schema doc (get_recipe_schema) for the names and each transform's inputs/config/output. The catalog's single source of truth is transforms.catalog.json; validated server-side against it. |
 | `inputs` | `string[]` | yes | Ordered {{steps.<id>}} / {{dashboard.steps.<id>}} references to the step outputs this transform consumes. |
 | `config` | `object` | — | Transform-specific configuration; the accepted shape depends on fn (see the transform catalog in the schema doc). |
 

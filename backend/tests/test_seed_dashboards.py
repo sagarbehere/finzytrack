@@ -25,7 +25,7 @@ import pytest
 from app.helpers.recipe_validation import validate_dashboard
 from app.api.routers.compute import build_registry
 # Single source of truth for the transform catalog — don't re-declare it here.
-from app.ai.tools.write_recipe import KNOWN_TRANSFORMS
+from app.ai.tools.write_recipe import known_transforms
 from app.services.sqlite_exporter import SQLiteExporter
 
 DASHBOARDS_DIR = "resources/seed_config/recipes/dashboards"
@@ -61,7 +61,7 @@ def _dry_run_steps(steps, path, con, registry, dashboard_step_ids=frozenset()):
             # Args satisfy the fn schema ({{...}} templates are plain strings).
             jsonschema.validate(instance=s.get("args", {}), schema=fn.parameters_schema)
         elif kind == "transform":
-            assert s["fn"] in KNOWN_TRANSFORMS, f"{path}: unknown transform {s['fn']}"
+            assert s["fn"] in known_transforms(), f"{path}: unknown transform {s['fn']}"
             for inp in s["inputs"]:
                 m = re.match(r"^\{\{\s*steps\.([a-z0-9-]+)", inp)
                 md = re.match(r"^\{\{\s*dashboard\.steps\.([a-z0-9-]+)", inp)

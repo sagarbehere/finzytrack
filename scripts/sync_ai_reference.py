@@ -34,6 +34,9 @@ SYNC_ITEMS: list[tuple[str, str, str]] = [
     ("frontend/src/recipes/functions/generators.ts",  "ai_reference", "generators.ts"),
     # JSON Schemas authoritative for backend validators
     ("frontend/src/types/recipe.schema.json",         "schemas",      "recipe.schema.json"),
+    # Transform catalog — SoT for the client-side transform names; the backend
+    # validator (write_recipe.py) reads it to check `fn` validity.
+    ("frontend/src/types/transforms.catalog.json",    "schemas",      "transforms.catalog.json"),
 ]
 
 

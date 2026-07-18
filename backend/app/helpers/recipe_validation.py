@@ -80,7 +80,7 @@ VALID_PARAM_TYPES = set(_defs()["RecipeParameter"]["properties"]["type"]["enum"]
 VALID_QUERY_ENGINES = set(_defs()["QueryStep"]["properties"]["engine"]["enum"])
 VALID_STEP_KINDS = _discriminator_consts("Step", "kind")
 # Transform fn-name validity is a code-side catalog check (§3.6 G8) and lives in
-# the AI dry-run (write_recipe.KNOWN_TRANSFORMS), not here.
+# the AI dry-run (write_recipe.known_transforms()), not here.
 
 
 # ── Error formatting ────────────────────────────────────────────────────────

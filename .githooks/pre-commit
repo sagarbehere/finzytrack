@@ -12,7 +12,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 
 # Only engage when the schema or a generator is staged.
 if ! git diff --cached --name-only \
-     | grep -qE 'recipe\.schema\.json|generate-recipe-types\.mjs|generate_recipe_schema_doc\.py'; then
+     | grep -qE 'recipe\.schema\.json|transforms\.catalog\.json|generate-recipe-types\.mjs|generate_recipe_schema_doc\.py'; then
   exit 0
 fi
 
