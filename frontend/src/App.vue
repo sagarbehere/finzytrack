@@ -18,8 +18,11 @@
 
       <!-- Normal views get the AppShell wrapper -->
       <AppShell v-else>
+        <!-- `:key` on the ledger file: switching ledgers recreates the KeepAlive
+             with an empty cache, so the kept-alive views (Assistant, Import) reset
+             fresh instead of showing state from the previous ledger. -->
         <router-view v-slot="{ Component }">
-          <KeepAlive :include="['AssistantView', 'ImportView']">
+          <KeepAlive :key="activeLedger" :include="['AssistantView', 'ImportView']">
             <component :is="Component" />
           </KeepAlive>
         </router-view>
@@ -36,13 +39,19 @@
 </template>
 
 <script setup>
-  import { ref } from 'vue'
+  import { ref, computed } from 'vue'
   import { useRouter } from 'vue-router'
   import AppShell from './components/layout/AppShell.vue'
   import ToastNotifications from './components/common/ToastNotifications.vue'
   import StartupGate from './components/common/StartupGate.vue'
   import SeedContentNotice from './components/common/SeedContentNotice.vue'
   import { useStartupTasks } from './composables/useStartupTasks'
+  import { useConfig } from './composables/useConfig'
+
+  // Identity of the active ledger; keys the KeepAlive so a ledger switch drops the
+  // cached Assistant/Import views (their state is component-local) and reloads fresh.
+  const { config } = useConfig()
+  const activeLedger = computed(() => config.value?.ledger_file ?? 'no-ledger')
 
   const router = useRouter()
   const routerReady = ref(false)
