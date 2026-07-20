@@ -127,7 +127,6 @@
       "output": "rows",
       "visualization": {
         "type": "budget-progress",
-        "accountFormat": "accountName2",
         "emptyText": "No spending under this total account for the selected month. Set a budget on the total account (Budgets view) and pick a populated month/currency.",
         "link": {
           "name": "transactions",

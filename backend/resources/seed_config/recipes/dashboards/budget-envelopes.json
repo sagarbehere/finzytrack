@@ -96,7 +96,6 @@
       "output": "rows",
       "visualization": {
         "type": "budget-progress",
-        "accountFormat": "accountName2",
         "emptyText": "No budgets or spending for this currency. Set budgets in the Budgets view, then pick a currency and 'As of' date that have data.",
         "link": { "select": { "account": "{{row.account}}" } }
       }

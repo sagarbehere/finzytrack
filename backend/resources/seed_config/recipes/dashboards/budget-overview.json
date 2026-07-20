@@ -99,7 +99,7 @@
         "type": "table",
         "emptyText": "Nothing's leaking — every account with spending is covered by a budget.",
         "columns": [
-          { "key": "account", "label": "Account", "format": "accountName2", "link": { "name": "transactions", "query": { "accountContains": "{{row.account}}", "dateFrom": "{{parameters.monthStart}}", "dateTo": "{{parameters.monthEnd}}" } } },
+          { "key": "account", "label": "Account", "link": { "name": "transactions", "query": { "accountContains": "{{row.account}}", "dateFrom": "{{parameters.monthStart}}", "dateTo": "{{parameters.monthEnd}}" } } },
           { "key": "actual", "label": "Spent", "format": "currency", "align": "right" }
         ]
       }
@@ -114,7 +114,6 @@
       "output": "rows",
       "visualization": {
         "type": "budget-progress",
-        "accountFormat": "accountName2",
         "emptyText": "No budgets or spending for this range. Set budgets in the Budgets view, then pick a date range and currency that have data.",
         "link": {
           "name": "transactions",
