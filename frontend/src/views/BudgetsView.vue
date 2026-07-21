@@ -31,7 +31,7 @@
         </div>
       </div>
       <div>
-        <label class="block text-xs font-medium text-gray-500 dark:text-gray-400">Current budget as of</label>
+        <label class="block text-xs font-medium text-gray-500 dark:text-gray-400">Budget as of</label>
         <input
           v-model="asOf"
           type="date"
@@ -73,7 +73,7 @@
             <th class="w-8 px-2 py-3"></th>
             <th class="px-4 py-3">Account</th>
             <th class="px-4 py-3">Currency</th>
-            <th class="px-4 py-3">Current budget</th>
+            <th class="px-4 py-3">Budget</th>
             <th class="px-4 py-3 text-right">New budget</th>
             <th class="px-4 py-3">Interval</th>
             <th class="px-4 py-3">Effective</th>
@@ -241,7 +241,7 @@
 
         <div class="space-y-2 border-t border-gray-100 px-3 py-2 dark:border-white/5">
           <div class="flex items-center justify-between text-sm">
-            <span class="text-gray-500 dark:text-gray-400">Current</span>
+            <span class="text-gray-500 dark:text-gray-400">Budget</span>
             <span v-if="row.current?.ended" class="text-gray-400 italic dark:text-gray-500">Ended {{ row.current.date }}</span>
             <span v-else-if="row.current" class="text-gray-900 dark:text-white">{{ row.current.amount }} · {{ row.current.interval }}</span>
             <span v-else class="text-gray-400 dark:text-gray-500">—</span>
@@ -349,7 +349,7 @@ const currencyFilter = ref('')
 
 const newRow = ref({ account: '', currency: 'USD', interval: 'monthly', amount: '', date: todayLocal() })
 
-const key = (account: string, currency: string) => `${account} ${currency}`
+const key = (account: string, currency: string) => `${account} ${currency}`
 
 async function refresh() {
   try {
