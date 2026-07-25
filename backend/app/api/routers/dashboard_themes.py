@@ -93,7 +93,7 @@ def _builtin_default() -> DashboardTheme:
             good=ModeColor(light="#4e8f66", dark="#5faf7f"),
             warn=ModeColor(light="#b8863a", dark="#d8a24a"),
             bad=ModeColor(light="#bf5b52", dark="#d97066"),
-            complete=ModeColor(light="#3f8d82", dark="#56b0a4"),
+            complete=ModeColor(light="#3a80b0", dark="#5aa0d8"),
         ),
         series={"budget": "{{theme.baseline}}", "actual": "{{theme.brand}}"},
         categorical=ModePalette(

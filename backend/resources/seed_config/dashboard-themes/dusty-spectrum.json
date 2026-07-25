@@ -13,7 +13,7 @@
     "good":     { "light": "#4e8f66", "dark": "#5faf7f" },
     "warn":     { "light": "#b8863a", "dark": "#d8a24a" },
     "bad":      { "light": "#bf5b52", "dark": "#d97066" },
-    "complete": { "light": "#3f8d82", "dark": "#56b0a4" }
+    "complete": { "light": "#3a80b0", "dark": "#5aa0d8" }
   },
 
   "categorical": {

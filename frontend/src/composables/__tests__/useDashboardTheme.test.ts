@@ -18,7 +18,7 @@ describe('resolveThemeColor', () => {
 
   it('resolves a valence color', () => {
     expect(resolveThemeColor('{{theme.valence.bad}}', true)).toBe('#d97066')
-    expect(resolveThemeColor('{{theme.valence.complete}}', false)).toBe('#3f8d82')
+    expect(resolveThemeColor('{{theme.valence.complete}}', false)).toBe('#3a80b0')
   })
 
   it('resolves a series alias recursively (series.actual → brand)', () => {
