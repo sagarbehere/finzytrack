@@ -1,0 +1,70 @@
+{
+  "id": "quiet-slate",
+  "name": "Quiet Slate",
+  "description": "Soft, muted colors that stay quiet in the background.",
+  "version": 1,
+  "readme": "To recolor: (1) edit 'valence' (the budget bars), 'categorical' (pie/treemap identity), and 'brand'. (2) Optionally 'baseline', 'series', 'accountPins'. (3) The rest are fine knobs with sensible defaults. Every color has a 'light' and a 'dark' variant.",
+  "brand": {
+    "light": "#5f6a82",
+    "dark": "#8b95ad"
+  },
+  "baseline": {
+    "light": "#a2a9b2",
+    "dark": "#8a9099"
+  },
+  "valence": {
+    "good": {
+      "light": "#5f8570",
+      "dark": "#74a088"
+    },
+    "warn": {
+      "light": "#9c8a5f",
+      "dark": "#b6a074"
+    },
+    "bad": {
+      "light": "#a5726a",
+      "dark": "#bd8a82"
+    },
+    "complete": {
+      "light": "#647d99",
+      "dark": "#7e97b0"
+    }
+  },
+  "categorical": {
+    "dark": [
+      "#7f95b0",
+      "#b09a86",
+      "#84a89a",
+      "#a695ac",
+      "#95a884",
+      "#b0929a",
+      "#8a93a8",
+      "#b3a888",
+      "#9a8fac",
+      "#83a3a8",
+      "#a89484",
+      "#909caf"
+    ],
+    "light": [
+      "#6b7d94",
+      "#948171",
+      "#6f8d81",
+      "#8b7d90",
+      "#7d8d6f",
+      "#947b81",
+      "#747b8d",
+      "#968d72",
+      "#817890",
+      "#6e898d",
+      "#8d7c6f",
+      "#798393"
+    ]
+  },
+  "series": {
+    "budget": "{{theme.baseline}}",
+    "actual": "{{theme.brand}}",
+    "income": "{{theme.categorical.0}}",
+    "expense": "{{theme.categorical.5}}",
+    "savings": "{{theme.brand}}"
+  }
+}

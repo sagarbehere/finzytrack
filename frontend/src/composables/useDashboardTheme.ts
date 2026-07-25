@@ -261,6 +261,8 @@ export function useDashboardTheme() {
   return {
     theme: readonly(activeTheme),
     isLoaded: readonly(isLoaded),
+    // The built-in default theme id (kept in sync with the backend default).
+    defaultThemeId: DEFAULT_THEME.id,
     loadTheme,
     resolveThemeColor,
     resolveTokensDeep,

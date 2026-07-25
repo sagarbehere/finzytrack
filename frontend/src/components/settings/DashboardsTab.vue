@@ -1,5 +1,62 @@
 <template>
   <div class="pb-6">
+    <!-- Color theme picker -->
+    <section class="mb-8">
+      <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Color theme</h3>
+      <p class="mt-1 mb-3 text-sm text-gray-500 dark:text-gray-400">
+        The color palette used across all dashboard charts, KPIs, and budget bars. Changes apply immediately.
+      </p>
+
+      <div v-if="themesLoading" class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 py-2">
+        <div class="animate-spin h-4 w-4 border-2 border-indigo-500 border-t-transparent rounded-full"></div>
+        Loading themes...
+      </div>
+
+      <div v-else-if="themes.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
+        No themes found.
+      </div>
+
+      <div v-else class="max-w-sm">
+        <Listbox as="div" :model-value="activeThemeId" :disabled="savingTheme" @update:model-value="selectTheme">
+          <div class="relative">
+            <ListboxButton class="grid w-full cursor-default grid-cols-1 rounded-md bg-white py-1.5 pr-2 pl-3 text-left text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-600 disabled:cursor-wait disabled:opacity-70 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus-visible:outline-indigo-500">
+              <span class="col-start-1 row-start-1 truncate pr-6">{{ selectedThemeName }}</span>
+              <ChevronUpDownIcon class="col-start-1 row-start-1 size-5 self-center justify-self-end text-gray-500 sm:size-4 dark:text-gray-400" aria-hidden="true" />
+            </ListboxButton>
+            <transition leave-active-class="transition ease-in duration-100" leave-to-class="opacity-0">
+              <ListboxOptions class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg outline-1 outline-black/5 sm:text-sm dark:bg-gray-800 dark:shadow-none dark:-outline-offset-1 dark:outline-white/10">
+                <ListboxOption v-for="theme in themes" :key="theme.id" :value="theme.id" as="template" v-slot="{ active, selected }">
+                  <li :class="[active ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'text-gray-900 dark:text-white', 'relative cursor-default py-2 pr-9 pl-3 select-none']">
+                    <span :class="[selected ? 'font-semibold' : 'font-normal', 'flex items-center gap-2']">
+                      <span class="truncate">{{ theme.name }}</span>
+                      <span
+                        v-if="theme.id === defaultThemeId"
+                        :class="[active ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500 dark:bg-white/10 dark:text-gray-300', 'rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide']"
+                      >Default</span>
+                    </span>
+                    <span
+                      v-if="theme.description"
+                      :class="[active ? 'text-indigo-100' : 'text-gray-500 dark:text-gray-400', 'mt-0.5 block text-xs font-normal']"
+                    >{{ stripDefaultSuffix(theme.description) }}</span>
+                    <span v-if="selected" :class="[active ? 'text-white' : 'text-indigo-600 dark:text-indigo-400', 'absolute top-2.5 right-0 flex items-center pr-4']">
+                      <CheckIcon class="size-5" aria-hidden="true" />
+                    </span>
+                  </li>
+                </ListboxOption>
+              </ListboxOptions>
+            </transition>
+          </div>
+        </Listbox>
+        <p v-if="selectedThemeDescription" class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+          {{ selectedThemeDescription }}
+        </p>
+      </div>
+
+      <p v-if="themeError" class="mt-2 text-sm text-red-600 dark:text-red-400">{{ themeError }}</p>
+    </section>
+
+    <div class="mb-6 border-t border-gray-200 dark:border-white/10"></div>
+
     <p class="mb-4 text-sm text-gray-500 dark:text-gray-400">
       Manage dashboard recipe files.
       <a href="https://docs.finzytrack.com/reference/dashboard-recipes/" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300">View documentation</a>.
@@ -197,17 +254,78 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
+import { Listbox, ListboxButton, ListboxOptions, ListboxOption } from '@headlessui/vue'
+import { ChevronUpDownIcon } from '@heroicons/vue/16/solid'
+import { CheckIcon } from '@heroicons/vue/20/solid'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import RecipeDashboard from '@/components/recipes/RecipeDashboard.vue'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
-import { RecipesService } from '@/services/generated-api'
+import { RecipesService, DashboardThemesService } from '@/services/generated-api'
+import type { DashboardThemeSummary } from '@/services/generated-api'
 import { errorHandler } from '@/utils/ErrorHandler'
 import { getStorageAdapter, STORAGE_KEYS } from '@/services/storage'
 import { useRecipeLoader } from '@/composables/useRecipeLoader'
+import { useDashboardTheme } from '@/composables/useDashboardTheme'
+import { useConfig } from '@/composables/useConfig'
+import { patchConfig } from '@/composables/useConfigPatch'
 import { resolveRecipeGenerators } from '@/recipes/functions'
 import type { JsonDashboardRecipe } from '@/types/recipes'
 
 const { loadUserRecipes, checkIdConflict } = useRecipeLoader()
+
+// --- Color theme picker ---
+
+const { loadTheme, defaultThemeId } = useDashboardTheme()
+const { updateConfig } = useConfig()
+
+// The default badge conveys "the default", so drop that trailing phrase from the
+// description text to avoid saying it twice.
+function stripDefaultSuffix(description: string): string {
+  return description.replace(/\s*The default\.?\s*$/i, '')
+}
+
+const themes = ref<DashboardThemeSummary[]>([])
+const activeThemeId = ref<string | null>(null)
+const themesLoading = ref(false)
+const savingTheme = ref(false)
+const themeError = ref<string | null>(null)
+
+const selectedTheme = computed(() => themes.value.find((t) => t.id === activeThemeId.value))
+const selectedThemeName = computed(() => selectedTheme.value?.name ?? 'Select theme')
+const selectedThemeDescription = computed(() => selectedTheme.value?.description ?? '')
+
+async function loadThemes() {
+  themesLoading.value = true
+  themeError.value = null
+  try {
+    const resp = await DashboardThemesService.listDashboardThemesApiDashboardThemesGet()
+    themes.value = resp.data?.themes ?? []
+    activeThemeId.value = resp.data?.active ?? null
+  } catch (e) {
+    errorHandler.display(e)
+    themes.value = []
+  } finally {
+    themesLoading.value = false
+  }
+}
+
+async function selectTheme(id: string) {
+  if (id === activeThemeId.value || savingTheme.value) return
+  const previous = activeThemeId.value
+  savingTheme.value = true
+  themeError.value = null
+  activeThemeId.value = id // optimistic
+  try {
+    const result = await patchConfig({ active_dashboard_theme: id })
+    updateConfig(result.config)
+    await loadTheme() // re-fetch the active theme so charts recolor live
+  } catch (e: any) {
+    activeThemeId.value = previous // revert on failure
+    themeError.value = e?.message ?? 'Failed to switch theme'
+  } finally {
+    savingTheme.value = false
+  }
+}
 
 // --- File list state ---
 
@@ -493,4 +611,7 @@ onBeforeRouteLeave(async (_to, _from, next) => {
 
 // Load user recipes (for id-conflict detection) then the dashboard file list.
 loadUserRecipes().then(() => loadFileList())
+
+// Load the theme picker options (independent of the recipe file list).
+loadThemes()
 </script>

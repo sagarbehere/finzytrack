@@ -1,7 +1,7 @@
 {
   "id": "dusty-spectrum",
   "name": "Dusty Spectrum",
-  "description": "Calm valence with a fresh, well-differentiated identity palette. The default.",
+  "description": "Fresh, balanced colors with calm budget-status shades. The default.",
   "version": 1,
 
   "readme": "To recolor: (1) edit 'valence' (the budget bars), 'categorical' (pie/treemap identity), and 'brand'. (2) Optionally 'baseline', 'series', 'accountPins'. (3) The rest — 'thresholds', 'stickiness', 'overflow', 'states', 'tints' — are fine knobs with sensible defaults; touch only if you really want to. Every color has a 'light' and a 'dark' variant.",

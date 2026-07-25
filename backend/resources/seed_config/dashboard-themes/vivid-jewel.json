@@ -1,0 +1,70 @@
+{
+  "id": "vivid-jewel",
+  "name": "Vivid Jewel",
+  "description": "Bold, saturated colors with strong contrast between categories.",
+  "version": 1,
+  "readme": "To recolor: (1) edit 'valence' (the budget bars), 'categorical' (pie/treemap identity), and 'brand'. (2) Optionally 'baseline', 'series', 'accountPins'. (3) The rest are fine knobs with sensible defaults. Every color has a 'light' and a 'dark' variant.",
+  "brand": {
+    "light": "#6a3fd0",
+    "dark": "#9166f0"
+  },
+  "baseline": {
+    "light": "#94a3b8",
+    "dark": "#8592a3"
+  },
+  "valence": {
+    "good": {
+      "light": "#1f9d57",
+      "dark": "#28c46e"
+    },
+    "warn": {
+      "light": "#e08a12",
+      "dark": "#f5a623"
+    },
+    "bad": {
+      "light": "#d62828",
+      "dark": "#f04444"
+    },
+    "complete": {
+      "light": "#2f6fe0",
+      "dark": "#4f97ff"
+    }
+  },
+  "categorical": {
+    "dark": [
+      "#3b6fd6",
+      "#e8703a",
+      "#2fa36b",
+      "#d64550",
+      "#8a54c8",
+      "#d9a520",
+      "#d95a9a",
+      "#3fa8b0",
+      "#7a9f2e",
+      "#a2653f",
+      "#6a4fd0",
+      "#c23f6a"
+    ],
+    "light": [
+      "#325db4",
+      "#c35e31",
+      "#27895a",
+      "#b43a43",
+      "#7447a8",
+      "#b68b1b",
+      "#b64c81",
+      "#358d94",
+      "#668627",
+      "#885535",
+      "#5942af",
+      "#a33559"
+    ]
+  },
+  "series": {
+    "budget": "{{theme.baseline}}",
+    "actual": "{{theme.brand}}",
+    "income": "{{theme.categorical.0}}",
+    "expense": "{{theme.categorical.5}}",
+    "savings": "{{theme.brand}}"
+  }
+}
