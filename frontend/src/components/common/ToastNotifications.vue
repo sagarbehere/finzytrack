@@ -1,6 +1,6 @@
 <template>
   <div
-    class="fixed top-4 right-4 left-4 sm:left-auto z-50 space-y-2 w-full sm:w-auto max-w-md sm:max-w-lg md:max-w-xl"
+    class="fixed top-6 right-6 left-4 sm:left-auto z-50 space-y-2 w-full sm:w-auto max-w-md sm:max-w-lg md:max-w-xl"
     style="min-width: 320px"
   >
     <!-- Bulk dismiss when several toasts stack up (distinct errors). -->

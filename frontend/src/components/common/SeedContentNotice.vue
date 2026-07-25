@@ -3,7 +3,7 @@
        StartupGate this never gates the app — it's a dismissible card. -->
   <div
     v-if="task || result"
-    class="fixed bottom-4 right-4 z-40 w-full max-w-md overflow-hidden rounded-lg bg-white shadow-xl ring-1 ring-gray-200 dark:bg-gray-800 dark:ring-white/10"
+    class="fixed bottom-6 right-6 z-40 w-full max-w-md overflow-hidden rounded-lg bg-white shadow-xl ring-1 ring-gray-200 dark:bg-gray-800 dark:ring-white/10"
   >
     <!-- ── Offer ───────────────────────────────────────────────── -->
     <template v-if="!result && task">
