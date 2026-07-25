@@ -18,6 +18,7 @@ Open-source personal finance software for people who want to understand their fi
 - **Import a wide variety of statements** — rule-based importers for OFX, CSV, XLS files, PDF statements, or directly from email
 - **Find any transaction, instantly** — global search across your full history, with advanced filtering by date, amount, account, and more
 - **Customizable dashboards** — KPI cards, charts, tables, and pivot tables in configurable grid layouts
+- **Budgeting** — set effective-dated budgets per account (stored as standard Beancount `custom "budget"` directives) and track budget-vs-actual with ready-made dashboards: overview, envelopes with rollover, zero-based catch-all, and month-over-month history
 - **Auto-categorization** — train on your past transactions or use AI assistance
 - **Powerful querying** — SQL and BQL queries against your financial data
 - **Optional AI assistance** — parse statements, create import rules, enter transactions in natural language, build dashboards, and answer financial questions
