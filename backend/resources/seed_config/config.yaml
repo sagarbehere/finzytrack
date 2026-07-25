@@ -6,6 +6,10 @@ setup_complete: false
 # File paths
 ledger_file: "./data/ledgers/one.beancount"
 
+# Dashboard color theme — names a theme file (without .json) under
+# config/dashboard-themes/. See dev-docs/dashboard-color-system.md.
+active_dashboard_theme: "dusty-spectrum"
+
 # Account settings
 accounts:
   default_currency: "USD"
