@@ -564,6 +564,68 @@ def test_rebaseline_noop_when_task_rewrites_nothing(bundle):
     assert UpgradeState(bundle.config_dir).installed_hashes() == before
 
 
+# ── Legacy backfill for pre-provenance installs (§10.1, case B) ───────────────
+#
+# An install that predates the provenance system has an original dashboard on
+# disk with NO `installed` record. If its pre-migration bytes match a version we
+# shipped in a past release, the migration re-baseline backfills its provenance so
+# the seed-content refresh can finally deliver colors. An edited dashboard matches
+# no shipped hash, so it is left protected.
+
+
+def test_legacy_backfill_colors_untouched_preprovenance_dashboard(bundle, monkeypatch):
+    from app.seed_refresh import refresh as refresh_mod
+    a = bundle.target("recipes/dashboards/a.json")
+    a.parent.mkdir(parents=True, exist_ok=True)
+    # The user's on-disk a.json is a pristine copy of a past shipped release, but
+    # there is NO provenance record for it (install predates provenance).
+    shipped = b'{"id":"a","v":1}\n'
+    a.write_bytes(shipped)
+    shipped_hash = hashlib.sha256(shipped).hexdigest()
+    monkeypatch.setattr(
+        refresh_mod, "LEGACY_RECIPE_HASHES",
+        {"recipes/dashboards/a.json": frozenset({shipped_hash})},
+    )
+    state = UpgradeState(bundle.config_dir)
+    assert "recipes/dashboards/a.json" not in state.installed_hashes()
+
+    # A migration rewrites a.json in place (v1 → v2). The backfill records a
+    # baseline for it because its pre-migration bytes matched a shipped release.
+    _apply_rewrite(bundle, state, {a: b'{"id":"a","v":2}\n'})
+
+    fresh = UpgradeState(bundle.config_dir)
+    assert fresh.installed_hashes()["recipes/dashboards/a.json"] == _sha(a)
+
+    # A newer bundle (with colors) now refreshes it instead of skipping it.
+    (bundle.seed_config / "recipes" / "dashboards" / "a.json").write_text('{"id":"a","v":2,"colour":"new"}\n')
+    apply_seed_refresh(fresh, bundle.config_dir, bundle.data_dir, bundle.currency)
+    assert a.read_text() == '{"id":"a","v":2,"colour":"new"}\n'
+
+
+def test_legacy_backfill_skips_edited_preprovenance_dashboard(bundle, monkeypatch):
+    from app.seed_refresh import refresh as refresh_mod
+    a = bundle.target("recipes/dashboards/a.json")
+    a.parent.mkdir(parents=True, exist_ok=True)
+    # The user EDITED their a.json — its bytes match no shipped release hash.
+    a.write_bytes(b'{"id":"a","v":1,"mine":true}\n')
+    monkeypatch.setattr(
+        refresh_mod, "LEGACY_RECIPE_HASHES",
+        {"recipes/dashboards/a.json": frozenset({"a_different_shipped_hash"})},
+    )
+    state = UpgradeState(bundle.config_dir)
+
+    _apply_rewrite(bundle, state, {a: b'{"id":"a","v":2,"mine":true}\n'})
+
+    # No baseline backfilled → stays user-created → a newer bundle never clobbers it.
+    fresh = UpgradeState(bundle.config_dir)
+    assert "recipes/dashboards/a.json" not in fresh.installed_hashes()
+    (bundle.seed_config / "recipes" / "dashboards" / "a.json").write_text('{"id":"a","v":2,"colour":"new"}\n')
+    report = preview_refresh(
+        bundle.config_dir, bundle.data_dir, bundle.currency, fresh.installed_hashes()
+    )
+    assert "config/recipes/dashboards/a.json" not in [i["path"] for i in report.to_details()["items"]]
+
+
 # ── Endpoint round-trip ──────────────────────────────────────────────────────
 
 

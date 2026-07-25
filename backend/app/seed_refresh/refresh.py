@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING
 
 from app.core.atomic_backup import atomic_write_text, timestamped_backup
 from .bundle import SeedFile, content_digest, walk_bundle
+from .legacy_recipe_hashes import LEGACY_RECIPE_HASHES
 
 if TYPE_CHECKING:  # avoids a package import cycle (startup_tasks ↔ seed_refresh)
     from app.startup_tasks.upgrade_state import UpgradeState
@@ -309,37 +310,50 @@ def rebaseline_after_rewrite(
     state,  # UpgradeState — typed loosely to avoid an import cycle
 ) -> list[str]:
     """Re-record the seed `installed` hash for any bundled file that was **provably
-    pristine before** a task ran and got **rewritten in place** by it. Returns the
+    untouched before** a task ran and got **rewritten in place** by it. Returns the
     relpaths re-baselined (for logging/tests).
 
     Why this exists (dev-docs/seed-content-refresh.md §10.1): a format migration
-    rewrites a user's saved dashboards in place. A *pristine* seeded dashboard
-    thereby changes hash, so the seed-content refresh would classify it as
+    rewrites a user's saved dashboards in place. That changes their hash, so the
+    seed-content refresh would classify a previously-untouched seeded dashboard as
     `user-modified` (§4) and skip it for **all** future bundle improvements
     (colours, better defaults, …). Re-baselining restores its `pristine` status so
-    it keeps receiving refreshes. Genuinely user-edited files were *not* pristine
-    before (their on-disk hash never matched what we last wrote), so they are left
-    untouched — their edits stay protected.
+    it keeps receiving refreshes.
 
-    General by construction: it keys off (was-pristine, got-rewritten), not off any
-    task or asset class, so every future migration and refreshable asset inherits
-    it. It deliberately does **not** advance `appliedContentDigest`
-    (`record_seed_installed`), so the seed-content notice still fires and delivers
-    the newer bundle bytes to the files it just re-baselined."""
+    A file counts as *provably untouched before the rewrite* two ways:
+      (A) **Pristine** — we had an `installed` record and the on-disk bytes matched
+          it. (Normal path once provenance exists.)
+      (B) **Legacy** — no `installed` record, but the pre-task bytes match a version
+          we shipped in a past release (`LEGACY_RECIPE_HASHES`). This backfills
+          provenance for installs that predate the provenance system, whose original
+          dashboards were never baselined and would otherwise stay `user-created`
+          forever.
+
+    Genuinely user-edited files satisfy neither test — their on-disk hash never
+    matched a recorded baseline *or* a shipped hash — so they are left untouched and
+    their edits stay protected. General by construction (keyed on untouched +
+    rewritten, not on any task/asset class), and it deliberately does **not** advance
+    `appliedContentDigest` (`record_seed_installed`), so the seed-content notice
+    still fires and delivers the newer bundle bytes to the files it re-baselined."""
     installed = state.installed_hashes()
     updates: dict[str, str] = {}
     for f in walk_bundle():
         if f.kind == "ledger" and data_dir is None:
             continue
         prior = before.get(f.relpath)
+        if prior is None:
+            continue  # not on disk before the task → nothing we wrote to re-baseline
         recorded = installed.get(f.relpath)
-        # Provably pristine before the rewrite = we had a record AND on-disk matched
-        # it. Anything else (user-created, user-modified, or no prior snapshot) is
-        # left alone.
-        if prior is None or recorded is None or prior != recorded:
+        pristine = recorded is not None and prior == recorded
+        legacy = recorded is None and prior in LEGACY_RECIPE_HASHES.get(f.relpath, frozenset())
+        if not (pristine or legacy):
             continue
         after = _hash_file(f.target_path(config_dir, data_dir))
-        if after is not None and after != prior:
+        if after is None:
+            continue
+        # Legacy: record the new baseline (none existed). Pristine: only if the task
+        # actually changed the bytes (else `installed` already equals it).
+        if legacy or after != prior:
             updates[f.relpath] = after
     state.record_seed_installed(updates)
     return sorted(updates)
