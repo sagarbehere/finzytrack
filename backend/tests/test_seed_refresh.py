@@ -22,6 +22,7 @@ from app.seed_refresh import bundle as bundle_mod
 from app.seed_refresh.refresh import (
     classify, NEW, PRISTINE, USER_MODIFIED, USER_CREATED, USER_DELETED,
 )
+from app.startup_tasks.base import StartupTask
 from app.startup_tasks.upgrade_state import UpgradeState
 
 
@@ -450,6 +451,117 @@ def test_task_reopen_clears_snooze(bundle):
     assert task.detect() is None
     task.reopen()
     assert task.detect() is not None
+
+
+# ── Post-migration re-baseline (§10.1) ───────────────────────────────────────
+#
+# A format migration rewrites a user's saved dashboards *in place*. A pristine
+# seeded dashboard thereby changes hash, so without the registry's re-baseline
+# hook the seed-content refresh would classify it as `user-modified` and skip it
+# for all future bundle improvements (colours, new defaults). These tests pin the
+# hook: pristine-and-rewritten → re-baselined (stays refreshable); user-edited →
+# left as user-modified (edits protected); the digest is never advanced.
+
+
+class _RewriteTask(StartupTask):
+    """Stand-in for a format migration: rewrites given on-disk files in place with
+    new bytes (like recipes v1→v2), reporting a clean apply."""
+
+    id = "rewrite-test"
+    one_shot = False
+
+    def __init__(self, rewrites: dict):
+        self._rewrites = rewrites
+
+    def detect(self, consented: bool = False):
+        return None
+
+    def apply(self):
+        for path, data in self._rewrites.items():
+            path.write_bytes(data)
+        return {"errors": []}
+
+
+def _apply_rewrite(bundle, state, rewrites):
+    from app.startup_tasks.registry import StartupTaskRegistry
+    reg = StartupTaskRegistry(state, bundle.config_dir, bundle.data_dir)
+    reg.register(_RewriteTask(rewrites))
+    reg.apply("rewrite-test")
+
+
+def test_rebaseline_keeps_migrated_pristine_dashboard_refreshable(bundle):
+    """A pristine seeded dashboard the migration rewrote is re-baselined, so a
+    later bundle (e.g. new colours) still refreshes it instead of skipping it."""
+    bundle.seed_all()
+    state = UpgradeState(bundle.config_dir)
+    a = bundle.target("recipes/dashboards/a.json")
+
+    # A "migration" rewrites a.json in place (v1 → v2 structure).
+    _apply_rewrite(bundle, state, {a: b'{"id":"a","v":2}\n'})
+
+    # installed[a] now matches the migrated on-disk bytes → provenance = pristine.
+    fresh = UpgradeState(bundle.config_dir)
+    assert fresh.installed_hashes()["recipes/dashboards/a.json"] == _sha(a)
+
+    # A newer release bumps a.json in the bundle (the "new colours"). Because the
+    # file reads pristine, the refresh REFRESHES it rather than skipping it.
+    (bundle.seed_config / "recipes" / "dashboards" / "a.json").write_text('{"id":"a","v":2,"colour":"new"}\n')
+    report = preview_refresh(
+        bundle.config_dir, bundle.data_dir, bundle.currency, fresh.installed_hashes()
+    )
+    assert "config/recipes/dashboards/a.json" in [i["path"] for i in report.to_details()["items"]]
+    apply_seed_refresh(fresh, bundle.config_dir, bundle.data_dir, bundle.currency)
+    assert a.read_text() == '{"id":"a","v":2,"colour":"new"}\n'
+
+
+def test_rebaseline_does_not_advance_applied_digest(bundle):
+    """The re-baseline must NOT stamp appliedContentDigest — otherwise the
+    seed-content notice would think content is current and stop offering the
+    refresh it just made possible."""
+    bundle.seed_all()
+    state = UpgradeState(bundle.config_dir)
+    digest_before = state.applied_content_digest()
+    a = bundle.target("recipes/dashboards/a.json")
+
+    _apply_rewrite(bundle, state, {a: b'{"id":"a","v":2}\n'})
+
+    assert UpgradeState(bundle.config_dir).applied_content_digest() == digest_before
+
+
+def test_rebaseline_leaves_user_edited_dashboard_protected(bundle):
+    """A dashboard the user edited before the migration is NOT re-baselined, so it
+    stays `user-modified` and the refresh never clobbers it."""
+    bundle.seed_all()
+    state = UpgradeState(bundle.config_dir)
+    baseline_b = state.installed_hashes()["recipes/dashboards/b.json"]
+    b = bundle.target("recipes/dashboards/b.json")
+
+    # User edits b.json (on-disk now differs from the recorded baseline)…
+    b.write_text('{"id":"b","v":1,"mine":true}\n')
+    # …then a migration rewrites it in place.
+    _apply_rewrite(bundle, state, {b: b'{"id":"b","v":2,"mine":true}\n'})
+
+    # installed[b] is unchanged (not re-baselined) → still user-modified.
+    fresh = UpgradeState(bundle.config_dir)
+    assert fresh.installed_hashes()["recipes/dashboards/b.json"] == baseline_b
+    # A newer bundle would NOT overwrite it (edits protected).
+    (bundle.seed_config / "recipes" / "dashboards" / "b.json").write_text('{"id":"b","v":2,"colour":"new"}\n')
+    report = preview_refresh(
+        bundle.config_dir, bundle.data_dir, bundle.currency, fresh.installed_hashes()
+    )
+    assert "config/recipes/dashboards/b.json" not in [i["path"] for i in report.to_details()["items"]]
+
+
+def test_rebaseline_noop_when_task_rewrites_nothing(bundle):
+    """A task that touches no seed files leaves provenance byte-for-byte unchanged
+    (no spurious re-baselining)."""
+    bundle.seed_all()
+    state = UpgradeState(bundle.config_dir)
+    before = state.installed_hashes()
+
+    _apply_rewrite(bundle, state, {})  # rewrites nothing
+
+    assert UpgradeState(bundle.config_dir).installed_hashes() == before
 
 
 # ── Endpoint round-trip ──────────────────────────────────────────────────────

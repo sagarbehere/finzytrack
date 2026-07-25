@@ -139,6 +139,19 @@ class UpgradeState:
         self._seed["appliedContentDigest"] = applied_content_digest
         self._persist("seed content applied")
 
+    def record_seed_installed(self, installed_updates: dict[str, str]) -> None:
+        """Merge freshly-written file hashes into `installed` **without** advancing
+        `appliedContentDigest`. Used by the registry's post-migration re-baseline
+        (dev-docs/seed-content-refresh.md §10.1): a format migration rewrote a
+        *pristine* seeded file, so we update our record of what's on disk — but we
+        must NOT mark bundle content as applied, or the seed-content notice would
+        stop offering the (now-pristine) files their colour/format refresh. A no-op
+        when there's nothing to record."""
+        if not installed_updates:
+            return
+        self._seed.setdefault("installed", {}).update(installed_updates)
+        self._persist("seed provenance re-baselined")
+
     def snooze_seed(self, content_digest: str) -> None:
         """Record that the user dismissed the seed-content notice for this bundle
         digest, so it doesn't re-nag until a later release changes the digest."""

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.schemas.startup_schemas import StartupTaskInfo
+from app.seed_refresh.refresh import rebaseline_after_rewrite, snapshot_on_disk
 from .base import StartupTask
 from .upgrade_state import UpgradeState
 from .tasks.recipe_migration_task import RecipeMigrationTask
@@ -16,9 +17,18 @@ logger = logging.getLogger(__name__)
 
 
 class StartupTaskRegistry:
-    def __init__(self, state: UpgradeState) -> None:
+    def __init__(
+        self,
+        state: UpgradeState,
+        config_dir: Path | None = None,
+        data_dir: Path | None = None,
+    ) -> None:
         self._tasks: dict[str, StartupTask] = {}
         self._state = state
+        # config_dir/data_dir enable the post-apply seed re-baseline (§10.1). When
+        # absent (a bare registry with no seed context), the re-baseline no-ops.
+        self._config_dir = config_dir
+        self._data_dir = data_dir
 
     def register(self, task: StartupTask) -> None:
         self._tasks[task.id] = task
@@ -51,6 +61,14 @@ class StartupTaskRegistry:
         task = self._tasks.get(task_id)
         if task is None:
             raise KeyError(task_id)
+        # Snapshot what's on disk *before* the task runs, so we can tell which
+        # pristine seeded files the task rewrote in place (re-baseline below).
+        # Skipped when the registry has no seed context (a bare test registry).
+        before = (
+            snapshot_on_disk(self._config_dir, self._data_dir)
+            if self._config_dir is not None
+            else None
+        )
         result = task.apply()
         if result.get("errors"):
             # Partial failure (best-effort per file): record that the user
@@ -60,6 +78,21 @@ class StartupTaskRegistry:
         elif task.one_shot:
             # Clean apply: retire a one-shot so it doesn't surface again.
             self._state.mark_completed(task_id)
+        # If the task rewrote a file the user hadn't touched (e.g. a format
+        # migration rewriting a pristine seeded dashboard), re-baseline the seed
+        # provenance so the seed-content refresh still recognises it as pristine
+        # and keeps delivering bundle improvements (colours, new defaults). General
+        # across tasks/asset classes; a no-op for tasks that touch no seed files.
+        # See dev-docs/seed-content-refresh.md §10.1.
+        if before is not None:
+            rebaselined = rebaseline_after_rewrite(
+                self._config_dir, self._data_dir, before, self._state
+            )
+            if rebaselined:
+                logger.info(
+                    "Re-baselined seed provenance for %d untouched file(s) after %s: %s",
+                    len(rebaselined), task_id, ", ".join(rebaselined),
+                )
         return result
 
     def dismiss(self, task_id: str) -> dict[str, Any]:
@@ -102,7 +135,7 @@ def build_startup_registry(
     is only registered once those are known — the state object is shared so the
     task and the registry read/write one `.upgrade-state.json`."""
     state = UpgradeState(config_dir)
-    registry = StartupTaskRegistry(state)
+    registry = StartupTaskRegistry(state, config_dir, data_dir)
     registry.register(RecipeMigrationTask(recipes_dir))
     if data_dir is not None:
         registry.register(

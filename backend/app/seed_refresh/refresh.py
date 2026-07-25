@@ -288,6 +288,63 @@ def record_seed_baseline(config_dir: Path, data_dir: Path) -> None:
     logger.info("Recorded seed baseline: %d file(s) under %s", len(installed), config_dir)
 
 
+def snapshot_on_disk(config_dir: Path, data_dir: Path | None) -> dict[str, str | None]:
+    """Hash of every bundled file as it currently sits on the user's disk, keyed by
+    seed relpath (None when the file is absent). Captured *before* a startup task
+    runs so the registry can tell which pristine files that task rewrote — see
+    `rebaseline_after_rewrite`. Ledger files are skipped when `data_dir` is unknown
+    (they have no rewrite-in-place path anyway)."""
+    snap: dict[str, str | None] = {}
+    for f in walk_bundle():
+        if f.kind == "ledger" and data_dir is None:
+            continue
+        snap[f.relpath] = _hash_file(f.target_path(config_dir, data_dir))
+    return snap
+
+
+def rebaseline_after_rewrite(
+    config_dir: Path,
+    data_dir: Path | None,
+    before: dict[str, str | None],
+    state,  # UpgradeState — typed loosely to avoid an import cycle
+) -> list[str]:
+    """Re-record the seed `installed` hash for any bundled file that was **provably
+    pristine before** a task ran and got **rewritten in place** by it. Returns the
+    relpaths re-baselined (for logging/tests).
+
+    Why this exists (dev-docs/seed-content-refresh.md §10.1): a format migration
+    rewrites a user's saved dashboards in place. A *pristine* seeded dashboard
+    thereby changes hash, so the seed-content refresh would classify it as
+    `user-modified` (§4) and skip it for **all** future bundle improvements
+    (colours, better defaults, …). Re-baselining restores its `pristine` status so
+    it keeps receiving refreshes. Genuinely user-edited files were *not* pristine
+    before (their on-disk hash never matched what we last wrote), so they are left
+    untouched — their edits stay protected.
+
+    General by construction: it keys off (was-pristine, got-rewritten), not off any
+    task or asset class, so every future migration and refreshable asset inherits
+    it. It deliberately does **not** advance `appliedContentDigest`
+    (`record_seed_installed`), so the seed-content notice still fires and delivers
+    the newer bundle bytes to the files it just re-baselined."""
+    installed = state.installed_hashes()
+    updates: dict[str, str] = {}
+    for f in walk_bundle():
+        if f.kind == "ledger" and data_dir is None:
+            continue
+        prior = before.get(f.relpath)
+        recorded = installed.get(f.relpath)
+        # Provably pristine before the rewrite = we had a record AND on-disk matched
+        # it. Anything else (user-created, user-modified, or no prior snapshot) is
+        # left alone.
+        if prior is None or recorded is None or prior != recorded:
+            continue
+        after = _hash_file(f.target_path(config_dir, data_dir))
+        if after is not None and after != prior:
+            updates[f.relpath] = after
+    state.record_seed_installed(updates)
+    return sorted(updates)
+
+
 def _hash_file(path: Path) -> str | None:
     try:
         return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
