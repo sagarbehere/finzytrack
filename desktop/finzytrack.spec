@@ -41,6 +41,14 @@ SITE_PACKAGES = Path(sysconfig.get_paths()['purelib'])
 beancount_hidden = collect_submodules('beancount')
 beanquery_hidden = collect_submodules('beanquery')
 
+# scipy (pulled in via scikit-learn) dynamically imports submodules that
+# PyInstaller's static analysis misses — notably the vendored
+# scipy._external.array_api_compat.*, which newer scipy releases grew. A missed
+# submodule crashes the packaged backend at import time with ModuleNotFoundError,
+# and the app then hangs waiting on a backend that never starts. Collect every
+# scipy submodule so the bundle is complete regardless of the resolved version.
+scipy_hidden = collect_submodules('scipy')
+
 # pywebview on Windows uses pythonnet + clr_loader to drive the EdgeChromium
 # WebView2 control via the .NET CLR. Those packages ship native DLLs and
 # runtime support files that PyInstaller's default analysis misses, which
@@ -113,6 +121,7 @@ a = Analysis(
     hiddenimports=[
         *beancount_hidden,
         *beanquery_hidden,
+        *scipy_hidden,
         *webview_hidden,
         *pythonnet_hidden,
         *clr_loader_hidden,

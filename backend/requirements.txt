@@ -5,13 +5,18 @@ click>=8.3.0
 pydantic>=2.11.9
 beancount>=3.2.0
 ruamel.yaml>=0.18.15
-scikit-learn>=1.7.2
+# Pinned exactly: these are bundled into the PyInstaller desktop app, and newer
+# scipy releases add dynamically-imported submodules (e.g. array_api_compat) that
+# PyInstaller's hook misses, silently breaking the packaged backend. Pin to the
+# known-good, locally-verified set so CI builds reproduce a working bundle. Bump
+# deliberately + rebuild-test, never let CI float them. See desktop/finzytrack.spec.
+scikit-learn==1.7.2
 rapidfuzz>=3.0.0
 pandas>=2.3.3
 openpyxl>=3.1.0   # required by pandas for .xlsx files
 xlrd>=2.0.0       # required by pandas for legacy .xls files
-numpy>=2.3.3
-scipy>=1.16.2
+numpy==2.3.3    # pinned — see scikit-learn note above
+scipy==1.16.2   # pinned — see scikit-learn note above
 httpx>=0.28.1
 beautifulsoup4>=4.14.3
 cryptography>=46.0.2
