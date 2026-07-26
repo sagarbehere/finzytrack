@@ -63,10 +63,16 @@ FRONTEND_DIST = ROOT / 'frontend' / 'dist'
 # script (imports app.*) and is not itself shipped. See
 # dev-docs/seed-content-refresh.md §8, §14.4.
 import datetime as _dt
+import subprocess as _subprocess
 _gen = BACKEND / 'scripts' / 'generate_fake.py'
 _seed_ledger = BACKEND / 'resources' / 'seed_data' / 'ledgers' / 'fake.beancount'
 _anchor = _dt.date.today().strftime('%Y-%m')
-_rc = os.system(f'"{sys.executable}" "{_gen}" --anchor {_anchor} --out "{_seed_ledger}"')
+# Invoke via an argument list (no shell). os.system() would route through cmd.exe
+# on Windows, whose quote-stripping mangles a command with several quoted paths
+# ("The system cannot find the path specified."). subprocess.run avoids the shell.
+_rc = _subprocess.run(
+    [sys.executable, str(_gen), '--anchor', _anchor, '--out', str(_seed_ledger)]
+).returncode
 if _rc != 0:
     raise SystemExit(f'Demo-ledger regeneration failed (exit {_rc}); aborting build.')
 print(f'[finzytrack.spec] Regenerated demo ledger anchored to {_anchor}')
