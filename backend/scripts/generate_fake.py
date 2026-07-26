@@ -1457,6 +1457,7 @@ def ensure_seed_ledger(out: Path = _BUNDLE_OUTPUT, anchor_month: date | None = N
         generate(anchor_month=anchor_month or date.today().replace(day=1),
                  buffer_months=buffer_months),
         encoding="utf-8",
+        newline="",  # LF on every platform — see the __main__ writer below
     )
     return out
 
@@ -1488,7 +1489,12 @@ if __name__ == "__main__":
 
     content = generate(anchor_month=args.anchor, buffer_months=args.buffer)
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    with open(args.out, "w", encoding="utf-8") as f:
+    # newline="" so the demo ledger is LF on every platform. This file is the one
+    # bundled asset .gitattributes cannot reach — it is generated at build time, not
+    # checked out — so without this the Windows release shipped a wholly CRLF
+    # fake.beancount while macOS and Linux shipped LF, breaking the invariant that a
+    # bundle is byte-identical whatever host built it.
+    with open(args.out, "w", encoding="utf-8", newline="") as f:
         f.write(content)
     # Count stats
     lines = content.split("\n")

@@ -22,6 +22,24 @@ def _budget_lines(text):
     return [l for l in text.splitlines() if re.match(r'\d{4}-\d{2}-\d{2} custom "budget"', l)]
 
 
+def test_written_ledger_is_lf_on_every_platform(tmp_path):
+    """The demo ledger must be LF wherever it's built. It is the one bundled asset
+    .gitattributes cannot normalize — CI generates it at build time rather than
+    checking it out — so a text-mode write would ship a wholly CRLF ledger from the
+    Windows runner and an LF one from macOS/Linux, breaking the invariant that a
+    bundle is byte-identical whatever host built it.
+
+    (On a POSIX host this passes either way, since there is no translation to
+    suppress; it fails on Windows if the `newline=""` on the writers is lost.)"""
+    out = gen.ensure_seed_ledger(
+        out=tmp_path / "fake.beancount", anchor_month=date(2026, 5, 1)
+    )
+    data = out.read_bytes()
+    assert b"\r" not in data
+    # The content itself is LF-only, so a CR could only come from the writer.
+    assert "\r" not in gen.generate(anchor_month=date(2026, 5, 1), buffer_months=2)
+
+
 def test_deterministic_output():
     a = gen.generate(anchor_month=date(2026, 5, 1), buffer_months=2)
     b = gen.generate(anchor_month=date(2026, 5, 1), buffer_months=2)
