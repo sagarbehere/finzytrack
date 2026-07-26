@@ -61,6 +61,22 @@ def test_atomic_write_text_fully_replaces_shorter(tmp_path: Path):
     assert target.read_text(encoding="utf-8") == "hi"
 
 
+def test_atomic_write_text_writes_bytes_verbatim(tmp_path: Path):
+    """The bytes on disk must be exactly the bytes of the text, on every platform.
+    Text mode would otherwise rewrite "\\n" as os.linesep, so on Windows a file we
+    just wrote wouldn't hash to the content we recorded — which silently breaks the
+    seed-provenance comparison (a fresh write reads as user-modified, so future
+    bundle updates are skipped forever) and turns CRLF input into "\\r\\r\\n"."""
+    target = tmp_path / "out.json"
+
+    atomic_write_text(target, "a\nb\n")
+    assert target.read_bytes() == b"a\nb\n"
+
+    # Content that already carries CRLF is preserved as-is, not doubled.
+    atomic_write_text(target, "a\r\nb\r\n")
+    assert target.read_bytes() == b"a\r\nb\r\n"
+
+
 def test_atomic_write_text_leaves_no_temp_files(tmp_path: Path):
     target = tmp_path / "out.json"
     atomic_write_text(target, "x")

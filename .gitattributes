@@ -1,0 +1,27 @@
+# Line endings: LF in the repository AND in every working tree, on every platform.
+#
+# This is a correctness requirement, not a style preference. Two mechanisms compare
+# sha256 hashes of bundled seed files against hashes that are ultimately derived from
+# git blob content (always LF):
+#
+#   - the seed-content refresh's provenance table, which decides whether a bundled
+#     dashboard on a user's disk is pristine (safe to update) or user-edited, and
+#   - the legacy recipe-hash backfill (app/seed_refresh/legacy_recipe_hashes.py),
+#     generated from release tags to recognise untouched pre-provenance dashboards.
+#
+# A checkout with core.autocrlf=true (the Git-for-Windows default) would hand the
+# build CRLF copies of exactly those files. Every hash comparison then fails, the
+# backfill silently misses, and users' untouched demo dashboards never receive
+# bundle updates again — with no error anywhere. Pinning eol=lf makes a bundle built
+# on Windows byte-identical to one built on macOS or Linux.
+#
+# See dev-docs/seed-content-refresh.md §10.1.
+* text=auto eol=lf
+
+# The bundled ledgers are hashed seed content — spelled out because they matter most.
+*.beancount text eol=lf
+
+# Binary assets: excluded explicitly so `text=auto` never has to guess.
+*.png binary
+*.ico binary
+*.icns binary

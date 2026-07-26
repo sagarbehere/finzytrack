@@ -78,12 +78,20 @@ def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None
     survives a crash. This is a *full overwrite* (no read-modify-write); the
     original is left untouched if anything fails. For the read-modify-write
     case (edit part of an existing file), use ``BackupManager.atomic_write``.
+
+    ``newline=""`` disables universal-newline *translation*: the bytes written are
+    exactly the bytes of *text*, on every platform. Without it, text mode rewrites
+    every ``\\n`` as ``os.linesep``, so on Windows a file we write would not match
+    the content we hashed — which silently breaks the seed-provenance comparison
+    (a just-written file reads as ``user-modified``, so future bundle updates are
+    skipped forever) and turns already-CRLF input into ``\\r\\r\\n``. Any writer
+    whose bytes are later hashed or diffed must not translate newlines.
     """
     path = Path(path)
     fd, tmp_str = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     tmp = Path(tmp_str)
     try:
-        with os.fdopen(fd, "w", encoding=encoding) as f:
+        with os.fdopen(fd, "w", encoding=encoding, newline="") as f:
             f.write(text)
             f.flush()
             os.fsync(f.fileno())

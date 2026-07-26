@@ -58,7 +58,14 @@ def seed_data_with_currency(data_dir: Path, currency: str) -> None:
     shutil.copytree(SEED_DATA_DIR, data_dir, dirs_exist_ok=True)
     # Substitute {default_currency} in all .beancount files
     for bc_file in data_dir.rglob("*.beancount"):
-        content = bc_file.read_text(encoding="utf-8")
+        # newline="" on both sides: read the file's real bytes and write them back
+        # untranslated. The seed refresh compares a delivered ledger's on-disk hash
+        # against the hash of the substituted *bundle* bytes, so translating
+        # newlines here (Windows) would make every launch see a ledger that
+        # differs from what we recorded delivering.
+        content = bc_file.read_text(encoding="utf-8", newline="")
         if CURRENCY_PLACEHOLDER in content:
-            bc_file.write_text(substitute_currency(content, currency), encoding="utf-8")
+            bc_file.write_text(
+                substitute_currency(content, currency), encoding="utf-8", newline=""
+            )
     logger.info(f"Seeded data directory → {data_dir} (currency={currency})")

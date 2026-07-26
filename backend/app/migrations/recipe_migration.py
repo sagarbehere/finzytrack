@@ -36,7 +36,10 @@ RemoveFn = Callable[[Path], None]
 
 
 def _plain_write(path: Path, text: str) -> None:
-    path.write_text(text, encoding="utf-8")
+    # newline="" for the same reason as atomic_write_text: a migrated recipe's
+    # bytes are hashed by the seed provenance, so newline translation on Windows
+    # would make a freshly written file read as user-modified.
+    path.write_text(text, encoding="utf-8", newline="")
 
 
 def _plain_remove(path: Path) -> None:
