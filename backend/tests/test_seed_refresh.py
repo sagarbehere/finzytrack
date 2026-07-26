@@ -625,6 +625,80 @@ def test_legacy_backfill_colors_untouched_preprovenance_dashboard(bundle, monkey
     assert a.read_text() == '{"id":"a","v":2,"colour":"new"}\n'
 
 
+def test_legacy_manifest_covers_windows_line_endings():
+    """The shipped manifest must accept each legacy dashboard in BOTH line-ending
+    forms. The hashes are generated from git blobs, which are always LF, but the
+    Windows releases were built from a checkout with core.autocrlf enabled (the repo
+    had no .gitattributes before v0.2.0) — so what reached a Windows user's disk was
+    CRLF. With only the LF hash, every Windows user's *untouched* dashboard fails the
+    match, is classified `user-created`, and is skipped by the refresh forever.
+
+    Verifies the real manifest against the real release tags, not a stub: this is a
+    frozen transition aid, so a regenerated-but-wrong manifest is the failure mode
+    worth catching."""
+    import subprocess
+
+    from app.seed_refresh.legacy_recipe_hashes import LEGACY_RECIPE_HASHES
+
+    tags = ["v0.1.2", "v0.1.3", "v0.1.4"]
+    prefix = "backend/resources/seed_config/recipes/dashboards"
+    repo = Path(__file__).resolve().parents[2]  # git pathspecs are cwd-relative
+    checked = 0
+
+    for tag in tags:
+        listing = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", tag, "--", prefix],
+            cwd=repo, capture_output=True, text=True,
+        )
+        if listing.returncode != 0:
+            pytest.skip(f"release tag {tag} unavailable (shallow clone?)")
+        for path in listing.stdout.splitlines():
+            if not path.endswith(".json"):
+                continue
+            relpath = f"recipes/dashboards/{path.rsplit('/', 1)[-1]}"
+            lf = subprocess.run(
+                ["git", "cat-file", "-p", f"{tag}:{path}"],
+                cwd=repo, capture_output=True, check=True,
+            ).stdout
+            known = LEGACY_RECIPE_HASHES.get(relpath, frozenset())
+            assert hashlib.sha256(lf).hexdigest() in known, f"{relpath} @ {tag}: LF form missing"
+            crlf = lf.replace(b"\n", b"\r\n")
+            assert hashlib.sha256(crlf).hexdigest() in known, f"{relpath} @ {tag}: CRLF form missing"
+            checked += 1
+
+    assert checked > 0, "no legacy dashboards were checked — the manifest source moved"
+
+
+def test_legacy_backfill_accepts_crlf_copy_of_shipped_dashboard(bundle, monkeypatch):
+    """End-to-end for a Windows pre-provenance install: the user's on-disk dashboard
+    is a CRLF copy of a shipped release with no provenance record. It must be
+    recognised as ours, backfilled, and then refreshed with the newer bundle."""
+    from app.seed_refresh import refresh as refresh_mod
+    a = bundle.target("recipes/dashboards/a.json")
+    a.parent.mkdir(parents=True, exist_ok=True)
+
+    shipped_lf = b'{"id":"a","v":1}\n'
+    a.write_bytes(shipped_lf.replace(b"\n", b"\r\n"))  # what Windows actually received
+    monkeypatch.setattr(
+        refresh_mod, "LEGACY_RECIPE_HASHES",
+        {"recipes/dashboards/a.json": frozenset({
+            hashlib.sha256(shipped_lf).hexdigest(),
+            hashlib.sha256(shipped_lf.replace(b"\n", b"\r\n")).hexdigest(),
+        })},
+    )
+    state = UpgradeState(bundle.config_dir)
+    assert "recipes/dashboards/a.json" not in state.installed_hashes()
+
+    _apply_rewrite(bundle, state, {a: b'{"id":"a","v":2}\n'})
+
+    fresh = UpgradeState(bundle.config_dir)
+    assert fresh.installed_hashes()["recipes/dashboards/a.json"] == _sha(a)
+
+    (bundle.seed_config / "recipes" / "dashboards" / "a.json").write_text('{"id":"a","v":2,"colour":"new"}\n')
+    apply_seed_refresh(fresh, bundle.config_dir, bundle.data_dir, bundle.currency)
+    assert a.read_bytes() == b'{"id":"a","v":2,"colour":"new"}\n'
+
+
 def test_legacy_backfill_skips_edited_preprovenance_dashboard(bundle, monkeypatch):
     from app.seed_refresh import refresh as refresh_mod
     a = bundle.target("recipes/dashboards/a.json")
