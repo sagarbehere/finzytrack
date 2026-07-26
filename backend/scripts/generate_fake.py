@@ -1483,12 +1483,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.if_missing and args.out.exists():
-        print(f"Demo ledger already present → {args.out} (nothing to do)")
+        print(f"Demo ledger already present -> {args.out} (nothing to do)")
         raise SystemExit(0)
 
     content = generate(anchor_month=args.anchor, buffer_months=args.buffer)
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    with open(args.out, "w") as f:
+    with open(args.out, "w", encoding="utf-8") as f:
         f.write(content)
     # Count stats
     lines = content.split("\n")
@@ -1496,4 +1496,4 @@ if __name__ == "__main__":
     last = max(
         (l[:10] for l in lines if re.match(r"\d{4}-\d{2}-\d{2} ", l)), default="?"
     )
-    print(f"Generated {len(lines)} lines, {txn_count} transactions, ending {last} → {args.out}")
+    print(f"Generated {len(lines)} lines, {txn_count} transactions, ending {last} -> {args.out}")
