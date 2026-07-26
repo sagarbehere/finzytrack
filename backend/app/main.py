@@ -66,7 +66,15 @@ def setup_logging(
     formatter = logging.Formatter(LOG_FORMAT)
     user_id_filter = UserIdLogFilter()
 
-    # Console handler
+    # Console handler. Windows consoles default to cp1252, so a non-ASCII log line
+    # would raise inside logging exactly as it does for the file handler below. The
+    # desktop launcher already reconfigures stdout, but a bare `python -m app.main`
+    # (dev, Docker-on-Windows) doesn't — make the server self-sufficient.
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (ValueError, OSError):  # detached/closed stream — non-fatal
+            pass
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
     console_handler.setFormatter(formatter)
@@ -74,10 +82,18 @@ def setup_logging(
     logger.addHandler(console_handler)
 
     # Rotating file handler
+    # encoding="utf-8" is required, not cosmetic: RotatingFileHandler otherwise
+    # opens the log with the locale encoding, which is cp1252 on Windows — so any
+    # non-ASCII in a log line (an arrow in a startup message, a payee name, "₹")
+    # raises UnicodeEncodeError inside logging and the record is dropped with a
+    # "--- Logging error ---" dump. errors= keeps a stray unencodable character
+    # from ever costing us the line.
     file_handler = RotatingFileHandler(
         log_file,
         maxBytes=max_file_size_mb * 1024 * 1024,
         backupCount=backup_count,
+        encoding="utf-8",
+        errors="backslashreplace",
     )
     file_handler.setLevel(log_level)
     file_handler.setFormatter(formatter)
