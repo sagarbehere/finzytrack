@@ -1,0 +1,48 @@
+# Direct backend dependencies — the human-maintained source of intent.
+#
+# This file is NOT installed directly. It is compiled into the fully-pinned,
+# cross-platform lock `requirements.txt` (every direct AND transitive package
+# at an exact version) via:
+#
+#   python -m uv pip compile --universal requirements.in \
+#       -c <(pip freeze) -o requirements.txt
+#
+# CI installs the compiled requirements.txt, so builds are reproducible and can
+# never silently drift onto an untested dependency version. To bump a dep: edit
+# the constraint here, re-compile, and rebuild-test the desktop app before
+# releasing — never let CI float versions. See desktop/finzytrack.spec.
+
+fastapi>=0.118.0
+uvicorn>=0.37.0
+pyyaml>=6.0.3
+click>=8.3.0
+pydantic>=2.11.9
+beancount>=3.2.0
+beanquery>=0.2.0
+ruamel.yaml>=0.18.15
+
+# Pinned exactly: these are bundled into the PyInstaller desktop app, and newer
+# scipy releases add dynamically-imported submodules (e.g. array_api_compat)
+# that PyInstaller's hook misses, silently breaking the packaged backend. The
+# lock would pin them regardless, but pinning here documents that the version is
+# load-bearing, not incidental.
+scikit-learn==1.7.2
+numpy==2.3.3
+scipy==1.16.2
+
+rapidfuzz>=3.0.0
+pandas>=2.3.3
+openpyxl>=3.1.0   # required by pandas for .xlsx files
+xlrd>=2.0.0       # required by pandas for legacy .xls files
+httpx>=0.28.1
+beautifulsoup4>=4.14.3
+cryptography>=46.0.2
+keyring>=25.6.0
+uuid-utils>=0.11.1
+openai>=2.29.0
+anthropic>=0.86.0
+pdfplumber>=0.11.0  # PDF text extraction for non-Anthropic LLM providers
+python-multipart>=0.0.18  # required by FastAPI for File/Form uploads
+python-dotenv>=1.2.2
+jsonschema>=4.20.0  # validates recipe.schema.json against AI-authored recipes
+portalocker>=3.0.0  # cross-platform file lock for inter-process write serialisation
