@@ -40,20 +40,48 @@ SEED_CONFIG_DIR = (
 )
 
 
+#: Recipe sub-directories the app understands. Anything else under the bundled
+#: ``recipes/`` tree is not copied to a new install — see ``_ignore_unsupported``.
+_SUPPORTED_RECIPE_SUBDIRS = frozenset({"dashboards"})
+
+
+def _ignore_unsupported(directory: str, names: list[str]) -> set[str]:
+    """``shutil.copytree`` filter: drop bundled recipe paths the app can't serve.
+
+    An installed bundle is not guaranteed to contain only the current release's
+    files. On Windows the app is a folder you unzip, so extracting a new release
+    over an old one leaves behind every file the new version dropped — for us, the
+    pre-DAG ``recipes/widgets/*.json``. Copying those into a brand-new config made
+    a *first run* open with the "Upgrade saved dashboards" gate, before the setup
+    wizard, over files the user had never seen.
+
+    Seeding therefore copies only what the app supports: under ``recipes/``, just
+    the ``dashboards/`` sub-tree (the only location ``api/routers/recipes.py``
+    will serve). Everything outside ``recipes/`` is unaffected.
+    """
+    if Path(directory).name != "recipes":
+        return set()
+    return {
+        n for n in names
+        if (Path(directory) / n).is_dir() and n not in _SUPPORTED_RECIPE_SUBDIRS
+    }
+
+
 def seed_config(config_dir: Path) -> None:
     """Copy seed config template to *config_dir* on first run.
 
     Copies the bundled ``seed_config/`` (default config.yaml, empty rule
     directories, default dashboard recipes) into the working config
     directory.  Skipped if *config_dir* already exists — user data is
-    never overwritten.
+    never overwritten. Recipe paths the app doesn't support are skipped
+    (``_ignore_unsupported``), so a stale bundle can't seed legacy content.
     """
     if config_dir.exists():
         return
     if not SEED_CONFIG_DIR.is_dir():
         return
-    shutil.copytree(SEED_CONFIG_DIR, config_dir)
-    logger.info("Seeded config directory → %s", config_dir)
+    shutil.copytree(SEED_CONFIG_DIR, config_dir, ignore=_ignore_unsupported)
+    logger.info("Seeded config directory -> %s", config_dir)
 
 
 # ── Service creation ────────────────────────────────────────────────────────

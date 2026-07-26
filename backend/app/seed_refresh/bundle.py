@@ -7,7 +7,7 @@ never stored. The only thing we persist is the record of what we last wrote to
 the user's disk (`installed`, in the upgrade-state) — the one value that can't be
 recomputed. See dev-docs/seed-content-refresh.md §3.
 
-Scope (design §11): recipes (`seed_config/recipes/**`) and the app-owned **demo**
+Scope (design §11): dashboards (`seed_config/recipes/dashboards/**`) and the app-owned **demo**
 ledgers only — `fake.beancount` and the whole `fake-multi/` tree. Other ledgers
 under `seed_data/ledgers/**` (notably the `one.beancount` starter, whose name a
 real user's ledger can take) are NOT refreshable content and are excluded from the
@@ -38,7 +38,11 @@ from app.service_factory import SEED_CONFIG_DIR
 class _Kind:
     kind: str
     root: Path            # SEED_CONFIG_DIR or SEED_DATA_DIR
-    prefix: str           # "recipes" | "ledgers" — top of the relpath key
+    # The sub-tree to walk, relative to `root`, and also the leading segment(s) of
+    # each file's relpath key (e.g. "recipes/dashboards", "ledgers"). Keep it as
+    # narrow as the app's actual contract: anything under it is content we will
+    # deliver, so a stray or stale file inside the prefix becomes a user-visible write.
+    prefix: str
     needs_currency: bool
     # If set, an *allowlist* of the top-level entries under the sub-tree this kind
     # owns; anything else in the tree is ignored by the refresh. Used for ledgers:
@@ -59,7 +63,17 @@ def _kinds() -> list[_Kind]:
     # A function (not a module constant) so the SEED_*_DIR values are read at
     # call time — they resolve differently frozen vs. dev, and tests monkeypatch.
     return [
-        _Kind("recipe", SEED_CONFIG_DIR, "recipes", needs_currency=False),
+        # Scoped to recipes/dashboards/ — the only recipe location the app supports
+        # (the recipes router refuses to serve anything else). Walking all of
+        # recipes/ would deliver whatever else happens to sit in the bundle: a
+        # Windows install is a folder you unzip, so extracting a new release over
+        # an old one leaves behind files the new version dropped — e.g. the v0.1.x
+        # recipes/widgets/*.json. Delivered as "new" content, those re-created the
+        # very legacy files the recipe migration had just removed, which re-armed
+        # the migration gate on the next detect. `relpath` is still computed from
+        # the seed root, so the provenance keys ("recipes/dashboards/x.json") are
+        # unchanged and existing installs keep their baselines.
+        _Kind("recipe", SEED_CONFIG_DIR, "recipes/dashboards", needs_currency=False),
         _Kind("ledger", SEED_DATA_DIR, "ledgers", needs_currency=True, demo_only=_DEMO_LEDGERS),
         # Dashboard color themes — user-editable, so provenance-protected like
         # recipes (a non-ledger kind → the §4 pristine-only rule in refresh._decide).

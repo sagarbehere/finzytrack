@@ -256,6 +256,29 @@ def test_untracked_demo_ledger_is_refreshed(bundle):
     assert "data/ledgers/fake-multi/plain.beancount" in [p["path"] for p in report.refreshed]
 
 
+def test_unsupported_recipe_path_excluded_from_bundle(bundle):
+    """A recipe file outside `recipes/dashboards/` must be entirely out of the
+    refresh's scope. An installed bundle can contain files the current release
+    dropped — on Windows the app is a folder you unzip, so extracting a new release
+    over an old one leaves the pre-DAG `recipes/widgets/*.json` behind. Delivered as
+    "new" content, those re-created the legacy files the recipe migration had just
+    removed, re-arming the migration gate on the next detect."""
+    stale = bundle.seed_config / "recipes" / "widgets"
+    stale.mkdir(parents=True)
+    (stale / "expense-treemap.json").write_text('{"id":"expense-treemap","query":"SELECT 1"}\n')
+
+    # Not in the walked bundle at all…
+    assert not any(f.relpath.startswith("recipes/widgets/") for f in walk_bundle())
+
+    # …and a full refresh never creates it on disk.
+    state = UpgradeState(bundle.config_dir)
+    report = apply_seed_refresh(state, bundle.config_dir, bundle.data_dir, bundle.currency)
+    assert not bundle.target("recipes/widgets/expense-treemap.json").exists()
+    assert "config/recipes/widgets/expense-treemap.json" not in [
+        p["path"] for p in report.added + report.refreshed
+    ]
+
+
 def test_non_demo_ledger_excluded_from_bundle(bundle):
     """A ledger in seed_data/ledgers/ that isn't an app-owned demo (only
     `fake.beancount` and `fake-multi/` are) must be entirely out of the refresh's
