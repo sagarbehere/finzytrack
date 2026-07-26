@@ -5,6 +5,7 @@ Starts the FastAPI backend and opens a PyWebView window.
 import os
 import sys
 import time
+import shutil
 import threading
 import argparse
 import multiprocessing
@@ -274,6 +275,82 @@ def find_config_path() -> str:
     )
 
 
+# The .app bundle identifier (finzytrack.spec). WKWebView keys its HTTP cache by
+# this, NOT by our storage_path — which is why the cache survives deleting the
+# whole Application Support folder.
+_MACOS_BUNDLE_ID = 'com.finzytrack.app'
+
+
+def _webview_cache_dirs():
+    """Directories a webview may keep a cached copy of the frontend in.
+
+    `storage_path` (browser_storage) covers the Chromium/WebKitGTK backends, but on
+    macOS WKWebView ignores it for the HTTP cache and uses ~/Library/Caches and
+    ~/Library/WebKit keyed by bundle id — outside anything a user would think to
+    clear.
+    """
+    dirs = [os.path.join(APP_DIR, 'browser_storage')]
+    if sys.platform == 'darwin':
+        home = os.path.expanduser('~')
+        dirs += [
+            os.path.join(home, 'Library', 'Caches', _MACOS_BUNDLE_ID),
+            os.path.join(home, 'Library', 'WebKit', _MACOS_BUNDLE_ID),
+        ]
+    return dirs
+
+
+def clear_webview_cache_on_version_change():
+    """Drop the webview's cached frontend when the app version has changed.
+
+    Insurance behind the real fix (index.html is served `no-store`, app/main.py):
+    if a cached shell from the previous release survives an upgrade, the app loads
+    the OLD frontend against the NEW backend. That silently skips the entire
+    upgrade flow, because detecting pending migrations is client-initiated — the
+    stale frontend never calls /api/startup/tasks, so nothing is ever offered.
+
+    Only the webview's own cache is touched, and only when the version actually
+    changed; user config, data and ledgers are never involved. Best-effort: any
+    failure here must not stop the app from starting.
+    """
+    stamp = os.path.join(APP_DIR, '.last-run-version')
+    try:
+        with open(os.path.join(BUNDLE_DIR, 'VERSION'), encoding='utf-8') as f:
+            current = f.read().strip()
+    except OSError:
+        return  # no version to compare against — do nothing rather than guess
+
+    try:
+        with open(stamp, encoding='utf-8') as f:
+            previous = f.read().strip()
+    except OSError:
+        previous = None
+
+    if previous == current:
+        return
+
+    # Also clear when `previous` is None. That is not only a first-ever install
+    # (where the cache dirs don't exist and this is a no-op) — it is every upgrade
+    # FROM a release that predates this stamp file, which is precisely the case
+    # that has a stale cache and no record of it. Skipping it would leave the one
+    # upgrade this exists to protect unprotected.
+    for d in _webview_cache_dirs():
+        try:
+            if os.path.isdir(d):
+                shutil.rmtree(d)
+                print(f'[launcher] Cleared webview cache on version change '
+                      f'{previous or "unknown"} -> {current}: {d}', flush=True)
+        except OSError as e:
+            print(f'[launcher] Could not clear {d} (non-fatal): {e}',
+                  file=sys.stderr, flush=True)
+
+    try:
+        with open(stamp, 'w', encoding='utf-8') as f:
+            f.write(current + '\n')
+    except OSError as e:
+        print(f'[launcher] Could not record run version (non-fatal): {e}',
+              file=sys.stderr, flush=True)
+
+
 def start_backend(args, shutdown_event):
     """Start uvicorn in a background thread via the shared start_server() path."""
     from app.main import start_server
@@ -329,6 +406,12 @@ def wait_for_backend(url: str, timeout: int = 180) -> bool:
 
 def main():
     args = parse_args()
+    # Before the window exists: if this launch is a different app version than
+    # the last one, drop any frontend the webview cached from the old release.
+    # Frozen builds only — a dev run serves from frontend/dist and has no bundle
+    # VERSION to compare. See clear_webview_cache_on_version_change().
+    if getattr(sys, 'frozen', False):
+        clear_webview_cache_on_version_change()
     # Host and port for the window URL come from args (which already reflect config defaults)
     url = f'http://{args.host}:{args.port}'
 

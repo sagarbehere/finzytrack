@@ -101,6 +101,28 @@ def setup_logging(
     logger.addHandler(file_handler)
 
 
+def _index_response(static_path: Path) -> FileResponse:
+    """Serve the SPA shell with caching disabled.
+
+    `index.html` is the one file whose URL never changes while its contents do
+    every release — it names the content-hashed asset bundles. Served without an
+    explicit directive, a webview may reuse a cached copy under its own heuristics,
+    which loads the PREVIOUS release's frontend against the current backend. That
+    is not merely cosmetic here: the upgrade handshake is client-initiated (the
+    frontend calls /api/startup/tasks; see dev-docs/upgrades.md §10), so a stale
+    shell never asks, no migration is ever detected, and the app silently reports
+    the new version while running the old UI. Observed on macOS upgrading v0.1.4 →
+    v0.2.0: the new backend served zero requests for `/` or any asset.
+
+    `no-store` keeps the decision ours rather than the webview's. The cost is one
+    small request per launch; the assets it references stay fully cacheable.
+    """
+    return FileResponse(
+        str(static_path / "index.html"),
+        headers={"Cache-Control": "no-store, must-revalidate"},
+    )
+
+
 def _check_rule_templates(logger: logging.Logger) -> None:
     """Log a warning if any rule template files are missing.
 
@@ -236,6 +258,8 @@ def create_app(
 
     static_path = Path(static_dir) if static_dir else None
     if static_path and static_path.exists():
+        # Assets keep default caching: Vite content-hashes their filenames, so a new
+        # build asks for new names and a cached old file is never wrong.
         app.mount("/assets", StaticFiles(directory=str(static_path / "assets")), name="assets")
         for item in static_path.iterdir():
             if item.is_dir() and item.name != "assets":
@@ -243,7 +267,7 @@ def create_app(
 
         @app.get("/")
         async def serve_index():
-            return FileResponse(str(static_path / "index.html"))
+            return _index_response(static_path)
     else:
         @app.get("/")
         async def root():
@@ -339,7 +363,7 @@ def create_app(
     if static_path and static_path.exists():
         @app.get("/{full_path:path}")
         async def spa_fallback(full_path: str):
-            return FileResponse(str(static_path / "index.html"))
+            return _index_response(static_path)
 
     return app
 
