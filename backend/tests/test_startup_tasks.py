@@ -113,6 +113,23 @@ def test_partial_migration_downgrades_gate_to_dismissible_notice(tmp_path: Path)
     assert after[0].severity == SEVERITY_INFO
 
 
+def test_no_gate_before_first_run_setup_completes(tmp_path: Path):
+    """A gating migration must never pre-empt the setup wizard. The frontend renders
+    the gate ahead of the router, so a legacy config on a not-yet-set-up install
+    would otherwise ask the user to migrate "their" dashboards before they had been
+    asked which currency they use."""
+    config = tmp_path / "config"
+    recipes = config / "recipes"
+    _legacy_tree(recipes)
+
+    assert build_startup_registry(config, recipes, setup_complete=False).detect() == []
+
+    # Same on-disk state, setup finished → the gate surfaces as normal.
+    tasks = build_startup_registry(config, recipes, setup_complete=True).detect()
+    assert [t.id for t in tasks] == ["recipes-upgrade"]
+    assert tasks[0].requires_consent is True
+
+
 def test_apply_unknown_task_raises(tmp_path: Path):
     reg = build_startup_registry(tmp_path / "config", tmp_path / "config" / "recipes")
     try:

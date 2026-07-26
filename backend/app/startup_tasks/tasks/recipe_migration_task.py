@@ -41,8 +41,9 @@ class RecipeMigrationTask(StartupTask):
     id = TASK_ID
     one_shot = False  # detection is data-driven; no completion marker needed
 
-    def __init__(self, recipes_dir: Path) -> None:
+    def __init__(self, recipes_dir: Path, setup_complete: bool = True) -> None:
         self._recipes_dir = recipes_dir
+        self._setup_complete = setup_complete
 
     def _base_dir(self) -> str:
         """The absolute app/working directory that `config/recipes` lives under —
@@ -51,6 +52,18 @@ class RecipeMigrationTask(StartupTask):
         return str(self._recipes_dir.resolve().parent.parent)
 
     def detect(self, consented: bool = False) -> StartupTaskInfo | None:
+        # Never gate a user who hasn't finished first-run setup. This task blocks
+        # the whole app (App.vue renders the gate ahead of the router, so ahead of
+        # the wizard), and asking someone to consent to migrating "your saved
+        # dashboards" before they have been asked which currency they use is
+        # incoherent — those files are ours, from seeding, not theirs. Deferring
+        # loses nothing: recipes are GUI-only and unreachable until setup completes,
+        # and the frontend re-detects when the wizard finishes, so a genuinely
+        # legacy config still gets its gate immediately afterwards. Mirrors the same
+        # guard in SeedContentTask.
+        if not self._setup_complete:
+            return None
+
         pending = detect_pending(self._recipes_dir)
         if pending["total"] == 0:
             return None

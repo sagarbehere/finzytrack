@@ -388,6 +388,7 @@ import {
 import FilePickerModal from '@/components/common/FilePickerModal.vue'
 import { SetupService, ApiError } from '@/services/generated-api'
 import { useConfig } from '@/composables/useConfig'
+import { useStartupTasks } from '@/composables/useStartupTasks'
 // @ts-ignore — useTheme is a .js file without type declarations
 import { useTheme } from '@/composables/useTheme'
 
@@ -396,6 +397,7 @@ useTheme()
 
 const router = useRouter()
 const { reloadConfig } = useConfig()
+const { checkStartupTasks } = useStartupTasks()
 
 // Wizard state
 const step = ref(1)
@@ -530,7 +532,13 @@ const completeSetup = async () => {
   }
 }
 
-const goTo = (path: string) => {
+const goTo = async (path: string) => {
+  // Startup tasks were detected before the wizard, when setup was still
+  // incomplete — and tasks that must not pre-empt the wizard (the dashboard-format
+  // migration, the demo-content notice) deliberately stay silent until then.
+  // Re-detect on the way out so a genuinely pending upgrade surfaces now rather
+  // than on the next launch.
+  await checkStartupTasks()
   router.push(path)
 }
 </script>

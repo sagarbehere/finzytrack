@@ -133,10 +133,14 @@ def build_startup_registry(
     New asset migrations / notices register here as additional tasks. The
     seed-content notice needs the data dir + currency (for the demo ledgers) and
     is only registered once those are known — the state object is shared so the
-    task and the registry read/write one `.upgrade-state.json`."""
+    task and the registry read/write one `.upgrade-state.json`.
+
+    `setup_complete` goes to every task that shouldn't surface during first-run
+    setup: the seed-content notice (demos are irrelevant pre-setup) and the recipe
+    migration (a gating task must not pre-empt the wizard)."""
     state = UpgradeState(config_dir)
     registry = StartupTaskRegistry(state, config_dir, data_dir)
-    registry.register(RecipeMigrationTask(recipes_dir))
+    registry.register(RecipeMigrationTask(recipes_dir, setup_complete))
     if data_dir is not None:
         registry.register(
             SeedContentTask(state, config_dir, data_dir, currency, setup_complete)
