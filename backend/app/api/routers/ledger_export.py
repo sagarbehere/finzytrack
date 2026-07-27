@@ -62,8 +62,9 @@ async def export_ledger(
 
     # Full export via transient parse
     from app.core.ledger_loader import load_ledger_checked
-    entries, errors, options = load_ledger_checked(config_manager.get_config().ledger_file)
-    result = await exporter.export_full(entries, errors, options)
+    ledger_file = config_manager.get_config().ledger_file
+    entries, errors, options = load_ledger_checked(ledger_file)
+    result = await exporter.export_full(entries, errors, options, ledger_file=str(ledger_file))
 
     export_data = ExportData(**result, db_type="sqlite")
     return success_json_response(export_data)

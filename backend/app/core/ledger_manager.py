@@ -417,7 +417,9 @@ class LedgerManager:
         if self._sqlite_exporter:
             entries, errors, options = self._parse_ledger()
             try:
-                self._sqlite_exporter.export_full_sync(entries, errors, options)
+                self._sqlite_exporter.export_full_sync(
+                    entries, errors, options, ledger_file=str(self.ledger_file)
+                )
             except Exception as e:
                 logger.error(
                     "SQLite export failed after write (data is in .beancount, "

@@ -8,6 +8,7 @@ The _query() method bundles the freshness check and connection management
 so that developers adding new read methods can't forget either one.
 """
 
+import os
 import json
 import logging
 import sqlite3
@@ -48,28 +49,73 @@ class SqliteReader:
     # ── Core query infrastructure ────────────────────────────────────────────
 
     def _needs_export(self) -> bool:
-        """Mtime check + accounts-table check. Cheap, no side effects."""
-        try:
-            ledger_mtime = self.ledger_file.stat().st_mtime
-            sqlite_mtime = self.sqlite_path.stat().st_mtime
-            if ledger_mtime > sqlite_mtime:
-                return True
-        except FileNotFoundError:
+        """The single freshness gate — cheap, no side effects, no hashing.
+
+        Rebuild the mirror iff any of:
+          * the DB file is missing;
+          * its ``meta`` row says the build didn't complete, or is absent
+            (a legacy/partial DB);
+          * the recorded ``export_version`` differs from the current one
+            (schema or export-logic changed — see EXPORT_VERSION);
+          * any recorded ledger file's (mtime_ns, size) no longer matches
+            (the ledger changed, including any ``include``d file).
+
+        When no file fingerprint was recorded (e.g. an export that wasn't given
+        the ledger path), fall back to the historical root-mtime-vs-DB check.
+        Cost on the fast path: one connection + a one-row read + a few stat()s.
+        """
+        from app.services.sqlite_exporter import EXPORT_VERSION
+
+        if not self.sqlite_path.exists():
             return True
 
-        if self.sqlite_path.exists():
+        try:
+            con = sqlite3.connect(str(self.sqlite_path))
+            con.execute("PRAGMA query_only = ON")  # read-only probe, consistent with _query
             try:
-                con = sqlite3.connect(str(self.sqlite_path))
-                con.execute("PRAGMA query_only = ON")  # read-only probe, consistent with _query
-                row = con.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'"
-                ).fetchone()
+                meta = dict(con.execute("SELECT key, value FROM meta").fetchall())
+            except sqlite3.OperationalError:
+                return True  # no meta table → legacy/partial mirror
+            finally:
                 con.close()
-                if row is None:
-                    return True
-            except Exception:
+        except Exception:
+            return True
+
+        if meta.get("build_complete") != "1":
+            return True
+        if meta.get("export_version") != EXPORT_VERSION:
+            return True
+
+        files_json = meta.get("ledger_files")
+        if not files_json:
+            # No recorded fingerprint — fall back to the old root-mtime check.
+            try:
+                return self.ledger_file.stat().st_mtime > self.sqlite_path.stat().st_mtime
+            except FileNotFoundError:
+                return True
+
+        try:
+            recorded = json.loads(files_json)
+        except (ValueError, TypeError):
+            return True
+        for entry in recorded:
+            try:
+                path_str, mtime_ns, size = entry
+                st = os.stat(path_str)
+            except (OSError, ValueError, TypeError):
+                return True
+            if st.st_mtime_ns != mtime_ns or st.st_size != size:
                 return True
         return False
+
+    def ensure_fresh(self) -> None:
+        """Public entry point for the freshness gate + locked recovery.
+
+        Used at service startup (`startup_user_services`) to rebuild the mirror
+        only when stale, instead of unconditionally. Reads go through
+        ``_ensure_fresh`` via ``_query``.
+        """
+        self._ensure_fresh()
 
     def _ensure_fresh(self) -> None:
         """Detect and recover from stale SQLite — any cause.
@@ -110,7 +156,9 @@ class SqliteReader:
         logger.warning("SQLite stale or missing tables — triggering full re-export")
         from app.core.ledger_loader import load_ledger_checked
         entries, errors, options = load_ledger_checked(self.ledger_file)
-        self.exporter.export_full_sync(entries, errors, options)
+        self.exporter.export_full_sync(
+            entries, errors, options, ledger_file=str(self.ledger_file)
+        )
 
     def _query(self, fn: Callable[[sqlite3.Connection], T]) -> T:
         """All reads go through this — freshness check + connection automatic.

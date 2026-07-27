@@ -215,7 +215,9 @@ class ConfigManager:
         try:
             from app.core.ledger_loader import load_ledger_checked
             entries, errors, options = load_ledger_checked(new_ledger_file)
-            await self._sqlite_exporter.export_full(entries, errors, options)
+            await self._sqlite_exporter.export_full(
+                entries, errors, options, ledger_file=str(new_ledger_file)
+            )
         except Exception as e:
             logger.error(f"Failed to parse new ledger after switch: {e}", exc_info=True)
             raise APIError(

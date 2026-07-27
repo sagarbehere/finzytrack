@@ -8,6 +8,7 @@ app startup) and hosted mode (lazy per-user creation via ServiceRegistry)
 call through here.
 """
 
+import asyncio
 import logging
 import shutil
 import sys
@@ -193,23 +194,22 @@ def create_user_services(config: Config, user_id: str = "local") -> UserServices
 
 
 async def startup_user_services(services: UserServices, config: Config) -> None:
-    """Run async post-creation setup (e.g. SQLite export on startup).
+    """Run async post-creation setup (SQLite mirror freshness) for a user.
 
-    Always re-exports on startup to guarantee the SQLite database reflects
-    the current ledger state, including fresh parsing errors.
+    Rebuilds the SQLite mirror **only when stale** — missing, wrong schema/export
+    version, or ledger changed — via the reader's single freshness gate
+    (``SqliteReader.ensure_fresh`` → ``_needs_export``). This is the same gate
+    the read path uses, so startup and reads can't diverge, and an unchanged
+    ledger with an up-to-date mirror pays only a few stat() calls instead of a
+    full re-parse + rebuild. That matters per-user at scale (see
+    dev-docs/multi-user.md §5, "Scale ceiling").
     """
     if config.setup_complete:
         try:
-            # Drop the SQLite file so the current schema (CREATE statements in
-            # the exporter) is what gets built. The ledger is the source of
-            # truth; the DB is a materialised view rebuilt below.
-            Path(config.sqlite_export_path).unlink(missing_ok=True)
-            from app.core.ledger_loader import load_ledger_checked
-            entries, errors, options = load_ledger_checked(config.ledger_file)
-            await services.sqlite_exporter.export_full(entries, errors, options)
-            logger.info("SQLite full-exported on startup")
+            await asyncio.to_thread(services.sqlite_reader.ensure_fresh)
+            logger.info("SQLite mirror verified fresh on startup")
         except Exception as e:
-            logger.error("Failed to export SQLite on startup: %s", e)
+            logger.error("Failed to ensure SQLite freshness on startup: %s", e)
 
 
 async def shutdown_user_services(services: UserServices) -> None:

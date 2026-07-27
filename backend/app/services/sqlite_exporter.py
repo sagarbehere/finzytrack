@@ -9,8 +9,10 @@ The exporter populates two groups of tables:
 - ledger mirror tables (new): normalized representation of all Beancount directives
   and computed state (accounts, commodities, balances, lots, prices, etc.)
 """
+import os
 import json
 import time
+import hashlib
 import asyncio
 import logging
 import sqlite3
@@ -26,6 +28,14 @@ from beancount.core.data import Transaction, Posting
 from beancount.core import data
 
 logger = logging.getLogger(__name__)
+
+
+# Bump this by 1 when you change *how* an existing column is populated without
+# changing the schema (e.g. a new way to compute account_balances). Schema
+# changes (add/remove/rename a table/column/index) are detected automatically —
+# see EXPORT_VERSION at the bottom of this module. This integer is the ONLY
+# freshness trigger a human must remember to touch.
+_EXPORT_LOGIC_VERSION = 1
 
 
 # All tables added by the CQRS expansion (does NOT include 'postings')
@@ -114,6 +124,7 @@ class SQLiteExporter:
         entries: List[Any],
         errors: List[Any],
         options: Dict[str, Any],
+        ledger_file: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Export ALL Beancount state to SQLite — postings + all ledger mirror tables.
@@ -126,6 +137,9 @@ class SQLiteExporter:
             entries: Parsed Beancount entries
             errors: Beancount parsing errors
             options: Beancount options dict
+            ledger_file: Optional source ledger path; when given, its include
+                tree is fingerprinted into the ``meta`` table (see
+                ``export_full_sync``).
 
         Returns:
             Dictionary with success, postings_count, duration_ms, etc.
@@ -134,7 +148,7 @@ class SQLiteExporter:
 
         try:
             result = await asyncio.to_thread(
-                self.export_full_sync, entries, errors, options
+                self.export_full_sync, entries, errors, options, ledger_file
             )
             duration_ms = int((time.time() - start_time) * 1000)
 
@@ -224,6 +238,59 @@ class SQLiteExporter:
             con.execute("PRAGMA temp_store=MEMORY").fetchone()
 
         return con
+
+    def _ensure_meta_table(self, con: sqlite3.Connection) -> None:
+        """Create the freshness-metadata table if absent.
+
+        Infrastructure, not part of the mirrored data schema — deliberately
+        excluded from EXPORT_VERSION so its own existence doesn't perturb the
+        schema fingerprint.
+        """
+        con.execute(
+            "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)"
+        )
+
+    def _write_meta(self, con: sqlite3.Connection, ledger_file: Optional[str]) -> None:
+        """Write the freshness stamp: export version, ledger fingerprint, and a
+        build-complete marker. Pure DML (so it stays inside the caller's
+        transaction); the table is created earlier by ``_ensure_meta_table``."""
+        files_json = (
+            json.dumps(self._ledger_fingerprint(ledger_file)) if ledger_file else None
+        )
+        rows = [
+            ("export_version", EXPORT_VERSION),
+            ("ledger_files", files_json),
+            ("built_at", datetime.utcnow().isoformat() + "Z"),
+            ("build_complete", "1"),
+        ]
+        con.execute("DELETE FROM meta")
+        con.executemany("INSERT INTO meta(key, value) VALUES (?, ?)", rows)
+
+    @staticmethod
+    def _ledger_fingerprint(ledger_file: str) -> List[list]:
+        """Return ``[[path, mtime_ns, size], ...]`` for the ledger's whole
+        include tree. Integer mtime_ns + size avoid float-equality pitfalls and
+        keep the reader's freshness check to cheap stat() calls (no hashing)."""
+        from app.core.ledger_loader import discover_includes_per_file
+
+        files: set[str] = {str(Path(ledger_file).resolve())}
+        try:
+            include_map = discover_includes_per_file(ledger_file)
+            for parent, children in include_map.items():
+                files.add(parent)
+                files.update(children)
+        except Exception:
+            # Best-effort: if include discovery fails, fingerprint just the root.
+            pass
+
+        result: List[list] = []
+        for f in sorted(files):
+            try:
+                st = os.stat(f)
+            except OSError:
+                continue
+            result.append([f, st.st_mtime_ns, st.st_size])
+        return result
 
     def _ensure_postings_table(self, con: sqlite3.Connection) -> None:
         """Create the postings table and indexes if they don't exist."""
@@ -1117,6 +1184,7 @@ class SQLiteExporter:
         entries: List[Any],
         errors: List[Any],
         options: Dict[str, Any],
+        ledger_file: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Synchronous full-export entry point.
 
@@ -1125,12 +1193,20 @@ class SQLiteExporter:
         ``export_full`` via ``asyncio.to_thread``. Both callers are expected
         to hold their user's write lock for the duration to prevent
         re-export stampedes and races against in-flight writes.
+
+        ``ledger_file`` (optional): when given, the ledger's include tree is
+        fingerprinted (path + mtime + size) and recorded in the ``meta`` table
+        as part of this same transaction, so the reader can later tell — with
+        only cheap stat() calls — whether the mirror is still current. Callers
+        on the write/recovery path pass it; callers that don't (e.g. tests)
+        still produce a valid mirror, just without the ledger fingerprint.
         """
         transactions = [e for e in entries if isinstance(e, Transaction)]
 
         con = self._open_connection()
         self._ensure_postings_table(con)
         self._ensure_new_tables(con)
+        self._ensure_meta_table(con)
 
         try:
             # Existing postings export (unchanged logic)
@@ -1139,6 +1215,10 @@ class SQLiteExporter:
 
             # New: full ledger export (same atomic transaction)
             self._export_full_ledger(con, entries, errors, options)
+
+            # Freshness stamp — written last, inside the same transaction, so
+            # "build_complete" + fingerprint appear atomically with the data.
+            self._write_meta(con, ledger_file)
 
             con.commit()
             logger.info(
@@ -1332,3 +1412,36 @@ class SQLiteExporter:
         if txn.meta and 'content_hash' in txn.meta:
             return str(txn.meta['content_hash'])
         return None
+
+
+def _compute_export_version() -> str:
+    """Fingerprint the mirror-building code: a hash of the schema DDL this
+    exporter produces, combined with the manual logic-version integer.
+
+    Computed once at module import (see EXPORT_VERSION). Runs the real schema
+    builders against a throwaway in-memory SQLite and hashes the resulting DDL
+    from ``sqlite_master`` — so it needs no source-file access (works in a
+    PyInstaller bundle) and changes automatically whenever a table/column/index
+    changes. The ``meta`` table is intentionally excluded (infrastructure, not
+    mirrored data). A schema change bumps this for free; a same-schema change to
+    how values are computed requires bumping ``_EXPORT_LOGIC_VERSION``.
+    """
+    con = sqlite3.connect(":memory:")
+    try:
+        probe = SQLiteExporter(":memory:")
+        probe._ensure_postings_table(con)
+        probe._ensure_new_tables(con)
+        rows = con.execute(
+            "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL "
+            "ORDER BY type, name"
+        ).fetchall()
+        ddl = "\n".join(r[0] for r in rows)
+    finally:
+        con.close()
+    digest = hashlib.sha256(ddl.encode("utf-8")).hexdigest()[:16]
+    return f"{digest}:{_EXPORT_LOGIC_VERSION}"
+
+
+# Computed once per process at import time; compared per-check against the value
+# stored in the mirror's ``meta`` table to detect schema/logic drift.
+EXPORT_VERSION = _compute_export_version()
