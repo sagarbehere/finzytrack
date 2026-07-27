@@ -108,22 +108,27 @@ class SqliteReader:
                 return True
         return False
 
-    def ensure_fresh(self) -> None:
+    def ensure_fresh(self) -> bool:
         """Public entry point for the freshness gate + locked recovery.
 
         Used at service startup (`startup_user_services`) to rebuild the mirror
         only when stale, instead of unconditionally. Reads go through
-        ``_ensure_fresh`` via ``_query``.
+        ``_ensure_fresh`` via ``_query``. Returns ``True`` if a rebuild was
+        performed, ``False`` if the mirror was already fresh.
         """
-        self._ensure_fresh()
+        return self._ensure_fresh()
 
-    def _ensure_fresh(self) -> None:
+    def _ensure_fresh(self) -> bool:
         """Detect and recover from stale SQLite — any cause.
 
         Catches: failed exports, external edits to the .beancount file,
-        crash between write and export, manual file manipulation,
-        and missing CQRS tables (legacy export that only created postings).
-        Cost on the fast path: one stat() call (~1µs).
+        crash between write and export, manual file manipulation, schema/export
+        drift, and missing CQRS tables. Fast path (already fresh): one
+        connection + a one-row ``meta`` read + a few stat()s (see
+        ``_needs_export``); no hashing.
+
+        Returns ``True`` if a rebuild was performed, ``False`` if the mirror was
+        already fresh — so callers (e.g. startup) can log which happened.
 
         On a miss we acquire the per-user write lock before re-exporting so
         that (a) concurrent stale-detect readers serialise instead of all
@@ -133,7 +138,7 @@ class SqliteReader:
         the work while we were blocked.
         """
         if not self._needs_export():
-            return
+            return False
 
         # No lock wired (test-only construction): preserve the historical
         # unlocked behaviour. Logged once so it's diagnosable.
@@ -143,14 +148,15 @@ class SqliteReader:
                 "serialisation; this is only safe in single-threaded tests"
             )
             self._do_recovery_export()
-            return
+            return True
 
         with self.write_lock.acquire("sqlite_stale_recovery"):
             # Double-check inside the lock: another thread may have just
             # finished the same recovery.
             if not self._needs_export():
-                return
+                return False
             self._do_recovery_export()
+            return True
 
     def _do_recovery_export(self) -> None:
         logger.warning("SQLite stale or missing tables — triggering full re-export")

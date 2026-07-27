@@ -103,7 +103,7 @@ class TestEnsureFresh:
         calls = []
         orig = exporter.export_full_sync
         exporter.export_full_sync = lambda *a, **k: (calls.append(1), orig(*a, **k))[1]
-        reader.ensure_fresh()
+        assert reader.ensure_fresh() is False, "ensure_fresh should report no rebuild"
         assert calls == [], "ensure_fresh rebuilt an already-fresh mirror"
 
     def test_ensure_fresh_rebuilds_when_stale(self, wired):
@@ -113,6 +113,6 @@ class TestEnsureFresh:
         con.commit()
         con.close()
         assert reader._needs_export() is True
-        reader.ensure_fresh()
+        assert reader.ensure_fresh() is True, "ensure_fresh should report a rebuild"
         # After recovery the mirror is current again.
         assert reader._needs_export() is False

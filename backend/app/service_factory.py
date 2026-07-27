@@ -206,8 +206,11 @@ async def startup_user_services(services: UserServices, config: Config) -> None:
     """
     if config.setup_complete:
         try:
-            await asyncio.to_thread(services.sqlite_reader.ensure_fresh)
-            logger.info("SQLite mirror verified fresh on startup")
+            rebuilt = await asyncio.to_thread(services.sqlite_reader.ensure_fresh)
+            if rebuilt:
+                logger.info("SQLite mirror was stale on startup — rebuilt")
+            else:
+                logger.info("SQLite mirror already fresh on startup — no rebuild")
         except Exception as e:
             logger.error("Failed to ensure SQLite freshness on startup: %s", e)
 
