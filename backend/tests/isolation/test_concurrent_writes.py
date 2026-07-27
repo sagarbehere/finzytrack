@@ -14,11 +14,43 @@ correctness check, not a stress test.
 """
 
 import threading
+import time
+from datetime import date
+from pathlib import Path
 
 import pytest
 
+from app.core.backup_manager import BackupManager
+from app.core.ledger_initializer import LedgerInitializer
+from app.core.ledger_manager import LedgerManager
+from app.write_lock import WriteLockManager
+from app.schemas.account_schemas import AccountCreateRequest
+
 
 ALICE = {"X-User-ID": "alice"}
+
+
+def _manager_with_lock(config) -> LedgerManager:
+    """A LedgerManager wired with a real (file-backed) WriteLockManager,
+    mirroring production wiring (service_factory)."""
+    backup_manager = BackupManager(
+        backup_dir=Path(config.backup_dir),
+        retention_count=config.backup.retention_count,
+    )
+    ledger_initializer = LedgerInitializer(
+        ledger_file=config.ledger_file,
+        default_currency=config.accounts.default_currency,
+        backup_manager=backup_manager,
+    )
+    write_lock = WriteLockManager(
+        user_id="local", lock_file=Path(config.write_lock_path)
+    )
+    return LedgerManager(
+        ledger_file=config.ledger_file,
+        backup_manager=backup_manager,
+        ledger_initializer=ledger_initializer,
+        write_lock=write_lock,
+    )
 
 
 class TestConcurrentWrites:
@@ -89,3 +121,67 @@ class TestConcurrentWrites:
         assert not lost, (
             f"Pre-existing accounts were lost after concurrent writes: {lost}"
         )
+
+
+class TestLostUpdatePrevention:
+    """The write lock must cover the whole read-modify-write, not just the
+    file write, so a concurrent mutation can't clobber another's update.
+
+    Spec: given two concurrent mutations of the same ledger, both must
+    persist. This test *forces* the interleaving that produces a lost
+    update when the parse happens outside the lock (the pre-fix bug):
+    thread A is held inside its write step while thread B runs its entire
+    mutation. With parse-outside-lock, B parses the pre-A snapshot and its
+    rewrite drops A's account. With parse-inside-lock, B blocks until A is
+    fully done. This test fails on the old code and passes on the fixed code.
+    """
+
+    def test_forced_interleave_preserves_both_updates(self, config, monkeypatch):
+        mgr = _manager_with_lock(config)
+
+        # Widen A's critical section: pause inside the actual file write,
+        # signalling once A is in. Under the fix, A holds the lock across its
+        # parse+write for this whole window, so B cannot parse a stale snapshot.
+        orig_do_write = mgr._do_write_entries
+        entered_write = threading.Event()
+
+        def slow_write(entries, options=None):
+            entered_write.set()
+            time.sleep(0.4)
+            return orig_do_write(entries, options)
+
+        monkeypatch.setattr(mgr, "_do_write_entries", slow_write)
+
+        errors: dict[str, str] = {}
+
+        def make(name: str, key: str):
+            try:
+                mgr.create_account_directive(
+                    AccountCreateRequest(
+                        name=name, open_date=date(2024, 1, 1), currencies=["USD"]
+                    )
+                )
+            except Exception as e:  # noqa: BLE001 - surface any failure to the assert
+                errors[key] = repr(e)
+
+        t_a = threading.Thread(target=make, args=("Assets:RaceA", "a"))
+        t_a.start()
+        assert entered_write.wait(timeout=5), "thread A never reached the write step"
+
+        # A is now inside its write window. Start B; under the old code its
+        # parse would race here and lose A's update.
+        t_b = threading.Thread(target=make, args=("Assets:RaceB", "b"))
+        t_b.start()
+
+        t_a.join(timeout=10)
+        t_b.join(timeout=10)
+        assert not t_a.is_alive() and not t_b.is_alive(), "a thread deadlocked"
+        assert not errors, f"unexpected errors: {errors}"
+
+        # Fresh parse from disk — both accounts must have survived.
+        entries, _, _ = mgr._parse_ledger()
+        opened = {
+            e.account for e in entries if type(e).__name__ == "Open"
+        }
+        assert "Assets:RaceA" in opened, "thread A's update was lost"
+        assert "Assets:RaceB" in opened, "thread B's update was lost"

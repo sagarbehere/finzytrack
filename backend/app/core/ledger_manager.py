@@ -12,6 +12,7 @@ creation, account/transaction/commodity/balance CRUD.
 """
 
 import os
+import functools
 import logging
 from collections import defaultdict
 from pathlib import Path
@@ -38,6 +39,31 @@ from app.schemas.commodity_schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _serialized_write(method):
+    """Hold the per-user write lock across an entire read-modify-write.
+
+    Every ledger mutation is: ``_parse_ledger()`` (read current state) →
+    mutate the in-memory entry list → ``_write_and_export()`` (rewrite +
+    re-export). Without this decorator the lock is taken only for the write
+    itself, so two concurrent mutations can each parse the *same* pre-write
+    snapshot and the second rewrite silently clobbers the first (a lost
+    update — not corruption). Wrapping the whole method makes parse+write one
+    critical section.
+
+    The lock is reentrant per thread (``WriteLockManager`` uses an ``RLock``
+    plus a depth-guarded file lock), so the inner ``_write_entries`` acquire
+    is a safe no-op while this outer hold is active. Mutations that call other
+    decorated mutations (reentrant nesting) are likewise safe.
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        if self._write_lock is not None:
+            with self._write_lock.acquire(method.__name__):
+                return method(self, *args, **kwargs)
+        return method(self, *args, **kwargs)
+    return wrapper
 
 
 class LedgerManager:
@@ -398,6 +424,7 @@ class LedgerManager:
                     "will be recovered on next read): %s", e
                 )
 
+    @_serialized_write
     def append_entries(self, new_entries) -> None:
         """Append new entries via a full rewrite through _write_and_export()."""
         entries, errors, options = self._parse_ledger()
@@ -406,6 +433,7 @@ class LedgerManager:
 
     # ── Account management (orchestrator: parse → engine → write) ────────────
 
+    @_serialized_write
     def create_account_directive(self, request: AccountCreateRequest) -> AccountCreateData:
         if not self.validate_account_format(request.name):
             raise ValueError(f"Invalid account format: {request.name}")
@@ -440,6 +468,7 @@ class LedgerManager:
             message=f"Account '{request.name}' created successfully",
         )
 
+    @_serialized_write
     def update_account_directive(
         self,
         account_name: str,
@@ -465,6 +494,7 @@ class LedgerManager:
         )
         self._write_and_export(new_entries, errors, options)
 
+    @_serialized_write
     def close_account_directive(self, account_name: str, close_date, reason: Optional[str] = None) -> None:
         entries, errors, options = self._parse_ledger()
         new_entries = self.engine.close_account(
@@ -475,11 +505,13 @@ class LedgerManager:
         )
         self._write_and_export(new_entries, errors, options)
 
+    @_serialized_write
     def reopen_account_directive(self, account_name: str) -> None:
         entries, errors, options = self._parse_ledger()
         new_entries = self.engine.reopen_account(list(entries), account_name)
         self._write_and_export(new_entries, errors, options)
 
+    @_serialized_write
     def delete_account_directive(self, account_name: str) -> None:
         """Remove Open/Close directives only (no transaction deletion)."""
         entries, errors, options = self._parse_ledger()
@@ -492,6 +524,7 @@ class LedgerManager:
         ]
         self._write_and_export(new_entries, errors, options)
 
+    @_serialized_write
     def delete_account(self, account_name: str, delete_transactions: bool = True) -> int:
         entries, errors, options = self._parse_ledger()
         remaining, txn_deleted = self.engine.delete_account(
@@ -503,6 +536,7 @@ class LedgerManager:
 
     # ── Budget management (custom "budget" directives) ──────────────────────
 
+    @_serialized_write
     def create_budget_directive(
         self, *, date_obj, account: str, interval: str, amount, currency: str,
     ) -> None:
@@ -521,6 +555,7 @@ class LedgerManager:
                 return i
         return None
 
+    @_serialized_write
     def update_budget_directive(
         self, budget_id_str: str, *, date_obj, account: str, interval: str, amount, currency: str,
     ) -> bool:
@@ -540,6 +575,7 @@ class LedgerManager:
         self._write_and_export(new_entries, errors, options)
         return True
 
+    @_serialized_write
     def delete_budget_directive(self, budget_id_str: str) -> bool:
         """Remove the budget directive identified by ``budget_id_str``. Returns
         False if no such directive exists."""
@@ -553,6 +589,7 @@ class LedgerManager:
 
     # ── Commodity management ────────────────────────────────────────────────
 
+    @_serialized_write
     def create_commodity_directive(self, request: CommodityCreateRequest) -> CommodityCreateData:
         entries, errors, options = self._parse_ledger()
 
@@ -579,6 +616,7 @@ class LedgerManager:
 
     # ── Document directive management (account-level documents) ──────────────
 
+    @_serialized_write
     def create_document_attachment(
         self,
         *,
@@ -608,6 +646,7 @@ class LedgerManager:
         )
         self._write_and_export(new_entries, errors, options)
 
+    @_serialized_write
     def delete_document_directive(self, *, account_name: str, filename: str) -> int:
         """Remove the ``Document`` directive(s) matching account + filename.
 
@@ -636,6 +675,7 @@ class LedgerManager:
             self._write_and_export(remaining, errors, options)
         return removed
 
+    @_serialized_write
     def ensure_documents_option(self, documents_root: "Path") -> bool:
         """Write ``option "documents" "<rel>"`` into the ledger if it has none.
 
@@ -727,6 +767,7 @@ class LedgerManager:
     def compute_hash_from_transaction(self, txn: Transaction) -> Tuple[str, str]:
         return self.engine.compute_hash_from_transaction(txn)
 
+    @_serialized_write
     def update_transactions_by_id(self, transactions: List[Tuple[str, Transaction]]) -> int:
         entries, errors, options = self._parse_ledger()
         updated_entries, count = self.engine.update_transactions(list(entries), transactions)
@@ -734,6 +775,7 @@ class LedgerManager:
         logger.info(f"Updated {count} transactions in ledger")
         return count
 
+    @_serialized_write
     def delete_transactions_by_id(self, transaction_ids: List[str]) -> int:
         entries, errors, options = self._parse_ledger()
         remaining, count = self.engine.delete_transactions(list(entries), transaction_ids)
@@ -741,6 +783,7 @@ class LedgerManager:
         logger.info(f"Deleted {count} transaction(s) from ledger")
         return count
 
+    @_serialized_write
     def delete_transactions_for_account(self, account_name: str) -> int:
         entries, errors, options = self._parse_ledger()
         remaining, count = self.engine.delete_transactions_for_account(list(entries), account_name)
@@ -755,6 +798,7 @@ class LedgerManager:
 
     # ── Balance & pad directive management ──────────────────────────────────
 
+    @_serialized_write
     def add_balance_directive(self, account_name: str, request: BalanceDirectiveCreateRequest) -> None:
         entries, errors, options = self._parse_ledger()
 
@@ -778,6 +822,7 @@ class LedgerManager:
         )
         self._write_and_export(new_entries, errors, options)
 
+    @_serialized_write
     def update_balance_directive(self, account_name: str, request: BalanceDirectiveUpdateRequest) -> None:
         entries, errors, options = self._parse_ledger()
 
@@ -804,6 +849,7 @@ class LedgerManager:
         )
         self._write_and_export(new_entries, errors, options)
 
+    @_serialized_write
     def delete_balance_directive(
         self, account_name: str,
         directive_date: str, currency: str, amount: Decimal,

@@ -14,6 +14,15 @@ Two layers of locking:
    desktop launcher, accidental double-launch, future hosted multi-worker
    deployment). The lock file is per-user (lives in the user's data dir).
 
+The lock is **reentrant per thread**. A single read-modify-write holds the
+lock across the whole ``parse → mutate → write → export`` sequence (see
+``LedgerManager._serialized_write``); the ``_write_entries`` step re-acquires
+the same lock from the same thread, which must not deadlock. The intra-process
+layer is a ``threading.RLock`` (reentrant by construction) and the
+inter-process ``portalocker`` file lock is taken only on the *outermost*
+acquire (depth 1) and released when it unwinds — nested acquires skip it,
+because the thread already holds the file lock.
+
 What this does NOT protect against:
 - External writers that don't cooperate with our lock (e.g. ``$EDITOR``
   editing ``.beancount`` directly). File locks are advisory in
@@ -50,7 +59,10 @@ class WriteLockManager:
         user_id: str = "local",
         lock_file: Optional[Path] = None,
     ) -> None:
-        self._lock = threading.Lock()
+        # RLock so a read-modify-write can hold the lock across parse+write
+        # while the inner _write_entries re-acquires from the same thread.
+        self._lock = threading.RLock()
+        self._depth = 0
         self._user_id = user_id
         self._lock_file = Path(lock_file) if lock_file is not None else None
         if self._lock_file is not None:
@@ -62,8 +74,14 @@ class WriteLockManager:
     def acquire(self, operation: str = "write") -> Generator[None, None, None]:
         logger.debug("[%s] Acquiring write lock for %s", self._user_id, operation)
         self._lock.acquire()
+        self._depth += 1
+        # Nested (reentrant) acquire by the same thread: the intra-process
+        # RLock already serialises, and this thread already holds the
+        # inter-process file lock from the outermost acquire — re-taking it
+        # on a fresh handle could deadlock, so skip it.
+        reentrant = self._depth > 1
         try:
-            if self._lock_file is None:
+            if self._lock_file is None or reentrant:
                 yield
                 return
             # Open the sidecar in append mode so it auto-creates without
@@ -75,5 +93,6 @@ class WriteLockManager:
                 finally:
                     portalocker.unlock(fp)
         finally:
+            self._depth -= 1
             self._lock.release()
             logger.debug("[%s] Released write lock for %s", self._user_id, operation)
