@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Dict, Any, Iterator, List, Optional, Tuple
 from decimal import Decimal
-from datetime import datetime, date
+from datetime import datetime, date, UTC
 
 from app.core.constants import SOURCE_ACCOUNT_TYPES, INCOME_STATEMENT_PREFIXES
 
@@ -28,6 +28,11 @@ from beancount.core.data import Transaction, Posting
 from beancount.core import data
 
 logger = logging.getLogger(__name__)
+
+
+def _utc_now_iso() -> str:
+    """Current UTC time as an ISO-8601 string with a ``Z`` suffix."""
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 # Bump this by 1 when you change *how* an existing column is populated without
@@ -112,7 +117,7 @@ class SQLiteExporter:
                 "transactions_count": result["transactions_count"],
                 "duration_ms": duration_ms,
                 "path": str(self.sqlite_path),
-                "last_sync": datetime.utcnow().isoformat() + "Z"
+                "last_sync": _utc_now_iso()
             }
 
         except Exception as e:
@@ -158,7 +163,7 @@ class SQLiteExporter:
                 "transactions_count": result["transactions_count"],
                 "duration_ms": duration_ms,
                 "path": str(self.sqlite_path),
-                "last_sync": datetime.utcnow().isoformat() + "Z",
+                "last_sync": _utc_now_iso(),
             }
 
         except Exception as e:
@@ -260,7 +265,7 @@ class SQLiteExporter:
         rows = [
             ("export_version", EXPORT_VERSION),
             ("ledger_files", files_json),
-            ("built_at", datetime.utcnow().isoformat() + "Z"),
+            ("built_at", _utc_now_iso()),
             ("build_complete", "1"),
         ]
         con.execute("DELETE FROM meta")
