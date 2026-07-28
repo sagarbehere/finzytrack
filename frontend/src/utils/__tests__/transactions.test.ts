@@ -44,6 +44,44 @@ describe('isTransactionBalanced', () => {
     expect(isTransactionBalanced(tx)).toBe(true)
   })
 
+  it('balanced: cost wins over price when a posting has both (sell with lot + price)', () => {
+    // Real-world regression: selling a lot records both the cost basis {1.46 USD}
+    // and the sale price @ 4.20 USD on the same reducing posting. Beancount balances
+    // on the cost (-5000 × 1.46 = -7300), not the price. If price were used instead
+    // (-5000 × 4.20 = -21000) the transaction would falsely appear unbalanced.
+    const tx = makeTx({
+      postings: [
+        {
+          amount: toMoney(-5000),
+          currency: 'AUR',
+          cost: { amount: toMoney(1.46), currency: 'USD' },
+          price: { amount: toMoney(4.2), currency: 'USD', type: '@' },
+        },
+        { amount: toMoney(21000), currency: 'USD' },
+        { amount: toMoney(-13700), currency: 'USD' },
+      ],
+    })
+    expect(isTransactionBalanced(tx)).toBe(true)
+  })
+
+  it('unbalanced: cost+price posting that genuinely does not balance still fails', () => {
+    // Same shape as above but the USD legs no longer offset the cost weight,
+    // confirming the cost-first path doesn't blanket-pass costed postings.
+    const tx = makeTx({
+      postings: [
+        {
+          amount: toMoney(-5000),
+          currency: 'AUR',
+          cost: { amount: toMoney(1.46), currency: 'USD' },
+          price: { amount: toMoney(4.2), currency: 'USD', type: '@' },
+        },
+        { amount: toMoney(21000), currency: 'USD' },
+        { amount: toMoney(-14000), currency: 'USD' },
+      ],
+    })
+    expect(isTransactionBalanced(tx)).toBe(false)
+  })
+
   it('balanced: per-unit price (@)', () => {
     const tx = makeTx({
       postings: [

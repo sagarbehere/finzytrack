@@ -27,7 +27,16 @@ export function isTransactionBalanced(transaction: TransactionViewModel): boolea
     let effectiveCurrency: string
     let effectiveAmount: Money
 
-    if (posting.price?.amount && posting.price?.currency) {
+    // Cost takes precedence over price: Beancount's balancing weight for a
+    // posting with a lot is units × cost. A price alongside a cost is a
+    // documentary annotation (used for gain/loss elsewhere), not for balancing,
+    // so it must not override the cost here. Price is only the balancing weight
+    // when there is no cost (e.g. a plain currency conversion, 100 EUR @ 1.08 USD).
+    if (posting.cost?.amount && posting.cost?.currency) {
+      effectiveCurrency = posting.cost.currency
+      effectiveAmount = mul(amount, posting.cost.amount)
+      pricedUnits = add(pricedUnits, abs(amount))
+    } else if (posting.price?.amount && posting.price?.currency) {
       effectiveCurrency = posting.price.currency
       if (posting.price.type === '@@') {
         // @@ = total price: sign follows the posting amount
@@ -36,10 +45,6 @@ export function isTransactionBalanced(transaction: TransactionViewModel): boolea
         // @ = per-unit price (default)
         effectiveAmount = mul(amount, posting.price.amount)
       }
-      pricedUnits = add(pricedUnits, abs(amount))
-    } else if (posting.cost?.amount && posting.cost?.currency) {
-      effectiveCurrency = posting.cost.currency
-      effectiveAmount = mul(amount, posting.cost.amount)
       pricedUnits = add(pricedUnits, abs(amount))
     } else {
       effectiveCurrency = posting.currency || 'UNKNOWN'
