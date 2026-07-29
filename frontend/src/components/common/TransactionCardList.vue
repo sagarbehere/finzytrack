@@ -18,11 +18,13 @@
             />
           </div>
 
-          <!-- Documents -->
-          <div v-if="isColumnVisible('documents')" class="flex items-center justify-between px-4 py-2">
-            <span class="text-xs font-medium text-gray-500 dark:text-gray-400">Documents</span>
-            <DocumentBadge
+          <!-- Details (documents + metadata) — the paperclip lives with Status
+               ("Info") on desktop; on mobile it gets its own labelled row. -->
+          <div v-if="isColumnVisible('status')" class="flex items-center justify-between px-4 py-2">
+            <span class="text-xs font-medium text-gray-500 dark:text-gray-400">Details</span>
+            <DetailsBadge
               :transaction="transaction"
+              :details-mode="enableBulkEdit"
               @document-click="(id: string) => emit('openDocuments', id)"
             />
           </div>
@@ -330,7 +332,7 @@ import AccountDropdown from '@/components/common/AccountDropdown.vue'
 import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
 import PriceTypeDropdown from '@/components/common/PriceTypeDropdown.vue'
 import TransactionStatusIndicator from '@/components/common/TransactionStatusIndicator.vue'
-import DocumentBadge from '@/components/documents/DocumentBadge.vue'
+import DetailsBadge from '@/components/documents/DetailsBadge.vue'
 import type { TransactionViewModel, ImportContext, LedgerContext } from '@/types/transactions'
 import { sign, toFixed, toMoney, type Money } from '@/utils/money'
 
@@ -340,10 +342,14 @@ interface Props {
   editable?: boolean
   importContext?: Map<string, ImportContext>
   ledgerContext?: Map<string, LedgerContext>
+  // Transactions view: the Details drawer also edits metadata (drives the badge
+  // tooltip/active state). Off = documents only (Import).
+  enableBulkEdit?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   editable: false,
+  enableBulkEdit: false,
 })
 
 const emit = defineEmits<{

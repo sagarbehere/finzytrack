@@ -69,6 +69,7 @@
         :show-column-filters="false"
         :show-summary="true"
         :column-control-align="'right'"
+        :enable-bulk-edit="true"
         @transactions-updated="handleTransactionsUpdated"
         @transaction-deleted="handleTransactionDeleted"
       />

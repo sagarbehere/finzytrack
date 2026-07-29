@@ -14,6 +14,22 @@
     />
 
 
+    <!-- Bulk edit: operation summary (staged changes) + action bar (on selection) -->
+    <template v-if="enableBulkEdit">
+      <OperationSummary :operations="store.operationLog.value" @undo="undoBulkOp" />
+      <BulkActionBar
+        v-if="selectedCount > 0"
+        :selected-count="selectedCount"
+        :accounts-in-selection="accountsInSelection"
+        :editable-meta-keys-in-selection="editableMetaKeysInSelection"
+        :tags-in-selection="tagsInSelection"
+        :links-in-selection="linksInSelection"
+        @apply="applyBulkOp"
+        @delete="bulkDelete"
+        @clear="clearSelection"
+      />
+    </template>
+
     <!-- Table Controls -->
     <div class="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
       <!-- Global search bar (when enabled) -->
@@ -35,6 +51,18 @@
 
       <!-- Right side: transaction count and column visibility controls -->
       <div class="flex items-center gap-4">
+        <button
+          v-if="enableBulkEdit && hasModifiedRows"
+          type="button"
+          @click="showDiff = !showDiff"
+          class="rounded-md px-2.5 py-1.5 text-sm font-medium shadow-xs inset-ring inset-ring-gray-300 dark:inset-ring-white/10"
+          :class="showDiff
+            ? 'bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-200'
+            : 'bg-white text-gray-900 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:hover:bg-white/20'"
+        >
+          {{ showDiff ? 'Hide changes' : 'Show changes' }}
+        </button>
+
         <div class="text-sm text-gray-700 dark:text-gray-300">
           Showing {{ filteredTransactions.length }} {{ filteredTransactions.length === 1 ? 'transaction' : 'transactions' }}
         </div>
@@ -52,7 +80,7 @@
     <!-- Desktop: Table layout (md and above) -->
     <div v-if="isMd" class="overflow-hidden rounded-lg ring-1 ring-gray-200 dark:ring-white/10">
       <div class="table-scroll-container">
-        <table class="w-full table-fixed">
+        <table class="w-full table-fixed" :class="{ 'has-select-col': enableBulkEdit }">
           <!-- Table Header -->
           <thead class="bg-gray-50 dark:bg-gray-800/50">
             <tr v-for="headerGroup in table.getHeaderGroups()" :key="headerGroup.id">
@@ -104,6 +132,7 @@
                     :style="{ width: `${cell.column.getSize()}px` }"
                     :class="[
                       getCellClasses(cell),
+                      showDiff && cellDiffOld(cell, row.original) ? 'diff-cell' : '',
                       dragOverTransactionId === row.original.transaction.id
                         ? '!bg-indigo-50 dark:!bg-indigo-900/30'
                         : ''
@@ -111,7 +140,11 @@
                     @keydown.capture="(e) => handleCellKeydown(e, cell, row.original)"
                     @click="(e) => handleCellClick(e, cell, row.original)"
                   >
-                    <FlexRender :render="cell.column.columnDef.cell" :props="cell.getContext()" />
+                    <div v-if="showDiff && cellDiffOld(cell, row.original)" class="flex flex-col gap-0.5 py-1 text-sm leading-tight">
+                      <span class="text-red-600 line-through decoration-red-400 break-words dark:text-red-400">{{ cellDiffOld(cell, row.original) }}</span>
+                      <span class="font-medium text-green-700 break-words dark:text-green-400">{{ cellDiffNew(cell, row.original) }}</span>
+                    </div>
+                    <FlexRender v-else :render="cell.column.columnDef.cell" :props="cell.getContext()" />
                   </td>
                 </template>
               </tr>
@@ -127,6 +160,7 @@
       :transactions="filteredTransactions"
       :column-visibility="columnVisibility"
       :editable="editable"
+      :enable-bulk-edit="enableBulkEdit"
       :import-context="importContext"
       :ledger-context="ledgerContext"
       @update-field="handleUpdateField"
@@ -141,6 +175,8 @@
     <TransactionDocumentsDrawer
       :open="documentsDrawerOpen"
       :transaction="documentsDrawerTx"
+      :show-metadata="enableBulkEdit"
+      :baseline-meta="documentsDrawerBaselineMeta"
       @update:open="documentsDrawerOpen = $event"
       @changed="onDocumentsDrawerChanged"
     />
@@ -169,12 +205,15 @@ import AccountDropdown from '@/components/common/AccountDropdown.vue'
 import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
 import PriceTypeDropdown from '@/components/common/PriceTypeDropdown.vue'
 import TransactionStatusIndicator from '@/components/common/TransactionStatusIndicator.vue'
-import DocumentBadge from '@/components/documents/DocumentBadge.vue'
+import DetailsBadge from '@/components/documents/DetailsBadge.vue'
 import TransactionDocumentsDrawer from '@/components/documents/TransactionDocumentsDrawer.vue'
 import ColumnVisibilityControl from '@/components/common/ColumnVisibilityControl.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import TransactionTableSummary from '@/components/common/TransactionTableSummary.vue'
 import TransactionCardList from '@/components/common/TransactionCardList.vue'
+import BulkActionBar from '@/components/transactions/BulkActionBar.vue'
+import OperationSummary from '@/components/transactions/OperationSummary.vue'
+import { isEditableMetaKey, type BulkOperation } from '@/utils/bulkOperations'
 import { useTableColumns } from '@/composables/useTableColumns'
 import { useTableKeyboardNavigation } from '@/composables/useTableKeyboardNavigation'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
@@ -203,6 +242,10 @@ interface Props {
   showSummary?: boolean
   editable?: boolean
   columnControlAlign?: 'left' | 'right'
+  // Enables per-transaction selection, the bulk action bar, and the operation
+  // summary. Off by default so the Import flow (which shares this table) is
+  // unaffected; the Transactions view opts in.
+  enableBulkEdit?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -212,6 +255,7 @@ const props = withDefaults(defineProps<Props>(), {
   showSummary: true,
   editable: true,
   columnControlAlign: 'left',
+  enableBulkEdit: false,
 })
 
 // Define emits
@@ -266,6 +310,11 @@ const documentsDrawerTxId = ref<string | null>(null)
 // after the parent persists/stages a document change.
 const documentsDrawerTx = computed<TransactionViewModel | null>(
   () => store.transactions.value.find(t => t.id === documentsDrawerTxId.value) ?? null
+)
+// Last-saved meta for the open transaction, so the drawer can show removed /
+// renamed / changed metadata as a diff against what's staged.
+const documentsDrawerBaselineMeta = computed<Record<string, string> | null>(
+  () => store.editBaseline.value.find(t => t.id === documentsDrawerTxId.value)?.meta ?? null
 )
 const dragOverTransactionId = ref<string | null>(null)
 
@@ -334,8 +383,10 @@ watch(() => props.transactions, (newVal) => {
     isOwnEmit = false
     return
   }
-  // Genuinely new data from parent — sync into the store
+  // Genuinely new data from parent — sync into the store and drop any stale
+  // selection (the underlying set changed).
   store.replaceTransactions(newVal)
+  clearSelection()
 })
 
 // Wrapped mutation methods — call store then emit to parent
@@ -438,6 +489,127 @@ const filteredTransactions = computed(() => {
   })
 })
 
+// ── Bulk selection & operations (enableBulkEdit only) ────────────────────────
+// Selection is per transaction (id), over the currently loaded/filtered set.
+const selectedTxIds = ref<Set<string>>(new Set())
+const clearSelection = () => { selectedTxIds.value = new Set() }
+
+const toggleRowSelection = (txId: string) => {
+  const next = new Set(selectedTxIds.value)
+  next.has(txId) ? next.delete(txId) : next.add(txId)
+  selectedTxIds.value = next
+}
+
+// Anchor for shift-click range selection (index into visibleIds).
+const lastClickedIndex = ref<number | null>(null)
+const onSelectClick = (txId: string, e: MouseEvent) => {
+  const ids = visibleIds.value
+  const idx = ids.indexOf(txId)
+  if (e.shiftKey && lastClickedIndex.value !== null && idx !== -1) {
+    // Shift-click: select the contiguous range from the anchor to here.
+    const lo = Math.min(lastClickedIndex.value, idx)
+    const hi = Math.max(lastClickedIndex.value, idx)
+    const next = new Set(selectedTxIds.value)
+    for (let i = lo; i <= hi; i++) next.add(ids[i])
+    selectedTxIds.value = next
+  } else {
+    // Plain / ctrl / cmd click: toggle this row and move the anchor.
+    toggleRowSelection(txId)
+    lastClickedIndex.value = idx
+  }
+}
+
+const visibleIds = computed(() => filteredTransactions.value.map(t => t.id))
+const allVisibleSelected = computed(
+  () => visibleIds.value.length > 0 && visibleIds.value.every(id => selectedTxIds.value.has(id)),
+)
+const someVisibleSelected = computed(() => visibleIds.value.some(id => selectedTxIds.value.has(id)))
+const toggleSelectAll = () => {
+  selectedTxIds.value = allVisibleSelected.value ? new Set() : new Set(visibleIds.value)
+}
+
+const selectedTransactions = computed(() =>
+  store.transactions.value.filter(t => selectedTxIds.value.has(t.id)),
+)
+const selectedCount = computed(() => selectedTransactions.value.length)
+
+// Accounts present across the selection — the "from" options for replace-account.
+const accountsInSelection = computed(() => {
+  const set = new Set<string>()
+  for (const tx of selectedTransactions.value) for (const p of tx.postings) set.add(p.account)
+  return [...set].sort()
+})
+
+// Editable metadata keys present across the selection — for remove/rename.
+const editableMetaKeysInSelection = computed(() => {
+  const set = new Set<string>()
+  for (const tx of selectedTransactions.value) {
+    for (const k of Object.keys(tx.meta)) if (isEditableMetaKey(k)) set.add(k)
+  }
+  return [...set].sort()
+})
+
+// Tags / links present across the selection — the options for "remove".
+const tagsInSelection = computed(() => {
+  const set = new Set<string>()
+  for (const tx of selectedTransactions.value) for (const t of tx.tags) set.add(t)
+  return [...set].sort()
+})
+const linksInSelection = computed(() => {
+  const set = new Set<string>()
+  for (const tx of selectedTransactions.value) for (const l of tx.links) set.add(l)
+  return [...set].sort()
+})
+
+const applyBulkOp = (op: BulkOperation) => {
+  const ids = selectedTransactions.value.map(t => t.id)
+  const entry = store.applyBulkOperation(ids, op)
+  if (entry) {
+    emitAndGuard()
+  } else {
+    toast.warning('No changes', 'No selected transactions matched that operation.')
+  }
+}
+
+const undoBulkOp = (id: number) => {
+  store.undoBulkOperation(id)
+  emitAndGuard()
+}
+
+// Bulk delete is immediate (like the per-row delete), not staged: it writes to
+// the ledger straight away after a confirm, then drops the rows and clears the
+// selection. In import context there is no ledger, so it only removes locally.
+const bulkDelete = async () => {
+  const ids = selectedTransactions.value.map(t => t.id)
+  if (ids.length === 0) return
+  const isImportContext = props.importContext !== undefined
+
+  const confirmed = await confirmDialog.showConfirm({
+    title: isImportContext ? 'Remove Transactions?' : 'Delete Transactions?',
+    message: isImportContext
+      ? `Remove ${ids.length} selected transaction${ids.length === 1 ? '' : 's'} from the import?`
+      : `Delete ${ids.length} selected transaction${ids.length === 1 ? '' : 's'}? This immediately updates the ledger and cannot be undone.`,
+    confirmText: isImportContext ? 'Remove' : 'Delete',
+    cancelText: 'Cancel',
+    variant: 'danger',
+  })
+  if (!confirmed) return
+
+  try {
+    if (!isImportContext) await deleteTransactions(ids)
+    for (const id of ids) clearRawAmountsForTx(id)
+    store.removeTransactions(ids)
+    clearSelection()
+    emitAndGuard()
+    if (!isImportContext) {
+      toast.success('Transactions Deleted', `Removed ${ids.length} transaction${ids.length === 1 ? '' : 's'} from the ledger`)
+      for (const id of ids) emit('transactionDeleted', id)
+    }
+  } catch (error: any) {
+    toast.error('Delete Failed', error.message || 'Failed to delete transactions. Please try again.')
+  }
+}
+
 // Flatten transactions into table rows. Cache is keyed by tx identity:
 // the store mutates only the changed transaction's reference, so rows for
 // untouched transactions are reused — keystrokes only rebuild the edited tx.
@@ -466,8 +638,9 @@ const getAmountColorClass = (amount: Money | null | undefined): string => {
 
 // Column definitions
 const COLUMN_DEFS: TransactionColumnDef[] = [
-  { id: 'status', header: 'Status', type: 'component', span: 'transaction', component: TransactionStatusIndicator },
-  { id: 'documents', header: '', type: 'component', span: 'transaction', component: DocumentBadge },
+  // Status ("Info") also hosts the document/details paperclip (folded in via the
+  // cell override below) so the affordance needs no column of its own.
+  { id: 'status', header: 'Info', type: 'component', span: 'transaction', component: TransactionStatusIndicator },
   { id: 'index', header: '#', type: 'display', span: 'transaction', accessor: 'transactionIndex' },
   { id: 'date', header: 'Date', type: 'date', field: 'transaction.date', span: 'transaction' },
   { id: 'flag', header: 'Flag', type: 'text', field: 'transaction.flag', span: 'transaction' },
@@ -493,7 +666,9 @@ const COLUMN_DEFS: TransactionColumnDef[] = [
   },
 ]
 
-const spannedColumnIds = COLUMN_DEFS.filter(d => d.span === 'transaction').map(d => d.id)
+// 'select' is a transaction-level column (one checkbox per transaction), so it
+// participates in the same rowspan treatment as the other spanned columns.
+const spannedColumnIds = [...COLUMN_DEFS.filter(d => d.span === 'transaction').map(d => d.id), 'select']
 
 const getRowSpan = (cell: Cell<any, any>) => {
   if (spannedColumnIds.includes(cell.column.id) && cell.row.original.isFirstPosting) {
@@ -544,6 +719,77 @@ const columns = computed(() => {
       minSize: colConfig?.minWidth || 100,
       enableResizing: colConfig?.resizable ?? true,
     })
+  }
+
+  // Fold the document/details paperclip into the Status ("Info") cell — stacked
+  // beneath the status glyphs, so it needs no column of its own. detailsMode makes
+  // its active state and tooltip reflect metadata too (Transactions view).
+  const statusIdx = factoryColumns.findIndex(c => c.id === 'status')
+  if (statusIdx !== -1) {
+    const statusHelper = createColumnHelper<TableRowData>()
+    const statusConfig = allColumns.value.find((col: any) => col.id === 'status')
+    factoryColumns[statusIdx] = statusHelper.display({
+      id: 'status',
+      header: 'Info',
+      cell: ({ row }) => {
+        if (!row.original.isFirstPosting) return null
+        const tx = row.original.transaction
+        // Details glyph on top (always present, so it stays top-aligned with the
+        // select checkbox and # regardless of status); status glyphs stack below.
+        return h('div', { class: 'flex flex-col items-center gap-1 pt-1.5' }, [
+          h(DetailsBadge, {
+            transaction: tx,
+            detailsMode: props.enableBulkEdit,
+            onDocumentClick: (id: string) => openDocumentsDrawer(id),
+          }),
+          h(TransactionStatusIndicator, {
+            transaction: tx,
+            importContext: getImportContext(tx.id),
+            ledgerContext: getLedgerContext(tx.id),
+            onDuplicateClick: (id: string) => emit('duplicateClick', id),
+          }),
+        ])
+      },
+      size: statusConfig?.defaultWidth || 60,
+      minSize: statusConfig?.minWidth || 40,
+      enableResizing: statusConfig?.resizable ?? true,
+    })
+  }
+
+  // Prepend the selection column (bulk-edit only). Header is a select-all
+  // checkbox over the visible set; the per-row checkbox is rowspanned so it
+  // shows once per transaction (see spannedColumnIds / shouldSkipCell).
+  if (props.enableBulkEdit) {
+    const selectHelper = createColumnHelper<TableRowData>()
+    const checkboxClass = 'h-3.5 w-3.5 cursor-pointer rounded border-gray-300 text-indigo-600 focus:ring-indigo-600 dark:border-white/20 dark:bg-white/5'
+    factoryColumns.unshift(selectHelper.display({
+      id: 'select',
+      header: () => h('div', { class: 'flex justify-center' }, [
+        h('input', {
+          type: 'checkbox',
+          class: checkboxClass,
+          checked: allVisibleSelected.value,
+          indeterminate: someVisibleSelected.value && !allVisibleSelected.value,
+          onChange: toggleSelectAll,
+          'aria-label': 'Select all transactions',
+        }),
+      ]),
+      cell: ({ row }) => row.original.isFirstPosting
+        ? h('div', { class: 'flex justify-center pt-2' }, [
+            h('input', {
+              type: 'checkbox',
+              class: checkboxClass,
+              checked: selectedTxIds.value.has(row.original.transaction.id),
+              // Click (not change) so shift-click range selection can read modifier keys.
+              onClick: (e: MouseEvent) => onSelectClick(row.original.transaction.id, e),
+              'aria-label': 'Select transaction',
+            }),
+          ])
+        : null,
+      size: 44,
+      minSize: 44,
+      enableResizing: false,
+    }))
   }
 
   // Append hand-written actions column
@@ -626,6 +872,74 @@ for (const def of COLUMN_DEFS) {
 }
 cellBaseByColumn.set('actions', `${CELL_BASE} text-center`)
 
+// Sticky-left columns keep their own solid background (so scrolling content
+// doesn't bleed through), so the modified tint would be hidden under them —
+// skip those and tint the scrollable cells instead.
+const STICKY_LEFT_COLS = new Set(['select', 'status', 'index'])
+
+// ── In-table cell diff (bulk-edit only) ──────────────────────────────────────
+// Show "was: <old>" beneath a changed cell, diffed against the last-saved
+// (edit baseline) value. Covers bulk and manual edits alike.
+const baselineById = computed(() => {
+  const m = new Map<string, TransactionViewModel>()
+  for (const t of store.editBaseline.value) m.set(t.id, t)
+  return m
+})
+
+const DIFF_COLUMNS = new Set([
+  'date', 'flag', 'payee', 'memo', 'narration', 'tags_links',
+  'account', 'amount', 'currency', 'cost_amount', 'cost_currency', 'cost_date',
+  'price_amount', 'price_currency', 'price_type',
+])
+
+const fieldValueForColumn = (tx: TransactionViewModel, colId: string, pi: number): string | undefined => {
+  const p = tx.postings[pi]
+  switch (colId) {
+    case 'date': return tx.date ?? ''
+    case 'flag': return tx.flag ?? ''
+    case 'payee': return tx.payee ?? ''
+    case 'memo': return tx.memo ?? ''
+    case 'narration': return tx.narration ?? ''
+    case 'tags_links': return [...tx.tags.map(t => `#${t}`), ...tx.links.map(l => `^${l}`)].join(' ')
+    case 'account': return p?.account ?? ''
+    case 'amount': return p?.amount != null ? String(p.amount) : ''
+    case 'currency': return p?.currency ?? ''
+    case 'cost_amount': return p?.cost?.amount != null ? String(p.cost.amount) : ''
+    case 'cost_currency': return p?.cost?.currency ?? ''
+    case 'cost_date': return p?.cost?.date ?? ''
+    case 'price_amount': return p?.price?.amount != null ? String(p.price.amount) : ''
+    case 'price_currency': return p?.price?.currency ?? ''
+    case 'price_type': return p?.price?.type ?? ''
+    default: return undefined
+  }
+}
+
+// When on, changed cells render a read-only old → new diff instead of the input.
+const showDiff = ref(false)
+const hasModifiedRows = computed(() => store.transactions.value.some(t => t.internal.isModified))
+
+// The baseline (pre-edit) value for a changed cell, or undefined if unchanged /
+// not a diffable column. '' is rendered as "(empty)".
+const cellDiffOld = (cell: Cell<any, any>, rowData: any): string | undefined => {
+  if (!props.enableBulkEdit) return undefined
+  const tx = rowData.transaction as TransactionViewModel
+  if (!tx.internal.isModified) return undefined
+  const colId = cell.column.id
+  if (!DIFF_COLUMNS.has(colId)) return undefined
+  const baseTx = baselineById.value.get(tx.id)
+  if (!baseTx) return undefined
+  const cur = fieldValueForColumn(tx, colId, rowData.postingIndex)
+  const old = fieldValueForColumn(baseTx, colId, rowData.postingIndex)
+  if (cur === undefined || old === undefined || cur === old) return undefined
+  return old === '' ? '(empty)' : old
+}
+
+// The current (post-edit) value for a changed cell, for the diff display.
+const cellDiffNew = (cell: Cell<any, any>, rowData: any): string => {
+  const cur = fieldValueForColumn(rowData.transaction as TransactionViewModel, cell.column.id, rowData.postingIndex)
+  return cur === undefined || cur === '' ? '(empty)' : cur
+}
+
 const getCellClasses = (cell: Cell<any, any>): string => {
   const id = cell.column.id
   let cls = cellBaseByColumn.get(id) ?? CELL_BASE
@@ -633,6 +947,11 @@ const getCellClasses = (cell: Cell<any, any>): string => {
   if (rowspan > 1) {
     cls += ' align-top'
     if (id === 'index') cls += ' bg-gray-50 dark:bg-gray-800/50'
+  }
+  // In-table diff signal: tint cells of a modified transaction so the user can
+  // see which rows a bulk (or manual) edit touched, before Save.
+  if (props.enableBulkEdit && !STICKY_LEFT_COLS.has(id) && cell.row.original.transaction.internal.isModified) {
+    cls += ' bg-amber-50 dark:bg-amber-500/10'
   }
   return cls
 }
@@ -830,18 +1149,24 @@ onUnmounted(() => {
 defineExpose({
   resetToOriginal: () => {
     store.resetToImported()
+    clearSelection()
     emitAndGuard()
   },
   scrollToTable,
   setNewEditBaseline: store.setEditBaseline,
   markAllSavedAndRebaseline: () => {
     store.markAllSavedAndRebaseline()
+    clearSelection()
     emitAndGuard()
   },
-  reinitializeBaselines: store.reinitializeBaselines,
+  reinitializeBaselines: () => {
+    store.reinitializeBaselines()
+    clearSelection()
+  },
   addToBaselines: store.addToBaselines,
   clearState: () => {
     store.clearState()
+    clearSelection()
     emitAndGuard()
   },
 })
@@ -1068,6 +1393,13 @@ td[data-column-id="status"] {
   background-color: #111827; /* dark:bg-gray-900 */
 }
 
+/* Diff cells override the text-column shrink-wrap hack (overflow:hidden +
+   height:1px) so the read-only old → new display isn't clipped. */
+td.diff-cell {
+  overflow: visible !important;
+  height: auto !important;
+}
+
 /* Sticky Index (#) column (second from left, after 60px Status column) */
 th[data-column-id="index"],
 td[data-column-id="index"] {
@@ -1103,6 +1435,45 @@ td[data-column-id="index"] {
 
 .dark td[data-column-id="index"] {
   background-color: #111827; /* dark:bg-gray-900 */
+}
+
+/* Bulk-edit selection column: sticky at the far left (44px), pushing the
+   Status and Index sticky columns right by 44px. Scoped to .has-select-col so
+   the Import flow (no select column) keeps the original left offsets. */
+table.has-select-col th[data-column-id="select"],
+table.has-select-col td[data-column-id="select"] {
+  position: sticky;
+  left: 0;
+  z-index: 10;
+  min-width: 44px;
+  max-width: 44px;
+  box-shadow: none;
+}
+
+table.has-select-col th[data-column-id="select"] {
+  background-color: rgb(249 250 251); /* bg-gray-50 */
+}
+
+table.has-select-col td[data-column-id="select"] {
+  background-color: white;
+}
+
+.dark table.has-select-col th[data-column-id="select"] {
+  background-color: rgb(31, 41, 55); /* gray-800 (sticky header) */
+}
+
+.dark table.has-select-col td[data-column-id="select"] {
+  background-color: #111827; /* dark:bg-gray-900 */
+}
+
+table.has-select-col th[data-column-id="status"],
+table.has-select-col td[data-column-id="status"] {
+  left: 44px;
+}
+
+table.has-select-col th[data-column-id="index"],
+table.has-select-col td[data-column-id="index"] {
+  left: 104px; /* 44px select + 60px status */
 }
 
 </style>

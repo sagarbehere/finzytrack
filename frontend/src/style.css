@@ -12,4 +12,11 @@
   body {
     @apply h-full bg-white dark:bg-gray-900;
   }
+
+  /* Tailwind v4 dropped the default cursor:pointer on buttons; restore it for
+     enabled buttons and role="button" elements (disabled ones keep the arrow). */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
 }

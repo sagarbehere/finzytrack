@@ -1,7 +1,23 @@
 import { type Ref, ref } from 'vue'
 import type { TransactionViewModel } from '@/types/transactions'
 import { isModified } from '@/utils/transactionModification'
+import { applyOperationToTransaction, describeOperation, type BulkOperation } from '@/utils/bulkOperations'
 import type { Money } from '@/utils/money'
+
+/**
+ * One applied bulk operation, recorded for the operation summary and per-operation
+ * undo. `priors` holds a pre-mutation snapshot of each affected transaction keyed
+ * by id — undo restores them. (Because priors are whole-transaction snapshots,
+ * undoing an operation reverts any *later* operations on the same transactions
+ * too; the summary UI undoes most-recent-first to keep that intuitive.)
+ */
+export interface AppliedOperation {
+  id: number
+  operation: BulkOperation
+  label: string
+  affectedIds: string[]
+  priors: Map<string, TransactionViewModel>
+}
 
 function deepCopy<T>(obj: T): T {
   return JSON.parse(JSON.stringify(obj))
@@ -36,6 +52,12 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
   const transactions = ref<TransactionViewModel[]>(deepCopy(input.value))
   const importedBaseline = ref<TransactionViewModel[]>(deepCopy(input.value))
   const editBaseline = ref<TransactionViewModel[]>(deepCopy(input.value))
+
+  // Log of applied bulk operations, in application order. Drives the operation
+  // summary and per-operation undo. Cleared whenever the working set is
+  // rebaselined (save), reset, or reloaded (re-query).
+  const operationLog = ref<AppliedOperation[]>([])
+  let nextOpId = 1
 
   function replaceTransactions(newVal: TransactionViewModel[]): void {
     transactions.value = deepCopy(newVal)
@@ -73,6 +95,7 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
       tx.links = parts.filter(p => p.startsWith('^') || p.startsWith('ˆ')).map(p => p.substring(1))
       refreshModifiedFlag(tx)
       notifyChange(tx)
+      pruneOperationLogIfClean()
       return
     }
 
@@ -87,6 +110,7 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
       }
       refreshModifiedFlag(tx)
       notifyChange(tx)
+      pruneOperationLogIfClean()
       return
     }
 
@@ -104,6 +128,7 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
       }
       refreshModifiedFlag(tx)
       notifyChange(tx)
+      pruneOperationLogIfClean()
       return
     }
 
@@ -111,6 +136,7 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
     setByPath(tx as unknown as Record<string, any>, path, value)
     refreshModifiedFlag(tx)
     notifyChange(tx)
+    pruneOperationLogIfClean()
   }
 
   function addPosting(txId: string): void {
@@ -140,9 +166,94 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
     transactions.value = transactions.value.filter(t => t.id !== txId)
   }
 
+  function removeTransactions(ids: string[]): void {
+    const set = new Set(ids)
+    transactions.value = transactions.value.filter(t => !set.has(t.id))
+  }
+
+  /**
+   * Apply one bulk operation to the transactions whose ids are in `txIds`.
+   *
+   * Only transactions the operation actually changes are touched (e.g. a
+   * replace-account skips a selected transaction that never used the account).
+   * Each changed transaction has its modified flag recomputed against the
+   * *unchanged* edit baseline — so bulk-edited transactions become modified and
+   * are included in the next Save. (This is the opposite of the import path,
+   * which rebaselines after categorizing; here rebaselining would make Save
+   * silently drop the edits — see dev-docs/bulk-edits.md.)
+   *
+   * Returns the log entry, or null if nothing changed. A single array
+   * reassignment notifies reactive consumers once for the whole batch.
+   */
+  function applyBulkOperation(txIds: string[], op: BulkOperation): AppliedOperation | null {
+    const idSet = new Set(txIds)
+    const priors = new Map<string, TransactionViewModel>()
+    const affectedIds: string[] = []
+
+    const next = transactions.value.map(tx => {
+      if (!idSet.has(tx.id)) return tx
+      const candidate = deepCopy(tx)
+      const changed = applyOperationToTransaction(candidate, op)
+      if (!changed) return tx
+      priors.set(tx.id, deepCopy(tx))
+      candidate.internal.isModified = isModified(candidate, editBaseline.value)
+      affectedIds.push(tx.id)
+      return candidate
+    })
+
+    if (affectedIds.length === 0) return null
+
+    transactions.value = next
+    const entry: AppliedOperation = {
+      id: nextOpId++,
+      operation: op,
+      label: describeOperation(op),
+      affectedIds,
+      priors,
+    }
+    operationLog.value = [...operationLog.value, entry]
+    pruneOperationLogIfClean()
+    return entry
+  }
+
+  /**
+   * Undo a previously applied bulk operation by restoring the pre-operation
+   * snapshot of every transaction it affected, then dropping it from the log.
+   */
+  function undoBulkOperation(opId: number): void {
+    const entry = operationLog.value.find(e => e.id === opId)
+    if (!entry) return
+
+    const next = transactions.value.map(tx => {
+      const prior = entry.priors.get(tx.id)
+      if (!prior) return tx
+      const restored = deepCopy(prior)
+      restored.internal.isModified = isModified(restored, editBaseline.value)
+      return restored
+    })
+    transactions.value = next
+    operationLog.value = operationLog.value.filter(e => e.id !== opId)
+    pruneOperationLogIfClean()
+  }
+
+  function clearOperationLog(): void {
+    operationLog.value = []
+  }
+
+  // If the working set is back to the edit baseline (nothing modified), there is
+  // nothing staged — so drop the operation log. This keeps a net-zero sequence
+  // (e.g. add tag then remove it) from leaving phantom "staged changes" that the
+  // disabled Save button contradicts.
+  function pruneOperationLogIfClean(): void {
+    if (operationLog.value.length > 0 && !transactions.value.some(t => t.internal.isModified)) {
+      operationLog.value = []
+    }
+  }
+
   function resetToImported(): void {
     transactions.value = deepCopy(importedBaseline.value)
     editBaseline.value = deepCopy(importedBaseline.value)
+    clearOperationLog()
     // Refresh modified flags (all should be false after reset)
     for (const tx of transactions.value) {
       refreshModifiedFlag(tx)
@@ -168,11 +279,13 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
     }))
     transactions.value = next
     editBaseline.value = deepCopy(next)
+    clearOperationLog()
   }
 
   function reinitializeBaselines(): void {
     importedBaseline.value = deepCopy(transactions.value)
     editBaseline.value = deepCopy(transactions.value)
+    clearOperationLog()
     for (const tx of transactions.value) {
       refreshModifiedFlag(tx)
     }
@@ -187,15 +300,22 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
     transactions.value = []
     importedBaseline.value = []
     editBaseline.value = []
+    clearOperationLog()
   }
 
   return {
     transactions,
+    editBaseline,
+    operationLog,
     replaceTransactions,
     updateField,
     addPosting,
     removePosting,
     removeTransaction,
+    removeTransactions,
+    applyBulkOperation,
+    undoBulkOperation,
+    clearOperationLog,
     resetToImported,
     setEditBaseline,
     markAllSavedAndRebaseline,
