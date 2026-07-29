@@ -88,6 +88,40 @@ class CategorizeResponse(BaseModel):
 
 
 # =====================================
+# Categorize-existing schemas (POST /api/ledger/categorize)
+# =====================================
+# For re-categorizing transactions already in the ledger (e.g. resolving
+# Expenses:Unknown in bulk). No duplicate detection — the rows already exist.
+
+class CategorizeExistingTransaction(BaseModel):
+    """One existing transaction to categorize."""
+    id: str = Field(..., description="Stable transaction id (matches request to response)")
+    payee: str = Field(..., description="Transaction payee")
+    memo: Optional[str] = Field(default=None, description="Optional memo")
+    narration: str = Field(default="", description="Transaction narration")
+    source_account: str = Field(..., description="The known (non-unknown) posting's account — AI prompt context")
+
+
+class CategorizeExistingRequest(BaseModel):
+    """Request body for the categorize-existing endpoint."""
+    transactions: List[CategorizeExistingTransaction] = Field(..., description="Existing transactions to categorize")
+    force_engine: Optional[str] = Field(default=None, description="Override engine: 'ai' or 'classifier'. If unset, uses config.")
+
+
+class CategorizeExistingResult(BaseModel):
+    """Suggested account for one existing transaction."""
+    id: str = Field(..., description="Matches the request id")
+    suggested_category: Optional[str] = Field(default=None, description="Suggested account")
+    confidence: Optional[float] = Field(default=None, description="Classifier confidence (0.0-1.0); null for AI")
+
+
+class CategorizeExistingResponse(BaseModel):
+    """Response body for the categorize-existing endpoint."""
+    results: List[CategorizeExistingResult] = Field(..., description="Suggestions keyed by id")
+    stats: CategorizationStats = Field(..., description="Batch statistics (duplicate_count is always 0)")
+
+
+# =====================================
 # Commit Schemas
 # =====================================
 

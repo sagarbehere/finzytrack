@@ -15,9 +15,19 @@ from app.schemas.transaction_delete_schemas import (
     DeleteTransactionRequest,
     DeleteTransactionResponse,
 )
-from app.dependencies import get_beancount_manager, get_sqlite_reader
+from app.dependencies import get_beancount_manager, get_sqlite_reader, get_config_manager
 from app.core.ledger_manager import LedgerManager
+from app.core.config_manager import ConfigManager
+from app.config import CategorizationEngine
 from app.services.sqlite_reader import SqliteReader
+from app.services.categorization import CategorizationInput, run_categorization
+from app.services.ai_categorizer import AICategorizeError
+from app.schemas.transaction_schemas import (
+    CategorizeExistingRequest,
+    CategorizeExistingResponse,
+    CategorizeExistingResult,
+    CategorizationStats,
+)
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
 from app.helpers.transaction_validation import validate_postings
@@ -26,6 +36,7 @@ from beancount.core.data import Transaction, Posting
 from beancount.core.amount import Amount
 from beancount.core.position import Cost
 from decimal import Decimal
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -256,3 +267,101 @@ async def delete_ledger_transactions(
             status_code=500,
             details={"error": str(e)}
         )
+
+
+@router.post(
+    "/categorize",
+    response_model=ApiResponse[CategorizeExistingResponse],
+    operation_id="categorizeExistingTransactions",
+)
+async def categorize_existing_transactions(
+    request: CategorizeExistingRequest,
+    config_manager: ConfigManager = Depends(get_config_manager),
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
+):
+    """
+    Suggest accounts for transactions already in the ledger (e.g. bulk-resolving
+    Expenses:Unknown). Uses the same engines as import categorization but runs NO
+    duplicate detection — the rows already exist. source_account is provided
+    per-transaction (the known posting's account) as AI prompt context.
+    """
+    config = config_manager.get_config()
+    default_account = config.accounts.default_unknown_account
+    warnings: list[str] = []
+    start_time = time.monotonic()
+
+    # Engine resolution (mirrors import categorize).
+    if request.force_engine:
+        try:
+            engine = CategorizationEngine(request.force_engine)
+        except ValueError:
+            raise APIError(
+                message=f"Invalid force_engine value: '{request.force_engine}'. Must be 'classifier', 'ai', or 'llm'.",
+                code=ec.INVALID_ENGINE,
+                status_code=422,
+            )
+    else:
+        engine = config.ai.categorization.engine
+    if engine == CategorizationEngine.LLM:
+        engine = CategorizationEngine.AI
+
+    account_names = sqlite_reader.get_account_names()
+    training_data = sqlite_reader.get_training_data() if engine == CategorizationEngine.CLASSIFIER else []
+
+    categorization_map: dict[str, tuple[str, float | None]] = {}
+    engine_used = "default"
+    ml_warning: str | None = None
+
+    if not config.ai.categorization.enabled:
+        for t in request.transactions:
+            categorization_map[t.id] = (default_account, None)
+    else:
+        if engine == CategorizationEngine.AI and not config.ai.llm.is_configured:
+            raise APIError(
+                message="AI is not configured. Enable Finzytrack AI or set a model under Settings → AI.",
+                code=ec.LLM_NOT_CONFIGURED,
+                status_code=400,
+            )
+        cat_inputs = [
+            CategorizationInput(
+                id=t.id, payee=t.payee, memo=t.memo,
+                narration=t.narration or "", source_account=t.source_account,
+            )
+            for t in request.transactions
+        ]
+        try:
+            categorization_map, engine_used, cat_warnings, ml_warning = run_categorization(
+                transactions=cat_inputs,
+                engine=engine,
+                account_names=account_names,
+                training_data=training_data,
+                default_account=default_account,
+                llm_config=config.ai.llm,
+            )
+        except AICategorizeError as e:
+            raise APIError(
+                message=f"AI categorization failed: {e}",
+                code=ec.AI_CATEGORIZE_FAILED,
+                status_code=502,
+            )
+        warnings.extend(cat_warnings)
+
+    # No duplicate detection — these transactions are already committed.
+    results: list[CategorizeExistingResult] = []
+    categorized_count = 0
+    for t in request.transactions:
+        account, confidence = categorization_map[t.id]
+        if account != default_account:
+            categorized_count += 1
+        results.append(CategorizeExistingResult(id=t.id, suggested_category=account, confidence=confidence))
+
+    stats = CategorizationStats(
+        total_count=len(request.transactions),
+        categorized_count=categorized_count,
+        duplicate_count=0,
+        engine_used=engine_used,
+        duration_secs=round(time.monotonic() - start_time, 1),
+        ml_training_info=ml_warning,
+        warnings=warnings,
+    )
+    return success_json_response(CategorizeExistingResponse(results=results, stats=stats))

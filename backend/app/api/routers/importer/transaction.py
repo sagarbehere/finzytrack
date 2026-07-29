@@ -23,8 +23,8 @@ from app.schemas.transaction_schemas import (
     CommitResponse
 )
 from app.helpers.response_helpers import success_json_response
-from app.services.categorizer import initialize_classifier, categorize_transaction
-from app.services.ai_categorizer import categorize_transactions_ai, AICategorizeError
+from app.services.ai_categorizer import AICategorizeError
+from app.services.categorization import CategorizationInput, run_categorization
 from app.services.duplicate_detector import find_duplicate
 from app import error_codes as ec
 from app.helpers.transaction_validation import validate_postings
@@ -87,77 +87,47 @@ async def categorize_transactions(
                f"{len(existing_transactions)} existing transactions, "
                f"{len(account_names)} accounts")
 
-    # ── Categorization ────────────────────────────────────────────────
-    # Maps transaction id -> (suggested_category, confidence)
+    # ── Categorization (shared core; dedup handled separately below) ──
+    # Maps transaction id -> (suggested_category, confidence). Import passes a
+    # single source_account for the whole batch, so the AI engine sees one group
+    # — identical to the pre-split single call.
     categorization_map: dict[str, tuple[str, float | None]] = {}
     engine_used = "default"
     ml_warning: str | None = None
 
     if not config.ai.categorization.enabled:
-        # Categorization disabled — all get default
-        engine_used = "default"
         for raw_txn in request.transactions:
             categorization_map[raw_txn.id] = (default_account, None)
-
-    elif engine == CategorizationEngine.AI:
-        # AI engine
-        engine_used = "ai"
-        if not config.ai.llm.is_configured:
+    else:
+        if engine == CategorizationEngine.AI and not config.ai.llm.is_configured:
             raise APIError(
                 message="AI is not configured. Enable Finzytrack AI or set a model under Settings → AI.",
                 code=ec.LLM_NOT_CONFIGURED,
                 status_code=400,
             )
-
-        txn_dicts = [
-            {"id": t.id, "payee": t.payee, "memo": t.memo or "", "narration": t.narration or ""}
+        cat_inputs = [
+            CategorizationInput(
+                id=t.id, payee=t.payee, memo=t.memo,
+                narration=t.narration or "", source_account=request.source_account,
+            )
             for t in request.transactions
         ]
-
         try:
-            ai_results, ai_warnings = categorize_transactions_ai(
-                transactions=txn_dicts,
+            categorization_map, engine_used, cat_warnings, ml_warning = run_categorization(
+                transactions=cat_inputs,
+                engine=engine,
                 account_names=account_names,
+                training_data=training_data,
                 default_account=default_account,
-                source_account=request.source_account,
                 llm_config=config.ai.llm,
             )
-            warnings.extend(ai_warnings)
-            for raw_txn in request.transactions:
-                account = ai_results.get(raw_txn.id, default_account)
-                categorization_map[raw_txn.id] = (account, None)
         except AICategorizeError as e:
             raise APIError(
                 message=f"AI categorization failed: {e}",
                 code=ec.AI_CATEGORIZE_FAILED,
                 status_code=502,
             )
-
-    else:
-        # Classifier engine
-        classifier, ml_warning = initialize_classifier(
-            training_data=training_data,
-            ml_enabled=True,
-        )
-
-        if classifier:
-            engine_used = "classifier"
-            for raw_txn in request.transactions:
-                description_parts = [raw_txn.payee]
-                if raw_txn.memo:
-                    description_parts.append(raw_txn.memo)
-                if raw_txn.narration:
-                    description_parts.append(raw_txn.narration)
-                description = " ".join(description_parts)
-                suggested_category, confidence = categorize_transaction(description, classifier, default_account)
-                categorization_map[raw_txn.id] = (suggested_category, confidence)
-        else:
-            # Classifier has insufficient data — use default account
-            engine_used = "default"
-            if ml_warning:
-                warnings.append(ml_warning)
-            for raw_txn in request.transactions:
-                categorization_map[raw_txn.id] = (default_account, None)
+        warnings.extend(cat_warnings)
 
     # ── Duplicate detection (always runs, regardless of engine) ───────
     results = []
