@@ -7,6 +7,15 @@
     </span>
 
     <div class="flex flex-wrap items-center gap-2">
+      <!-- Autocategorize (direct action, not a popover): resolves Expenses:Unknown -->
+      <button
+        :class="[triggerClass, 'disabled:opacity-50 disabled:cursor-not-allowed']"
+        :disabled="categorizing"
+        @click="emit('autocategorize')"
+      >
+        {{ categorizing ? 'Categorizing…' : 'Autocategorize' }}
+      </button>
+
       <!-- Replace account -->
       <Popover class="relative">
         <PopoverButton :class="triggerClass">Replace account</PopoverButton>
@@ -180,11 +189,14 @@ const props = defineProps<{
   /** Tags / links present across the selection (for remove). */
   tagsInSelection: string[]
   linksInSelection: string[]
+  /** True while an autocategorize request is in flight (disables the button). */
+  categorizing?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'apply', op: BulkOperation): void
   (e: 'delete'): void
+  (e: 'autocategorize'): void
   (e: 'clear'): void
 }>()
 

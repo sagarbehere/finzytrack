@@ -39,6 +39,7 @@ export type { ApiResponse_BalanceDirectiveUpdateData_ } from './models/ApiRespon
 export type { ApiResponse_BrowseResponse_ } from './models/ApiResponse_BrowseResponse_';
 export type { ApiResponse_BudgetListData_ } from './models/ApiResponse_BudgetListData_';
 export type { ApiResponse_BudgetWriteData_ } from './models/ApiResponse_BudgetWriteData_';
+export type { ApiResponse_CategorizeExistingResponse_ } from './models/ApiResponse_CategorizeExistingResponse_';
 export type { ApiResponse_CategorizeResponse_ } from './models/ApiResponse_CategorizeResponse_';
 export type { ApiResponse_CommitResponse_ } from './models/ApiResponse_CommitResponse_';
 export type { ApiResponse_CommodityListData_ } from './models/ApiResponse_CommodityListData_';
@@ -99,6 +100,10 @@ export type { CategorizationConfig } from './models/CategorizationConfig';
 export { CategorizationEngine } from './models/CategorizationEngine';
 export type { CategorizationStats } from './models/CategorizationStats';
 export type { CategorizedTransactionResult } from './models/CategorizedTransactionResult';
+export type { CategorizeExistingRequest } from './models/CategorizeExistingRequest';
+export type { CategorizeExistingResponse } from './models/CategorizeExistingResponse';
+export type { CategorizeExistingResult } from './models/CategorizeExistingResult';
+export type { CategorizeExistingTransaction } from './models/CategorizeExistingTransaction';
 export type { CategorizeRequest } from './models/CategorizeRequest';
 export type { CategorizeResponse } from './models/CategorizeResponse';
 export type { ChatMessage } from './models/ChatMessage';

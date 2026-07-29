@@ -2,12 +2,14 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ApiResponse_CategorizeExistingResponse_ } from '../models/ApiResponse_CategorizeExistingResponse_';
 import type { ApiResponse_DeleteTransactionResponse_ } from '../models/ApiResponse_DeleteTransactionResponse_';
 import type { ApiResponse_ExportData_ } from '../models/ApiResponse_ExportData_';
 import type { ApiResponse_ExportStatusData_ } from '../models/ApiResponse_ExportStatusData_';
 import type { ApiResponse_QueryData_ } from '../models/ApiResponse_QueryData_';
 import type { ApiResponse_UpdateTransactionResponse_ } from '../models/ApiResponse_UpdateTransactionResponse_';
 import type { Body_exportLedger } from '../models/Body_exportLedger';
+import type { CategorizeExistingRequest } from '../models/CategorizeExistingRequest';
 import type { DeleteTransactionRequest } from '../models/DeleteTransactionRequest';
 import type { QueryRequest } from '../models/QueryRequest';
 import type { UpdateTransactionRequest } from '../models/UpdateTransactionRequest';
@@ -102,6 +104,29 @@ export class LedgerService {
         return __request(OpenAPI, {
             method: 'DELETE',
             url: '/api/ledger/transactions',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Categorize Existing Transactions
+     * Suggest accounts for transactions already in the ledger (e.g. bulk-resolving
+     * Expenses:Unknown). Uses the same engines as import categorization but runs NO
+     * duplicate detection — the rows already exist. source_account is provided
+     * per-transaction (the known posting's account) as AI prompt context.
+     * @param requestBody
+     * @returns ApiResponse_CategorizeExistingResponse_ Successful Response
+     * @throws ApiError
+     */
+    public static categorizeExistingTransactions(
+        requestBody: CategorizeExistingRequest,
+    ): CancelablePromise<ApiResponse_CategorizeExistingResponse_> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/ledger/categorize',
             body: requestBody,
             mediaType: 'application/json',
             errors: {

@@ -13,7 +13,11 @@ import type { Money } from '@/utils/money'
  */
 export interface AppliedOperation {
   id: number
-  operation: BulkOperation
+  // The uniform bulk operation, when there is one. Autocategorize applies a
+  // *different* account per transaction, so it records a labelled entry with no
+  // single operation. The summary only needs `label`/`affectedIds`; undo uses
+  // `priors`.
+  operation?: BulkOperation
   label: string
   affectedIds: string[]
   priors: Map<string, TransactionViewModel>
@@ -217,6 +221,43 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
   }
 
   /**
+   * Apply autocategorization suggestions (a different account per transaction)
+   * as a single logged, undoable operation. Each suggestion replaces the
+   * transaction's unknown-account posting; suggestions equal to the unknown
+   * account (or absent) are skipped. Reuses the tested replace-account logic.
+   */
+  function applyAutocategorization(
+    suggestions: Map<string, string>,
+    unknownAccount: string,
+    label: string,
+  ): AppliedOperation | null {
+    const priors = new Map<string, TransactionViewModel>()
+    const affectedIds: string[] = []
+
+    const next = transactions.value.map(tx => {
+      const suggestion = suggestions.get(tx.id)
+      if (!suggestion || suggestion === unknownAccount) return tx
+      const candidate = deepCopy(tx)
+      const changed = applyOperationToTransaction(candidate, {
+        type: 'replaceAccount', from: unknownAccount, to: suggestion,
+      })
+      if (!changed) return tx
+      priors.set(tx.id, deepCopy(tx))
+      candidate.internal.isModified = isModified(candidate, editBaseline.value)
+      affectedIds.push(tx.id)
+      return candidate
+    })
+
+    if (affectedIds.length === 0) return null
+
+    transactions.value = next
+    const entry: AppliedOperation = { id: nextOpId++, label, affectedIds, priors }
+    operationLog.value = [...operationLog.value, entry]
+    pruneOperationLogIfClean()
+    return entry
+  }
+
+  /**
    * Undo a previously applied bulk operation by restoring the pre-operation
    * snapshot of every transaction it affected, then dropping it from the log.
    */
@@ -314,6 +355,7 @@ export function useTransactionStore(input: Ref<TransactionViewModel[]>) {
     removeTransaction,
     removeTransactions,
     applyBulkOperation,
+    applyAutocategorization,
     undoBulkOperation,
     clearOperationLog,
     resetToImported,

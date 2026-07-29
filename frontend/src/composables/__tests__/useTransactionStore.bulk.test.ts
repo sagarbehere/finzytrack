@@ -117,6 +117,62 @@ describe('net-zero pruning', () => {
   })
 })
 
+describe('applyAutocategorization', () => {
+  function unknownSetup() {
+    const input = ref<TransactionViewModel[]>([
+      makeTx({ id: 'tx-1', payee: 'Coffee', postings: [
+        { account: 'Expenses:Unknown', amount: toMoney(5), currency: 'USD' },
+        { account: 'Assets:Bank', amount: toMoney(-5), currency: 'USD' },
+      ] }),
+      makeTx({ id: 'tx-2', payee: 'Fuel', postings: [
+        { account: 'Expenses:Unknown', amount: toMoney(20), currency: 'USD' },
+        { account: 'Assets:Bank', amount: toMoney(-20), currency: 'USD' },
+      ] }),
+      makeTx({ id: 'tx-3', payee: 'Already', postings: [
+        { account: 'Expenses:Food', amount: toMoney(9), currency: 'USD' },
+        { account: 'Assets:Bank', amount: toMoney(-9), currency: 'USD' },
+      ] }),
+    ])
+    return useTransactionStore(input)
+  }
+
+  it('applies a different suggested account per transaction as one logged entry', () => {
+    const store = unknownSetup()
+    const suggestions = new Map([['tx-1', 'Expenses:Coffee'], ['tx-2', 'Expenses:Fuel']])
+    const entry = store.applyAutocategorization(suggestions, 'Expenses:Unknown', 'Autocategorize 2 transactions')
+
+    expect(byId(store, 'tx-1').postings[0].account).toBe('Expenses:Coffee')
+    expect(byId(store, 'tx-2').postings[0].account).toBe('Expenses:Fuel')
+    expect(byId(store, 'tx-1').internal.isModified).toBe(true)
+    expect(byId(store, 'tx-2').internal.isModified).toBe(true)
+    // One heterogeneous entry (not two).
+    expect(store.operationLog.value).toHaveLength(1)
+    expect(entry!.label).toBe('Autocategorize 2 transactions')
+    expect(entry!.affectedIds.sort()).toEqual(['tx-1', 'tx-2'])
+  })
+
+  it('skips suggestions equal to the unknown account or absent, and returns null if nothing applies', () => {
+    const store = unknownSetup()
+    const entry = store.applyAutocategorization(
+      new Map([['tx-1', 'Expenses:Unknown'], ['tx-3', 'Expenses:Whatever']]),
+      'Expenses:Unknown', 'Autocategorize',
+    )
+    // tx-1 suggestion is the unknown account (no-op); tx-3 has no unknown posting (no-op).
+    expect(entry).toBeNull()
+    expect(store.operationLog.value).toHaveLength(0)
+    expect(byId(store, 'tx-1').internal.isModified).toBe(false)
+  })
+
+  it('is undoable via the operation log', () => {
+    const store = unknownSetup()
+    const entry = store.applyAutocategorization(new Map([['tx-1', 'Expenses:Coffee']]), 'Expenses:Unknown', 'Autocategorize 1 transaction')!
+    store.undoBulkOperation(entry.id)
+    expect(byId(store, 'tx-1').postings[0].account).toBe('Expenses:Unknown')
+    expect(byId(store, 'tx-1').internal.isModified).toBe(false)
+    expect(store.operationLog.value).toHaveLength(0)
+  })
+})
+
 describe('undoBulkOperation', () => {
   it('restores affected transactions and drops the log entry', () => {
     const store = setup()

@@ -31,6 +31,12 @@ vi.mock('@/composables/useConfirmDialog', () => ({
     handleClose: vi.fn(),
   }),
 }))
+// Mock the categorize-existing API so autocategorize is deterministic.
+const { mockCategorize } = vi.hoisted(() => ({ mockCategorize: vi.fn() }))
+vi.mock('@/composables/useCategorizeExisting', async () => {
+  const { ref: r } = await import('vue')
+  return { useCategorizeExisting: () => ({ isCategorizing: r(false), categorizeExisting: mockCategorize }) }
+})
 
 const mountOpts = {
   global: {
@@ -204,6 +210,65 @@ describe('TransactionTable bulk edit', () => {
     // The paperclip (DetailsBadge) now lives inside the status cell.
     expect(wrapper.findComponent(DetailsBadge).exists()).toBe(true)
     expect(wrapper.find('td[data-column-id="status"] button').exists()).toBe(true)
+  })
+
+  it('autocategorizes: sends resolvable targets, stages one suggestion per row as a single entry', async () => {
+    mockCategorize.mockReset()
+    mockCategorize.mockResolvedValue({
+      results: [
+        { id: 'u1', suggested_category: 'Expenses:Coffee', confidence: 0.97 }, // high (>= 0.95)
+        { id: 'u2', suggested_category: 'Expenses:Fuel', confidence: 0.3 },     // low (<= 0.5)
+      ],
+      stats: { total_count: 2, categorized_count: 2, duplicate_count: 0, engine_used: 'classifier', duration_secs: 0.1, warnings: [] },
+    })
+    const txns = [
+      makeTx({ id: 'u1', payee: 'Coffee', postings: [
+        { account: 'Expenses:Unknown', amount: toMoney(5), currency: 'USD' },
+        { account: 'Assets:Bank', amount: toMoney(-5), currency: 'USD' },
+      ] }),
+      makeTx({ id: 'u2', payee: 'Fuel', postings: [
+        { account: 'Expenses:Unknown', amount: toMoney(20), currency: 'USD' },
+        { account: 'Assets:Bank', amount: toMoney(-20), currency: 'USD' },
+      ] }),
+    ]
+    const wrapper = mount(TransactionTable, { props: { transactions: txns, enableBulkEdit: true }, ...mountOpts })
+    await flushPromises()
+
+    await wrapper.find('th[data-column-id="select"] input[type="checkbox"]').setValue(true)
+    wrapper.findComponent(BulkActionBar).vm.$emit('autocategorize')
+    await flushPromises()
+
+    // The request carried the resolvable targets with the derived source account.
+    const sent = mockCategorize.mock.calls[0][0] as Array<{ id: string; source_account: string }>
+    expect(sent.map(t => t.id).sort()).toEqual(['u1', 'u2'])
+    expect(sent.find(t => t.id === 'u1')!.source_account).toBe('Assets:Bank')
+
+    // Each row's unknown posting is resolved to its own suggestion.
+    const latest = latestEmitted(wrapper)
+    expect(latest.find(t => t.id === 'u1')!.postings[0].account).toBe('Expenses:Coffee')
+    expect(latest.find(t => t.id === 'u2')!.postings[0].account).toBe('Expenses:Fuel')
+    // Staged as a single "Autocategorize" entry (heterogeneous), not two.
+    const ops = wrapper.findComponent(OperationSummary).props('operations') as { label: string }[]
+    expect(ops).toHaveLength(1)
+    expect(ops[0].label).toContain('Autocategorize')
+
+    // Per-row confidence glyph in the status/Info cell — same as import.
+    expect(wrapper.find('tr.transaction-u1 td[data-column-id="status"]').html()).toContain('High confidence')
+    expect(wrapper.find('tr.transaction-u2 td[data-column-id="status"]').html()).toContain('Low confidence')
+  })
+
+  it('autocategorize skips rows with no single unknown posting and does not call the API', async () => {
+    mockCategorize.mockReset()
+    const wrapper = mount(TransactionTable, { props: { transactions: threeTxns(), enableBulkEdit: true }, ...mountOpts })
+    await flushPromises()
+
+    await wrapper.find('th[data-column-id="select"] input[type="checkbox"]').setValue(true)
+    wrapper.findComponent(BulkActionBar).vm.$emit('autocategorize')
+    await flushPromises()
+
+    // No selected row has an Expenses:Unknown posting → nothing to categorize.
+    expect(mockCategorize).not.toHaveBeenCalled()
+    expect(wrapper.findComponent(OperationSummary).props('operations')).toHaveLength(0)
   })
 
   it('does not render selection UI when enableBulkEdit is off (Import parity)', async () => {

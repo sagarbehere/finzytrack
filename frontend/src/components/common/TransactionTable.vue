@@ -24,7 +24,9 @@
         :editable-meta-keys-in-selection="editableMetaKeysInSelection"
         :tags-in-selection="tagsInSelection"
         :links-in-selection="linksInSelection"
+        :categorizing="isCategorizing"
         @apply="applyBulkOp"
+        @autocategorize="autocategorizeSelected"
         @delete="bulkDelete"
         @clear="clearSelection"
       />
@@ -214,6 +216,9 @@ import TransactionCardList from '@/components/common/TransactionCardList.vue'
 import BulkActionBar from '@/components/transactions/BulkActionBar.vue'
 import OperationSummary from '@/components/transactions/OperationSummary.vue'
 import { isEditableMetaKey, type BulkOperation } from '@/utils/bulkOperations'
+import { autocategorizeTargets } from '@/utils/autocategorize'
+import { useCategorizeExisting } from '@/composables/useCategorizeExisting'
+import { useConfig } from '@/composables/useConfig'
 import { useTableColumns } from '@/composables/useTableColumns'
 import { useTableKeyboardNavigation } from '@/composables/useTableKeyboardNavigation'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
@@ -462,6 +467,15 @@ const getImportContext = (transactionId: string): ImportContext | undefined => {
   return props.importContext?.get(transactionId)
 }
 
+// Import context merged with any autocategorize confidence, so the status
+// indicator shows the same confidence glyph for bulk autocategorize as at import.
+const getStatusContext = (transactionId: string): ImportContext | undefined => {
+  const base = getImportContext(transactionId)
+  const confidence = autocatConfidence.value.get(transactionId)
+  if (confidence == null) return base
+  return { ...(base ?? { is_duplicate: false }), confidence }
+}
+
 const getLedgerContext = (transactionId: string): LedgerContext | undefined => {
   return props.ledgerContext?.get(transactionId)
 }
@@ -492,7 +506,10 @@ const filteredTransactions = computed(() => {
 // ── Bulk selection & operations (enableBulkEdit only) ────────────────────────
 // Selection is per transaction (id), over the currently loaded/filtered set.
 const selectedTxIds = ref<Set<string>>(new Set())
-const clearSelection = () => { selectedTxIds.value = new Set() }
+const clearSelection = () => {
+  selectedTxIds.value = new Set()
+  autocatConfidence.value = new Map()
+}
 
 const toggleRowSelection = (txId: string) => {
   const next = new Set(selectedTxIds.value)
@@ -518,6 +535,11 @@ const onSelectClick = (txId: string, e: MouseEvent) => {
     lastClickedIndex.value = idx
   }
 }
+
+// Per-row autocategorization confidence (classifier only; AI returns none).
+// Feeds the SAME status-indicator confidence glyph the import flow uses, so the
+// review affordance is identical. Transient: cleared on save/reset/requery/clear.
+const autocatConfidence = ref<Map<string, number>>(new Map())
 
 const visibleIds = computed(() => filteredTransactions.value.map(t => t.id))
 const allVisibleSelected = computed(
@@ -573,7 +595,56 @@ const applyBulkOp = (op: BulkOperation) => {
 
 const undoBulkOp = (id: number) => {
   store.undoBulkOperation(id)
+  autocatConfidence.value = new Map() // clear transient confidence glyphs on undo
   emitAndGuard()
+}
+
+// ── Autocategorize (resolve Expenses:Unknown on the selection) ───────────────
+const { config } = useConfig()
+const { categorizeExisting, isCategorizing } = useCategorizeExisting()
+const unknownAccount = computed(() => config.value?.accounts?.default_unknown_account || 'Expenses:Unknown')
+
+const autocategorizeSelected = async () => {
+  const selected = selectedTransactions.value
+  const targets = autocategorizeTargets(selected, unknownAccount.value)
+  if (targets.length === 0) {
+    toast.warning('Nothing to categorize', `None of the ${selected.length} selected transaction${selected.length === 1 ? '' : 's'} has a single ${unknownAccount.value} posting to resolve.`)
+    return
+  }
+
+  const outcome = await categorizeExisting(targets.map(t => ({
+    id: t.txId, payee: t.payee, memo: t.memo ?? null, narration: t.narration, source_account: t.sourceAccount,
+  })))
+  if (!outcome) return // error already surfaced by the composable
+
+  const suggestions = new Map<string, string>()
+  const confidence = new Map<string, number>()
+  for (const r of outcome.results) {
+    if (r.suggested_category && r.suggested_category !== unknownAccount.value) {
+      suggestions.set(r.id, r.suggested_category)
+      // Per-row confidence surfaces via the status indicator (same glyph as
+      // import) — classifier only; AI returns null.
+      if (r.confidence != null) confidence.set(r.id, r.confidence)
+    }
+  }
+
+  const entry = store.applyAutocategorization(
+    suggestions, unknownAccount.value,
+    `Autocategorize ${suggestions.size} transaction${suggestions.size === 1 ? '' : 's'}`,
+  )
+  if (entry) {
+    autocatConfidence.value = confidence
+    emitAndGuard()
+  }
+
+  for (const w of outcome.stats.warnings || []) toast.warning('Autocategorize', w)
+
+  const skipped = selected.length - targets.length
+  const unresolved = targets.length - suggestions.size
+  const parts = [`Categorized ${suggestions.size} of ${targets.length}`]
+  if (unresolved > 0) parts.push(`${unresolved} unresolved`)
+  if (skipped > 0) parts.push(`${skipped} skipped`)
+  toast.success('Autocategorize complete', parts.join(' · '))
 }
 
 // Bulk delete is immediate (like the per-row delete), not staged: it writes to
@@ -744,7 +815,7 @@ const columns = computed(() => {
           }),
           h(TransactionStatusIndicator, {
             transaction: tx,
-            importContext: getImportContext(tx.id),
+            importContext: getStatusContext(tx.id),
             ledgerContext: getLedgerContext(tx.id),
             onDuplicateClick: (id: string) => emit('duplicateClick', id),
           }),
