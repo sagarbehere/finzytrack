@@ -33,12 +33,22 @@ Sign conventions (double-entry):
 - Assets: positive (debit).
 - Liabilities: negative (credit).
 - Use SUM(CAST(amount AS REAL)) for net figures — handles refunds automatically.
-- Net worth = SUM(CAST(amount AS REAL)) WHERE account_type IN ('Assets', 'Liabilities').
+- Net worth = SUM(CAST(amount AS REAL)) WHERE account_type IN ('Assets', 'Liabilities'), grouped by currency. For money totals, exclude investment holdings — see "Currencies vs holdings" below.
 
 Multi-currency:
 - The ledger may contain multiple currencies (e.g. USD and INR). NEVER sum amounts across currencies.
 - When aggregating amounts, always include "currency" in GROUP BY or filter to a single currency.
 - Example: GROUP BY account, currency — or — WHERE currency = 'USD'.
+
+Currencies vs holdings:
+- The "currency" column holds ANY commodity code — real currencies (USD, INR) AND investment holdings (stocks/funds like VOO, VTI). The "commodities" table's is_currency column (1/0) says which is which.
+- For money totals (net worth, total assets/liabilities) and anything a user reads as an amount of money, exclude holdings by joining commodities and filtering to currencies:
+    SELECT currency, SUM(CAST(amount AS REAL)) AS amount
+    FROM postings p JOIN commodities c ON p.currency = c.code
+    WHERE c.is_currency = 1 AND account_type = 'Assets'
+    GROUP BY currency
+  Summing a share count into a dollar total is meaningless — do not do it.
+- To analyze the holdings themselves (e.g. how many VOO shares over time), filter WHERE c.is_currency = 0, or query the raw quantities directly.
 
 Query rules:
 - Money columns (amount, cost_amount, price_amount) are stored as TEXT for exact decimal precision. Always wrap them in CAST(... AS REAL) before SUM/AVG/arithmetic. SQLite will implicitly cast for plain comparisons (WHERE amount > 0), so those can stay unwrapped.
@@ -57,3 +67,4 @@ Beyond "postings", additional tables exist for account metadata, price history, 
   PRAGMA table_info(<table_name>);
 Key tables: accounts, account_balances, commodities, prices, lots, balance_assertions.
 Numeric columns in these tables use TEXT for decimal precision — cast with CAST(value AS REAL) for arithmetic.
+The "commodities" table has one row per commodity (declared or merely used) with: code, name, asset_class (e.g. "cash", "stock", "etf"), is_currency (1 = a currency / unit of account, 0 = an investment holding), declaration_date, metadata_json. Join it on postings.currency = commodities.code to separate currencies from holdings (see "Currencies vs holdings" above).
