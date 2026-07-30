@@ -134,7 +134,12 @@ function boundFor(param: RecipeParameter, which: 'min' | 'max'): string | number
 }
 
 const { commodityDetails, fetchCommodities } = useCommodities()
+// Commodity-derived option lists, split by role (see is_currency): currencies
+// only, holdings only (non-currency), and every commodity. All populated from a
+// single fetch. See dev-docs/commodities-and-currencies.md.
 const dynamicCurrencyOptions = ref<RecipeParameterOption[]>([])
+const dynamicHoldingOptions = ref<RecipeParameterOption[]>([])
+const dynamicCommodityOptions = ref<RecipeParameterOption[]>([])
 
 const { years: dynamicYearOptions, fetchYears } = useAvailableYears()
 
@@ -181,6 +186,12 @@ function accountOptions(filterType: string | undefined): RecipeParameterOption[]
 function getRawOptions(param: RecipeParameter): RecipeParameterOption[] {
   if (param.optionsFrom === 'currencies') {
     return dynamicCurrencyOptions.value
+  }
+  if (param.optionsFrom === 'holdings') {
+    return dynamicHoldingOptions.value
+  }
+  if (param.optionsFrom === 'commodities') {
+    return dynamicCommodityOptions.value
   }
   if (param.optionsFrom === 'years') {
     return dynamicYearOptions.value
@@ -244,17 +255,21 @@ function updateParam(name: string, value: string | number) {
 
 onMounted(async () => {
   // Only visible params need their dropdown options fetched.
-  const hasDynamicCurrencies = visibleParameters.value.some((p) => p.optionsFrom === 'currencies')
+  const commodityOptionKinds = ['currencies', 'holdings', 'commodities']
+  const hasDynamicCommodities = visibleParameters.value.some(
+    (p) => p.optionsFrom !== undefined && commodityOptionKinds.includes(p.optionsFrom),
+  )
   const hasDynamicYears = visibleParameters.value.some((p) => p.optionsFrom === 'years')
 
   const fetches: Promise<void>[] = []
 
-  if (hasDynamicCurrencies) {
+  if (hasDynamicCommodities) {
     fetches.push(
       fetchCommodities().then(() => {
-        dynamicCurrencyOptions.value = commodityDetails.value
-          .filter((c) => c.is_currency)
-          .map((c) => ({ value: c.code, label: c.code }))
+        const toOption = (c: (typeof commodityDetails.value)[number]) => ({ value: c.code, label: c.code })
+        dynamicCurrencyOptions.value = commodityDetails.value.filter((c) => c.is_currency).map(toOption)
+        dynamicHoldingOptions.value = commodityDetails.value.filter((c) => !c.is_currency).map(toOption)
+        dynamicCommodityOptions.value = commodityDetails.value.map(toOption)
       }),
     )
   }

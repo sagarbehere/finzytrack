@@ -125,7 +125,9 @@ query via `:paramName` placeholders.
 ```
 
 - `type`: `"select"`, `"number"`, or `"date"`
-- `optionsFrom: "currencies"` — dynamically populates from the user's ledger currencies
+- `optionsFrom: "currencies"` — the user's currencies only (is_currency); use for currency pickers
+- `optionsFrom: "holdings"` — non-currency commodities only, i.e. investment holdings (VOO, VTI, …)
+- `optionsFrom: "commodities"` — every commodity (currencies and holdings)
 - `optionsFrom: "years"` — dynamically populates from years present in the ledger data
 - Dashboard-level parameters cascade to all widgets. Widget-level parameters override dashboard ones.
 - In the query, reference as `:year`, `:currency`, `:limit`, etc.
@@ -612,7 +614,7 @@ Type: `string`
 | `type` | `'date' | 'select' | 'number' | 'boolean'` | yes |  |
 | `default` | `string | number | object` | — | Default value, or a generator object {"$gen": "name"} resolved at runtime. |
 | `options` | `object[] | object` | — | Either a literal array of {value, label} options, or a generator reference like {"$gen": "monthOptions"} resolved to an array at runtime. |
-| `optionsFrom` | `'currencies' | 'years' | 'accounts' | 'expenseAccounts' | 'incomeAccounts' | 'budgetTotals'` | — | Populate options dynamically from the user's ledger. 'accounts' = all accounts; 'expenseAccounts'/'incomeAccounts' = only that type (value = full account path, label = path below the type root, e.g. 'Expenses:Insurance:Health' → 'Insurance:Health'). 'budgetTotals' = accounts that carry a budget AND have a budgeted descendant — i.e. valid top-down 'total' accounts for a zero-based/catch-all view (includes quoted roots like 'Expenses'). |
+| `optionsFrom` | `'currencies' | 'holdings' | 'commodities' | 'years' | 'accounts' | 'expenseAccounts' | 'incomeAccounts' | 'budgetTotals'` | — | Populate options dynamically from the user's ledger. 'currencies' = commodities that play a currency (unit-of-account) role, i.e. is_currency (USD, INR) — use for currency pickers. 'holdings' = non-currency commodities, i.e. investment holdings (stocks/funds like VOO, VTI). 'commodities' = every commodity, currencies and holdings alike. 'accounts' = all accounts; 'expenseAccounts'/'incomeAccounts' = only that type (value = full account path, label = path below the type root, e.g. 'Expenses:Insurance:Health' → 'Insurance:Health'). 'budgetTotals' = accounts that carry a budget AND have a budgeted descendant — i.e. valid top-down 'total' accounts for a zero-based/catch-all view (includes quoted roots like 'Expenses'). |
 | `min` | `number` | — |  |
 | `max` | `number` | — |  |
 | `minParam` | `string` | — | For a `date` (or `number`) control: bind the input's minimum to another parameter's current value (e.g. a 'to' date whose minimum is the 'from' date). Reactive. |

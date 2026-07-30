@@ -136,9 +136,17 @@ export interface RecipeParameter {
         [k: string]: unknown;
       };
   /**
-   * Populate options dynamically from the user's ledger. 'accounts' = all accounts; 'expenseAccounts'/'incomeAccounts' = only that type (value = full account path, label = path below the type root, e.g. 'Expenses:Insurance:Health' → 'Insurance:Health'). 'budgetTotals' = accounts that carry a budget AND have a budgeted descendant — i.e. valid top-down 'total' accounts for a zero-based/catch-all view (includes quoted roots like 'Expenses').
+   * Populate options dynamically from the user's ledger. 'currencies' = commodities that play a currency (unit-of-account) role, i.e. is_currency (USD, INR) — use for currency pickers. 'holdings' = non-currency commodities, i.e. investment holdings (stocks/funds like VOO, VTI). 'commodities' = every commodity, currencies and holdings alike. 'accounts' = all accounts; 'expenseAccounts'/'incomeAccounts' = only that type (value = full account path, label = path below the type root, e.g. 'Expenses:Insurance:Health' → 'Insurance:Health'). 'budgetTotals' = accounts that carry a budget AND have a budgeted descendant — i.e. valid top-down 'total' accounts for a zero-based/catch-all view (includes quoted roots like 'Expenses').
    */
-  optionsFrom?: "currencies" | "years" | "accounts" | "expenseAccounts" | "incomeAccounts" | "budgetTotals";
+  optionsFrom?:
+    | "currencies"
+    | "holdings"
+    | "commodities"
+    | "years"
+    | "accounts"
+    | "expenseAccounts"
+    | "incomeAccounts"
+    | "budgetTotals";
   min?: number;
   max?: number;
   /**
