@@ -1,5 +1,11 @@
 ;; Finzytrack Ledger File
 
+;; Operating currencies — the currencies you track balances and net worth in.
+;; Finzytrack uses this list to tell currencies apart from investment holdings
+;; (stocks, funds, etc.) in totals and currency pickers. Add a line per
+;; currency you use.
+option "operating_currency" "{default_currency}"
+
 ;; Base accounts - modify as needed
 1970-01-01 open Assets:Cash                {default_currency}
 1970-01-01 open Assets:Bank:Checking       {default_currency}

@@ -672,7 +672,7 @@ class BeancountEngine:
         *,
         code: str,
         name: Optional[str] = None,
-        commodity_type: Optional[str] = None,
+        asset_class: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         ledger_file: str = "",
     ) -> list:
@@ -680,10 +680,14 @@ class BeancountEngine:
         meta: Dict[str, Any] = {'filename': ledger_file, 'lineno': 0}
         if name:
             meta['name'] = name
-        meta['type'] = commodity_type or "Unknown"
+        # `asset-class` is Beancount's idiomatic commodity metadata key. Only
+        # written when supplied — an absent asset-class is a valid state (the
+        # commodity's currency role then falls back to operating_currency).
+        if asset_class:
+            meta['asset-class'] = asset_class
         if metadata:
             for key, value in metadata.items():
-                if key not in ('name', 'type'):
+                if key not in ('name', 'asset-class'):
                     meta[key] = value
         commodity_entry = bd.Commodity(meta, today, code)
         return list(entries) + [commodity_entry]

@@ -1397,6 +1397,12 @@ def generate(anchor_month: date = _REFERENCE_END.replace(day=1), buffer_months: 
     output.append("; Fake ledger for demo/screenshot purposes")
     output.append("; This file contains fictional data only")
     output.append("")
+    # Operating currencies — the demo's currencies (USD + INR). Marks them as
+    # currencies (vs holdings) for totals/pickers. See
+    # dev-docs/commodities-and-currencies.md.
+    output.append('option "operating_currency" "USD"')
+    output.append('option "operating_currency" "INR"')
+    output.append("")
     output.append("")
 
     # Account opens

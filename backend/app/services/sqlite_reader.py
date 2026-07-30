@@ -379,11 +379,16 @@ class SqliteReader:
     # ── Commodity reads ──────────────────────────────────────────────────────
 
     def get_commodities(self) -> List[CommodityDetails]:
-        """Get all commodities with usage stats."""
+        """Get all commodities with role classification and usage stats.
+
+        The ``commodities`` table is exported complete (declared ∪ used), so
+        every commodity has exactly one row here — no separate merge with
+        usage-only codes is needed. See the exporter's ``_export_commodities``.
+        """
         def query(con: sqlite3.Connection) -> List[CommodityDetails]:
             comm_rows = con.execute(
-                "SELECT code, declaration_date, name, type, metadata_json "
-                "FROM commodities"
+                "SELECT code, declaration_date, name, asset_class, is_currency, "
+                "metadata_json FROM commodities"
             ).fetchall()
 
             usage_rows = con.execute(
@@ -391,10 +396,6 @@ class SqliteReader:
                 "FROM commodity_usage"
             ).fetchall()
             usage_by_code = {r["code"]: r for r in usage_rows}
-
-            # Also pick up commodities that appear in usage but not in declarations
-            declared_codes = {r["code"] for r in comm_rows}
-            extra_usage = [u for u in usage_rows if u["code"] not in declared_codes]
 
             result = []
             for row in comm_rows:
@@ -423,30 +424,12 @@ class SqliteReader:
                 result.append(CommodityDetails(
                     code=row["code"],
                     name=row["name"],
-                    type=row["type"],
+                    asset_class=row["asset_class"],
+                    is_currency=bool(row["is_currency"]),
                     first_seen=first_seen,
                     last_seen=last_seen,
                     usage=usage,
                     metadata=metadata,
-                ))
-
-            # Commodities from usage only (no declaration directive)
-            for u in extra_usage:
-                result.append(CommodityDetails(
-                    code=u["code"],
-                    name=None,
-                    type=None,
-                    first_seen=(
-                        date.fromisoformat(u["first_seen"]) if u["first_seen"] else None
-                    ),
-                    last_seen=(
-                        date.fromisoformat(u["last_seen"]) if u["last_seen"] else None
-                    ),
-                    usage=CommodityUsageData(
-                        transaction_count=u["transaction_count"],
-                        total_volume=Decimal(u["total_volume"]),
-                    ),
-                    metadata={},
                 ))
 
             return result
@@ -692,6 +675,15 @@ class SqliteReader:
             rows = con.execute("SELECT key, value_json FROM ledger_options").fetchall()
             return {r["key"]: json.loads(r["value_json"]) for r in rows}
         return self._query(query)
+
+    def get_operating_currencies(self) -> List[str]:
+        """Return the ledger's declared operating currencies (may be empty).
+
+        Sourced from the ``operating_currency`` option — the authoritative
+        currency whitelist. See dev-docs/commodities-and-currencies.md.
+        """
+        value = self.get_options().get("operating_currency") or []
+        return list(value)
 
     # ── Lots ─────────────────────────────────────────────────────────────────
 

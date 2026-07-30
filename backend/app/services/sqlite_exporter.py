@@ -64,6 +64,12 @@ _NEW_TABLES = [
 ]
 
 
+# Asset-class metadata values (case-insensitive) that denote a unit of account
+# rather than a holding. Consulted only as a *fallback* when a ledger declares
+# no `operating_currency` option. See dev-docs/commodities-and-currencies.md.
+_CURRENCY_ASSET_CLASSES = frozenset({"cash", "currency"})
+
+
 class SQLiteExporter:
     """Service for exporting Beancount entries to SQLite format with WAL mode."""
 
@@ -345,12 +351,19 @@ class SQLiteExporter:
         logger.info("Created postings table and indexes")
 
     def _ensure_new_tables(self, con: sqlite3.Connection) -> None:
-        """Create all CQRS ledger-mirror tables if they don't exist."""
-        cursor = con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'"
-        )
-        if cursor.fetchone() is not None:
-            return  # Already created
+        """(Re)create all CQRS ledger-mirror tables.
+
+        A full export is a clean rebuild, so we DROP and recreate rather than
+        create-if-absent. This makes the mirror self-healing across schema
+        changes: when a column is added/renamed, EXPORT_VERSION (a hash of this
+        DDL) detects the drift and triggers a rebuild, and this drop guarantees
+        the stale on-disk table is replaced instead of retained. Reached only on
+        the rebuild path (a stale mirror per ``_needs_export``), so it does not
+        affect the cheap already-fresh startup fast-path. The ``meta`` and
+        ``postings`` tables are managed separately and not dropped here.
+        """
+        for table in _NEW_TABLES:
+            con.execute(f"DROP TABLE IF EXISTS {table}")
 
         # ── Non-transaction directive tables ─────────────────────────────
         con.execute("""
@@ -373,7 +386,8 @@ class SQLiteExporter:
                 code            TEXT PRIMARY KEY,
                 declaration_date TEXT,
                 name            TEXT,
-                type            TEXT,
+                asset_class     TEXT,
+                is_currency     INTEGER NOT NULL DEFAULT 1,
                 metadata_json   TEXT
             )
         """)
@@ -677,7 +691,6 @@ class SQLiteExporter:
         # ── 1. Classify entries by type ──────────────────────────────────
         account_rows = []
         close_updates = []       # (close_date, account_name)
-        commodity_rows = []
         balance_rows = []
         pad_rows = []
         price_rows = []
@@ -735,16 +748,6 @@ class SQLiteExporter:
 
             elif isinstance(entry, data.Close):
                 close_updates.append((entry.date.isoformat(), entry.account))
-
-            elif isinstance(entry, data.Commodity):
-                meta = entry.meta or {}
-                commodity_rows.append((
-                    entry.currency,
-                    entry.date.isoformat(),
-                    meta.get('name'),
-                    meta.get('type'),
-                    self._metadata_to_json(meta),
-                ))
 
             elif isinstance(entry, data.Balance):
                 passed = 1 if entry.diff_amount is None else 0
@@ -849,12 +852,6 @@ class SQLiteExporter:
                     (close_date, account_name),
                 )
 
-        with self._sub_export("commodities", lambda: commodity_rows[0] if commodity_rows else None):
-            con.executemany(
-                "INSERT OR REPLACE INTO commodities (code, declaration_date, name, type, metadata_json) "
-                "VALUES (?,?,?,?,?)",
-                commodity_rows,
-            )
         with self._sub_export("balance_assertions", lambda: balance_rows[0] if balance_rows else None):
             con.executemany(
                 "INSERT INTO balance_assertions "
@@ -912,7 +909,9 @@ class SQLiteExporter:
         with self._sub_export("lots"):
             self._export_lots(con, entries)
 
-        # ── 4. Commodity usage ───────────────────────────────────────────
+        # ── 4. Commodities (identity + role classification) and usage ────
+        with self._sub_export("commodities"):
+            self._export_commodities(con, entries, options)
         with self._sub_export("commodity_usage"):
             self._export_commodity_usage(con, entries)
 
@@ -929,9 +928,9 @@ class SQLiteExporter:
             self._export_options(con, options)
 
         logger.info(
-            "Full ledger export: %d accounts, %d commodities, %d balances, "
+            "Full ledger export: %d accounts, %d balances, "
             "%d prices, %d errors",
-            len(account_rows), len(commodity_rows), len(balance_rows),
+            len(account_rows), len(balance_rows),
             len(price_rows), len(errors),
         )
 
@@ -1031,6 +1030,96 @@ class SQLiteExporter:
             "acquisition_date, label, book_value) VALUES (?,?,?,?,?,?,?,?)",
             rows,
         )
+
+    def _export_commodities(
+        self, con: sqlite3.Connection, entries: List[Any], options: Dict[str, Any]
+    ) -> None:
+        """Export the commodity universe (declared ∪ used) with role classification.
+
+        Every commodity referenced anywhere in the ledger gets exactly one row,
+        so a downstream query can JOIN ``commodities`` on a posting's currency
+        and always find it — including commodities that were never formally
+        declared via a ``commodity`` directive (they just appear in a posting).
+
+        Each row carries a derived ``is_currency`` flag computed once, here, via
+        ``_classify_is_currency``. That flag is the single source of truth for
+        "is this a unit of account (currency) or a holding (security)?" and is
+        consumed identically by KPI recipes (SQL ``WHERE is_currency``) and the
+        currency pickers (the ``/api/commodities`` field). See
+        ``dev-docs/commodities-and-currencies.md``.
+        """
+        # Declared commodities carry full metadata (name, asset-class, …).
+        declared: Dict[str, Dict[str, Any]] = {}
+        for entry in entries:
+            if isinstance(entry, data.Commodity):
+                meta = entry.meta or {}
+                declared[entry.currency] = {
+                    "declaration_date": entry.date.isoformat(),
+                    "name": meta.get("name"),
+                    "asset_class": meta.get("asset-class"),
+                    "metadata_json": self._metadata_to_json(meta),
+                }
+
+        # Every code that actually appears in a posting, so used-only
+        # commodities still get a row (and thus a resolved is_currency).
+        used: set = set()
+        for entry in entries:
+            if not isinstance(entry, Transaction):
+                continue
+            for posting in entry.postings:
+                if posting.units is not None:
+                    used.add(posting.units.currency)
+
+        # `operating_currency` is a list option; Beancount defaults it to [].
+        operating_set = set(options.get("operating_currency") or [])
+        has_operating = bool(operating_set)
+
+        rows = []
+        for code in sorted(declared.keys() | used):
+            d = declared.get(code, {})
+            asset_class = d.get("asset_class")
+            is_currency = self._classify_is_currency(
+                code, asset_class, operating_set, has_operating
+            )
+            rows.append((
+                code,
+                d.get("declaration_date"),
+                d.get("name"),
+                asset_class,
+                1 if is_currency else 0,
+                d.get("metadata_json"),
+            ))
+
+        con.executemany(
+            "INSERT OR REPLACE INTO commodities "
+            "(code, declaration_date, name, asset_class, is_currency, metadata_json) "
+            "VALUES (?,?,?,?,?,?)",
+            rows,
+        )
+
+    @staticmethod
+    def _classify_is_currency(
+        code: str,
+        asset_class: Optional[str],
+        operating_set: set,
+        has_operating: bool,
+    ) -> bool:
+        """Resolve whether a commodity plays a currency (unit-of-account) role.
+
+        Precedence (see ``dev-docs/commodities-and-currencies.md``):
+          1. If the ledger declares ``option "operating_currency"``, that list
+             is the authoritative whitelist — currency iff ``code`` is in it.
+          2. Else, if the commodity declares an ``asset-class``, it is a
+             currency iff that class is cash-like (case-insensitive).
+          3. Else (no signal at all), default to currency — we never hide a
+             commodity we cannot classify. Setting operating_currency later
+             turns the whitelist on and reclassifies everything.
+        """
+        if has_operating:
+            return code in operating_set
+        if asset_class:
+            return asset_class.strip().lower() in _CURRENCY_ASSET_CLASSES
+        return True
 
     def _export_commodity_usage(
         self, con: sqlite3.Connection, entries: List[Any]

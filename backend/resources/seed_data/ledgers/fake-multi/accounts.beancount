@@ -30,6 +30,6 @@
 
 2024-01-01 commodity USD
   name: "US Dollar"
-  type: "Cash"
+  asset-class: "cash"
 
 

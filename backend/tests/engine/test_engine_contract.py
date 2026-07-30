@@ -550,9 +550,10 @@ class TestCommodityCRUD:
     def test_create_commodity_with_metadata(self, engine, base_entries):
         entries = engine.create_commodity(
             base_entries, code="BTC",
-            name="Bitcoin", commodity_type="Cryptocurrency",
+            name="Bitcoin", asset_class="crypto",
         )
         from beancount.core import data as bd
         btc = [e for e in entries if isinstance(e, bd.Commodity) and e.currency == "BTC"]
         assert len(btc) >= 1
         assert btc[0].meta.get("name") == "Bitcoin"
+        assert btc[0].meta.get("asset-class") == "crypto"

@@ -23,7 +23,8 @@ class CommodityDetails(BaseModel):
     """Detailed commodity information including transaction usage data."""
     code: CommodityStr = Field(..., description="Commodity/currency code (e.g., 'USD', 'AAPL')")
     name: Optional[str] = Field(None, description="Full name from commodity directive")
-    type: Optional[str] = Field(None, description="Commodity type (e.g., 'Currency', 'Stock', 'ETF')")
+    asset_class: Optional[str] = Field(None, description="Beancount 'asset-class' metadata (e.g., 'cash', 'stock', 'etf')")
+    is_currency: bool = Field(True, description="Whether this commodity plays a currency (unit-of-account) role. Derived from operating_currency (primary) then asset-class (fallback).")
     first_seen: Optional[date] = Field(None, description="Earliest date this commodity appeared")
     last_seen: Optional[date] = Field(None, description="Latest date this commodity appeared")
     usage: CommodityUsageData = Field(..., description="Transaction usage statistics")
@@ -33,7 +34,7 @@ class CommodityCreateRequest(BaseModel):
     """Request model for creating new Beancount commodities."""
     code: CommodityStr = Field(..., description="Commodity/currency code (uppercase alphanumeric)")
     name: Optional[str] = Field(None, max_length=100, description="Optional full name")
-    type: Optional[str] = Field(None, max_length=50, description="Commodity type (defaults to 'Unknown')")
+    asset_class: Optional[str] = Field(None, max_length=50, description="Beancount 'asset-class' metadata (e.g., 'cash', 'stock', 'etf')")
     metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Optional commodity metadata")
 
 class CommodityCreateData(BaseModel):
@@ -49,7 +50,7 @@ class CommodityListData(BaseModel):
 class CommodityUpdateRequest(BaseModel):
     """Request model for updating commodity details."""
     name: Optional[str] = Field(None, max_length=100, description="Updated full name")
-    type: Optional[str] = Field(None, max_length=50, description="Updated commodity type")
+    asset_class: Optional[str] = Field(None, max_length=50, description="Updated 'asset-class' metadata")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Updated metadata (merges with existing)")
 
 class CommodityUpdateData(BaseModel):
@@ -63,3 +64,15 @@ class CommodityDeleteData(BaseModel):
     commodity_deleted: bool = Field(..., description="Whether commodity was deleted")
     message: str = Field(..., description="Delete result message")
     warnings: Optional[List[str]] = Field(None, description="Any warnings about the deletion")
+
+class OperatingCurrenciesData(BaseModel):
+    """The ledger's operating currencies — the authoritative currency whitelist."""
+    currencies: List[CommodityStr] = Field(
+        ..., description="Commodity codes declared as operating currencies (may be empty)"
+    )
+
+class OperatingCurrenciesUpdateRequest(BaseModel):
+    """Request to replace the ledger's operating_currency option."""
+    currencies: List[CommodityStr] = Field(
+        ..., description="Full replacement list of operating currency codes (empty clears the whitelist)"
+    )

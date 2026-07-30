@@ -604,7 +604,7 @@ class LedgerManager:
             list(entries),
             code=request.code,
             name=request.name,
-            commodity_type=request.type,
+            asset_class=request.asset_class,
             metadata=request.metadata,
             ledger_file=str(self.ledger_file),
         )
@@ -615,6 +615,31 @@ class LedgerManager:
             commodity_details=None,
             message=f"Commodity '{request.code}' created successfully",
         )
+
+    @_serialized_write
+    def set_operating_currencies(self, currencies: List[str]) -> List[str]:
+        """Replace the ledger's ``operating_currency`` option.
+
+        Operating currencies are the authoritative whitelist of commodities
+        that play a currency (unit-of-account) role. They live in the ledger —
+        the single source of truth — as ``option "operating_currency"`` lines
+        in the root file (Beancount only honours options in the top-level
+        file). Passing an empty list clears the whitelist, reverting to
+        asset-class-based fallback classification. The classification itself is
+        derived downstream at export time; see the exporter's
+        ``_classify_is_currency`` and dev-docs/commodities-and-currencies.md.
+        """
+        # Dedupe while preserving order — the option is a list, not a set.
+        deduped: List[str] = []
+        for code in currencies:
+            if code not in deduped:
+                deduped.append(code)
+
+        entries, errors, options = self._parse_ledger()
+        options = dict(options)
+        options['operating_currency'] = deduped
+        self._write_and_export(entries, errors, options)
+        return deduped
 
     # ── Document directive management (account-level documents) ──────────────
 

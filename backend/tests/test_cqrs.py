@@ -403,10 +403,12 @@ class TestExportZeroValuePostings:
 
 
 class TestExportCommodities:
-    """commodities table must match Commodity directives."""
+    """commodities table holds every commodity (declared ∪ used) with a
+    derived is_currency role flag."""
 
     def test_declared_commodities_match_fixture(self, edge_case_db):
-        """edge_cases declares exactly USD, EUR, AAPL."""
+        """edge_cases declares USD, EUR, AAPL — and uses only those, so the
+        complete (declared ∪ used) set is exactly those three."""
         db_path, _, _, _ = edge_case_db
         con = sqlite3.connect(str(db_path))
         codes = {
@@ -414,6 +416,35 @@ class TestExportCommodities:
         }
         con.close()
         assert codes == EDGE_CASE_COMMODITIES
+
+    def test_is_currency_follows_operating_currency_whitelist(self, edge_case_db):
+        """edge_cases declares `operating_currency "USD"`, so USD is a currency
+        and EUR/AAPL are not — the whitelist is authoritative."""
+        db_path, _, _, _ = edge_case_db
+        con = sqlite3.connect(str(db_path))
+        flags = {
+            r[0]: r[1]
+            for r in con.execute("SELECT code, is_currency FROM commodities").fetchall()
+        }
+        con.close()
+        assert flags == {"USD": 1, "EUR": 0, "AAPL": 0}
+
+    def test_asset_class_carried_from_directive(self, tmp_path):
+        """The `asset-class` metadata key is captured into its own column."""
+        db_path, _ = _export_ledger_to_db(tmp_path, (
+            'option "operating_currency" "USD"\n\n'
+            '1970-01-01 commodity USD\n'
+            '  asset-class: "cash"\n'
+            '1970-01-01 commodity VOO\n'
+            '  asset-class: "etf"\n'
+        ))
+        con = sqlite3.connect(str(db_path))
+        rows = {
+            r[0]: r[1]
+            for r in con.execute("SELECT code, asset_class FROM commodities").fetchall()
+        }
+        con.close()
+        assert rows == {"USD": "cash", "VOO": "etf"}
 
     def test_commodity_usage_count_for_usd(self, exported_db):
         """small_ledger has 20 transactions, all in USD. Each transaction has
@@ -426,6 +457,68 @@ class TestExportCommodities:
         con.close()
         # 20 transactions × 2 postings each = 40 posting-level usages
         assert row[0] == 40
+
+
+class TestCommodityClassification:
+    """The is_currency rule: operating_currency (primary) → asset-class
+    (fallback) → default-True. See dev-docs/commodities-and-currencies.md."""
+
+    # ── Unit: the pure classifier, all three precedence branches ──────────
+    def test_whitelist_present_is_authoritative(self):
+        cls = SQLiteExporter._classify_is_currency
+        op = {"USD", "INR"}
+        # asset_class is ignored entirely when a whitelist exists.
+        assert cls("USD", "stock", op, True) is True
+        assert cls("VOO", "cash", op, True) is False
+
+    def test_asset_class_fallback_when_no_whitelist(self):
+        cls = SQLiteExporter._classify_is_currency
+        assert cls("USD", "cash", set(), False) is True
+        assert cls("USD", "Currency", set(), False) is True   # case-insensitive
+        assert cls("VOO", "etf", set(), False) is False
+        assert cls("VOO", "stock", set(), False) is False
+
+    def test_defaults_to_currency_with_no_signal(self):
+        cls = SQLiteExporter._classify_is_currency
+        assert cls("USD", None, set(), False) is True
+
+    # ── Integration: through the real exporter ────────────────────────────
+    def test_used_only_commodity_gets_row_and_defaults_to_currency(self, tmp_path):
+        """A commodity that only appears in a posting (never declared) still
+        gets a row, and with no operating_currency it defaults to currency."""
+        db_path, _ = _export_ledger_to_db(tmp_path, (
+            "1970-01-01 open Assets:Cash   XYZ\n"
+            "1970-01-01 open Equity:Opening-Balances\n\n"
+            '2024-01-01 * "seed"\n'
+            "  Assets:Cash              100 XYZ\n"
+            "  Equity:Opening-Balances\n"
+        ))
+        con = sqlite3.connect(str(db_path))
+        row = con.execute(
+            "SELECT is_currency FROM commodities WHERE code = 'XYZ'"
+        ).fetchone()
+        con.close()
+        assert row is not None, "used-only commodity must still get a row"
+        assert row[0] == 1
+
+    def test_asset_class_excludes_holding_without_whitelist(self, tmp_path):
+        """With no operating_currency, a declared holding (asset-class etf) is
+        classified as a non-currency via the fallback."""
+        db_path, _ = _export_ledger_to_db(tmp_path, (
+            "1970-01-01 open Assets:Broker   VOO\n"
+            "1970-01-01 open Equity:Opening-Balances\n\n"
+            "1970-01-01 commodity VOO\n"
+            '  asset-class: "etf"\n\n'
+            '2024-01-01 * "buy"\n'
+            "  Assets:Broker            10 VOO\n"
+            "  Equity:Opening-Balances\n"
+        ))
+        con = sqlite3.connect(str(db_path))
+        row = con.execute(
+            "SELECT is_currency FROM commodities WHERE code = 'VOO'"
+        ).fetchone()
+        con.close()
+        assert row[0] == 0
 
 
 class TestExportBalanceAssertions:
@@ -951,6 +1044,49 @@ def _export_ledger_to_db(tmp_path, ledger_text):
     entries, errors, options = loader.load_file(str(ledger_path))
     exporter.export_full_sync(entries, errors, options)
     return db_path, errors
+
+
+class TestSchemaDrift:
+    """A mirror built with an older schema must be rebuilt cleanly."""
+
+    def test_old_commodities_schema_heals_on_reexport(self, tmp_path):
+        """Regression: an on-disk `commodities` table from a previous schema
+        (a `type` column, no `asset_class`/`is_currency`) must be dropped and
+        recreated by a full export, not retained — otherwise the insert crashes
+        with 'table commodities has no column named asset_class'. Guards the
+        drop+recreate in `_ensure_new_tables`."""
+        db_path = tmp_path / "ledger.db"
+        con = sqlite3.connect(str(db_path))
+        con.execute(
+            "CREATE TABLE commodities (code TEXT PRIMARY KEY, declaration_date TEXT, "
+            "name TEXT, type TEXT, metadata_json TEXT)"
+        )
+        con.execute("INSERT INTO commodities (code, type) VALUES ('USD', 'Cash')")
+        con.commit()
+        con.close()
+
+        ledger_path = tmp_path / "main.beancount"
+        ledger_path.write_text(
+            'option "operating_currency" "USD"\n\n'
+            "1970-01-01 open Assets:Cash USD\n"
+            "1970-01-01 open Equity:Opening-Balances\n\n"
+            '2024-01-01 * "seed"\n'
+            "  Assets:Cash              100 USD\n"
+            "  Equity:Opening-Balances\n"
+        )
+        entries, errors, options = loader.load_file(str(ledger_path))
+        # Must not raise, and must produce the current schema.
+        SQLiteExporter(str(db_path)).export_full_sync(entries, errors, options)
+
+        con = sqlite3.connect(str(db_path))
+        cols = {r[1] for r in con.execute("PRAGMA table_info(commodities)").fetchall()}
+        row = con.execute(
+            "SELECT is_currency FROM commodities WHERE code = 'USD'"
+        ).fetchone()
+        con.close()
+        assert "asset_class" in cols and "is_currency" in cols
+        assert "type" not in cols
+        assert row[0] == 1
 
 
 class TestExportResilience:
