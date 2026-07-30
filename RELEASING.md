@@ -62,6 +62,15 @@ just expressed through rc tags instead of dispatch builds.
 - The dispatch-build-then-test path is also the cure for "the CI binary breaks
   in ways my local build didn't": you test CI's own output before committing to
   a version number.
+- **Builds are not bit-reproducible, so artifact hashes differ between runs —
+  this is expected.** The tag triggers a *fresh* build, so its `sha256` sums
+  won't match the dispatch build you tested. The cause is packaging
+  nondeterminism (timestamps baked into the `.zip`/AppImage squashfs, PyInstaller
+  build paths), not code or dependency drift (all deps are pinned). Same commit +
+  same pinned toolchain → functionally identical program. "Test-then-tag"
+  therefore validates the *commit and toolchain*, not the literal shipped bytes.
+  If you ever need the exact tested bytes to ship, publish the dispatch build's
+  artifacts (`make_release=true`) instead of rebuilding on the tag.
 
 ## Quick checklist
 
