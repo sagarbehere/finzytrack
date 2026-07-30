@@ -63,7 +63,7 @@
         {
           "id": "main",
           "kind": "query",
-          "query": "SELECT currency, SUM(CAST(amount AS REAL)) * -1 AS amount FROM postings WHERE account_type = 'Income' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency"
+          "query": "SELECT currency, SUM(CAST(amount AS REAL)) * -1 AS amount FROM postings p JOIN commodities c ON p.currency = c.code WHERE c.is_currency = 1 AND account_type = 'Income' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency"
         },
         {
           "id": "out",
@@ -97,7 +97,7 @@
         {
           "id": "main",
           "kind": "query",
-          "query": "SELECT currency, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Expenses' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency"
+          "query": "SELECT currency, SUM(CAST(amount AS REAL)) AS amount FROM postings p JOIN commodities c ON p.currency = c.code WHERE c.is_currency = 1 AND account_type = 'Expenses' AND year = :year GROUP BY currency HAVING amount != 0 ORDER BY currency"
         },
         {
           "id": "out",
@@ -123,7 +123,7 @@
         {
           "id": "main",
           "kind": "query",
-          "query": "SELECT currency, (SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END)) - (SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END)) AS amount FROM postings WHERE year = :year AND account_type IN ('Income', 'Expenses') GROUP BY currency HAVING amount != 0 ORDER BY currency"
+          "query": "SELECT currency, (SUM(CASE WHEN account_type = 'Income' THEN -amount ELSE 0 END)) - (SUM(CASE WHEN account_type = 'Expenses' THEN amount ELSE 0 END)) AS amount FROM postings p JOIN commodities c ON p.currency = c.code WHERE c.is_currency = 1 AND year = :year AND account_type IN ('Income', 'Expenses') GROUP BY currency HAVING amount != 0 ORDER BY currency"
         },
         {
           "id": "out",
