@@ -1,15 +1,13 @@
 <template>
-  <Menu as="div" class="relative inline-block text-left">
-    <div>
-      <MenuButton
-        class="inline-flex w-full justify-center gap-x-1.5 rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-gray-800 dark:text-white dark:ring-white/10 dark:hover:bg-gray-700"
-        title="Show/hide columns"
-      >
-        <AdjustmentsHorizontalIcon class="h-5 w-5" aria-hidden="true" />
-        <span class="sr-only">Show/hide columns</span>
-        <ChevronDownIcon class="-mr-1 h-5 w-5 text-gray-400" aria-hidden="true" />
-      </MenuButton>
-    </div>
+  <Popover class="relative inline-block text-left">
+    <PopoverButton
+      class="inline-flex w-full justify-center gap-x-1.5 rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-gray-800 dark:text-white dark:ring-white/10 dark:hover:bg-gray-700"
+      title="Show/hide columns"
+    >
+      <AdjustmentsHorizontalIcon class="h-5 w-5" aria-hidden="true" />
+      <span class="sr-only">Show/hide columns</span>
+      <ChevronDownIcon class="-mr-1 h-5 w-5 text-gray-400" aria-hidden="true" />
+    </PopoverButton>
 
     <transition
       enter-active-class="transition ease-out duration-100"
@@ -19,7 +17,9 @@
       leave-from-class="transform opacity-100 scale-100"
       leave-to-class="transform opacity-0 scale-95"
     >
-      <MenuItems
+      <!-- Popover (not Menu) so it stays open while toggling multiple columns;
+           it closes only on the button, Esc, or an outside click. -->
+      <PopoverPanel
         :class="[
           'absolute z-50 mt-2 w-[32rem] divide-y divide-gray-100 rounded-md bg-white shadow-lg ring-1 ring-black/5 focus:outline-none dark:bg-gray-800 dark:divide-gray-700 dark:ring-white/10',
           align === 'right' ? 'right-0 origin-top-right' : 'left-0 origin-top-left'
@@ -34,71 +34,41 @@
 
         <div class="py-1">
           <div class="grid grid-cols-2 gap-0">
-            <MenuItem
-              v-for="column in allColumns"
-              :key="column.id"
-              v-slot="{ active }"
-              as="div"
-            >
             <button
+              v-for="column in selectableColumns"
+              :key="column.id"
+              type="button"
               @click="toggleColumnVisibility(column.id)"
-              :class="[
-                active ? 'bg-gray-100 text-gray-900 dark:bg-white/5 dark:text-white' : 'text-gray-700 dark:text-gray-300',
-                'group flex w-full items-center px-4 py-2 text-sm'
-              ]"
-              :disabled="column.id === 'status' || column.id === 'actions' || column.disabled"
-              :title="column.disabled ? column.disabledReason : undefined"
+              class="group flex w-full items-center justify-between px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-white/5 dark:hover:text-white"
             >
-              <div class="flex items-center justify-between w-full">
-                <span :class="{ 'opacity-50': column.id === 'status' || column.id === 'actions' || column.disabled }">
-                  {{ column.label }}
-                </span>
-                <div class="flex items-center">
-                  <CheckIcon
-                    v-if="columnVisibility[column.id]"
-                    class="h-4 w-4 text-green-600 dark:text-green-400"
-                    aria-hidden="true"
-                  />
-                  <span
-                    v-if="column.id === 'status' || column.id === 'actions'"
-                    class="text-xs text-gray-400 ml-2"
-                  >
-                    Required
-                  </span>
-                  <span
-                    v-else-if="column.disabled"
-                    class="text-xs text-gray-400 ml-2"
-                  >
-                    {{ column.disabledReason || 'Coming Soon' }}
-                  </span>
-                </div>
-              </div>
+              <span>{{ column.label }}</span>
+              <CheckIcon
+                v-if="columnVisibility[column.id]"
+                class="h-4 w-4 text-green-600 dark:text-green-400"
+                aria-hidden="true"
+              />
             </button>
-          </MenuItem>
           </div>
         </div>
 
         <div class="py-1">
-          <MenuItem v-slot="{ active }">
-            <button
-              @click="resetToDefaults"
-              :class="[
-                active ? 'bg-gray-100 text-gray-900 dark:bg-white/5 dark:text-white' : 'text-gray-700 dark:text-gray-300',
-                'group flex w-full items-center px-4 py-2 text-sm'
-              ]"
-            >
-              <ArrowPathIcon class="mr-3 h-4 w-4" aria-hidden="true" />
-              Reset to defaults
-            </button>
-          </MenuItem>
+          <button
+            type="button"
+            @click="resetToDefaults"
+            class="group flex w-full items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-white/5 dark:hover:text-white"
+          >
+            <ArrowPathIcon class="mr-3 h-4 w-4" aria-hidden="true" />
+            Reset to defaults
+          </button>
         </div>
-      </MenuItems>
+      </PopoverPanel>
     </transition>
-  </Menu>
+  </Popover>
 </template>
 
 <script setup lang="ts">
-import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/vue'
+import { computed } from 'vue'
+import { Popover, PopoverButton, PopoverPanel } from '@headlessui/vue'
 import {
   AdjustmentsHorizontalIcon,
   ChevronDownIcon,
@@ -119,7 +89,15 @@ interface Props {
   align?: 'left' | 'right'
 }
 
-withDefaults(defineProps<Props>(), {
+const props = withDefaults(defineProps<Props>(), {
   align: 'left'
 })
+
+// Always-present columns the user can't toggle (they carry the row's identity /
+// actions), and disabled ones (e.g. Balance "Coming Soon"), are not shown —
+// listing non-selectable entries adds noise without letting the user do anything.
+const REQUIRED_COLUMN_IDS = new Set(['status', 'actions'])
+const selectableColumns = computed(() =>
+  props.allColumns.filter(c => !REQUIRED_COLUMN_IDS.has(c.id) && !c.disabled)
+)
 </script>
