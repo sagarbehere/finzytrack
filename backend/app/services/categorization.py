@@ -97,7 +97,16 @@ def run_categorization(
         return categorization_map, "ai", warnings, None
 
     # Classifier engine (source_account is irrelevant here).
-    classifier, ml_warning = initialize_classifier(training_data=training_data, ml_enabled=True)
+    #
+    # Exclude the default "unknown" account from the training labels. It is a
+    # catch-all, not a real category: training on it makes "unknown" a class the
+    # classifier can *predict*, so an existing transaction currently sitting on
+    # the unknown account (which is exactly what bulk autocategorize resolves)
+    # becomes a training example labelled "unknown" and gets that label handed
+    # straight back — never resolving. Dropping it forces a real best-guess
+    # category with a confidence the caller can surface for review.
+    real_training = [(desc, cat) for (desc, cat) in training_data if cat != default_account]
+    classifier, ml_warning = initialize_classifier(training_data=real_training, ml_enabled=True)
     if classifier:
         for txn in transactions:
             suggested_category, confidence = categorize_transaction(

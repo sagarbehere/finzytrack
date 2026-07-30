@@ -98,6 +98,27 @@ class TestClassifierEngine:
 
         assert captured["desc"] == "P M N"
 
+    def test_training_excludes_the_default_unknown_account(self):
+        # The unknown account must not become a predictable class — otherwise a
+        # transaction sitting on it gets "unknown" handed back and never resolves.
+        txns = _inputs([("a", "Blue Bottle", "Assets:Bank")])
+        captured = {}
+
+        def fake_init(*, training_data, ml_enabled):
+            captured["training"] = list(training_data)
+            return (object(), None)
+
+        with patch("app.services.categorization.initialize_classifier", side_effect=fake_init), \
+             patch("app.services.categorization.categorize_transaction", return_value=("Expenses:Coffee", 0.9)):
+            run_categorization(
+                txns, CategorizationEngine.CLASSIFIER,
+                {"Expenses:Coffee"},
+                [("d1", "Expenses:Coffee"), ("d2", "Expenses:Unknown"), ("d3", "Expenses:Unknown")],
+                "Expenses:Unknown", llm_config=object(),
+            )
+
+        assert captured["training"] == [("d1", "Expenses:Coffee")]  # Unknown-labelled rows dropped
+
     def test_insufficient_training_data_uses_default_and_warns(self):
         txns = _inputs([("a", "Blue Bottle", "Assets:Bank")])
         with patch("app.services.categorization.initialize_classifier", return_value=(None, "not enough data")):

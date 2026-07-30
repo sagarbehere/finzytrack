@@ -639,12 +639,23 @@ const autocategorizeSelected = async () => {
 
   for (const w of outcome.stats.warnings || []) toast.warning('Autocategorize', w)
 
-  const skipped = selected.length - targets.length
-  const unresolved = targets.length - suggestions.size
-  const parts = [`Categorized ${suggestions.size} of ${targets.length}`]
-  if (unresolved > 0) parts.push(`${unresolved} unresolved`)
-  if (skipped > 0) parts.push(`${skipped} skipped`)
-  toast.success('Autocategorize complete', parts.join(' · '))
+  const categorized = suggestions.size
+  const notEligible = selected.length - targets.length // no single unknown posting
+  const noText = targets.length - categorized           // empty description → left as-is
+
+  const detail: string[] = []
+  if (noText > 0) detail.push(`${noText} had no description to categorize`)
+  if (notEligible > 0) detail.push(`${notEligible} skipped (no ${unknownAccount.value} posting)`)
+  const suffix = detail.length ? ` — ${detail.join('; ')}` : ''
+
+  if (categorized === 0) {
+    toast.warning('Autocategorize', `No transactions were categorized${suffix}.`)
+  } else {
+    toast.success(
+      'Autocategorize complete',
+      `Categorized ${categorized} transaction${categorized === 1 ? '' : 's'}${suffix}. Review and Save.`,
+    )
+  }
 }
 
 // Bulk delete is immediate (like the per-row delete), not staged: it writes to
