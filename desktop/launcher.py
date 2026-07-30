@@ -115,23 +115,34 @@ if sys.platform == 'win32' and getattr(sys, 'frozen', False):
               file=sys.stderr, flush=True)
 
 # On Linux, the bundle deliberately doesn't ship GTK / WebKit / etc. —
-# those come from the user's system (see the allowlist in
-# finzytrack.spec). Probe for libwebkit2gtk-4.1 before importing
-# pywebview so users hit a clear "install this package" message
-# instead of a cryptic stack trace from inside webview.platforms.gtk.
+# those come from the user's system (see the allowlist in finzytrack.spec).
+# pywebview's GTK backend loads WebKit through GObject-introspection, which
+# needs BOTH the WebKit shared library (libwebkit2gtk-4.1) AND its
+# introspection typelib (gir1.2-webkit2-4.1). The typelib is a separate
+# package — usually present on GNOME, but often missing on KDE/Qt desktops
+# (e.g. Kubuntu) or minimal installs, in which case pywebview aborts with a
+# cryptic "You must have either QT or GTK with Python extensions installed"
+# message. Probe the real import chain here — same as pywebview does — so the
+# user gets an actionable hint, covering both the missing-library and the
+# missing-typelib cases.
 if sys.platform.startswith('linux') and getattr(sys, 'frozen', False):
-    import ctypes
     try:
-        ctypes.CDLL('libwebkit2gtk-4.1.so.0')
-    except OSError:
+        import gi
+        try:
+            gi.require_version('WebKit2', '4.1')
+        except ValueError:
+            gi.require_version('WebKit2', '4.0')  # fall back to the older typelib
+        from gi.repository import WebKit2  # noqa: F401 — import probe only
+    except (ImportError, ValueError) as exc:
         print(
-            '\nFinzytrack requires libwebkit2gtk-4.1 (and libfuse2) on the\n'
-            'system to render its UI. Install it with one of:\n'
-            '  Debian 13 / Ubuntu 24.04+:  sudo apt install libwebkit2gtk-4.1-0 libfuse2t64\n'
-            '  Debian 12 / Ubuntu 22.04:   sudo apt install libwebkit2gtk-4.1-0 libfuse2\n'
+            f'\nFinzytrack could not load the WebKit GTK backend ({exc}).\n'
+            'It needs the WebKit GTK library and its GObject-introspection\n'
+            'typelib (plus libfuse2) from your distro. Install with one of:\n'
+            '  Debian 13 / Ubuntu 24.04+:  sudo apt install gir1.2-webkit2-4.1 libfuse2t64\n'
+            '  Debian 12 / Ubuntu 22.04:   sudo apt install gir1.2-webkit2-4.1 libfuse2\n'
             '  Fedora 36+:                 sudo dnf install webkit2gtk4.1 fuse-libs\n'
             '  Arch / Manjaro:             sudo pacman -S webkit2gtk-4.1 fuse2\n'
-            '  openSUSE Tumbleweed:        sudo zypper install libwebkit2gtk-4_1-0 libfuse2\n',
+            '  openSUSE Tumbleweed:        sudo zypper install typelib-1_0-WebKit2-4_1 libfuse2\n',
             file=sys.stderr, flush=True,
         )
         sys.exit(1)
