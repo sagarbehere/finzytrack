@@ -55,6 +55,61 @@
       </div>
     </SettingsSection>
 
+    <!-- ── Operating currencies ─────────────────────────────────────────────── -->
+    <SettingsSection
+      title="Operating Currencies"
+      description="The currencies you track balances and net worth in. Finzytrack uses this list to tell currencies apart from investment holdings (stocks, funds) in totals and currency pickers. Leave it empty to treat every commodity as a currency."
+      :is-dirty="operatingCurrenciesIsDirty"
+      :is-saving="operatingCurrenciesSaving"
+      :error="operatingCurrenciesError"
+      @save="saveOperatingCurrencies"
+      @reset="resetOperatingCurrencies"
+    >
+      <div>
+        <label class="block text-sm/6 font-medium text-gray-900 dark:text-white">Currencies</label>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Commodity codes treated as currencies (e.g. USD, INR).</p>
+
+        <div v-if="operatingCurrencies.length" class="flex flex-wrap gap-2 mb-3">
+          <span
+            v-for="code in operatingCurrencies"
+            :key="code"
+            class="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-1 text-sm font-medium text-indigo-700 inset-ring inset-ring-indigo-200 dark:bg-indigo-500/10 dark:text-indigo-300 dark:inset-ring-indigo-500/20"
+          >
+            {{ code }}
+            <button
+              type="button"
+              @click="removeCurrency(code)"
+              :aria-label="`Remove ${code}`"
+              class="text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-200"
+            >
+              <XMarkIcon class="size-4" />
+            </button>
+          </span>
+        </div>
+        <p v-else class="text-sm italic text-gray-400 dark:text-gray-500 mb-3">
+          No operating currencies set — every commodity is treated as a currency.
+        </p>
+
+        <div class="flex items-center gap-2">
+          <input
+            v-model="newCurrency"
+            type="text"
+            placeholder="Add code (e.g. USD)"
+            :class="inputClass"
+            class="!w-48 uppercase"
+            @keydown.enter.prevent="addCurrency"
+          />
+          <button
+            type="button"
+            @click="addCurrency"
+            class="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+          >
+            Add
+          </button>
+        </div>
+      </div>
+    </SettingsSection>
+
     <!-- ── AI ─────────────────────────────────────────────────────────────── -->
     <SettingsSection
       id="ai-settings"
@@ -493,16 +548,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { Listbox, ListboxButton, ListboxLabel, ListboxOption, ListboxOptions } from '@headlessui/vue'
 import { ChevronUpDownIcon } from '@heroicons/vue/16/solid'
-import { CheckIcon } from '@heroicons/vue/20/solid'
+import { CheckIcon, XMarkIcon } from '@heroicons/vue/20/solid'
 import SettingsSection from './SettingsSection.vue'
 import DocumentMaintenanceSection from './DocumentMaintenanceSection.vue'
 import FilePickerModal from '@/components/common/FilePickerModal.vue'
 import { useConfig } from '@/composables/useConfig'
 import { useAccounts } from '@/composables/useAccounts'
 import { useCommodities } from '@/composables/useCommodities'
+import { CommoditiesService } from '@/services/generated-api'
+import { errorHandler } from '@/utils/ErrorHandler'
 import { useToast } from '@/composables/useNotifications'
 import { useStartupTasks } from '@/composables/useStartupTasks'
 import { patchConfig } from '@/composables/useConfigPatch'
@@ -511,7 +568,7 @@ const emit = defineEmits<{ 'restart-required': [] }>()
 
 const { config, updateConfig } = useConfig()
 const { invalidateCache: invalidateAccounts } = useAccounts()
-const { invalidateCache: invalidateCommodities } = useCommodities()
+const { invalidateCache: invalidateCommodities, fetchCommodities } = useCommodities()
 const toast = useToast()
 
 // ─── Notices: re-open startup notices the user dismissed ──────────────────────
@@ -687,6 +744,77 @@ async function saveAccounts() {
 }
 
 function resetAccounts() { initAccountsFields(); accountsError.value = '' }
+
+// ─── Operating currencies section ──────────────────────────────────────────────
+// Not config-backed: the list lives in the ledger's `operating_currency` option
+// (the authoritative currency whitelist). See dev-docs/commodities-and-currencies.md.
+
+const operatingCurrenciesLoaded = ref<string[]>([])
+const operatingCurrencies = ref<string[]>([])
+const newCurrency = ref('')
+const operatingCurrenciesSaving = ref(false)
+const operatingCurrenciesError = ref('')
+
+const operatingCurrenciesIsDirty = computed(() =>
+  JSON.stringify(operatingCurrencies.value) !== JSON.stringify(operatingCurrenciesLoaded.value)
+)
+
+async function loadOperatingCurrencies() {
+  try {
+    const res = await CommoditiesService.getOperatingCurrencies()
+    operatingCurrenciesLoaded.value = res.data?.currencies ?? []
+    operatingCurrencies.value = [...operatingCurrenciesLoaded.value]
+  } catch (e) {
+    errorHandler.display(e)
+  }
+}
+
+function addCurrency() {
+  const code = newCurrency.value.trim().toUpperCase()
+  operatingCurrenciesError.value = ''
+  if (!code) return
+  if (!/^[A-Z0-9]+$/.test(code)) {
+    operatingCurrenciesError.value = 'Use uppercase letters and digits only (e.g. USD).'
+    return
+  }
+  if (!operatingCurrencies.value.includes(code)) {
+    operatingCurrencies.value = [...operatingCurrencies.value, code]
+  }
+  newCurrency.value = ''
+}
+
+function removeCurrency(code: string) {
+  operatingCurrencies.value = operatingCurrencies.value.filter((c) => c !== code)
+}
+
+async function saveOperatingCurrencies() {
+  operatingCurrenciesSaving.value = true
+  operatingCurrenciesError.value = ''
+  try {
+    const res = await CommoditiesService.setOperatingCurrencies({
+      currencies: operatingCurrencies.value,
+    })
+    operatingCurrenciesLoaded.value = res.data?.currencies ?? []
+    operatingCurrencies.value = [...operatingCurrenciesLoaded.value]
+    // Reclassification (is_currency) changed — refresh the shared cache so
+    // currency pickers everywhere reflect the new whitelist immediately.
+    await fetchCommodities(true)
+    toast.success('Saved', 'Operating currencies updated')
+  } catch (e: any) {
+    operatingCurrenciesError.value = e.message ?? 'Failed to save'
+    errorHandler.display(e)
+  } finally {
+    operatingCurrenciesSaving.value = false
+  }
+}
+
+function resetOperatingCurrencies() {
+  operatingCurrencies.value = [...operatingCurrenciesLoaded.value]
+  newCurrency.value = ''
+  operatingCurrenciesError.value = ''
+}
+
+onMounted(loadOperatingCurrencies)
 
 // ─── LLM section ──────────────────────────────────────────────────────────────
 

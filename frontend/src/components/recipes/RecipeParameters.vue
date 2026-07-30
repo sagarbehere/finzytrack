@@ -253,7 +253,7 @@ onMounted(async () => {
     fetches.push(
       fetchCommodities().then(() => {
         dynamicCurrencyOptions.value = commodityDetails.value
-          .filter((c) => c.type === 'Currency' || c.type === null || c.type === undefined)
+          .filter((c) => c.is_currency)
           .map((c) => ({ value: c.code, label: c.code }))
       }),
     )

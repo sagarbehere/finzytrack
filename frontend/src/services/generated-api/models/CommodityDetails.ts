@@ -16,9 +16,13 @@ export type CommodityDetails = {
      */
     name?: (string | null);
     /**
-     * Commodity type (e.g., 'Currency', 'Stock', 'ETF')
+     * Beancount 'asset-class' metadata (e.g., 'cash', 'stock', 'etf')
      */
-    type?: (string | null);
+    asset_class?: (string | null);
+    /**
+     * Whether this commodity plays a currency (unit-of-account) role. Derived from operating_currency (primary) then asset-class (fallback).
+     */
+    is_currency?: boolean;
     /**
      * Earliest date this commodity appeared
      */

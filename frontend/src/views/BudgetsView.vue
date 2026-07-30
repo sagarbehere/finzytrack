@@ -93,6 +93,7 @@
                   v-model="newRow.currency"
                   :allow-custom="false"
                   :show-details="false"
+                  :currencies-only="true"
                   placeholder="Currency…"
                 />
               </div>
@@ -195,7 +196,7 @@
           <AccountDropdown v-model="newRow.account" :allow-custom="false" :include-groups="true" placeholder="Account…" />
           <div class="flex gap-2">
             <div class="flex-1">
-              <CommodityDropdown v-model="newRow.currency" :allow-custom="false" :show-details="false" placeholder="Currency…" />
+              <CommodityDropdown v-model="newRow.currency" :allow-custom="false" :show-details="false" :currencies-only="true" placeholder="Currency…" />
             </div>
             <div class="flex-1">
               <IntervalDropdown v-model="newRow.interval" />

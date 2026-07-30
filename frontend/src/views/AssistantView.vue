@@ -526,6 +526,7 @@
               v-model="ruleCurrency"
               placeholder="INR"
               :allow-custom="true"
+              :currencies-only="true"
               custom-class="!py-1 !text-xs"
             />
           </div>

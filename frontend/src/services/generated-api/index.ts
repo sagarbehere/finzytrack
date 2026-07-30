@@ -60,6 +60,7 @@ export type { ApiResponse_GenerateQueryData_ } from './models/ApiResponse_Genera
 export type { ApiResponse_LearnOFXAccountData_ } from './models/ApiResponse_LearnOFXAccountData_';
 export type { ApiResponse_NoticesResponse_ } from './models/ApiResponse_NoticesResponse_';
 export type { ApiResponse_OFXDetectionData_ } from './models/ApiResponse_OFXDetectionData_';
+export type { ApiResponse_OperatingCurrenciesData_ } from './models/ApiResponse_OperatingCurrenciesData_';
 export type { ApiResponse_OrphanDeleteData_ } from './models/ApiResponse_OrphanDeleteData_';
 export type { ApiResponse_OrphanScanData_ } from './models/ApiResponse_OrphanScanData_';
 export type { ApiResponse_ParseNLTransactionData_ } from './models/ApiResponse_ParseNLTransactionData_';
@@ -154,6 +155,8 @@ export type { NoticeModel } from './models/NoticeModel';
 export type { NoticesResponse } from './models/NoticesResponse';
 export type { OFXDetectionData } from './models/OFXDetectionData';
 export type { OFXDetectionRequest } from './models/OFXDetectionRequest';
+export type { OperatingCurrenciesData } from './models/OperatingCurrenciesData';
+export type { OperatingCurrenciesUpdateRequest } from './models/OperatingCurrenciesUpdateRequest';
 export type { OrphanCandidateData } from './models/OrphanCandidateData';
 export type { OrphanDeleteData } from './models/OrphanDeleteData';
 export type { OrphanDeleteRequest } from './models/OrphanDeleteRequest';

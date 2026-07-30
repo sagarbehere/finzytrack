@@ -155,8 +155,9 @@ interface Props {
   // Filtering options
   includePattern?: string | RegExp
   excludePattern?: string | RegExp
-  commodityTypes?: string[] // e.g., ['Currency', 'Stock']
-  showDetails?: boolean // Show commodity name/type in dropdown
+  assetClasses?: string[] // filter by asset-class, e.g. ['stock', 'etf']
+  currenciesOnly?: boolean // show only commodities that play a currency role (is_currency)
+  showDetails?: boolean // Show commodity name/asset-class in dropdown
   clearable?: boolean // Show a (none) option to clear the selection
 }
 
@@ -191,11 +192,19 @@ onMounted(() => {
 const filteredCommodities = computed(() => {
   let commodities = commodityCodes.value
 
-  // Filter by commodity types
-  if (props.commodityTypes?.length) {
+  // Filter to currency-role commodities only
+  if (props.currenciesOnly) {
     commodities = commodities.filter(code => {
       const commodity = commodityDetails.value.find(c => c.code === code)
-      return commodity && commodity.type && props.commodityTypes!.includes(commodity.type)
+      return commodity?.is_currency
+    })
+  }
+
+  // Filter by asset-class
+  if (props.assetClasses?.length) {
+    commodities = commodities.filter(code => {
+      const commodity = commodityDetails.value.find(c => c.code === code)
+      return commodity && commodity.asset_class && props.assetClasses!.includes(commodity.asset_class)
     })
   }
 
@@ -239,7 +248,7 @@ const getCommodityInfo = (code: string): string | null => {
   
   const parts = []
   if (commodity.name) parts.push(commodity.name)
-  if (commodity.type) parts.push(`(${commodity.type})`)
+  if (commodity.asset_class) parts.push(`(${commodity.asset_class})`)
   
   return parts.length > 0 ? parts.join(' ') : null
 }

@@ -43,7 +43,7 @@
         {
           "id": "main",
           "kind": "query",
-          "query": "SELECT currency, SUM(CASE WHEN account_type IN ('Assets', 'Liabilities') THEN amount ELSE 0 END) AS amount FROM postings GROUP BY currency HAVING amount != 0 ORDER BY currency"
+          "query": "SELECT currency, SUM(CASE WHEN account_type IN ('Assets', 'Liabilities') THEN amount ELSE 0 END) AS amount FROM postings p JOIN commodities c ON p.currency = c.code WHERE c.is_currency = 1 GROUP BY currency HAVING amount != 0 ORDER BY currency"
         },
         {
           "id": "out",
@@ -69,7 +69,7 @@
         {
           "id": "main",
           "kind": "query",
-          "query": "SELECT currency, SUM(CAST(amount AS REAL)) AS amount FROM postings WHERE account_type = 'Assets' GROUP BY currency HAVING amount != 0 ORDER BY currency"
+          "query": "SELECT currency, SUM(CAST(amount AS REAL)) AS amount FROM postings p JOIN commodities c ON p.currency = c.code WHERE c.is_currency = 1 AND account_type = 'Assets' GROUP BY currency HAVING amount != 0 ORDER BY currency"
         },
         {
           "id": "out",
@@ -95,7 +95,7 @@
         {
           "id": "main",
           "kind": "query",
-          "query": "SELECT currency, SUM(CAST(amount AS REAL)) * -1 AS amount FROM postings WHERE account_type = 'Liabilities' GROUP BY currency HAVING amount != 0 ORDER BY currency"
+          "query": "SELECT currency, SUM(CAST(amount AS REAL)) * -1 AS amount FROM postings p JOIN commodities c ON p.currency = c.code WHERE c.is_currency = 1 AND account_type = 'Liabilities' GROUP BY currency HAVING amount != 0 ORDER BY currency"
         },
         {
           "id": "out",
