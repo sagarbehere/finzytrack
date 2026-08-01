@@ -61,7 +61,7 @@ Valuing investments:
             WHERE y.base_currency = x.base_currency AND y.quote_currency = x.quote_currency)) lp
       ON lp.base_currency = l.units_currency
     GROUP BY l.units_currency, lp.quote_currency
-- REALIZED GAIN on a sale is derived STRUCTURALLY from the reducing posting (units < 0 with both cost_amount and price_amount set): gain = |units| × (price_amount − cost_amount). This works in ANY account — do not rely on an "Income:CapitalGains" account name.
+- REALIZED GAIN on a sale is derived STRUCTURALLY from the reducing posting (units < 0 with both cost_amount and price_amount set): gain = |units| × (price_amount − cost_amount). This works in ANY account — do not rely on an "Income:CapitalGains" account name. The sold lot's acquisition date is in the cost_date column, so the holding period = transaction_date − cost_date (over 365 days = long term). Use julianday(transaction_date) − julianday(cost_date) in SQLite.
 - For portfolio VALUE-OVER-TIME or RETURNS (XIRR), do NOT hand-roll SQL — use the compute functions "portfolio_series" (as-of value/cost series) and "portfolio_returns" (XIRR + simple gain) via execute_compute or a recipe `compute` step. SQL cannot do as-of series or money-weighted return well.
 
 Query rules:

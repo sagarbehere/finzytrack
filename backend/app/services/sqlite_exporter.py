@@ -335,6 +335,7 @@ class SQLiteExporter:
                 currency TEXT,
                 cost_amount TEXT,
                 cost_currency TEXT,
+                cost_date TEXT,
                 price_amount TEXT,
                 price_currency TEXT,
                 source_account TEXT,
@@ -610,11 +611,17 @@ class SQLiteExporter:
 
                 cost_amount = None
                 cost_currency = None
+                cost_date = None
                 if posting.cost is not None:
                     cost_number = getattr(posting.cost, 'number', None)
                     if cost_number is not None:
                         cost_amount = self._decimal_to_text(cost_number)
                     cost_currency = getattr(posting.cost, 'currency', None)
+                    # The lot's acquisition date — makes a sale row self-sufficient
+                    # for the short/long-term split (Slice 3, realized gains).
+                    cd = getattr(posting.cost, 'date', None)
+                    if cd is not None:
+                        cost_date = cd.isoformat()
 
                 price_amount = None
                 price_currency = None
@@ -643,6 +650,7 @@ class SQLiteExporter:
                     posting.units.currency if posting.units is not None else None,
                     cost_amount,
                     cost_currency,
+                    cost_date,
                     price_amount,
                     price_currency,
                     source_account,
@@ -657,7 +665,7 @@ class SQLiteExporter:
                 ))
 
         con.executemany(
-            "INSERT INTO postings VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO postings VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
         return posting_id

@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 2,
+  "id": "investment-realized-gains",
+  "title": "Realized Gains",
+  "description": "Realized gains and losses on sold holdings, consolidated across all your accounts and brokers — grouped by year and holding period (short vs long term). NOTE: this is derived from your ledger and is NOT a tax document. It does not apply wash-sale rules or your broker's lot-selection method, so it can differ from your 1099-B. For tax purposes, use your broker's 1099-B / official statements.",
+  "parameters": [
+    { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" }
+  ],
+
+  "layout": {
+    "columns": 12,
+    "gap": "1.5rem",
+    "rowHeight": "140px",
+    "widgets": [
+      { "widgetId": "kpi-total",    "gridArea": "1 / 1 / 2 / 7" },
+      { "widgetId": "kpi-thisyear", "gridArea": "1 / 7 / 2 / 13" },
+      { "widgetId": "by-year",      "gridArea": "2 / 1 / 5 / 13" },
+      { "widgetId": "detail",       "gridArea": "5 / 1 / 9 / 13" }
+    ]
+  },
+
+  "widgets": [
+    {
+      "id": "kpi-total",
+      "title": "Realized Gain (all-time)",
+      "helpText": "Total realized gain/loss across all sold holdings and accounts. Ledger-derived, not for tax filing.",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT price_currency AS currency, ROUND(SUM(ABS(CAST(amount AS REAL)) * (CAST(price_amount AS REAL) - CAST(cost_amount AS REAL))), 2) AS amount FROM postings p JOIN commodities c ON c.code = p.currency WHERE c.is_currency = 0 AND p.cost_amount IS NOT NULL AND p.price_amount IS NOT NULL AND CAST(p.amount AS REAL) < 0 GROUP BY price_currency HAVING amount != 0 ORDER BY price_currency" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": { "type": "kpi", "icon": "=", "multiCurrency": true, "amountField": "amount", "currencyField": "currency", "colorBySign": true }
+    },
+    {
+      "id": "kpi-thisyear",
+      "title": "Realized Gain (latest year)",
+      "helpText": "Realized gain/loss booked in the most recent year that has sales. Ledger-derived, not for tax filing.",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT price_currency AS currency, ROUND(SUM(ABS(CAST(amount AS REAL)) * (CAST(price_amount AS REAL) - CAST(cost_amount AS REAL))), 2) AS amount FROM postings p JOIN commodities c ON c.code = p.currency WHERE c.is_currency = 0 AND p.cost_amount IS NOT NULL AND p.price_amount IS NOT NULL AND CAST(p.amount AS REAL) < 0 AND p.year = (SELECT MAX(year) FROM postings p2 JOIN commodities c2 ON c2.code = p2.currency WHERE c2.is_currency = 0 AND p2.cost_amount IS NOT NULL AND p2.price_amount IS NOT NULL AND CAST(p2.amount AS REAL) < 0) GROUP BY price_currency HAVING amount != 0 ORDER BY price_currency" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": { "type": "kpi", "icon": "=", "multiCurrency": true, "amountField": "amount", "currencyField": "currency", "colorBySign": true }
+    },
+    {
+      "id": "by-year",
+      "title": "Realized Gain by Year (short vs long term)",
+      "helpText": "Realized gain per year, split by holding period. Held over one year = long term. Ledger-derived, not a tax document.",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT CAST(year AS TEXT) AS year, ROUND(SUM(CASE WHEN julianday(transaction_date) - julianday(cost_date) > 365 THEN ABS(CAST(amount AS REAL)) * (CAST(price_amount AS REAL) - CAST(cost_amount AS REAL)) ELSE 0 END), 2) AS long_term, ROUND(SUM(CASE WHEN julianday(transaction_date) - julianday(cost_date) <= 365 THEN ABS(CAST(amount AS REAL)) * (CAST(price_amount AS REAL) - CAST(cost_amount AS REAL)) ELSE 0 END), 2) AS short_term FROM postings p JOIN commodities c ON c.code = p.currency WHERE c.is_currency = 0 AND p.cost_amount IS NOT NULL AND p.price_amount IS NOT NULL AND CAST(p.amount AS REAL) < 0 AND p.price_currency = :currency GROUP BY year ORDER BY year" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": {
+        "type": "chart",
+        "chartType": "bar",
+        "emptyText": "No sales recorded in this currency. (This view is ledger-derived, not a tax document.)",
+        "options": {
+          "tooltip": { "trigger": "axis" },
+          "legend": { "show": true },
+          "grid": { "left": "3%", "right": "4%", "bottom": "3%", "containLabel": true },
+          "xAxis": { "type": "category" },
+          "yAxis": { "type": "value" },
+          "series": [
+            { "name": "Long term", "type": "bar", "stack": "gain", "encode": { "x": "year", "y": "long_term" }, "itemStyle": { "color": "{{theme.series.income}}" } },
+            { "name": "Short term", "type": "bar", "stack": "gain", "encode": { "x": "year", "y": "short_term" }, "itemStyle": { "color": "{{theme.series.budget}}" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "detail",
+      "title": "Sales",
+      "helpText": "Every sale: sale date, the lot's acquisition date, holding period, cost basis, proceeds, and realized gain. Consolidated across accounts. Ledger-derived — for tax, use your broker's 1099-B.",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT transaction_date AS sale_date, currency AS holding, ROUND(ABS(CAST(amount AS REAL)), 4) AS units, cost_date AS acquired, CAST(julianday(transaction_date) - julianday(cost_date) AS INTEGER) AS holding_days, CASE WHEN julianday(transaction_date) - julianday(cost_date) > 365 THEN 'Long' ELSE 'Short' END AS term, ROUND(ABS(CAST(amount AS REAL)) * CAST(cost_amount AS REAL), 2) AS cost_basis, ROUND(ABS(CAST(amount AS REAL)) * CAST(price_amount AS REAL), 2) AS proceeds, ROUND(ABS(CAST(amount AS REAL)) * (CAST(price_amount AS REAL) - CAST(cost_amount AS REAL)), 2) AS gain FROM postings p JOIN commodities c ON c.code = p.currency WHERE c.is_currency = 0 AND p.cost_amount IS NOT NULL AND p.price_amount IS NOT NULL AND CAST(p.amount AS REAL) < 0 AND p.price_currency = :currency ORDER BY transaction_date DESC" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": {
+        "type": "table",
+        "emptyText": "No sales recorded in this currency. (Ledger-derived; not a tax document.)",
+        "columns": [
+          { "key": "sale_date", "label": "Sold", "format": "dateShort" },
+          { "key": "holding", "label": "Holding" },
+          { "key": "units", "label": "Units", "format": "number", "align": "right" },
+          { "key": "acquired", "label": "Acquired", "format": "dateShort" },
+          { "key": "holding_days", "label": "Days Held", "format": "number", "align": "right" },
+          { "key": "term", "label": "Term" },
+          { "key": "cost_basis", "label": "Cost Basis", "format": "currency", "align": "right" },
+          { "key": "proceeds", "label": "Proceeds", "format": "currency", "align": "right" },
+          { "key": "gain", "label": "Realized Gain", "format": "signedCurrency", "align": "right" }
+        ]
+      }
+    }
+  ]
+}
