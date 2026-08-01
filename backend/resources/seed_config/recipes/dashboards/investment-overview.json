@@ -14,6 +14,12 @@
       "kind": "compute",
       "fn": "portfolio_series",
       "args": { "to": "{{params.asOf}}", "scope": "overall", "currency": "{{params.currency}}", "cadence": "monthly" }
+    },
+    {
+      "id": "returns-data",
+      "kind": "compute",
+      "fn": "portfolio_returns",
+      "args": { "to": "{{params.asOf}}", "scope": "asset-class", "currency": "{{params.currency}}" }
     }
   ],
 
@@ -27,7 +33,8 @@
       { "widgetId": "kpi-unrealized", "gridArea": "1 / 7 / 2 / 10" },
       { "widgetId": "kpi-income",     "gridArea": "1 / 10 / 2 / 13" },
       { "widgetId": "allocation",     "gridArea": "2 / 1 / 5 / 6" },
-      { "widgetId": "value-over-time","gridArea": "2 / 6 / 5 / 13" }
+      { "widgetId": "value-over-time","gridArea": "2 / 6 / 5 / 13" },
+      { "widgetId": "returns",        "gridArea": "5 / 1 / 8 / 13" }
     ]
   },
 
@@ -129,6 +136,26 @@
             { "name": "Cost basis", "type": "line", "smooth": true, "showSymbol": false, "encode": { "x": "date", "y": "cost_basis" }, "itemStyle": { "color": "{{theme.series.budget}}" }, "lineStyle": { "type": "dashed" } }
           ]
         }
+      }
+    },
+    {
+      "id": "returns",
+      "title": "Returns by Asset Class",
+      "helpText": "XIRR is your money-weighted annual return — it accounts for when you invested. Simple gain ignores timing. Both are shown per asset class.",
+      "steps": [
+        { "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.returns-data}}"] }
+      ],
+      "output": "rows",
+      "visualization": {
+        "type": "table",
+        "emptyText": "No priced holdings to measure returns on in this currency yet.",
+        "columns": [
+          { "key": "group", "label": "Asset Class" },
+          { "key": "xirr", "label": "XIRR", "format": "percent", "align": "right" },
+          { "key": "simple_gain_pct", "label": "Simple Gain %", "format": "percent", "align": "right" },
+          { "key": "simple_gain", "label": "Gain", "format": "signedCurrency", "align": "right" },
+          { "key": "market_value", "label": "Value", "format": "currency", "align": "right" }
+        ]
       }
     }
   ]

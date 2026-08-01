@@ -63,6 +63,7 @@ def _query_steps(dashboard: str):
 
 @pytest.mark.parametrize("dashboard", [
     "financial-overview", "investment-overview", "investment-holdings",
+    "investment-income",
 ])
 def test_all_query_steps_execute(mirror, dashboard):
     con = sqlite3.connect(str(mirror))
