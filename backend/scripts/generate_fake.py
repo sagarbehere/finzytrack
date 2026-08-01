@@ -14,6 +14,7 @@ currency-substituted (that's for the ``one.beancount`` starter ledger).
 
 import argparse
 import calendar
+import math
 import random
 import re
 import uuid
@@ -116,8 +117,16 @@ def fake_hash():
 def txn(dt, payee, narration, postings, source_account=None, external_id=None):
     """Generate a transaction string.
 
-    Each posting is a tuple: (account, amount, currency)
-    or with total price:      (account, amount, currency, total_price_amt, total_price_ccy)
+    Each posting is a tuple, in one of these shapes:
+      (account, amount, currency)                                  plain
+      (account, amount, currency, total_price_amt, total_price_ccy)  @@ total price
+      (account, units, currency, "COST", cost_num, cost_ccy)       held at cost {…}
+      (account, units, currency, "COST", cost_num, cost_ccy, price_num, price_ccy)
+                                                       reducing a lot {…} @ price
+
+    The first two shapes are unchanged and emit byte-identically to before; the
+    "COST" shapes are additive (investment lots — buys and cost-basis sales) and
+    print share units with `:g` (no forced 2-decimal padding).
     """
     lines = []
     lines.append(f'{dt} * "{payee}" "{narration}"')
@@ -130,10 +139,17 @@ def txn(dt, payee, narration, postings, source_account=None, external_id=None):
         lines.append(f'  external_id_type: "OFX"')
     for posting in postings:
         acct, amt, ccy = posting[0], posting[1], posting[2]
-        price_str = ""
-        if len(posting) >= 5:
-            price_str = f" @@ {posting[3]:.2f} {posting[4]}"
-        lines.append(f'  {acct:<55s} {amt:.2f} {ccy}{price_str}')
+        suffix = ""
+        amt_str = f"{amt:.2f}"
+        if len(posting) >= 6 and posting[3] == "COST":
+            # Investment lot: units held at cost, optionally reduced at a price.
+            amt_str = f"{amt:g}"
+            suffix = f" {{{posting[4]:.2f} {posting[5]}}}"
+            if len(posting) >= 8:
+                suffix += f" @ {posting[6]:.2f} {posting[7]}"
+        elif len(posting) >= 5:
+            suffix = f" @@ {posting[3]:.2f} {posting[4]}"
+        lines.append(f'  {acct:<55s} {amt_str} {ccy}{suffix}')
     return "\n".join(lines)
 
 # --- Account definitions ---
@@ -150,7 +166,7 @@ ACCOUNTS = """
 2015-12-31 open Assets:Receivable:Work                              USD
 2015-12-31 open Assets:Receivable:Personal                          USD
 2015-12-31 open Assets:Investments:Bonds:TreasuryDirect:IBonds      USD
-2015-12-31 open Assets:Investments:Brokerage:Vanguard:Individual    USD
+2015-12-31 open Assets:Investments:Brokerage:Vanguard:Individual    USD,VOO,VTI,AAPL,VMFXX
 2015-12-31 open Assets:Investments:Brokerage:Wealthsimple           USD
 
 2015-12-31 open Liabilities:CreditCards:Citi:DoubleCash             USD
@@ -175,6 +191,13 @@ ACCOUNTS = """
 2015-12-31 open Income:Interest:Checking:ValleyCU                   USD
 2015-12-31 open Income:Interest:Savings:PinnacleBank:NRE            INR
 2015-12-31 open Income:Interest:Savings:PinnacleBank:NRO            INR
+
+2015-12-31 open Income:Dividends:VOO                                USD
+2015-12-31 open Income:Dividends:VTI                                USD
+2015-12-31 open Income:Dividends:AAPL                               USD
+2015-12-31 open Income:Dividends:VMFXX                              USD
+2015-12-31 open Income:CapitalGains:VOO                             USD
+2015-12-31 open Income:CapitalGains:AAPL                            USD
 
 2015-12-31 open Expenses:AutoInsurance
 2015-12-31 open Expenses:Internet
@@ -250,6 +273,36 @@ PAD_BALANCE = """
 2019-01-01 balance Assets:Liquid:Savings:WestCoastBank                 125000.00 USD
 
 2019-04-24 balance Assets:Liquid:Savings:HighYield:HYSA                0.00 USD
+""".strip()
+
+# --- Commodity directives ---
+# Investment holdings carry Finzytrack's metadata vocabulary (see
+# dev-docs/metadata-conventions.md): `asset-class` classifies the security and
+# `fetch_symbol` is the ticker the price fetcher uses (redundant here where it
+# equals the Beancount code, but shown to document the convention). These are
+# non-currency commodities (`is_currency = 0`, derived from asset-class not being
+# cash/currency) so Layer 1 keeps them out of currency totals — Layer 2 values
+# them via the price sidecar. The money-market fund is priced at a flat 1.00 and
+# is never fetched.
+COMMODITIES = """
+2015-12-31 commodity VOO
+  name: "Vanguard S&P 500 ETF"
+  asset-class: "etf"
+  fetch_symbol: "VOO"
+
+2015-12-31 commodity VTI
+  name: "Vanguard Total Stock Market ETF"
+  asset-class: "etf"
+  fetch_symbol: "VTI"
+
+2015-12-31 commodity AAPL
+  name: "Apple Inc."
+  asset-class: "stock"
+  fetch_symbol: "AAPL"
+
+2015-12-31 commodity VMFXX
+  name: "Vanguard Federal Money Market Fund"
+  asset-class: "money-market"
 """.strip()
 
 # --- Transaction generators ---
@@ -580,17 +633,6 @@ def gen_bonus(dt):
         ("Assets:Liquid:Checking:WestCoastBank", amt, "USD"),
         ("Income:Bonus", -amt, "USD"),
     ], source_account="Assets:Liquid:Checking:WestCoastBank")
-
-def gen_brokerage_transfer(dt):
-    amt = round(random.uniform(1000, 3000), 2)
-    acct = random.choice([
-        "Assets:Investments:Brokerage:Vanguard:Individual",
-        "Assets:Investments:Brokerage:Wealthsimple",
-    ])
-    return txn(dt, f"Transfer to {acct.split(':')[-1]}", "Investment contribution", [
-        (acct, amt, "USD"),
-        ("Assets:Liquid:Checking:WestCoastBank", -amt, "USD"),
-    ], source_account=acct)
 
 def gen_savings_to_checking_transfer(dt):
     """Replenish checking from HYSA periodically."""
@@ -1069,6 +1111,159 @@ def gen_unknown_expense(dt):
         ("Expenses:Unknown", amt, "USD"),
     ], source_account=cc)
 
+# --- Priced investment holdings (Layer 2 valuation demo) ---
+#
+# A small, deterministic priced-holding portfolio in the Vanguard brokerage:
+# ETF/stock lots bought across several years (so short- vs long-term shows),
+# quarterly dividends, a money-market sweep with reinvested income (DRIP), and
+# two partial sales (one long-term, one short-term) that book capital gains to
+# `Income:CapitalGains:*`. The companion `prices.beancount` sidecar (see
+# `generate_prices`) supplies the market prices these are valued against; both
+# are re-anchored by the same day-shift so buy dates and price dates stay aligned.
+
+_INVEST_ACCT = "Assets:Investments:Brokerage:Vanguard:Individual"
+_INVEST_CASH = "Assets:Liquid:Checking:WestCoastBank"
+
+# Smooth, deterministic price paths (no RNG — a pure function of the date so the
+# sidecar and the buy/sale costs always agree). Per symbol:
+# (start_date, base_price, per-month drift, seasonal wiggle amplitude).
+_PRICE_MODEL = {
+    "VOO":  (date(2021, 1, 1), 340.0, 2.10, 12.0),
+    "VTI":  (date(2021, 1, 1), 210.0, 0.95,  7.0),
+    "AAPL": (date(2022, 1, 1), 175.0, 1.55,  9.0),
+}
+
+
+def _price_at(sym: str, d: date) -> float:
+    """Deterministic market price of *sym* on date *d* (2-decimal USD).
+
+    A pure function (drift + a small sinusoidal wiggle) shared by the price
+    sidecar and the purchase/sale cost bases, so a sale's ``{cost}`` always
+    matches the buy lot it reduces to the cent."""
+    start, base, slope, amp = _PRICE_MODEL[sym]
+    months = (d - start).days / 30.44
+    return round(base + slope * months + amp * math.sin(months / 5.0), 2)
+
+
+# (buy_date, symbol, units) — cost basis = price on that date; funded from checking.
+_STOCK_BUYS = [
+    (date(2021, 3, 15), "VOO", 10),
+    (date(2022, 6, 15), "VOO", 8),
+    (date(2023, 9, 15), "VOO", 6),
+    (date(2024, 5, 15), "VOO", 5),
+    (date(2021, 7, 20), "VTI", 12),
+    (date(2023, 2, 20), "VTI", 10),
+    (date(2024, 8, 20), "VTI", 8),
+    (date(2022, 1, 10), "AAPL", 20),
+    (date(2024, 11, 10), "AAPL", 10),
+]
+
+# (sale_date, symbol, units_sold, lot_buy_date, gain_account) — reduces the lot
+# bought on lot_buy_date (referenced by its exact cost). One long-term (VOO,
+# held ~3yr) and one short-term (AAPL, held ~3mo) so Slice 3's short/long split
+# has both to work with.
+_STOCK_SALES = [
+    (date(2024, 3, 15), "VOO", 4, date(2021, 3, 15), "Income:CapitalGains:VOO"),
+    (date(2025, 2, 10), "AAPL", 5, date(2024, 11, 10), "Income:CapitalGains:AAPL"),
+]
+
+
+def gen_stock_buy(dt, sym, units):
+    cost = _price_at(sym, dt)
+    total = round(units * cost, 2)
+    return txn(dt, "Vanguard", f"Buy {sym}", [
+        (_INVEST_ACCT, units, sym, "COST", cost, "USD"),
+        (_INVEST_CASH, -total, "USD"),
+    ], source_account=_INVEST_ACCT)
+
+
+def gen_stock_sale(dt, sym, units, lot_buy_date, gain_acct):
+    cost = _price_at(sym, lot_buy_date)   # matches the reduced lot's {cost}
+    price = _price_at(sym, dt)            # sale price
+    proceeds = round(units * price, 2)
+    basis = round(units * cost, 2)
+    gain = round(proceeds - basis, 2)
+    return txn(dt, "Vanguard", f"Sell {sym}", [
+        # Reduce the lot at its cost, annotated with the sale price so the gain
+        # is derivable structurally (cost vs price) — see Slice 3.
+        (_INVEST_ACCT, -units, sym, "COST", cost, "USD", price, "USD"),
+        (_INVEST_CASH, proceeds, "USD"),
+        (gain_acct, -gain, "USD"),
+    ], source_account=_INVEST_ACCT)
+
+
+def gen_dividend(dt, sym, amt):
+    return txn(dt, sym, f"{sym} dividend", [
+        (_INVEST_CASH, amt, "USD"),
+        (f"Income:Dividends:{sym}", -amt, "USD"),
+    ], source_account=_INVEST_CASH)
+
+
+def gen_mmf_buy(dt, units):
+    return txn(dt, "Vanguard", "Money market fund purchase", [
+        (_INVEST_ACCT, units, "VMFXX", "COST", 1.00, "USD"),
+        (_INVEST_CASH, -round(units, 2), "USD"),
+    ], source_account=_INVEST_ACCT)
+
+
+def gen_mmf_drip(dt, units):
+    # Reinvested income: units grow, price stays ~1.00 — a real income event.
+    return txn(dt, "VMFXX", "Money market dividend reinvested", [
+        (_INVEST_ACCT, units, "VMFXX", "COST", 1.00, "USD"),
+        ("Income:Dividends:VMFXX", -round(units, 2), "USD"),
+    ], source_account=_INVEST_ACCT)
+
+
+def _iter_month_starts(start: date, end: date):
+    """Yield the first-of-month for each month in [start, end] (inclusive)."""
+    y, m = start.year, start.month
+    while date(y, m, 1) <= end:
+        yield date(y, m, 1)
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+
+
+def build_investment_txns(end_date: date):
+    """All priced-holding transactions as ``(date, txn_string)`` pairs, capped at
+    *end_date* (the reference-calendar span end; the whole ledger is shifted
+    afterwards). Deterministic — no RNG — so it composes with the seeded body."""
+    out = []
+
+    # Money-market sweep + monthly reinvested-income DRIP.
+    mmf_start = date(2021, 1, 5)
+    if mmf_start <= end_date:
+        out.append((mmf_start, gen_mmf_buy(mmf_start, 5000)))
+    for i, ms in enumerate(_iter_month_starts(date(2021, 2, 1), end_date)):
+        drip_dt = ms.replace(day=28)
+        if drip_dt <= end_date:
+            units = round(18.0 + i * 0.05, 2)   # slowly growing monthly income
+            out.append((drip_dt, gen_mmf_drip(drip_dt, units)))
+
+    # Stock/ETF buys and the two sales.
+    for dt, sym, units in _STOCK_BUYS:
+        if dt <= end_date:
+            out.append((dt, gen_stock_buy(dt, sym, units)))
+    for dt, sym, units, lot_dt, gain_acct in _STOCK_SALES:
+        if dt <= end_date:
+            out.append((dt, gen_stock_sale(dt, sym, units, lot_dt, gain_acct)))
+
+    # Quarterly dividends (Mar/Jun/Sep/Dec, 20th), growing modestly year on year.
+    div_base = {"VOO": 6.00, "VTI": 5.00, "AAPL": 4.00}
+    for yr in range(2021, end_date.year + 1):
+        yidx = yr - 2021
+        for mo in (3, 6, 9, 12):
+            ddt = date(yr, mo, 20)
+            if ddt > end_date:
+                continue
+            for sym, base in div_base.items():
+                # AAPL holdings begin 2022; skip its 2021 dividends.
+                if sym == "AAPL" and yr < 2022:
+                    continue
+                amt = round(base + yidx * 0.45, 2)
+                out.append((ddt, gen_dividend(ddt, sym, amt)))
+
+    return out
+
+
 # --- Main generation ---
 
 def generate(anchor_month: date = _REFERENCE_END.replace(day=1), buffer_months: int = 2):
@@ -1149,9 +1344,9 @@ def generate(anchor_month: date = _REFERENCE_END.replace(day=1), buffer_months: 
         if day == 5 and year >= 2019 and month >= 5:
             all_txns.append((current, gen_transfer_to_hysa(current)))
 
-        # Brokerage investment monthly
-        if day == 10 and year >= 2019:
-            all_txns.append((current, gen_brokerage_transfer(current)))
+        # (Brokerage contributions are now modelled as the priced-holding buys
+        # in build_investment_txns() — cash → shares — rather than idle cash
+        # transfers, so the investment dashboards have real lots to value.)
 
         # Replenish ValleyCU checking from HYSA quarterly (after HYSA has funds)
         if day == 15 and month in (1, 4, 7, 10) and year >= 2020:
@@ -1356,6 +1551,10 @@ def generate(anchor_month: date = _REFERENCE_END.replace(day=1), buffer_months: 
     for yr in range(2020, 2025):
         all_txns.append((date(yr, 4, 15), gen_ibond_purchase(date(yr, 4, 15))))
 
+    # Priced investment holdings: ETF/stock lots, dividends, MMF DRIP, and sales
+    # (deterministic; valued against the prices.beancount sidecar).
+    all_txns.extend(build_investment_txns(end_date))
+
     # INR fixed deposits — NRE-FD opens 2026-01-29, NRO-FD opens 2026-02-03
     all_txns.append((date(2026, 2, 1), txn(date(2026, 2, 1), "Fixed Deposit", "FD at PinnacleBank", [
         ("Assets:Investments:TermDeposits:PinnacleBank:NRE-FD", 500000.00, "INR"),
@@ -1410,6 +1609,11 @@ def generate(anchor_month: date = _REFERENCE_END.replace(day=1), buffer_months: 
     output.append("")
     output.append("")
 
+    # Commodity directives (investment holdings + their metadata)
+    output.append(COMMODITIES)
+    output.append("")
+    output.append("")
+
     # Pad and balance
     output.append(PAD_BALANCE)
     output.append("")
@@ -1432,6 +1636,50 @@ def generate(anchor_month: date = _REFERENCE_END.replace(day=1), buffer_months: 
     text = _apply_day_shift(text, _shift_days_for(anchor_month, buffer_months))
 
     return text
+
+
+def generate_prices(anchor_month: date = _REFERENCE_END.replace(day=1),
+                    buffer_months: int = 2) -> str:
+    """Return the demo **price sidecar** (``prices.beancount``) as a string.
+
+    Monthly market closes for the priced holdings plus a flat 1.00 for the
+    money-market fund. Built on the same reference calendar as ``generate`` and
+    shifted by the **same** day-offset, so buy/sale dates and price dates stay
+    aligned after re-anchoring. This file is deliberately NOT ``include``d in the
+    ledger (dev-docs/valuations.md §3) — the exporter loads it directly for
+    valuation."""
+    rows = []  # (date, symbol, price_str)
+    for sym in ("VOO", "VTI", "AAPL"):
+        start = _PRICE_MODEL[sym][0]
+        for ms in _iter_month_starts(start.replace(day=1), _REFERENCE_END):
+            d = ms.replace(day=15)
+            if d < start or d > _REFERENCE_END:
+                continue
+            rows.append((d, sym, f"{_price_at(sym, d):.2f}"))
+    for ms in _iter_month_starts(date(2021, 1, 1), _REFERENCE_END):
+        d = ms.replace(day=15)
+        if d <= _REFERENCE_END:
+            rows.append((d, "VMFXX", "1.00"))   # money-market: flat, never fetched
+    rows.sort(key=lambda r: (r[0], r[1]))
+
+    lines = [
+        "; -*- mode: beancount; coding: utf-8; -*-",
+        "; Price sidecar for the demo ledger (fake.beancount).",
+        "; Deliberately NOT `include`d in the ledger — Finzytrack loads it only",
+        "; when valuing holdings. See dev-docs/valuations.md §3.",
+        "",
+    ]
+    for d, sym, price in rows:
+        lines.append(f"{d} price {sym} {price} USD")
+    text = "\n".join(lines) + "\n"
+
+    return _apply_day_shift(text, _shift_days_for(anchor_month, buffer_months))
+
+
+def _sidecar_out_for(ledger_out: Path) -> Path:
+    """The price-sidecar path next to *ledger_out* (mirrors the runtime
+    ``ledger_loader.sidecar_path`` convention: ``<ledger_dir>/prices.beancount``)."""
+    return ledger_out.parent / "prices.beancount"
 
 
 # Where the CI build drops the regenerated ledger: the *bundled template*
@@ -1459,11 +1707,17 @@ def ensure_seed_ledger(out: Path = _BUNDLE_OUTPUT, anchor_month: date | None = N
     if out.exists():
         return out
     out.parent.mkdir(parents=True, exist_ok=True)
+    anchor = anchor_month or date.today().replace(day=1)
     out.write_text(
-        generate(anchor_month=anchor_month or date.today().replace(day=1),
-                 buffer_months=buffer_months),
+        generate(anchor_month=anchor, buffer_months=buffer_months),
         encoding="utf-8",
         newline="",  # LF on every platform — see the __main__ writer below
+    )
+    # Companion price sidecar (generated together so they stay date-aligned).
+    _sidecar_out_for(out).write_text(
+        generate_prices(anchor_month=anchor, buffer_months=buffer_months),
+        encoding="utf-8",
+        newline="",
     )
     return out
 
@@ -1502,10 +1756,17 @@ if __name__ == "__main__":
     # bundle is byte-identical whatever host built it.
     with open(args.out, "w", encoding="utf-8", newline="") as f:
         f.write(content)
+    # Companion price sidecar (same anchor/buffer → date-aligned with the ledger).
+    prices_out = _sidecar_out_for(args.out)
+    prices_content = generate_prices(anchor_month=args.anchor, buffer_months=args.buffer)
+    with open(prices_out, "w", encoding="utf-8", newline="") as f:
+        f.write(prices_content)
     # Count stats
     lines = content.split("\n")
     txn_count = sum(1 for l in lines if l.startswith("20") and ' * "' in l)
     last = max(
         (l[:10] for l in lines if re.match(r"\d{4}-\d{2}-\d{2} ", l)), default="?"
     )
+    price_count = sum(1 for l in prices_content.split("\n") if " price " in l)
     print(f"Generated {len(lines)} lines, {txn_count} transactions, ending {last} -> {args.out}")
+    print(f"Generated {price_count} price directives -> {prices_out}")

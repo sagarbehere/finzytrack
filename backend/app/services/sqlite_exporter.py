@@ -282,7 +282,7 @@ class SQLiteExporter:
         """Return ``[[path, mtime_ns, size], ...]`` for the ledger's whole
         include tree. Integer mtime_ns + size avoid float-equality pitfalls and
         keep the reader's freshness check to cheap stat() calls (no hashing)."""
-        from app.core.ledger_loader import discover_includes_per_file
+        from app.core.ledger_loader import discover_includes_per_file, sidecar_path
 
         files: set[str] = {str(Path(ledger_file).resolve())}
         try:
@@ -293,6 +293,13 @@ class SQLiteExporter:
         except Exception:
             # Best-effort: if include discovery fails, fingerprint just the root.
             pass
+
+        # The price sidecar is deliberately outside the include tree
+        # (dev-docs/valuations.md §3), so include discovery never surfaces it.
+        # Add it explicitly so a price fetch (which only writes the sidecar)
+        # still triggers a re-export. Absent file → skipped by the stat() loop
+        # below, exactly like any other missing path.
+        files.add(str(sidecar_path(ledger_file)))
 
         result: List[list] = []
         for f in sorted(files):
@@ -438,6 +445,14 @@ class SQLiteExporter:
         """)
         con.execute("CREATE INDEX idx_prices_base_date ON prices(base_currency, date)")
         con.execute("CREATE INDEX idx_prices_date ON prices(date)")
+        # Latest-price lookups key on (base, quote): "the newest price of VOO in
+        # USD" is MAX(date) per (base_currency, quote_currency). See
+        # dev-docs/valuations.md §6.1. (Adding this index auto-bumps
+        # EXPORT_VERSION → one mirror rebuild on next read.)
+        con.execute(
+            "CREATE INDEX idx_prices_base_quote_date "
+            "ON prices(base_currency, quote_currency, date)"
+        )
 
         con.execute("""
             CREATE TABLE notes (
@@ -1273,6 +1288,38 @@ class SQLiteExporter:
             "transactions_count": len(transactions),
         }
 
+    def _load_sidecar_prices(self, ledger_file: Optional[str]) -> List[Any]:
+        """Parse the price sidecar (``<ledger_dir>/prices.beancount``) and return
+        its ``data.Price`` entries, or ``[]`` when there is no ``ledger_file`` or
+        no sidecar on disk.
+
+        The sidecar is deliberately **not** ``include``d in the root ledger
+        (dev-docs/valuations.md §3), so the normal parse never sees it; the export
+        step loads it here and folds its prices into the mirror's ``prices``
+        table. Only ``Price`` directives are taken — the sidecar is a price file,
+        and pulling in any stray non-price directive would silently duplicate
+        ledger state. A parse failure degrades to ``[]``: a broken sidecar must
+        never break the whole export (prices are supplementary, not load-bearing).
+        """
+        if not ledger_file:
+            return []
+        from app.core.ledger_loader import sidecar_path, load_ledger_checked
+
+        path = sidecar_path(ledger_file)
+        if not path.is_file():
+            return []
+        try:
+            entries, errors, _options = load_ledger_checked(path)
+        except Exception:
+            logger.warning("Price sidecar parse failed: %s", path, exc_info=True)
+            return []
+        if errors:
+            logger.warning(
+                "Price sidecar has %d parse error(s), ignoring them: %s",
+                len(errors), path,
+            )
+        return [e for e in entries if isinstance(e, data.Price)]
+
     def export_full_sync(
         self,
         entries: List[Any],
@@ -1296,6 +1343,15 @@ class SQLiteExporter:
         still produce a valid mirror, just without the ledger fingerprint.
         """
         transactions = [e for e in entries if isinstance(e, Transaction)]
+
+        # Fold in the price sidecar (not part of the include tree, so absent from
+        # `entries`). Main-ledger and sidecar prices deliberately coexist — the
+        # `prices` table stores both; "latest price" is resolved downstream via
+        # MAX(date) per (base, quote). See dev-docs/valuations.md §3/§6.
+        sidecar_prices = self._load_sidecar_prices(ledger_file)
+        if sidecar_prices:
+            entries = list(entries) + sidecar_prices
+            logger.info("Loaded %d price(s) from sidecar", len(sidecar_prices))
 
         con = self._open_connection()
         self._ensure_postings_table(con)

@@ -101,3 +101,112 @@ def test_shift_preserves_pad_before_balance():
         text = gen.generate(anchor_month=anchor, buffer_months=2)
         _, errors, _ = loader.load_string(text)
         assert errors == [], f"parse errors at anchor {anchor}: {errors}"
+
+
+# --- Priced investment holdings (Layer 2, Slice 0) ---
+
+def test_txn_plain_and_total_price_shapes_are_byte_identical():
+    """Extending txn() with the new "COST" arities must not perturb the existing
+    plain and @@ total-price shapes (they anchor the demo-snapshot invariants)."""
+    plain = gen.txn(date(2024, 1, 1), "P", "n", [
+        ("Assets:A", -12.5, "USD"),
+        ("Expenses:B", 12.5, "USD"),
+    ])
+    assert "  Assets:A                                                -12.50 USD" in plain
+    assert plain.count(" {") == 0 and " @@ " not in plain
+    total = gen.txn(date(2024, 1, 1), "P", "n", [
+        ("Assets:X", 1000.0, "INR", 12.0, "USD"),
+    ])
+    assert total.strip().endswith("1000.00 INR @@ 12.00 USD")
+
+
+def test_commodity_directives_carry_asset_class_and_fetch_symbol():
+    text = gen.generate(anchor_month=date(2026, 6, 1), buffer_months=2)
+    entries, errors, _ = loader.load_string(text)
+    assert errors == []
+    from beancount.core import data
+    commodities = {e.currency: e for e in entries if isinstance(e, data.Commodity)}
+    for sym in ("VOO", "VTI", "AAPL", "VMFXX"):
+        assert sym in commodities, f"missing commodity directive: {sym}"
+    assert commodities["VOO"].meta.get("asset-class") == "etf"
+    assert commodities["AAPL"].meta.get("asset-class") == "stock"
+    assert commodities["VMFXX"].meta.get("asset-class") == "money-market"
+    assert commodities["VOO"].meta.get("fetch_symbol") == "VOO"
+
+
+def test_ledger_has_cost_lots_dividends_and_two_sales():
+    text = gen.generate(anchor_month=date(2026, 6, 1), buffer_months=2)
+    entries, errors, _ = loader.load_string(text)
+    assert errors == []
+    from beancount.core import data
+    txns = [e for e in entries if isinstance(e, data.Transaction)]
+
+    cost_lots = [t for t in txns if any(p.cost for p in t.postings)]
+    assert len(cost_lots) >= 10, "expected several cost-lot buys (ETF/stock + MMF)"
+
+    # Exactly the two designed sales (reducing leg carries cost AND price).
+    # errors == [] already proves every sale balances (Beancount validates on
+    # load); here we assert the structural shape Slice 3 will key off.
+    sales = [t for t in txns if any(p.cost and p.price for p in t.postings)]
+    assert len(sales) == 2
+    for s in sales:
+        assert any(p.account.startswith("Income:CapitalGains:") for p in s.postings)
+
+    # Dividends booked to Income:Dividends:<SYM> (ETF/stock + reinvested MMF).
+    div_accts = {
+        p.account for t in txns for p in t.postings
+        if p.account.startswith("Income:Dividends:")
+    }
+    assert {"Income:Dividends:VOO", "Income:Dividends:VTI",
+            "Income:Dividends:AAPL", "Income:Dividends:VMFXX"} <= div_accts
+
+
+def test_one_long_term_and_one_short_term_sale():
+    """The sold lot's acquisition date vs the sale date must give one >1yr
+    (long-term) and one <1yr (short-term) holding, so Slice 3's split has both."""
+    text = gen.generate(anchor_month=date(2026, 6, 1), buffer_months=2)
+    entries, _, _ = loader.load_string(text)
+    from beancount.core import data
+    holding_days = []
+    for t in entries:
+        if not isinstance(t, data.Transaction):
+            continue
+        for p in t.postings:
+            if p.cost and p.price:  # a reducing (sale) leg
+                holding_days.append((t.date - p.cost.date).days)
+    assert len(holding_days) == 2
+    assert any(d > 365 for d in holding_days), "expected a long-term sale"
+    assert any(d < 365 for d in holding_days), "expected a short-term sale"
+
+
+def test_price_sidecar_parses_is_not_included_and_is_date_aligned():
+    anchor, buffer = date(2026, 6, 1), 2
+    prices = gen.generate_prices(anchor_month=anchor, buffer_months=buffer)
+    # Deterministic and parseable on its own.
+    assert prices == gen.generate_prices(anchor_month=anchor, buffer_months=buffer)
+    entries, errors, _ = loader.load_string(prices)
+    assert errors == []
+    from beancount.core import data
+    price_entries = [e for e in entries if isinstance(e, data.Price)]
+    assert len(price_entries) == sum(1 for l in prices.splitlines() if " price " in l)
+    assert {e.currency for e in price_entries} == {"VOO", "VTI", "AAPL", "VMFXX"}
+    # Money-market fund is flat 1.00.
+    assert all(e.amount.number == 1 for e in price_entries if e.currency == "VMFXX")
+
+    # The sidecar is a *separate* file — the ledger must not `include` it.
+    ledger = gen.generate(anchor_month=anchor, buffer_months=buffer)
+    assert "prices.beancount" not in ledger
+    assert " price " not in ledger  # the demo keeps all prices in the sidecar
+
+    # Same shift as the ledger: the sidecar's last price lands in the same
+    # anchor+buffer month as the ledger's last transaction.
+    end = gen._add_months(anchor, buffer)
+    last_price = max(e.date for e in price_entries)
+    assert (last_price.year, last_price.month) == (end.year, end.month)
+
+
+def test_ensure_seed_ledger_writes_lf_sidecar_next_to_ledger(tmp_path):
+    out = gen.ensure_seed_ledger(out=tmp_path / "fake.beancount", anchor_month=date(2026, 5, 1))
+    sidecar = out.parent / "prices.beancount"
+    assert sidecar.exists()
+    assert b"\r" not in sidecar.read_bytes()  # LF on every platform
