@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 2,
+  "id": "investment-overview",
+  "title": "Investment Overview",
+  "description": "Where your investments stand: how much you put in, what it's worth now, unrealized gain, income, allocation, and value over time.",
+  "parameters": [
+    { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" },
+    { "name": "asOf", "label": "As of", "type": "date", "default": { "$gen": "today" } }
+  ],
+
+  "steps": [
+    {
+      "id": "series",
+      "kind": "compute",
+      "fn": "portfolio_series",
+      "args": { "to": "{{params.asOf}}", "scope": "overall", "currency": "{{params.currency}}", "cadence": "monthly" }
+    }
+  ],
+
+  "layout": {
+    "columns": 12,
+    "gap": "1.5rem",
+    "rowHeight": "140px",
+    "widgets": [
+      { "widgetId": "kpi-invested",   "gridArea": "1 / 1 / 2 / 4" },
+      { "widgetId": "kpi-current",    "gridArea": "1 / 4 / 2 / 7" },
+      { "widgetId": "kpi-unrealized", "gridArea": "1 / 7 / 2 / 10" },
+      { "widgetId": "kpi-income",     "gridArea": "1 / 10 / 2 / 13" },
+      { "widgetId": "allocation",     "gridArea": "2 / 1 / 5 / 6" },
+      { "widgetId": "value-over-time","gridArea": "2 / 6 / 5 / 13" }
+    ]
+  },
+
+  "widgets": [
+    {
+      "id": "kpi-invested",
+      "title": "Invested",
+      "helpText": "The cost basis of the holdings you still own — what you paid for them.",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT :currency AS currency, ROUND(SUM(CAST(l.book_value AS REAL)), 2) AS amount FROM lots l JOIN commodities c ON c.code = l.units_currency AND c.is_currency = 0 WHERE l.cost_currency = :currency HAVING amount IS NOT NULL" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": { "type": "kpi", "icon": "$", "multiCurrency": true, "amountField": "amount", "currencyField": "currency" }
+    },
+    {
+      "id": "kpi-current",
+      "title": "Current Value",
+      "helpText": "Market value of your holdings at the latest recorded price.",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT :currency AS currency, ROUND(SUM(CAST(l.units_number AS REAL) * lp.price), 2) AS amount FROM lots l JOIN commodities c ON c.code = l.units_currency AND c.is_currency = 0 JOIN (SELECT base_currency, quote_currency, CAST(quote_number AS REAL) AS price FROM prices x WHERE x.date = (SELECT MAX(date) FROM prices y WHERE y.base_currency = x.base_currency AND y.quote_currency = x.quote_currency)) lp ON lp.base_currency = l.units_currency AND lp.quote_currency = :currency HAVING amount IS NOT NULL" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": { "type": "kpi", "icon": "↑", "iconColor": "{{theme.brand}}", "multiCurrency": true, "amountField": "amount", "currencyField": "currency" }
+    },
+    {
+      "id": "kpi-unrealized",
+      "title": "Unrealized Gain",
+      "helpText": "Current market value minus cost basis. Green if up, red if down. Holdings without a recorded price are not included.",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT :currency AS currency, ROUND(SUM(CAST(l.units_number AS REAL) * lp.price - CAST(l.book_value AS REAL)), 2) AS amount FROM lots l JOIN commodities c ON c.code = l.units_currency AND c.is_currency = 0 JOIN (SELECT base_currency, quote_currency, CAST(quote_number AS REAL) AS price FROM prices x WHERE x.date = (SELECT MAX(date) FROM prices y WHERE y.base_currency = x.base_currency AND y.quote_currency = x.quote_currency)) lp ON lp.base_currency = l.units_currency AND lp.quote_currency = :currency HAVING amount IS NOT NULL" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": { "type": "kpi", "icon": "=", "multiCurrency": true, "amountField": "amount", "currencyField": "currency", "colorBySign": true }
+    },
+    {
+      "id": "kpi-income",
+      "title": "Investment Income",
+      "helpText": "All dividends and interest earned to date, in this currency.",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT :currency AS currency, ROUND(SUM(CAST(amount AS REAL)) * -1, 2) AS amount FROM postings WHERE (account LIKE 'Income:Dividends%' OR account LIKE 'Income:Interest%') AND currency = :currency HAVING amount IS NOT NULL" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": { "type": "kpi", "icon": "%", "iconColor": "{{theme.brand}}", "multiCurrency": true, "amountField": "amount", "currencyField": "currency" }
+    },
+    {
+      "id": "allocation",
+      "title": "Allocation by Asset Class",
+      "helpText": "Current market value split by asset class (ETF, stock, money-market, and so on).",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT c.asset_class AS name, ROUND(SUM(CAST(l.units_number AS REAL) * lp.price), 2) AS value FROM lots l JOIN commodities c ON c.code = l.units_currency AND c.is_currency = 0 JOIN (SELECT base_currency, quote_currency, CAST(quote_number AS REAL) AS price FROM prices x WHERE x.date = (SELECT MAX(date) FROM prices y WHERE y.base_currency = x.base_currency AND y.quote_currency = x.quote_currency)) lp ON lp.base_currency = l.units_currency AND lp.quote_currency = :currency GROUP BY c.asset_class HAVING value > 0 ORDER BY value DESC" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": {
+        "type": "chart",
+        "chartType": "pie",
+        "emptyText": "No priced holdings in this currency yet.",
+        "options": {
+          "tooltip": { "trigger": "item" },
+          "legend": { "show": false },
+          "series": [
+            {
+              "type": "pie",
+              "radius": ["35%", "65%"],
+              "center": ["50%", "50%"],
+              "encode": { "itemName": "name", "value": "value" },
+              "label": { "show": true, "formatter": "{b}", "minShowLabelAngle": 15 },
+              "labelLine": { "show": true, "length": 8, "length2": 8 },
+              "emphasis": { "label": { "show": true, "fontWeight": "bold", "formatter": "{b}\n{d}%" } }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "value-over-time",
+      "title": "Value Over Time",
+      "helpText": "Monthly market value against what you put in (cost basis). Months where a holding had no recorded price fall back to cost.",
+      "steps": [
+        { "id": "rows", "kind": "transform", "fn": "groupBy", "inputs": ["{{dashboard.steps.series}}"], "config": { "key": "date", "sum": ["market_value", "cost_basis"] } }
+      ],
+      "output": "rows",
+      "visualization": {
+        "type": "chart",
+        "chartType": "line",
+        "emptyText": "No holdings to chart in this currency yet.",
+        "options": {
+          "tooltip": { "trigger": "axis" },
+          "legend": { "show": true },
+          "grid": { "left": "3%", "right": "4%", "bottom": "3%", "containLabel": true },
+          "xAxis": { "type": "time" },
+          "yAxis": { "type": "value" },
+          "series": [
+            { "name": "Market value", "type": "line", "smooth": true, "showSymbol": false, "encode": { "x": "date", "y": "market_value" }, "itemStyle": { "color": "{{theme.series.income}}" }, "areaStyle": { "opacity": 0.08 } },
+            { "name": "Cost basis", "type": "line", "smooth": true, "showSymbol": false, "encode": { "x": "date", "y": "cost_basis" }, "itemStyle": { "color": "{{theme.series.budget}}" }, "lineStyle": { "type": "dashed" } }
+          ]
+        }
+      }
+    }
+  ]
+}

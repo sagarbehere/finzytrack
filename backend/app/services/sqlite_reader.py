@@ -701,6 +701,34 @@ class SqliteReader:
 
     # ── Prices ───────────────────────────────────────────────────────────────
 
+    def get_postings_by_currency(self, currencies: List[str]) -> List[dict]:
+        """Return posting rows for the given commodity ``currencies``, ordered by
+        date, each as ``{transaction_date, currency, amount, cost_amount,
+        cost_currency, account}``.
+
+        This is the raw material for reconstructing a holding's **units-as-of** a
+        date (cumulative ``amount``) and its **cost-basis-as-of** (cumulative
+        ``amount × cost_amount``) — the inputs the ``portfolio_series`` valuation
+        compute function needs. Money columns stay TEXT/decimal-string; the caller
+        parses to ``Decimal`` (money-types.md). An empty ``currencies`` returns
+        ``[]`` without a query.
+        """
+        if not currencies:
+            return []
+
+        def query(con: sqlite3.Connection) -> List[dict]:
+            placeholders = ",".join("?" for _ in currencies)
+            rows = con.execute(
+                f"SELECT transaction_date, currency, amount, cost_amount, "
+                f"cost_currency, account FROM postings "
+                f"WHERE currency IN ({placeholders}) "
+                f"ORDER BY transaction_date, posting_id",
+                list(currencies),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+        return self._query(query)
+
     def get_prices(
         self,
         currency: Optional[str] = None,

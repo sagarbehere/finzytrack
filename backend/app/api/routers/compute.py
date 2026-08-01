@@ -15,6 +15,7 @@ from fastapi import APIRouter, Body, Depends
 
 from app.compute.function_registry import FunctionRegistry
 from app.compute.functions.budget_for_range import BudgetForRangeFunction
+from app.compute.functions.portfolio_series import PortfolioSeriesFunction
 from app.dependencies import get_sqlite_reader
 from app.services.sqlite_reader import SqliteReader
 from app.schemas.compute_schemas import ComputeRequest, ComputeData
@@ -43,6 +44,7 @@ def build_registry(reader: SqliteReader) -> FunctionRegistry:
     Functions are stateless beyond the injected reader, so this is cheap."""
     registry = FunctionRegistry()
     registry.register(BudgetForRangeFunction(reader))
+    registry.register(PortfolioSeriesFunction(reader))
     return registry
 
 

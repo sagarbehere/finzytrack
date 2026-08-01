@@ -43,7 +43,7 @@
         {
           "id": "main",
           "kind": "query",
-          "query": "SELECT currency, SUM(CASE WHEN account_type IN ('Assets', 'Liabilities') THEN amount ELSE 0 END) AS amount FROM postings p JOIN commodities c ON p.currency = c.code WHERE c.is_currency = 1 GROUP BY currency HAVING amount != 0 ORDER BY currency"
+          "query": "SELECT currency, SUM(amount) AS amount FROM (SELECT p.currency AS currency, SUM(CAST(p.amount AS REAL)) AS amount FROM postings p JOIN commodities c ON p.currency = c.code WHERE c.is_currency = 1 AND p.account_type IN ('Assets', 'Liabilities') GROUP BY p.currency UNION ALL SELECT lp.quote_currency AS currency, SUM(CAST(l.units_number AS REAL) * lp.price) AS amount FROM lots l JOIN commodities c ON c.code = l.units_currency AND c.is_currency = 0 JOIN (SELECT base_currency, quote_currency, CAST(quote_number AS REAL) AS price FROM prices x WHERE x.date = (SELECT MAX(date) FROM prices y WHERE y.base_currency = x.base_currency AND y.quote_currency = x.quote_currency)) lp ON lp.base_currency = l.units_currency GROUP BY lp.quote_currency) GROUP BY currency HAVING amount != 0 ORDER BY currency"
         },
         {
           "id": "out",
@@ -69,7 +69,7 @@
         {
           "id": "main",
           "kind": "query",
-          "query": "SELECT currency, SUM(CAST(amount AS REAL)) AS amount FROM postings p JOIN commodities c ON p.currency = c.code WHERE c.is_currency = 1 AND account_type = 'Assets' GROUP BY currency HAVING amount != 0 ORDER BY currency"
+          "query": "SELECT currency, SUM(amount) AS amount FROM (SELECT p.currency AS currency, SUM(CAST(p.amount AS REAL)) AS amount FROM postings p JOIN commodities c ON p.currency = c.code WHERE c.is_currency = 1 AND p.account_type = 'Assets' GROUP BY p.currency UNION ALL SELECT lp.quote_currency AS currency, SUM(CAST(l.units_number AS REAL) * lp.price) AS amount FROM lots l JOIN commodities c ON c.code = l.units_currency AND c.is_currency = 0 JOIN (SELECT base_currency, quote_currency, CAST(quote_number AS REAL) AS price FROM prices x WHERE x.date = (SELECT MAX(date) FROM prices y WHERE y.base_currency = x.base_currency AND y.quote_currency = x.quote_currency)) lp ON lp.base_currency = l.units_currency GROUP BY lp.quote_currency) GROUP BY currency HAVING amount != 0 ORDER BY currency"
         },
         {
           "id": "out",

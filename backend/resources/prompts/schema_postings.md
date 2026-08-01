@@ -50,6 +50,20 @@ Currencies vs holdings:
   Summing a share count into a dollar total is meaningless — do not do it.
 - To analyze the holdings themselves (e.g. how many VOO shares over time), filter WHERE c.is_currency = 0, or query the raw quantities directly.
 
+Valuing investments:
+- A holding's MARKET VALUE = units held × its latest price. "Latest price" is the row with MAX(date) per (base_currency, quote_currency) in the "prices" table; join it on prices.base_currency = the holding's commodity code. Value each holding in its OWN quote currency — never convert or sum a holding's value across currencies.
+    -- current market value per holding, in its quote currency:
+    SELECT l.units_currency AS holding, lp.quote_currency AS currency,
+           SUM(CAST(l.units_number AS REAL)) * lp.price AS market_value
+    FROM lots l
+    JOIN (SELECT base_currency, quote_currency, CAST(quote_number AS REAL) AS price
+          FROM prices x WHERE x.date = (SELECT MAX(date) FROM prices y
+            WHERE y.base_currency = x.base_currency AND y.quote_currency = x.quote_currency)) lp
+      ON lp.base_currency = l.units_currency
+    GROUP BY l.units_currency, lp.quote_currency
+- REALIZED GAIN on a sale is derived STRUCTURALLY from the reducing posting (units < 0 with both cost_amount and price_amount set): gain = |units| × (price_amount − cost_amount). This works in ANY account — do not rely on an "Income:CapitalGains" account name.
+- For portfolio VALUE-OVER-TIME or RETURNS (XIRR), do NOT hand-roll SQL — use the compute functions "portfolio_series" (as-of value/cost series) and "portfolio_returns" (XIRR + simple gain) via execute_compute or a recipe `compute` step. SQL cannot do as-of series or money-weighted return well.
+
 Query rules:
 - Money columns (amount, cost_amount, price_amount) are stored as TEXT for exact decimal precision. Always wrap them in CAST(... AS REAL) before SUM/AVG/arithmetic. SQLite will implicitly cast for plain comparisons (WHERE amount > 0), so those can stay unwrapped.
 - SQLite-compatible SQL only. Only SELECT statements.
