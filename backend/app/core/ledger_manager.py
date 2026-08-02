@@ -25,7 +25,7 @@ from beancount.core.data import Transaction, Posting
 
 from app.core.backup_manager import BackupManager
 from app.core.beancount_engine import BeancountEngine
-from app.core.ledger_loader import load_ledger_checked, discover_includes_per_file
+from app.core.ledger_loader import load_ledger_checked, discover_includes_per_file, sidecar_path
 from app.exceptions import APIError
 from app import error_codes as ec
 from app.write_lock import WriteLockManager
@@ -432,6 +432,77 @@ class LedgerManager:
         entries, errors, options = self._parse_ledger()
         all_entries = list(entries) + list(new_entries)
         self._write_and_export(all_entries, errors, options)
+
+    # ── Price sidecar (fetcher's dedicated, transaction-free write path) ──────
+
+    @staticmethod
+    def _render_price_sidecar(prices) -> str:
+        """Render ``data.Price`` entries as a ``prices.beancount`` file, sorted by
+        (date, base, quote)."""
+        lines = [
+            "; -*- mode: beancount; coding: utf-8; -*-",
+            "; Price sidecar — maintained by Finzytrack's price fetcher.",
+            "; Deliberately NOT `include`d in the ledger; loaded only for valuation.",
+            "; See dev-docs/valuations.md §3. Hand-editing is fine.",
+            "",
+        ]
+        for p in sorted(prices, key=lambda e: (e.date, e.currency, e.amount.currency)):
+            lines.append(
+                f"{p.date.isoformat()} price {p.currency} {p.amount.number} {p.amount.currency}"
+            )
+        return "\n".join(lines) + "\n"
+
+    @_serialized_write
+    def write_price_directives(self, new_prices: List[Any]) -> Dict[str, Any]:
+        """Merge ``new_prices`` (``data.Price``) into the price sidecar and rewrite
+        it atomically, then refresh the mirror. Returns ``{added, total, as_of}``.
+
+        This is the price fetcher's **dedicated** write path. The sidecar is
+        deliberately NOT part of any transaction write's ``known_files``
+        (dev-docs/valuations.md §3, Slice 4 gotcha): a price fetch never rewrites
+        transaction files, and ``_do_write_entries`` — which rewrites *every*
+        known file, blanking those with no entries — never touches the sidecar.
+        Prices carry no auto-generated padding, so writing them straight through
+        ``BackupManager.atomic_write`` is safe (the padding-filter invariant is
+        about transaction rewrites).
+
+        Idempotent: prices are keyed by (date, base, quote); rewriting an existing
+        point replaces it in place. Held under the per-user write lock so a fetch
+        and a transaction edit can't interleave.
+        """
+        path = sidecar_path(self.ledger_file)
+        merged: Dict[Tuple[Any, str, str], Any] = {}
+        if path.exists():
+            existing, _errs, _opts = load_ledger_checked(str(path))
+            for e in existing:
+                if isinstance(e, data.Price):
+                    merged[(e.date, e.currency, e.amount.currency)] = e
+
+        added = 0
+        for p in new_prices:
+            key = (p.date, p.currency, p.amount.currency)
+            if key not in merged:
+                added += 1
+            merged[key] = p  # new wins → idempotent replace
+
+        with self.backup_manager.atomic_write(str(path)) as f:
+            f.write(self._render_price_sidecar(merged.values()))
+
+        # A sidecar that didn't exist at the last export isn't recorded in the
+        # freshness fingerprint (an absent file is deliberately not fingerprinted
+        # — Slice 0), so a stat-based staleness check wouldn't notice the first
+        # fetch. Re-export explicitly so new prices are queryable immediately.
+        if self._sqlite_exporter:
+            entries, errors, options = self._parse_ledger()
+            try:
+                self._sqlite_exporter.export_full_sync(
+                    entries, errors, options, ledger_file=str(self.ledger_file)
+                )
+            except Exception as e:
+                logger.error("SQLite re-export after price write failed: %s", e)
+
+        as_of = max((p.date for p in merged.values()), default=None)
+        return {"added": added, "total": len(merged), "as_of": as_of.isoformat() if as_of else None}
 
     # ── Account management (orchestrator: parse → engine → write) ────────────
 

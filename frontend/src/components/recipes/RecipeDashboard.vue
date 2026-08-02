@@ -20,12 +20,25 @@
           {{ dashboard.description }}
         </p>
       </div>
-      <!-- Dashboard-level parameters -->
-      <RecipeParameters
-        v-if="dashboard.parameters && dashboard.parameters.length > 0"
-        :parameters="dashboard.parameters"
-        v-model="dashboardSelections"
-      />
+      <!-- Right-side controls: the price-update action (investment dashboards
+           only) sits alongside the dashboard-level parameters. -->
+      <div class="flex flex-wrap items-start gap-x-4 gap-y-3">
+        <button
+          v-if="usesPriceData"
+          type="button"
+          @click="onUpdatePrices"
+          :disabled="updatingPrices"
+          class="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+        >
+          {{ updatingPrices ? 'Updating…' : 'Update prices' }}
+        </button>
+        <!-- Dashboard-level parameters -->
+        <RecipeParameters
+          v-if="dashboard.parameters && dashboard.parameters.length > 0"
+          :parameters="dashboard.parameters"
+          v-model="dashboardSelections"
+        />
+      </div>
     </div>
 
     <!-- Dashboard grid -->
@@ -83,6 +96,9 @@ import { resolveParameterValues } from '@/recipes/functions'
 import { stepRefs } from '@/recipes/templating'
 import RecipeWidget from './RecipeWidget.vue'
 import RecipeParameters from './RecipeParameters.vue'
+import { PricesService } from '@/services/generated-api'
+import { errorHandler } from '@/utils/ErrorHandler'
+import { useNotifications } from '@/composables/useNotifications'
 
 interface Props {
   dashboard: DashboardRecipe | JsonDashboardRecipe
@@ -93,7 +109,54 @@ const props = defineProps<Props>()
 
 const emit = defineEmits<{
   'update:parameters': [params: Record<string, string | number>]
+  'prices-updated': []
 }>()
+
+/**
+ * Show the "Update prices" action on investment dashboards — detected by a
+ * compute step that values holdings (portfolio_series / portfolio_returns),
+ * rather than hard-coding a dashboard id. The fetch is manual (no scheduling);
+ * this button is its user-facing trigger (dev-docs/valuations.md §4).
+ */
+const usesPriceData = computed(() => {
+  type StepLike = { kind?: string; fn?: string }
+  const steps: StepLike[] = []
+  const d = props.dashboard as JsonDashboardRecipe
+  if (Array.isArray(d.steps)) steps.push(...(d.steps as unknown as StepLike[]))
+  for (const w of (d.widgets ?? []) as JsonWidgetRecipe[]) {
+    const ws = (w as unknown as { steps?: unknown }).steps
+    if (Array.isArray(ws)) steps.push(...(ws as StepLike[]))
+  }
+  return steps.some(
+    (s) => s.kind === 'compute' && (s.fn === 'portfolio_series' || s.fn === 'portfolio_returns'),
+  )
+})
+
+const updatingPrices = ref(false)
+const { addNotification } = useNotifications()
+
+async function onUpdatePrices() {
+  if (updatingPrices.value) return
+  updatingPrices.value = true
+  try {
+    const resp = await PricesService.updatePrices()
+    const added = resp.data?.added ?? 0
+    const asOf = resp.data?.as_of
+    addNotification({
+      type: 'success',
+      title: 'Prices updated',
+      message:
+        added > 0
+          ? `Added ${added} new price${added === 1 ? '' : 's'}${asOf ? `, as of ${asOf}` : ''}.`
+          : `Already up to date${asOf ? ` (as of ${asOf})` : ''}.`,
+    })
+    emit('prices-updated') // parent remounts the dashboard so widgets re-value
+  } catch (err) {
+    errorHandler.display(err)
+  } finally {
+    updatingPrices.value = false
+  }
+}
 
 
 /**

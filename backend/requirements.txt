@@ -9,6 +9,7 @@ anthropic==0.86.0
 anyio==4.10.0
 attrs==26.1.0
 beancount==3.2.0
+beanprice==2.1.0
 beanquery==0.2.0
 beautifulsoup4==4.14.3
 certifi==2025.10.5
@@ -17,6 +18,8 @@ charset-normalizer==3.4.6
 click==8.3.0
 colorama==0.4.6 ; sys_platform == 'win32'
 cryptography==46.0.2
+curl-cffi==0.16.0
+diskcache==5.6.3
 distro==1.9.0
 docstring-parser==0.17.0
 et-xmlfile==2.0.0
@@ -57,6 +60,7 @@ pyyaml==6.0.3
 rapidfuzz==3.14.1
 referencing==0.37.0
 regex==2025.9.1
+requests==2.34.2
 rpds-py==0.30.0
 ruamel-yaml==0.18.15
 ruamel-yaml-clib==0.2.12 ; python_full_version < '3.14' and platform_python_implementation == 'CPython'
@@ -73,6 +77,7 @@ tqdm==4.67.3
 typing-extensions==4.15.0
 typing-inspection==0.4.1
 tzdata==2025.2
+urllib3==2.7.0
 uuid-utils==0.11.1
 uvicorn==0.37.0
 xlrd==2.0.2

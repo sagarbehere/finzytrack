@@ -92,9 +92,10 @@
       <RecipeDashboard
         v-if="activeDashboard"
         :dashboard="activeDashboard"
-        :key="activeTabId ?? undefined"
+        :key="`${activeTabId ?? ''}:${refreshNonce}`"
         :initialParameters="initialDashboardParams"
         @update:parameters="handleDashboardParamsChange"
+        @prices-updated="refreshNonce++"
       />
       <div v-else class="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
         <div class="text-lg mb-2">No dashboard selected</div>
@@ -139,6 +140,10 @@ const conflictBannerDismissed = ref(false)
 const { tabs, activeTabId, addTab, removeTab, setActiveTab, loadTabs, activeDashboard } = useDashboardTabs()
 
 const showPicker = ref(false)
+
+// Bumped after a successful price update so the active dashboard remounts and
+// re-runs its widgets against the freshly fetched prices.
+const refreshNonce = ref(0)
 
 // Dashboard parameters extracted from URL (passed to RecipeDashboard on mount)
 // Must be initialized synchronously during setup so RecipeDashboard gets correct
