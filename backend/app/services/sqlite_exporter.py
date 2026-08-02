@@ -311,12 +311,20 @@ class SQLiteExporter:
         return result
 
     def _ensure_postings_table(self, con: sqlite3.Connection) -> None:
-        """Create the postings table and indexes if they don't exist."""
-        cursor = con.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='postings'"
-        )
-        if cursor.fetchone() is not None:
-            return
+        """(Re)create the postings table and its indexes.
+
+        Reached only on the full-export/rebuild path (``export_full_sync`` /
+        ``export_full``), which then re-inserts every posting — so we DROP and
+        recreate rather than create-if-absent. This makes a postings **schema**
+        change self-healing exactly like ``_ensure_new_tables``: EXPORT_VERSION
+        (a hash of this DDL) detects the drift and triggers a rebuild, and this
+        drop guarantees the stale-schema table is replaced instead of retained.
+        (Create-if-absent silently kept an old-column table, so a newly added
+        column — e.g. ``cost_date`` — made the INSERT supply more values than
+        columns: "table postings has N columns but N+1 values were supplied".)
+        DROP TABLE also removes the table's indexes, which are recreated below.
+        """
+        con.execute("DROP TABLE IF EXISTS postings")
 
         con.execute("""
             CREATE TABLE postings (
@@ -664,8 +672,19 @@ class SQLiteExporter:
                     year_month,
                 ))
 
+        # Named columns (not bare VALUES(?,…)) so the INSERT is self-documenting
+        # and decoupled from the CREATE TABLE column *order*; the only coupling
+        # left is this list ↔ the row tuple above, which sit side by side. Adding
+        # a column means: add it to CREATE TABLE, to the row tuple, and here.
         con.executemany(
-            "INSERT INTO postings VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO postings ("
+            "posting_id, transaction_id, transaction_content_hash, transaction_date, "
+            "transaction_flag, transaction_payee, transaction_narration, transaction_tags, "
+            "transaction_links, account, account_type, amount, currency, "
+            "cost_amount, cost_currency, cost_date, price_amount, price_currency, "
+            "source_account, source_account_type, transaction_metadata_json, "
+            "posting_metadata_json, document_count, year, month, quarter, year_month"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
         return posting_id
