@@ -413,7 +413,11 @@ export function useRecipeExecutor() {
     const params: Record<string, string | number> = {}
     if (recipe.parameters) {
       for (const param of recipe.parameters) {
-        params[param.name] = param.default as string | number
+        // A param with no default (e.g. a `select` with optionsFrom the user
+        // hasn't picked yet) still binds — as '' — so a `:name` placeholder is
+        // never left unbound. That makes the query return empty (→ the widget's
+        // emptyText) instead of a 500 "did not supply a value for :name".
+        params[param.name] = (param.default ?? '') as string | number
       }
     }
     return params

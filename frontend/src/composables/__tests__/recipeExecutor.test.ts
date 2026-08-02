@@ -139,3 +139,27 @@ describe('DAG executor', () => {
     await expect(executeRecipe(cyclic, {})).rejects.toMatchObject({ kind: 'graph' })
   })
 })
+
+describe('getDefaultParameters', () => {
+  it('binds a param with no default to "" so its :placeholder is never left unbound', () => {
+    // Regression: a `select` with optionsFrom and no default (e.g. investment-
+    // holdings' `holding`) used to resolve to undefined → the query omitted the
+    // binding → SQLite 500 "did not supply a value for :holding" on first load.
+    const { getDefaultParameters } = useRecipeExecutor()
+    const recipe = {
+      id: 'r', title: 'R',
+      parameters: [
+        { name: 'currency', type: 'select', default: 'USD' },
+        { name: 'holding', type: 'select', optionsFrom: 'holdings' }, // no default
+      ],
+      steps: [],
+      output: 'out',
+      visualization: { type: 'table', columns: [] },
+    } as unknown as AnyWidgetRecipe
+
+    const params = getDefaultParameters(recipe)
+    expect(params.currency).toBe('USD')
+    expect('holding' in params).toBe(true)
+    expect(params.holding).toBe('')
+  })
+})
