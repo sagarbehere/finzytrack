@@ -14,7 +14,8 @@
     "widgets": [
       { "widgetId": "income-over-time", "gridArea": "1 / 1 / 4 / 13" },
       { "widgetId": "income-by-source", "gridArea": "4 / 1 / 8 / 6" },
-      { "widgetId": "fixed-income",     "gridArea": "4 / 6 / 8 / 13" }
+      { "widgetId": "fixed-income",     "gridArea": "4 / 6 / 8 / 13" },
+      { "widgetId": "ibonds",           "gridArea": "8 / 1 / 11 / 13" }
     ]
   },
 
@@ -80,6 +81,26 @@
           { "key": "rate", "label": "Rate", "align": "right" },
           { "key": "maturity", "label": "Maturity", "format": "dateShort" },
           { "key": "balance", "label": "Balance", "format": "currency", "align": "right" }
+        ]
+      }
+    },
+    {
+      "id": "ibonds",
+      "title": "I-Bonds",
+      "helpText": "Series I savings bonds, valued formulaically from their issue date (accrued value grows with inflation). Face is what you paid; value is the current accrued value. A blank value means the rate table doesn't yet cover this date — run Update prices or refresh the rate table.",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT c.code AS bond, json_extract(c.metadata_json, '$.issue_date') AS issued, ROUND(SUM(CAST(l.units_number AS REAL)), 0) AS face, ROUND(SUM(CAST(l.units_number AS REAL)) * lp.price, 2) AS value FROM lots l JOIN commodities c ON c.code = l.units_currency AND c.asset_class = 'i-bond' JOIN (SELECT base_currency, quote_currency, CAST(quote_number AS REAL) AS price FROM prices x WHERE x.date = (SELECT MAX(date) FROM prices y WHERE y.base_currency = x.base_currency AND y.quote_currency = x.quote_currency)) lp ON lp.base_currency = l.units_currency AND lp.quote_currency = :currency GROUP BY c.code ORDER BY issued" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": {
+        "type": "table",
+        "emptyText": "No I-Bonds in this currency. Record them as commodity-per-issue holdings with asset-class \"i-bond\" and an issue_date to see accrued value here.",
+        "columns": [
+          { "key": "bond", "label": "Bond" },
+          { "key": "issued", "label": "Issued", "format": "dateShort" },
+          { "key": "face", "label": "Face", "format": "currency", "align": "right" },
+          { "key": "value", "label": "Accrued Value", "format": "currency", "align": "right" }
         ]
       }
     }

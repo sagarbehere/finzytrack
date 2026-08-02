@@ -20,6 +20,7 @@ pydantic>=2.11.9
 beancount>=3.2.0
 beanquery>=0.2.0
 beanprice>=2.1.0  # keyless Yahoo price fetcher (Layer 2 valuations)
+ibonds>=1.0.8  # formulaic I-Bond valuation (Layer 2 valuations)
 ruamel.yaml>=0.18.15
 
 # Pinned exactly: these are bundled into the PyInstaller desktop app, and newer

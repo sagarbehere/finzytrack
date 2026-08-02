@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 # asset-class → fetch cadence. Anything unlisted defaults to daily.
 _NEVER = {"money-market", "cash", "currency"}
 _MONTHLY = {"bond", "cd"}
+_IBOND = "i-bond"  # valued formulaically via the ibonds library, not fetched
 
 # How far back to reach on the very first fetch of a holding with no price yet.
 _DEFAULT_LOOKBACK_DAYS = 5 * 365
@@ -54,11 +55,74 @@ class PriceFetcher:
     @staticmethod
     def _cadence(asset_class: Optional[str]) -> str:
         ac = (asset_class or "").lower()
+        if ac == _IBOND:
+            return "ibond"
         if ac in _NEVER:
             return "never"
         if ac in _MONTHLY:
             return "monthly"
         return "daily"
+
+    @staticmethod
+    def _issue_ym(raw: Any) -> Optional[str]:
+        """Normalise an ``issue_date`` metadata value to ibonds' ``MM/YYYY``.
+        Accepts ``MM/YYYY``, ``YYYY-MM-DD``, or ``YYYY-MM``."""
+        if not raw:
+            return None
+        s = str(raw).strip()
+        if "/" in s:
+            return s
+        try:
+            return date.fromisoformat(s).strftime("%m/%Y")
+        except ValueError:
+            parts = s.split("-")
+            if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                return f"{int(parts[1]):02d}/{parts[0]}"
+        return None
+
+    def _ibond_series(self, commodity, begin: date, today: date) -> list[data.Price]:
+        """Monthly accrued per-unit prices for an I-Bond commodity, computed
+        formulaically via the ``ibonds`` library from its ``issue_date`` /
+        ``denomination`` metadata. Units are face dollars, so the per-unit price
+        is ``value / denom`` (denomination-invariant). Opt-in: a commodity with
+        no ``issue_date`` is skipped (left to manual pricing). Degrades
+        gracefully: dates the bundled rate table can't cover yield ``None`` from
+        ibonds and are skipped rather than raising (the semiannual rate refresh
+        keeps this current — see dev-docs/valuations.md)."""
+        meta = commodity.metadata or {}
+        issue = self._issue_ym(meta.get("issue_date"))
+        if issue is None:
+            return []
+        try:
+            denom = int(str(meta.get("denomination") or "1000").replace(",", ""))
+        except ValueError:
+            denom = 1000
+
+        try:
+            from ibonds import IBond
+            bond = IBond(issue_date=issue, denom=denom)
+        except Exception as e:
+            logger.warning("I-Bond %s: cannot init ibonds (%s): %s", commodity.code, issue, e)
+            return []
+
+        out: list[data.Price] = []
+        # Month-start points from `begin` to `today` (I-Bond value steps monthly).
+        y, m = begin.year, begin.month
+        while date(y, m, 1) <= today:
+            d = date(y, m, 1)
+            if d >= begin:
+                try:
+                    v = bond.value(d)
+                except Exception:
+                    v = None
+                if v is not None:
+                    out.append(data.Price(
+                        {}, d, commodity.code,
+                        Amount((Decimal(str(v)) / denom).quantize(Decimal("0.0001")), "USD"),
+                    ))
+            idx = (y * 12 + (m - 1)) + 1
+            y, m = idx // 12, idx % 12 + 1
+        return out
 
     @staticmethod
     def _thin_monthly(prices: list[data.Price]) -> list[data.Price]:
@@ -83,13 +147,24 @@ class PriceFetcher:
             if cadence == "never":
                 skipped.append(c.code)
                 continue
-            symbol = (c.metadata or {}).get("fetch_symbol") or c.code
 
             existing = self._reader.get_prices(currency=c.code)
             last = max((date.fromisoformat(r["date"]) for r in existing), default=None)
             begin = (last + timedelta(days=1)) if last else (today - timedelta(days=self._lookback))
             if begin > today:
                 continue  # already up to date
+
+            # I-Bonds are valued formulaically (offline), not fetched.
+            if cadence == "ibond":
+                ib = self._ibond_series(c, begin, today)
+                if ib:
+                    new_prices.extend(ib)
+                    symbols.append(c.code)
+                else:
+                    skipped.append(c.code)  # no issue_date, or rate table can't cover
+                continue
+
+            symbol = (c.metadata or {}).get("fetch_symbol") or c.code
 
             try:
                 series = self._get_source().get_prices_series(

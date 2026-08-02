@@ -165,7 +165,7 @@ ACCOUNTS = """
 
 2015-12-31 open Assets:Receivable:Work                              USD
 2015-12-31 open Assets:Receivable:Personal                          USD
-2015-12-31 open Assets:Investments:Bonds:TreasuryDirect:IBonds      USD
+2015-12-31 open Assets:Investments:Bonds:TreasuryDirect:IBonds      USD,IBOND2020,IBOND2022,IBOND2024
 2015-12-31 open Assets:Investments:Brokerage:Vanguard:Individual    USD,VOO,VTI,AAPL,VMFXX
 2015-12-31 open Assets:Investments:Brokerage:Wealthsimple           USD
 
@@ -317,6 +317,24 @@ COMMODITIES = """
 2015-12-31 commodity VMFXX
   name: "Vanguard Federal Money Market Fund"
   asset-class: "money-market"
+
+2015-12-31 commodity IBOND2020
+  name: "Series I Savings Bond (issued 2020)"
+  asset-class: "i-bond"
+  issue_date: "2020-04-15"
+  denomination: "10000"
+
+2015-12-31 commodity IBOND2022
+  name: "Series I Savings Bond (issued 2022)"
+  asset-class: "i-bond"
+  issue_date: "2022-04-15"
+  denomination: "5000"
+
+2015-12-31 commodity IBOND2024
+  name: "Series I Savings Bond (issued 2024)"
+  asset-class: "i-bond"
+  issue_date: "2024-04-15"
+  denomination: "10000"
 """.strip()
 
 # --- Transaction generators ---
@@ -961,11 +979,13 @@ def gen_inr_car(dt):
 
 # --- Generators for previously-empty accounts ---
 
-def gen_ibond_purchase(dt):
-    amt = round(random.choice([5000, 10000]), 2)
+def gen_ibond_buy(dt, code, denom):
+    """Buy an I-Bond as a commodity-per-issue holding: `denom` units (face
+    dollars) of `code` at cost 1.00, funded from checking. Its accrued value is
+    supplied later as a price directive (computed by the ibonds valuator)."""
     return txn(dt, "TreasuryDirect", "I-Bond purchase", [
-        ("Assets:Investments:Bonds:TreasuryDirect:IBonds", amt, "USD"),
-        ("Assets:Liquid:Checking:WestCoastBank", -amt, "USD"),
+        ("Assets:Investments:Bonds:TreasuryDirect:IBonds", denom, code, "COST", 1.00, "USD"),
+        ("Assets:Liquid:Checking:WestCoastBank", -float(denom), "USD"),
     ], source_account="Assets:Investments:Bonds:TreasuryDirect:IBonds")
 
 def gen_nationalbank_savings_transfer(dt):
@@ -1179,6 +1199,17 @@ _STOCK_BUYS = [
 _STOCK_SALES = [
     (date(2024, 3, 15), "VOO", 4, date(2021, 3, 15), "Income:CapitalGains:VOO"),
     (date(2025, 2, 10), "AAPL", 5, date(2024, 11, 10), "Income:CapitalGains:AAPL"),
+]
+
+# I-Bond issues: (issue/purchase date, commodity code, denomination in face $).
+# Modelled commodity-per-issue (units = face dollars @ 1.00); accrued value is
+# supplied as a price computed by the ibonds library. Codes/denoms/dates match
+# the commodity directives above. Multiple issues across years exercise the
+# per-issue valuation the cash model can't do (see dev-docs/valuations.md).
+_IBOND_ISSUES = [
+    (date(2020, 4, 15), "IBOND2020", 10000),
+    (date(2022, 4, 15), "IBOND2022", 5000),
+    (date(2024, 4, 15), "IBOND2024", 10000),
 ]
 
 
@@ -1561,9 +1592,10 @@ def generate(anchor_month: date = _REFERENCE_END.replace(day=1), buffer_months: 
         date(2024, 8, 14), "Assets:Investments:TermDeposits:ValleyCU:CD4",
         100000.00, "Assets:Liquid:Savings:ValleyCU")))
 
-    # I-Bond purchases (annual, 2020-2024)
-    for yr in range(2020, 2025):
-        all_txns.append((date(yr, 4, 15), gen_ibond_purchase(date(yr, 4, 15))))
+    # I-Bond purchases — commodity-per-issue (units = face dollars @ 1.00),
+    # valued formulaically via the ibonds library (see generate_prices).
+    for issue_dt, code, denom in _IBOND_ISSUES:
+        all_txns.append((issue_dt, gen_ibond_buy(issue_dt, code, denom)))
 
     # Priced investment holdings: ETF/stock lots, dividends, MMF DRIP, and sales
     # (deterministic; valued against the prices.beancount sidecar).
@@ -1674,6 +1706,22 @@ def generate_prices(anchor_month: date = _REFERENCE_END.replace(day=1),
         d = ms.replace(day=15)
         if d <= _REFERENCE_END:
             rows.append((d, "VMFXX", "1.00"))   # money-market: flat, never fetched
+
+    # I-Bonds: accrued value per unit (value/denom) computed formulaically by the
+    # ibonds library — the same values the runtime valuator would produce — so the
+    # shipped demo shows real accrual without a fetch.
+    from ibonds import IBond
+    for issue_dt, code, denom in _IBOND_ISSUES:
+        bond = IBond(issue_date=issue_dt.strftime("%m/%Y"), denom=denom)
+        for ms in _iter_month_starts(issue_dt.replace(day=1), _REFERENCE_END):
+            d = ms.replace(day=15)
+            if d < issue_dt or d > _REFERENCE_END:
+                continue
+            v = bond.value(d)
+            if v is None:
+                continue
+            rows.append((d, code, f"{v / denom:.4f}"))
+
     rows.sort(key=lambda r: (r[0], r[1]))
 
     lines = [

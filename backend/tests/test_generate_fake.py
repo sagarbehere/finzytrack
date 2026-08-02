@@ -189,7 +189,9 @@ def test_price_sidecar_parses_is_not_included_and_is_date_aligned():
     from beancount.core import data
     price_entries = [e for e in entries if isinstance(e, data.Price)]
     assert len(price_entries) == sum(1 for l in prices.splitlines() if " price " in l)
-    assert {e.currency for e in price_entries} == {"VOO", "VTI", "AAPL", "VMFXX"}
+    assert {e.currency for e in price_entries} == {
+        "VOO", "VTI", "AAPL", "VMFXX", "IBOND2020", "IBOND2022", "IBOND2024",
+    }
     # Money-market fund is flat 1.00.
     assert all(e.amount.number == 1 for e in price_entries if e.currency == "VMFXX")
 
@@ -203,6 +205,28 @@ def test_price_sidecar_parses_is_not_included_and_is_date_aligned():
     end = gen._add_months(anchor, buffer)
     last_price = max(e.date for e in price_entries)
     assert (last_price.year, last_price.month) == (end.year, end.month)
+
+
+def test_ibonds_are_commodity_per_issue_with_accrual():
+    """I-Bonds are modelled commodity-per-issue (asset-class 'i-bond' + issue_date),
+    and the shipped sidecar carries their ibonds-computed accrued value (> face)."""
+    from beancount.core import data
+    text = gen.generate(anchor_month=date(2026, 6, 1), buffer_months=2)
+    entries, errors, _ = loader.load_string(text)
+    assert errors == []
+    comms = {e.currency: e for e in entries if isinstance(e, data.Commodity)}
+    for code in ("IBOND2020", "IBOND2022", "IBOND2024"):
+        assert code in comms, f"missing I-Bond commodity {code}"
+        assert comms[code].meta.get("asset-class") == "i-bond"
+        assert comms[code].meta.get("issue_date")
+        assert comms[code].meta.get("denomination")
+
+    prices = gen.generate_prices(anchor_month=date(2026, 6, 1), buffer_months=2)
+    pentries, perrors, _ = loader.load_string(prices)
+    assert perrors == []
+    ibond_prices = [e for e in pentries if isinstance(e, data.Price) and e.currency.startswith("IBOND")]
+    assert ibond_prices
+    assert max(e.amount.number for e in ibond_prices) > 1  # accrued above face value
 
 
 def test_ensure_seed_ledger_writes_lf_sidecar_next_to_ledger(tmp_path):
