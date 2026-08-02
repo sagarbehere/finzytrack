@@ -275,7 +275,10 @@ function initializeParameters() {
     for (const param of props.dashboard.parameters) {
       // After resolveRecipeGenerators, `default` is always a scalar — either
       // a literal or a "$gen:name" sentinel for no-arg templated defaults.
-      params[param.name] = param.default as string | number
+      // A param with no default (e.g. a `select` awaiting a pick) still binds as
+      // '' so its `:name` placeholder is never left unbound — the query returns
+      // empty (→ emptyText) instead of a 500. See getDefaultParameters.
+      params[param.name] = (param.default ?? '') as string | number
     }
   }
   if (props.dashboard.id) {
