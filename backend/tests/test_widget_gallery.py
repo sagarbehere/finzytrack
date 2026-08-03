@@ -38,13 +38,13 @@ def _supported_viz_types_from_schema() -> set[str]:
     becomes a two-step change (schema + test) instead of one (schema +
     gallery). With this helper, adding a type to recipe.schema.json plus
     a gallery widget is sufficient — and forgetting either is caught."""
-    from app.helpers.recipe_validation import _load_schema, VALID_VIZ_TYPES
+    from app.helpers.recipe_validation import _load_schema, valid_viz_types
     schema = _load_schema()
     chart_types = set(schema["$defs"]["ChartType"]["enum"])
     # Non-chart top-level visualization.types: kpi/table/pivot. Chart types are
     # already enumerated under ChartType. The gallery exposes them under a
     # single flat key per type, so we union them here.
-    return chart_types | (VALID_VIZ_TYPES - {"chart"})
+    return chart_types | (valid_viz_types() - {"chart"})
 
 
 SUPPORTED_VIZ_TYPES = _supported_viz_types_from_schema()
