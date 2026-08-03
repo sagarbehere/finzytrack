@@ -63,7 +63,12 @@ def seed_data_with_currency(data_dir: Path, currency: str) -> None:
         # against the hash of the substituted *bundle* bytes, so translating
         # newlines here (Windows) would make every launch see a ledger that
         # differs from what we recorded delivering.
-        content = bc_file.read_text(encoding="utf-8", newline="")
+        # Path.read_text() only accepts `newline` on Python 3.13+; open() has
+        # taken it since forever. Use open() so this works on our documented
+        # 3.11+ floor — Ubuntu 24.04 ships 3.12, where the kwarg form raises
+        # TypeError and breaks the setup wizard.
+        with bc_file.open("r", encoding="utf-8", newline="") as fh:
+            content = fh.read()
         if CURRENCY_PLACEHOLDER in content:
             bc_file.write_text(
                 substitute_currency(content, currency), encoding="utf-8", newline=""
