@@ -19,6 +19,8 @@
     :trend="getTrendValue()"
     :values="getKPIValues()"
     :colorBySign="isJsonKPIVisualization(recipe.visualization) && !!recipe.visualization.colorBySign"
+    :secondaryValues="getKPISecondaryValues()"
+    :secondaryLabel="isJsonKPIVisualization(recipe.visualization) ? recipe.visualization.secondaryLabel : undefined"
   />
 
   <!-- Chart -->
@@ -214,6 +216,22 @@ function getKPIValues(): CurrencyAmount[] | undefined {
   }
 
   return undefined
+}
+
+// The optional secondary sub-line (e.g. a YTD figure under an all-time total):
+// same currency rows as the primary, but read from `secondaryField`.
+function getKPISecondaryValues(): CurrencyAmount[] | undefined {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'kpi' || !isJsonKPIVisualization(viz)) return undefined
+  const secondaryField = viz.secondaryField
+  if (!secondaryField || !Array.isArray(props.data)) return undefined
+  const currencyField = viz.currencyField || 'currency'
+  return props.data
+    .map((row: Record<string, unknown>) => ({
+      amount: Number(row[secondaryField]) || 0,
+      currency: String(row[currencyField] || 'USD'),
+    }))
+    .filter((item: CurrencyAmount) => item.amount !== 0)
 }
 
 // Get KPI icon

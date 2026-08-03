@@ -64,3 +64,31 @@ describe('stickiness (hashColor / familyColor)', () => {
     expect(familyColor('EatingOut:Coffee', true)).not.toBe(familyColor('EatingOut', true))
   })
 })
+
+describe('orderedFamilyColorer', () => {
+  const { categoricalPalette, orderedFamilyColorer } = useDashboardTheme()
+
+  it('gives adjacent families distinct palette colours (by order, not name hash)', () => {
+    const pal = categoricalPalette(true)
+    const colorer = orderedFamilyColorer(['etf', 'i-bond', 'money-market', 'stock'], true)
+    // Top-level families map to palette slots 0,1,2,3 in appearance order.
+    expect(colorer('etf')).toBe(pal[0])
+    expect(colorer('i-bond')).toBe(pal[1])
+    expect(colorer('money-market')).toBe(pal[2])
+    // …and are all different from each other (the collision this fixes).
+    expect(new Set([colorer('etf'), colorer('i-bond'), colorer('money-market'), colorer('stock')]).size).toBe(4)
+  })
+
+  it('lightens a child (depth 1) from its family base, so holdings read as a group', () => {
+    const colorer = orderedFamilyColorer(['etf'], true)
+    const base = colorer('etf')
+    const child = colorer('etf:VOO')
+    expect(child).not.toBe(base)          // shaded, not identical
+    expect(typeof child).toBe('string')
+  })
+
+  it('falls back to a hashed colour for a family not in the order (never uncolored)', () => {
+    const colorer = orderedFamilyColorer(['etf'], true)
+    expect(colorer('crypto')).toMatch(/^#/)
+  })
+})

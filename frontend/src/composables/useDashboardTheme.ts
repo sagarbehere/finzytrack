@@ -241,6 +241,32 @@ function familyColor(account: string, isDark: boolean): string {
   return mixHex(base, isDark ? '#ffffff' : '#000000', Math.min(depth * step, 0.6))
 }
 
+/**
+ * Order-based sibling of {@link familyColor} for treemap/sunburst tiles: the base
+ * hue of each top-level family is taken from the categorical palette by the
+ * family's **position in `familyOrder`** (first appearance), not a name hash —
+ * so adjacent families are maximally distinct, exactly as a pie is, instead of
+ * two family names colliding on the same hashed slot. Descendants still lighten
+ * by depth so each family's tiles read as a group. Returns a `colorer(label)`
+ * used per node; a family not present in `familyOrder` falls back to the hash so
+ * nothing is ever left uncolored. Trade-off vs. familyColor: a family's colour
+ * depends on its rank within this chart's data, not a fixed per-name identity.
+ */
+function orderedFamilyColorer(familyOrder: string[], isDark: boolean): (label: string) => string {
+  const index = new Map<string, number>()
+  for (const f of familyOrder) if (!index.has(f)) index.set(f, index.size)
+  const step = activeTheme.value.stickiness?.depthLightenStep ?? 0.18
+  return (label: string) => {
+    const seg = strippedSegments(label)
+    const fam = seg[0] || label
+    const slot = index.get(fam)
+    const base = slot === undefined ? hashColor(fam, isDark) : categoricalAt(slot, isDark)
+    const depth = Math.max(0, seg.length - 1)
+    if (depth === 0) return base
+    return mixHex(base, isDark ? '#ffffff' : '#000000', Math.min(depth * step, 0.6))
+  }
+}
+
 /** Load the active theme from the backend (once). Falls back to the built-in
  * default on any failure so charts always have a theme. */
 async function loadTheme(): Promise<void> {
@@ -279,5 +305,7 @@ export function useDashboardTheme() {
     // identity stickiness
     hashColor,
     familyColor,
+    familyOf,
+    orderedFamilyColorer,
   }
 }

@@ -68,7 +68,7 @@ def _query_steps(dashboard: str):
 def test_all_query_steps_execute(mirror, dashboard):
     con = sqlite3.connect(str(mirror))
     con.row_factory = sqlite3.Row
-    params = {"currency": "USD", "holding": "VOO"}
+    params = {"currency": "USD", "holding": "VOO", "asOf": "2022-01-01"}
     steps = _query_steps(dashboard)
     assert steps, f"{dashboard} has no query steps"
     for step_id, sql in steps:

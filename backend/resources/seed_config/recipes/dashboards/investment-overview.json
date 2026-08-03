@@ -16,6 +16,13 @@
       "args": { "to": "{{params.asOf}}", "scope": "overall", "currency": "{{params.currency}}", "cadence": "monthly" }
     },
     {
+      "id": "now",
+      "kind": "transform",
+      "fn": "where",
+      "inputs": ["{{steps.series}}"],
+      "config": { "field": "date", "equals": "{{params.asOf}}" }
+    },
+    {
       "id": "returns-data",
       "kind": "compute",
       "fn": "portfolio_returns",
@@ -42,72 +49,78 @@
     {
       "id": "kpi-invested",
       "title": "Invested",
-      "helpText": "The cost basis of the holdings you still own — what you paid for them.",
+      "helpText": "The cost basis of the holdings you held as of the selected date — what you paid for them.",
       "steps": [
-        { "id": "main", "kind": "query", "query": "SELECT :currency AS currency, ROUND(SUM(CAST(l.book_value AS REAL)), 2) AS amount FROM lots l JOIN commodities c ON c.code = l.units_currency AND c.is_currency = 0 WHERE l.cost_currency = :currency HAVING amount IS NOT NULL" },
-        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.now}}"] }
       ],
       "output": "out",
-      "visualization": { "type": "kpi", "icon": "$", "multiCurrency": true, "amountField": "amount", "currencyField": "currency" }
+      "visualization": {
+        "type": "kpi", "icon": "$", "multiCurrency": true, "amountField": "cost_basis", "currencyField": "currency",
+        "clickLink": { "name": "transactions", "query": { "accountContains": "Assets:Investments", "dateTo": "{{parameters.asOf}}" } }
+      }
     },
     {
       "id": "kpi-current",
       "title": "Current Value",
-      "helpText": "Market value of your holdings at the latest recorded price.",
+      "helpText": "Market value of your holdings as of the selected date. Click to see the holdings behind it.",
       "steps": [
-        { "id": "main", "kind": "query", "query": "SELECT :currency AS currency, ROUND(SUM(CAST(l.units_number AS REAL) * lp.price), 2) AS amount FROM lots l JOIN commodities c ON c.code = l.units_currency AND c.is_currency = 0 JOIN (SELECT base_currency, quote_currency, CAST(quote_number AS REAL) AS price FROM prices x WHERE x.date = (SELECT MAX(date) FROM prices y WHERE y.base_currency = x.base_currency AND y.quote_currency = x.quote_currency)) lp ON lp.base_currency = l.units_currency AND lp.quote_currency = :currency HAVING amount IS NOT NULL" },
-        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.now}}"] }
       ],
       "output": "out",
-      "visualization": { "type": "kpi", "icon": "↑", "iconColor": "{{theme.brand}}", "multiCurrency": true, "amountField": "amount", "currencyField": "currency" }
+      "visualization": {
+        "type": "kpi", "icon": "↑", "iconColor": "{{theme.brand}}", "multiCurrency": true, "amountField": "market_value", "currencyField": "currency",
+        "clickLink": { "name": "dashboard", "query": { "tab": "investment-holdings", "currency": "{{parameters.currency}}" } }
+      }
     },
     {
       "id": "kpi-unrealized",
       "title": "Unrealized Gain",
-      "helpText": "Current market value minus cost basis. Green if up, red if down. Holdings without a recorded price are not included.",
+      "helpText": "Current market value minus cost basis, as of the selected date. Green if up, red if down. Click to see per-holding gains.",
       "steps": [
-        { "id": "main", "kind": "query", "query": "SELECT :currency AS currency, ROUND(SUM(CAST(l.units_number AS REAL) * lp.price - CAST(l.book_value AS REAL)), 2) AS amount FROM lots l JOIN commodities c ON c.code = l.units_currency AND c.is_currency = 0 JOIN (SELECT base_currency, quote_currency, CAST(quote_number AS REAL) AS price FROM prices x WHERE x.date = (SELECT MAX(date) FROM prices y WHERE y.base_currency = x.base_currency AND y.quote_currency = x.quote_currency)) lp ON lp.base_currency = l.units_currency AND lp.quote_currency = :currency HAVING amount IS NOT NULL" },
-        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.now}}"] }
       ],
       "output": "out",
-      "visualization": { "type": "kpi", "icon": "=", "multiCurrency": true, "amountField": "amount", "currencyField": "currency", "colorBySign": true }
+      "visualization": {
+        "type": "kpi", "icon": "=", "multiCurrency": true, "amountField": "unrealized", "currencyField": "currency", "colorBySign": true,
+        "clickLink": { "name": "dashboard", "query": { "tab": "investment-holdings", "currency": "{{parameters.currency}}" } }
+      }
     },
     {
       "id": "kpi-income",
       "title": "Investment Income",
-      "helpText": "All dividends and interest earned to date, in this currency.",
+      "helpText": "Dividends and interest earned to date (cumulative), with this year's so far below. Click for the income breakdown.",
       "steps": [
-        { "id": "main", "kind": "query", "query": "SELECT :currency AS currency, ROUND(SUM(CAST(amount AS REAL)) * -1, 2) AS amount FROM postings WHERE (account LIKE 'Income:Dividends%' OR account LIKE 'Income:Interest%') AND currency = :currency HAVING amount IS NOT NULL" },
+        { "id": "main", "kind": "query", "query": "SELECT :currency AS currency, ROUND(SUM(CASE WHEN transaction_date <= :asOf THEN CAST(amount AS REAL) ELSE 0 END) * -1, 2) AS amount, ROUND(SUM(CASE WHEN transaction_date >= (strftime('%Y', :asOf) || '-01-01') AND transaction_date <= :asOf THEN CAST(amount AS REAL) ELSE 0 END) * -1, 2) AS ytd FROM postings WHERE (account LIKE 'Income:Dividends%' OR account LIKE 'Income:Interest%') AND currency = :currency HAVING amount != 0" },
         { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
       ],
       "output": "out",
-      "visualization": { "type": "kpi", "icon": "%", "iconColor": "{{theme.brand}}", "multiCurrency": true, "amountField": "amount", "currencyField": "currency" }
+      "visualization": {
+        "type": "kpi", "icon": "%", "iconColor": "{{theme.brand}}", "multiCurrency": true, "amountField": "amount", "currencyField": "currency",
+        "secondaryField": "ytd", "secondaryLabel": "YTD",
+        "clickLink": { "name": "dashboard", "query": { "tab": "investment-income", "currency": "{{parameters.currency}}" } }
+      }
     },
     {
       "id": "allocation",
-      "title": "Allocation by Asset Class",
-      "helpText": "Current market value split by asset class (ETF, stock, money-market, and so on).",
+      "title": "Allocation",
+      "helpText": "Current market value by asset class (inner ring) broken out to each holding (outer ring). Click a segment to zoom in.",
       "steps": [
-        { "id": "main", "kind": "query", "query": "SELECT c.asset_class AS name, ROUND(SUM(CAST(l.units_number AS REAL) * lp.price), 2) AS value FROM lots l JOIN commodities c ON c.code = l.units_currency AND c.is_currency = 0 JOIN (SELECT base_currency, quote_currency, CAST(quote_number AS REAL) AS price FROM prices x WHERE x.date = (SELECT MAX(date) FROM prices y WHERE y.base_currency = x.base_currency AND y.quote_currency = x.quote_currency)) lp ON lp.base_currency = l.units_currency AND lp.quote_currency = :currency GROUP BY c.asset_class HAVING value > 0 ORDER BY value DESC" },
+        { "id": "main", "kind": "query", "query": "SELECT c.asset_class || ':' || h.code AS account, ROUND(h.units * pa.price, 2) AS value FROM (SELECT p.currency AS code, SUM(CAST(p.amount AS REAL)) AS units FROM postings p JOIN commodities c ON c.code = p.currency AND c.is_currency = 0 WHERE p.transaction_date <= :asOf GROUP BY p.currency) h JOIN commodities c ON c.code = h.code JOIN (SELECT base_currency, CAST(quote_number AS REAL) AS price FROM prices x WHERE x.quote_currency = :currency AND x.date = (SELECT MAX(date) FROM prices y WHERE y.base_currency = x.base_currency AND y.quote_currency = :currency AND y.date <= :asOf)) pa ON pa.base_currency = h.code WHERE h.units > 0 ORDER BY value DESC" },
         { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
       ],
       "output": "out",
       "visualization": {
         "type": "chart",
-        "chartType": "pie",
+        "chartType": "sunburst",
         "emptyText": "No priced holdings in this currency yet.",
         "options": {
           "tooltip": { "trigger": "item" },
-          "legend": { "show": false },
           "series": [
             {
-              "type": "pie",
-              "radius": ["35%", "65%"],
-              "center": ["50%", "50%"],
-              "encode": { "itemName": "name", "value": "value" },
-              "label": { "show": true, "formatter": "{b}", "minShowLabelAngle": 15 },
-              "labelLine": { "show": true, "length": 8, "length2": 8 },
-              "emphasis": { "label": { "show": true, "fontWeight": "bold", "formatter": "{b}\n{d}%" } }
+              "type": "sunburst",
+              "radius": [0, "92%"],
+              "label": { "rotate": "tangential", "minAngle": 6, "fontSize": 10 },
+              "emphasis": { "focus": "ancestor" }
             }
           ]
         }
@@ -127,8 +140,8 @@
         "emptyText": "No holdings to chart in this currency yet.",
         "options": {
           "tooltip": { "trigger": "axis" },
-          "legend": { "show": true },
-          "grid": { "left": "3%", "right": "4%", "bottom": "3%", "containLabel": true },
+          "legend": { "show": true, "top": 0, "left": "center" },
+          "grid": { "left": "3%", "right": "4%", "top": 40, "bottom": "3%", "containLabel": true },
           "xAxis": { "type": "time" },
           "yAxis": { "type": "value" },
           "series": [

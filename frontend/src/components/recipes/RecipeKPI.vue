@@ -40,6 +40,14 @@
       >
         {{ formattedValue }}
       </p>
+      <!-- Optional secondary sub-line (e.g. a YTD figure under an all-time total) -->
+      <p
+        v-if="secondaryValues && secondaryValues.length > 0"
+        class="mt-0.5 text-xs text-gray-500 dark:text-gray-400 truncate"
+      >
+        <span v-if="secondaryLabel" class="font-medium">{{ secondaryLabel }}</span>
+        {{ secondaryValues.map(formatCurrencyAmount).join(' · ') }}
+      </p>
       <div v-if="showTrend && trend !== null" class="flex items-center mt-1">
         <span
           class="text-sm font-medium"
@@ -73,6 +81,9 @@ interface Props {
   values?: CurrencyAmount[]
   /** Colour the value + icon by sign (green ≥ 0, red < 0). */
   colorBySign?: boolean
+  /** Optional muted sub-line values (e.g. a YTD figure under an all-time total). */
+  secondaryValues?: CurrencyAmount[]
+  secondaryLabel?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {

@@ -81,9 +81,10 @@ class PortfolioSeriesFunction(ComputeFunction):
         "Money values are decimal strings."
     )
     output_shape = (
-        "[{date: 'YYYY-MM-DD', group, currency, market_value, cost_basis, degraded}] "
-        "— market_value/cost_basis are decimal strings; degraded is a bool; one row "
-        "per (date, group, currency)."
+        "[{date: 'YYYY-MM-DD', group, currency, market_value, cost_basis, unrealized, "
+        "unrealized_pct, degraded}] — market_value/cost_basis/unrealized are decimal "
+        "strings; unrealized = market_value - cost_basis; unrealized_pct is a ratio "
+        "string or null; degraded is a bool; one row per (date, group, currency)."
     )
     parameters_schema = {
         "type": "object",
@@ -209,12 +210,16 @@ class PortfolioSeriesFunction(ComputeFunction):
                 b["degraded"] = b["degraded"] or degraded
 
             for (group, quote), b in sorted(buckets.items()):
+                unrealized = b["market"] - b["basis"]
+                unrealized_pct = (unrealized / b["basis"]) if b["basis"] != 0 else None
                 result.append({
                     "date": d.isoformat(),
                     "group": group,
                     "currency": quote,
                     "market_value": str(b["market"]),
                     "cost_basis": str(b["basis"]),
+                    "unrealized": str(unrealized),
+                    "unrealized_pct": (str(unrealized_pct) if unrealized_pct is not None else None),
                     "degraded": b["degraded"],
                 })
 

@@ -458,24 +458,30 @@ function injectSeriesData(series: EChartsOption['series']): EChartsOption['serie
     }
 
     if (t === 'sunburst') {
-      // Build a tree from colon-separated account paths. Color by family+depth
-      // unless the recipe dictates its own colors (escape hatch).
+      // Build a tree from colon-separated account paths. Colour each top-level
+      // family from the categorical palette by order (distinct adjacent hues,
+      // like a pie), lightened by depth — unless the recipe sets its own colours.
       const pathField = (s as { pathField?: string }).pathField || 'account'
       const valueField = (s as { valueField?: string }).valueField || 'value'
-      const colorFn = recipeSetsColor(s) ? undefined : (p: string) => familyColor(p, isDarkMode())
+      const familyOrder = rows.map((r) => familyOf(String((r as Record<string, unknown>)[pathField] ?? '')))
+      const colorer = orderedFamilyColorer(familyOrder, isDarkMode())
+      const colorFn = recipeSetsColor(s) ? undefined : (p: string) => colorer(p)
       return { ...s, data: buildAccountTree(rows, pathField, valueField, colorFn) } as typeof s
     }
 
     if (t === 'treemap' && !recipeSetsColor(s)) {
-      // Sticky identity color per tile by its label (family+depth); the recipe's
-      // own colors still win via recipeSetsColor().
+      // Colour each tile by its family from the categorical palette by order
+      // (distinct adjacent hues), lightened by depth; the recipe's own colours
+      // still win via recipeSetsColor().
       const dark = isDarkMode()
+      const familyOrder = rows.map((r) => familyOf(String(r.name ?? r.account ?? '')))
+      const colorer = orderedFamilyColorer(familyOrder, dark)
       return {
         ...s,
         data: rows.map((r) => {
           const name = String(r.name ?? r.account ?? '')
           const existing = (r as { itemStyle?: Record<string, unknown> }).itemStyle ?? {}
-          return { ...r, itemStyle: { ...existing, color: familyColor(name, dark) } }
+          return { ...r, itemStyle: { ...existing, color: colorer(name) } }
         }),
       } as typeof s
     }
@@ -485,7 +491,7 @@ function injectSeriesData(series: EChartsOption['series']): EChartsOption['serie
   })
 }
 
-const { categoricalPalette, resolveTokensDeep, familyColor } = useDashboardTheme()
+const { categoricalPalette, resolveTokensDeep, familyOf, orderedFamilyColorer } = useDashboardTheme()
 
 /** True when the recipe already dictates fill colors for this series (an explicit
  * `itemStyle.color`) or the whole chart (`options.color`) — the value-level escape

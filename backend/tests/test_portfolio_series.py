@@ -102,6 +102,7 @@ def test_priced_point_uses_latest_price_on_or_before(tmp_path):
     # Latest price ≤ Jun 30 is the Feb 120.00 (Dec price is later).
     assert voo["market_value"] == "1200.00"   # 10 × 120
     assert voo["cost_basis"] == "1000.00"
+    assert voo["unrealized"] == "200.00"      # market - cost
     assert voo["degraded"] is False
     pvt = by[("2021-06-30", "PVT")]
     assert pvt["market_value"] == "200.00" == pvt["cost_basis"]  # never priced

@@ -14,8 +14,9 @@
     "rowHeight": "140px",
     "widgets": [
       { "widgetId": "holdings", "gridArea": "1 / 1 / 4 / 13" },
-      { "widgetId": "lots",     "gridArea": "4 / 1 / 7 / 7" },
-      { "widgetId": "price-history", "gridArea": "4 / 7 / 7 / 13" }
+      { "widgetId": "by-holding", "gridArea": "4 / 1 / 7 / 13" },
+      { "widgetId": "lots",     "gridArea": "7 / 1 / 10 / 7" },
+      { "widgetId": "price-history", "gridArea": "7 / 7 / 10 / 13" }
     ]
   },
 
@@ -44,6 +45,32 @@
           { "key": "unrealized_pct", "label": "Gain %", "format": "percent", "align": "right" },
           { "key": "weight", "label": "Weight", "format": "percent", "align": "right" }
         ]
+      }
+    },
+    {
+      "id": "by-holding",
+      "title": "Market Value by Holding",
+      "helpText": "Each holding's current market value, largest at top. Click a bar to see that holding's transactions.",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT l.units_currency AS holding, ROUND(SUM(CAST(l.units_number AS REAL) * lp.price), 2) AS value FROM lots l JOIN commodities c ON c.code = l.units_currency AND c.is_currency = 0 JOIN (SELECT base_currency, quote_currency, CAST(quote_number AS REAL) AS price FROM prices x WHERE x.date = (SELECT MAX(date) FROM prices y WHERE y.base_currency = x.base_currency AND y.quote_currency = x.quote_currency)) lp ON lp.base_currency = l.units_currency AND lp.quote_currency = :currency GROUP BY l.units_currency HAVING value > 0 ORDER BY value ASC" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": {
+        "type": "chart",
+        "chartType": "bar",
+        "seriesLabelFormat": "currency",
+        "xAxisLabelFormat": "compact",
+        "emptyText": "No priced holdings in this currency yet.",
+        "options": {
+          "grid": { "left": 90, "right": 24, "top": 12, "bottom": 24 },
+          "xAxis": { "type": "value" },
+          "yAxis": { "type": "category", "axisLabel": { "width": 80, "overflow": "truncate" } },
+          "series": [
+            { "name": "Market value", "type": "bar", "encode": { "x": "value", "y": "holding" }, "itemStyle": { "color": "{{theme.brand}}" }, "label": { "show": true, "position": "right" } }
+          ]
+        },
+        "clickLink": { "name": "transactions", "query": { "currency": "{{data.holding}}" } }
       }
     },
     {

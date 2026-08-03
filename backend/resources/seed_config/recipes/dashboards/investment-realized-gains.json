@@ -57,8 +57,8 @@
         "emptyText": "No sales recorded in this currency. (This view is ledger-derived, not a tax document.)",
         "options": {
           "tooltip": { "trigger": "axis" },
-          "legend": { "show": true },
-          "grid": { "left": "3%", "right": "4%", "bottom": "3%", "containLabel": true },
+          "legend": { "show": true, "top": 0, "left": "center" },
+          "grid": { "left": "3%", "right": "4%", "top": 40, "bottom": "3%", "containLabel": true },
           "xAxis": { "type": "category" },
           "yAxis": { "type": "value" },
           "series": [

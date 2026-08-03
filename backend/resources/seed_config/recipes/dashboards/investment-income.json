@@ -4,7 +4,8 @@
   "title": "Income & Fixed Income",
   "description": "Investment income over time (dividends + interest) by year and source, plus your fixed-income holdings — CDs and bonds with rate, maturity, and balance.",
   "parameters": [
-    { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" }
+    { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" },
+    { "name": "asOf", "label": "As of", "type": "date", "default": { "$gen": "today" } }
   ],
 
   "layout": {
@@ -23,9 +24,9 @@
     {
       "id": "income-over-time",
       "title": "Income Over Time",
-      "helpText": "Dividends and interest received each year, in the selected currency.",
+      "helpText": "Dividends and interest received each year through the selected date, in the selected currency.",
       "steps": [
-        { "id": "main", "kind": "query", "query": "SELECT CAST(year AS TEXT) AS year, ROUND(SUM(CASE WHEN account LIKE 'Income:Dividends%' THEN CAST(amount AS REAL) ELSE 0 END) * -1, 2) AS dividends, ROUND(SUM(CASE WHEN account LIKE 'Income:Interest%' THEN CAST(amount AS REAL) ELSE 0 END) * -1, 2) AS interest FROM postings WHERE (account LIKE 'Income:Dividends%' OR account LIKE 'Income:Interest%') AND currency = :currency GROUP BY year ORDER BY year" },
+        { "id": "main", "kind": "query", "query": "SELECT CAST(year AS TEXT) AS year, ROUND(SUM(CASE WHEN account LIKE 'Income:Dividends%' THEN CAST(amount AS REAL) ELSE 0 END) * -1, 2) AS dividends, ROUND(SUM(CASE WHEN account LIKE 'Income:Interest%' THEN CAST(amount AS REAL) ELSE 0 END) * -1, 2) AS interest FROM postings WHERE (account LIKE 'Income:Dividends%' OR account LIKE 'Income:Interest%') AND currency = :currency AND transaction_date <= :asOf GROUP BY year ORDER BY year" },
         { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
       ],
       "output": "out",
@@ -35,8 +36,8 @@
         "emptyText": "No dividend or interest income in this currency yet.",
         "options": {
           "tooltip": { "trigger": "axis" },
-          "legend": { "show": true },
-          "grid": { "left": "3%", "right": "4%", "bottom": "3%", "containLabel": true },
+          "legend": { "show": true, "top": 0, "left": "center" },
+          "grid": { "left": "3%", "right": "4%", "top": 40, "bottom": "3%", "containLabel": true },
           "xAxis": { "type": "category" },
           "yAxis": { "type": "value" },
           "series": [
@@ -49,9 +50,9 @@
     {
       "id": "income-by-source",
       "title": "Income by Source",
-      "helpText": "Which accounts your investment income came from, largest first.",
+      "helpText": "Which accounts your investment income came from through the selected date, largest first.",
       "steps": [
-        { "id": "main", "kind": "query", "query": "SELECT account AS source, ROUND(SUM(CAST(amount AS REAL)) * -1, 2) AS amount FROM postings WHERE (account LIKE 'Income:Dividends%' OR account LIKE 'Income:Interest%') AND currency = :currency GROUP BY account HAVING amount != 0 ORDER BY amount DESC" },
+        { "id": "main", "kind": "query", "query": "SELECT account AS source, ROUND(SUM(CAST(amount AS REAL)) * -1, 2) AS amount FROM postings WHERE (account LIKE 'Income:Dividends%' OR account LIKE 'Income:Interest%') AND currency = :currency AND transaction_date <= :asOf GROUP BY account HAVING amount != 0 ORDER BY amount DESC" },
         { "id": "with-total", "kind": "transform", "fn": "appendTotal", "inputs": ["{{steps.main}}"], "config": { "field": "amount", "labelField": "source", "label": "Total" } }
       ],
       "output": "with-total",

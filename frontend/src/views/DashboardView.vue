@@ -130,6 +130,7 @@ import { useRecipeLoader } from '@/composables/useRecipeLoader'
 import { useDashboardTabs } from '@/composables/useDashboardTabs'
 import { RecipesService } from '@/services/generated-api'
 import { errorHandler } from '@/utils/ErrorHandler'
+import { useToast } from '@/composables/useNotifications'
 
 const route = useRoute()
 const router = useRouter()
@@ -140,10 +141,31 @@ const conflictBannerDismissed = ref(false)
 const { tabs, activeTabId, addTab, removeTab, setActiveTab, loadTabs, activeDashboard } = useDashboardTabs()
 
 const showPicker = ref(false)
+const toast = useToast()
 
 // Bumped after a successful price update so the active dashboard remounts and
 // re-runs its widgets against the freshly fetched prices.
 const refreshNonce = ref(0)
+
+/**
+ * Activate a dashboard by id (the target of a cross-dashboard click-through),
+ * opening it as a tab first if it isn't already. Returns false when no dashboard
+ * with that id exists — the caller degrades gracefully (a user can freely delete
+ * a dashboard that another one links to).
+ */
+function openOrActivateTab(tabId: string): boolean {
+  if (tabs.value.some((t) => t.id === tabId)) {
+    setActiveTab(tabId)
+    return true
+  }
+  const dashboard = getDashboard(tabId)
+  if (dashboard) {
+    addTab(tabId, dashboard.title || tabId)
+    setActiveTab(tabId)
+    return true
+  }
+  return false
+}
 
 // Dashboard parameters extracted from URL (passed to RecipeDashboard on mount)
 // Must be initialized synchronously during setup so RecipeDashboard gets correct
@@ -256,8 +278,10 @@ watch(() => route.query, (newQuery, oldQuery) => {
 
   const tabFromUrl = newQuery.tab as string | undefined
   if (tabFromUrl && tabFromUrl !== activeTabId.value) {
-    if (tabs.value.some((t) => t.id === tabFromUrl)) {
-      setActiveTab(tabFromUrl)
+    // A cross-dashboard link may point at a dashboard the user has since
+    // removed — open/activate it if it exists, otherwise degrade gracefully.
+    if (!openOrActivateTab(tabFromUrl)) {
+      toast.info('Dashboard not available', `The "${tabFromUrl}" dashboard isn't available.`)
     }
   }
 
@@ -273,10 +297,11 @@ onMounted(async () => {
   await loadUserRecipes()
   await loadTabs()
 
-  // Restore active tab from URL if present
+  // Restore active tab from URL if present (a deep link may reference a
+  // not-yet-open dashboard — open it; silently ignore an unknown id on mount).
   const tabFromUrl = route.query.tab as string | undefined
-  if (tabFromUrl && tabs.value.some((t) => t.id === tabFromUrl)) {
-    setActiveTab(tabFromUrl)
+  if (tabFromUrl) {
+    openOrActivateTab(tabFromUrl)
   }
 
   // Set initial URL if no tab param was present (first visit)
