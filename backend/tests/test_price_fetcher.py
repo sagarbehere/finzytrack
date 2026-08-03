@@ -57,8 +57,10 @@ option "operating_currency" "USD"
 class FakeSource:
     """Offline stand-in for beanprice's Yahoo source."""
 
-    def __init__(self, by_symbol: dict[str, list[tuple[date, str]]]):
+    def __init__(self, by_symbol: dict[str, list[tuple[date, str]]],
+                 latest: dict[str, tuple[date, str]] | None = None):
         self.by_symbol = by_symbol
+        self.latest = latest or {}
         self.calls: list[tuple[str, date, date]] = []
 
     def get_prices_series(self, ticker, time_begin, time_end):
@@ -70,6 +72,13 @@ class FakeSource:
                     Decimal(price), datetime.combine(d, time.min, tzinfo=timezone.utc), "USD"
                 ))
         return out
+
+    def get_latest_price(self, ticker):
+        v = self.latest.get(ticker)
+        if v is None:
+            return None
+        d, price = v
+        return SourcePrice(Decimal(price), datetime.combine(d, time.min, tzinfo=timezone.utc), "USD")
 
 
 @pytest.fixture
@@ -130,6 +139,22 @@ def test_gap_fill_only_requests_dates_after_last_persisted(wired):
     PriceFetcher(reader, lm, source=source, today=date(2021, 3, 25)).fetch_and_persist()
     voo_call = next(c for c in source.calls if c[0] == "VOO")
     assert voo_call[1] == date(2021, 3, 16)   # begins the day after the last persisted price
+
+
+def test_falls_back_to_latest_price_when_series_is_empty(wired):
+    """Yahoo's chart endpoint returns no series for some ranges even when the
+    latest quote works — the fetcher must fall back to get_latest_price so the
+    holding still gets today's price (and record what still returned nothing)."""
+    ledger, _, reader, lm = wired
+    source = FakeSource(
+        {"VOO": [], "ACME.XYZ": []},                       # no historical series for anything
+        latest={"VOO": (date(2021, 2, 1), "120.00")},      # …but VOO has a latest quote
+    )
+    res = PriceFetcher(reader, lm, source=source, today=date(2021, 2, 1)).fetch_and_persist()
+    voo = reader.get_prices(currency="VOO")
+    assert any(r["date"] == "2021-02-01" and r["quote_number"] == "120.00" for r in voo)
+    assert res["added"] == 1
+    assert any(f.startswith("ACME") for f in res["failed"])  # attempted, nothing → reported with reason
 
 
 def test_idempotent_second_run_adds_nothing(wired):

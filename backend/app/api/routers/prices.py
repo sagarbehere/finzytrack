@@ -54,4 +54,5 @@ async def update_prices(
         as_of=result.get("as_of"),
         symbols=result.get("symbols", []),
         skipped=result.get("skipped", []),
+        failed=result.get("failed", []),
     ))

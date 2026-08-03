@@ -127,21 +127,26 @@ def discover_includes_per_file(root_path: str | Path) -> Dict[str, List[str]]:
     return result
 
 
-# The fixed filename of the price sidecar (dev-docs/valuations.md §3): a
-# Beancount file holding `price` directives that is deliberately **not**
-# `include`d in the root ledger, so it stays off the two-parse transaction-edit
-# path. It lives next to the root ledger.
-SIDECAR_FILENAME = "prices.beancount"
+# The price sidecar's filename suffix (dev-docs/valuations.md §3): a Beancount
+# file holding `price` directives that is deliberately **not** `include`d in the
+# root ledger, so it stays off the two-parse transaction-edit path. It is keyed
+# to the ledger's **filename** (not just its directory) so two ledgers sharing a
+# folder — e.g. `one.beancount` and `fake.beancount` — get their own prices:
+# `one.beancount` → `one.prices.beancount`.
+SIDECAR_SUFFIX = ".prices.beancount"
 
 
 def sidecar_path(ledger_file: str | Path) -> Path:
     """Return the price-sidecar path for ``ledger_file``:
-    ``<ledger_dir>/prices.beancount`` (resolved).
+    ``<ledger_dir>/<ledger_stem>.prices.beancount`` (resolved).
 
-    The single source of this path (Decision d in
+    Keyed to the ledger filename, not just its directory, so each ledger in a
+    shared folder has its own prices and switching the active ledger switches the
+    sidecar. The single source of this path (Decision d in
     dev-docs/valuations-invdashboards-implementation.md) — used by the exporter
     (loading + freshness fingerprint) and the fetcher's write path — so the
     sidecar's location is defined in exactly one place.
     """
-    return Path(ledger_file).resolve().parent / SIDECAR_FILENAME
+    p = Path(ledger_file).resolve()
+    return p.parent / f"{p.stem}{SIDECAR_SUFFIX}"
 

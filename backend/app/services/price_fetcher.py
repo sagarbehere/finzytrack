@@ -132,15 +132,66 @@ class PriceFetcher:
             keep[(p.currency, p.amount.currency, p.date.year, p.date.month)] = p
         return list(keep.values())
 
+    def _holdings_activity(self, codes: list[str]) -> dict:
+        """Per-commodity ``{code: (first_date, last_date, net_units)}`` from
+        postings — used to bound the fetch window to the ownership period."""
+        out: dict[str, list] = {}
+        for row in self._reader.get_postings_by_currency(codes):
+            code = row["currency"]
+            d = date.fromisoformat(row["transaction_date"])
+            u = Decimal(row["amount"]) if row["amount"] is not None else Decimal(0)
+            m = out.get(code)
+            if m is None:
+                out[code] = [d, d, u]
+            else:
+                m[0] = min(m[0], d)
+                m[1] = max(m[1], d)
+                m[2] += u
+        return out
+
+    def _fetch_series(self, source, symbol: str, begin: date, end: date):
+        """Historical daily prices for ``[begin, end]``, provider-agnostic:
+        try the source's ``get_daily_prices`` (Yahoo's real historical method)
+        then ``get_prices_series`` (other sources implement this one), and if
+        neither yields a series, fall back to ``get_latest_price`` (a different,
+        more reliable endpoint — enough for "current value"). Returns
+        ``(list[SourcePrice], reason_if_empty)``."""
+        tb = datetime.combine(begin, time.min)
+        te = datetime.combine(end, time.max)
+        last_err: Optional[str] = None
+        for name in ("get_daily_prices", "get_prices_series"):
+            fn = getattr(source, name, None)
+            if fn is None:
+                continue
+            try:
+                series = fn(symbol, tb, te)
+            except Exception as e:
+                last_err = str(e)
+                logger.warning("%s failed for %s: %s", name, symbol, e)
+                continue
+            if series:
+                return series, None
+        try:
+            latest = source.get_latest_price(symbol)
+            if latest is not None:
+                return [latest], None
+        except Exception as e:
+            last_err = str(e)
+            logger.warning("get_latest_price failed for %s: %s", symbol, e)
+        return [], (last_err or "provider returned no data")
+
     def fetch_and_persist(self) -> dict:
         """Fetch and persist prices for every fetchable holding. Returns
-        ``{added, total, as_of, symbols, skipped}``."""
+        ``{added, total, as_of, symbols, skipped, failed}`` — ``failed`` lists
+        ``"CODE (SYMBOL): reason"`` for holdings the provider gave nothing for."""
         today = self._today or date.today()
         commodities = [c for c in self._reader.get_commodities() if not c.is_currency]
+        activity = self._holdings_activity([c.code for c in commodities])
 
         new_prices: list[data.Price] = []
         symbols: list[str] = []
         skipped: list[str] = []
+        failed: list[str] = []
 
         for c in commodities:
             cadence = self._cadence(c.asset_class)
@@ -148,38 +199,41 @@ class PriceFetcher:
                 skipped.append(c.code)
                 continue
 
+            first_dt, last_dt, net_units = activity.get(c.code, (None, None, Decimal(0)))
+            if first_dt is None:
+                continue  # declared but never actually held
+
             existing = self._reader.get_prices(currency=c.code)
-            last = max((date.fromisoformat(r["date"]) for r in existing), default=None)
-            begin = (last + timedelta(days=1)) if last else (today - timedelta(days=self._lookback))
-            if begin > today:
-                continue  # already up to date
+            last_priced = max((date.fromisoformat(r["date"]) for r in existing), default=None)
+            # Start the day after the last stored price, else at first purchase —
+            # so the first fetch covers the whole ownership history, not a fixed
+            # 5-year window.
+            begin = (last_priced + timedelta(days=1)) if last_priced else first_dt
+            # Stop at today while still held; a fully-sold holding needs no prices
+            # past its last transaction (its value is 0 after that).
+            end = today if net_units > 0 else min(last_dt, today)
+            if begin > end:
+                continue  # up to date / nothing to fetch in the ownership window
 
             # I-Bonds are valued formulaically (offline), not fetched.
             if cadence == "ibond":
-                ib = self._ibond_series(c, begin, today)
+                ib = self._ibond_series(c, begin, end)
                 if ib:
                     new_prices.extend(ib)
                     symbols.append(c.code)
                 else:
-                    skipped.append(c.code)  # no issue_date, or rate table can't cover
+                    skipped.append(c.code)  # opt-out: no issue_date (leave to manual pricing)
                 continue
 
             symbol = (c.metadata or {}).get("fetch_symbol") or c.code
-
-            try:
-                series = self._get_source().get_prices_series(
-                    symbol, datetime.combine(begin, time.min), datetime.combine(today, time.max)
-                )
-            except Exception as e:
-                logger.warning("Price fetch failed for %s (%s): %s", c.code, symbol, e)
-                continue
+            series, reason = self._fetch_series(self._get_source(), symbol, begin, end)
 
             fetched: list[data.Price] = []
-            for sp in series or []:
+            for sp in series:
                 if sp.price is None or sp.quote_currency is None:
                     continue
                 d = sp.time.date() if isinstance(sp.time, datetime) else sp.time
-                if d < begin or d > today:
+                if d < begin or d > end:
                     continue
                 fetched.append(data.Price({}, d, c.code, Amount(Decimal(str(sp.price)), sp.quote_currency)))
 
@@ -188,11 +242,18 @@ class PriceFetcher:
             if fetched:
                 new_prices.extend(fetched)
                 symbols.append(symbol)
+            else:
+                failed.append(f"{c.code} ({symbol}): {reason}")
+
+        if failed:
+            logger.warning("Price fetch got no data for: %s", "; ".join(failed))
 
         if not new_prices:
-            return {"added": 0, "total": 0, "as_of": None, "symbols": [], "skipped": skipped}
+            return {"added": 0, "total": 0, "as_of": None,
+                    "symbols": [], "skipped": skipped, "failed": failed}
 
         result = self._lm.write_price_directives(new_prices)
         result["symbols"] = symbols
         result["skipped"] = skipped
+        result["failed"] = failed
         return result

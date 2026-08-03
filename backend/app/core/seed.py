@@ -42,15 +42,16 @@ def copy_fake_ledger(data_dir: Path) -> None:
     shutil.copy2(src, dest_dir / "fake.beancount")
     logger.info(f"Copied fake ledger → {dest_dir / 'fake.beancount'}")
 
-    # The fake ledger ships with a price sidecar (prices.beancount) that lives
-    # next to it but is NOT `include`d (dev-docs/valuations.md §3). Carry it
-    # along so the demo's investment holdings can be valued.
-    # (seed_data_with_currency copies the whole tree, so it needs no such
-    # special-case; this troubleshooting-only path copies files individually.)
-    prices_src = SEED_DATA_DIR / "ledgers" / "prices.beancount"
+    # The fake ledger ships with a per-ledger price sidecar
+    # (fake.prices.beancount) that lives next to it but is NOT `include`d
+    # (dev-docs/valuations.md §3). Carry it along so the demo's investment
+    # holdings can be valued. (seed_data_with_currency copies the whole tree, so
+    # it needs no such special-case; this troubleshooting-only path copies files
+    # individually.)
+    prices_src = SEED_DATA_DIR / "ledgers" / "fake.prices.beancount"
     if prices_src.exists():
-        shutil.copy2(prices_src, dest_dir / "prices.beancount")
-        logger.info(f"Copied price sidecar → {dest_dir / 'prices.beancount'}")
+        shutil.copy2(prices_src, dest_dir / "fake.prices.beancount")
+        logger.info(f"Copied price sidecar → {dest_dir / 'fake.prices.beancount'}")
 
 
 def seed_data_with_currency(data_dir: Path, currency: str) -> None:

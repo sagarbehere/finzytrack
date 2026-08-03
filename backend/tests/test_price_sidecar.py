@@ -73,6 +73,16 @@ def _prices(db: Path):
         con.close()
 
 
+def test_sidecar_is_keyed_to_the_ledger_filename(tmp_path):
+    """Two ledgers sharing a folder must get distinct sidecars, so switching the
+    active ledger switches its prices (no cross-contamination)."""
+    one = tmp_path / "one.beancount"
+    fake = tmp_path / "fake.beancount"
+    assert sidecar_path(one).name == "one.prices.beancount"
+    assert sidecar_path(fake).name == "fake.prices.beancount"
+    assert sidecar_path(one) != sidecar_path(fake)
+
+
 def test_sidecar_prices_are_loaded_into_the_mirror(tmp_path):
     _, db, _, _ = _wire(tmp_path, with_sidecar=True)
     rows = _prices(db)

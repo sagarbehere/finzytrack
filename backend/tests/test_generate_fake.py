@@ -231,6 +231,6 @@ def test_ibonds_are_commodity_per_issue_with_accrual():
 
 def test_ensure_seed_ledger_writes_lf_sidecar_next_to_ledger(tmp_path):
     out = gen.ensure_seed_ledger(out=tmp_path / "fake.beancount", anchor_month=date(2026, 5, 1))
-    sidecar = out.parent / "prices.beancount"
+    sidecar = out.parent / "fake.prices.beancount"
     assert sidecar.exists()
     assert b"\r" not in sidecar.read_bytes()  # LF on every platform

@@ -141,15 +141,37 @@ async function onUpdatePrices() {
   try {
     const resp = await PricesService.updatePrices()
     const added = resp.data?.added ?? 0
+    const total = resp.data?.total ?? 0
     const asOf = resp.data?.as_of
-    addNotification({
-      type: 'success',
-      title: 'Prices updated',
-      message:
-        added > 0
-          ? `Added ${added} new price${added === 1 ? '' : 's'}${asOf ? `, as of ${asOf}` : ''}.`
-          : `Already up to date${asOf ? ` (as of ${asOf})` : ''}.`,
-    })
+    const failed = resp.data?.failed ?? []
+    const failedTail = failed.length ? ` Couldn't fetch: ${failed.join('; ')}. Those are shown at cost.` : ''
+
+    if (added > 0) {
+      // Some fetched, some may have failed — report both honestly.
+      addNotification({
+        type: failed.length ? 'warning' : 'success',
+        title: 'Prices updated',
+        message: `Added ${added} new price${added === 1 ? '' : 's'}${asOf ? `, as of ${asOf}` : ''}.${failedTail}`,
+      })
+    } else if (failed.length || total === 0) {
+      // Nothing added and something failed (or the sidecar is still empty) → the
+      // provider returned no data. Don't pretend it's "up to date".
+      addNotification({
+        type: 'warning',
+        title: 'No prices fetched',
+        message:
+          (failed.length
+            ? `The price provider returned no data.${failedTail}`
+            : 'The price provider returned no data. Check the commodity tickers (fetch_symbol), try again later, or enter prices manually.') +
+          ' Holdings without a price are shown at cost.',
+      })
+    } else {
+      addNotification({
+        type: 'success',
+        title: 'Prices updated',
+        message: `Already up to date${asOf ? ` (as of ${asOf})` : ''}.`,
+      })
+    }
     emit('prices-updated') // parent remounts the dashboard so widgets re-value
   } catch (err) {
     errorHandler.display(err)

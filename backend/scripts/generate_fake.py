@@ -1740,8 +1740,8 @@ def generate_prices(anchor_month: date = _REFERENCE_END.replace(day=1),
 
 def _sidecar_out_for(ledger_out: Path) -> Path:
     """The price-sidecar path next to *ledger_out* (mirrors the runtime
-    ``ledger_loader.sidecar_path`` convention: ``<ledger_dir>/prices.beancount``)."""
-    return ledger_out.parent / "prices.beancount"
+    ``ledger_loader.sidecar_path`` convention: ``<stem>.prices.beancount``)."""
+    return ledger_out.parent / f"{ledger_out.stem}.prices.beancount"
 
 
 # Where the CI build drops the regenerated ledger: the *bundled template*

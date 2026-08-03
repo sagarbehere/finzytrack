@@ -26,5 +26,9 @@ export type PriceUpdateData = {
      * Holdings not fetched (e.g. money-market funds).
      */
     skipped?: Array<string>;
+    /**
+     * Holdings the provider returned nothing for, as 'CODE (SYMBOL): reason'.
+     */
+    failed?: Array<string>;
 };
 

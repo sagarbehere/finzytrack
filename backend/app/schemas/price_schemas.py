@@ -11,3 +11,4 @@ class PriceUpdateData(BaseModel):
     as_of: Optional[str] = Field(None, description="Date of the most recent price, YYYY-MM-DD, or null if none.")
     symbols: List[str] = Field(default_factory=list, description="Tickers that were fetched.")
     skipped: List[str] = Field(default_factory=list, description="Holdings not fetched (e.g. money-market funds).")
+    failed: List[str] = Field(default_factory=list, description="Holdings the provider returned nothing for, as 'CODE (SYMBOL): reason'.")
