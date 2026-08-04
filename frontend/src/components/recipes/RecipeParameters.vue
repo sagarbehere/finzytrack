@@ -91,6 +91,7 @@ import {
   genSelectionName,
   resolveParameterValue,
   GENERATOR_LABELS,
+  ALL_CURRENCIES_SENTINEL,
 } from '@/recipes/functions'
 
 interface Props {
@@ -218,6 +219,11 @@ function getRawOptions(param: RecipeParameter): RecipeParameterOption[] {
  */
 function getOptions(param: RecipeParameter): RecipeParameterOption[] {
   const base = getRawOptions(param)
+  // An `allowAll` currency filter prepends an "All currencies" option bound to
+  // the '*' sentinel (its default), shown at the top of the list.
+  const withAll = param.allowAll
+    ? [{ value: ALL_CURRENCIES_SENTINEL, label: 'All currencies' }, ...base]
+    : base
   const def = param.default
   if (typeof def === 'string' && isGenSelection(def)) {
     const name = genSelectionName(def)
@@ -228,9 +234,9 @@ function getOptions(param: RecipeParameter): RecipeParameterOption[] {
     // prefer that label over the raw value.
     const resolved = resolveParameterValue(def)
     const resolvedLabel = base.find((o) => o.value === resolved)?.label ?? String(resolved)
-    return [{ value: def, label: `${label} (${resolvedLabel})` }, ...base]
+    return [{ value: def, label: `${label} (${resolvedLabel})` }, ...withAll]
   }
-  return base
+  return withAll
 }
 
 function getButtonLabel(param: RecipeParameter): string {

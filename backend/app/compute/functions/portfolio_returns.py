@@ -117,6 +117,10 @@ class PortfolioReturnsFunction(ComputeFunction):
 
         scope = args.get("scope") or "portfolio"
         want_currency = args.get("currency")
+        # '*' is the dashboard currency-filter's "All" sentinel — treat it as
+        # "no restriction" (dev-docs/dashboard-multi-currency.md).
+        if want_currency == "*":
+            want_currency = None
         want_class = args.get("assetClass")
 
         asset_class_of = {

@@ -117,7 +117,12 @@ export type SelectParams = Record<string, string>
 export interface TableColumn {
   key: string
   label: string
-  format?: (value: unknown) => string
+  /**
+   * Format a cell value. Receives the whole row as an optional second argument so
+   * a currency-aware column can format each cell in its own currency (per-row
+   * `currencyField`; see dev-docs/dashboard-multi-currency.md §6.2).
+   */
+  format?: (value: unknown, row?: Record<string, unknown>) => string
   align?: 'left' | 'center' | 'right'
   /**
    * Function to generate link for cell values in this column.

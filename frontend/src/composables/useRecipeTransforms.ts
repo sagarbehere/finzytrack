@@ -580,8 +580,14 @@ function groupBy(inputs: unknown[], config?: TransformConfig): unknown {
  * then (optionally) keep only the first `count` data rows above it. Computing the
  * total before slicing means a "top N + Total" table still totals the full set,
  * not just the rows shown. Config: { field (default "actual"), labelField
- * (default "account"), label (default "Total"), count? }. The total row carries
- * `isTotal: true`.
+ * (default "account"), label (default "Total"), count?, groupField? }. The total
+ * row carries `isTotal: true`.
+ *
+ * With `groupField` (e.g. "currency"), emit ONE total row per distinct group
+ * value instead of a single grand total — the honest choice for a multi-currency
+ * table, where summing across currencies is meaningless (never sum across
+ * currencies; see dev-docs/dashboard-multi-currency.md). Each total row carries
+ * the group value so a currency-aware column formats it in its own currency.
  */
 function appendTotal(inputs: unknown[], config?: TransformConfig): unknown {
   const rows = asRows(inputs[0])
@@ -589,8 +595,26 @@ function appendTotal(inputs: unknown[], config?: TransformConfig): unknown {
   const labelField = String(config?.labelField ?? 'account')
   const label = String(config?.label ?? 'Total')
   const count = config?.count as number | undefined
-  const total = rows.reduce((s: Money, r) => add(s, toMoneyOr0(r[field])), zero())
+  const groupField = config?.groupField ? String(config.groupField) : undefined
   const shown = typeof count === 'number' ? rows.slice(0, count) : rows
+
+  if (groupField) {
+    // One total per group, in first-seen order — never a cross-group sum.
+    const totals = new Map<string, Money>()
+    for (const r of rows) {
+      const g = String(r[groupField] ?? '')
+      totals.set(g, add(totals.get(g) ?? zero(), toMoneyOr0(r[field])))
+    }
+    const totalRows = [...totals.entries()].map(([g, total]) => ({
+      [labelField]: label,
+      [groupField]: g,
+      [field]: total,
+      isTotal: true,
+    }))
+    return [...shown, ...totalRows]
+  }
+
+  const total = rows.reduce((s: Money, r) => add(s, toMoneyOr0(r[field])), zero())
   return [...shown, { [labelField]: label, [field]: total, isTotal: true }]
 }
 

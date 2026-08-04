@@ -181,7 +181,7 @@ is the primary rowset; `config` shapes behavior.
 | `joinBudgetActualByPeriod` | `[budgetsByPeriod, actualsByPeriod]` | — | one row per budgeted `(account, currency, period)` — `{ budget, actual, remaining, pctUsed }`, inclusive-parent; feed `pctUsed` into a `pivot` with `colorByValue` for an accounts×months heat-map |
 | `budgetSummary` | `[budgets, actuals]` | — | one aggregate row `{ budget, actual, remaining, pctUsed, pctUsedPct, value }` (maximal-named-subtree, so nested budgets don't double-count) — feeds a ring / KPIs |
 | `unbudgetedSpending` | `[budgets, actuals]` | — | actual rows for accounts covered by no budget, sorted desc (inclusive-parent aware) — the 'leak' list; chain `limit` for a top-N |
-| `appendTotal` | `[rows]` | `{ field?, labelField?, label?, count? }` | rows (+ optional top-`count`) plus a grand-total row (`isTotal: true`) summing the FULL input, not just the shown rows |
+| `appendTotal` | `[rows]` | `{ field?, labelField?, label?, count?, groupField? }` | rows (+ optional top-`count`) plus a grand-total row (`isTotal: true`) summing the FULL input, not just the shown rows. With `groupField` (e.g. "currency") emits ONE total row per distinct group value instead of a single grand total — for multi-currency tables, where summing across currencies is meaningless |
 | `groupBy` | `[rows]` | `{ key: string | string[], sum: string[] }` | one row per distinct `key`, each `sum` field totalled exactly (Money), first-seen order — 'totals over time/category' |
 | `runningSum` | `[rows]` | `{ fields: […], orderBy }` | rows + `cumulative<Field>` columns (burn-down / cumulative) |
 | `envelopeRollover` | `[budgetsByPeriod, actualsByPeriod]` | `{ reset?, resetFrom? }` | `[{ period, budget, actual, available, carryover, overspent, dateFrom, dateTo }]` — stateless rollover; `reset`+`resetFrom` is the 'start fresh' toggle |
@@ -578,6 +578,7 @@ SELECT click action: clicking sets dashboard parameters from the clicked context
 | `label` | `string` | yes |  |
 | `format` | `ValueFormat` | — |  |
 | `align` | `'left' | 'center' | 'right'` | — |  |
+| `currencyField` | `string` | — | For a money column in a multi-currency table: the row field holding that row's currency code, so each cell is formatted in its OWN currency (symbol + locale) instead of the single widget `currency` param. Use with a `currency`/`signedCurrency` `format`. Without it, all cells format with the widget currency (defaulting to USD), which mis-renders mixed-currency rows. See dev-docs/dashboard-multi-currency.md §6.2. |
 | `link` | `JsonValueLinkConfig` | — |  |
 
 #### `JsonTableVisualization`
@@ -622,6 +623,7 @@ Type: `string`
 | `minParam` | `string` | — | For a `date` (or `number`) control: bind the input's minimum to another parameter's current value (e.g. a 'to' date whose minimum is the 'from' date). Reactive. |
 | `maxParam` | `string` | — | For a `date` (or `number`) control: bind the input's maximum to another parameter's current value (e.g. a 'from' date that can't exceed the 'as of' date). Reactive. |
 | `hidden` | `boolean` | — | When true, the parameter is functional (its default applies, it can be set by a `select` click or the URL, and steps read it) but renders NO control in the parameter bar. Use for a parameter driven only by click-to-select master-detail. |
+| `allowAll` | `boolean` | — | For a `select` param (typically optionsFrom: 'currencies'): prepend an 'All' option that binds the sentinel value '*'. Used for a dashboard-level currency filter — 'All' (default) shows every currency (KPIs stacked, tables per-currency), a specific pick narrows the whole dashboard. In a query, gate the filter with `WHERE (:currency = '*' OR currency = :currency)`. The '*' value does not override or hide a same-named widget-level currency param (so per-chart pickers stay usable in All-mode). See dev-docs/dashboard-multi-currency.md. |
 | `showWhen` | `object` | — | Conditional visibility: this parameter's control is shown only when another parameter's current value equals `equals`. Use e.g. to reveal a date only when a boolean toggle is on. The parameter stays functional when hidden by this rule (its default/last value still feeds steps). |
 
 #### `Step`

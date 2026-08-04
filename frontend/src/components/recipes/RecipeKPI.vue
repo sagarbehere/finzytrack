@@ -8,8 +8,12 @@
         <span class="text-white text-xl font-semibold">{{ icon }}</span>
       </div>
     </div>
+    <!-- Content column: scales font to fit (see maxFontSize), but if content is
+         still taller than the card at the minimum readable size, scroll instead of
+         clipping. Vertical scroll only; block flow scrolls from the top so nothing
+         is stranded above the centered fold. -->
     <div
-      class="flex-1 min-w-0 overflow-hidden"
+      class="flex-1 min-w-0 max-h-full overflow-x-hidden overflow-y-auto"
       style="container-type: inline-size"
     >
       <p v-if="label" class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
@@ -23,8 +27,8 @@
           class="kpi-value font-bold whitespace-nowrap"
           :class="colorBySign ? '' : 'text-gray-900 dark:text-white'"
           :style="colorBySign
-            ? { color: signColor(item.amount), '--kpi-max-fs': maxFontSize(values.length) }
-            : { '--kpi-max-fs': maxFontSize(values.length) }"
+            ? { color: signColor(item.amount), '--kpi-max-fs': maxFontSize(contentLines) }
+            : { '--kpi-max-fs': maxFontSize(contentLines) }"
         >
           {{ formatCurrencyAmount(item) }}
         </p>
@@ -35,8 +39,8 @@
         class="kpi-value font-bold whitespace-nowrap"
         :class="colorBySign ? '' : 'text-gray-900 dark:text-white'"
         :style="colorBySign
-          ? { color: signColor(value), '--kpi-max-fs': maxFontSize(1) }
-          : { '--kpi-max-fs': maxFontSize(1) }"
+          ? { color: signColor(value), '--kpi-max-fs': maxFontSize(contentLines) }
+          : { '--kpi-max-fs': maxFontSize(contentLines) }"
       >
         {{ formattedValue }}
       </p>
@@ -122,11 +126,26 @@ const shownAmounts = computed<number[]>(() =>
 const isNegative = computed(() => shownAmounts.value.some((n) => n < 0))
 const isExactlyZero = computed(() => !isNegative.value && shownAmounts.value.every((n) => n === 0))
 
-// Max font sizes per currency count: 1 → 26px, 2 → 22px, 3+ → 18px
-const maxSizes: Record<number, number> = { 1: 26, 2: 22, 3: 18 }
+// Total lines of content the card must fit: one per currency value, plus the
+// optional secondary sub-line and trend line (and a label, if present). A
+// multi-currency KPI with a YTD sub-line is several lines and must shrink to fit
+// the fixed-height card instead of clipping.
+const contentLines = computed(() => {
+  const primary = props.values && props.values.length > 0 ? props.values.length : 1
+  const secondary = props.secondaryValues && props.secondaryValues.length > 0 ? 1 : 0
+  const trend = props.showTrend && props.trend !== null ? 1 : 0
+  const label = props.label ? 1 : 0
+  return primary + secondary + trend + label
+})
+
+// Ceiling font size by total content lines — more lines → smaller cap, so the
+// content fits the card. The CSS clamp still scales down further for narrow cards
+// (12cqw) but never below a readable floor (~13px); past that, the content column
+// scrolls rather than shrinking into illegibility.
+const maxSizes: Record<number, number> = { 1: 26, 2: 22, 3: 18, 4: 16, 5: 15, 6: 14 }
 
 function maxFontSize(count: number): string {
-  return `${maxSizes[Math.min(count, 3)]}px`
+  return `${maxSizes[Math.min(Math.max(count, 1), 6)]}px`
 }
 
 const iconColorHex = computed<string>(() => {
@@ -165,6 +184,9 @@ function formatTrend(value: number): string {
    text wrapper (container-type: inline-size).  The --kpi-max-fs custom
    property is set per-element based on currency count. */
 .kpi-value {
-  font-size: clamp(0.875rem, 12cqw, var(--kpi-max-fs, 26px));
+  /* Floor ~13px keeps the value readable; below this the content column scrolls
+     (see template) rather than shrinking further. */
+  font-size: clamp(0.8rem, 12cqw, var(--kpi-max-fs, 26px));
+  line-height: 1.15;
 }
 </style>

@@ -155,13 +155,19 @@ def txn(dt, payee, narration, postings, source_account=None, external_id=None):
 # --- Account definitions ---
 ACCOUNTS = """
 2015-01-01 open Assets:Liquid:Savings:PinnacleBank:NRE              INR
+  asset-class: "savings"
 2015-01-01 open Assets:Liquid:Savings:PinnacleBank:NRO              INR
+  asset-class: "savings"
 2015-01-01 open Assets:Transfer
 
 2015-10-01 open Assets:Liquid:Checking:WestCoastBank                USD
+  asset-class: "checking"
 2015-10-01 open Assets:Liquid:Savings:WestCoastBank                 USD
+  asset-class: "savings"
 2015-10-01 open Assets:Liquid:Checking:ValleyCU                     USD
+  asset-class: "checking"
 2015-10-01 open Assets:Liquid:Savings:ValleyCU                      USD
+  asset-class: "savings"
 
 2015-12-31 open Assets:Receivable:Work                              USD
 2015-12-31 open Assets:Receivable:Personal                          USD
@@ -241,33 +247,43 @@ ACCOUNTS = """
 2015-12-31 open Expenses:Unknown
 
 2019-04-22 open Assets:Liquid:Savings:HighYield:HYSA                USD
+  asset-class: "savings"
 2019-04-24 open Income:Interest:Savings:HighYield:HYSA              USD
 2020-01-01 open Income:Interest:TermDeposits                        USD,INR
 2023-01-14 open Assets:Investments:TermDeposits:ValleyCU:CD1        USD
+  asset-class: "cd"
   interest_rate: "4.50%"
   maturity_date: 2025-01-14
 2023-01-14 open Assets:Investments:TermDeposits:ValleyCU:CD2        USD
+  asset-class: "cd"
   interest_rate: "4.25%"
   maturity_date: 2024-01-14
 2023-01-24 open Assets:Investments:TermDeposits:WestCoastBank:CD001 USD
+  asset-class: "cd"
   interest_rate: "4.75%"
   maturity_date: 2026-01-24
 2023-10-14 open Assets:Investments:TermDeposits:ValleyCU:CD3        USD
+  asset-class: "cd"
   interest_rate: "5.00%"
   maturity_date: 2025-10-14
 2024-08-14 open Assets:Investments:TermDeposits:ValleyCU:CD4        USD
+  asset-class: "cd"
   interest_rate: "5.10%"
   maturity_date: 2027-08-14
 2026-01-29 open Assets:Investments:TermDeposits:PinnacleBank:NRE-FD INR
+  asset-class: "cd"
   interest_rate: "7.10%"
   maturity_date: 2027-01-29
 2026-02-03 open Assets:Investments:TermDeposits:PinnacleBank:NRO-FD INR
+  asset-class: "cd"
   interest_rate: "6.90%"
   maturity_date: 2028-02-03
 2026-02-23 open Income:Business:Consulting                          INR
 2026-03-01 open Expenses:Business                                   INR
 2026-03-06 open Assets:Liquid:Savings:NationalBank                  INR
+  asset-class: "savings"
 2026-03-06 open Assets:Liquid:Checking:NationalBank                 INR
+  asset-class: "checking"
 2026-03-06 open Income:Interest:Savings:NationalBank                INR
 """.strip()
 

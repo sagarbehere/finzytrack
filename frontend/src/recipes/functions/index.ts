@@ -57,6 +57,17 @@ export function genSelectionName(value: string): string {
 }
 
 /**
+ * The value bound by the "All currencies" option of an `allowAll` currency
+ * filter. Its two special behaviors (both scoped to this exact value, so
+ * dashboards without a currency filter are unaffected): a query gates the filter
+ * with `WHERE (:currency = '*' OR currency = :currency)`, and in the param merge
+ * a dashboard `currency` of `'*'` does NOT override or hide a same-named
+ * widget-level currency param (so per-chart pickers stay usable in All-mode).
+ * See dev-docs/dashboard-multi-currency.md.
+ */
+export const ALL_CURRENCIES_SENTINEL = '*'
+
+/**
  * Resolve a parameter value to its concrete scalar. If the value is a
  * generator sentinel ("$gen:name"), the generator is invoked now. Otherwise
  * the value passes through.

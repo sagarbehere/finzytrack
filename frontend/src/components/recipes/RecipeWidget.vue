@@ -111,7 +111,7 @@ import {
   type AnyWidgetRecipe,
   type StepError,
 } from '@/composables/useRecipeExecutor'
-import { resolveParameterValues } from '@/recipes/functions'
+import { resolveParameterValues, ALL_CURRENCIES_SENTINEL } from '@/recipes/functions'
 import { interpolateString, resolvePath } from '@/recipes/templating'
 import { getFormats } from '@/composables/useRecipeExecutor'
 import type { ValueFormat } from '@/types/recipes'
@@ -160,20 +160,43 @@ const rendererRef = ref<InstanceType<typeof RecipeWidgetRenderer>>()
  */
 const localSelections = ref<Record<string, string | number>>({})
 
-// Widget parameters that are NOT provided by the dashboard (shown in widget header)
+// True when the parent dashboard supplies a `currency` filter — then a widget's
+// own `currency` param is subordinate to it (shown only in All-mode, and its pick
+// is transient). See dev-docs/dashboard-multi-currency.md §4.
+const hasCurrencyFilter = computed(() =>
+  props.dashboardParameters ? 'currency' in props.dashboardParameters : false,
+)
+
+// Widget parameters that are NOT provided by the dashboard (shown in widget header).
+// Exception: a widget keeps its own control for a param the dashboard supplies as
+// the "All" currency sentinel ('*'), so a per-chart currency picker stays usable in
+// All-mode (a concrete dashboard value hides it and drives the widget instead).
 const widgetOnlyParameters = computed(() => {
   if (!props.recipe.parameters) return []
   if (!props.dashboardParameters) return props.recipe.parameters
-  return props.recipe.parameters.filter((p) => !(p.name in props.dashboardParameters!))
+  return props.recipe.parameters.filter(
+    (p) =>
+      !(p.name in props.dashboardParameters!) ||
+      props.dashboardParameters![p.name] === ALL_CURRENCIES_SENTINEL,
+  )
 })
 
-// Merged parameters: dashboard params override local params. Both sources
-// are resolved (sentinels → scalar) before they reach the query/widget.
-const mergedParameters = computed(() => ({
-  ...resolveParameterValues(getDefaultParameters(props.recipe)),
-  ...resolveParameterValues(localSelections.value),
-  ...(props.dashboardParameters || {}),
-}))
+// Merged parameters: dashboard params override local params. Both sources are
+// resolved (sentinels → scalar) before they reach the query/widget. Exception: the
+// "All" currency sentinel ('*') does NOT override a widget's own same-named param —
+// a chart keeps its picker/default in All-mode, while a KPI/table (no own currency
+// param) still receives '*' and shows every currency (dashboard-multi-currency.md §6.3).
+const mergedParameters = computed(() => {
+  const merged: Record<string, string | number> = {
+    ...resolveParameterValues(getDefaultParameters(props.recipe)),
+    ...resolveParameterValues(localSelections.value),
+  }
+  for (const [k, v] of Object.entries(props.dashboardParameters || {})) {
+    if (v === ALL_CURRENCIES_SENTINEL && k in merged) continue
+    merged[k] = v
+  }
+  return merged
+})
 
 // Widget title with {{params.<name>}} interpolation so a title can reflect the
 // live selection (e.g. "{{params.account:accountName}} — Available" → the drilled-in
@@ -244,11 +267,30 @@ watch(() => props.dashboardStepsLoading, (loading) => {
   if (!loading) executeQuery()
 })
 
+// Transient peek: under a dashboard currency filter, a per-chart `currency` pick
+// must not survive a change to the dashboard's currency — reset it to the widget
+// default so the board re-coheres (dashboard-multi-currency.md §4).
+watch(() => props.dashboardParameters?.currency, () => {
+  if (!hasCurrencyFilter.value) return
+  if (!props.recipe.parameters?.some((p) => p.name === 'currency')) return
+  const defs = getDefaultParameters(props.recipe)
+  if ('currency' in defs) {
+    localSelections.value = { ...localSelections.value, currency: defs.currency }
+  }
+})
+
 // Persist widget-level parameter selections (sentinels included) when they change.
+// A per-chart currency pick under a dashboard currency filter is transient — never
+// persist it, so the board always loads coherent (dashboard-multi-currency.md §4).
 watch(localSelections, (newSelections) => {
   if (!props.recipe.id || !props.recipe.parameters?.length) return
   const all = getStorageAdapter().get<Record<string, Record<string, string | number>>>(STORAGE_KEYS.WIDGET_SETTINGS) ?? {}
-  all[props.recipe.id] = newSelections
+  let toSave: Record<string, string | number> = newSelections
+  if (hasCurrencyFilter.value && 'currency' in toSave) {
+    toSave = { ...toSave }
+    delete toSave.currency
+  }
+  all[props.recipe.id] = toSave
   getStorageAdapter().set(STORAGE_KEYS.WIDGET_SETTINGS, all)
 }, { deep: true })
 
@@ -257,7 +299,13 @@ onMounted(() => {
   const defaults = getDefaultParameters(props.recipe)
   if (props.recipe.id && props.recipe.parameters?.length) {
     const all = getStorageAdapter().get<Record<string, Record<string, string | number>>>(STORAGE_KEYS.WIDGET_SETTINGS) ?? {}
-    const saved = all[props.recipe.id]
+    let saved = all[props.recipe.id]
+    // A transient per-chart currency pick is never restored — start at the widget
+    // default so All-mode loads coherent (dashboard-multi-currency.md §4).
+    if (saved && hasCurrencyFilter.value && 'currency' in saved) {
+      saved = { ...saved }
+      delete saved.currency
+    }
     localSelections.value = saved ? { ...defaults, ...saved } : defaults
   } else {
     localSelections.value = defaults

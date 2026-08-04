@@ -22,7 +22,9 @@
         <tr
           v-for="(row, rowIndex) in data"
           :key="rowIndex"
-          class="hover:bg-gray-50 dark:hover:bg-gray-800/50"
+          :class="isRowActive(row, rowIndex)
+            ? 'bg-indigo-50 dark:bg-indigo-500/10'
+            : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'"
         >
           <td
             v-for="column in columns"
@@ -78,15 +80,33 @@ interface Props {
   data: Record<string, unknown>[]
   columns: TableColumn[]
   emptyText?: string
+  /** Current dashboard-param values a select would reproduce — the row whose
+   *  select matches is highlighted as the active (drilled-in) row (master-detail). */
+  activeParams?: SelectParams | null
 }
 
-defineProps<Props>()
+const props = defineProps<Props>()
 const emit = defineEmits<{ select: [params: SelectParams] }>()
+
+/** A row is "active" when its select action would reproduce the current selection
+ *  (e.g. the holdings row whose {holding} equals the dashboard's holding param). */
+function isRowActive(row: Record<string, unknown>, rowIndex: number): boolean {
+  const active = props.activeParams
+  if (!active || Object.keys(active).length === 0) return false
+  for (const column of props.columns) {
+    if (!column.getSelect) continue
+    const sel = column.getSelect({ row, rowIndex, column, value: row[column.key] })
+    if (sel && Object.keys(active).every((k) => k in sel && String(sel[k]) === String(active[k]))) {
+      return true
+    }
+  }
+  return false
+}
 
 function formatCell(row: Record<string, unknown>, column: TableColumn): string {
   const value = row[column.key]
   if (column.format) {
-    return column.format(value)
+    return column.format(value, row)
   }
   if (value === null || value === undefined) {
     return '—'

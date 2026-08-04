@@ -113,6 +113,11 @@ class PortfolioSeriesFunction(ComputeFunction):
         scope = args.get("scope") or "overall"
         cadence = args.get("cadence") or "monthly"
         want_currency = args.get("currency")
+        # '*' is the dashboard currency-filter's "All" sentinel — treat it as
+        # "no restriction" so a filtered dashboard step returns every currency
+        # (dev-docs/dashboard-multi-currency.md).
+        if want_currency == "*":
+            want_currency = None
 
         # Holdings = non-currency commodities. Keep asset-class for grouping.
         asset_class_of = {

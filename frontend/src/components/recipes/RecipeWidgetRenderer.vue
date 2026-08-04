@@ -43,6 +43,7 @@
     :data="Array.isArray(data) ? data : []"
     :columns="getTableColumns()"
     :emptyText="getTableEmptyText()"
+    :activeParams="getTableActiveParams()"
     @select="emit('select', $event)"
   />
 
@@ -338,14 +339,22 @@ function getTableColumns(): TableColumn[] {
         label: jsonCol.label,
         align: jsonCol.align,
         format: jsonCol.format
-          ? (value: unknown) => {
+          ? (value: unknown, row?: Record<string, unknown>) => {
               // Format numbers and numeric (Money) strings; Money flows through
               // the data path as a decimal string and is display-formatted here.
+              // Per-row currency: when the column declares `currencyField`, format
+              // each cell in its OWN currency (multi-currency tables, §6.2), falling
+              // back to the widget currency when a row lacks the field.
+              const fmts =
+                jsonCol.currencyField && row && row[jsonCol.currencyField]
+                  ? getFormats(String(row[jsonCol.currencyField]))
+                  : formats.value
+              const fmt = jsonCol.format as ValueFormat
               if (typeof value === 'number') {
-                return formats.value[jsonCol.format as ValueFormat](value)
+                return fmts[fmt](value)
               }
               if (typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Number(value))) {
-                return formats.value[jsonCol.format as ValueFormat](Number(value))
+                return fmts[fmt](Number(value))
               }
               return String(value ?? '—')
             }
@@ -402,6 +411,24 @@ function getTableEmptyText(): string | undefined {
   const viz = props.recipe.visualization
   if (viz.type !== 'table') return undefined
   return (viz as { emptyText?: string }).emptyText
+}
+
+// The dashboard-param values a table row's select writes, at their current values —
+// used to highlight the active (drilled-in) row. Mirrors getBudgetProgressActiveParams.
+function getTableActiveParams(): SelectParams | null {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'table') return null
+  const active: SelectParams = {}
+  for (const col of (viz as { columns?: (TableColumn | JsonTableColumn)[] }).columns ?? []) {
+    const link = (col as JsonTableColumn).link
+    if (link && typeof link === 'object' && 'select' in link) {
+      for (const param of Object.keys(link.select)) {
+        const v = props.mergedParameters[param]
+        if (v !== undefined && v !== '') active[param] = String(v)
+      }
+    }
+  }
+  return Object.keys(active).length ? active : null
 }
 
 // Get pivot data (transform should return PivotData shape)

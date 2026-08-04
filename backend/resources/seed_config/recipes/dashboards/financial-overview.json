@@ -27,6 +27,10 @@
       {
         "widgetId": "liabilities-pie",
         "gridArea": "2 / 7 / 5 / 13"
+      },
+      {
+        "widgetId": "allocation-class",
+        "gridArea": "5 / 1 / 8 / 13"
       }
     ]
   },
@@ -273,6 +277,38 @@
             "{{steps.main}}"
           ]
         }
+      ],
+      "output": "out"
+    },
+    {
+      "id": "allocation-class",
+      "title": "Allocation by Asset Class",
+      "helpText": "Your mix by asset class — holdings at market value, cash/deposit accounts at balance, in the selected currency. Accounts you haven't tagged with an asset-class show as plain cash.",
+      "parameters": [
+        { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" }
+      ],
+      "visualization": {
+        "type": "chart",
+        "chartType": "pie",
+        "options": {
+          "tooltip": { "trigger": "item" },
+          "legend": { "show": false },
+          "series": [
+            {
+              "type": "pie",
+              "radius": ["35%", "65%"],
+              "center": ["50%", "50%"],
+              "encode": { "itemName": "name", "value": "value" },
+              "label": { "show": true, "formatter": "{b}", "minShowLabelAngle": 15 },
+              "labelLine": { "show": true, "length": 8, "length2": 8 },
+              "emphasis": { "label": { "show": true, "fontWeight": "bold", "formatter": "{b}\n{d}%" } }
+            }
+          ]
+        }
+      },
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT name, ROUND(value, 2) AS value FROM (SELECT class AS name, SUM(v) AS value FROM (SELECT COALESCE(c.asset_class, 'unclassified') AS class, SUM(CASE WHEN lp.price IS NOT NULL THEN CAST(l.units_number AS REAL) * lp.price ELSE CAST(l.book_value AS REAL) END) AS v FROM lots l JOIN commodities c ON c.code = l.units_currency AND c.is_currency = 0 LEFT JOIN (SELECT base_currency, CAST(quote_number AS REAL) AS price FROM prices x WHERE x.quote_currency = :currency AND x.date = (SELECT MAX(date) FROM prices y WHERE y.base_currency = x.base_currency AND y.quote_currency = :currency)) lp ON lp.base_currency = l.units_currency WHERE l.cost_currency = :currency GROUP BY c.asset_class UNION ALL SELECT COALESCE(json_extract(a.metadata_json, '$.\"asset-class\"'), 'cash') AS class, SUM(CAST(ab.balance AS REAL)) AS v FROM account_balances ab JOIN accounts a ON a.name = ab.account JOIN commodities cc ON cc.code = ab.currency AND cc.is_currency = 1 WHERE ab.account LIKE 'Assets:%' AND ab.currency = :currency GROUP BY class) GROUP BY class) WHERE value > 0 ORDER BY value DESC" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
       ],
       "output": "out"
     }

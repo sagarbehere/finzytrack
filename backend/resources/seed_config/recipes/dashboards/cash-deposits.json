@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 2,
+  "id": "cash-deposits",
+  "title": "Cash & Deposits",
+  "description": "Every cash-balance account — checking, savings, CDs, cash-modelled bonds — with balance, rate, and maturity. Accounts tagged with an asset-class group by type; untagged accounts show as plain cash. Nothing is hidden.",
+  "parameters": [
+    { "name": "currency", "label": "Currency", "type": "select", "default": "*", "optionsFrom": "currencies", "allowAll": true }
+  ],
+
+  "layout": {
+    "columns": 12,
+    "gap": "1.5rem",
+    "rowHeight": "140px",
+    "widgets": [
+      { "widgetId": "kpi-total-cash", "gridArea": "1 / 1 / 2 / 13" },
+      { "widgetId": "accounts",       "gridArea": "2 / 1 / 6 / 13" },
+      { "widgetId": "by-type",        "gridArea": "6 / 1 / 9 / 6" },
+      { "widgetId": "maturities",     "gridArea": "6 / 6 / 9 / 13" }
+    ]
+  },
+
+  "widgets": [
+    {
+      "id": "kpi-total-cash",
+      "title": "Total Cash & Deposits",
+      "helpText": "Sum of all your cash-balance accounts (checking, savings, CDs, cash-modelled bonds), per currency. Priced holdings are on the Holdings dashboard, not here.",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT ab.currency AS currency, ROUND(SUM(CAST(ab.balance AS REAL)), 2) AS amount FROM account_balances ab JOIN commodities cc ON cc.code = ab.currency AND cc.is_currency = 1 WHERE ab.account LIKE 'Assets:%' AND (:currency = '*' OR ab.currency = :currency) GROUP BY ab.currency HAVING amount != 0 ORDER BY ab.currency" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": { "type": "kpi", "icon": "$", "iconColor": "{{theme.brand}}", "multiCurrency": true, "amountField": "amount", "currencyField": "currency" }
+    },
+    {
+      "id": "accounts",
+      "title": "Accounts",
+      "helpText": "Every cash-balance account with its type, rate, and maturity when recorded. Tag an account's open with asset-class (checking/savings/cd/bond) to type it; interest_rate / maturity_date add the rate and maturity. Shows every currency, totalled per currency.",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT ab.account AS account, COALESCE(json_extract(a.metadata_json, '$.\"asset-class\"'), 'cash') AS type, ab.currency AS currency, json_extract(a.metadata_json, '$.interest_rate') AS rate, json_extract(a.metadata_json, '$.maturity_date') AS maturity, ROUND(CAST(ab.balance AS REAL), 2) AS balance FROM account_balances ab JOIN accounts a ON a.name = ab.account JOIN commodities cc ON cc.code = ab.currency AND cc.is_currency = 1 WHERE ab.account LIKE 'Assets:%' AND (:currency = '*' OR ab.currency = :currency) AND CAST(ab.balance AS REAL) != 0 ORDER BY ab.currency, type, ab.account" },
+        { "id": "with-total", "kind": "transform", "fn": "appendTotal", "inputs": ["{{steps.main}}"], "config": { "field": "balance", "labelField": "account", "label": "Total", "groupField": "currency" } }
+      ],
+      "output": "with-total",
+      "visualization": {
+        "type": "table",
+        "emptyText": "No cash-balance accounts in this currency.",
+        "columns": [
+          { "key": "account", "label": "Account", "format": "accountName2", "link": { "name": "transactions", "query": { "accountContains": "{{row.account}}" } } },
+          { "key": "type", "label": "Type" },
+          { "key": "currency", "label": "Currency" },
+          { "key": "rate", "label": "Rate", "align": "right" },
+          { "key": "maturity", "label": "Maturity", "format": "dateShort" },
+          { "key": "balance", "label": "Balance", "format": "currency", "currencyField": "currency", "align": "right" }
+        ]
+      }
+    },
+    {
+      "id": "by-type",
+      "title": "Cash by Type",
+      "helpText": "Your cash-balance accounts by type, in the selected currency. Untagged accounts fall under \"cash\".",
+      "parameters": [
+        { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" }
+      ],
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT type AS name, ROUND(SUM(CAST(ab.balance AS REAL)), 2) AS value FROM (SELECT ab.account, ab.balance, COALESCE(json_extract(a.metadata_json, '$.\"asset-class\"'), 'cash') AS type, ab.currency FROM account_balances ab JOIN accounts a ON a.name = ab.account JOIN commodities cc ON cc.code = ab.currency AND cc.is_currency = 1 WHERE ab.account LIKE 'Assets:%' AND ab.currency = :currency) ab GROUP BY type HAVING value > 0 ORDER BY value DESC" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": {
+        "type": "chart",
+        "chartType": "pie",
+        "emptyText": "No cash-balance accounts in this currency.",
+        "options": {
+          "tooltip": { "trigger": "item" },
+          "legend": { "show": false },
+          "series": [
+            { "type": "pie", "radius": ["35%", "65%"], "encode": { "itemName": "name", "value": "value" }, "label": { "show": true, "formatter": "{b}", "minShowLabelAngle": 15 }, "emphasis": { "label": { "show": true, "fontWeight": "bold", "formatter": "{b}\n{d}%" } } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "maturities",
+      "title": "Upcoming Maturities",
+      "helpText": "Term instruments (CDs, bonds) with a recorded maturity date, soonest first.",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT ab.account AS account, ab.currency AS currency, json_extract(a.metadata_json, '$.interest_rate') AS rate, json_extract(a.metadata_json, '$.maturity_date') AS maturity, ROUND(CAST(ab.balance AS REAL), 2) AS balance FROM account_balances ab JOIN accounts a ON a.name = ab.account WHERE ab.account LIKE 'Assets:%' AND (:currency = '*' OR ab.currency = :currency) AND json_extract(a.metadata_json, '$.maturity_date') IS NOT NULL AND CAST(ab.balance AS REAL) != 0 ORDER BY maturity" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": {
+        "type": "table",
+        "emptyText": "No term instruments with a recorded maturity date. Add maturity_date to a CD/bond account's open to see it here.",
+        "columns": [
+          { "key": "account", "label": "Account", "format": "accountName2", "link": { "name": "transactions", "query": { "accountContains": "{{row.account}}" } } },
+          { "key": "currency", "label": "Currency" },
+          { "key": "rate", "label": "Rate", "align": "right" },
+          { "key": "maturity", "label": "Maturity", "format": "dateShort" },
+          { "key": "balance", "label": "Balance", "format": "currency", "currencyField": "currency", "align": "right" }
+        ]
+      }
+    }
+  ]
+}

@@ -107,4 +107,22 @@ describe('appendTotal transform', () => {
     expect(out.map((x) => x.account)).toEqual(['A', 'B', 'Total'])
     expect(out[2].actual).toBe('19.25') // full total, not just the shown two
   })
+
+  it('groupField: one total per group, never a cross-group sum', () => {
+    const multi = [
+      { source: 'X', currency: 'USD', amount: '10' },
+      { source: 'Y', currency: 'USD', amount: '5' },
+      { source: 'Z', currency: 'INR', amount: '700' },
+    ]
+    const out = applyTransform('appendTotal', [multi], {
+      field: 'amount',
+      labelField: 'source',
+      label: 'Total',
+      groupField: 'currency',
+    }) as Record<string, unknown>[]
+    // 3 data rows + one total per currency (first-seen order: USD, INR)
+    expect(out).toHaveLength(5)
+    expect(out[3]).toEqual({ source: 'Total', currency: 'USD', amount: '15', isTotal: true })
+    expect(out[4]).toEqual({ source: 'Total', currency: 'INR', amount: '700', isTotal: true })
+  })
 })

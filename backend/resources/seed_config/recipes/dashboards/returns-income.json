@@ -1,0 +1,156 @@
+{
+  "schemaVersion": 2,
+  "id": "returns-income",
+  "title": "Returns & Income",
+  "description": "What your money earned: dividends and interest over time and by source, plus realized capital gains on sales. NOTE: the realized-gains section is derived from your ledger and is NOT a tax document — it applies no wash-sale rules or broker lot-selection, so it can differ from your 1099-B. For tax, use your broker's 1099-B / official statements.",
+  "parameters": [
+    { "name": "currency", "label": "Currency", "type": "select", "default": "*", "optionsFrom": "currencies", "allowAll": true },
+    { "name": "asOf", "label": "As of", "type": "date", "default": { "$gen": "today" } }
+  ],
+
+  "layout": {
+    "columns": 12,
+    "gap": "1.5rem",
+    "rowHeight": "140px",
+    "widgets": [
+      { "widgetId": "kpi-income",       "gridArea": "1 / 1 / 2 / 7" },
+      { "widgetId": "kpi-realized",     "gridArea": "1 / 7 / 2 / 13" },
+      { "widgetId": "income-over-time", "gridArea": "2 / 1 / 5 / 7" },
+      { "widgetId": "income-by-source", "gridArea": "2 / 7 / 5 / 13" },
+      { "widgetId": "realized-by-year", "gridArea": "5 / 1 / 8 / 13" },
+      { "widgetId": "sales-detail",     "gridArea": "8 / 1 / 12 / 13" }
+    ]
+  },
+
+  "widgets": [
+    {
+      "id": "kpi-income",
+      "title": "Income (dividends + interest)",
+      "helpText": "All dividend and interest income received to date, per currency. This is the honest total across every source — no 'is this investment interest' decision.",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT currency, ROUND(SUM(CAST(amount AS REAL)) * -1, 2) AS amount FROM postings WHERE (account LIKE 'Income:Dividends%' OR account LIKE 'Income:Interest%') AND (:currency = '*' OR currency = :currency) AND transaction_date <= :asOf GROUP BY currency HAVING amount != 0 ORDER BY currency" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": { "type": "kpi", "icon": "%", "iconColor": "{{theme.brand}}", "multiCurrency": true, "amountField": "amount", "currencyField": "currency" }
+    },
+    {
+      "id": "kpi-realized",
+      "title": "Realized Gain",
+      "helpText": "Total realized capital gain/loss on sold holdings, per currency. Ledger-derived, NOT for tax filing.",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT price_currency AS currency, ROUND(SUM(ABS(CAST(amount AS REAL)) * (CAST(price_amount AS REAL) - CAST(cost_amount AS REAL))), 2) AS amount FROM postings p JOIN commodities c ON c.code = p.currency WHERE c.is_currency = 0 AND p.cost_amount IS NOT NULL AND p.price_amount IS NOT NULL AND CAST(p.amount AS REAL) < 0 AND transaction_date <= :asOf AND (:currency = '*' OR price_currency = :currency) GROUP BY price_currency HAVING amount != 0 ORDER BY price_currency" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": { "type": "kpi", "icon": "=", "multiCurrency": true, "amountField": "amount", "currencyField": "currency", "colorBySign": true }
+    },
+    {
+      "id": "income-over-time",
+      "title": "Income Over Time",
+      "helpText": "Dividends and interest received each year through the selected date, in the selected currency.",
+      "parameters": [
+        { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" }
+      ],
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT CAST(year AS TEXT) AS year, ROUND(SUM(CASE WHEN account LIKE 'Income:Dividends%' THEN CAST(amount AS REAL) ELSE 0 END) * -1, 2) AS dividends, ROUND(SUM(CASE WHEN account LIKE 'Income:Interest%' THEN CAST(amount AS REAL) ELSE 0 END) * -1, 2) AS interest FROM postings WHERE (account LIKE 'Income:Dividends%' OR account LIKE 'Income:Interest%') AND currency = :currency AND transaction_date <= :asOf GROUP BY year ORDER BY year" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": {
+        "type": "chart",
+        "chartType": "bar",
+        "emptyText": "No dividend or interest income in this currency yet.",
+        "seriesClickLinks": {
+          "Dividends": { "name": "transactions", "query": { "accountContains": "Income:Dividends", "year": "{{data.year}}", "currency": "{{parameters.currency}}" } },
+          "Interest": { "name": "transactions", "query": { "accountContains": "Income:Interest", "year": "{{data.year}}", "currency": "{{parameters.currency}}" } }
+        },
+        "options": {
+          "tooltip": { "trigger": "axis" },
+          "legend": { "show": true, "top": 0, "left": "center" },
+          "grid": { "left": "3%", "right": "4%", "top": 40, "bottom": "3%", "containLabel": true },
+          "xAxis": { "type": "category" },
+          "yAxis": { "type": "value" },
+          "series": [
+            { "name": "Dividends", "type": "bar", "stack": "income", "encode": { "x": "year", "y": "dividends" }, "itemStyle": { "color": "{{theme.series.income}}" } },
+            { "name": "Interest", "type": "bar", "stack": "income", "encode": { "x": "year", "y": "interest" }, "itemStyle": { "color": "{{theme.series.budget}}" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "income-by-source",
+      "title": "Income by Source",
+      "helpText": "Which accounts your income came from through the selected date, largest first. Shows every currency; each currency totals separately.",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT account AS source, currency, ROUND(SUM(CAST(amount AS REAL)) * -1, 2) AS amount FROM postings WHERE (account LIKE 'Income:Dividends%' OR account LIKE 'Income:Interest%') AND (:currency = '*' OR currency = :currency) AND transaction_date <= :asOf GROUP BY account, currency HAVING amount != 0 ORDER BY currency, amount DESC" },
+        { "id": "with-total", "kind": "transform", "fn": "appendTotal", "inputs": ["{{steps.main}}"], "config": { "field": "amount", "labelField": "source", "label": "Total", "groupField": "currency" } }
+      ],
+      "output": "with-total",
+      "visualization": {
+        "type": "table",
+        "emptyText": "No income sources yet.",
+        "columns": [
+          { "key": "source", "label": "Source", "format": "accountName2", "link": { "name": "transactions", "query": { "accountContains": "{{row.source}}", "currency": "{{row.currency}}", "dateTo": "{{parameters.asOf}}" } } },
+          { "key": "currency", "label": "Currency" },
+          { "key": "amount", "label": "Received", "format": "currency", "currencyField": "currency", "align": "right" }
+        ]
+      }
+    },
+    {
+      "id": "realized-by-year",
+      "title": "Realized Gain by Year (short vs long term)",
+      "helpText": "Realized capital gain per year in the selected currency, split by holding period (held over one year = long term). Ledger-derived, NOT a tax document.",
+      "parameters": [
+        { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" }
+      ],
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT CAST(year AS TEXT) AS year, ROUND(SUM(CASE WHEN julianday(transaction_date) - julianday(cost_date) > 365 THEN ABS(CAST(amount AS REAL)) * (CAST(price_amount AS REAL) - CAST(cost_amount AS REAL)) ELSE 0 END), 2) AS long_term, ROUND(SUM(CASE WHEN julianday(transaction_date) - julianday(cost_date) <= 365 THEN ABS(CAST(amount AS REAL)) * (CAST(price_amount AS REAL) - CAST(cost_amount AS REAL)) ELSE 0 END), 2) AS short_term FROM postings p JOIN commodities c ON c.code = p.currency WHERE c.is_currency = 0 AND p.cost_amount IS NOT NULL AND p.price_amount IS NOT NULL AND CAST(p.amount AS REAL) < 0 AND p.price_currency = :currency GROUP BY year ORDER BY year" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": {
+        "type": "chart",
+        "chartType": "bar",
+        "emptyText": "No sales recorded in this currency. (Ledger-derived, not a tax document.)",
+        "options": {
+          "tooltip": { "trigger": "axis" },
+          "legend": { "show": true, "top": 0, "left": "center" },
+          "grid": { "left": "3%", "right": "4%", "top": 40, "bottom": "3%", "containLabel": true },
+          "xAxis": { "type": "category" },
+          "yAxis": { "type": "value" },
+          "series": [
+            { "name": "Long term", "type": "bar", "stack": "gain", "encode": { "x": "year", "y": "long_term" }, "itemStyle": { "color": "{{theme.series.income}}" } },
+            { "name": "Short term", "type": "bar", "stack": "gain", "encode": { "x": "year", "y": "short_term" }, "itemStyle": { "color": "{{theme.series.budget}}" } }
+          ]
+        }
+      }
+    },
+    {
+      "id": "sales-detail",
+      "title": "Sales",
+      "helpText": "Every sale: sale date, the lot's acquisition date, holding period, cost basis, proceeds, and realized gain. Consolidated across accounts; shows every currency. Ledger-derived — for tax, use your broker's 1099-B.",
+      "steps": [
+        { "id": "main", "kind": "query", "query": "SELECT transaction_date AS sale_date, p.currency AS holding, price_currency AS currency, ROUND(ABS(CAST(amount AS REAL)), 4) AS units, cost_date AS acquired, CAST(julianday(transaction_date) - julianday(cost_date) AS INTEGER) AS holding_days, CASE WHEN julianday(transaction_date) - julianday(cost_date) > 365 THEN 'Long' ELSE 'Short' END AS term, ROUND(ABS(CAST(amount AS REAL)) * CAST(cost_amount AS REAL), 2) AS cost_basis, ROUND(ABS(CAST(amount AS REAL)) * CAST(price_amount AS REAL), 2) AS proceeds, ROUND(ABS(CAST(amount AS REAL)) * (CAST(price_amount AS REAL) - CAST(cost_amount AS REAL)), 2) AS gain FROM postings p JOIN commodities c ON c.code = p.currency WHERE c.is_currency = 0 AND p.cost_amount IS NOT NULL AND p.price_amount IS NOT NULL AND CAST(p.amount AS REAL) < 0 AND (:currency = '*' OR p.price_currency = :currency) ORDER BY transaction_date DESC" },
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
+      ],
+      "output": "out",
+      "visualization": {
+        "type": "table",
+        "emptyText": "No sales recorded. (Ledger-derived; not a tax document.)",
+        "columns": [
+          { "key": "sale_date", "label": "Sold", "format": "dateShort" },
+          { "key": "holding", "label": "Holding", "link": { "name": "transactions", "query": { "currency": "{{row.holding}}", "dateFrom": "{{row.sale_date}}", "dateTo": "{{row.sale_date}}" } } },
+          { "key": "currency", "label": "Currency" },
+          { "key": "units", "label": "Units", "format": "number", "align": "right" },
+          { "key": "acquired", "label": "Acquired", "format": "dateShort" },
+          { "key": "holding_days", "label": "Days Held", "format": "number", "align": "right" },
+          { "key": "term", "label": "Term" },
+          { "key": "cost_basis", "label": "Cost Basis", "format": "currency", "currencyField": "currency", "align": "right" },
+          { "key": "proceeds", "label": "Proceeds", "format": "currency", "currencyField": "currency", "align": "right" },
+          { "key": "gain", "label": "Realized Gain", "format": "signedCurrency", "currencyField": "currency", "align": "right" }
+        ]
+      }
+    }
+  ]
+}

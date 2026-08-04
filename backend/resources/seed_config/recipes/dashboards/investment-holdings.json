@@ -2,10 +2,17 @@
   "schemaVersion": 2,
   "id": "investment-holdings",
   "title": "Holdings & Performance",
-  "description": "Every priced holding: units, cost, current price, market value, gain/loss, and weight — plus purchase lots and price history for a selected holding.",
+  "description": "Your priced holdings (equities, funds, crypto): what you put in, what they're worth, gain/loss, weight and returns — plus purchase lots and price history for a selected holding.",
   "parameters": [
-    { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" },
-    { "name": "holding", "label": "Holding", "type": "select", "optionsFrom": "holdings" }
+    { "name": "currency", "label": "Currency", "type": "select", "default": "*", "optionsFrom": "currencies", "allowAll": true },
+    { "name": "asOf", "label": "As of", "type": "date", "default": { "$gen": "today" } },
+    { "name": "holding", "label": "Holding", "type": "select", "optionsFrom": "holdings", "hidden": true }
+  ],
+
+  "steps": [
+    { "id": "series", "kind": "compute", "fn": "portfolio_series", "args": { "to": "{{params.asOf}}", "scope": "overall", "currency": "{{params.currency}}", "cadence": "monthly" } },
+    { "id": "now", "kind": "transform", "fn": "where", "inputs": ["{{steps.series}}"], "config": { "field": "date", "equals": "{{params.asOf}}" } },
+    { "id": "returns-data", "kind": "compute", "fn": "portfolio_returns", "args": { "to": "{{params.asOf}}", "scope": "asset-class", "currency": "{{params.currency}}" } }
   ],
 
   "layout": {
@@ -13,35 +20,94 @@
     "gap": "1.5rem",
     "rowHeight": "140px",
     "widgets": [
-      { "widgetId": "holdings", "gridArea": "1 / 1 / 4 / 13" },
-      { "widgetId": "by-holding", "gridArea": "4 / 1 / 7 / 13" },
-      { "widgetId": "lots",     "gridArea": "7 / 1 / 10 / 7" },
-      { "widgetId": "price-history", "gridArea": "7 / 7 / 10 / 13" }
+      { "widgetId": "kpi-invested",   "gridArea": "1 / 1 / 2 / 5" },
+      { "widgetId": "kpi-current",    "gridArea": "1 / 5 / 2 / 9" },
+      { "widgetId": "kpi-unrealized", "gridArea": "1 / 9 / 2 / 13" },
+      { "widgetId": "value-over-time","gridArea": "2 / 1 / 5 / 13" },
+      { "widgetId": "by-holding",     "gridArea": "5 / 1 / 8 / 7" },
+      { "widgetId": "returns",        "gridArea": "5 / 7 / 8 / 13" },
+      { "widgetId": "holdings",       "gridArea": "8 / 1 / 11 / 13" },
+      { "widgetId": "lots",           "gridArea": "11 / 1 / 14 / 7" },
+      { "widgetId": "price-history",  "gridArea": "11 / 7 / 14 / 13" }
     ]
   },
 
   "widgets": [
     {
+      "id": "kpi-invested",
+      "title": "Invested",
+      "helpText": "The cost basis of the holdings you held as of the selected date — what you paid for them. Shows every currency; use the Currency filter to focus.",
+      "steps": [ { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.now}}"] } ],
+      "output": "out",
+      "visualization": { "type": "kpi", "icon": "$", "multiCurrency": true, "amountField": "cost_basis", "currencyField": "currency" }
+    },
+    {
+      "id": "kpi-current",
+      "title": "Current Value",
+      "helpText": "Market value of your holdings as of the selected date, per currency.",
+      "steps": [ { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.now}}"] } ],
+      "output": "out",
+      "visualization": { "type": "kpi", "icon": "↑", "iconColor": "{{theme.brand}}", "multiCurrency": true, "amountField": "market_value", "currencyField": "currency" }
+    },
+    {
+      "id": "kpi-unrealized",
+      "title": "Unrealized Gain",
+      "helpText": "Current market value minus cost basis, as of the selected date. Green if up, red if down. Shown per currency.",
+      "steps": [ { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.now}}"] } ],
+      "output": "out",
+      "visualization": { "type": "kpi", "icon": "=", "multiCurrency": true, "amountField": "unrealized", "currencyField": "currency", "colorBySign": true }
+    },
+    {
+      "id": "value-over-time",
+      "title": "Value Over Time",
+      "helpText": "Monthly market value against what you put in (cost basis), in the selected currency. Months where a holding had no recorded price fall back to cost.",
+      "parameters": [
+        { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" }
+      ],
+      "steps": [
+        { "id": "flt", "kind": "transform", "fn": "where", "inputs": ["{{dashboard.steps.series}}"], "config": { "field": "currency", "equals": "{{params.currency}}" } },
+        { "id": "rows", "kind": "transform", "fn": "groupBy", "inputs": ["{{steps.flt}}"], "config": { "key": "date", "sum": ["market_value", "cost_basis"] } }
+      ],
+      "output": "rows",
+      "visualization": {
+        "type": "chart",
+        "chartType": "line",
+        "emptyText": "No holdings to chart in this currency yet.",
+        "options": {
+          "tooltip": { "trigger": "axis" },
+          "legend": { "show": true, "top": 0, "left": "center" },
+          "grid": { "left": "3%", "right": "4%", "top": 40, "bottom": "3%", "containLabel": true },
+          "xAxis": { "type": "time" },
+          "yAxis": { "type": "value" },
+          "series": [
+            { "name": "Market value", "type": "line", "smooth": true, "showSymbol": false, "encode": { "x": "date", "y": "market_value" }, "itemStyle": { "color": "{{theme.series.income}}" }, "areaStyle": { "opacity": 0.08 } },
+            { "name": "Cost basis", "type": "line", "smooth": true, "showSymbol": false, "encode": { "x": "date", "y": "cost_basis" }, "itemStyle": { "color": "{{theme.series.budget}}" }, "lineStyle": { "type": "dashed" } }
+          ]
+        }
+      }
+    },
+    {
       "id": "holdings",
       "title": "Holdings",
-      "helpText": "Sortable. Gain/loss compares the latest recorded price to cost basis; weight is each holding's share of the portfolio. Use the Holding picker to drill into lots and price history below. Holdings with no recorded price are not shown.",
+      "helpText": "Sortable. Gain/loss compares the latest recorded price to cost basis; weight is each holding's share of the portfolio in its own currency. Click a holding's name to drill into its lots and price history below. Holdings with no recorded price fall back to cost basis.",
       "steps": [
-        { "id": "main", "kind": "query", "query": "WITH latest AS (SELECT base_currency, quote_currency, CAST(quote_number AS REAL) AS price FROM prices x WHERE x.date = (SELECT MAX(date) FROM prices y WHERE y.base_currency = x.base_currency AND y.quote_currency = x.quote_currency)), agg AS (SELECT l.units_currency AS holding, COALESCE(c.asset_class, 'unclassified') AS asset_class, SUM(CAST(l.units_number AS REAL)) AS units, SUM(CAST(l.book_value AS REAL)) AS cost_basis FROM lots l JOIN commodities c ON c.code = l.units_currency AND c.is_currency = 0 WHERE l.cost_currency = :currency GROUP BY l.units_currency, c.asset_class), joined AS (SELECT agg.holding, agg.asset_class, ROUND(agg.units, 4) AS units, ROUND(agg.cost_basis / agg.units, 2) AS avg_cost, ROUND(agg.cost_basis, 2) AS cost_basis, lt.price AS last_price, ROUND(CASE WHEN lt.price IS NOT NULL THEN agg.units * lt.price ELSE agg.cost_basis END, 2) AS market_value, ROUND(CASE WHEN lt.price IS NOT NULL THEN agg.units * lt.price - agg.cost_basis ELSE 0 END, 2) AS unrealized, CASE WHEN lt.price IS NOT NULL AND agg.cost_basis != 0 THEN (agg.units * lt.price - agg.cost_basis) / agg.cost_basis ELSE 0 END AS unrealized_pct, CASE WHEN lt.price IS NOT NULL THEN agg.units * lt.price ELSE agg.cost_basis END AS mv_raw FROM agg LEFT JOIN latest lt ON lt.base_currency = agg.holding AND lt.quote_currency = :currency) SELECT holding, asset_class, units, avg_cost, cost_basis, last_price, market_value, unrealized, unrealized_pct, mv_raw / SUM(mv_raw) OVER () AS weight FROM joined ORDER BY market_value DESC" },
+        { "id": "main", "kind": "query", "query": "WITH latest AS (SELECT base_currency, quote_currency, CAST(quote_number AS REAL) AS price FROM prices x WHERE x.date = (SELECT MAX(date) FROM prices y WHERE y.base_currency = x.base_currency AND y.quote_currency = x.quote_currency)), agg AS (SELECT l.units_currency AS holding, COALESCE(c.asset_class, 'unclassified') AS asset_class, l.cost_currency AS currency, SUM(CAST(l.units_number AS REAL)) AS units, SUM(CAST(l.book_value AS REAL)) AS cost_basis FROM lots l JOIN commodities c ON c.code = l.units_currency AND c.is_currency = 0 WHERE (:currency = '*' OR l.cost_currency = :currency) GROUP BY l.units_currency, c.asset_class, l.cost_currency), joined AS (SELECT agg.holding, agg.asset_class, agg.currency, ROUND(agg.units, 4) AS units, ROUND(agg.cost_basis / agg.units, 2) AS avg_cost, ROUND(agg.cost_basis, 2) AS cost_basis, lt.price AS last_price, ROUND(CASE WHEN lt.price IS NOT NULL THEN agg.units * lt.price ELSE agg.cost_basis END, 2) AS market_value, ROUND(CASE WHEN lt.price IS NOT NULL THEN agg.units * lt.price - agg.cost_basis ELSE 0 END, 2) AS unrealized, CASE WHEN lt.price IS NOT NULL AND agg.cost_basis != 0 THEN (agg.units * lt.price - agg.cost_basis) / agg.cost_basis ELSE 0 END AS unrealized_pct, CASE WHEN lt.price IS NOT NULL THEN agg.units * lt.price ELSE agg.cost_basis END AS mv_raw FROM agg LEFT JOIN latest lt ON lt.base_currency = agg.holding AND lt.quote_currency = agg.currency) SELECT holding, asset_class, currency, units, avg_cost, cost_basis, last_price, market_value, unrealized, unrealized_pct, mv_raw / SUM(mv_raw) OVER (PARTITION BY currency) AS weight FROM joined ORDER BY currency, market_value DESC" },
         { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
       ],
       "output": "out",
       "visualization": {
         "type": "table",
-        "emptyText": "No priced holdings in this currency yet. Add holdings with cost lots and prices, then pick a currency that has data.",
+        "emptyText": "No priced holdings yet. Add holdings with cost lots and prices to see them here.",
         "columns": [
-          { "key": "holding", "label": "Holding" },
+          { "key": "holding", "label": "Holding", "link": { "select": { "holding": "{{row.holding}}" } } },
           { "key": "asset_class", "label": "Class" },
+          { "key": "currency", "label": "Currency" },
           { "key": "units", "label": "Units", "format": "number", "align": "right" },
-          { "key": "avg_cost", "label": "Avg Cost", "format": "currency", "align": "right" },
-          { "key": "cost_basis", "label": "Cost Basis", "format": "currency", "align": "right" },
-          { "key": "last_price", "label": "Last Price", "format": "currency", "align": "right" },
-          { "key": "market_value", "label": "Market Value", "format": "currency", "align": "right" },
-          { "key": "unrealized", "label": "Gain / Loss", "format": "signedCurrency", "align": "right" },
+          { "key": "avg_cost", "label": "Avg Cost", "format": "currency", "currencyField": "currency", "align": "right" },
+          { "key": "cost_basis", "label": "Cost Basis", "format": "currency", "currencyField": "currency", "align": "right" },
+          { "key": "last_price", "label": "Last Price", "format": "currency", "currencyField": "currency", "align": "right" },
+          { "key": "market_value", "label": "Market Value", "format": "currency", "currencyField": "currency", "align": "right" },
+          { "key": "unrealized", "label": "Gain / Loss", "format": "signedCurrency", "currencyField": "currency", "align": "right" },
           { "key": "unrealized_pct", "label": "Gain %", "format": "percent", "align": "right" },
           { "key": "weight", "label": "Weight", "format": "percent", "align": "right" }
         ]
@@ -50,7 +116,10 @@
     {
       "id": "by-holding",
       "title": "Market Value by Holding",
-      "helpText": "Each holding's current market value, largest at top. Click a bar to see that holding's transactions.",
+      "helpText": "Each holding's current market value in the selected currency, largest at top. Click a bar to see that holding's transactions.",
+      "parameters": [
+        { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" }
+      ],
       "steps": [
         { "id": "main", "kind": "query", "query": "SELECT holding, value FROM (SELECT l.units_currency AS holding, ROUND(SUM(CASE WHEN lp.price IS NOT NULL THEN CAST(l.units_number AS REAL) * lp.price ELSE CAST(l.book_value AS REAL) END), 2) AS value FROM lots l JOIN commodities c ON c.code = l.units_currency AND c.is_currency = 0 LEFT JOIN (SELECT base_currency, CAST(quote_number AS REAL) AS price FROM prices x WHERE x.quote_currency = :currency AND x.date = (SELECT MAX(date) FROM prices y WHERE y.base_currency = x.base_currency AND y.quote_currency = :currency)) lp ON lp.base_currency = l.units_currency WHERE l.cost_currency = :currency GROUP BY l.units_currency) WHERE value > 0 ORDER BY value ASC" },
         { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
@@ -63,6 +132,7 @@
         "xAxisLabelFormat": "compact",
         "emptyText": "No priced holdings in this currency yet.",
         "options": {
+          "legend": { "show": false },
           "grid": { "left": 90, "right": 24, "top": 12, "bottom": 24 },
           "xAxis": { "type": "value" },
           "yAxis": { "type": "category", "axisLabel": { "width": 80, "overflow": "truncate" } },
@@ -74,11 +144,30 @@
       }
     },
     {
+      "id": "returns",
+      "title": "Returns by Asset Class",
+      "helpText": "XIRR is your money-weighted annual return — it accounts for when you invested. Simple gain ignores timing. Both are shown per asset class, per currency.",
+      "steps": [ { "id": "rows", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.returns-data}}"] } ],
+      "output": "rows",
+      "visualization": {
+        "type": "table",
+        "emptyText": "No priced holdings to measure returns on yet.",
+        "columns": [
+          { "key": "group", "label": "Asset Class" },
+          { "key": "currency", "label": "Currency" },
+          { "key": "xirr", "label": "XIRR", "format": "percent", "align": "right" },
+          { "key": "simple_gain_pct", "label": "Simple Gain %", "format": "percent", "align": "right" },
+          { "key": "simple_gain", "label": "Gain", "format": "signedCurrency", "currencyField": "currency", "align": "right" },
+          { "key": "market_value", "label": "Value", "format": "currency", "currencyField": "currency", "align": "right" }
+        ]
+      }
+    },
+    {
       "id": "lots",
-      "title": "Purchase Lots",
-      "helpText": "The remaining lots of the selected holding — when each was acquired, how many units, and at what cost.",
+      "title": "Purchase Lots — {{params.holding}}",
+      "helpText": "The remaining lots of the holding selected in the table above — when each was acquired, how many units, and at what cost.",
       "steps": [
-        { "id": "main", "kind": "query", "query": "SELECT acquisition_date, ROUND(CAST(units_number AS REAL), 4) AS units, CAST(cost_number AS REAL) AS cost, ROUND(CAST(book_value AS REAL), 2) AS book_value FROM lots WHERE units_currency = :holding ORDER BY acquisition_date" },
+        { "id": "main", "kind": "query", "query": "SELECT acquisition_date, ROUND(CAST(units_number AS REAL), 4) AS units, CAST(cost_number AS REAL) AS cost, ROUND(CAST(book_value AS REAL), 2) AS book_value, cost_currency AS currency FROM lots WHERE units_currency = :holding ORDER BY acquisition_date" },
         { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
       ],
       "output": "out",
@@ -86,19 +175,19 @@
         "type": "table",
         "emptyText": "Pick a holding above to see its purchase lots.",
         "columns": [
-          { "key": "acquisition_date", "label": "Acquired", "format": "dateShort" },
+          { "key": "acquisition_date", "label": "Acquired", "format": "dateShort", "link": { "name": "transactions", "query": { "currency": "{{parameters.holding}}", "dateFrom": "{{row.acquisition_date}}", "dateTo": "{{row.acquisition_date}}" } } },
           { "key": "units", "label": "Units", "format": "number", "align": "right" },
-          { "key": "cost", "label": "Unit Cost", "format": "currency", "align": "right" },
-          { "key": "book_value", "label": "Cost Basis", "format": "currency", "align": "right" }
+          { "key": "cost", "label": "Unit Cost", "format": "currency", "currencyField": "currency", "align": "right" },
+          { "key": "book_value", "label": "Cost Basis", "format": "currency", "currencyField": "currency", "align": "right" }
         ]
       }
     },
     {
       "id": "price-history",
-      "title": "Price History",
-      "helpText": "Recorded prices for the selected holding over time.",
+      "title": "Price History — {{params.holding}}",
+      "helpText": "Recorded prices for the holding selected in the table above, over time, in the currency it's held in.",
       "steps": [
-        { "id": "main", "kind": "query", "query": "SELECT date, CAST(quote_number AS REAL) AS price FROM prices WHERE base_currency = :holding AND quote_currency = :currency ORDER BY date" },
+        { "id": "main", "kind": "query", "query": "SELECT date, CAST(quote_number AS REAL) AS price FROM prices WHERE base_currency = :holding AND quote_currency IN (SELECT DISTINCT cost_currency FROM lots WHERE units_currency = :holding) ORDER BY date" },
         { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
       ],
       "output": "out",

@@ -162,6 +162,10 @@ export interface RecipeParameter {
    */
   hidden?: boolean;
   /**
+   * For a `select` param (typically optionsFrom: 'currencies'): prepend an 'All' option that binds the sentinel value '*'. Used for a dashboard-level currency filter — 'All' (default) shows every currency (KPIs stacked, tables per-currency), a specific pick narrows the whole dashboard. In a query, gate the filter with `WHERE (:currency = '*' OR currency = :currency)`. The '*' value does not override or hide a same-named widget-level currency param (so per-chart pickers stay usable in All-mode). See dev-docs/dashboard-multi-currency.md.
+   */
+  allowAll?: boolean;
+  /**
    * Conditional visibility: this parameter's control is shown only when another parameter's current value equals `equals`. Use e.g. to reveal a date only when a boolean toggle is on. The parameter stays functional when hidden by this rule (its default/last value still feeds steps).
    */
   showWhen?: {
@@ -349,6 +353,10 @@ export interface JsonTableColumn {
   label: string;
   format?: ValueFormat;
   align?: "left" | "center" | "right";
+  /**
+   * For a money column in a multi-currency table: the row field holding that row's currency code, so each cell is formatted in its OWN currency (symbol + locale) instead of the single widget `currency` param. Use with a `currency`/`signedCurrency` `format`. Without it, all cells format with the widget currency (defaulting to USD), which mis-renders mixed-currency rows. See dev-docs/dashboard-multi-currency.md §6.2.
+   */
+  currencyField?: string;
   link?: JsonValueLinkConfig;
   [k: string]: unknown;
 }
