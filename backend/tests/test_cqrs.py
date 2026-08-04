@@ -1425,6 +1425,30 @@ class TestExportNonSerializableMetadata:
         assert warnings, "expected a warning naming the offending entry"
         assert "main.beancount:5" in warnings[0], warnings[0]
 
+    def test_synthesised_posting_falls_back_to_the_transaction_location(self, tmp_path, caplog):
+        """A posting with no parser stamp still reports a usable ledger location.
+
+        Beancount's residual/automatic postings — and anything a plugin builds —
+        carry meta without ``filename``. Reporting "<unknown file>" there would
+        be useless in a large ledger, so the owning transaction's location is
+        used instead.
+        """
+        def mutate(entry):
+            if isinstance(entry, data.Transaction):
+                for posting in entry.postings:
+                    # Replicates a plugin-synthesised posting: no filename/lineno.
+                    posting.meta.clear()
+                    posting.meta["__automatic__"] = True
+                    posting.meta["odd"] = {Decimal: "0.005"}
+
+        with caplog.at_level(logging.WARNING):
+            self._export(tmp_path, mutate).close()
+
+        warnings = [r.getMessage() for r in caplog.records if "non-string keys" in r.getMessage()]
+        assert warnings, "expected a warning naming the owning transaction"
+        assert "main.beancount:5" in warnings[0], warnings[0]
+        assert "synthesised entry" in warnings[0], warnings[0]
+
     def test_postings_failure_sample_names_the_transaction(self, tmp_path, monkeypatch, caplog):
         """An unrelated crash in the postings step still reports the ledger line."""
         ledger_path = tmp_path / "main.beancount"

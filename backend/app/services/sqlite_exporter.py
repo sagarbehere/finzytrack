@@ -588,9 +588,11 @@ class SQLiteExporter:
             # just the step. Cheap (one attribute write per transaction) and the
             # only pointer a user has into a large ledger.
             meta = txn.meta or {}
+            txn_source = (
+                f"{meta.get('filename', '<unknown file>')}:{meta.get('lineno', '?')}"
+            )
             self._postings_cursor = (
-                f"{meta.get('filename', '<unknown file>')}:{meta.get('lineno', '?')} "
-                f"{txn.date} {txn.payee or ''!r} {txn.narration or ''!r}"
+                f"{txn_source} {txn.date} {txn.payee or ''!r} {txn.narration or ''!r}"
             )
             transaction_id = self._get_transaction_id(txn, fallback_ids.get(txn_index))
             transaction_content_hash = self._get_content_hash(txn)
@@ -603,7 +605,10 @@ class SQLiteExporter:
                 posting_id += 1
 
                 source_account, source_account_type = self._compute_source_account(txn, posting)
-                posting_metadata = self._metadata_to_json(posting.meta) if posting.meta else None
+                posting_metadata = (
+                    self._metadata_to_json(posting.meta, source_hint=txn_source)
+                    if posting.meta else None
+                )
 
                 cost_amount = None
                 cost_currency = None
@@ -1485,23 +1490,38 @@ class SQLiteExporter:
         )
 
     @staticmethod
-    def _metadata_to_json(meta: Optional[Dict[str, Any]]) -> Optional[str]:
+    def _metadata_to_json(
+        meta: Optional[Dict[str, Any]],
+        source_hint: Optional[str] = None,
+    ) -> Optional[str]:
         """Convert metadata dictionary to JSON string, handling special types.
 
         Both keys and values are coerced. When a key had to be coerced we log
-        the entry's ``filename:lineno`` at WARNING — the export still succeeds,
-        but the log then names the exact source line, which is the only way to
-        trace metadata a plugin injected back to the ledger.
+        the source location at WARNING — the export still succeeds, but the log
+        then names the exact ledger line, which is the only way to trace
+        metadata a plugin injected back to the file the user has to edit.
+
+        Args:
+            source_hint: Location to report when ``meta`` itself carries no
+                ``filename``. Postings synthesised after parsing (Beancount's
+                residual/automatic postings, and anything a plugin builds) have
+                no parser stamp, so the caller passes the owning transaction's
+                location instead of leaving the log pointing at nothing.
         """
         if not meta:
             return None
 
         if SQLiteExporter._has_unsafe_keys(meta):
+            if "filename" in meta:
+                where = f"{meta['filename']}:{meta.get('lineno', '?')}"
+            elif source_hint:
+                where = f"{source_hint} (synthesised entry — no source line of its own)"
+            else:
+                where = "<unknown location>"
             logger.warning(
-                "Metadata at %s:%s has non-string keys — coerced to strings for "
+                "Metadata at %s has non-string keys — coerced to strings for "
                 "the mirror; keys=%r",
-                meta.get("filename", "<unknown file>"),
-                meta.get("lineno", "?"),
+                where,
                 [k for k in meta if not isinstance(k, str)] or "<nested>",
             )
 
