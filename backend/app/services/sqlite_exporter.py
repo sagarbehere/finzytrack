@@ -84,6 +84,9 @@ class SQLiteExporter:
         self.sqlite_path = sqlite_path
         self.export_path = sqlite_path  # Generic interface
         self.enable_wal = enable_wal
+        # Set per transaction during the postings export; read by _sub_export's
+        # failure sample so a crash names the ledger line it was on.
+        self._postings_cursor: Optional[str] = None
 
     # ── Public async API ─────────────────────────────────────────────────────
 
@@ -580,6 +583,15 @@ class SQLiteExporter:
         fallback_ids = self._compute_fallback_id_map(transactions)
 
         for txn_index, txn in enumerate(transactions):
+            # Breadcrumb for _sub_export's failure sample: if anything below
+            # raises, the log names the ledger line being processed rather than
+            # just the step. Cheap (one attribute write per transaction) and the
+            # only pointer a user has into a large ledger.
+            meta = txn.meta or {}
+            self._postings_cursor = (
+                f"{meta.get('filename', '<unknown file>')}:{meta.get('lineno', '?')} "
+                f"{txn.date} {txn.payee or ''!r} {txn.narration or ''!r}"
+            )
             transaction_id = self._get_transaction_id(txn, fallback_ids.get(txn_index))
             transaction_content_hash = self._get_content_hash(txn)
             transaction_tags = self._serialize_array(self._extract_tags(txn))
@@ -673,7 +685,7 @@ class SQLiteExporter:
                         hint = f" sample={s!r}"
                 except Exception:
                     pass
-            logger.error("Sub-export %r failed: %s%s", name, e, hint)
+            logger.error("Sub-export %r failed: %s%s", name, e, hint, exc_info=True)
             raise RuntimeError(f"sub-export {name!r} failed: {e}") from e
 
     def _export_full_ledger(
@@ -1304,7 +1316,8 @@ class SQLiteExporter:
 
         try:
             # Existing postings export (unchanged logic)
-            with self._sub_export("postings"):
+            self._postings_cursor = None
+            with self._sub_export("postings", lambda: self._postings_cursor):
                 postings_count = self._export_postings(con, transactions)
 
             # New: full ledger export (same atomic transaction)
@@ -1397,8 +1410,47 @@ class SQLiteExporter:
         return list(txn.links) if txn.links else []
 
     @staticmethod
+    def _json_key(key: Any) -> str:
+        """Coerce a dict key to something ``json.dumps`` accepts.
+
+        JSON object keys must be str/int/float/bool/None. Metadata reaches us
+        from Beancount and from whatever plugins the user's ledger loads, so a
+        key can be an arbitrary object — a class, an Amount, a namedtuple. That
+        is diagnostic payload, not something the mirror should die on: before
+        this coercion a single such key aborted the whole `postings` sub-export
+        and left the app unusable ("keys must be str, int, float, bool or None,
+        not type"). We stringify instead, so the metadata survives in a
+        readable form and the export completes.
+        """
+        if isinstance(key, str):
+            return key
+        return str(key)
+
+    @staticmethod
+    def _has_unsafe_keys(value: Any) -> bool:
+        """True if ``value`` contains a dict key JSON would reject, at any depth.
+
+        Used only to decide whether to emit the one-line warning that names the
+        offending entry — the coercion itself is unconditional.
+        """
+        if isinstance(value, dict):
+            return any(
+                not isinstance(k, (str, int, float, bool, type(None)))
+                or SQLiteExporter._has_unsafe_keys(v)
+                for k, v in value.items()
+            )
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return any(SQLiteExporter._has_unsafe_keys(item) for item in value)
+        return False
+
+    @staticmethod
     def _convert_value_to_json_serializable(value: Any) -> Any:
-        """Recursively convert values to JSON-serializable types."""
+        """Recursively convert values to JSON-serializable types.
+
+        Keys are coerced as well as values (see ``_json_key``) — a nested dict
+        with non-primitive keys is just as fatal to ``json.dumps`` as a
+        non-serializable value.
+        """
         if isinstance(value, Decimal):
             return str(value)
         elif isinstance(value, (date, datetime)):
@@ -1406,7 +1458,10 @@ class SQLiteExporter:
         elif isinstance(value, (str, int, float, bool, type(None))):
             return value
         elif isinstance(value, dict):
-            return {k: SQLiteExporter._convert_value_to_json_serializable(v) for k, v in value.items()}
+            return {
+                SQLiteExporter._json_key(k): SQLiteExporter._convert_value_to_json_serializable(v)
+                for k, v in value.items()
+            }
         elif isinstance(value, (list, tuple, set, frozenset)):
             return [SQLiteExporter._convert_value_to_json_serializable(item) for item in value]
         else:
@@ -1431,13 +1486,28 @@ class SQLiteExporter:
 
     @staticmethod
     def _metadata_to_json(meta: Optional[Dict[str, Any]]) -> Optional[str]:
-        """Convert metadata dictionary to JSON string, handling special types."""
+        """Convert metadata dictionary to JSON string, handling special types.
+
+        Both keys and values are coerced. When a key had to be coerced we log
+        the entry's ``filename:lineno`` at WARNING — the export still succeeds,
+        but the log then names the exact source line, which is the only way to
+        trace metadata a plugin injected back to the ledger.
+        """
         if not meta:
             return None
 
-        # Recursively convert all values to JSON-serializable types
+        if SQLiteExporter._has_unsafe_keys(meta):
+            logger.warning(
+                "Metadata at %s:%s has non-string keys — coerced to strings for "
+                "the mirror; keys=%r",
+                meta.get("filename", "<unknown file>"),
+                meta.get("lineno", "?"),
+                [k for k in meta if not isinstance(k, str)] or "<nested>",
+            )
+
+        # Recursively convert all keys and values to JSON-serializable types
         clean_meta = {
-            k: SQLiteExporter._convert_value_to_json_serializable(v)
+            SQLiteExporter._json_key(k): SQLiteExporter._convert_value_to_json_serializable(v)
             for k, v in meta.items()
         }
 

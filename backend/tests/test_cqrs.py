@@ -10,6 +10,8 @@ These tests verify the specification, not the implementation. Expected values
 are hand-derived from the fixture files, not computed from the code under test.
 """
 
+import json
+import logging
 import os
 import shutil
 import sqlite3
@@ -19,6 +21,7 @@ from pathlib import Path
 
 import pytest
 from beancount import loader
+from beancount.core import data
 
 from app.services.sqlite_exporter import SQLiteExporter
 from app.services.sqlite_reader import SqliteReader
@@ -1339,3 +1342,105 @@ class TestExportResilience:
             exporter.export_full_sync(entries, errors, options)
         assert "lots" in str(excinfo.value)
         assert "synthetic failure" in str(excinfo.value)
+
+
+class TestExportNonSerializableMetadata:
+    """Metadata is diagnostic payload — it must never abort a mirror rebuild.
+
+    A plugin can attach arbitrary objects to entry/posting metadata, including
+    dicts keyed by class objects. Before keys were coerced, one such entry made
+    json.dumps raise "keys must be str, int, float, bool or None, not type",
+    which failed the 'postings' sub-export, rolled back the whole export and
+    left the app unable to read the ledger at all.
+    """
+
+    LEDGER = """
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Expenses:Food USD
+
+2020-01-02 * "Shop" "Groceries"
+  Assets:Cash    -10.00 USD
+  Expenses:Food   10.00 USD
+"""
+
+    def _export(self, tmp_path, mutate):
+        ledger_path = tmp_path / "main.beancount"
+        ledger_path.write_text(self.LEDGER)
+        entries, errors, options = loader.load_file(str(ledger_path))
+        for entry in entries:
+            mutate(entry)
+        exporter = SQLiteExporter(str(tmp_path / "ledger.db"))
+        exporter.export_full_sync(
+            entries, errors, options, ledger_file=str(ledger_path)
+        )
+        return sqlite3.connect(str(tmp_path / "ledger.db"))
+
+    def test_class_keyed_metadata_dict_does_not_abort_export(self, tmp_path):
+        """A dict keyed by a class survives as a stringified key."""
+        def mutate(entry):
+            if isinstance(entry, data.Transaction):
+                entry.meta["__tolerances__"] = {Decimal: "0.005", "USD": Decimal("0.005")}
+
+        con = self._export(tmp_path, mutate)
+        rows = con.execute(
+            "SELECT transaction_metadata_json FROM postings"
+        ).fetchall()
+        con.close()
+
+        assert len(rows) == 2, "both postings exported despite the odd metadata"
+        for (meta_json,) in rows:
+            meta = json.loads(meta_json)
+            tolerances = meta["__tolerances__"]
+            assert tolerances["<class 'decimal.Decimal'>"] == "0.005"
+            assert tolerances["USD"] == "0.005"
+
+    def test_class_keyed_posting_metadata_does_not_abort_export(self, tmp_path):
+        """Same guarantee on the posting-level metadata dict."""
+        def mutate(entry):
+            if isinstance(entry, data.Transaction):
+                for posting in entry.postings:
+                    if posting.meta is not None:
+                        posting.meta[Decimal] = "odd key"
+
+        con = self._export(tmp_path, mutate)
+        rows = con.execute(
+            "SELECT posting_metadata_json FROM postings"
+        ).fetchall()
+        con.close()
+
+        assert len(rows) == 2
+        for (meta_json,) in rows:
+            assert json.loads(meta_json)["<class 'decimal.Decimal'>"] == "odd key"
+
+    def test_coercion_logs_the_source_line(self, tmp_path, caplog):
+        """The warning names filename:lineno so a large ledger is traceable."""
+        def mutate(entry):
+            if isinstance(entry, data.Transaction):
+                entry.meta["__tolerances__"] = {Decimal: "0.005"}
+
+        with caplog.at_level(logging.WARNING):
+            self._export(tmp_path, mutate).close()
+
+        warnings = [r.getMessage() for r in caplog.records if "non-string keys" in r.getMessage()]
+        assert warnings, "expected a warning naming the offending entry"
+        assert "main.beancount:5" in warnings[0], warnings[0]
+
+    def test_postings_failure_sample_names_the_transaction(self, tmp_path, monkeypatch, caplog):
+        """An unrelated crash in the postings step still reports the ledger line."""
+        ledger_path = tmp_path / "main.beancount"
+        ledger_path.write_text(self.LEDGER)
+        entries, errors, options = loader.load_file(str(ledger_path))
+        exporter = SQLiteExporter(str(tmp_path / "ledger.db"))
+
+        def _boom(*_a, **_k):
+            raise RuntimeError("synthetic failure")
+        monkeypatch.setattr(exporter, "_get_content_hash", _boom)
+
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(Exception):
+                exporter.export_full_sync(entries, errors, options)
+
+        logged = "\n".join(r.getMessage() for r in caplog.records)
+        assert "sample=" in logged
+        assert "main.beancount:5" in logged
+        assert "Groceries" in logged
