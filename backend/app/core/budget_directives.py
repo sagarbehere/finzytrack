@@ -100,7 +100,12 @@ def parse_budget_entry(entry: Any) -> dict | None:
 
     account = interval = currency = None
     amount: Decimal | None = None
-    for value, dtype in entry.values:
+    # `2021-01-01 custom "budget"` with no arguments is legal Beancount and
+    # parses to values=None, not []. Iterating that raised TypeError and took
+    # out every budget edit in the ledger, not just this directive — the same
+    # shape as the export aborts: one odd line, whole feature down. The
+    # exporter and engine already guard this; this path did not.
+    for value, dtype in (entry.values or []):
         if isinstance(value, Amount):
             amount = value.number
             currency = value.currency

@@ -183,3 +183,30 @@ def test_delete_tombstone_reverts_to_prior_budget(test_client):
     reverted = test_client.get("/api/budgets", params={"as_of": "2026-05-01"}).json()["data"]["budgets"]
     food = [b for b in reverted if b["account"] == "Expenses:Food"]
     assert len(food) == 1 and food[0]["ended"] is False and food[0]["amount"] == "500"
+
+
+def test_valueless_budget_directive_does_not_break_budget_edits(test_client, tmp_path):
+    """`custom "budget"` with no arguments is legal Beancount (values=None).
+
+    Iterating it raised TypeError, which took out every budget edit in the
+    ledger rather than skipping the one malformed line — the same shape as the
+    export aborts: one odd directive, whole feature down.
+    """
+    from beancount import loader
+    from app.core.budget_directives import parse_budget_entry
+
+    ledger = tmp_path / "main.beancount"
+    ledger.write_text(
+        "2000-01-01 open Expenses:Food GBP\n"
+        "2021-01-01 custom \"budget\"\n"
+        "2021-01-02 custom \"budget\" Expenses:Food \"monthly\" 400.00 GBP\n"
+    )
+    entries, _errors, _options = loader.load_file(str(ledger))
+
+    parsed = [parse_budget_entry(e) for e in entries]
+
+    # The valueless directive is skipped, the well-formed one still parses.
+    good = [p for p in parsed if p]
+    assert len(good) == 1
+    assert good[0]["account"] == "Expenses:Food"
+    assert good[0]["interval"] == "monthly"
