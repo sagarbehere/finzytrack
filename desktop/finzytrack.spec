@@ -117,6 +117,10 @@ a = Analysis(
         (str(SITE_PACKAGES / 'beancount' / 'VERSION'), 'beancount'),
         # Finzytrack VERSION file — read by backend/app/_version.py at runtime
         (str(ROOT / 'VERSION'), '.'),
+        # BUILD_INFO — the commit stamp written by build.py for non-release
+        # builds, appended to the displayed version. Absent on release builds,
+        # hence the conditional.
+        *([(str(ROOT / 'BUILD_INFO'), '.')] if (ROOT / 'BUILD_INFO').exists() else []),
     ],
     hiddenimports=[
         *beancount_hidden,

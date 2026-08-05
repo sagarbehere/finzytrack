@@ -65,3 +65,6 @@ node_modules
 .astro/
 .claude/
 dev-docs/
+
+# Per-build commit stamp written by desktop/build.py (never committed)
+BUILD_INFO

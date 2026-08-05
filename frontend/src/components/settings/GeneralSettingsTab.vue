@@ -773,8 +773,13 @@ function addCurrency() {
   const code = newCurrency.value.trim().toUpperCase()
   operatingCurrenciesError.value = ''
   if (!code) return
-  if (!/^[A-Z0-9]+$/.test(code)) {
-    operatingCurrenciesError.value = 'Use uppercase letters and digits only (e.g. USD).'
+  // Mirrors COMMODITY_CODE_PATTERN in backend/app/core/constants.py, which is
+  // derived from Beancount's own lexer rule. Beancount allows '.', '-', '_'
+  // and "'" inside a code (BRK.B, ELEC-DAYS), so this must not be stricter than
+  // the backend — an over-strict copy here rejects codes the ledger accepts.
+  if (!/^(?:[A-Z][A-Z0-9'._-]*[A-Z0-9]?\b|\/[A-Z0-9'._-]*[A-Z](?:[A-Z0-9'._-]*[A-Z0-9])?)$/.test(code)) {
+    operatingCurrenciesError.value =
+      'Start with an uppercase letter; letters, digits, and . - _ are allowed (e.g. USD, BRK.B).'
     return
   }
   if (!operatingCurrencies.value.includes(code)) {

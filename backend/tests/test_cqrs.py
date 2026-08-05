@@ -10,6 +10,8 @@ These tests verify the specification, not the implementation. Expected values
 are hand-derived from the fixture files, not computed from the code under test.
 """
 
+import json
+import logging
 import os
 import shutil
 import sqlite3
@@ -19,6 +21,7 @@ from pathlib import Path
 
 import pytest
 from beancount import loader
+from beancount.core import data
 
 from app.services.sqlite_exporter import SQLiteExporter
 from app.services.sqlite_reader import SqliteReader
@@ -1339,3 +1342,233 @@ class TestExportResilience:
             exporter.export_full_sync(entries, errors, options)
         assert "lots" in str(excinfo.value)
         assert "synthetic failure" in str(excinfo.value)
+
+
+class TestExportBookingMethod:
+    """`open` directives may name a booking method — Beancount v3 makes it an enum.
+
+    `2018-02-21 open Assets:Broker FILINV "FIFO"` parses to Booking.FIFO, which
+    sqlite3 refuses to bind ("type 'Booking' is not supported"). That failed the
+    'accounts' sub-export and left the app unable to open the ledger at all.
+    """
+
+    LEDGER = """
+2000-01-01 open Income:Gifts                 GBP
+2018-02-21 open Assets:Broker:GIA:FILINV     FILINV "FIFO"
+2019-03-01 open Assets:Broker:ISA:VWRL       VWRL "STRICT"
+"""
+
+    def _export(self, tmp_path):
+        ledger_path = tmp_path / "main.beancount"
+        ledger_path.write_text(self.LEDGER)
+        entries, errors, options = loader.load_file(str(ledger_path))
+        exporter = SQLiteExporter(str(tmp_path / "ledger.db"))
+        exporter.export_full_sync(
+            entries, errors, options, ledger_file=str(ledger_path)
+        )
+        return sqlite3.connect(str(tmp_path / "ledger.db"))
+
+    def test_booking_method_is_stored_as_text(self, tmp_path):
+        con = self._export(tmp_path)
+        rows = dict(con.execute("SELECT name, booking FROM accounts").fetchall())
+        con.close()
+
+        assert rows["Assets:Broker:GIA:FILINV"] == "FIFO"
+        assert rows["Assets:Broker:ISA:VWRL"] == "STRICT"
+
+    def test_account_without_booking_method_stores_null(self, tmp_path):
+        con = self._export(tmp_path)
+        rows = dict(con.execute("SELECT name, booking FROM accounts").fetchall())
+        con.close()
+
+        assert rows["Income:Gifts"] is None
+
+    def test_all_accounts_exported(self, tmp_path):
+        """The whole sub-export completes — one booking method can't abort it."""
+        con = self._export(tmp_path)
+        count = con.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
+        con.close()
+
+        assert count == 3
+
+
+class TestBulkInsertDiagnostics:
+    """A failing bulk insert must name the offending row, not the first row."""
+
+    def test_failing_row_is_identified(self, tmp_path):
+        con = sqlite3.connect(str(tmp_path / "t.db"))
+        con.execute("CREATE TABLE t (a TEXT, b TEXT)")
+        rows = [("ok", "ok"), ("ok", "ok"), ("bad", object()), ("ok", "ok")]
+
+        with pytest.raises(Exception) as excinfo:
+            SQLiteExporter._executemany_diagnosed(
+                con, "INSERT INTO t VALUES (?,?)", rows
+            )
+        con.close()
+
+        message = str(excinfo.value)
+        assert "failing row 2 of 4" in message, message
+        assert "bad" in message, message
+
+    def test_earlier_rows_are_not_blamed_for_a_later_failure(self, tmp_path):
+        """Partial inserts from the failed executemany must not confuse the replay.
+
+        `executemany` inserts every row before the failure. Replaying row 0
+        against those leftovers raises a UNIQUE violation, which would blame
+        row 0 for an error caused by row 3 — the misdirection this diagnostic
+        exists to remove.
+        """
+        con = sqlite3.connect(str(tmp_path / "t.db"))
+        con.execute("CREATE TABLE t (name TEXT PRIMARY KEY, v TEXT)")
+        rows = [("a", "ok"), ("b", "ok"), ("c", "ok"), ("d", object())]
+
+        with pytest.raises(Exception) as excinfo:
+            SQLiteExporter._executemany_diagnosed(
+                con, "INSERT INTO t VALUES (?,?)", rows
+            )
+        message = str(excinfo.value)
+
+        assert "failing row 3 of 4" in message, message
+        assert "UNIQUE" not in message, (
+            f"blamed a leftover row instead of the real culprit: {message}"
+        )
+        # The failed batch leaves nothing behind.
+        assert con.execute("SELECT COUNT(*) FROM t").fetchone()[0] == 0
+        con.close()
+
+    def test_clean_rows_insert_normally(self, tmp_path):
+        con = sqlite3.connect(str(tmp_path / "t.db"))
+        con.execute("CREATE TABLE t (a TEXT, b TEXT)")
+        SQLiteExporter._executemany_diagnosed(
+            con, "INSERT INTO t VALUES (?,?)", [("x", "y"), ("p", "q")]
+        )
+        count = con.execute("SELECT COUNT(*) FROM t").fetchone()[0]
+        con.close()
+
+        assert count == 2
+
+
+class TestExportNonSerializableMetadata:
+    """Metadata is diagnostic payload — it must never abort a mirror rebuild.
+
+    A plugin can attach arbitrary objects to entry/posting metadata, including
+    dicts keyed by class objects. Before keys were coerced, one such entry made
+    json.dumps raise "keys must be str, int, float, bool or None, not type",
+    which failed the 'postings' sub-export, rolled back the whole export and
+    left the app unable to read the ledger at all.
+    """
+
+    LEDGER = """
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Expenses:Food USD
+
+2020-01-02 * "Shop" "Groceries"
+  Assets:Cash    -10.00 USD
+  Expenses:Food   10.00 USD
+"""
+
+    def _export(self, tmp_path, mutate):
+        ledger_path = tmp_path / "main.beancount"
+        ledger_path.write_text(self.LEDGER)
+        entries, errors, options = loader.load_file(str(ledger_path))
+        for entry in entries:
+            mutate(entry)
+        exporter = SQLiteExporter(str(tmp_path / "ledger.db"))
+        exporter.export_full_sync(
+            entries, errors, options, ledger_file=str(ledger_path)
+        )
+        return sqlite3.connect(str(tmp_path / "ledger.db"))
+
+    def test_class_keyed_metadata_dict_does_not_abort_export(self, tmp_path):
+        """A dict keyed by a class survives as a stringified key."""
+        def mutate(entry):
+            if isinstance(entry, data.Transaction):
+                entry.meta["__tolerances__"] = {Decimal: "0.005", "USD": Decimal("0.005")}
+
+        con = self._export(tmp_path, mutate)
+        rows = con.execute(
+            "SELECT transaction_metadata_json FROM postings"
+        ).fetchall()
+        con.close()
+
+        assert len(rows) == 2, "both postings exported despite the odd metadata"
+        for (meta_json,) in rows:
+            meta = json.loads(meta_json)
+            tolerances = meta["__tolerances__"]
+            assert tolerances["<class 'decimal.Decimal'>"] == "0.005"
+            assert tolerances["USD"] == "0.005"
+
+    def test_class_keyed_posting_metadata_does_not_abort_export(self, tmp_path):
+        """Same guarantee on the posting-level metadata dict."""
+        def mutate(entry):
+            if isinstance(entry, data.Transaction):
+                for posting in entry.postings:
+                    if posting.meta is not None:
+                        posting.meta[Decimal] = "odd key"
+
+        con = self._export(tmp_path, mutate)
+        rows = con.execute(
+            "SELECT posting_metadata_json FROM postings"
+        ).fetchall()
+        con.close()
+
+        assert len(rows) == 2
+        for (meta_json,) in rows:
+            assert json.loads(meta_json)["<class 'decimal.Decimal'>"] == "odd key"
+
+    def test_coercion_logs_the_source_line(self, tmp_path, caplog):
+        """The warning names filename:lineno so a large ledger is traceable."""
+        def mutate(entry):
+            if isinstance(entry, data.Transaction):
+                entry.meta["__tolerances__"] = {Decimal: "0.005"}
+
+        with caplog.at_level(logging.WARNING):
+            self._export(tmp_path, mutate).close()
+
+        warnings = [r.getMessage() for r in caplog.records if "non-string keys" in r.getMessage()]
+        assert warnings, "expected a warning naming the offending entry"
+        assert "main.beancount:5" in warnings[0], warnings[0]
+
+    def test_synthesised_posting_falls_back_to_the_transaction_location(self, tmp_path, caplog):
+        """A posting with no parser stamp still reports a usable ledger location.
+
+        Beancount's residual/automatic postings — and anything a plugin builds —
+        carry meta without ``filename``. Reporting "<unknown file>" there would
+        be useless in a large ledger, so the owning transaction's location is
+        used instead.
+        """
+        def mutate(entry):
+            if isinstance(entry, data.Transaction):
+                for posting in entry.postings:
+                    # Replicates a plugin-synthesised posting: no filename/lineno.
+                    posting.meta.clear()
+                    posting.meta["__automatic__"] = True
+                    posting.meta["odd"] = {Decimal: "0.005"}
+
+        with caplog.at_level(logging.WARNING):
+            self._export(tmp_path, mutate).close()
+
+        warnings = [r.getMessage() for r in caplog.records if "non-string keys" in r.getMessage()]
+        assert warnings, "expected a warning naming the owning transaction"
+        assert "main.beancount:5" in warnings[0], warnings[0]
+        assert "synthesised entry" in warnings[0], warnings[0]
+
+    def test_postings_failure_sample_names_the_transaction(self, tmp_path, monkeypatch, caplog):
+        """An unrelated crash in the postings step still reports the ledger line."""
+        ledger_path = tmp_path / "main.beancount"
+        ledger_path.write_text(self.LEDGER)
+        entries, errors, options = loader.load_file(str(ledger_path))
+        exporter = SQLiteExporter(str(tmp_path / "ledger.db"))
+
+        def _boom(*_a, **_k):
+            raise RuntimeError("synthetic failure")
+        monkeypatch.setattr(exporter, "_get_content_hash", _boom)
+
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(Exception):
+                exporter.export_full_sync(entries, errors, options)
+
+        logged = "\n".join(r.getMessage() for r in caplog.records)
+        assert "context=" in logged
+        assert "main.beancount:5" in logged
+        assert "Groceries" in logged

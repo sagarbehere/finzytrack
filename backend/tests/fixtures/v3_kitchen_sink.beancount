@@ -1,0 +1,162 @@
+;; Every Beancount v3 directive and optional field we can be handed.
+;;
+;; Purpose: our other fixtures, and Beancount's own `bean-example` generator,
+;; emit only transactions/opens/prices/balances/commodities/events. Both v3
+;; export bugs we shipped lived in the forms nothing exercised — a `Booking`
+;; enum from `open ... "FIFO"`, and dict-valued metadata. This fixture covers
+;; the whole directive surface so the binding-contract test has something to
+;; bite on.
+;;
+;; Must parse with ZERO errors. If you add to it, re-run:
+;;   pytest tests/test_v3_export_contract.py
+
+option "title" "v3 kitchen sink"
+option "operating_currency" "USD"
+option "operating_currency" "EUR"
+option "render_commas" "TRUE"
+option "inferred_tolerance_default" "USD:0.005"
+
+plugin "beancount.plugins.implicit_prices"
+
+;; ── Commodities, with and without metadata ──────────────────────────────────
+2000-01-01 commodity USD
+  name: "US Dollar"
+  asset-class: "cash"
+2000-01-01 commodity EUR
+2000-01-01 commodity AAPL
+  name: "Apple Inc."
+  asset-class: "equity"
+  quote: USD
+2000-01-01 commodity VWRL
+  asset-class: "equity"
+
+;; ── Opens: every booking method, multi-currency, and none at all ────────────
+2000-01-01 open Assets:Cash:Wallet              USD
+2000-01-01 open Assets:Bank:Checking            USD,EUR
+2000-01-01 open Assets:Broker:Strict            AAPL "STRICT"
+2000-01-01 open Assets:Broker:StrictSize        AAPL "STRICT_WITH_SIZE"
+2000-01-01 open Assets:Broker:Fifo              AAPL "FIFO"
+2000-01-01 open Assets:Broker:Lifo              AAPL "LIFO"
+2000-01-01 open Assets:Broker:Hifo              AAPL "HIFO"
+2000-01-01 open Assets:Broker:Average           VWRL "AVERAGE"
+2000-01-01 open Assets:Broker:NoBooking         VWRL "NONE"
+2000-01-01 open Assets:Temporary                USD
+2000-01-01 open Liabilities:Card                USD
+2000-01-01 open Income:Salary                   USD
+2000-01-01 open Income:Gains                    USD
+2000-01-01 open Expenses:Food                   USD
+2000-01-01 open Expenses:Fees                   USD
+2000-01-01 open Equity:Opening                  USD
+
+;; An open carrying metadata, including a date and a number value
+2000-01-01 open Assets:Bank:Savings             USD
+  institution: "Example Bank"
+  opened-on: 2000-01-01
+  interest-rate: 1.25
+  asset-class: "savings"
+  active: TRUE
+
+;; ── Prices ──────────────────────────────────────────────────────────────────
+2020-01-01 price AAPL   100.00 USD
+2020-06-01 price AAPL   120.00 USD
+2020-01-01 price VWRL    80.00 USD
+2020-01-01 price EUR      1.10 USD
+
+;; ── Opening balances, then a pad/balance pair ───────────────────────────────
+2020-01-01 * "Opening" "Initial funding"
+  Assets:Cash:Wallet          1000.00 USD
+  Assets:Bank:Checking       10000.00 USD
+  Equity:Opening
+
+2020-01-02 pad Assets:Temporary Equity:Opening
+2020-01-03 balance Assets:Temporary   500.00 USD
+
+;; A balance assertion with an explicit tolerance
+2020-01-04 balance Assets:Cash:Wallet  1000.00 ~ 0.05 USD
+
+;; ── Transactions: costs, labels, prices, tags, links, metadata ──────────────
+2020-02-01 * "Broker" "Buy at cost" #trade ^order-1
+  document: "receipt.pdf"
+  reviewed: TRUE
+  settle-date: 2020-02-03
+  counterparty: Assets:Bank:Checking
+  fee-currency: USD
+  units-note: 10 AAPL
+  Assets:Broker:Fifo            10 AAPL {100.00 USD}
+    lot-note: "first lot"
+  Assets:Bank:Checking      -1000.00 USD
+
+2020-02-02 * "Broker" "Buy at cost with label"
+  Assets:Broker:Fifo             5 AAPL {110.00 USD, "batch-b"}
+  Assets:Bank:Checking       -550.00 USD
+
+2020-02-03 * "Broker" "Buy with cost date"
+  Assets:Broker:Strict           3 AAPL {100.00 USD, 2020-01-15}
+  Assets:Bank:Checking       -300.00 USD
+
+2020-03-01 * "Broker" "Sell with per-unit price"
+  Assets:Broker:Fifo            -4 AAPL {100.00 USD} @ 120.00 USD
+  Assets:Bank:Checking        480.00 USD
+  Income:Gains                -80.00 USD
+
+2020-03-02 * "Broker" "Sell with total price"
+  Assets:Broker:Fifo            -2 AAPL {100.00 USD} @@ 250.00 USD
+  Assets:Bank:Checking        250.00 USD
+  Income:Gains                -50.00 USD
+
+2020-03-03 * "Broker" "Average-booked purchase"
+  Assets:Broker:Average         10 VWRL {80.00 USD}
+  Assets:Bank:Checking       -800.00 USD
+
+;; Flags: pending, and a posting-level flag
+2020-04-01 ! "Unsure" "Pending review"
+  Expenses:Food               25.00 USD
+  Liabilities:Card
+
+2020-04-02 * "Flagged posting" "One leg marked"
+  ! Expenses:Food             15.00 USD
+  Assets:Cash:Wallet
+
+;; Multi-currency with an @ price
+2020-05-01 * "Travel" "Euro cash"
+  Assets:Bank:Checking        -110.00 USD
+  Assets:Bank:Checking         100.00 EUR @ 1.10 USD
+
+;; pushtag / poptag
+pushtag #vacation
+2020-05-02 * "Hotel" "Two nights"
+  Expenses:Food               200.00 USD
+  Assets:Bank:Checking
+poptag #vacation
+
+;; pushmeta / popmeta
+pushmeta project: "renovation"
+2020-05-03 * "Hardware" "Supplies"
+  Expenses:Food                75.00 USD
+  Assets:Bank:Checking
+popmeta project:
+
+;; Transaction with links only, and one with no payee
+2020-05-04 * "Reconcile" ^stmt-2020-05
+  Expenses:Fees                 5.00 USD
+  Assets:Bank:Checking
+
+2020-05-05 * "No payee, narration only"
+  Expenses:Fees                 2.00 USD
+  Assets:Bank:Checking
+
+;; ── Note, event, document, query, custom ────────────────────────────────────
+2021-01-01 note Assets:Bank:Checking "Rate changed" #ratechange ^note-link
+2021-01-02 event "location" "Berlin"
+2021-01-03 event "employer" "Example Corp"
+2021-01-04 document Assets:Bank:Checking "v3-kitchen-sink-statement.pdf" #statement ^doc-link
+
+2021-02-01 query "big-expenses" "SELECT account, sum(position) WHERE account ~ 'Expenses'"
+
+;; Custom directives exercising every value dtype the grammar allows
+2021-03-01 custom "budget" Expenses:Food "monthly" 400.00 USD
+2021-03-02 custom "flags" TRUE 42 2021-03-02 "text"
+2021-03-03 custom "fava-option" "interval" "month"
+
+;; ── Close ───────────────────────────────────────────────────────────────────
+2022-01-01 close Assets:Temporary

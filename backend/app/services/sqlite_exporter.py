@@ -10,6 +10,7 @@ The exporter populates two groups of tables:
   and computed state (accounts, commodities, balances, lots, prices, etc.)
 """
 import os
+import enum
 import json
 import time
 import hashlib
@@ -84,6 +85,9 @@ class SQLiteExporter:
         self.sqlite_path = sqlite_path
         self.export_path = sqlite_path  # Generic interface
         self.enable_wal = enable_wal
+        # Set per transaction during the postings export; read by _sub_export's
+        # failure sample so a crash names the ledger line it was on.
+        self._postings_cursor: Optional[str] = None
 
     # ── Public async API ─────────────────────────────────────────────────────
 
@@ -604,6 +608,17 @@ class SQLiteExporter:
         fallback_ids = self._compute_fallback_id_map(transactions)
 
         for txn_index, txn in enumerate(transactions):
+            # Breadcrumb for _sub_export's failure sample: if anything below
+            # raises, the log names the ledger line being processed rather than
+            # just the step. Cheap (one attribute write per transaction) and the
+            # only pointer a user has into a large ledger.
+            meta = txn.meta or {}
+            txn_source = (
+                f"{meta.get('filename', '<unknown file>')}:{meta.get('lineno', '?')}"
+            )
+            self._postings_cursor = (
+                f"{txn_source} {txn.date} {txn.payee or ''!r} {txn.narration or ''!r}"
+            )
             transaction_id = self._get_transaction_id(txn, fallback_ids.get(txn_index))
             transaction_content_hash = self._get_content_hash(txn)
             transaction_tags = self._serialize_array(self._extract_tags(txn))
@@ -615,7 +630,10 @@ class SQLiteExporter:
                 posting_id += 1
 
                 source_account, source_account_type = self._compute_source_account(txn, posting)
-                posting_metadata = self._metadata_to_json(posting.meta) if posting.meta else None
+                posting_metadata = (
+                    self._metadata_to_json(posting.meta, source_hint=txn_source)
+                    if posting.meta else None
+                )
 
                 cost_amount = None
                 cost_currency = None
@@ -676,7 +694,8 @@ class SQLiteExporter:
         # and decoupled from the CREATE TABLE column *order*; the only coupling
         # left is this list ↔ the row tuple above, which sit side by side. Adding
         # a column means: add it to CREATE TABLE, to the row tuple, and here.
-        con.executemany(
+        self._executemany_diagnosed(
+            con,
             "INSERT INTO postings ("
             "posting_id, transaction_id, transaction_content_hash, transaction_date, "
             "transaction_flag, transaction_payee, transaction_narration, transaction_tags, "
@@ -691,31 +710,86 @@ class SQLiteExporter:
 
     # ── Full ledger export (new CQRS tables) ─────────────────────────────────
 
+    @staticmethod
+    def _executemany_diagnosed(
+        con: sqlite3.Connection,
+        sql: str,
+        rows: List[Tuple[Any, ...]],
+    ) -> None:
+        """``executemany`` that names the offending row when a bind fails.
+
+        ``executemany`` reports *what* went wrong ("type 'Booking' is not
+        supported") but never *which* row, and the sub-export context can only
+        offer ``rows[0]`` — which sent a user chasing the wrong ledger line.
+        On failure we replay row by row to find the culprit and raise with that
+        row attached. The replay only runs on the error path, so the success
+        path costs nothing.
+
+        The replay runs inside a SAVEPOINT that is rolled back first. Without
+        that rollback the replay is actively misleading: ``executemany`` inserts
+        every row *before* the failure, so re-inserting row 0 raises a UNIQUE
+        violation and the diagnostic blames row 0 for an error caused fifteen
+        rows later — reproducing the misdirection this method exists to remove.
+        """
+        con.execute("SAVEPOINT bulk_insert")
+        try:
+            con.executemany(sql, rows)
+        except Exception as e:
+            # Undo the partial insert so each row is replayed against the same
+            # state executemany saw, not against its own leftovers.
+            con.execute("ROLLBACK TO bulk_insert")
+            culprit = None
+            for i, row in enumerate(rows):
+                try:
+                    con.execute(sql, row)
+                except Exception as row_error:
+                    culprit = (i, row, row_error)
+                    break
+            con.execute("ROLLBACK TO bulk_insert")
+            con.execute("RELEASE bulk_insert")
+            if culprit is not None:
+                i, row, row_error = culprit
+                raise type(e)(
+                    f"{e} — failing row {i} of {len(rows)}: {row!r}"
+                ) from row_error
+            # Every row inserts cleanly in isolation, so the failure was not
+            # row-specific (constraint interaction between rows, connection
+            # state, …). Re-raise the original rather than invent a culprit.
+            raise
+        else:
+            con.execute("RELEASE bulk_insert")
+
     @contextmanager
     def _sub_export(
         self,
         name: str,
-        sample: Optional[Callable[[], Any]] = None,
+        context: Optional[Callable[[], Any]] = None,
     ) -> Iterator[None]:
         """Tag a sub-export step so failures log which step crashed and on what.
 
-        On exception, logs ``Sub-export 'name' failed: <error> sample=<row>`` and
+        On exception, logs ``Sub-export 'name' failed: <error> context=<…>`` and
         re-raises with the name prefixed onto the message. The whole transaction
         still rolls back at the caller — the wrapper is for diagnosis, not
         recovery.
+
+        ``context`` is orientation only — for bulk inserts it is the *first*
+        row, which is not the row that failed. It was previously labelled
+        ``sample=``, which read as "here is the offending data" and sent a user
+        to the wrong ledger line. The offending row now comes from
+        ``_executemany_diagnosed``, inside the exception message itself.
         """
         try:
             yield
         except Exception as e:
             hint = ""
-            if sample is not None:
+            if context is not None:
                 try:
-                    s = sample()
+                    s = context()
                     if s is not None:
-                        hint = f" sample={s!r}"
+                        hint = f" context={s!r}"
                 except Exception:
                     pass
-            logger.error("Sub-export %r failed: %s%s", name, e, hint)
+            logger.error("Sub-export %r failed: %s%s", name, e, hint, exc_info=True)
             raise RuntimeError(f"sub-export {name!r} failed: {e}") from e
 
     def _export_full_ledger(
@@ -779,12 +853,20 @@ class SQLiteExporter:
                 if seen_opens.get(entry.account) is not entry:
                     continue  # skip duplicate; the earliest is already chosen
                 currencies = list(entry.currencies) if entry.currencies else []
+                # Beancount v3 models the booking method as a `Booking` enum
+                # (v2 used a plain string), and sqlite3 cannot bind an enum:
+                # `open Assets:Broker FILINV "FIFO"` used to abort the whole
+                # export with "type 'Booking' is not supported". Store the
+                # enum's value — the same text the ledger carries.
+                booking = getattr(entry, 'booking', None)
+                if isinstance(booking, enum.Enum):
+                    booking = booking.value
                 account_rows.append((
                     entry.account,
                     entry.date.isoformat(),
                     None,  # close_date filled by Close directives
                     json.dumps(currencies),
-                    getattr(entry, 'booking', None),
+                    booking,
                     self._metadata_to_json(entry.meta),
                 ))
 
@@ -882,7 +964,8 @@ class SQLiteExporter:
 
         # ── 2. Bulk insert directive tables ──────────────────────────────
         with self._sub_export("accounts", lambda: account_rows[0] if account_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO accounts (name, open_date, close_date, currencies_json, booking, metadata_json) "
                 "VALUES (?,?,?,?,?,?)",
                 account_rows,
@@ -895,7 +978,8 @@ class SQLiteExporter:
                 )
 
         with self._sub_export("balance_assertions", lambda: balance_rows[0] if balance_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO balance_assertions "
                 "(date, account, amount_number, amount_currency, tolerance, passed, "
                 "diff_number, diff_currency, metadata_json, pad_date, pad_source_account) "
@@ -903,43 +987,50 @@ class SQLiteExporter:
                 balance_rows,
             )
         with self._sub_export("pad_directives", lambda: pad_rows[0] if pad_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO pad_directives (date, account, source_account, metadata_json) "
                 "VALUES (?,?,?,?)",
                 pad_rows,
             )
         with self._sub_export("prices", lambda: price_rows[0] if price_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO prices (date, base_currency, quote_number, quote_currency, metadata_json) "
                 "VALUES (?,?,?,?,?)",
                 price_rows,
             )
         with self._sub_export("notes", lambda: note_rows[0] if note_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO notes (date, account, comment, tags_json, links_json, metadata_json) "
                 "VALUES (?,?,?,?,?,?)",
                 note_rows,
             )
         with self._sub_export("events", lambda: event_rows[0] if event_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO events (date, type, description, metadata_json) "
                 "VALUES (?,?,?,?)",
                 event_rows,
             )
         with self._sub_export("documents", lambda: document_rows[0] if document_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO documents (date, account, filename, tags_json, links_json, metadata_json) "
                 "VALUES (?,?,?,?,?,?)",
                 document_rows,
             )
         with self._sub_export("custom_directives", lambda: custom_rows[0] if custom_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO custom_directives (date, type, values_json, metadata_json) "
                 "VALUES (?,?,?,?)",
                 custom_rows,
             )
         with self._sub_export("stored_queries", lambda: query_rows[0] if query_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO stored_queries (date, name, query_string, metadata_json) "
                 "VALUES (?,?,?,?)",
                 query_rows,
@@ -1034,7 +1125,8 @@ class SQLiteExporter:
                 stats["last_date"].isoformat() if stats.get("last_date") else None,
             ))
 
-        con.executemany(
+        self._executemany_diagnosed(
+            con,
             "INSERT INTO account_balances "
             "(account, currency, balance, transaction_count, last_transaction_date) "
             "VALUES (?,?,?,?,?)",
@@ -1066,7 +1158,8 @@ class SQLiteExporter:
                         book_value,
                     ))
 
-        con.executemany(
+        self._executemany_diagnosed(
+            con,
             "INSERT OR REPLACE INTO lots "
             "(account, units_number, units_currency, cost_number, cost_currency, "
             "acquisition_date, label, book_value) VALUES (?,?,?,?,?,?,?,?)",
@@ -1132,7 +1225,8 @@ class SQLiteExporter:
                 d.get("metadata_json"),
             ))
 
-        con.executemany(
+        self._executemany_diagnosed(
+            con,
             "INSERT OR REPLACE INTO commodities "
             "(code, declaration_date, name, asset_class, is_currency, metadata_json) "
             "VALUES (?,?,?,?,?,?)",
@@ -1195,7 +1289,8 @@ class SQLiteExporter:
             (code, u["count"], str(u["volume"]), u["first"].isoformat(), u["last"].isoformat())
             for code, u in usage.items()
         ]
-        con.executemany(
+        self._executemany_diagnosed(
+            con,
             "INSERT INTO commodity_usage (code, transaction_count, total_volume, first_seen, last_seen) "
             "VALUES (?,?,?,?,?)",
             rows,
@@ -1228,7 +1323,8 @@ class SQLiteExporter:
                     rows.append((description, posting.account))
                     break
 
-        con.executemany(
+        self._executemany_diagnosed(
+            con,
             "INSERT INTO training_data (description, category) VALUES (?,?)",
             rows,
         )
@@ -1258,7 +1354,8 @@ class SQLiteExporter:
                 err.message if hasattr(err, 'message') else str(err),
                 entry_json,
             ))
-        con.executemany(
+        self._executemany_diagnosed(
+            con,
             "INSERT INTO ledger_errors (source_file, line_number, message, entry_json) "
             "VALUES (?,?,?,?)",
             rows,
@@ -1278,7 +1375,8 @@ class SQLiteExporter:
             except (TypeError, ValueError):
                 # Skip non-serializable values (e.g. DisplayContext)
                 continue
-        con.executemany(
+        self._executemany_diagnosed(
+            con,
             "INSERT INTO ledger_options (key, value_json) VALUES (?,?)",
             rows,
         )
@@ -1387,7 +1485,8 @@ class SQLiteExporter:
 
         try:
             # Existing postings export (unchanged logic)
-            with self._sub_export("postings"):
+            self._postings_cursor = None
+            with self._sub_export("postings", lambda: self._postings_cursor):
                 postings_count = self._export_postings(con, transactions)
 
             # New: full ledger export (same atomic transaction)
@@ -1480,8 +1579,47 @@ class SQLiteExporter:
         return list(txn.links) if txn.links else []
 
     @staticmethod
+    def _json_key(key: Any) -> str:
+        """Coerce a dict key to something ``json.dumps`` accepts.
+
+        JSON object keys must be str/int/float/bool/None. Metadata reaches us
+        from Beancount and from whatever plugins the user's ledger loads, so a
+        key can be an arbitrary object — a class, an Amount, a namedtuple. That
+        is diagnostic payload, not something the mirror should die on: before
+        this coercion a single such key aborted the whole `postings` sub-export
+        and left the app unusable ("keys must be str, int, float, bool or None,
+        not type"). We stringify instead, so the metadata survives in a
+        readable form and the export completes.
+        """
+        if isinstance(key, str):
+            return key
+        return str(key)
+
+    @staticmethod
+    def _has_unsafe_keys(value: Any) -> bool:
+        """True if ``value`` contains a dict key JSON would reject, at any depth.
+
+        Used only to decide whether to emit the one-line warning that names the
+        offending entry — the coercion itself is unconditional.
+        """
+        if isinstance(value, dict):
+            return any(
+                not isinstance(k, (str, int, float, bool, type(None)))
+                or SQLiteExporter._has_unsafe_keys(v)
+                for k, v in value.items()
+            )
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return any(SQLiteExporter._has_unsafe_keys(item) for item in value)
+        return False
+
+    @staticmethod
     def _convert_value_to_json_serializable(value: Any) -> Any:
-        """Recursively convert values to JSON-serializable types."""
+        """Recursively convert values to JSON-serializable types.
+
+        Keys are coerced as well as values (see ``_json_key``) — a nested dict
+        with non-primitive keys is just as fatal to ``json.dumps`` as a
+        non-serializable value.
+        """
         if isinstance(value, Decimal):
             return str(value)
         elif isinstance(value, (date, datetime)):
@@ -1489,7 +1627,10 @@ class SQLiteExporter:
         elif isinstance(value, (str, int, float, bool, type(None))):
             return value
         elif isinstance(value, dict):
-            return {k: SQLiteExporter._convert_value_to_json_serializable(v) for k, v in value.items()}
+            return {
+                SQLiteExporter._json_key(k): SQLiteExporter._convert_value_to_json_serializable(v)
+                for k, v in value.items()
+            }
         elif isinstance(value, (list, tuple, set, frozenset)):
             return [SQLiteExporter._convert_value_to_json_serializable(item) for item in value]
         else:
@@ -1513,14 +1654,44 @@ class SQLiteExporter:
         )
 
     @staticmethod
-    def _metadata_to_json(meta: Optional[Dict[str, Any]]) -> Optional[str]:
-        """Convert metadata dictionary to JSON string, handling special types."""
+    def _metadata_to_json(
+        meta: Optional[Dict[str, Any]],
+        source_hint: Optional[str] = None,
+    ) -> Optional[str]:
+        """Convert metadata dictionary to JSON string, handling special types.
+
+        Both keys and values are coerced. When a key had to be coerced we log
+        the source location at WARNING — the export still succeeds, but the log
+        then names the exact ledger line, which is the only way to trace
+        metadata a plugin injected back to the file the user has to edit.
+
+        Args:
+            source_hint: Location to report when ``meta`` itself carries no
+                ``filename``. Postings synthesised after parsing (Beancount's
+                residual/automatic postings, and anything a plugin builds) have
+                no parser stamp, so the caller passes the owning transaction's
+                location instead of leaving the log pointing at nothing.
+        """
         if not meta:
             return None
 
-        # Recursively convert all values to JSON-serializable types
+        if SQLiteExporter._has_unsafe_keys(meta):
+            if "filename" in meta:
+                where = f"{meta['filename']}:{meta.get('lineno', '?')}"
+            elif source_hint:
+                where = f"{source_hint} (synthesised entry — no source line of its own)"
+            else:
+                where = "<unknown location>"
+            logger.warning(
+                "Metadata at %s has non-string keys — coerced to strings for "
+                "the mirror; keys=%r",
+                where,
+                [k for k in meta if not isinstance(k, str)] or "<nested>",
+            )
+
+        # Recursively convert all keys and values to JSON-serializable types
         clean_meta = {
-            k: SQLiteExporter._convert_value_to_json_serializable(v)
+            SQLiteExporter._json_key(k): SQLiteExporter._convert_value_to_json_serializable(v)
             for k, v in meta.items()
         }
 

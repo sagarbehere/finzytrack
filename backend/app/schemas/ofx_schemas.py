@@ -1,14 +1,20 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Annotated
 
+from app.core.constants import COMMODITY_CODE_MAX_LENGTH, COMMODITY_CODE_PATTERN
 
-# Reusable custom type for currency validation
+
+# Reusable custom type for currency validation. Used for account currencies too
+# (app.schemas.account_schemas), so it must accept everything Beancount does:
+# the previous alphanumeric-only rule rejected valid codes like 'ELEC-DAYS' on
+# the account-create path. Derived from Beancount's lexer — see
+# app.core.constants.COMMODITY_CODE_PATTERN.
 CurrencyStr = Annotated[
     str,
     Field(
-        description="Alphanumeric currency code",
-        max_length=16,
-        pattern=r'^[a-zA-Z0-9]+$'
+        description="Currency/commodity code (e.g., 'USD', 'BRK.B')",
+        max_length=COMMODITY_CODE_MAX_LENGTH,
+        pattern=COMMODITY_CODE_PATTERN
     )
 ]
 
