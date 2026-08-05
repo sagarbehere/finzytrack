@@ -677,25 +677,45 @@ class SQLiteExporter:
         """``executemany`` that names the offending row when a bind fails.
 
         ``executemany`` reports *what* went wrong ("type 'Booking' is not
-        supported") but never *which* row, and the sub-export sample could only
+        supported") but never *which* row, and the sub-export context can only
         offer ``rows[0]`` — which sent a user chasing the wrong ledger line.
-        On failure we replay row by row to find the first one that fails and
-        raise with that row attached. The replay only runs on the error path,
-        so the success path costs nothing.
+        On failure we replay row by row to find the culprit and raise with that
+        row attached. The replay only runs on the error path, so the success
+        path costs nothing.
+
+        The replay runs inside a SAVEPOINT that is rolled back first. Without
+        that rollback the replay is actively misleading: ``executemany`` inserts
+        every row *before* the failure, so re-inserting row 0 raises a UNIQUE
+        violation and the diagnostic blames row 0 for an error caused fifteen
+        rows later — reproducing the misdirection this method exists to remove.
         """
+        con.execute("SAVEPOINT bulk_insert")
         try:
             con.executemany(sql, rows)
         except Exception as e:
+            # Undo the partial insert so each row is replayed against the same
+            # state executemany saw, not against its own leftovers.
+            con.execute("ROLLBACK TO bulk_insert")
+            culprit = None
             for i, row in enumerate(rows):
                 try:
                     con.execute(sql, row)
                 except Exception as row_error:
-                    raise type(e)(
-                        f"{e} — failing row {i} of {len(rows)}: {row!r}"
-                    ) from row_error
+                    culprit = (i, row, row_error)
+                    break
+            con.execute("ROLLBACK TO bulk_insert")
+            con.execute("RELEASE bulk_insert")
+            if culprit is not None:
+                i, row, row_error = culprit
+                raise type(e)(
+                    f"{e} — failing row {i} of {len(rows)}: {row!r}"
+                ) from row_error
             # Every row inserts cleanly in isolation, so the failure was not
-            # row-specific (constraint interaction, connection state, …).
+            # row-specific (constraint interaction between rows, connection
+            # state, …). Re-raise the original rather than invent a culprit.
             raise
+        else:
+            con.execute("RELEASE bulk_insert")
 
     @contextmanager
     def _sub_export(

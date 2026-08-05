@@ -1,0 +1,2 @@
+Placeholder for the v3 kitchen-sink fixture: the `document` directive
+requires its target to exist, so this file must ship with the fixture.

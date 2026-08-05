@@ -1410,6 +1410,32 @@ class TestBulkInsertDiagnostics:
         assert "failing row 2 of 4" in message, message
         assert "bad" in message, message
 
+    def test_earlier_rows_are_not_blamed_for_a_later_failure(self, tmp_path):
+        """Partial inserts from the failed executemany must not confuse the replay.
+
+        `executemany` inserts every row before the failure. Replaying row 0
+        against those leftovers raises a UNIQUE violation, which would blame
+        row 0 for an error caused by row 3 — the misdirection this diagnostic
+        exists to remove.
+        """
+        con = sqlite3.connect(str(tmp_path / "t.db"))
+        con.execute("CREATE TABLE t (name TEXT PRIMARY KEY, v TEXT)")
+        rows = [("a", "ok"), ("b", "ok"), ("c", "ok"), ("d", object())]
+
+        with pytest.raises(Exception) as excinfo:
+            SQLiteExporter._executemany_diagnosed(
+                con, "INSERT INTO t VALUES (?,?)", rows
+            )
+        message = str(excinfo.value)
+
+        assert "failing row 3 of 4" in message, message
+        assert "UNIQUE" not in message, (
+            f"blamed a leftover row instead of the real culprit: {message}"
+        )
+        # The failed batch leaves nothing behind.
+        assert con.execute("SELECT COUNT(*) FROM t").fetchone()[0] == 0
+        con.close()
+
     def test_clean_rows_insert_normally(self, tmp_path):
         con = sqlite3.connect(str(tmp_path / "t.db"))
         con.execute("CREATE TABLE t (a TEXT, b TEXT)")
