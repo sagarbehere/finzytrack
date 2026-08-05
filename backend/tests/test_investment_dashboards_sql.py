@@ -1,9 +1,21 @@
-"""Investment seed dashboards — their embedded SQL must actually run.
+"""Investment seed dashboards — their embedded SQL must return the right numbers.
 
-Schema validation (test_seed_dashboards) checks the recipe *shape*; it does not
-execute the queries. This runs every `query` step of the investment dashboards
-(and the holdings-folded financial-overview) against a real mirror so a SQL typo
-or a wrong column name is caught here rather than at render time.
+Division of labour with the other dashboard tests:
+
+  - `test_seed_dashboards` validates every dashboard's *shape* and dry-runs its
+    SQL (`SELECT * FROM (q) LIMIT 0`), driven by the dashboards directory — so
+    it covers new dashboards automatically and cannot go stale.
+  - This file goes further for the investment set: it builds a mirror holding a
+    priced holding with lots, a dividend and cash, then asserts the *values*
+    those queries produce (the net-worth fold, market value, weight). A query
+    that runs but computes the wrong thing is only caught here.
+
+The dashboard list below is therefore deliberately explicit — it names the ones
+whose numbers we assert, not "all of them". It went stale once when the
+factual-reframe restructure (dev-docs/investment-dashboards.md, Update
+2026-08-04) folded investment-overview/-income/-realized-gains into
+investment-holdings, cash-deposits and returns-income; a missing file fails
+loudly here, which is the intended behaviour.
 """
 
 import json
@@ -62,8 +74,7 @@ def _query_steps(dashboard: str):
 
 
 @pytest.mark.parametrize("dashboard", [
-    "financial-overview", "investment-overview", "investment-holdings",
-    "investment-income", "investment-realized-gains",
+    "financial-overview", "investment-holdings", "cash-deposits", "returns-income",
 ])
 def test_all_query_steps_execute(mirror, dashboard):
     con = sqlite3.connect(str(mirror))

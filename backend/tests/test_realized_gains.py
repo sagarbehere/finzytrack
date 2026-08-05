@@ -82,7 +82,15 @@ def test_export_emits_cost_date_on_sale_legs(mirror):
 
 
 def _dashboard_query(widget_id: str) -> str:
-    d = json.loads(Path(f"{_DASHBOARDS}/investment-realized-gains.json").read_text())
+    """Realized-gain widgets now live in the merged `returns-income` dashboard.
+
+    The standalone `investment-realized-gains` dashboard was folded into it by
+    the factual-reframe restructure (dev-docs/investment-dashboards.md, Update
+    2026-08-04): `detail` → `sales-detail`, `by-year` → `realized-by-year`,
+    `kpi-total` → `kpi-realized`. The behaviour asserted below is unchanged —
+    only the widget's address moved.
+    """
+    d = json.loads(Path(f"{_DASHBOARDS}/returns-income.json").read_text())
     w = next(w for w in d["widgets"] if w["id"] == widget_id)
     return next(s["query"] for s in w["steps"] if s.get("kind") == "query")
 
@@ -90,7 +98,7 @@ def _dashboard_query(widget_id: str) -> str:
 def test_detail_query_gain_and_term_exact(mirror):
     con = sqlite3.connect(str(mirror))
     con.row_factory = sqlite3.Row
-    rows = con.execute(_dashboard_query("detail"), {"currency": "USD"}).fetchall()
+    rows = con.execute(_dashboard_query("sales-detail"), {"currency": "USD"}).fetchall()
     con.close()
     by_holding = {r["holding"]: r for r in rows}
     assert round(by_holding["VOO"]["gain"], 2) == 120.00
@@ -102,7 +110,7 @@ def test_detail_query_gain_and_term_exact(mirror):
 def test_by_year_splits_short_and_long(mirror):
     con = sqlite3.connect(str(mirror))
     con.row_factory = sqlite3.Row
-    rows = {r["year"]: r for r in con.execute(_dashboard_query("by-year"), {"currency": "USD"}).fetchall()}
+    rows = {r["year"]: r for r in con.execute(_dashboard_query("realized-by-year"), {"currency": "USD"}).fetchall()}
     con.close()
     assert round(rows["2023"]["long_term"], 2) == 120.00
     assert round(rows["2023"]["short_term"], 2) == 0.00
@@ -110,8 +118,41 @@ def test_by_year_splits_short_and_long(mirror):
 
 
 def test_total_kpi_consolidates_all_sales(mirror):
+    """The KPI sums every sale, across accounts and holdings.
+
+    Since the merge into `returns-income` the query is multi-currency aware and
+    date-bounded: it groups by price currency and takes `:currency` ('*' for
+    all) plus an `:asOf` cutoff. `asOf` here is after both sales.
+    """
     con = sqlite3.connect(str(mirror))
     con.row_factory = sqlite3.Row
-    rows = con.execute(_dashboard_query("kpi-total")).fetchall()
+    rows = con.execute(
+        _dashboard_query("kpi-realized"), {"currency": "*", "asOf": "2025-01-01"}
+    ).fetchall()
     con.close()
+    assert len(rows) == 1, "one row per price currency; this ledger is USD-only"
+    assert rows[0]["currency"] == "USD"
     assert round(rows[0]["amount"], 2) == 220.00   # 120 + 100, across accounts
+
+
+def test_total_kpi_respects_the_currency_filter(mirror):
+    """'*' means all currencies; a specific currency selects only that one."""
+    con = sqlite3.connect(str(mirror))
+    con.row_factory = sqlite3.Row
+    sql = _dashboard_query("kpi-realized")
+    usd = con.execute(sql, {"currency": "USD", "asOf": "2025-01-01"}).fetchall()
+    eur = con.execute(sql, {"currency": "EUR", "asOf": "2025-01-01"}).fetchall()
+    con.close()
+    assert round(usd[0]["amount"], 2) == 220.00
+    assert eur == [], "no EUR-priced sales in this ledger"
+
+
+def test_total_kpi_excludes_sales_after_the_as_of_date(mirror):
+    """The `asOf` cutoff is real: before the 2024 sale, only the 2023 gain counts."""
+    con = sqlite3.connect(str(mirror))
+    con.row_factory = sqlite3.Row
+    rows = con.execute(
+        _dashboard_query("kpi-realized"), {"currency": "*", "asOf": "2024-01-01"}
+    ).fetchall()
+    con.close()
+    assert round(rows[0]["amount"], 2) == 120.00   # VOO only; AAPL sold 2024-03
