@@ -39,7 +39,23 @@ the build's commit, and the About screen shows it as semver build metadata:
 
 **Release builds carry no stamp, automatically.** A release is exactly a build
 whose HEAD is the `v<VERSION>` tag, which `build.py` detects — so tagging is all
-it takes. Override with `--stamp` / `--no-stamp` if you ever need to.
+it takes. Against the normal flow that means:
+
+| Build | Stamp? |
+|---|---|
+| *Run workflow* from the UI on a branch | stamped — this is the artifact you test and send testers |
+| Pushing `vX.Y.Z`, which auto-builds the draft release | clean `X.Y.Z` |
+| *Run workflow* from the UI with a **tag** selected in "Use workflow from" | clean — the dropdown lists tags as well as branches |
+| Local `python build.py` | stamped |
+
+Detection uses two independent signals, because a stamped release would fail
+silently: GitHub's default `GITHUB_REF_TYPE`/`GITHUB_REF_NAME` variables (set on
+every run, nothing to declare in the workflow), and `git tag --points-at HEAD`
+for local builds. Override either way with `--stamp` / `--no-stamp`.
+
+If a tag build's tag doesn't match `/VERSION`, the build warns loudly and stamps
+it — so a lockstep slip shows up in the artifact instead of shipping as a clean
+wrong version.
 
 The commit cannot live in `/VERSION` itself: committing that file would change
 the SHA it names. `BUILD_INFO` is generated per build and gitignored — never

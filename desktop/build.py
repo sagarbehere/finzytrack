@@ -129,12 +129,21 @@ def write_build_info(force_stamp=None):
 
     Release builds get no stamp. A release is exactly a build whose HEAD is the
     `v<VERSION>` tag (RELEASING.md's golden rule), so that is detected rather
-    than passed in, and `vX.Y.Z` ships as a clean `X.Y.Z`.
+    than passed in, and `vX.Y.Z` ships as a clean `X.Y.Z`. Two signals, because
+    shipping a stamped release would fail silently:
+
+    1. ``GITHUB_REF_TYPE``/``GITHUB_REF_NAME`` — authoritative on CI, and
+       independent of how the repository was cloned.
+    2. ``git tag --points-at HEAD`` — covers local builds, and CI if those
+       variables ever change. Verified to work on the depth-1 checkout
+       ``actions/checkout`` performs for a tag push: its fetch refspec creates
+       the tag ref locally even with ``--no-tags``.
 
     Args:
-        force_stamp: True/False to override the tag detection; None to detect.
+        force_stamp: True/False to override the detection; None to detect.
     """
     version = VERSION_FILE.read_text().strip()
+    release_tag = f'v{version}'
 
     def git(*args):
         try:
@@ -153,8 +162,22 @@ def write_build_info(force_stamp=None):
         return
 
     if force_stamp is None:
-        tags = git('tag', '--points-at', 'HEAD').split()
-        is_release = f'v{version}' in tags
+        ci_tag = (
+            os.environ.get('GITHUB_REF_NAME', '')
+            if os.environ.get('GITHUB_REF_TYPE') == 'tag' else ''
+        )
+        local_tags = git('tag', '--points-at', 'HEAD').split()
+        is_release = ci_tag == release_tag or release_tag in local_tags
+
+        # A tag build whose tag doesn't match /VERSION means the two have
+        # drifted — the lockstep RELEASING.md requires. Say so loudly: the
+        # build still proceeds, stamped, so the mismatch is visible in the
+        # artifact rather than shipping as a clean wrong version.
+        if ci_tag and ci_tag != release_tag:
+            print(
+                f'==> WARNING: building tag {ci_tag} but /VERSION is {version} '
+                f'(expected tag {release_tag}). Treating as a test build.'
+            )
     else:
         is_release = not force_stamp
 
