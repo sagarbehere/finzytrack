@@ -10,6 +10,7 @@ The exporter populates two groups of tables:
   and computed state (accounts, commodities, balances, lots, prices, etc.)
 """
 import os
+import enum
 import json
 import time
 import hashlib
@@ -658,7 +659,8 @@ class SQLiteExporter:
                     year_month,
                 ))
 
-        con.executemany(
+        self._executemany_diagnosed(
+            con,
             "INSERT INTO postings VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
@@ -666,28 +668,63 @@ class SQLiteExporter:
 
     # ── Full ledger export (new CQRS tables) ─────────────────────────────────
 
+    @staticmethod
+    def _executemany_diagnosed(
+        con: sqlite3.Connection,
+        sql: str,
+        rows: List[Tuple[Any, ...]],
+    ) -> None:
+        """``executemany`` that names the offending row when a bind fails.
+
+        ``executemany`` reports *what* went wrong ("type 'Booking' is not
+        supported") but never *which* row, and the sub-export sample could only
+        offer ``rows[0]`` — which sent a user chasing the wrong ledger line.
+        On failure we replay row by row to find the first one that fails and
+        raise with that row attached. The replay only runs on the error path,
+        so the success path costs nothing.
+        """
+        try:
+            con.executemany(sql, rows)
+        except Exception as e:
+            for i, row in enumerate(rows):
+                try:
+                    con.execute(sql, row)
+                except Exception as row_error:
+                    raise type(e)(
+                        f"{e} — failing row {i} of {len(rows)}: {row!r}"
+                    ) from row_error
+            # Every row inserts cleanly in isolation, so the failure was not
+            # row-specific (constraint interaction, connection state, …).
+            raise
+
     @contextmanager
     def _sub_export(
         self,
         name: str,
-        sample: Optional[Callable[[], Any]] = None,
+        context: Optional[Callable[[], Any]] = None,
     ) -> Iterator[None]:
         """Tag a sub-export step so failures log which step crashed and on what.
 
-        On exception, logs ``Sub-export 'name' failed: <error> sample=<row>`` and
+        On exception, logs ``Sub-export 'name' failed: <error> context=<…>`` and
         re-raises with the name prefixed onto the message. The whole transaction
         still rolls back at the caller — the wrapper is for diagnosis, not
         recovery.
+
+        ``context`` is orientation only — for bulk inserts it is the *first*
+        row, which is not the row that failed. It was previously labelled
+        ``sample=``, which read as "here is the offending data" and sent a user
+        to the wrong ledger line. The offending row now comes from
+        ``_executemany_diagnosed``, inside the exception message itself.
         """
         try:
             yield
         except Exception as e:
             hint = ""
-            if sample is not None:
+            if context is not None:
                 try:
-                    s = sample()
+                    s = context()
                     if s is not None:
-                        hint = f" sample={s!r}"
+                        hint = f" context={s!r}"
                 except Exception:
                     pass
             logger.error("Sub-export %r failed: %s%s", name, e, hint, exc_info=True)
@@ -754,12 +791,20 @@ class SQLiteExporter:
                 if seen_opens.get(entry.account) is not entry:
                     continue  # skip duplicate; the earliest is already chosen
                 currencies = list(entry.currencies) if entry.currencies else []
+                # Beancount v3 models the booking method as a `Booking` enum
+                # (v2 used a plain string), and sqlite3 cannot bind an enum:
+                # `open Assets:Broker FILINV "FIFO"` used to abort the whole
+                # export with "type 'Booking' is not supported". Store the
+                # enum's value — the same text the ledger carries.
+                booking = getattr(entry, 'booking', None)
+                if isinstance(booking, enum.Enum):
+                    booking = booking.value
                 account_rows.append((
                     entry.account,
                     entry.date.isoformat(),
                     None,  # close_date filled by Close directives
                     json.dumps(currencies),
-                    getattr(entry, 'booking', None),
+                    booking,
                     self._metadata_to_json(entry.meta),
                 ))
 
@@ -857,7 +902,8 @@ class SQLiteExporter:
 
         # ── 2. Bulk insert directive tables ──────────────────────────────
         with self._sub_export("accounts", lambda: account_rows[0] if account_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO accounts (name, open_date, close_date, currencies_json, booking, metadata_json) "
                 "VALUES (?,?,?,?,?,?)",
                 account_rows,
@@ -870,7 +916,8 @@ class SQLiteExporter:
                 )
 
         with self._sub_export("balance_assertions", lambda: balance_rows[0] if balance_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO balance_assertions "
                 "(date, account, amount_number, amount_currency, tolerance, passed, "
                 "diff_number, diff_currency, metadata_json, pad_date, pad_source_account) "
@@ -878,43 +925,50 @@ class SQLiteExporter:
                 balance_rows,
             )
         with self._sub_export("pad_directives", lambda: pad_rows[0] if pad_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO pad_directives (date, account, source_account, metadata_json) "
                 "VALUES (?,?,?,?)",
                 pad_rows,
             )
         with self._sub_export("prices", lambda: price_rows[0] if price_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO prices (date, base_currency, quote_number, quote_currency, metadata_json) "
                 "VALUES (?,?,?,?,?)",
                 price_rows,
             )
         with self._sub_export("notes", lambda: note_rows[0] if note_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO notes (date, account, comment, tags_json, links_json, metadata_json) "
                 "VALUES (?,?,?,?,?,?)",
                 note_rows,
             )
         with self._sub_export("events", lambda: event_rows[0] if event_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO events (date, type, description, metadata_json) "
                 "VALUES (?,?,?,?)",
                 event_rows,
             )
         with self._sub_export("documents", lambda: document_rows[0] if document_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO documents (date, account, filename, tags_json, links_json, metadata_json) "
                 "VALUES (?,?,?,?,?,?)",
                 document_rows,
             )
         with self._sub_export("custom_directives", lambda: custom_rows[0] if custom_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO custom_directives (date, type, values_json, metadata_json) "
                 "VALUES (?,?,?,?)",
                 custom_rows,
             )
         with self._sub_export("stored_queries", lambda: query_rows[0] if query_rows else None):
-            con.executemany(
+            self._executemany_diagnosed(
+                con,
                 "INSERT INTO stored_queries (date, name, query_string, metadata_json) "
                 "VALUES (?,?,?,?)",
                 query_rows,
@@ -1009,7 +1063,8 @@ class SQLiteExporter:
                 stats["last_date"].isoformat() if stats.get("last_date") else None,
             ))
 
-        con.executemany(
+        self._executemany_diagnosed(
+            con,
             "INSERT INTO account_balances "
             "(account, currency, balance, transaction_count, last_transaction_date) "
             "VALUES (?,?,?,?,?)",
@@ -1041,7 +1096,8 @@ class SQLiteExporter:
                         book_value,
                     ))
 
-        con.executemany(
+        self._executemany_diagnosed(
+            con,
             "INSERT OR REPLACE INTO lots "
             "(account, units_number, units_currency, cost_number, cost_currency, "
             "acquisition_date, label, book_value) VALUES (?,?,?,?,?,?,?,?)",
@@ -1107,7 +1163,8 @@ class SQLiteExporter:
                 d.get("metadata_json"),
             ))
 
-        con.executemany(
+        self._executemany_diagnosed(
+            con,
             "INSERT OR REPLACE INTO commodities "
             "(code, declaration_date, name, asset_class, is_currency, metadata_json) "
             "VALUES (?,?,?,?,?,?)",
@@ -1170,7 +1227,8 @@ class SQLiteExporter:
             (code, u["count"], str(u["volume"]), u["first"].isoformat(), u["last"].isoformat())
             for code, u in usage.items()
         ]
-        con.executemany(
+        self._executemany_diagnosed(
+            con,
             "INSERT INTO commodity_usage (code, transaction_count, total_volume, first_seen, last_seen) "
             "VALUES (?,?,?,?,?)",
             rows,
@@ -1203,7 +1261,8 @@ class SQLiteExporter:
                     rows.append((description, posting.account))
                     break
 
-        con.executemany(
+        self._executemany_diagnosed(
+            con,
             "INSERT INTO training_data (description, category) VALUES (?,?)",
             rows,
         )
@@ -1233,7 +1292,8 @@ class SQLiteExporter:
                 err.message if hasattr(err, 'message') else str(err),
                 entry_json,
             ))
-        con.executemany(
+        self._executemany_diagnosed(
+            con,
             "INSERT INTO ledger_errors (source_file, line_number, message, entry_json) "
             "VALUES (?,?,?,?)",
             rows,
@@ -1253,7 +1313,8 @@ class SQLiteExporter:
             except (TypeError, ValueError):
                 # Skip non-serializable values (e.g. DisplayContext)
                 continue
-        con.executemany(
+        self._executemany_diagnosed(
+            con,
             "INSERT INTO ledger_options (key, value_json) VALUES (?,?)",
             rows,
         )

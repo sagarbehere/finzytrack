@@ -1344,6 +1344,84 @@ class TestExportResilience:
         assert "synthetic failure" in str(excinfo.value)
 
 
+class TestExportBookingMethod:
+    """`open` directives may name a booking method — Beancount v3 makes it an enum.
+
+    `2018-02-21 open Assets:Broker FILINV "FIFO"` parses to Booking.FIFO, which
+    sqlite3 refuses to bind ("type 'Booking' is not supported"). That failed the
+    'accounts' sub-export and left the app unable to open the ledger at all.
+    """
+
+    LEDGER = """
+2000-01-01 open Income:Gifts                 GBP
+2018-02-21 open Assets:Broker:GIA:FILINV     FILINV "FIFO"
+2019-03-01 open Assets:Broker:ISA:VWRL       VWRL "STRICT"
+"""
+
+    def _export(self, tmp_path):
+        ledger_path = tmp_path / "main.beancount"
+        ledger_path.write_text(self.LEDGER)
+        entries, errors, options = loader.load_file(str(ledger_path))
+        exporter = SQLiteExporter(str(tmp_path / "ledger.db"))
+        exporter.export_full_sync(
+            entries, errors, options, ledger_file=str(ledger_path)
+        )
+        return sqlite3.connect(str(tmp_path / "ledger.db"))
+
+    def test_booking_method_is_stored_as_text(self, tmp_path):
+        con = self._export(tmp_path)
+        rows = dict(con.execute("SELECT name, booking FROM accounts").fetchall())
+        con.close()
+
+        assert rows["Assets:Broker:GIA:FILINV"] == "FIFO"
+        assert rows["Assets:Broker:ISA:VWRL"] == "STRICT"
+
+    def test_account_without_booking_method_stores_null(self, tmp_path):
+        con = self._export(tmp_path)
+        rows = dict(con.execute("SELECT name, booking FROM accounts").fetchall())
+        con.close()
+
+        assert rows["Income:Gifts"] is None
+
+    def test_all_accounts_exported(self, tmp_path):
+        """The whole sub-export completes — one booking method can't abort it."""
+        con = self._export(tmp_path)
+        count = con.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
+        con.close()
+
+        assert count == 3
+
+
+class TestBulkInsertDiagnostics:
+    """A failing bulk insert must name the offending row, not the first row."""
+
+    def test_failing_row_is_identified(self, tmp_path):
+        con = sqlite3.connect(str(tmp_path / "t.db"))
+        con.execute("CREATE TABLE t (a TEXT, b TEXT)")
+        rows = [("ok", "ok"), ("ok", "ok"), ("bad", object()), ("ok", "ok")]
+
+        with pytest.raises(Exception) as excinfo:
+            SQLiteExporter._executemany_diagnosed(
+                con, "INSERT INTO t VALUES (?,?)", rows
+            )
+        con.close()
+
+        message = str(excinfo.value)
+        assert "failing row 2 of 4" in message, message
+        assert "bad" in message, message
+
+    def test_clean_rows_insert_normally(self, tmp_path):
+        con = sqlite3.connect(str(tmp_path / "t.db"))
+        con.execute("CREATE TABLE t (a TEXT, b TEXT)")
+        SQLiteExporter._executemany_diagnosed(
+            con, "INSERT INTO t VALUES (?,?)", [("x", "y"), ("p", "q")]
+        )
+        count = con.execute("SELECT COUNT(*) FROM t").fetchone()[0]
+        con.close()
+
+        assert count == 2
+
+
 class TestExportNonSerializableMetadata:
     """Metadata is diagnostic payload — it must never abort a mirror rebuild.
 
@@ -1465,6 +1543,6 @@ class TestExportNonSerializableMetadata:
                 exporter.export_full_sync(entries, errors, options)
 
         logged = "\n".join(r.getMessage() for r in caplog.records)
-        assert "sample=" in logged
+        assert "context=" in logged
         assert "main.beancount:5" in logged
         assert "Groceries" in logged
