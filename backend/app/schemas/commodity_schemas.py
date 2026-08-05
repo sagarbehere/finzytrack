@@ -3,14 +3,19 @@ from decimal import Decimal
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Annotated
 
-# Define CommodityStr for consistent commodity code validation
+from app.core.constants import COMMODITY_CODE_MAX_LENGTH, COMMODITY_CODE_PATTERN
+
+# Define CommodityStr for consistent commodity code validation. The rule comes
+# from Beancount's own lexer (app.core.constants) — a stricter hand-written
+# pattern here once rejected valid codes like 'ELEC-DAYS' and 'BRK.B', which
+# made the whole ledger unreadable rather than just the one commodity.
 CommodityStr = Annotated[
     str,
     Field(
-        description="Commodity/currency code (e.g., 'USD', 'AAPL')",
-        pattern=r'^[A-Z0-9]+$',
+        description="Commodity/currency code (e.g., 'USD', 'AAPL', 'BRK.B')",
+        pattern=COMMODITY_CODE_PATTERN,
         min_length=1,
-        max_length=16
+        max_length=COMMODITY_CODE_MAX_LENGTH
     )
 ]
 
