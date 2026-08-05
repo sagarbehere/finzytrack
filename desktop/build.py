@@ -33,6 +33,8 @@ DIST_DIR = SCRIPT_DIR / 'dist'
 BUILD_DIR = SCRIPT_DIR / 'build'
 ICONS_DIR = ROOT_DIR / 'assets' / 'icons'
 VERSION_FILE = ROOT_DIR / 'VERSION'
+# Written per build, never committed — see write_build_info().
+BUILD_INFO_FILE = ROOT_DIR / 'BUILD_INFO'
 
 
 def run(cmd: list[str], **kwargs):
@@ -113,6 +115,57 @@ def sync_ai_resources():
 
     print('==> Regenerating TS types from recipe.schema.json...')
     run(['npm', 'run', 'generate-recipe-types'], cwd=str(FRONTEND_DIR))
+
+
+def write_build_info(force_stamp=None):
+    """Stamp the build's commit into BUILD_INFO, so a binary identifies itself.
+
+    Test builds handed to users are otherwise indistinguishable: two dispatch
+    builds of different commits both report the /VERSION string, and nobody can
+    tell which binary is installed. The commit can't live in /VERSION itself —
+    committing that file changes the very SHA it would name — so it is stamped
+    here at build time and read by backend/app/_version.py, which renders
+    `0.2.1+3894c8a`.
+
+    Release builds get no stamp. A release is exactly a build whose HEAD is the
+    `v<VERSION>` tag (RELEASING.md's golden rule), so that is detected rather
+    than passed in, and `vX.Y.Z` ships as a clean `X.Y.Z`.
+
+    Args:
+        force_stamp: True/False to override the tag detection; None to detect.
+    """
+    version = VERSION_FILE.read_text().strip()
+
+    def git(*args):
+        try:
+            return subprocess.run(
+                ['git', *args], cwd=str(ROOT_DIR), capture_output=True,
+                text=True, check=True,
+            ).stdout.strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return ''
+
+    sha = git('rev-parse', '--short', 'HEAD')
+    if not sha:
+        # Not a git checkout (source tarball, vendored copy). Nothing to stamp.
+        BUILD_INFO_FILE.unlink(missing_ok=True)
+        print('==> No git metadata — building without a commit stamp')
+        return
+
+    if force_stamp is None:
+        tags = git('tag', '--points-at', 'HEAD').split()
+        is_release = f'v{version}' in tags
+    else:
+        is_release = not force_stamp
+
+    if is_release:
+        BUILD_INFO_FILE.unlink(missing_ok=True)
+        print(f'==> Release build of v{version} — no commit stamp')
+        return
+
+    dirty = ' (modified)' if git('status', '--porcelain') else ''
+    BUILD_INFO_FILE.write_text(f'{sha}{dirty}\n', encoding='utf-8')
+    print(f'==> Build stamp: {version}+{sha}{dirty}')
 
 
 def sync_frontend_version():
@@ -244,6 +297,11 @@ def main():
     parser.add_argument('--clean', action='store_true', help='Remove build/dist before building')
     parser.add_argument('--skip-frontend', action='store_true',
                         help='Skip frontend build (use existing frontend/dist)')
+    stamp = parser.add_mutually_exclusive_group()
+    stamp.add_argument('--stamp', dest='stamp', action='store_true', default=None,
+                       help='Force the commit stamp on (default: on unless HEAD is the release tag)')
+    stamp.add_argument('--no-stamp', dest='stamp', action='store_false',
+                       help='Force the commit stamp off (what a release build does automatically)')
     args = parser.parse_args()
 
     check_venv()
@@ -252,6 +310,9 @@ def main():
         clean()
 
     ensure_icons()
+
+    # Before PyInstaller: the spec bundles BUILD_INFO if it exists.
+    write_build_info(force_stamp=args.stamp)
 
     # AI reference sync + schema-driven codegen must happen before the frontend
     # build (which compiles recipes.generated.ts) and before PyInstaller (which

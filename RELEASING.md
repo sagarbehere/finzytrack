@@ -24,6 +24,28 @@ OpenAPI *document* version, unrelated to the app version.
 The git tag must equal `v` + the contents of `/VERSION` (e.g. `/VERSION` = `0.2.1`
 → tag `v0.2.1`). Keep them in lockstep.
 
+## Build stamps: which binary is this?
+
+Test builds of the same `/VERSION` are otherwise indistinguishable — two dispatch
+builds of different commits both report `0.2.1`, and neither you nor a tester can
+tell which one is installed. So `desktop/build.py` writes a `BUILD_INFO` file with
+the build's commit, and the About screen shows it as semver build metadata:
+
+```
+0.2.1+3894c8a              a dispatch build of commit 3894c8a
+0.2.1+3894c8a (modified)   built from a dirty working tree
+0.2.2                      a release build — no stamp
+```
+
+**Release builds carry no stamp, automatically.** A release is exactly a build
+whose HEAD is the `v<VERSION>` tag, which `build.py` detects — so tagging is all
+it takes. Override with `--stamp` / `--no-stamp` if you ever need to.
+
+The commit cannot live in `/VERSION` itself: committing that file would change
+the SHA it names. `BUILD_INFO` is generated per build and gitignored — never
+commit it. `CFBundleShortVersionString` keeps the clean `/VERSION` value, since
+Apple wants dot-separated integers there.
+
 ## Release flow
 
 1. **Bump `/VERSION`** (e.g. `0.2.1`) and commit it.
