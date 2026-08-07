@@ -21,6 +21,7 @@
     :colorBySign="isJsonKPIVisualization(recipe.visualization) && !!recipe.visualization.colorBySign"
     :secondaryValues="getKPISecondaryValues()"
     :secondaryLabel="isJsonKPIVisualization(recipe.visualization) ? recipe.visualization.secondaryLabel : undefined"
+    :emptyText="isJsonKPIVisualization(recipe.visualization) ? recipe.visualization.emptyText : undefined"
   />
 
   <!-- Chart -->
@@ -301,6 +302,11 @@ function resolveTemplateLink(
   for (const [key, tmpl] of Object.entries(template.query)) {
     query[key] = interpolateString(tmpl, (path) => resolvePath(path, vars))
   }
+  // A link whose every query value interpolated to empty has no filter to apply —
+  // it would land on an unfiltered/garbage view. Suppress it (render plain text).
+  // This is how a row that legitimately has no target (e.g. the "Unattributed
+  // interest" row, whose filter_account is empty) opts out of a drill-through.
+  if (Object.values(query).every((v) => v.trim() === '')) return null
   return { name: template.name, query }
 }
 

@@ -17,6 +17,7 @@ from app.compute.function_registry import FunctionRegistry
 from app.compute.functions.budget_for_range import BudgetForRangeFunction
 from app.compute.functions.portfolio_series import PortfolioSeriesFunction
 from app.compute.functions.portfolio_returns import PortfolioReturnsFunction
+from app.compute.functions.cash_instruments import CashInstrumentsFunction
 from app.dependencies import get_sqlite_reader
 from app.services.sqlite_reader import SqliteReader
 from app.schemas.compute_schemas import ComputeRequest, ComputeData
@@ -47,6 +48,7 @@ def build_registry(reader: SqliteReader) -> FunctionRegistry:
     registry.register(BudgetForRangeFunction(reader))
     registry.register(PortfolioSeriesFunction(reader))
     registry.register(PortfolioReturnsFunction(reader))
+    registry.register(CashInstrumentsFunction(reader))
     return registry
 
 

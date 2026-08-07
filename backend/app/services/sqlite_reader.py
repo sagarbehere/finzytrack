@@ -757,6 +757,54 @@ class SqliteReader:
 
         return self._query(query)
 
+    def get_transaction_legs_touching(self, accounts: List[str]) -> List[dict]:
+        """Return **all legs** of every transaction that has a posting to one of
+        ``accounts``, each as ``{transaction_id, transaction_date, account,
+        account_type, currency, amount}`` ordered by date. Empty ``accounts`` → ``[]``.
+
+        Raw material for **interest attribution** (dev-docs/metadata-conventions.md):
+        pass the income accounts tagged ``income-type: "interest"`` (identified by
+        metadata, **not** by account name); the income leg carries the amount, and the
+        other legs identify the earning instrument (an investment-account counterpart,
+        or the reduced/closed leg at maturity). Money columns stay TEXT/decimal-string.
+        """
+        if not accounts:
+            return []
+
+        def query(con: sqlite3.Connection) -> List[dict]:
+            placeholders = ",".join("?" for _ in accounts)
+            rows = con.execute(
+                "SELECT transaction_id, transaction_date, account, account_type, "
+                "currency, amount FROM postings WHERE transaction_id IN ("
+                f"  SELECT DISTINCT transaction_id FROM postings WHERE account IN ({placeholders})"
+                ") ORDER BY transaction_date, transaction_id, posting_id",
+                list(accounts),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+        return self._query(query)
+
+    def get_postings_by_account(self, accounts: List[str]) -> List[dict]:
+        """Return postings for the given ``accounts`` as ``{account,
+        transaction_date, amount, currency}`` ordered by date — the raw material for
+        reconstructing an account's **balance timeline** (e.g. a time-weighted
+        average balance for effective-yield). Empty ``accounts`` returns ``[]``.
+        """
+        if not accounts:
+            return []
+
+        def query(con: sqlite3.Connection) -> List[dict]:
+            placeholders = ",".join("?" for _ in accounts)
+            rows = con.execute(
+                f"SELECT account, transaction_date, amount, currency FROM postings "
+                f"WHERE account IN ({placeholders}) "
+                f"ORDER BY transaction_date, posting_id",
+                list(accounts),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+        return self._query(query)
+
     def get_prices(
         self,
         currency: Optional[str] = None,

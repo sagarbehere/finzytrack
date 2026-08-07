@@ -336,6 +336,10 @@ export interface JsonKPIVisualization {
    * Optional label prefix for the secondary sub-line (e.g. 'YTD').
    */
   secondaryLabel?: string;
+  /**
+   * Opt-in empty state: shown instead of '$0.00' when the KPI has no non-zero value (e.g. no unattributed interest). Omit to keep showing the zero value.
+   */
+  emptyText?: string;
   clickLink?: JsonValueLinkConfig;
   [k: string]: unknown;
 }

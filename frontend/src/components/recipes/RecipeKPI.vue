@@ -1,6 +1,6 @@
 <template>
   <div class="flex items-center h-full overflow-hidden">
-    <div v-if="icon" class="flex-shrink-0 mr-4">
+    <div v-if="icon && !showEmpty" class="flex-shrink-0 mr-4">
       <div
         class="w-12 h-12 rounded-full flex items-center justify-center"
         :style="{ backgroundColor: iconColorHex }"
@@ -19,8 +19,14 @@
       <p v-if="label" class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
         {{ label }}
       </p>
+      <!-- Empty state (opt-in via emptyText): a user-defined message instead of a
+           meaningless "$0.00" when the KPI has nothing to show (e.g. no unattributed
+           interest). Only kicks in when emptyText is set AND the value is empty/zero. -->
+      <p v-if="showEmpty" class="text-sm text-gray-500 dark:text-gray-400">
+        {{ emptyText }}
+      </p>
       <!-- Multi-currency stacked values -->
-      <template v-if="values && values.length > 0">
+      <template v-else-if="values && values.length > 0">
         <p
           v-for="(item, index) in values"
           :key="index"
@@ -88,6 +94,8 @@ interface Props {
   /** Optional muted sub-line values (e.g. a YTD figure under an all-time total). */
   secondaryValues?: CurrencyAmount[]
   secondaryLabel?: string
+  /** Opt-in empty state: shown instead of "$0.00" when the KPI is empty/zero. */
+  emptyText?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -125,6 +133,10 @@ const shownAmounts = computed<number[]>(() =>
 )
 const isNegative = computed(() => shownAmounts.value.some((n) => n < 0))
 const isExactlyZero = computed(() => !isNegative.value && shownAmounts.value.every((n) => n === 0))
+
+// Empty state is opt-in: only when the recipe supplies `emptyText` AND there is
+// nothing non-zero to show. A KPI without emptyText keeps the old "$0.00" behaviour.
+const showEmpty = computed(() => !!props.emptyText && !(props.values && props.values.length > 0) && isExactlyZero.value)
 
 // Total lines of content the card must fit: one per currency value, plus the
 // optional secondary sub-line and trend line (and a label, if present). A

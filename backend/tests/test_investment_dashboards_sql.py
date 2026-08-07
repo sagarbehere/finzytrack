@@ -40,6 +40,7 @@ option "operating_currency" "USD"
 2020-01-01 open Assets:Broker USD,VOO
 2020-01-01 open Assets:Cash USD
 2020-01-01 open Income:Dividends:VOO USD
+  income-type: "dividend"
 
 2021-01-10 * "buy"
   Assets:Broker  10 VOO {100.00 USD}
@@ -102,11 +103,30 @@ def test_net_worth_includes_holdings_market_value(mirror):
     assert round(rows["USD"], 2) == 312.00
 
 
+def test_income_classified_by_metadata_not_name(mirror):
+    """Returns & Income classifies income by the account's `income-type` metadata,
+    never by an `Income:Dividends`/`Income:Interest` name. The tagged
+    `Income:Dividends:VOO` dividend ($12) must surface in the income KPI and land in
+    the 'dividends' column of the over-time split — proving the metadata join works."""
+    con = sqlite3.connect(str(mirror))
+    con.row_factory = sqlite3.Row
+    kpi = next(q for i, q in _query_steps("returns-income") if i == "main" and "income-type" in q and "GROUP BY p.currency" in q)
+    rows = con.execute(kpi, {"currency": "*", "asOf": "2030-01-01"}).fetchall()
+    by_ccy = {r["currency"]: r["amount"] for r in rows}
+    assert round(by_ccy["USD"], 2) == 12.00   # the dividend, picked up via metadata
+
+    ovt = next(q for i, q in _query_steps("returns-income") if "dividends" in q and "interest" in q and "income-type" in q)
+    orows = con.execute(ovt, {"currency": "USD", "asOf": "2030-01-01"}).fetchall()
+    con.close()
+    total_div = sum(r["dividends"] for r in orows)
+    assert round(total_div, 2) == 12.00        # lands in the dividend column, not interest
+
+
 def test_holdings_table_market_value_and_weight(mirror):
     con = sqlite3.connect(str(mirror))
     con.row_factory = sqlite3.Row
     sql = next(q for i, q in _query_steps("investment-holdings") if i == "main")
-    rows = con.execute(sql, {"currency": "USD"}).fetchall()
+    rows = con.execute(sql, {"currency": "USD", "asOf": "2030-01-01"}).fetchall()
     con.close()
     assert len(rows) == 1
     voo = rows[0]

@@ -188,22 +188,36 @@ ACCOUNTS = """
 2015-12-31 open Equity:Taxes:State                                  USD
 
 2015-12-31 open Income:Salary                                       USD
+  income-type: "salary"
 2015-12-31 open Income:Bonus                                        USD
+  income-type: "salary"
 2015-12-31 open Income:Other                                        USD,INR
 2015-12-31 open Income:Rewards                                      USD
 2015-12-31 open Income:Interest:Savings:WestCoastBank               USD
+  income-type: "interest"
 2015-12-31 open Income:Interest:Savings:ValleyCU                    USD
+  income-type: "interest"
 2015-12-31 open Income:Interest:Checking:WestCoastBank              USD
+  income-type: "interest"
 2015-12-31 open Income:Interest:Checking:ValleyCU                   USD
+  income-type: "interest"
 2015-12-31 open Income:Interest:Savings:PinnacleBank:NRE            INR
+  income-type: "interest"
 2015-12-31 open Income:Interest:Savings:PinnacleBank:NRO            INR
+  income-type: "interest"
 
 2015-12-31 open Income:Dividends:VOO                                USD
+  income-type: "dividend"
 2015-12-31 open Income:Dividends:VTI                                USD
+  income-type: "dividend"
 2015-12-31 open Income:Dividends:AAPL                               USD
+  income-type: "dividend"
 2015-12-31 open Income:Dividends:VMFXX                              USD
+  income-type: "dividend"
 2015-12-31 open Income:CapitalGains:VOO                             USD
+  income-type: "capital-gains"
 2015-12-31 open Income:CapitalGains:AAPL                            USD
+  income-type: "capital-gains"
 
 2015-12-31 open Expenses:AutoInsurance
 2015-12-31 open Expenses:Internet
@@ -249,7 +263,24 @@ ACCOUNTS = """
 2019-04-22 open Assets:Liquid:Savings:HighYield:HYSA                USD
   asset-class: "savings"
 2019-04-24 open Income:Interest:Savings:HighYield:HYSA              USD
+  income-type: "interest"
 2020-01-01 open Income:Interest:TermDeposits                        USD,INR
+  income-type: "interest"
+2022-01-03 open Income:Interest:AxisBank:FD-Linked                  USD
+  income-type: "interest"
+2022-01-03 open Assets:Investments:TermDeposits:HometownBank:CD-Compound USD
+  asset-class: "cd"
+  interest_rate: "4.80%"
+  maturity_date: 2027-01-03
+2022-01-03 open Assets:Investments:TermDeposits:AxisBank:FD-Linked  USD
+  asset-class: "cd"
+  interest_rate: "5.25%"
+  maturity_date: 2027-01-03
+  interest_account: "Income:Interest:AxisBank:FD-Linked"
+2022-01-03 open Assets:Investments:TermDeposits:HometownBank:CD-Matured USD
+  asset-class: "cd"
+  interest_rate: "4.50%"
+  maturity_date: 2024-01-03
 2023-01-14 open Assets:Investments:TermDeposits:ValleyCU:CD1        USD
   asset-class: "cd"
   interest_rate: "4.50%"
@@ -279,12 +310,14 @@ ACCOUNTS = """
   interest_rate: "6.90%"
   maturity_date: 2028-02-03
 2026-02-23 open Income:Business:Consulting                          INR
+  income-type: "business"
 2026-03-01 open Expenses:Business                                   INR
 2026-03-06 open Assets:Liquid:Savings:NationalBank                  INR
   asset-class: "savings"
 2026-03-06 open Assets:Liquid:Checking:NationalBank                 INR
   asset-class: "checking"
 2026-03-06 open Income:Interest:Savings:NationalBank                INR
+  income-type: "interest"
 """.strip()
 
 # --- Pad and balance directives ---
@@ -941,6 +974,56 @@ def gen_term_deposit_interest(dt):
         (acct, amt, "USD"),
         ("Income:Interest:TermDeposits", -amt, "USD"),
     ], source_account=acct)
+
+def gen_interest_showcase():
+    """Showcase interest attribution (dev-docs/metadata-conventions.md) with three
+    explicit instruments, so the Cash & Deposits dashboard demonstrates every path:
+
+      (a) compounding — interest credited to the CD itself, via a *shared* income
+          account, NO metadata → attributed by the structural counterpart;
+      (b) paid out — interest deposited into a savings account, resolved by the FD's
+          ``interest_account`` link → attributed to the FD wherever the cash landed;
+      (c) matured — principal + interest swept into a (tagged) savings account and
+          the CD closed → attributed to the CD via the reduced/closed leg.
+
+    Case (d), unattributed/graceful, is already exercised by
+    ``gen_term_deposit_interest`` (interest to checking, shared account, no link).
+    Amounts/dates are fixed (deterministic).
+    """
+    src = "Assets:Liquid:Checking:WestCoastBank"      # USD checking (funding)
+    sav = "Assets:Liquid:Savings:HighYield:HYSA"      # tagged savings (destination)
+    out = []
+
+    # (a) Compounding CD — shared income account, no link.
+    cda = "Assets:Investments:TermDeposits:HometownBank:CD-Compound"
+    out.append((date(2022, 1, 3), gen_term_deposit_purchase(date(2022, 1, 3), cda, 20000.00, src)))
+    for y, amt in ((2023, 960.00), (2024, 1006.00), (2025, 1054.00), (2026, 1105.00)):
+        out.append((date(y, 1, 3), txn(date(y, 1, 3), "CD Interest (compounded)", "", [
+            (cda, amt, "USD"),
+            ("Income:Interest:TermDeposits", -amt, "USD"),
+        ], source_account=cda)))
+
+    # (b) Paid-out FD — interest to savings, attributed via interest_account link.
+    fdb = "Assets:Investments:TermDeposits:AxisBank:FD-Linked"
+    inc = "Income:Interest:AxisBank:FD-Linked"
+    out.append((date(2022, 1, 3), gen_term_deposit_purchase(date(2022, 1, 3), fdb, 15000.00, src)))
+    for y in (2023, 2024, 2025, 2026):
+        out.append((date(y, 1, 3), txn(date(y, 1, 3), "FD Interest (paid out)", "", [
+            (sav, 787.50, "USD"),
+            (inc, -787.50, "USD"),
+        ], source_account=sav)))
+
+    # (c) Maturing CD — principal + interest to a tagged savings account, then close.
+    cdm = "Assets:Investments:TermDeposits:HometownBank:CD-Matured"
+    out.append((date(2022, 1, 3), gen_term_deposit_purchase(date(2022, 1, 3), cdm, 10000.00, src)))
+    out.append((date(2024, 1, 3), txn(date(2024, 1, 3), "CD Matured", "principal + interest to savings", [
+        (sav, 10920.00, "USD"),
+        (cdm, -10000.00, "USD"),
+        ("Income:Interest:TermDeposits", -920.00, "USD"),
+    ], source_account=sav)))
+    out.append((date(2024, 1, 4), f"2024-01-04 close {cdm}"))
+
+    return out
 
 def gen_inr_business_income(dt):
     amt = round(random.uniform(50000, 200000), 0)
@@ -1607,6 +1690,9 @@ def generate(anchor_month: date = _REFERENCE_END.replace(day=1), buffer_months: 
     all_txns.append((date(2024, 8, 14), gen_term_deposit_purchase(
         date(2024, 8, 14), "Assets:Investments:TermDeposits:ValleyCU:CD4",
         100000.00, "Assets:Liquid:Savings:ValleyCU")))
+
+    # Interest-attribution showcase: compounding / paid-out+link / matured (§ demo).
+    all_txns.extend(gen_interest_showcase())
 
     # I-Bond purchases — commodity-per-issue (units = face dollars @ 1.00),
     # valued formulaically via the ibonds library (see generate_prices).

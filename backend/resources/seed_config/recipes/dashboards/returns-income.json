@@ -26,9 +26,9 @@
     {
       "id": "kpi-income",
       "title": "Income (dividends + interest)",
-      "helpText": "All dividend and interest income received to date, per currency. This is the honest total across every source — no 'is this investment interest' decision.",
+      "helpText": "Total interest + dividend income received to date, per currency. Income is classified by the income-type on each income account (income-type: interest / dividend) — not by account names. Tag an income account's open to include it here.",
       "steps": [
-        { "id": "main", "kind": "query", "query": "SELECT currency, ROUND(SUM(CAST(amount AS REAL)) * -1, 2) AS amount FROM postings WHERE (account LIKE 'Income:Dividends%' OR account LIKE 'Income:Interest%') AND (:currency = '*' OR currency = :currency) AND transaction_date <= :asOf GROUP BY currency HAVING amount != 0 ORDER BY currency" },
+        { "id": "main", "kind": "query", "query": "SELECT p.currency AS currency, ROUND(SUM(CAST(p.amount AS REAL)) * -1, 2) AS amount FROM postings p JOIN accounts a ON a.name = p.account WHERE LOWER(COALESCE(json_extract(a.metadata_json, '$.\"income-type\"'), '')) IN ('interest', 'dividend') AND (:currency = '*' OR p.currency = :currency) AND p.transaction_date <= :asOf GROUP BY p.currency HAVING amount != 0 ORDER BY p.currency" },
         { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
       ],
       "output": "out",
@@ -53,7 +53,7 @@
         { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" }
       ],
       "steps": [
-        { "id": "main", "kind": "query", "query": "SELECT CAST(year AS TEXT) AS year, ROUND(SUM(CASE WHEN account LIKE 'Income:Dividends%' THEN CAST(amount AS REAL) ELSE 0 END) * -1, 2) AS dividends, ROUND(SUM(CASE WHEN account LIKE 'Income:Interest%' THEN CAST(amount AS REAL) ELSE 0 END) * -1, 2) AS interest FROM postings WHERE (account LIKE 'Income:Dividends%' OR account LIKE 'Income:Interest%') AND currency = :currency AND transaction_date <= :asOf GROUP BY year ORDER BY year" },
+        { "id": "main", "kind": "query", "query": "SELECT CAST(p.year AS TEXT) AS year, ROUND(SUM(CASE WHEN LOWER(json_extract(a.metadata_json, '$.\"income-type\"')) = 'dividend' THEN CAST(p.amount AS REAL) ELSE 0 END) * -1, 2) AS dividends, ROUND(SUM(CASE WHEN LOWER(json_extract(a.metadata_json, '$.\"income-type\"')) = 'interest' THEN CAST(p.amount AS REAL) ELSE 0 END) * -1, 2) AS interest FROM postings p JOIN accounts a ON a.name = p.account WHERE LOWER(COALESCE(json_extract(a.metadata_json, '$.\"income-type\"'), '')) IN ('interest', 'dividend') AND p.currency = :currency AND p.transaction_date <= :asOf GROUP BY p.year ORDER BY p.year" },
         { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
       ],
       "output": "out",
@@ -61,10 +61,6 @@
         "type": "chart",
         "chartType": "bar",
         "emptyText": "No dividend or interest income in this currency yet.",
-        "seriesClickLinks": {
-          "Dividends": { "name": "transactions", "query": { "accountContains": "Income:Dividends", "year": "{{data.year}}", "currency": "{{parameters.currency}}" } },
-          "Interest": { "name": "transactions", "query": { "accountContains": "Income:Interest", "year": "{{data.year}}", "currency": "{{parameters.currency}}" } }
-        },
         "options": {
           "tooltip": { "trigger": "axis" },
           "legend": { "show": true, "top": 0, "left": "center" },
@@ -81,9 +77,9 @@
     {
       "id": "income-by-source",
       "title": "Income by Source",
-      "helpText": "Which accounts your income came from through the selected date, largest first. Shows every currency; each currency totals separately.",
+      "helpText": "Which accounts your interest + dividend income came from through the selected date, largest first. Income is classified by each account's income-type metadata (not its name). Shows every currency; each currency totals separately.",
       "steps": [
-        { "id": "main", "kind": "query", "query": "SELECT account AS source, currency, ROUND(SUM(CAST(amount AS REAL)) * -1, 2) AS amount FROM postings WHERE (account LIKE 'Income:Dividends%' OR account LIKE 'Income:Interest%') AND (:currency = '*' OR currency = :currency) AND transaction_date <= :asOf GROUP BY account, currency HAVING amount != 0 ORDER BY currency, amount DESC" },
+        { "id": "main", "kind": "query", "query": "SELECT p.account AS source, p.currency AS currency, ROUND(SUM(CAST(p.amount AS REAL)) * -1, 2) AS amount FROM postings p JOIN accounts a ON a.name = p.account WHERE LOWER(COALESCE(json_extract(a.metadata_json, '$.\"income-type\"'), '')) IN ('interest', 'dividend') AND (:currency = '*' OR p.currency = :currency) AND p.transaction_date <= :asOf GROUP BY p.account, p.currency HAVING amount != 0 ORDER BY p.currency, amount DESC" },
         { "id": "with-total", "kind": "transform", "fn": "appendTotal", "inputs": ["{{steps.main}}"], "config": { "field": "amount", "labelField": "source", "label": "Total", "groupField": "currency" } }
       ],
       "output": "with-total",

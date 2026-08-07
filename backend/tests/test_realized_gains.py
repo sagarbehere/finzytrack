@@ -98,7 +98,7 @@ def _dashboard_query(widget_id: str) -> str:
 def test_detail_query_gain_and_term_exact(mirror):
     con = sqlite3.connect(str(mirror))
     con.row_factory = sqlite3.Row
-    rows = con.execute(_dashboard_query("sales-detail"), {"currency": "USD"}).fetchall()
+    rows = con.execute(_dashboard_query("sales-detail"), {"currency": "USD", "asOf": "2030-01-01"}).fetchall()
     con.close()
     by_holding = {r["holding"]: r for r in rows}
     assert round(by_holding["VOO"]["gain"], 2) == 120.00
@@ -110,7 +110,7 @@ def test_detail_query_gain_and_term_exact(mirror):
 def test_by_year_splits_short_and_long(mirror):
     con = sqlite3.connect(str(mirror))
     con.row_factory = sqlite3.Row
-    rows = {r["year"]: r for r in con.execute(_dashboard_query("realized-by-year"), {"currency": "USD"}).fetchall()}
+    rows = {r["year"]: r for r in con.execute(_dashboard_query("realized-by-year"), {"currency": "USD", "asOf": "2030-01-01"}).fetchall()}
     con.close()
     assert round(rows["2023"]["long_term"], 2) == 120.00
     assert round(rows["2023"]["short_term"], 2) == 0.00

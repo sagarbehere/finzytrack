@@ -535,6 +535,7 @@ Budget-vs-actual progress list: one row per budgeted account with a fill bar (sp
 | `colorBySign` | `boolean` | — | Colour the value (and icon) by sign — green when ≥ 0, red when negative. Use for figures where negative is bad, e.g. a Remaining/over-budget KPI. |
 | `secondaryField` | `string` | — | Optional. A second amount field (per row / per currency) rendered as a small muted sub-line beneath the primary value — e.g. a year-to-date figure under an all-time total. Formatted as currency using the same currencyField. |
 | `secondaryLabel` | `string` | — | Optional label prefix for the secondary sub-line (e.g. 'YTD'). |
+| `emptyText` | `string` | — | Opt-in empty state: shown instead of '$0.00' when the KPI has no non-zero value (e.g. no unattributed interest). Omit to keep showing the zero value. |
 | `clickLink` | `JsonValueLinkConfig` | — |  |
 
 #### `JsonPivotVisualization`
