@@ -208,10 +208,14 @@ ACCOUNTS = """
 
 2015-12-31 open Income:Dividends:VOO                                USD
   income-type: "dividend"
+  dividend_of: "VOO"
 2015-12-31 open Income:Dividends:VTI                                USD
   income-type: "dividend"
+  dividend_of: "VTI"
 2015-12-31 open Income:Dividends:AAPL                               USD
   income-type: "dividend"
+  ; intentionally NO dividend_of — its cash dividends stay unattributed to an
+  ; asset class, to showcase the "Unattributed Dividends" KPI + graceful degradation
 2015-12-31 open Income:Dividends:VMFXX                              USD
   income-type: "dividend"
 2015-12-31 open Income:CapitalGains:VOO                             USD

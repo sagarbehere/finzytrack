@@ -729,9 +729,11 @@ class SqliteReader:
 
         return self._query(query)
 
-    def get_investment_cashflow_postings(self, holdings: List[str]) -> List[dict]:
+    def get_investment_cashflow_postings(
+        self, holdings: List[str], dividend_accounts: List[str]
+    ) -> List[dict]:
         """Return **all legs** of every transaction that either touches an
-        investment holding or books to an ``Income:Dividends*`` account, each as
+        investment holding or books to one of ``dividend_accounts``, each as
         ``{transaction_id, transaction_date, account, account_type, currency,
         amount, cost_amount, price_amount}`` ordered by date.
 
@@ -739,19 +741,23 @@ class SqliteReader:
         from these legs the caller extracts the external cash flows — the cash
         (currency) Asset/Liability legs of investment transactions (a buy's cash
         out, a sale's proceeds, a cash dividend in; a reinvested-income DRIP has
-        no cash leg and nets to zero). Money columns stay TEXT/decimal-string.
-        Empty ``holdings`` still returns dividend transactions.
+        no cash leg and nets to zero). ``dividend_accounts`` are the income
+        accounts tagged ``income-type: "dividend"`` (identified by **metadata**,
+        never by an ``Income:Dividends`` name); passing them in is what pulls a
+        *cash* dividend — which touches no holding leg — into the set. Money
+        columns stay TEXT/decimal-string. With both lists empty, nothing matches.
         """
         def query(con: sqlite3.Connection) -> List[dict]:
-            placeholders = ",".join("?" for _ in holdings) if holdings else "NULL"
+            hp = ",".join("?" for _ in holdings) if holdings else "NULL"
+            dp = ",".join("?" for _ in dividend_accounts) if dividend_accounts else "NULL"
             rows = con.execute(
                 f"SELECT transaction_id, transaction_date, account, account_type, "
                 f"currency, amount, cost_amount, price_amount FROM postings "
                 f"WHERE transaction_id IN ("
                 f"  SELECT DISTINCT transaction_id FROM postings "
-                f"  WHERE currency IN ({placeholders}) OR account LIKE 'Income:Dividends%'"
+                f"  WHERE currency IN ({hp}) OR account IN ({dp})"
                 f") ORDER BY transaction_date, transaction_id, posting_id",
-                list(holdings),
+                list(holdings) + list(dividend_accounts),
             ).fetchall()
             return [dict(r) for r in rows]
 

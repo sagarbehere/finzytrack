@@ -87,7 +87,8 @@ class CashInstrumentsFunction(ComputeFunction):
         "the instrument that earned it: by the instrument's interest_account link, "
         "else by the investment counterpart in the interest transaction (the "
         "reduced/closed leg at maturity); interest that can't be attributed is "
-        "returned as per-currency 'Unattributed interest' rows, never misattributed. "
+        "returned as unattributed rows keyed by the income account that booked it "
+        "(degraded=true), never misattributed. "
         "Effective yield = interest / time-weighted average balance over the "
         "account's active life, annualized; null when it can't be computed. No "
         "cross-currency conversion. Money values are decimal strings."
@@ -95,10 +96,10 @@ class CashInstrumentsFunction(ComputeFunction):
     output_shape = (
         "[{account, filter_account, type, currency, rate, maturity, balance, "
         "interest_earned, effective_yield, degraded}] — one row per currency-balance "
-        "Asset account (filter_account = account, or '' for the unattributed rows so "
-        "they render no drill-through), "
-        "plus rows with account='Unattributed interest' (degraded=true) per currency "
-        "with unattributed interest. balance/interest_earned are decimal strings or "
+        "Asset account (filter_account = account), plus one row per (income account, "
+        "currency) with unattributed interest (degraded=true; account/filter_account "
+        "= that income account, so it drills to those postings). "
+        "balance/interest_earned are decimal strings or "
         "null; effective_yield is a decimal ratio string (e.g. '0.045') or null; "
         "rate/maturity are the recorded metadata strings or null."
     )
@@ -162,7 +163,12 @@ class CashInstrumentsFunction(ComputeFunction):
             by_txn[leg["transaction_id"]].append(leg)
 
         interest: dict[tuple[str, str], Decimal] = defaultdict(lambda: Decimal(0))
-        unattributed: dict[str, Decimal] = defaultdict(lambda: Decimal(0))
+        # Unattributed interest is keyed by the (income account, currency) that
+        # booked it. The earning *instrument* is unknown — that's what makes it
+        # unattributed — but the income account is not, so we keep it: it lets the
+        # dashboard drill into those postings and names where to add an
+        # `interest_account` link.
+        unattributed: dict[tuple[str, str], Decimal] = defaultdict(lambda: Decimal(0))
         for tlegs in by_txn.values():
             for leg in tlegs:
                 if leg["account"] not in interest_income_accounts:
@@ -197,7 +203,7 @@ class CashInstrumentsFunction(ComputeFunction):
                 if instrument is not None:
                     interest[(instrument, ccy)] += earned
                 else:
-                    unattributed[ccy] += earned
+                    unattributed[(leg["account"], ccy)] += earned
 
         # ── Balance timelines for interest earners (for average-balance yield) ──
         earners = sorted({acct for (acct, _c) in interest})
@@ -257,13 +263,17 @@ class CashInstrumentsFunction(ComputeFunction):
 
         result.sort(key=lambda r: (r["currency"], r["type"], r["account"]))
 
-        # Surface unattributed interest as its own per-currency rows.
-        for ccy, amt in sorted(unattributed.items()):
+        # Surface unattributed interest as one row per (income account, currency):
+        # `account`/`filter_account` = the income account that booked it, so the row
+        # drills into those transactions and names where a link would fix the gap.
+        # degraded=true marks them — the KPI sums them by currency, the "by account"
+        # list shows them, and the accounts table filters them out.
+        for (inc_acct, ccy), amt in sorted(unattributed.items()):
             if amt == 0 or (want_ccy and ccy != want_ccy):
                 continue
             result.append({
-                "account": "Unattributed interest",
-                "filter_account": "",   # no single account → no drill-through link
+                "account": inc_acct,
+                "filter_account": inc_acct,   # drills to that income account's postings
                 "type": "—",
                 "currency": ccy,
                 "rate": None,

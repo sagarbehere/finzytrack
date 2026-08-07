@@ -65,6 +65,31 @@ option "operating_currency" "USD"
 """
 
 
+# A cash-dividend ledger whose dividend income account is deliberately NOT named
+# `Income:Dividends*` — proving attribution is metadata-driven (`income-type` +
+# `dividend_of`), never name-based. Same buy/price as the 30% case; a mid-year
+# cash dividend either feeds the etf asset-class XIRR (linked) or is dropped
+# (unlinked, degrading to portfolio scope only).
+_LEDGER_DIV_LINKED = """\
+option "operating_currency" "USD"
+2020-01-01 commodity VOO
+  asset-class: "etf"
+2020-01-01 open Assets:Broker USD,VOO
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Income:Payouts:BigCo USD
+  income-type: "dividend"
+  dividend_of: "VOO"
+2021-01-01 * "buy"
+  Assets:Broker  10 VOO {100.00 USD}
+  Assets:Cash  -1000.00 USD
+2021-07-01 * "cash dividend"
+  Assets:Cash  50.00 USD
+  Income:Payouts:BigCo  -50.00 USD
+"""
+_LEDGER_DIV_UNLINKED = _LEDGER_DIV_LINKED.replace('  dividend_of: "VOO"\n', "")
+_SIDECAR_DIV = "2022-01-01 price VOO 130.00 USD\n"
+
+
 def _reader(tmp_path, ledger_text, sidecar_text):
     ledger = tmp_path / "main.beancount"
     ledger.write_text(ledger_text)
@@ -97,6 +122,35 @@ def test_degenerate_series_returns_null_xirr(tmp_path):
     assert len(rows) == 1
     assert rows[0]["xirr"] is None            # single flow → no XIRR
     assert rows[0]["simple_gain"] == "0.00"   # unpriced MMF: market == cost
+
+
+def test_cash_dividend_attributes_to_asset_class_only_when_linked(tmp_path):
+    d1 = tmp_path / "linked"; d1.mkdir()
+    etf = {x["group"]: x for x in asyncio.run(
+        PortfolioReturnsFunction(_reader(d1, _LEDGER_DIV_LINKED, _SIDECAR_DIV))
+        .execute(**{"to": "2022-01-01", "scope": "asset-class"}))}["etf"]
+
+    d2 = tmp_path / "unlinked"; d2.mkdir()
+    etf2 = {x["group"]: x for x in asyncio.run(
+        PortfolioReturnsFunction(_reader(d2, _LEDGER_DIV_UNLINKED, _SIDECAR_DIV))
+        .execute(**{"to": "2022-01-01", "scope": "asset-class"}))}["etf"]
+
+    # Same terminal facts either way; only the dividend's inclusion in XIRR changes.
+    assert etf["market_value"] == etf2["market_value"] == "1300.00"
+    assert abs(float(etf2["xirr"]) - 0.30) < 1e-4     # unlinked: dividend dropped → buy-only 30%
+    assert float(etf["xirr"]) > float(etf2["xirr"])   # linked: +50 inflow → higher XIRR
+
+
+def test_dividend_link_never_changes_portfolio_scope(tmp_path):
+    # The cash dividend's cash leg is always in the portfolio-scope flows, link or
+    # not — the link only governs *asset-class* attribution.
+    d1 = tmp_path / "linked"; d1.mkdir()
+    p = asyncio.run(PortfolioReturnsFunction(_reader(d1, _LEDGER_DIV_LINKED, _SIDECAR_DIV))
+                    .execute(**{"to": "2022-01-01", "scope": "portfolio"}))[0]
+    d2 = tmp_path / "unlinked"; d2.mkdir()
+    p2 = asyncio.run(PortfolioReturnsFunction(_reader(d2, _LEDGER_DIV_UNLINKED, _SIDECAR_DIV))
+                     .execute(**{"to": "2022-01-01", "scope": "portfolio"}))[0]
+    assert p["xirr"] == p2["xirr"]
 
 
 def test_no_holdings_returns_empty(tmp_path):

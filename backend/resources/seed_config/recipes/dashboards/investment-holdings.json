@@ -12,7 +12,8 @@
   "steps": [
     { "id": "series", "kind": "compute", "fn": "portfolio_series", "args": { "to": "{{params.asOf}}", "scope": "overall", "currency": "{{params.currency}}", "cadence": "monthly" } },
     { "id": "now", "kind": "transform", "fn": "where", "inputs": ["{{steps.series}}"], "config": { "field": "date", "equals": "{{params.asOf}}" } },
-    { "id": "returns-data", "kind": "compute", "fn": "portfolio_returns", "args": { "to": "{{params.asOf}}", "scope": "asset-class", "currency": "{{params.currency}}" } }
+    { "id": "returns-data", "kind": "compute", "fn": "portfolio_returns", "args": { "to": "{{params.asOf}}", "scope": "asset-class", "currency": "{{params.currency}}" } },
+    { "id": "unattributed-dividends", "kind": "query", "query": "SELECT p.account AS account, p.currency AS currency, ROUND(SUM(CAST(p.amount AS REAL)) * -1, 2) AS amount FROM postings p JOIN accounts a ON a.name = p.account WHERE LOWER(COALESCE(json_extract(a.metadata_json, '$.\"income-type\"'), '')) = 'dividend' AND json_extract(a.metadata_json, '$.dividend_of') IS NULL AND p.transaction_date <= :asOf AND (:currency = '*' OR p.currency = :currency) AND NOT EXISTS (SELECT 1 FROM postings h JOIN commodities c ON c.code = h.currency AND c.is_currency = 0 WHERE h.transaction_id = p.transaction_id) GROUP BY p.account, p.currency HAVING amount != 0 ORDER BY p.currency, amount DESC" }
   ],
 
   "layout": {
@@ -26,9 +27,11 @@
       { "widgetId": "value-over-time","gridArea": "2 / 1 / 5 / 13" },
       { "widgetId": "by-holding",     "gridArea": "5 / 1 / 8 / 7" },
       { "widgetId": "returns",        "gridArea": "5 / 7 / 8 / 13" },
-      { "widgetId": "holdings",       "gridArea": "8 / 1 / 11 / 13" },
-      { "widgetId": "lots",           "gridArea": "11 / 1 / 14 / 7" },
-      { "widgetId": "price-history",  "gridArea": "11 / 7 / 14 / 13" }
+      { "widgetId": "kpi-unattributed-dividends",  "gridArea": "8 / 1 / 10 / 5" },
+      { "widgetId": "unattributed-dividends-list", "gridArea": "8 / 5 / 10 / 13" },
+      { "widgetId": "holdings",       "gridArea": "10 / 1 / 13 / 13" },
+      { "widgetId": "lots",           "gridArea": "13 / 1 / 16 / 7" },
+      { "widgetId": "price-history",  "gridArea": "13 / 7 / 16 / 13" }
     ]
   },
 
@@ -141,6 +144,34 @@
           ]
         },
         "clickLink": { "name": "transactions", "query": { "currency": "{{data.holding}}" } }
+      }
+    },
+    {
+      "id": "kpi-unattributed-dividends",
+      "title": "Unattributed Dividends",
+      "helpText": "Dividend income not tied to a specific holding, per currency. This happens when a cash dividend is paid to a cash account and its income account declares no dividend_of link to the security it came from. It still counts in your income totals, but it can't be assigned to an asset class — so the asset-class returns above leave it out (their XIRR is slightly understated). See the list beside this for which accounts, and add dividend_of: \"<SYMBOL>\" to attribute them. When everything is attributed, this shows nothing.",
+      "steps": [
+        { "id": "by-ccy", "kind": "transform", "fn": "groupBy", "inputs": ["{{dashboard.steps.unattributed-dividends}}"], "config": { "key": "currency", "sum": ["amount"] } }
+      ],
+      "output": "by-ccy",
+      "visualization": { "type": "kpi", "icon": "!", "iconColor": "{{theme.valence.warn}}", "multiCurrency": true, "amountField": "amount", "currencyField": "currency", "emptyText": "All dividends attributed" }
+    },
+    {
+      "id": "unattributed-dividends-list",
+      "title": "Unattributed Dividends by Account",
+      "helpText": "The dividend income that makes up the Unattributed Dividends figure, grouped by the income account that recorded it. Click an account to see its transactions; add dividend_of: \"<SYMBOL>\" to that account's open to attribute its dividends to the security's asset class. This list is empty when everything is attributed.",
+      "steps": [
+        { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{dashboard.steps.unattributed-dividends}}"] }
+      ],
+      "output": "out",
+      "visualization": {
+        "type": "table",
+        "emptyText": "All dividends are attributed to a holding.",
+        "columns": [
+          { "key": "account", "label": "Income Account", "format": "accountName2", "link": { "name": "transactions", "query": { "accountContains": "{{row.account}}" } } },
+          { "key": "currency", "label": "Currency" },
+          { "key": "amount", "label": "Dividends", "format": "currency", "currencyField": "currency", "align": "right" }
+        ]
       }
     },
     {

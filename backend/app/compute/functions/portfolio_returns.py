@@ -81,6 +81,10 @@ class PortfolioReturnsFunction(ComputeFunction):
         "scope='asset-class' (one row per asset-class per currency). XIRR uses the "
         "external cash flows (buys negative, sales and cash dividends positive; "
         "reinvested DRIP nets to zero) plus the terminal market value at 'to'. "
+        "Dividend accounts are found by income-type='dividend' metadata (never a "
+        "name); at asset-class scope a cash dividend is attributed to a class only "
+        "via the income account's dividend_of link to its security, else it counts "
+        "at portfolio scope only (surfaced by an Unattributed Dividends figure). "
         "XIRR is null when the series is degenerate (a single flow, all one sign, "
         "or non-convergent) — never a fabricated number. simple_gain = market "
         "value - cost basis; simple_gain_pct is a ratio. No cross-currency "
@@ -131,6 +135,23 @@ class PortfolioReturnsFunction(ComputeFunction):
         if not holdings:
             return []
 
+        # Dividend income accounts — identified by `income-type: "dividend"`
+        # metadata, NEVER by an `Income:Dividends` name. `dividend_of` (optional)
+        # links a dividend account to the security it pays for, so a *cash*
+        # dividend (no holding leg in the transaction) can still be attributed to
+        # that security's asset-class — the exact analog of `interest_account` for
+        # paid-out interest (dev-docs/metadata-conventions.md). Without the link a
+        # cash dividend degrades to portfolio-scope only (surfaced by the
+        # "Unattributed Dividends" KPI), never guessed from the account name.
+        dividend_accounts: list[str] = []
+        dividend_of: dict[str, str] = {}
+        for a in self._reader.get_accounts():
+            if str(a.metadata.get("income-type") or "").strip().lower() == "dividend":
+                dividend_accounts.append(a.name)
+                link = a.metadata.get("dividend_of")
+                if link:
+                    dividend_of[a.name] = str(link)
+
         # Terminal market value + cost basis at `to`, per group, from the tested
         # value-over-time function (its last sample is exactly `to`).
         series = await PortfolioSeriesFunction(self._reader).execute(
@@ -149,7 +170,7 @@ class PortfolioReturnsFunction(ComputeFunction):
             }
 
         # External cash flows, grouped by (group, currency).
-        legs = self._reader.get_investment_cashflow_postings(list(holdings))
+        legs = self._reader.get_investment_cashflow_postings(list(holdings), dividend_accounts)
         by_txn: dict[str, list[dict]] = {}
         for leg in legs:
             by_txn.setdefault(leg["transaction_id"], []).append(leg)
@@ -162,11 +183,11 @@ class PortfolioReturnsFunction(ComputeFunction):
             # Which asset-classes this transaction touches.
             classes: set[str] = set()
             for leg in tlegs:
-                if leg["currency"] in holdings:
+                if leg["currency"] in holdings:                    # buy/sell/DRIP: holding leg present
                     classes.add(asset_class_of[leg["currency"]])
-                elif leg["account"].startswith("Income:Dividends:"):
-                    sym = leg["account"].rsplit(":", 1)[-1]
-                    if sym in holdings:
+                else:                                              # cash dividend: attribute via the metadata link
+                    sym = dividend_of.get(leg["account"])
+                    if sym and sym in holdings:
                         classes.add(asset_class_of[sym])
             # Net cash (currency) legs in Asset/Liability accounts, per currency.
             cash: dict[str, Decimal] = {}

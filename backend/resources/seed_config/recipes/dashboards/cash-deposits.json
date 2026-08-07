@@ -16,8 +16,9 @@
       { "widgetId": "kpi-total-cash",   "gridArea": "1 / 1 / 2 / 7" },
       { "widgetId": "kpi-unattributed", "gridArea": "1 / 7 / 2 / 13" },
       { "widgetId": "accounts",         "gridArea": "2 / 1 / 6 / 13" },
-      { "widgetId": "by-type",        "gridArea": "6 / 1 / 9 / 6" },
-      { "widgetId": "maturities",     "gridArea": "6 / 6 / 9 / 13" }
+      { "widgetId": "unattributed-interest-list", "gridArea": "6 / 1 / 8 / 13" },
+      { "widgetId": "by-type",        "gridArea": "8 / 1 / 11 / 6" },
+      { "widgetId": "maturities",     "gridArea": "8 / 6 / 11 / 13" }
     ]
   },
 
@@ -39,18 +40,20 @@
       "helpText": "Interest that could not be tied to the instrument that earned it — per currency. This happens when interest is paid out to a separate account and the earning instrument declares no interest_account link. It is still counted in your income totals; it just can't be assigned a yield. Add an interest_account to the earning account's open to attribute it. When everything is attributed, this shows nothing.",
       "steps": [
         { "id": "main", "kind": "compute", "fn": "cash_instruments", "args": { "to": "{{params.asOf}}", "currency": "{{params.currency}}" } },
-        { "id": "only-unattributed", "kind": "transform", "fn": "where", "inputs": ["{{steps.main}}"], "config": { "field": "degraded", "equals": true } }
+        { "id": "only-unattributed", "kind": "transform", "fn": "where", "inputs": ["{{steps.main}}"], "config": { "field": "degraded", "equals": true } },
+        { "id": "by-ccy", "kind": "transform", "fn": "groupBy", "inputs": ["{{steps.only-unattributed}}"], "config": { "key": "currency", "sum": ["interest_earned"] } }
       ],
-      "output": "only-unattributed",
+      "output": "by-ccy",
       "visualization": { "type": "kpi", "icon": "!", "iconColor": "{{theme.valence.warn}}", "multiCurrency": true, "amountField": "interest_earned", "currencyField": "currency", "emptyText": "All interest attributed" }
     },
     {
       "id": "accounts",
       "title": "Accounts",
-      "helpText": "Every cash-balance account with its type, rate, maturity, interest earned, and effective yield (interest ÷ average balance, annualized). Interest is attributed to the account that earned it — even when paid out (via the account's interest_account) or at maturity; interest that can't be tied to an account shows as a \"Unattributed interest\" row. Tag an account's open with asset-class (checking/savings/cd/bond) to type it.",
+      "helpText": "Every cash-balance account with its type, rate, maturity, interest earned, and effective yield (interest ÷ average balance, annualized). Interest is attributed to the account that earned it — even when paid out (via the account's interest_account) or at maturity; interest that can't be tied to an account is listed separately under Unattributed Interest below. Tag an account's open with asset-class (checking/savings/cd/bond) to type it.",
       "steps": [
         { "id": "main", "kind": "compute", "fn": "cash_instruments", "args": { "to": "{{params.asOf}}", "currency": "{{params.currency}}" } },
-        { "id": "with-total", "kind": "transform", "fn": "appendTotal", "inputs": ["{{steps.main}}"], "config": { "field": "balance", "labelField": "account", "label": "Total", "groupField": "currency" } }
+        { "id": "real", "kind": "transform", "fn": "where", "inputs": ["{{steps.main}}"], "config": { "field": "degraded", "notEquals": true } },
+        { "id": "with-total", "kind": "transform", "fn": "appendTotal", "inputs": ["{{steps.real}}"], "config": { "field": "balance", "labelField": "account", "label": "Total", "groupField": "currency" } }
       ],
       "output": "with-total",
       "visualization": {
@@ -65,6 +68,25 @@
           { "key": "balance", "label": "Balance", "format": "currency", "currencyField": "currency", "align": "right" },
           { "key": "interest_earned", "label": "Interest Earned", "format": "currency", "currencyField": "currency", "align": "right" },
           { "key": "effective_yield", "label": "Yield", "format": "percent", "align": "right" }
+        ]
+      }
+    },
+    {
+      "id": "unattributed-interest-list",
+      "title": "Unattributed Interest by Account",
+      "helpText": "Interest that couldn't be tied to the instrument that earned it, grouped by the income account that recorded it. This happens when interest is paid out to a separate account and the earning instrument declares no interest_account link. Click an account to see its transactions; add an interest_account link on the earning instrument's open to attribute it. This list is empty when everything is attributed.",
+      "steps": [
+        { "id": "main", "kind": "compute", "fn": "cash_instruments", "args": { "to": "{{params.asOf}}", "currency": "{{params.currency}}" } },
+        { "id": "only", "kind": "transform", "fn": "where", "inputs": ["{{steps.main}}"], "config": { "field": "degraded", "equals": true } }
+      ],
+      "output": "only",
+      "visualization": {
+        "type": "table",
+        "emptyText": "All interest is attributed to an account.",
+        "columns": [
+          { "key": "account", "label": "Income Account", "format": "accountName2", "link": { "name": "transactions", "query": { "accountContains": "{{row.filter_account}}" } } },
+          { "key": "currency", "label": "Currency" },
+          { "key": "interest_earned", "label": "Interest", "format": "currency", "currencyField": "currency", "align": "right" }
         ]
       }
     },
