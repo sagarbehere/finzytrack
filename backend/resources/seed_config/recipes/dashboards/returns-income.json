@@ -25,7 +25,7 @@
   "widgets": [
     {
       "id": "kpi-income",
-      "title": "Income (dividends + interest)",
+      "title": "Interest & Dividends",
       "helpText": "Total interest + dividend income received to date, per currency. Income is classified by the income-type on each income account (income-type: interest / dividend) — not by account names. Tag an income account's open to include it here.",
       "steps": [
         { "id": "main", "kind": "query", "query": "SELECT p.currency AS currency, ROUND(SUM(CAST(p.amount AS REAL)) * -1, 2) AS amount FROM postings p JOIN accounts a ON a.name = p.account WHERE LOWER(COALESCE(json_extract(a.metadata_json, '$.\"income-type\"'), '')) IN ('interest', 'dividend') AND (:currency = '*' OR p.currency = :currency) AND p.transaction_date <= :asOf GROUP BY p.currency HAVING amount != 0 ORDER BY p.currency" },
@@ -47,7 +47,7 @@
     },
     {
       "id": "income-over-time",
-      "title": "Income Over Time",
+      "title": "Interest & Dividends Over Time",
       "helpText": "Dividends and interest received each year through the selected date, in the selected currency.",
       "parameters": [
         { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" }
@@ -76,7 +76,7 @@
     },
     {
       "id": "income-by-source",
-      "title": "Income by Source",
+      "title": "Interest & Dividends by Source",
       "helpText": "Which accounts your interest + dividend income came from through the selected date, largest first. Income is classified by each account's income-type metadata (not its name). Shows every currency; each currency totals separately.",
       "steps": [
         { "id": "main", "kind": "query", "query": "SELECT p.account AS source, p.currency AS currency, ROUND(SUM(CAST(p.amount AS REAL)) * -1, 2) AS amount FROM postings p JOIN accounts a ON a.name = p.account WHERE LOWER(COALESCE(json_extract(a.metadata_json, '$.\"income-type\"'), '')) IN ('interest', 'dividend') AND (:currency = '*' OR p.currency = :currency) AND p.transaction_date <= :asOf GROUP BY p.account, p.currency HAVING amount != 0 ORDER BY p.currency, amount DESC" },
