@@ -110,7 +110,7 @@
           { "key": "currency", "label": "Currency" },
           { "key": "rate", "label": "Rate", "align": "right" },
           { "key": "maturity", "label": "Maturity", "format": "dateShort" },
-          { "key": "balance", "label": "Balance", "format": "currency", "currencyField": "currency", "align": "right" }
+          { "key": "balance", "label": "Current Balance", "format": "currency", "currencyField": "currency", "align": "right" }
         ]
       }
     }
