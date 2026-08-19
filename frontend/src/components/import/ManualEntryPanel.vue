@@ -40,7 +40,7 @@
       </button>
       <!-- Validation warnings -->
       <div v-if="parseWarnings.length" class="mt-2 rounded-md border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 px-3 py-2">
-        <p class="text-xs font-medium text-amber-800 dark:text-amber-300">Review the transaction below — the AI result had issues:</p>
+        <p class="text-xs font-medium text-amber-800 dark:text-amber-300">{{ warningHeading }}</p>
         <ul class="mt-1 list-disc list-inside text-xs text-amber-700 dark:text-amber-400">
           <li v-for="(w, i) in parseWarnings" :key="i">{{ w }}</li>
         </ul>
@@ -77,7 +77,7 @@
 </template>
 
 <script setup lang="ts">
-  import { ref } from 'vue'
+  import { computed, ref } from 'vue'
   import AccountDropdown from '@/components/common/AccountDropdown.vue'
   import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
   import { parseNaturalLanguageTransaction, type ParsedTransaction } from '@/services/nlParser'
@@ -91,7 +91,7 @@
   const { config } = useConfig()
 
   const emit = defineEmits<{
-    addTransaction: [payload: { account: string; currency: string; parsed?: ParsedTransaction; scrollToResult: boolean }]
+    addTransaction: [payload: { account: string; currency: string; parsed?: ParsedTransaction[]; scrollToResult: boolean }]
   }>()
 
   const account = ref('')
@@ -99,6 +99,13 @@
   const nlText = ref('')
   const isParsing = ref(false)
   const parseWarnings = ref<string[]>([])
+  const parsedCount = ref(0)
+
+  const warningHeading = computed(() =>
+    parsedCount.value === 1
+      ? 'Review the transaction below — the AI result had issues:'
+      : 'Review the transactions below — the AI result had issues:',
+  )
 
   const handleParseAndAdd = async () => {
     if (!nlText.value.trim() || isParsing.value) return
@@ -111,10 +118,19 @@
         currency.value || undefined,
       )
       parseWarnings.value = result.warnings
+      parsedCount.value = result.transactions.length
+      // No usable transaction came back — surface it instead of adding a blank row.
+      if (result.transactions.length === 0) {
+        showErrorToast(
+          'Parse Failed',
+          result.warnings[0] || 'The AI did not return a transaction. Try rephrasing.',
+        )
+        return
+      }
       emit('addTransaction', {
         account: account.value,
         currency: currency.value,
-        parsed: result.transaction,
+        parsed: result.transactions,
         scrollToResult: false,
       })
       nlText.value = ''

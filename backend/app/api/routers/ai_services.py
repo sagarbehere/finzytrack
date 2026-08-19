@@ -1,7 +1,7 @@
 """
 Stateless AI service endpoints.
 
-POST /ai/parse-nl-transaction  — natural language → Beancount transaction JSON
+POST /ai/parse-nl-transaction  — natural language → one or more Beancount transactions
 POST /ai/generate-query        — natural language → SQL or BQL query string
 
 These are simple one-shot request/response calls (no streaming, no tool-use).
@@ -132,7 +132,7 @@ class ParsedTransaction(BaseModel):
 
 
 class ParseNLTransactionData(BaseModel):
-    transaction: ParsedTransaction
+    transactions: list[ParsedTransaction] = []
     warnings: list[str] = []
 
 
@@ -141,6 +141,51 @@ class GenerateQueryData(BaseModel):
 
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _coerce_to_transaction_list(parsed: Any) -> tuple[list[Any], list[str]]:
+    """Normalise the model's top-level JSON into a list of transaction candidates.
+
+    The prompt asks for a JSON array, but models also emit a bare object (single
+    transaction) or an envelope like {"transactions": [...]}. Accept all three
+    rather than failing the whole request on a shape the user can't control.
+    """
+    warnings: list[str] = []
+
+    if isinstance(parsed, list):
+        return parsed, warnings
+
+    if isinstance(parsed, dict):
+        for key in ("transactions", "entries", "results"):
+            inner = parsed.get(key)
+            if isinstance(inner, list):
+                return inner, warnings
+        # A bare transaction object.
+        return [parsed], warnings
+
+    warnings.append(
+        f"Unexpected response structure: expected a list of transactions, "
+        f"got {type(parsed).__name__}."
+    )
+    return [], warnings
+
+
+def _salvage_transaction(raw: dict[str, Any]) -> ParsedTransaction:
+    """Build a ParsedTransaction from whatever fields in `raw` are usable.
+
+    Used when strict validation fails: keep the fields the model got right so the
+    user has something to edit, instead of handing the frontend an unusable shape.
+    """
+    txn = ParsedTransaction()
+    for field in ParsedTransaction.model_fields:
+        if field not in raw:
+            continue
+        try:
+            one = ParsedTransaction.model_validate({field: raw[field]})
+        except ValidationError:
+            continue
+        setattr(txn, field, getattr(one, field))
+    return txn
 
 
 def _validate_parsed_transaction(
@@ -153,13 +198,13 @@ def _validate_parsed_transaction(
     try:
         txn = ParsedTransaction.model_validate(raw)
     except ValidationError as e:
-        # Return the raw data with a structural warning rather than rejecting
+        # Salvage the usable fields and warn rather than rejecting outright
         field_errors = ", ".join(
-            f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
+            f"{'.'.join(str(loc) for loc in err['loc']) or '(root)'}: {err['msg']}"
             for err in e.errors()
         )
         warnings.append(f"Unexpected response structure: {field_errors}")
-        return raw, warnings
+        txn = _salvage_transaction(raw) if isinstance(raw, dict) else ParsedTransaction()
 
     # Date format
     if txn.date and not _DATE_RE.match(txn.date):
@@ -233,8 +278,26 @@ async def parse_nl_transaction(
             details={"raw": json_str[:300]},
         )
 
-    transaction, warnings = _validate_parsed_transaction(parsed, account_set, currency_set)
-    return success_json_response(data={"transaction": transaction, "warnings": warnings})
+    candidates, warnings = _coerce_to_transaction_list(parsed)
+
+    transactions: list[dict[str, Any]] = []
+    multiple = len(candidates) > 1
+    for i, candidate in enumerate(candidates):
+        if not isinstance(candidate, dict):
+            warnings.append(
+                f"Transaction {i + 1}: expected an object, got {type(candidate).__name__}."
+            )
+            continue
+        txn, txn_warnings = _validate_parsed_transaction(
+            candidate, account_set, currency_set
+        )
+        transactions.append(txn)
+        prefix = f"Transaction {i + 1}: " if multiple else ""
+        warnings.extend(f"{prefix}{w}" for w in txn_warnings)
+
+    return success_json_response(
+        data={"transactions": transactions, "warnings": warnings}
+    )
 
 
 # ── Generate Query ───────────────────────────────────────────────────────────

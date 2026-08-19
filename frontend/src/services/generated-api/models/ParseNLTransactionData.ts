@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { ParsedTransaction } from './ParsedTransaction';
 export type ParseNLTransactionData = {
-    transaction: ParsedTransaction;
+    transactions?: Array<ParsedTransaction>;
     warnings?: Array<string>;
 };
 

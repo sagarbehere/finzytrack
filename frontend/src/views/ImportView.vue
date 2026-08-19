@@ -612,46 +612,50 @@
     return { transactions, importContext: context }
   }
 
-  // Handle the "Add Transaction" click from ManualEntryPanel
-  const handleManualAddTransaction = (payload: { account: string; currency: string; parsed?: ParsedTransaction; scrollToResult: boolean }) => {
-    sourceAccount.value = payload.account || sourceAccount.value
-    sourceCurrency.value = payload.currency || sourceCurrency.value
-    importSource.value = 'manual'
-
-    const transactionId = uuidv7()
+  // Build one editable view model from a parsed transaction.
+  // `parsed` is undefined for the "add a blank row" path.
+  const buildManualTransaction = (
+    parsed: ParsedTransaction | undefined,
+    fallbackAccount: string,
+    fallbackCurrency: string,
+  ): TransactionViewModel => {
     const today = new Date().toISOString().split('T')[0]
-    const parsed = payload.parsed
 
-    const firstAccount = parsed?.postings?.[0]?.account || payload.account
-    const firstCurrency = parsed?.postings?.[0]?.currency || payload.currency
-    const secondPosting = parsed?.postings?.[1]
+    const firstAccount = parsed?.postings?.[0]?.account || fallbackAccount
+    const firstCurrency = parsed?.postings?.[0]?.currency || fallbackCurrency
 
-    const transaction: TransactionViewModel = {
-      id: transactionId,
-      date: parsed?.date ?? today,
-      flag: (parsed?.flag as '*' | '!') ?? '*',
+    // Map every posting the AI returned — a transfer with a fee has three, not two.
+    const postings: PostingViewModel[] = (parsed?.postings ?? []).map(p => ({
+      account: p.account || fallbackAccount,
+      // Compare against null, not truthiness: a legitimate 0 amount must survive.
+      amount: p.amount != null ? toMoney(p.amount) : null,
+      currency: p.currency || fallbackCurrency,
+      cost: undefined,
+      price: undefined,
+      meta: undefined
+    }))
+
+    // The table edits a two-sided entry, so keep a floor of two rows.
+    while (postings.length < 2) {
+      postings.push({
+        account: postings.length === 0 ? fallbackAccount : 'Expenses:Unknown',
+        amount: null,
+        currency: firstCurrency,
+        cost: undefined,
+        price: undefined,
+        meta: undefined
+      })
+    }
+
+    return {
+      id: uuidv7(),
+      date: parsed?.date || today,
+      flag: (parsed?.flag as '*' | '!') || '*',
       payee: parsed?.payee ?? '',
       narration: parsed?.narration ?? '',
       tags: parsed?.tags ?? [],
       links: parsed?.links ?? [],
-      postings: [
-        {
-          account: firstAccount,
-          amount: parsed?.postings?.[0]?.amount ? toMoney(parsed.postings[0].amount) : null,
-          currency: firstCurrency,
-          cost: undefined,
-          price: undefined,
-          meta: undefined
-        },
-        {
-          account: secondPosting?.account ?? 'Expenses:Unknown',
-          amount: secondPosting?.amount ? toMoney(secondPosting.amount) : null,
-          currency: secondPosting?.currency ?? firstCurrency,
-          cost: undefined,
-          price: undefined,
-          meta: undefined
-        }
-      ],
+      postings,
       meta: {
         source_account: firstAccount
       },
@@ -661,19 +665,33 @@
         source_currency: firstCurrency
       }
     }
+  }
 
-    transactionViewModels.value = [...transactionViewModels.value, transaction]
+  // Handle the "Add Transaction" click from ManualEntryPanel.
+  // One natural-language description can yield several transactions — e.g. a
+  // transfer whose money leaves on one date and arrives on another.
+  const handleManualAddTransaction = (payload: { account: string; currency: string; parsed?: ParsedTransaction[]; scrollToResult: boolean }) => {
+    sourceAccount.value = payload.account || sourceAccount.value
+    sourceCurrency.value = payload.currency || sourceCurrency.value
+    importSource.value = 'manual'
 
-    importContext.value.set(transactionId, {
-      is_duplicate: false
+    const parsedList = payload.parsed?.length ? payload.parsed : [undefined]
+    const newTransactions = parsedList.map(parsed =>
+      buildManualTransaction(parsed, payload.account, payload.currency)
+    )
+
+    transactionViewModels.value = [...transactionViewModels.value, ...newTransactions]
+
+    newTransactions.forEach(t => {
+      importContext.value.set(t.id, { is_duplicate: false })
     })
 
     showTransactionTable.value = true
 
-    // Add the new transaction to the table's baselines so edit tracking works
+    // Add the new transactions to the table's baselines so edit tracking works
     nextTick(() => {
       if (transactionTableRef.value) {
-        transactionTableRef.value.addToBaselines(transaction)
+        newTransactions.forEach(t => transactionTableRef.value!.addToBaselines(t))
         if (payload.scrollToResult) {
           transactionTableRef.value.scrollToTable()
         }

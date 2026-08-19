@@ -5,15 +5,17 @@ import type { ParsedTransaction } from '@/services/generated-api'
 export type { ParsedTransaction }
 
 export interface ParseResult {
-  transaction: ParsedTransaction
+  transactions: ParsedTransaction[]
   warnings: string[]
 }
 
 /**
- * Parse natural language text into a structured transaction.
+ * Parse natural language text into one or more structured transactions.
+ *
+ * A single description can describe several transactions — e.g. a transfer whose
+ * money leaves one account and arrives in another on a different date is two.
  *
  * Calls the backend POST /api/ai/parse-nl-transaction endpoint.
- * Falls back to a regex stub when AI is not configured.
  */
 export async function parseNaturalLanguageTransaction(
   text: string,
@@ -25,7 +27,7 @@ export async function parseNaturalLanguageTransaction(
       default_currency: defaultCurrency || null,
     })
     return {
-      transaction: resp.data?.transaction ?? {},
+      transactions: resp.data?.transactions ?? [],
       warnings: resp.data?.warnings ?? [],
     }
   } catch (e: unknown) {

@@ -27,7 +27,7 @@ export type LearnOFXAccountRequest = {
      */
     beancount_account: string;
     /**
-     * Alphanumeric currency code
+     * Currency/commodity code (e.g., 'USD', 'BRK.B')
      */
     currency: string;
 };
