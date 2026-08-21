@@ -29,6 +29,7 @@ from app.schemas.investment_schemas import (
     BuyEvent,
     DripEvent,
     CashDividendEvent,
+    SellEvent,
     AddHoldingEvent,
     DraftPosting,
     DraftTransaction,
@@ -176,6 +177,8 @@ class InvestmentAssembler:
             return self._build_drip(index, ev, commodities)
         if isinstance(ev, CashDividendEvent):
             return self._build_cash_dividend(index, ev, commodities)
+        if isinstance(ev, SellEvent):
+            return self._build_sell(index, ev, commodities)
         if isinstance(ev, AddHoldingEvent):
             return self._build_add_holding(index, ev, commodities)
         raise _EventError("UNKNOWN_EVENT_TYPE", f"Unsupported event type: {getattr(ev, 'type', '?')}")
@@ -236,6 +239,134 @@ class InvestmentAssembler:
             DraftPosting(account=ev.income_account, amount=-ev.amount, currency=ev.currency),
         ]
         return self._finalize(index, ev, ev.cash_account, f"{ev.security} dividend", postings, warnings)
+
+    def _build_sell(self, index, ev: SellEvent, commodities):
+        """Reduce a holding, realizing a gain — cost basis resolved from the mirror lots.
+
+        Emits one reducing leg per consumed lot, each stamped with that lot's explicit
+        ``{cost, date}`` (so it books deterministically under any Beancount method) plus
+        the sale price ``@``. Gross gain = proceeds − cost basis; a fee is a **separate**
+        Expenses leg (it does not reduce the gain). A whole-position redemption legitimately
+        expands into many legs — that is the correct mirror of Beancount's booking, not a bug.
+        """
+        warnings = self._check_holding_security(index, ev.security, commodities)
+        self._require_positive(ev.units, "units")
+        self._require_non_negative(ev.sale_price, "sale_price")
+
+        available = [
+            {
+                "units": Decimal(l["units_number"]),
+                "cost": Decimal(l["cost_number"]),
+                "cost_currency": l["cost_currency"],
+                "date": date.fromisoformat(l["acquisition_date"]),
+            }
+            for l in self.reader.get_lots(ev.holding_account)
+            if l["units_currency"] == ev.security and Decimal(l["units_number"]) > 0
+        ]
+        consumed = self._select_lots(ev, available)  # [(units, cost, date, cost_currency)]
+
+        postings: List[DraftPosting] = []
+        cost_basis = Decimal("0")
+        for units, cost, lot_date, cost_currency in consumed:
+            if cost_currency != ev.currency:
+                # Cross-currency cost basis (lot held in another currency than the sale
+                # currency) is out of scope — refuse rather than emit an imbalanced draft.
+                raise _EventError(
+                    "COST_CURRENCY_MISMATCH",
+                    f"Lot cost currency {cost_currency} differs from sale currency {ev.currency}",
+                )
+            postings.append(DraftPosting(
+                account=ev.holding_account, amount=-units, currency=ev.security,
+                cost_amount=cost, cost_currency=cost_currency, cost_date=lot_date,
+                price_amount=ev.sale_price, price_currency=ev.currency, price_type="@",
+            ))
+            cost_basis += units * cost
+
+        proceeds = ev.units * ev.sale_price
+        gain = proceeds - cost_basis  # gross; a fee is a separate expense, never nets the gain
+
+        cash_amount = proceeds
+        fee_leg: Optional[DraftPosting] = None
+        if ev.fee is not None and ev.fee != 0:
+            self._require_positive(ev.fee, "fee")
+            if not ev.fee_account:
+                raise _EventError("MISSING_FEE_ACCOUNT", "A fee amount was given without a fee_account")
+            cash_amount = proceeds - ev.fee
+            fee_leg = DraftPosting(account=ev.fee_account, amount=ev.fee, currency=ev.currency)
+
+        postings.append(DraftPosting(account=ev.cash_account, amount=cash_amount, currency=ev.currency))
+        if fee_leg is not None:
+            postings.append(fee_leg)
+        postings.append(DraftPosting(account=ev.gains_account, amount=-gain, currency=ev.currency))
+
+        return self._finalize(index, ev, ev.holding_account, f"Sell {ev.security}", postings, warnings)
+
+    def _select_lots(self, ev: SellEvent, available: List[dict]) -> List[tuple]:
+        """Resolve which lots (and how many units of each) the sale consumes.
+
+        Specific-lot selection (``ev.lots``) matches each chosen lot to a held one by
+        (date, cost, currency); otherwise ``ev.strategy`` orders the held lots
+        (fifo/lifo/hifo) and consumes them greedily. Refuses — never guesses — when the
+        held lots don't cover the sale (INSUFFICIENT_LOTS).
+        """
+        if not available:
+            raise _EventError("INSUFFICIENT_LOTS", f"No lots held for {ev.security} in {ev.holding_account}")
+
+        if ev.lots:
+            avail_by_key: dict = {}
+            for a in available:
+                avail_by_key[(a["date"], a["cost"], a["cost_currency"])] = a
+            remaining = {k: v["units"] for k, v in avail_by_key.items()}
+            consumed: List[tuple] = []
+            total = Decimal("0")
+            for sel in ev.lots:
+                self._require_positive(sel.units, "lot units")
+                key = (sel.acquisition_date, sel.cost_number, sel.cost_currency)
+                if key not in avail_by_key:
+                    raise _EventError(
+                        "LOT_NOT_FOUND",
+                        f"No held lot matches {sel.units} @ {sel.cost_number} {sel.cost_currency} "
+                        f"acquired {sel.acquisition_date}",
+                    )
+                if sel.units > remaining[key]:
+                    raise _EventError(
+                        "INSUFFICIENT_LOTS",
+                        f"Lot acquired {sel.acquisition_date} has only {remaining[key]} units available",
+                    )
+                remaining[key] -= sel.units
+                total += sel.units
+                consumed.append((sel.units, sel.cost_number, sel.acquisition_date, sel.cost_currency))
+            if total != ev.units:
+                raise _EventError(
+                    "LOT_UNITS_MISMATCH",
+                    f"Selected lots total {total} units but the sale is for {ev.units}",
+                )
+            return consumed
+
+        ordered = self._order_lots(available, ev.strategy)
+        consumed = []
+        remaining_units = ev.units
+        for a in ordered:
+            if remaining_units <= 0:
+                break
+            take = a["units"] if a["units"] < remaining_units else remaining_units
+            consumed.append((take, a["cost"], a["date"], a["cost_currency"]))
+            remaining_units -= take
+        if remaining_units > 0:
+            held = sum(a["units"] for a in available)
+            raise _EventError(
+                "INSUFFICIENT_LOTS",
+                f"Only {held} units of {ev.security} held in {ev.holding_account}; cannot sell {ev.units}",
+            )
+        return consumed
+
+    @staticmethod
+    def _order_lots(available: List[dict], strategy: str) -> List[dict]:
+        if strategy == "lifo":
+            return sorted(available, key=lambda a: a["date"], reverse=True)
+        if strategy == "hifo":
+            return sorted(available, key=lambda a: a["cost"], reverse=True)
+        return sorted(available, key=lambda a: a["date"])  # fifo (oldest first)
 
     def _build_add_holding(self, index, ev: AddHoldingEvent, commodities):
         warnings = self._check_holding_security(index, ev.security, commodities)

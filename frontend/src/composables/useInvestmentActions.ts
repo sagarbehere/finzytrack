@@ -10,7 +10,7 @@
  */
 import { ref } from 'vue'
 import { InvestmentsService } from '@/services/generated-api'
-import type { AssembleRequest, AssembleIssue } from '@/services/generated-api'
+import type { AssembleRequest, AssembleIssue, CommodityHoldings } from '@/services/generated-api'
 import type { TransactionImportBundle } from '@/types/transactions'
 import { convertAssembledDraftsToViewModels } from '@/utils/investmentDrafts'
 import { errorHandler } from '@/utils/ErrorHandler'
@@ -53,5 +53,19 @@ export function useInvestmentActions() {
     }
   }
 
-  return { isLoading, assembleAndConvert }
+  /**
+   * Fetch the open lots + latest price for one commodity (the Sale lot picker).
+   * Returns null if the security has no holdings.
+   */
+  async function fetchHoldings(security: string): Promise<CommodityHoldings | null> {
+    try {
+      const response = await InvestmentsService.getInvestmentHoldingsForCommodity(security)
+      return response.data?.holdings?.[0] ?? null
+    } catch (error) {
+      errorHandler.display(error)
+      throw error
+    }
+  }
+
+  return { isLoading, assembleAndConvert, fetchHoldings }
 }

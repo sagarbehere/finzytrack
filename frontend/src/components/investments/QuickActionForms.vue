@@ -41,6 +41,16 @@
       </div>
     </div>
 
+    <!-- Sale form (own lot picker + live gain preview) -->
+    <SaleForm
+      v-if="action === 'sell'"
+      :date="form.date"
+      :currency="form.currency"
+      :is-loading="isLoading"
+      @submit="ev => assembleAndStage(ev)"
+    />
+
+    <template v-if="action !== 'sell'">
     <!-- Holding account (buy / drip / add-holding) -->
     <div v-if="needs('holding_account')" class="mt-4">
       <AccountDropdown
@@ -141,6 +151,7 @@
       <label class="block text-sm font-medium text-gray-900 dark:text-white">Narration <span class="text-gray-400">(optional)</span></label>
       <input v-model="form.narration" type="text" :class="inputClass" :placeholder="defaultNarration" />
     </div>
+    </template>
 
     <!-- Warnings / errors from the assembler -->
     <div v-if="issues.length" class="mt-4 rounded-lg bg-yellow-50 p-4 ring-1 ring-yellow-200 dark:bg-yellow-900/20 dark:ring-yellow-500/30">
@@ -150,7 +161,7 @@
       </ul>
     </div>
 
-    <div class="mt-6 flex justify-end">
+    <div v-if="action !== 'sell'" class="mt-6 flex justify-end">
       <button
         type="button"
         @click="submit"
@@ -171,6 +182,7 @@
   import { ref, reactive, computed, watch, onMounted } from 'vue'
   import AccountDropdown from '@/components/common/AccountDropdown.vue'
   import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
+  import SaleForm from '@/components/investments/SaleForm.vue'
   import { CommoditiesService } from '@/services/generated-api'
   import type { AssembleRequest, AssembleIssue } from '@/services/generated-api'
   import type { TransactionViewModel } from '@/types/transactions'
@@ -178,7 +190,7 @@
   import { useAccounts } from '@/composables/useAccounts'
   import { useToast } from '@/composables/useNotifications'
 
-  type ActionId = 'buy' | 'drip' | 'cash_dividend' | 'add_holding'
+  type ActionId = 'buy' | 'drip' | 'cash_dividend' | 'sell' | 'add_holding'
   type InvestmentEvent = AssembleRequest['events'][number]
 
   const emit = defineEmits<{ staged: [vms: TransactionViewModel[]] }>()
@@ -190,11 +202,12 @@
   const inputClass =
     'mt-2 block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500'
 
-  const actions = [
-    { id: 'buy' as const, label: 'Buy', help: 'Acquire a holding at cost — units bought against a cash account.', fields: ['holding_account', 'security', 'units', 'unit_price', 'cash_account'] },
-    { id: 'drip' as const, label: 'Reinvest', help: 'A reinvested dividend/income buys more units — no cash changes hands.', fields: ['holding_account', 'security', 'units', 'unit_price', 'income_account'] },
-    { id: 'cash_dividend' as const, label: 'Dividend', help: 'A dividend paid to cash (not reinvested).', fields: ['cash_account', 'security', 'amount', 'income_account'] },
-    { id: 'add_holding' as const, label: 'Add Holding', help: 'Record a position you already hold at its average cost — seeds current value without lot-by-lot history.', fields: ['holding_account', 'security', 'units', 'avg_cost', 'opening_account'] },
+  const actions: { id: ActionId; label: string; help: string; fields: string[] }[] = [
+    { id: 'buy', label: 'Buy', help: 'Acquire a holding at cost — units bought against a cash account.', fields: ['holding_account', 'security', 'units', 'unit_price', 'cash_account'] },
+    { id: 'drip', label: 'Reinvest', help: 'A reinvested dividend/income buys more units — no cash changes hands.', fields: ['holding_account', 'security', 'units', 'unit_price', 'income_account'] },
+    { id: 'cash_dividend', label: 'Dividend', help: 'A dividend paid to cash (not reinvested).', fields: ['cash_account', 'security', 'amount', 'income_account'] },
+    { id: 'sell', label: 'Sell', help: 'Sell units of a holding — pick the lots (or a strategy) and see the realized gain before staging.', fields: [] },
+    { id: 'add_holding', label: 'Add Holding', help: 'Record a position you already hold at its average cost — seeds current value without lot-by-lot history.', fields: ['holding_account', 'security', 'units', 'avg_cost', 'opening_account'] },
   ]
 
   const action = ref<ActionId>('buy')
@@ -300,15 +313,20 @@
 
   async function submit() {
     if (!canSubmit.value) return
+    await assembleAndStage(buildEvent(), resetAmounts)
+  }
+
+  // Shared assemble → stage path used by the inline forms and the Sale form.
+  async function assembleAndStage(event: InvestmentEvent, onSuccess?: () => void) {
     issues.value = []
     try {
-      const { bundle, warnings, errors } = await assembleAndConvert([buildEvent()])
+      const { bundle, warnings, errors } = await assembleAndConvert([event])
       issues.value = [...errors, ...warnings]
       if (bundle.transactions.length > 0) {
         emit('staged', bundle.transactions)
         if (errors.length === 0) {
           showSuccessToast('Added to review', 'The draft was staged below. Review and Register when ready.')
-          resetAmounts()
+          onSuccess?.()
         }
       }
     } catch (_error) {

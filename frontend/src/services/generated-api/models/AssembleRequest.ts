@@ -6,6 +6,7 @@ import type { AddHoldingEvent } from './AddHoldingEvent';
 import type { BuyEvent } from './BuyEvent';
 import type { CashDividendEvent } from './CashDividendEvent';
 import type { DripEvent } from './DripEvent';
+import type { SellEvent } from './SellEvent';
 /**
  * Request body for POST /api/investments/assemble.
  */
@@ -13,6 +14,6 @@ export type AssembleRequest = {
     /**
      * One or more typed investment events
      */
-    events: Array<(BuyEvent | DripEvent | CashDividendEvent | AddHoldingEvent)>;
+    events: Array<(BuyEvent | DripEvent | CashDividendEvent | SellEvent | AddHoldingEvent)>;
 };
 

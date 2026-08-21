@@ -70,6 +70,40 @@ class CashDividendEvent(InvestmentEventBase):
     income_account: str = Field(..., description="Income account (income-type: dividend)")
 
 
+class LotSelection(BaseModel):
+    """One chosen lot + how many units of it to sell (from GET /holdings)."""
+    acquisition_date: DateType = Field(..., description="The lot's acquisition date")
+    cost_number: Decimal = Field(..., description="The lot's per-unit cost")
+    cost_currency: str = Field(..., description="The lot's cost currency")
+    units: Decimal = Field(..., description="Units of this lot to sell (> 0)")
+
+
+class SellEvent(InvestmentEventBase):
+    """Reduce a holding and realize a gain — cost basis resolved from the mirror lots.
+
+    Provide either an explicit ``lots`` selection (specific-lot) or a ``strategy``
+    (fifo/lifo/hifo) to auto-select which lots to consume. Every reducing leg is
+    written with an explicit ``{cost, date}`` so it books deterministically under any
+    Beancount booking method (dev-docs/investment-view.md §6.3 event 4, §6.5).
+    """
+    type: Literal["sell"]
+    holding_account: str = Field(..., description="Assets account the units are sold from")
+    security: str = Field(..., description="Commodity code (is_currency=0)")
+    units: Decimal = Field(..., description="Total units to sell (> 0)")
+    sale_price: Decimal = Field(..., description="Sale price per unit in `currency`")
+    cash_account: str = Field(..., description="Assets account receiving the proceeds")
+    gains_account: str = Field(..., description="Income account for the realized gain (income-type: capital-gains)")
+    fee: Optional[Decimal] = Field(default=None, description="Optional fee amount")
+    fee_account: Optional[str] = Field(default=None, description="Expenses account for the fee")
+    lots: Optional[List[LotSelection]] = Field(
+        default=None, description="Specific lots to consume; if omitted, `strategy` selects them"
+    )
+    strategy: Literal["fifo", "lifo", "hifo"] = Field(
+        default="fifo",
+        description="Auto lot-selection when `lots` is omitted: fifo (oldest), lifo (newest), hifo (highest cost)",
+    )
+
+
 class AddHoldingEvent(InvestmentEventBase):
     """Bootstrap a currently-held position at an aggregate cost (positions-snapshot)."""
     type: Literal["add_holding"]
@@ -84,7 +118,7 @@ class AddHoldingEvent(InvestmentEventBase):
 
 
 InvestmentEvent = Annotated[
-    Union[BuyEvent, DripEvent, CashDividendEvent, AddHoldingEvent],
+    Union[BuyEvent, DripEvent, CashDividendEvent, SellEvent, AddHoldingEvent],
     Field(discriminator="type"),
 ]
 
