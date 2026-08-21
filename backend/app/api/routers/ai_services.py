@@ -18,15 +18,15 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field, ValidationError, TypeAdapter
+from pydantic import BaseModel, Field, ValidationError
 
 from app.ai.client import complete_chat
 from app.config import LLMConfig
 from app.core.config_manager import ConfigManager
 from app.dependencies import get_config_manager, get_sqlite_reader
 from app.services.sqlite_reader import SqliteReader
-from app.services.investment_assembler import InvestmentAssembler
-from app.schemas.investment_schemas import InvestmentEvent, DraftTransaction
+from app.services.investment_assembler import InvestmentAssembler, parse_investment_events as _parse_investment_events
+from app.schemas.investment_schemas import DraftTransaction
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
 from app.schemas.response_schemas import ApiResponse
@@ -137,30 +137,6 @@ class ParseNLTransactionData(BaseModel):
     transactions: list[ParsedTransaction] = []
     drafts: list[DraftTransaction] = []
     warnings: list[str] = []
-
-
-_EVENT_ADAPTER = TypeAdapter(InvestmentEvent)
-
-
-def _parse_investment_events(raw_events: list[Any]) -> tuple[list[InvestmentEvent], list[str]]:
-    """Validate raw event dicts from the model into typed InvestmentEvents.
-
-    Salvages the good ones and warns on the rest, rather than failing the whole
-    request — an unusable event becomes a warning the user sees, rather than a 500.
-    """
-    events: list[InvestmentEvent] = []
-    warnings: list[str] = []
-    for i, raw in enumerate(raw_events):
-        if not isinstance(raw, dict):
-            warnings.append(f"Event {i + 1}: expected an object, got {type(raw).__name__}.")
-            continue
-        try:
-            events.append(_EVENT_ADAPTER.validate_python(raw))
-        except ValidationError as e:
-            first = e.errors()[0] if e.errors() else {}
-            loc = ".".join(str(x) for x in first.get("loc", [])) or "(root)"
-            warnings.append(f"Event {i + 1}: could not be understood ({loc}: {first.get('msg', 'invalid')}).")
-    return events, warnings
 
 
 class GenerateQueryData(BaseModel):

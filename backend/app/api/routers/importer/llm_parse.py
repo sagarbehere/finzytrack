@@ -22,7 +22,9 @@ from app.ai.client import DoneEvent, TokenEvent, stream_chat
 from app.ai.file_processor import process_file as process_eml_file
 from app.config import LLMConfig
 from app.core.config_manager import ConfigManager
-from app.dependencies import get_config_manager
+from app.dependencies import get_config_manager, get_sqlite_reader
+from app.services.sqlite_reader import SqliteReader
+from app.services.investment_assembler import InvestmentAssembler, parse_investment_events
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
 from app.schemas.llm_parse_schemas import LlmParsedTransaction, LlmParseResult
@@ -57,6 +59,16 @@ def _load_system_prompt() -> str:
     if not path.is_file():
         raise FileNotFoundError(f"LLM parse prompt not found: {path}")
     return path.read_text(encoding="utf-8").strip()
+
+
+def _format_account_block(accounts: list[str]) -> str:
+    """Group account names by top-level type — the AI picks from these for events."""
+    grouped: dict[str, list[str]] = {}
+    for name in sorted(accounts):
+        grouped.setdefault(name.split(":")[0], []).append(name)
+    return "\n".join(
+        f"{typ}:\n  " + "\n  ".join(names) for typ, names in grouped.items()
+    )
 
 
 def _detect_file_type(ext: str) -> str:
@@ -406,6 +418,7 @@ async def llm_parse(
     currency: str = Form(...),
     text_extraction: str = Form(default="false"),
     config_manager: ConfigManager = Depends(get_config_manager),
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
 ):
     """Parse transactions from a file using the configured LLM."""
     config = config_manager.get_config()
@@ -434,11 +447,15 @@ async def llm_parse(
     file_ext = Path(filename).suffix.lower()
     file_type = _detect_file_type(file_ext)
 
-    # Load system prompt
+    # Load system prompt and inject the available accounts (so investment events can
+    # reference real account paths, the same way the NL parser does).
     try:
         system_prompt = _load_system_prompt()
     except FileNotFoundError as e:
         raise APIError(str(e), code=ec.CONFIG_ERROR, status_code=500)
+
+    account_block = _format_account_block(sorted(sqlite_reader.get_account_names()))
+    system_prompt = system_prompt.replace("{{ACCOUNT_BLOCK}}", account_block or "(none)")
 
     # For PDFs, allow the frontend to force text extraction mode
     if file_type == "pdf" and force_text_extraction:
@@ -482,6 +499,8 @@ async def llm_parse(
     parsed = _extract_json(raw_response)
 
     raw_transactions = parsed.get("transactions")
+    if raw_transactions is None:
+        raw_transactions = []
     if not isinstance(raw_transactions, list):
         raise APIError(
             "The AI response did not contain a 'transactions' array.",
@@ -489,7 +508,10 @@ async def llm_parse(
             status_code=422,
         )
 
-    if len(raw_transactions) == 0:
+    raw_events = parsed.get("events")
+    raw_events = raw_events if isinstance(raw_events, list) else []
+
+    if len(raw_transactions) == 0 and len(raw_events) == 0:
         raise APIError(
             "The AI could not find any transactions in this file. "
             "The file may not contain financial transaction data, "
@@ -498,23 +520,44 @@ async def llm_parse(
             status_code=422,
         )
 
-    # Validate and clean
+    # Validate and clean the plain cash transactions.
     transactions, warning = _validate_transactions(raw_transactions)
 
-    if len(transactions) == 0:
+    # Investment events → the shared assembler builds balanced drafts (cost basis,
+    # lots, gains resolved from the mirror). The model never writes Beancount geometry.
+    drafts: list = []
+    event_warnings: list[str] = []
+    if raw_events:
+        events, parse_warnings = parse_investment_events(raw_events)
+        event_warnings.extend(parse_warnings)
+        if events:
+            assembled = InvestmentAssembler(sqlite_reader).assemble(events)
+            drafts = assembled.drafts
+            event_warnings.extend(iss.message for iss in assembled.errors)
+            event_warnings.extend(iss.message for iss in assembled.warnings)
+
+    # Nothing to show AND nothing to explain → the extraction genuinely failed. When
+    # events were attempted but produced no drafts (e.g. a sale with no lots yet), keep
+    # the 200 and surface the warnings so the user learns *why* (mirrors the NL path).
+    if len(transactions) == 0 and len(drafts) == 0 and not event_warnings:
         raise APIError(
-            "All transactions extracted by the AI failed validation "
-            "(invalid dates or amounts). The file may not contain "
+            "Everything the AI extracted failed validation (invalid dates, amounts, "
+            "or unrecognized investment activity). The file may not contain "
             "recognizable transaction data.",
             code=ec.ALL_TRANSACTIONS_INVALID,
             status_code=422,
         )
 
+    # Merge any investment warnings into the single warning string.
+    all_warnings = [w for w in ([warning] if warning else []) + event_warnings]
+    merged_warning = "; ".join(all_warnings) if all_warnings else None
+
     result = LlmParseResult(
         transactions=transactions,
+        drafts=drafts,
         file_type=file_type,
         transaction_count=len(transactions),
-        warning=warning,
+        warning=merged_warning,
     )
 
-    return success_json_response(result.model_dump())
+    return success_json_response(result.model_dump(mode="json"))

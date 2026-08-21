@@ -167,6 +167,7 @@
   import AccountDropdown from '@/components/common/AccountDropdown.vue'
   import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
   import { ImportService } from '@/services/generated-api'
+  import type { DraftTransaction } from '@/services/generated-api'
   import { useConfig } from '@/composables/useConfig'
   import type { CsvParsedTransaction, CsvFileDetails } from '@/types/csv'
   import { toMoney } from '@/utils/money'
@@ -179,6 +180,7 @@
       details: CsvFileDetails
       account: string
       currency: string
+      drafts?: DraftTransaction[]
     }): void
     (e: 'fileCleared'): void
   }>()
@@ -290,8 +292,11 @@
       }
 
       const data = response.data
-      if (!data || !data.transactions || data.transactions.length === 0) {
-        parseError.value = 'No transactions were found in the file.'
+      const drafts: DraftTransaction[] = data?.drafts ?? []
+      const txnCount = data?.transactions?.length ?? 0
+      if (!data || (txnCount === 0 && drafts.length === 0)) {
+        // Nothing staged — surface the reason (e.g. "insufficient lots") when there is one.
+        parseError.value = data?.warning || 'No transactions were found in the file.'
         return
       }
 
@@ -313,7 +318,7 @@
       // Convert to CsvParsedTransaction format (same shape).
       // LLM endpoint returns Decimal strings; canonicalise via toMoney so
       // downstream code sees the same form CSV/XLS parsers produce.
-      const transactions: CsvParsedTransaction[] = data.transactions.map((tx: any) => ({
+      const transactions: CsvParsedTransaction[] = (data.transactions ?? []).map((tx: any) => ({
         date: tx.date,
         payee: tx.payee || '',
         narration: tx.narration || '',
@@ -340,6 +345,7 @@
         details,
         account: selectedAccount.value,
         currency: selectedCurrency.value,
+        drafts,
       })
     } catch (error: any) {
       // Retry also failed

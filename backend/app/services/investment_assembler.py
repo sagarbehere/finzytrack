@@ -21,7 +21,9 @@ import logging
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
+
+from pydantic import TypeAdapter, ValidationError
 
 from app.services.sqlite_reader import SqliteReader
 from app.schemas.investment_schemas import (
@@ -47,6 +49,30 @@ logger = logging.getLogger(__name__)
 # Balance tolerance: all amounts are exact Decimals, but keep a small epsilon so a
 # legitimately-rounded input never trips a false imbalance (mirrors the NL parser).
 _BALANCE_TOLERANCE = Decimal("0.005")
+
+_EVENT_ADAPTER = TypeAdapter(InvestmentEvent)
+
+
+def parse_investment_events(raw_events: List[Any]) -> Tuple[List[InvestmentEvent], List[str]]:
+    """Validate raw event dicts (from an AI parser) into typed InvestmentEvents.
+
+    Salvages the good ones and warns on the rest, so an unusable event becomes a
+    warning the user sees rather than a failed request. Shared by the NL and file
+    AI parsers (dev-docs/investment-view.md §8).
+    """
+    events: List[InvestmentEvent] = []
+    warnings: List[str] = []
+    for i, raw in enumerate(raw_events):
+        if not isinstance(raw, dict):
+            warnings.append(f"Event {i + 1}: expected an object, got {type(raw).__name__}.")
+            continue
+        try:
+            events.append(_EVENT_ADAPTER.validate_python(raw))
+        except ValidationError as e:
+            first = e.errors()[0] if e.errors() else {}
+            loc = ".".join(str(x) for x in first.get("loc", [])) or "(root)"
+            warnings.append(f"Event {i + 1}: could not be understood ({loc}: {first.get('msg', 'invalid')}).")
+    return events, warnings
 
 
 class _EventError(Exception):

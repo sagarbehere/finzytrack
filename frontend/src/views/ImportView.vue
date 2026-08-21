@@ -442,16 +442,24 @@
     return { transactions, importContext }
   }
 
-  // Handle the Proceed button click from CSVFilePicker or XLSFilePicker
-  const handleCsvProceedWithImport = (payload: { file: File, details: CsvFileDetails, account: string, currency: string }) => {
+  // Handle the Proceed button click from CSVFilePicker, XLSFilePicker, or AIImportPanel.
+  // The AI panel may additionally carry assembled investment drafts (typed-event
+  // channel) — convert them via the shared converter and stage them alongside the
+  // flat cash rows.
+  const handleCsvProceedWithImport = (payload: { file: File, details: CsvFileDetails, account: string, currency: string, drafts?: DraftTransaction[] }) => {
     sourceAccount.value = payload.account
     sourceCurrency.value = payload.currency
     importSource.value = activeTab.value === 'xls' ? 'xls' : activeTab.value === 'ai' ? 'ai' : 'csv'
 
     rawCsvTransactions.value = payload.details.rawTransactions
     const bundle = convertCsvTransactionsToViewModels(payload.details.rawTransactions, payload.account, payload.currency)
-    transactionViewModels.value = [...transactionViewModels.value, ...bundle.transactions]
+    const draftBundle = payload.drafts?.length
+      ? convertAssembledDraftsToViewModels(payload.drafts)
+      : { transactions: [], importContext: new Map<string, ImportContext>() }
+
+    transactionViewModels.value = [...transactionViewModels.value, ...bundle.transactions, ...draftBundle.transactions]
     bundle.importContext.forEach((v, k) => importContext.value.set(k, v))
+    draftBundle.importContext.forEach((v, k) => importContext.value.set(k, v))
 
     showTransactionTable.value = true
 
