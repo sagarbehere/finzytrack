@@ -427,6 +427,7 @@
     MoonIcon,
     WalletIcon,
     BanknotesIcon,
+    ArrowTrendingUpIcon,
     SparklesIcon,
   } from '@heroicons/vue/24/outline'
 
@@ -556,6 +557,12 @@
       href: '/budgets',
       icon: BanknotesIcon,
       id: 'budgets',
+    },
+    {
+      name: 'Investments',
+      href: '/investments',
+      icon: ArrowTrendingUpIcon,
+      id: 'investments',
     },
     {
       name: 'Query',

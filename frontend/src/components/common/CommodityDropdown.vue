@@ -157,6 +157,7 @@ interface Props {
   excludePattern?: string | RegExp
   assetClasses?: string[] // filter by asset-class, e.g. ['stock', 'etf']
   currenciesOnly?: boolean // show only commodities that play a currency role (is_currency)
+  holdingsOnly?: boolean // show only non-currency commodities (holdings) — inverse of currenciesOnly
   showDetails?: boolean // Show commodity name/asset-class in dropdown
   clearable?: boolean // Show a (none) option to clear the selection
 }
@@ -197,6 +198,14 @@ const filteredCommodities = computed(() => {
     commodities = commodities.filter(code => {
       const commodity = commodityDetails.value.find(c => c.code === code)
       return commodity?.is_currency
+    })
+  }
+
+  // Filter to non-currency commodities (holdings) only
+  if (props.holdingsOnly) {
+    commodities = commodities.filter(code => {
+      const commodity = commodityDetails.value.find(c => c.code === code)
+      return commodity ? !commodity.is_currency : true // unknown/typed codes are candidate holdings
     })
   }
 

@@ -71,6 +71,14 @@ const routes: RouteRecordRaw[] = [
     },
   },
   {
+    path: '/investments',
+    name: 'investments',
+    component: () => import('../views/InvestmentsView.vue'),
+    meta: {
+      title: 'Investments',
+    },
+  },
+  {
     path: '/settings',
     name: 'settings',
     component: SettingsView,
