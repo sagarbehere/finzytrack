@@ -1,11 +1,13 @@
 import { AiService, ApiError } from '@/services/generated-api'
-import type { ParsedTransaction } from '@/services/generated-api'
+import type { ParsedTransaction, DraftTransaction } from '@/services/generated-api'
 
 // Re-export so existing consumers keep working via this module
-export type { ParsedTransaction }
+export type { ParsedTransaction, DraftTransaction }
 
 export interface ParseResult {
   transactions: ParsedTransaction[]
+  // Assembled investment drafts (from the typed-event channel) — review-table shaped.
+  drafts: DraftTransaction[]
   warnings: string[]
 }
 
@@ -28,6 +30,7 @@ export async function parseNaturalLanguageTransaction(
     })
     return {
       transactions: resp.data?.transactions ?? [],
+      drafts: resp.data?.drafts ?? [],
       warnings: resp.data?.warnings ?? [],
     }
   } catch (e: unknown) {

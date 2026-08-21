@@ -258,7 +258,8 @@
   import type { OFXTransaction, OfxFileDetails } from '@/types/ofx'
   import type { CsvParsedTransaction, CsvFileDetails } from '@/types/csv'
   import type { DuplicateInfo } from '@/services/generated-api'
-  import type { ParsedTransaction } from '@/services/nlParser'
+  import type { ParsedTransaction, DraftTransaction } from '@/services/nlParser'
+  import { convertAssembledDraftsToViewModels } from '@/utils/investmentDrafts'
   import { useTransactionImporter } from '@/composables/useTransactionImporter'
   import { useServerNotices } from '@/composables/useServerNotices'
   import { useToast } from '@/composables/useNotifications'
@@ -670,16 +671,26 @@
   // Handle the "Add Transaction" click from ManualEntryPanel.
   // One natural-language description can yield several transactions — e.g. a
   // transfer whose money leaves on one date and arrives on another.
-  const handleManualAddTransaction = (payload: { account: string; currency: string; parsed?: ParsedTransaction[]; scrollToResult: boolean }) => {
+  const handleManualAddTransaction = (payload: { account: string; currency: string; parsed?: ParsedTransaction[]; drafts?: DraftTransaction[]; scrollToResult: boolean }) => {
     sourceAccount.value = payload.account || sourceAccount.value
     sourceCurrency.value = payload.currency || sourceCurrency.value
     importSource.value = 'manual'
 
-    const parsedList = payload.parsed?.length ? payload.parsed : [undefined]
-    const newTransactions = parsedList.map(parsed =>
+    // Assembled investment drafts (typed-event channel) map 1:1 to view models via the
+    // shared converter; plain parsed transactions build as before. When the NL box
+    // produced investment drafts, don't also synthesize a blank manual row.
+    const draftBundle = payload.drafts?.length
+      ? convertAssembledDraftsToViewModels(payload.drafts)
+      : { transactions: [], importContext: new Map<string, ImportContext>() }
+
+    const parsedList = payload.parsed?.length
+      ? payload.parsed
+      : (draftBundle.transactions.length ? [] : [undefined])
+    const parsedTransactions = parsedList.map(parsed =>
       buildManualTransaction(parsed, payload.account, payload.currency)
     )
 
+    const newTransactions = [...parsedTransactions, ...draftBundle.transactions]
     transactionViewModels.value = [...transactionViewModels.value, ...newTransactions]
 
     newTransactions.forEach(t => {

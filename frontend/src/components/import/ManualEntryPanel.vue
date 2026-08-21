@@ -80,7 +80,7 @@
   import { computed, ref } from 'vue'
   import AccountDropdown from '@/components/common/AccountDropdown.vue'
   import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
-  import { parseNaturalLanguageTransaction, type ParsedTransaction } from '@/services/nlParser'
+  import { parseNaturalLanguageTransaction, type ParsedTransaction, type DraftTransaction } from '@/services/nlParser'
   import { useToast } from '@/composables/useNotifications'
   import { useConfig } from '@/composables/useConfig'
   import { useShortcutLabel } from '@/composables/useShortcutLabel'
@@ -91,7 +91,7 @@
   const { config } = useConfig()
 
   const emit = defineEmits<{
-    addTransaction: [payload: { account: string; currency: string; parsed?: ParsedTransaction[]; scrollToResult: boolean }]
+    addTransaction: [payload: { account: string; currency: string; parsed?: ParsedTransaction[]; drafts?: DraftTransaction[]; scrollToResult: boolean }]
   }>()
 
   const account = ref('')
@@ -118,9 +118,9 @@
         currency.value || undefined,
       )
       parseWarnings.value = result.warnings
-      parsedCount.value = result.transactions.length
-      // No usable transaction came back — surface it instead of adding a blank row.
-      if (result.transactions.length === 0) {
+      parsedCount.value = result.transactions.length + result.drafts.length
+      // No usable transaction OR investment draft came back — surface it instead of adding a blank row.
+      if (result.transactions.length === 0 && result.drafts.length === 0) {
         showErrorToast(
           'Parse Failed',
           result.warnings[0] || 'The AI did not return a transaction. Try rephrasing.',
@@ -131,6 +131,7 @@
         account: account.value,
         currency: currency.value,
         parsed: result.transactions,
+        drafts: result.drafts,
         scrollToResult: false,
       })
       nlText.value = ''

@@ -18,13 +18,15 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, TypeAdapter
 
 from app.ai.client import complete_chat
 from app.config import LLMConfig
 from app.core.config_manager import ConfigManager
 from app.dependencies import get_config_manager, get_sqlite_reader
 from app.services.sqlite_reader import SqliteReader
+from app.services.investment_assembler import InvestmentAssembler
+from app.schemas.investment_schemas import InvestmentEvent, DraftTransaction
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
 from app.schemas.response_schemas import ApiResponse
@@ -133,7 +135,32 @@ class ParsedTransaction(BaseModel):
 
 class ParseNLTransactionData(BaseModel):
     transactions: list[ParsedTransaction] = []
+    drafts: list[DraftTransaction] = []
     warnings: list[str] = []
+
+
+_EVENT_ADAPTER = TypeAdapter(InvestmentEvent)
+
+
+def _parse_investment_events(raw_events: list[Any]) -> tuple[list[InvestmentEvent], list[str]]:
+    """Validate raw event dicts from the model into typed InvestmentEvents.
+
+    Salvages the good ones and warns on the rest, rather than failing the whole
+    request — an unusable event becomes a warning the user sees, rather than a 500.
+    """
+    events: list[InvestmentEvent] = []
+    warnings: list[str] = []
+    for i, raw in enumerate(raw_events):
+        if not isinstance(raw, dict):
+            warnings.append(f"Event {i + 1}: expected an object, got {type(raw).__name__}.")
+            continue
+        try:
+            events.append(_EVENT_ADAPTER.validate_python(raw))
+        except ValidationError as e:
+            first = e.errors()[0] if e.errors() else {}
+            loc = ".".join(str(x) for x in first.get("loc", [])) or "(root)"
+            warnings.append(f"Event {i + 1}: could not be understood ({loc}: {first.get('msg', 'invalid')}).")
+    return events, warnings
 
 
 class GenerateQueryData(BaseModel):
@@ -278,8 +305,21 @@ async def parse_nl_transaction(
             details={"raw": json_str[:300]},
         )
 
-    candidates, warnings = _coerce_to_transaction_list(parsed)
+    # Investment activity comes back as a typed-event envelope ({"events": [...]});
+    # regular activity is a plain transaction array (or {"transactions": [...]}).
+    raw_events = parsed.get("events") if isinstance(parsed, dict) else None
+    raw_events = raw_events if isinstance(raw_events, list) else []
 
+    warnings: list[str] = []
+    if isinstance(parsed, dict) and "transactions" in parsed:
+        candidates, coerce_warnings = _coerce_to_transaction_list(parsed)
+    elif raw_events:
+        candidates, coerce_warnings = [], []  # events-only response
+    else:
+        candidates, coerce_warnings = _coerce_to_transaction_list(parsed)
+    warnings.extend(coerce_warnings)
+
+    # Plain transactions.
     transactions: list[dict[str, Any]] = []
     multiple = len(candidates) > 1
     for i, candidate in enumerate(candidates):
@@ -295,8 +335,20 @@ async def parse_nl_transaction(
         prefix = f"Transaction {i + 1}: " if multiple else ""
         warnings.extend(f"{prefix}{w}" for w in txn_warnings)
 
+    # Investment events → the shared assembler builds balanced drafts (cost basis,
+    # lots, gains resolved from the mirror). The model never writes Beancount geometry.
+    drafts: list[dict[str, Any]] = []
+    if raw_events:
+        events, event_warnings = _parse_investment_events(raw_events)
+        warnings.extend(event_warnings)
+        if events:
+            result = InvestmentAssembler(sqlite_reader).assemble(events)
+            drafts = [d.model_dump(mode="json") for d in result.drafts]
+            warnings.extend(iss.message for iss in result.errors)
+            warnings.extend(iss.message for iss in result.warnings)
+
     return success_json_response(
-        data={"transactions": transactions, "warnings": warnings}
+        data={"transactions": transactions, "drafts": drafts, "warnings": warnings}
     )
 
 

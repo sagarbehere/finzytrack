@@ -192,3 +192,68 @@ def test_amounts_are_decimal_not_float():
     cleaned, warnings = _validate_parsed_transaction(raw, ACCOUNTS, CURRENCIES)
     assert cleaned["postings"][0]["amount"] == Decimal("-140000.55")
     assert warnings == []
+
+
+# ── Investment event channel (Slice 4a) ─────────────────────────────────────
+
+
+def test_parse_investment_events_salvages_the_good_ones():
+    from app.api.routers.ai_services import _parse_investment_events
+    events, warnings = _parse_investment_events([
+        {"type": "buy", "date": "2024-06-03", "currency": "USD", "holding_account": "A",
+         "security": "VOO", "units": 1, "unit_price": 10, "cash_account": "C"},
+        {"type": "nonsense"},          # unknown discriminator
+        {"type": "cash_dividend"},     # missing required fields
+    ])
+    assert len(events) == 1
+    assert len(warnings) == 2
+
+
+def test_endpoint_builds_a_cash_dividend_draft(test_client: TestClient):
+    content = json.dumps({"events": [{
+        "type": "cash_dividend", "date": "2024-06-03", "currency": "USD",
+        "cash_account": "Assets:Checking", "security": "VOO", "amount": 379.09,
+        "income_account": "Income:Dividends",
+    }]})
+    data = _post(test_client, content, text="I got a $379.09 dividend for VOO")
+    assert data["transactions"] == []            # events-only response
+    assert len(data["drafts"]) == 1
+    d = data["drafts"][0]
+    assert "dividend" in d["narration"].lower()
+    assert len(d["postings"]) == 2
+    cash = next(p for p in d["postings"] if p["account"] == "Assets:Checking")
+    assert cash["amount"] == "379.09"            # money is a string on the wire
+
+
+def test_endpoint_builds_a_buy_draft_with_cost(test_client: TestClient):
+    content = json.dumps({"events": [{
+        "type": "buy", "date": "2024-06-03", "currency": "USD",
+        "holding_account": "Assets:Brokerage:VOO", "security": "VOO", "units": 10,
+        "unit_price": 417.45, "cash_account": "Assets:Checking",
+    }]})
+    data = _post(test_client, content, text="bought 10 VOO")
+    assert len(data["drafts"]) == 1
+    holding = next(p for p in data["drafts"][0]["postings"] if p["currency"] == "VOO")
+    assert holding["cost_amount"] == "417.45"
+    assert holding["amount"] == "10"
+
+
+def test_endpoint_sell_without_lots_warns_and_builds_no_draft(test_client: TestClient):
+    """The fixture ledger holds no VOO lots, so a sale can't resolve cost basis —
+    it must refuse (INSUFFICIENT_LOTS) rather than fabricate one."""
+    content = json.dumps({"events": [{
+        "type": "sell", "date": "2024-06-03", "currency": "USD",
+        "holding_account": "Assets:Brokerage:VOO", "security": "VOO", "units": 5,
+        "sale_price": 560, "cash_account": "Assets:Checking",
+        "gains_account": "Income:CapitalGains", "strategy": "fifo",
+    }]})
+    data = _post(test_client, content, text="sold 5 VOO")
+    assert data["drafts"] == []
+    assert any("lot" in w.lower() for w in data["warnings"])
+
+
+def test_endpoint_regular_array_still_yields_transactions_not_drafts(test_client: TestClient):
+    content = json.dumps([_txn("2026-08-17", [("Assets:Checking", "-45"), ("Assets:Savings", "45")])])
+    data = _post(test_client, content)
+    assert len(data["transactions"]) == 1
+    assert data["drafts"] == []
