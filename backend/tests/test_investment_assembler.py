@@ -24,6 +24,8 @@ from app.schemas.investment_schemas import (
     CashDividendEvent,
     SellEvent,
     LotSelection,
+    CdMaturityEvent,
+    InterestEvent,
     AddHoldingEvent,
 )
 
@@ -474,6 +476,90 @@ def _render_draft(draft) -> str:
             line += f" {p.price_type} {p.price_amount} {p.price_currency}"
         lines.append(line)
     return "\n".join(lines) + "\n"
+
+
+# ── CD maturity ───────────────────────────────────────────────────────────────
+
+def test_cd_maturity_geometry(tmp_path):
+    asm = _assembler(tmp_path, _BASE)
+    data = asm.assemble([CdMaturityEvent(
+        type="cd_maturity", date=date(2024, 6, 3), currency="USD",
+        cd_account="Assets:CD", principal=Decimal("10000.00"), interest=Decimal("250.00"),
+        destination_account="Assets:Cash", interest_income_account="Income:Interest",
+    )])
+    assert data.errors == []
+    d = data.drafts[0]
+    assert d.narration == "CD matured"
+    assert d.source_account == "Assets:CD"
+    by = {p.account: p for p in d.postings}
+    assert by["Assets:Cash"].amount == Decimal("10250.00")     # principal + interest
+    assert by["Assets:CD"].amount == Decimal("-10000.00")      # principal drawn down
+    assert by["Income:Interest"].amount == Decimal("-250.00")
+
+
+def test_cd_maturity_principal_only_omits_interest_leg(tmp_path):
+    asm = _assembler(tmp_path, _BASE)
+    data = asm.assemble([CdMaturityEvent(
+        type="cd_maturity", date=date(2024, 6, 3), currency="USD",
+        cd_account="Assets:CD", principal=Decimal("10000.00"),
+        destination_account="Assets:Cash",
+    )])
+    assert data.errors == []
+    d = data.drafts[0]
+    assert len(d.postings) == 2
+    by = {p.account: p for p in d.postings}
+    assert by["Assets:Cash"].amount == Decimal("10000.00")
+    assert by["Assets:CD"].amount == Decimal("-10000.00")
+
+
+def test_cd_maturity_interest_without_income_account_errors(tmp_path):
+    asm = _assembler(tmp_path, _BASE)
+    data = asm.assemble([CdMaturityEvent(
+        type="cd_maturity", date=date(2024, 6, 3), currency="USD",
+        cd_account="Assets:CD", principal=Decimal("10000.00"), interest=Decimal("250.00"),
+        destination_account="Assets:Cash",
+    )])
+    assert data.drafts == []
+    assert data.errors[0].code == "MISSING_INCOME_ACCOUNT"
+
+
+# ── Interest ──────────────────────────────────────────────────────────────────
+
+def test_interest_compounding_credits_the_instrument(tmp_path):
+    asm = _assembler(tmp_path, _BASE)
+    data = asm.assemble([InterestEvent(
+        type="interest", date=date(2024, 6, 3), currency="USD",
+        deposit_account="Assets:CD", interest=Decimal("50.00"), income_account="Income:Interest",
+    )])
+    assert data.errors == []
+    d = data.drafts[0]
+    assert d.narration == "Interest"
+    assert d.source_account == "Assets:CD"
+    by = {p.account: p for p in d.postings}
+    assert by["Assets:CD"].amount == Decimal("50.00")
+    assert by["Income:Interest"].amount == Decimal("-50.00")
+
+
+def test_interest_paid_out_to_a_separate_account(tmp_path):
+    asm = _assembler(tmp_path, _BASE)
+    data = asm.assemble([InterestEvent(
+        type="interest", date=date(2024, 6, 3), currency="USD",
+        deposit_account="Assets:Checking", interest=Decimal("50.00"), income_account="Income:Interest",
+    )])
+    assert data.errors == []
+    by = {p.account: p for p in data.drafts[0].postings}
+    assert by["Assets:Checking"].amount == Decimal("50.00")
+    assert by["Income:Interest"].amount == Decimal("-50.00")
+
+
+def test_interest_zero_rejected(tmp_path):
+    asm = _assembler(tmp_path, _BASE)
+    data = asm.assemble([InterestEvent(
+        type="interest", date=date(2024, 6, 3), currency="USD",
+        deposit_account="Assets:CD", interest=Decimal("0"), income_account="Income:Interest",
+    )])
+    assert data.drafts == []
+    assert data.errors[0].code == "INVALID_AMOUNT"
 
 
 def test_sell_draft_rebooks_cleanly_against_the_ledger(tmp_path):

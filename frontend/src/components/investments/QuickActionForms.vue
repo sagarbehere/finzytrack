@@ -84,6 +84,42 @@
       />
     </div>
 
+    <!-- CD / term-deposit account (cd-maturity) -->
+    <div v-if="needs('cd_account')" class="mt-4">
+      <AccountDropdown
+        v-model="form.cd_account"
+        label="CD / term-deposit account"
+        :account-types="['Assets']"
+        :allow-custom="true"
+        placeholder="e.g. Assets:CD:ValleyCU"
+      />
+    </div>
+
+    <!-- Deposit account (interest lands here) -->
+    <div v-if="needs('deposit_account')" class="mt-4">
+      <AccountDropdown
+        v-model="form.deposit_account"
+        label="Account receiving the interest"
+        :account-types="['Assets']"
+        :allow-custom="true"
+        placeholder="the instrument (compounding) or a cash account (paid out)"
+      />
+      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        Pick the instrument itself to compound, or a separate cash account if it’s paid out.
+      </p>
+    </div>
+
+    <!-- Destination account (cd-maturity) -->
+    <div v-if="needs('destination_account')" class="mt-4">
+      <AccountDropdown
+        v-model="form.destination_account"
+        label="Destination account (receives principal + interest)"
+        :account-types="['Assets']"
+        :allow-custom="true"
+        placeholder="e.g. Assets:Checking"
+      />
+    </div>
+
     <!-- Amount fields -->
     <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
       <div v-if="needs('units')">
@@ -102,19 +138,30 @@
         <label class="block text-sm font-medium text-gray-900 dark:text-white">Amount</label>
         <input v-model="form.amount" type="text" inputmode="decimal" :class="inputClass" placeholder="e.g. 379.09" />
       </div>
+      <div v-if="needs('principal')">
+        <label class="block text-sm font-medium text-gray-900 dark:text-white">Principal</label>
+        <input v-model="form.principal" type="text" inputmode="decimal" :class="inputClass" placeholder="e.g. 10000.00" />
+      </div>
+      <div v-if="needs('interest')">
+        <label class="block text-sm font-medium text-gray-900 dark:text-white">
+          Interest <span v-if="action === 'cd_maturity'" class="text-gray-400">(optional)</span>
+        </label>
+        <input v-model="form.interest" type="text" inputmode="decimal" :class="inputClass" placeholder="e.g. 250.00" />
+      </div>
     </div>
 
-    <!-- Income account (drip / dividend) -->
+    <!-- Income account (drip / dividend / interest / cd-maturity) -->
     <div v-if="needs('income_account')" class="mt-4">
       <AccountDropdown
         v-model="form.income_account"
-        label="Income account"
+        :label="isInterestKind ? (action === 'cd_maturity' ? 'Interest income account (if interest was paid)' : 'Interest income account') : 'Income account'"
         :account-types="['Income']"
         :allow-custom="true"
-        placeholder="e.g. Income:Dividends:VOO"
+        :placeholder="isInterestKind ? 'e.g. Income:Interest:ValleyCU' : 'e.g. Income:Dividends:VOO'"
       />
       <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-        Tag this account with <code>income-type: "dividend"</code> so it feeds the dividend split.
+        Tag this account with <code>income-type: "{{ isInterestKind ? 'interest' : 'dividend' }}"</code>
+        so it feeds the {{ isInterestKind ? 'interest' : 'dividend' }} split.
       </p>
     </div>
 
@@ -190,7 +237,7 @@
   import { useAccounts } from '@/composables/useAccounts'
   import { useToast } from '@/composables/useNotifications'
 
-  type ActionId = 'buy' | 'drip' | 'cash_dividend' | 'sell' | 'add_holding'
+  type ActionId = 'buy' | 'drip' | 'cash_dividend' | 'sell' | 'cd_maturity' | 'interest' | 'add_holding'
   type InvestmentEvent = AssembleRequest['events'][number]
 
   const emit = defineEmits<{ staged: [vms: TransactionViewModel[]] }>()
@@ -207,6 +254,8 @@
     { id: 'drip', label: 'Reinvest', help: 'A reinvested dividend/income buys more units — no cash changes hands.', fields: ['holding_account', 'security', 'units', 'unit_price', 'income_account'] },
     { id: 'cash_dividend', label: 'Dividend', help: 'A dividend paid to cash (not reinvested).', fields: ['cash_account', 'security', 'amount', 'income_account'] },
     { id: 'sell', label: 'Sell', help: 'Sell units of a holding — pick the lots (or a strategy) and see the realized gain before staging.', fields: [] },
+    { id: 'cd_maturity', label: 'CD Matures', help: 'A CD / term deposit matures — principal (and any final interest) is paid to another account.', fields: ['cd_account', 'principal', 'interest', 'destination_account', 'income_account'] },
+    { id: 'interest', label: 'Interest', help: 'Record periodic interest — credited to the instrument (compounding) or paid to another account.', fields: ['deposit_account', 'interest', 'income_account'] },
     { id: 'add_holding', label: 'Add Holding', help: 'Record a position you already hold at its average cost — seeds current value without lot-by-lot history.', fields: ['holding_account', 'security', 'units', 'avg_cost', 'opening_account'] },
   ]
 
@@ -228,8 +277,15 @@
     amount: '',
     avg_cost: '',
     opening_account: '',
+    cd_account: '',
+    destination_account: '',
+    deposit_account: '',
+    principal: '',
+    interest: '',
     narration: '',
   })
+
+  const isInterestKind = computed(() => action.value === 'interest' || action.value === 'cd_maturity')
 
   const issues = ref<AssembleIssue[]>([])
 
@@ -245,6 +301,8 @@
       case 'buy': return `Buy ${s}`
       case 'drip': return `${s} dividend reinvested`
       case 'cash_dividend': return `${s} dividend`
+      case 'cd_maturity': return 'CD matured'
+      case 'interest': return 'Interest'
       case 'add_holding': return `Opening holding ${s}`
     }
     return ''
@@ -256,10 +314,31 @@
     return Number.isFinite(n) && n > 0
   }
 
+  function isNonNegativeNumber(v: string): boolean {
+    if (v === '' || v == null) return false
+    const n = Number(v)
+    return Number.isFinite(n) && n >= 0
+  }
+
+  const NUMERIC_REQUIRED = new Set(['units', 'unit_price', 'amount', 'avg_cost', 'principal'])
+
   const canSubmit = computed(() => {
     if (!form.date || !form.currency) return false
     for (const f of currentAction.value.fields) {
-      if (f === 'units' || f === 'unit_price' || f === 'amount' || f === 'avg_cost') {
+      if (f === 'interest') {
+        if (action.value === 'interest') {
+          if (!isPositiveNumber(form.interest)) return false
+        } else if (form.interest !== '' && !isNonNegativeNumber(form.interest)) {
+          return false // cd_maturity: interest optional, but a bad value blocks
+        }
+      } else if (f === 'income_account') {
+        // cd_maturity's income account is required only when interest was entered.
+        if (action.value === 'cd_maturity') {
+          if (isPositiveNumber(form.interest) && !form.income_account) return false
+        } else if (!form.income_account) {
+          return false
+        }
+      } else if (NUMERIC_REQUIRED.has(f)) {
         if (!isPositiveNumber((form as Record<string, string>)[f])) return false
       } else if (!(form as Record<string, string>)[f]) {
         return false
@@ -301,6 +380,22 @@
           cash_account: form.cash_account, security: form.security,
           amount: form.amount, income_account: form.income_account,
         } as InvestmentEvent
+      case 'cd_maturity': {
+        const hasInterest = isPositiveNumber(form.interest)
+        return {
+          ...base, type: 'cd_maturity',
+          cd_account: form.cd_account, principal: form.principal,
+          interest: hasInterest ? form.interest : '0',
+          destination_account: form.destination_account,
+          ...(hasInterest ? { interest_income_account: form.income_account } : {}),
+        } as InvestmentEvent
+      }
+      case 'interest':
+        return {
+          ...base, type: 'interest',
+          deposit_account: form.deposit_account, interest: form.interest,
+          income_account: form.income_account,
+        } as InvestmentEvent
       case 'add_holding':
         return {
           ...base, type: 'add_holding',
@@ -341,21 +436,33 @@
     form.unit_price = ''
     form.amount = ''
     form.avg_cost = ''
+    form.principal = ''
+    form.interest = ''
     form.fee = ''
     form.narration = ''
   }
 
-  // Metadata-driven income-account suggestion (never keyed off account names).
-  // Prefer an Income account whose dividend_of matches the security, else the sole
-  // account tagged income-type: dividend. The user can always override.
-  watch(() => [action.value, form.security] as const, ([act, security]) => {
-    if ((act !== 'drip' && act !== 'cash_dividend') || !security || form.income_account) return
-    const dividends = accountDetails.value.filter(
-      a => String(a.metadata?.['income-type'] ?? '').toLowerCase() === 'dividend'
+  // Metadata-driven income-account suggestion (never keyed off account names). The user
+  // can always override. For dividend/DRIP prefer an account whose dividend_of matches the
+  // security, else the sole income-type: dividend account; for interest/CD maturity the sole
+  // income-type: interest account.
+  function incomeAccountsOfType(kind: string) {
+    return accountDetails.value.filter(
+      a => String(a.metadata?.['income-type'] ?? '').toLowerCase() === kind
     )
-    const exact = dividends.filter(a => a.metadata?.['dividend_of'] === security)
-    const pick = exact.length === 1 ? exact[0] : (dividends.length === 1 ? dividends[0] : null)
-    if (pick) form.income_account = pick.name
+  }
+  watch(() => [action.value, form.security, accountDetails.value] as const, ([act, security]) => {
+    if (form.income_account) return
+    if (act === 'drip' || act === 'cash_dividend') {
+      if (!security) return
+      const dividends = incomeAccountsOfType('dividend')
+      const exact = dividends.filter(a => a.metadata?.['dividend_of'] === security)
+      const pick = exact.length === 1 ? exact[0] : (dividends.length === 1 ? dividends[0] : null)
+      if (pick) form.income_account = pick.name
+    } else if (act === 'interest' || act === 'cd_maturity') {
+      const interest = incomeAccountsOfType('interest')
+      if (interest.length === 1) form.income_account = interest[0].name
+    }
   })
 
   onMounted(async () => {

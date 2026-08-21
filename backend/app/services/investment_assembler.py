@@ -30,6 +30,8 @@ from app.schemas.investment_schemas import (
     DripEvent,
     CashDividendEvent,
     SellEvent,
+    CdMaturityEvent,
+    InterestEvent,
     AddHoldingEvent,
     DraftPosting,
     DraftTransaction,
@@ -179,6 +181,10 @@ class InvestmentAssembler:
             return self._build_cash_dividend(index, ev, commodities)
         if isinstance(ev, SellEvent):
             return self._build_sell(index, ev, commodities)
+        if isinstance(ev, CdMaturityEvent):
+            return self._build_cd_maturity(index, ev)
+        if isinstance(ev, InterestEvent):
+            return self._build_interest(index, ev)
         if isinstance(ev, AddHoldingEvent):
             return self._build_add_holding(index, ev, commodities)
         raise _EventError("UNKNOWN_EVENT_TYPE", f"Unsupported event type: {getattr(ev, 'type', '?')}")
@@ -367,6 +373,39 @@ class InvestmentAssembler:
         if strategy == "hifo":
             return sorted(available, key=lambda a: a["cost"], reverse=True)
         return sorted(available, key=lambda a: a["date"])  # fifo (oldest first)
+
+    def _build_cd_maturity(self, index, ev: CdMaturityEvent):
+        """A CD/term-deposit matures: principal (+ final interest) paid to a destination.
+
+        Draws down the CD by principal, credits the destination with principal+interest,
+        and books the interest to income (omitted when zero — a principal-only return).
+        The CD is the sole reduced investment leg → interest attributes structurally as a
+        maturity (metadata-conventions.md), so no metadata is required.
+        """
+        self._require_positive(ev.principal, "principal")
+        self._require_non_negative(ev.interest, "interest")
+
+        total = ev.principal + ev.interest
+        postings = [
+            DraftPosting(account=ev.destination_account, amount=total, currency=ev.currency),
+            DraftPosting(account=ev.cd_account, amount=-ev.principal, currency=ev.currency),
+        ]
+        if ev.interest > 0:
+            if not ev.interest_income_account:
+                raise _EventError("MISSING_INCOME_ACCOUNT", "Interest was given without an interest_income_account")
+            postings.append(DraftPosting(account=ev.interest_income_account, amount=-ev.interest, currency=ev.currency))
+
+        return self._finalize(index, ev, ev.cd_account, "CD matured", postings, [])
+
+    def _build_interest(self, index, ev: InterestEvent):
+        """Periodic interest — credited to ``deposit_account`` (the instrument itself when
+        compounding, or a separate cash account when paid out) against an income leg."""
+        self._require_positive(ev.interest, "interest")
+        postings = [
+            DraftPosting(account=ev.deposit_account, amount=ev.interest, currency=ev.currency),
+            DraftPosting(account=ev.income_account, amount=-ev.interest, currency=ev.currency),
+        ]
+        return self._finalize(index, ev, ev.deposit_account, "Interest", postings, [])
 
     def _build_add_holding(self, index, ev: AddHoldingEvent, commodities):
         warnings = self._check_holding_security(index, ev.security, commodities)

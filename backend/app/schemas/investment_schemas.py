@@ -104,6 +104,33 @@ class SellEvent(InvestmentEventBase):
     )
 
 
+class CdMaturityEvent(InvestmentEventBase):
+    """CD / term-deposit matures: principal (+ any final interest) paid to a destination."""
+    type: Literal["cd_maturity"]
+    cd_account: str = Field(..., description="The CD/term-deposit account (Assets, asset-class: cd)")
+    principal: Decimal = Field(..., description="Principal returned (> 0)")
+    interest: Decimal = Field(default=Decimal("0"), description="Final interest paid at maturity (>= 0)")
+    destination_account: str = Field(..., description="Account receiving principal + interest (checking/savings)")
+    interest_income_account: Optional[str] = Field(
+        default=None, description="Income account for the interest (income-type: interest); required if interest > 0"
+    )
+
+
+class InterestEvent(InvestmentEventBase):
+    """Periodic interest — credited to the instrument (compounding) or a separate account (paid out).
+
+    The geometry is the same either way; which account receives the interest is the
+    caller's choice, and that choice is what makes it compounding vs paid out
+    (dev-docs/metadata-conventions.md "Interest attribution").
+    """
+    type: Literal["interest"]
+    deposit_account: str = Field(
+        ..., description="Account receiving the interest — the instrument itself (compounding) or a cash account (paid out)"
+    )
+    interest: Decimal = Field(..., description="Interest amount (> 0)")
+    income_account: str = Field(..., description="Income account (income-type: interest)")
+
+
 class AddHoldingEvent(InvestmentEventBase):
     """Bootstrap a currently-held position at an aggregate cost (positions-snapshot)."""
     type: Literal["add_holding"]
@@ -118,7 +145,7 @@ class AddHoldingEvent(InvestmentEventBase):
 
 
 InvestmentEvent = Annotated[
-    Union[BuyEvent, DripEvent, CashDividendEvent, SellEvent, AddHoldingEvent],
+    Union[BuyEvent, DripEvent, CashDividendEvent, SellEvent, CdMaturityEvent, InterestEvent, AddHoldingEvent],
     Field(discriminator="type"),
 ]
 

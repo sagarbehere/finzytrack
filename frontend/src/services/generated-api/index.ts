@@ -116,6 +116,7 @@ export type { CategorizeExistingResult } from './models/CategorizeExistingResult
 export type { CategorizeExistingTransaction } from './models/CategorizeExistingTransaction';
 export type { CategorizeRequest } from './models/CategorizeRequest';
 export type { CategorizeResponse } from './models/CategorizeResponse';
+export type { CdMaturityEvent } from './models/CdMaturityEvent';
 export type { ChatMessage } from './models/ChatMessage';
 export type { CommitPosting } from './models/CommitPosting';
 export type { CommitRequest } from './models/CommitRequest';
@@ -158,6 +159,7 @@ export { GenerateQueryRequest } from './models/GenerateQueryRequest';
 export type { HoldingLot } from './models/HoldingLot';
 export type { HoldingsData } from './models/HoldingsData';
 export type { HTTPValidationError } from './models/HTTPValidationError';
+export type { InterestEvent } from './models/InterestEvent';
 export type { InvalidProfileInfo } from './models/InvalidProfileInfo';
 export type { InvalidRuleSummary } from './models/InvalidRuleSummary';
 export type { LearnOFXAccountData } from './models/LearnOFXAccountData';
