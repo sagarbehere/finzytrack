@@ -31,6 +31,9 @@ LEDGER_INVALID = "LEDGER_INVALID"
 LEDGER_NOT_READABLE = "LEDGER_NOT_READABLE"
 LEDGER_PARSE_ERROR = "LEDGER_PARSE_ERROR"
 LEDGER_WRITE_FAILED = "LEDGER_WRITE_FAILED"
+# Pre-write validation gate: the candidate ledger would not load cleanly (booking /
+# balance / validation error introduced by this change). The write is refused.
+LEDGER_VALIDATION_FAILED = "LEDGER_VALIDATION_FAILED"
 
 # Account errors
 ACCOUNT_ALREADY_CLOSED = "ACCOUNT_ALREADY_CLOSED"

@@ -72,6 +72,23 @@ def load_ledger_checked(
     return loader.load_file(str(ledger_file))
 
 
+def load_string_checked(
+    ledger_text: str,
+) -> Tuple[List[Any], List[Any], Dict[str, Any]]:
+    """Parse a Beancount ledger from an **in-memory string** (full pipeline —
+    parse → **book** → validate), the single entry point for ``loader.load_string``.
+
+    Used by the write-path gate (``LedgerManager._write_and_export``) to validate a
+    *candidate* ledger before the durable write: booking errors ("Ambiguous
+    matches", insufficient inventory) surface only from a full load, never from a
+    bare ``parser.parse_string``. Nothing touches the filesystem; the candidate is
+    transient (dev-docs/investment-view.md §6.6).
+
+    Returns the ``(entries, errors, options)`` tuple from Beancount's loader.
+    """
+    return loader.load_string(ledger_text)
+
+
 def discover_includes_per_file(root_path: str | Path) -> Dict[str, List[str]]:
     """Walk the include tree starting at ``root_path`` and return a map of
     ``{absolute_filename: [absolute_path_of_each_file_it_includes, ...]}``.

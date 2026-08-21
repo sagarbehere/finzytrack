@@ -178,6 +178,13 @@ class CommitTransaction(BaseModel):
 class CommitRequest(BaseModel):
     """Request body for commit endpoint."""
     transactions: List[CommitTransaction] = Field(..., description="List of transactions to commit to ledger")
+    acknowledge: bool = Field(
+        default=False,
+        description=(
+            "Bypass the pre-write validation gate. Set true only on an explicit "
+            "'Register anyway' after the user has seen the introduced errors (§6.6)."
+        ),
+    )
 
 
 class CommitResponse(BaseModel):

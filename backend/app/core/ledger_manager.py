@@ -25,7 +25,7 @@ from beancount.core.data import Transaction, Posting
 
 from app.core.backup_manager import BackupManager
 from app.core.beancount_engine import BeancountEngine
-from app.core.ledger_loader import load_ledger_checked, discover_includes_per_file, sidecar_path
+from app.core.ledger_loader import load_ledger_checked, load_string_checked, discover_includes_per_file, sidecar_path, MemoryPressureError
 from app.exceptions import APIError
 from app import error_codes as ec
 from app.write_lock import WriteLockManager
@@ -393,11 +393,81 @@ class LedgerManager:
                 routed.append(e)
         return routed
 
-    def _write_and_export(self, entries, errors=None, options=None) -> None:
+    @staticmethod
+    def _is_booking_error(err) -> bool:
+        """A **booking-phase** error (``beancount.parser.booking*``) — "Ambiguous
+        matches", "Not enough lots to reduce", etc. These are the errors a bare
+        ``parser.parse_string`` cannot see (booking runs only on a full load), so they
+        are exactly what the write-path gate exists to catch before a durable write.
+
+        Deliberately narrow: balance-*assertion* mismatches
+        (``interpolate.BalanceError``) and document-reference errors
+        (``documents.DocumentError``) are **informational and legitimately
+        persistable** — a failing ``balance`` assertion is the user's own "does this
+        still match the broker?" signal, not corruption — so they must never block a
+        write. Other validation errors (unknown account, transaction imbalance) are
+        already surfaced on today's paths (the commit endpoint's parse check, client-side
+        balance validation) and stay write-then-surface; the gate only *adds* the booking
+        class, regressing nothing. (This narrows dev-docs/investment-view.md §6.6's
+        "any new error" to booking errors — see the note there.)
+        """
+        return type(err).__module__.startswith("beancount.parser.booking")
+
+    def _candidate_new_errors(self, entries, baseline_errors, options) -> List[str]:
+        """Validate a candidate entry list **in memory** and return the **booking**
+        errors this change would introduce (the write-path gate; §6.6).
+
+        Format the whole candidate as one self-contained string (options + plugins
+        preamble, no ``include`` lines — the entry stream already carries every file's
+        entries) and run it back through the loader so booking runs. Nothing touches disk.
+
+        The "new error" signal is deliberately **cheap and location-insensitive**, not a
+        per-error diff (a rewrite shifts source locations, so ``(file, lineno)`` matching
+        is unreliable): compare the **count of booking errors** before vs after — any
+        increase is treated as introduced (biased to over-report). Returns ``[]`` when no
+        new booking error (so the write proceeds).
+        """
+        try:
+            preamble_parts: List[str] = []
+            if options:
+                opt_text = self.engine.format_options(options)
+                if opt_text:
+                    preamble_parts.append(opt_text)
+                plugin_text = self.engine.format_plugins(options)
+                if plugin_text:
+                    preamble_parts.append(plugin_text)
+            preamble = ''.join(preamble_parts)
+            candidate_text = (preamble + '\n' if preamble else '') + self.engine.format_entries(list(entries))
+            _cand_entries, cand_errors, _cand_options = load_string_checked(candidate_text)
+        except MemoryPressureError:
+            raise
+        except Exception:
+            # A validator bug must never block an otherwise-valid write. Fall back to
+            # the historical write-then-surface behavior (the post-write reparse still
+            # records any real errors into the mirror).
+            logger.exception("Pre-write validation could not run; proceeding without the gate")
+            return []
+
+        baseline_booking = sum(1 for e in (baseline_errors or []) if self._is_booking_error(e))
+        candidate_booking = [e for e in cand_errors if self._is_booking_error(e)]
+        if len(candidate_booking) <= baseline_booking:
+            return []
+        return [str(getattr(e, 'message', e)) for e in candidate_booking]
+
+    def _write_and_export(self, entries, errors=None, options=None, *, acknowledge: bool = False) -> None:
         """Write entries then synchronously export to SQLite.
 
         This replaces the old pattern of write → cache invalidation → debounced export.
         The export happens inline so that reads immediately reflect the write.
+
+        **Check-then-write gate (dev-docs/investment-view.md §6.6).** Before the durable
+        write, the candidate entry list is validated in memory (``_candidate_new_errors``);
+        if the change would introduce a new load error and the caller hasn't
+        ``acknowledge``-d it, we **raise and do not write** — nothing broken is silently
+        persisted. The atomic swap itself is unchanged (this is "check, then write," never
+        "write, then undo"), and the whole sequence runs inside the caller's
+        ``@_serialized_write`` critical section, so no interleaving write can change the
+        inventory between validation and swap. Passing ``errors=None`` skips the gate.
 
         Always re-parses after writing to get fresh errors/options, because the
         write may have resolved or introduced validation errors (e.g. changing an
@@ -410,8 +480,22 @@ class LedgerManager:
         constraints: (a) no in-memory ledger cache (parsing is the architectural
         choice — see ``ledger_loader.py``), and (b) post-write errors must be
         immediately visible. Bulk imports batch into a single ``append_entries``
-        call, so a 1000-transaction import is still 2 parses, not 2000.
+        call, so a 1000-transaction import is still 2 parses, not 2000. The gate
+        adds one in-memory ``load_string`` (no disk) on the pre-write path.
         """
+        if errors is not None and not acknowledge:
+            new_errors = self._candidate_new_errors(entries, errors, options)
+            if new_errors:
+                raise APIError(
+                    message=(
+                        "This change can't be saved — it would put the ledger in an "
+                        "invalid state: " + "; ".join(new_errors[:5])
+                    ),
+                    code=ec.LEDGER_VALIDATION_FAILED,
+                    status_code=422,
+                    details={"errors": new_errors, "introduced_by_change": True},
+                )
+
         self._write_entries(entries, options)
 
         if self._sqlite_exporter:
@@ -427,11 +511,16 @@ class LedgerManager:
                 )
 
     @_serialized_write
-    def append_entries(self, new_entries) -> None:
-        """Append new entries via a full rewrite through _write_and_export()."""
+    def append_entries(self, new_entries, *, acknowledge: bool = False) -> None:
+        """Append new entries via a full rewrite through _write_and_export().
+
+        ``acknowledge=True`` bypasses the pre-write validation gate (§6.6) — the
+        interactive "Register anyway" path, after the user has seen the introduced
+        errors and chosen to proceed.
+        """
         entries, errors, options = self._parse_ledger()
         all_entries = list(entries) + list(new_entries)
-        self._write_and_export(all_entries, errors, options)
+        self._write_and_export(all_entries, errors, options, acknowledge=acknowledge)
 
     # ── Price sidecar (fetcher's dedicated, transaction-free write path) ──────
 

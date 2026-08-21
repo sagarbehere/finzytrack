@@ -364,7 +364,7 @@ async def commit_transactions(
 
     # Write all transactions to ledger via the single write path
     try:
-        beancount_manager.append_entries(validated_transactions)
+        beancount_manager.append_entries(validated_transactions, acknowledge=request.acknowledge)
         logger.info(f"Successfully committed {len(request.transactions)} transactions to ledger")
 
         return success_json_response(
@@ -375,6 +375,11 @@ async def commit_transactions(
             )
         )
 
+    except APIError:
+        # Preserve typed errors — notably the pre-write validation gate's
+        # LEDGER_VALIDATION_FAILED (422), which the frontend's Register dialog
+        # turns into "Register anyway" (re-submit with acknowledge=true). §6.6.
+        raise
     except Exception as e:
         logger.error(f"Failed to write to ledger: {e}")
         raise APIError(
