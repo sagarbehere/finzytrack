@@ -298,7 +298,10 @@
       </div>
 
       <!-- Main content -->
-      <main class="flex-1 min-h-0 overflow-auto pt-8 min-w-0">
+      <!-- relative: the containing block for absolutely positioned descendants
+           (e.g. sr-only labels in table rows), so they scroll with the content
+           instead of stretching the page and adding a second scrollbar. -->
+      <main class="relative flex-1 min-h-0 overflow-auto pt-8 min-w-0">
         <!-- Server-side notices (parse errors, advisories) -->
         <div
           v-for="notice in serverNotices"
