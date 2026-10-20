@@ -123,7 +123,9 @@ def build_overview(reader: SqliteReader, ledger_file: str, today: date) -> Price
             latest=latest_price,
             age_days=age,
             count=lp["count"] if lp else 0,
-            out_of_date=is_out_of_date(
+            # An I-Bond without an issue month is never computed, so (like any
+            # holding that isn't fetched) it is never out of date.
+            out_of_date=(cadence != CADENCE_COMPUTED or reason is None) and is_out_of_date(
                 cadence, is_held, latest_price.date if latest_price else None, today,
             ),
             not_fetched_reason=reason,

@@ -125,6 +125,9 @@
                       Add
                     </button>
                   </div>
+                  <p v-if="!errors.currencies" class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    Leave empty to allow any currency or security, for example in a brokerage account.
+                  </p>
                   <p v-if="errors.currencies" class="mt-1 text-sm text-red-600 dark:text-red-400">
                     {{ errors.currencies }}
                   </p>
@@ -574,12 +577,8 @@ function validate(): boolean {
     valid = false
   }
 
-  // An existing unconstrained `open` may stay unconstrained.
-  const unconstrainedEdit = props.mode === 'edit' && (props.account?.declaredCurrencies.length ?? 0) === 0
-  if (formData.currencies.length === 0 && !unconstrainedEdit) {
-    errors.currencies = 'At least one currency is required'
-    valid = false
-  }
+  // No currencies = an unconstrained `open`: the account may hold any currency
+  // or security (what a brokerage account usually wants).
 
   if (formData.customFields.some(f => f.key.trim() && !isValidKey(f.key.trim()))) {
     errors.customFields = 'Fix the highlighted keys. A key starts with a lowercase letter and uses letters, numbers, \'-\' and \'_\'.'

@@ -188,7 +188,7 @@ class TestOverview:
         assert rows[("VTI", "USD")]["cadence"] == "never"
         ibx = rows[("IBX", "USD")]
         assert (ibx["cadence"], ibx["not_fetched_reason"]) == ("computed", "Needs an issue month")
-        assert ibx["out_of_date"] is True            # held, computed, no price yet
+        assert ibx["out_of_date"] is False           # not computed without an issue month
 
 
 class TestHistory:

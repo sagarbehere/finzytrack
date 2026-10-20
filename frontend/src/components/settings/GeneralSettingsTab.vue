@@ -87,7 +87,7 @@
           </span>
         </div>
         <p v-else class="text-sm italic text-gray-400 dark:text-gray-500 mb-3">
-          No operating currencies set — every commodity is treated as a currency.
+          No operating currencies set. A commodity counts as a holding only if its asset class is set to something other than cash or currency.
         </p>
 
         <div class="flex items-center gap-2">

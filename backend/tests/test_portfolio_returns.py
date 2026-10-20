@@ -166,3 +166,41 @@ def test_registered_and_discoverable(tmp_path):
     assert "portfolio_returns" in reg.names()
     schema = {s["name"]: s for s in reg.get_schemas()}["portfolio_returns"]
     assert schema["description"] and schema["output_shape"]
+
+
+# A position entered at its average cost against opening balances (the Add
+# Holding quick action) is money put in on that date — not a free position.
+_LEDGER_ADD_HOLDING = """\
+option "operating_currency" "USD"
+2020-01-01 commodity VOO
+  asset-class: "etf"
+2020-01-01 open Assets:Broker USD,VOO
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Equity:Opening-Balances
+2021-01-01 * "Opening holding VOO"
+  Assets:Broker  10 VOO {100.00 USD}
+  Equity:Opening-Balances  -1000.00 USD
+"""
+
+
+def test_add_holding_counts_as_money_in_on_its_date(tmp_path):
+    r = _reader(tmp_path, _LEDGER_ADD_HOLDING, _SIDECAR_30PCT)
+    rows = asyncio.run(PortfolioReturnsFunction(r).execute(**{"to": "2022-01-01", "scope": "portfolio"}))
+    assert len(rows) == 1
+    assert abs(float(rows[0]["xirr"]) - 0.30) < 1e-4   # same as a cash-funded buy
+    assert rows[0]["simple_gain"] == "300.00"
+
+
+def test_add_holding_and_buy_together_give_the_money_weighted_return(tmp_path):
+    """An opening position plus a later cash buy: both are money in, so the
+    return is the same 30% the buy-only ledger gives when both lots gain 30%
+    over the same year."""
+    ledger = _LEDGER_ADD_HOLDING + (
+        '2021-01-01 * "buy"\n'
+        "  Assets:Broker  10 VOO {100.00 USD}\n"
+        "  Assets:Cash  -1000.00 USD\n"
+    )
+    r = _reader(tmp_path, ledger, _SIDECAR_30PCT)
+    rows = asyncio.run(PortfolioReturnsFunction(r).execute(**{"to": "2022-01-01", "scope": "portfolio"}))
+    assert abs(float(rows[0]["xirr"]) - 0.30) < 1e-4
+    assert rows[0]["market_value"] == "2600.00" and rows[0]["cost_basis"] == "2000.00"

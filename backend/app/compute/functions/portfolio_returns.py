@@ -7,7 +7,8 @@ quote — where the cash-flow series is dense enough for the solver to be truste
 per-holding / per-year use simple gain instead.
 
 Cash-flow model (dev-docs/valuations.md §5): the external cash exchanged with the
-portfolio — a buy's cash leg (negative, money in), a sale's proceeds and a cash
+portfolio — a buy's cash leg (negative, money in), a position opened at cost
+against Equity (negative, money in on that date), a sale's proceeds and a cash
 dividend (positive, money out), while a reinvested-income DRIP has no cash leg
 and nets to zero — plus the terminal market value as a final positive flow.
 
@@ -30,7 +31,11 @@ from app.services.sqlite_reader import SqliteReader
 
 logger = logging.getLogger(__name__)
 
-_CASH_ACCOUNT_TYPES = ("Assets", "Liabilities")
+# Legs that move money into or out of the portfolio. Equity counts: a position
+# entered at its average cost against opening balances (Add Holding) is money put
+# in on that date, so XIRR measures the return since tracking began instead of
+# treating the position as free (dev-docs/valuations.md §5).
+_CASH_ACCOUNT_TYPES = ("Assets", "Liabilities", "Equity")
 
 
 def _xnpv(rate: float, flows: list[tuple[date, float]], d0: date) -> float:

@@ -92,6 +92,18 @@ class TestCreateAccount:
         assert body["success"] is True
         assert body["data"]["account_created"] is True
 
+    def test_create_without_currencies_is_unconstrained(self, test_client):
+        """No currencies = an `open` with no constraint, so the account can hold
+        any currency or security (a brokerage account)."""
+        resp = test_client.post(
+            "/api/accounts",
+            json={"name": "Assets:Brokerage", "open_date": "2024-01-01", "currencies": []},
+        )
+        assert resp.status_code == 201, resp.text
+        accounts = test_client.get("/api/accounts").json()["data"]["accounts"]
+        created = next(a for a in accounts if a["name"] == "Assets:Brokerage")
+        assert created["declared_currencies"] == []
+
     def test_created_account_appears_in_list(self, test_client):
         """After creating an account, it must appear in GET /accounts."""
         test_client.post(
