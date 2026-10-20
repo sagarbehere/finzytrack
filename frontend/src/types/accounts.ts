@@ -29,6 +29,16 @@ export interface AccountTreeNode {
   metadata: Record<string, string>;     // All metadata from beancount open directive
 }
 
+/** What the account create/edit form submits. */
+export interface AccountFormSubmitData {
+  name: string
+  openDate: string
+  closeDate?: string | null
+  currencies: string[]
+  description: string
+  metadata: Record<string, string>
+}
+
 export interface AccountFilters {
   search: string;
   type: AccountType | 'All';

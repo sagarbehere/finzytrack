@@ -557,3 +557,40 @@ class TestCommodityCRUD:
         assert len(btc) >= 1
         assert btc[0].meta.get("name") == "Bitcoin"
         assert btc[0].meta.get("asset-class") == "crypto"
+
+    def test_upsert_creates_directive_when_missing(self, engine, base_entries):
+        from beancount.core import data as bd
+        entries, changed = engine.upsert_commodity_metadata(
+            base_entries, code="VOO", set_metadata={"asset-class": "etf"},
+            remove_keys=[], on_date=date(2020, 5, 1),
+        )
+        voo = [e for e in entries if isinstance(e, bd.Commodity) and e.currency == "VOO"]
+        assert changed is True
+        assert len(voo) == 1
+        assert voo[0].date == date(2020, 5, 1)
+        assert voo[0].meta["asset-class"] == "etf"
+
+    def test_upsert_sets_and_removes_keeping_others(self, engine, base_entries):
+        from beancount.core import data as bd
+        entries = engine.create_commodity(
+            base_entries, code="BTC", name="Bitcoin",
+            metadata={"fetch_symbol": "BTC-USD", "note": "x"}, on_date=date(2021, 1, 1),
+        )
+        entries, changed = engine.upsert_commodity_metadata(
+            entries, code="BTC", set_metadata={"asset-class": "crypto"},
+            remove_keys=["note"],
+        )
+        btc = [e for e in entries if isinstance(e, bd.Commodity) and e.currency == "BTC"]
+        assert changed is True
+        assert len(btc) == 1
+        assert btc[0].date == date(2021, 1, 1)
+        user_meta = {k: v for k, v in btc[0].meta.items() if k not in ("filename", "lineno")}
+        assert user_meta == {"name": "Bitcoin", "fetch_symbol": "BTC-USD", "asset-class": "crypto"}
+
+    def test_upsert_without_changes_is_a_noop(self, engine, base_entries):
+        from beancount.core import data as bd
+        entries, changed = engine.upsert_commodity_metadata(
+            base_entries, code="NEW", set_metadata={}, remove_keys=["asset-class"],
+        )
+        assert changed is False
+        assert [e for e in entries if isinstance(e, bd.Commodity) and e.currency == "NEW"] == []

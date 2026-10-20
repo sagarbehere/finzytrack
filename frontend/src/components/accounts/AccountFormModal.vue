@@ -183,6 +183,87 @@
                   </div>
                 </div>
 
+                <!-- Investment details: the recognized keys for this account, typed -->
+                <div v-if="typedFields.length > 0" class="border-t border-gray-200 dark:border-white/10 pt-4">
+                  <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">Investment details (optional)</h4>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Each one adds detail to the investment dashboards.</p>
+                  <div class="mt-3 space-y-3">
+                    <div v-for="f in shownTypedFields" :key="f.key">
+                      <label
+                        :for="fieldApplies(f, formData.investment) && ['date', 'text', 'percent', 'integer'].includes(f.kind) ? `inv-${f.key}` : undefined"
+                        class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1"
+                      >{{ f.label }}</label>
+                      <!-- Set, but not used for this type: shown read-only so it can be cleared -->
+                      <div v-if="!fieldApplies(f, formData.investment)" class="flex items-center gap-2">
+                        <span class="flex-1 text-sm text-gray-500 dark:text-gray-400">{{ formData.investment[f.key] }}</span>
+                        <button
+                          type="button"
+                          class="text-xs font-medium text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300"
+                          @click="formData.investment[f.key] = ''"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                      <p v-if="!fieldApplies(f, formData.investment)" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Not used when {{ f.requires_key === 'income-type' ? 'income type' : 'account type' }} is {{ formData.investment[f.requires_key ?? ''] || 'not set' }}.
+                      </p>
+                      <template v-else>
+                      <ValueCombobox
+                        v-if="f.kind === 'enum'"
+                        :model-value="formData.investment[f.key] ?? ''"
+                        :options="f.values ?? []"
+                        placeholder="Not set"
+                        :aria-label="f.label"
+                        @update:model-value="v => (formData.investment[f.key] = canonicalValue(f, v))"
+                      />
+                      <input
+                        v-else-if="f.kind === 'date'"
+                        :id="`inv-${f.key}`"
+                        v-model="formData.investment[f.key]"
+                        type="date"
+                        class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
+                      />
+                      <div v-else-if="f.kind === 'account'" class="flex items-center gap-2">
+                        <div class="flex-1">
+                          <AccountDropdown
+                            v-model="formData.investment[f.key]"
+                            placeholder="Not set"
+                            :account-types="['Income']"
+                            :open-only="false"
+                            :allow-custom="true"
+                          />
+                        </div>
+                        <button
+                          v-if="formData.investment[f.key]"
+                          type="button"
+                          :aria-label="`Clear ${f.label}`"
+                          class="text-gray-400 hover:text-red-500 dark:hover:text-red-400"
+                          @click="formData.investment[f.key] = ''"
+                        >
+                          <XMarkIcon class="h-4 w-4" />
+                        </button>
+                      </div>
+                      <CommodityDropdown
+                        v-else-if="f.kind === 'commodity'"
+                        v-model="formData.investment[f.key]"
+                        placeholder="Not set"
+                        :allow-custom="true"
+                        :clearable="true"
+                      />
+                      <input
+                        v-else
+                        :id="`inv-${f.key}`"
+                        v-model="formData.investment[f.key]"
+                        type="text"
+                        placeholder="Not set"
+                        class="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
+                      />
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ f.adds }}</p>
+                      </template>
+                    </div>
+                  </div>
+                </div>
+
                 <!-- Custom Fields -->
                 <div class="border-t border-gray-200 dark:border-white/10 pt-4">
                   <div class="flex items-center justify-between mb-3">
@@ -223,7 +304,8 @@
                         <XMarkIcon class="h-4 w-4" />
                       </button>
                     </div>
-                    <p class="text-xs text-gray-400 dark:text-gray-500">Keys must be lowercase letters, numbers, and underscores.</p>
+                    <p v-if="errors.customFields" class="text-xs text-red-600 dark:text-red-400">{{ errors.customFields }}</p>
+                    <p v-else class="text-xs text-gray-400 dark:text-gray-500">Keys start with a lowercase letter and use letters, numbers, '-' and '_'.</p>
                   </div>
                   <p v-else class="text-xs text-gray-400 dark:text-gray-500">
                     Store arbitrary metadata like branch name, opening date, registered address, etc.
@@ -241,7 +323,7 @@
                   </button>
                   <button
                     type="submit"
-                    :disabled="isSubmitting"
+                    :disabled="isSubmitting || (mode === 'edit' && isLoadingAccount)"
                     class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {{ isSubmitting ? 'Saving...' : (mode === 'create' ? 'Create' : 'Save') }}
@@ -257,11 +339,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
+import { computed, ref, reactive, watch } from 'vue'
 import { Dialog, DialogPanel, DialogTitle, TransitionChild, TransitionRoot } from '@headlessui/vue'
 import { XMarkIcon, PlusIcon } from '@heroicons/vue/24/outline'
-import type { AccountTreeNode } from '@/types/accounts'
+import type { AccountFormSubmitData, AccountTreeNode } from '@/types/accounts'
+import AccountDropdown from '@/components/common/AccountDropdown.vue'
 import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
+import ValueCombobox from '@/components/common/ValueCombobox.vue'
+import { useCommodities } from '@/composables/useCommodities'
+import { useMetadataVocabulary } from '@/composables/useMetadataVocabulary'
+import { MetadataService } from '@/services/generated-api'
+import { errorHandler } from '@/utils/ErrorHandler'
+import { canonicalValue, fieldApplies, fieldsFor, type MetadataScope } from '@/utils/metadataVocabulary'
 
 const BANKING_KEYS = new Set(['account_number', 'ifsc_code', 'swift_bic'])
 const RESERVED_KEYS = new Set(['description', ...BANKING_KEYS])
@@ -270,6 +359,9 @@ interface Props {
   open: boolean
   mode: 'create' | 'edit'
   account?: AccountTreeNode | null
+  // The account's recognized-metadata scope when the caller already knows it
+  // (the Setup & Metadata review). Undefined → looked up from the review.
+  investmentScope?: MetadataScope | null
 }
 
 interface Emits {
@@ -277,14 +369,7 @@ interface Emits {
   (e: 'submit', data: FormSubmitData): void
 }
 
-export interface FormSubmitData {
-  name: string
-  openDate: string
-  closeDate?: string | null
-  currencies: string[]
-  description: string
-  metadata: Record<string, string>
-}
+export type FormSubmitData = AccountFormSubmitData
 
 interface InternalFormData {
   name: string
@@ -296,14 +381,18 @@ interface InternalFormData {
   ifscCode: string
   swiftBic: string
   customFields: { key: string; value: string }[]
+  // Recognized investment keys (dev-docs/investment-view.md §10.3), edited as typed fields.
+  investment: Record<string, string>
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  account: null
+  account: null,
+  investmentScope: undefined,
 })
 const emit = defineEmits<Emits>()
 
 const isSubmitting = ref(false)
+const isLoadingAccount = ref(false)
 const currencyInput = ref('')
 const originalName = ref('')
 
@@ -317,6 +406,7 @@ const formData = reactive<InternalFormData>({
   ifscCode: '',
   swiftBic: '',
   customFields: [],
+  investment: {},
 })
 
 const errors = reactive({
@@ -324,11 +414,63 @@ const errors = reactive({
   openDate: '',
   closeDate: '',
   currencies: '',
+  customFields: '',
 })
 
+const { fields: vocabularyFields, fetchVocabulary } = useMetadataVocabulary()
+const { commodityDetails, fetchCommodities } = useCommodities()
+
+/**
+ * Which recognized-metadata scope a NEW account belongs to: Income accounts, and
+ * Assets accounts that hold only currencies (account-level asset-class describes
+ * a currency balance; a brokerage account's holdings carry their own). An
+ * existing account's scope comes from the backend review instead, so it follows
+ * the same rule as the Setup & Metadata tab (including the held-at-cost check).
+ */
+function scopeFor(name: string, currencies: string[]): MetadataScope | null {
+  const root = name.split(':')[0]
+  if (root === 'Income') return 'income-account'
+  if (root !== 'Assets') return null
+  const isCurrency = new Map(commodityDetails.value.map(c => [c.code, c.is_currency]))
+  return currencies.every(c => isCurrency.get(c) ?? true) ? 'account' : null
+}
+
+const editScope = ref<MetadataScope | null>(null)
+
+async function lookUpScope(name: string): Promise<MetadataScope | null> {
+  if (props.investmentScope !== undefined) return props.investmentScope
+  try {
+    const review = await MetadataService.getMetadataReview()
+    const item = review.data?.items.find(i => i.item === name && i.scope !== 'commodity')
+    return (item?.scope as MetadataScope | undefined) ?? null
+  } catch (err) {
+    errorHandler.display(err)
+    return null
+  }
+}
+
+const typedFields = computed(() => {
+  const scope = props.mode === 'edit' ? editScope.value : scopeFor(formData.name, formData.currencies)
+  return scope ? fieldsFor(vocabularyFields.value, scope) : []
+})
+
+// Fields that apply now, plus any that hold a value but no longer apply (e.g.
+// maturity_date after the type changed from CD) — kept visible so they can be cleared.
+const shownTypedFields = computed(() =>
+  typedFields.value.filter(f => fieldApplies(f, formData.investment) || !!formData.investment[f.key]),
+)
+
 // Watch for account changes to populate edit form
-watch(() => props.account, (account) => {
+watch(() => props.account, async (account) => {
   if (account && props.mode === 'edit') {
+    // Save stays disabled until this account's form is filled; a result for an
+    // account that is no longer selected is dropped.
+    isLoadingAccount.value = true
+    const [, , scope] = await Promise.all([fetchVocabulary(), fetchCommodities(), lookUpScope(account.fullPath)])
+    if (props.account !== account) return
+    isLoadingAccount.value = false
+    editScope.value = scope
+    const typedKeys = new Set(scope ? fieldsFor(vocabularyFields.value, scope).map(f => f.key) : [])
     originalName.value = account.fullPath
     formData.name = account.fullPath
     formData.openDate = account.openDate || new Date().toISOString().split('T')[0]
@@ -346,8 +488,11 @@ watch(() => props.account, (account) => {
     formData.ifscCode = account.metadata['ifsc_code'] || ''
     formData.swiftBic = account.metadata['swift_bic'] || ''
     formData.customFields = Object.entries(account.metadata)
-      .filter(([k]) => !RESERVED_KEYS.has(k))
+      .filter(([k]) => !RESERVED_KEYS.has(k) && !typedKeys.has(k))
       .map(([key, value]) => ({ key, value }))
+    formData.investment = Object.fromEntries(
+      Object.entries(account.metadata).filter(([k]) => typedKeys.has(k)),
+    )
   }
 }, { immediate: true })
 
@@ -363,7 +508,10 @@ watch(() => props.open, (isOpen) => {
     formData.ifscCode = ''
     formData.swiftBic = ''
     formData.customFields = []
+    formData.investment = {}
     currencyInput.value = ''
+    fetchVocabulary()
+    fetchCommodities()
     clearErrors()
   }
 })
@@ -373,6 +521,7 @@ function clearErrors() {
   errors.openDate = ''
   errors.closeDate = ''
   errors.currencies = ''
+  errors.customFields = ''
 }
 
 function addCurrency() {
@@ -395,8 +544,9 @@ function removeCustomField(index: number) {
   formData.customFields.splice(index, 1)
 }
 
+// Beancount's metadata-key grammar.
 function isValidKey(key: string): boolean {
-  return /^[a-z][a-z0-9_]*$/.test(key)
+  return /^[a-z][a-zA-Z0-9_-]*$/.test(key)
 }
 
 function validate(): boolean {
@@ -424,8 +574,15 @@ function validate(): boolean {
     valid = false
   }
 
-  if (formData.currencies.length === 0) {
+  // An existing unconstrained `open` may stay unconstrained.
+  const unconstrainedEdit = props.mode === 'edit' && (props.account?.declaredCurrencies.length ?? 0) === 0
+  if (formData.currencies.length === 0 && !unconstrainedEdit) {
     errors.currencies = 'At least one currency is required'
+    valid = false
+  }
+
+  if (formData.customFields.some(f => f.key.trim() && !isValidKey(f.key.trim()))) {
+    errors.customFields = 'Fix the highlighted keys. A key starts with a lowercase letter and uses letters, numbers, \'-\' and \'_\'.'
     valid = false
   }
 
@@ -441,6 +598,11 @@ function buildMetadata(): Record<string, string> {
     if (field.key.trim() && field.value.trim() && isValidKey(field.key.trim())) {
       meta[field.key.trim()] = field.value.trim()
     }
+  }
+  // Kept even when a field no longer applies (e.g. type changed from CD) — the
+  // form never drops a value the user didn't clear.
+  for (const [key, value] of Object.entries(formData.investment)) {
+    if (value && value.trim()) meta[key] = value.trim()
   }
   return meta
 }

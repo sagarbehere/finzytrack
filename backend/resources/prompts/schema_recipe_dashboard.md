@@ -454,6 +454,7 @@ The only recipe type. Owns layout, parameters, optional shared steps, and an arr
 | `id` | `RecipeId` | yes |  |
 | `title` | `string` | yes |  |
 | `description` | `string` | — |  |
+| `metadataHint` | `object` | — | Optional, dismissible offer shown above the dashboard when items in this scope have recognized metadata not set (Investments → Setup & Metadata review). Links to that tab. Phrase it as an offer of what tagging adds, never as missing or incomplete data. |
 | `parameters` | `RecipeParameter[]` | — |  |
 | `steps` | `Steps` | — | Optional dashboard-level shared steps. Run once per dashboard render; widgets reference them via {{dashboard.steps.<id>}}. There is no dashboard-level output. |
 | `layout` | `object` | yes |  |

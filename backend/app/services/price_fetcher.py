@@ -25,10 +25,12 @@ from typing import Any, Optional
 from beancount.core import data
 from beancount.core.amount import Amount
 
+from app.core.metadata_vocabulary import CURRENCY_ASSET_CLASSES
+
 logger = logging.getLogger(__name__)
 
 # asset-class → fetch cadence. Anything unlisted defaults to daily.
-_NEVER = {"money-market", "cash", "currency"}
+_NEVER = CURRENCY_ASSET_CLASSES | {"money-market"}
 _MONTHLY = {"bond", "cd"}
 _IBOND = "i-bond"  # valued formulaically via the ibonds library, not fetched
 

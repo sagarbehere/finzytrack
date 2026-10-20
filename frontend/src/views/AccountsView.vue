@@ -181,6 +181,7 @@ import AccountsTable from '@/components/accounts/AccountsTable.vue'
 import AccountsCardList from '@/components/accounts/AccountsCardList.vue'
 import { useBreakpoint } from '@/composables/useBreakpoint'
 import AccountFormModal from '@/components/accounts/AccountFormModal.vue'
+import { buildAccountUpdateRequest } from '@/utils/accountUpdate'
 import AccountCloseModal from '@/components/accounts/AccountCloseModal.vue'
 import AccountDeleteModal from '@/components/accounts/AccountDeleteModal.vue'
 import BalanceBreakdownModal from '@/components/accounts/BalanceBreakdownModal.vue'
@@ -192,7 +193,7 @@ import { LedgerService } from '@/services/generated-api'
 import { useAccounts, type AccountDateFilter } from '@/composables/useAccounts'
 import { useAccountsTree } from '@/composables/useAccountsTree'
 import { useToast } from '@/composables/useNotifications'
-import type { AccountTreeNode, AccountFilters } from '@/types/accounts'
+import type { AccountTreeNode, AccountFilters, AccountFormSubmitData } from '@/types/accounts'
 
 const router = useRouter()
 const route = useRoute()
@@ -510,20 +511,12 @@ async function handleCreateSubmit(data: { name: string; openDate: string; curren
   }
 }
 
-async function handleEditSubmit(data: { name: string; openDate: string; closeDate?: string | null; currencies: string[]; description: string; metadata: Record<string, string> }) {
+async function handleEditSubmit(data: AccountFormSubmitData) {
   if (!editingAccount.value) return
 
   try {
-    const metadata: Record<string, string> = { ...data.metadata }
-    if (data.description) metadata['description'] = data.description
     const isRenamed = data.name !== editingAccount.value.fullPath
-    await updateAccount(editingAccount.value.fullPath, {
-      new_name: isRenamed ? data.name : undefined,
-      open_date: data.openDate,
-      close_date: data.closeDate !== undefined ? (data.closeDate || '') : undefined,
-      currencies: data.currencies,
-      metadata,
-    })
+    await updateAccount(editingAccount.value.fullPath, buildAccountUpdateRequest(editingAccount.value, data))
     showEditModal.value = false
     const successMsg = isRenamed
       ? `Account renamed from "${editingAccount.value.fullPath}" to "${data.name}".`

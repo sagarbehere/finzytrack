@@ -23,6 +23,7 @@ from typing import Callable, Dict, Any, Iterator, List, Optional, Tuple
 from decimal import Decimal
 from datetime import datetime, date, UTC
 
+from app.core.metadata_vocabulary import CURRENCY_ASSET_CLASSES
 from app.core.constants import SOURCE_ACCOUNT_TYPES, INCOME_STATEMENT_PREFIXES
 
 from beancount.core.data import Transaction, Posting
@@ -68,7 +69,7 @@ _NEW_TABLES = [
 # Asset-class metadata values (case-insensitive) that denote a unit of account
 # rather than a holding. Consulted only as a *fallback* when a ledger declares
 # no `operating_currency` option. See dev-docs/commodities-and-currencies.md.
-_CURRENCY_ASSET_CLASSES = frozenset({"cash", "currency"})
+_CURRENCY_ASSET_CLASSES = CURRENCY_ASSET_CLASSES
 
 
 class SQLiteExporter:

@@ -436,6 +436,27 @@ class SqliteReader:
 
         return self._query(query)
 
+    def get_cost_held(self) -> Tuple[Set[str], Set[str]]:
+        """Return ``(accounts, commodities)`` that have ever had a posting held at
+        cost — the structural sign of a holding, independent of how the ledger
+        classifies currencies."""
+        def query(con: sqlite3.Connection) -> Tuple[Set[str], Set[str]]:
+            rows = con.execute(
+                "SELECT DISTINCT account, currency FROM postings "
+                "WHERE cost_currency IS NOT NULL"
+            ).fetchall()
+            return {r["account"] for r in rows}, {r["currency"] for r in rows}
+        return self._query(query)
+
+    def get_posting_counts(self) -> Dict[str, int]:
+        """Number of postings per account, ever (accounts with none are absent)."""
+        def query(con: sqlite3.Connection) -> Dict[str, int]:
+            rows = con.execute(
+                "SELECT account, COUNT(*) AS n FROM postings GROUP BY account"
+            ).fetchall()
+            return {r["account"]: r["n"] for r in rows}
+        return self._query(query)
+
     def get_commodity_codes(self) -> Set[str]:
         """Get set of all commodity codes."""
         def query(con: sqlite3.Connection) -> Set[str]:

@@ -362,6 +362,7 @@ class BeancountEngine:
         open_date: Optional[date] = None,
         currencies: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        remove_metadata: Optional[List[str]] = None,
         close_date: Optional[date] = None,
         reopen: bool = False,
         ledger_file: str = "",
@@ -376,7 +377,11 @@ class BeancountEngine:
                 found_open = True
                 final_date = open_date or entry.date
                 final_currencies = currencies or list(entry.currencies or [])
-                carried = {k: v for k, v in (entry.meta or {}).items() if k not in ('filename', 'lineno')}
+                removed = set(remove_metadata or ())
+                carried = {
+                    k: v for k, v in (entry.meta or {}).items()
+                    if k not in ('filename', 'lineno') and k not in removed
+                }
                 if metadata:
                     carried.update(metadata)
                 new_meta = {'filename': entry.meta.get('filename', ledger_file), 'lineno': entry.meta.get('lineno', 0)}
@@ -674,9 +679,10 @@ class BeancountEngine:
         name: Optional[str] = None,
         asset_class: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        on_date: Optional[date] = None,
         ledger_file: str = "",
     ) -> list:
-        today = datetime.now().date()
+        today = on_date or datetime.now().date()
         meta: Dict[str, Any] = {'filename': ledger_file, 'lineno': 0}
         if name:
             meta['name'] = name
@@ -687,10 +693,43 @@ class BeancountEngine:
             meta['asset-class'] = asset_class
         if metadata:
             for key, value in metadata.items():
-                if key not in ('name', 'asset-class'):
+                if key not in meta:  # explicit name/asset_class params win
                     meta[key] = value
         commodity_entry = bd.Commodity(meta, today, code)
         return list(entries) + [commodity_entry]
+
+    def upsert_commodity_metadata(
+        self,
+        entries: list,
+        *,
+        code: str,
+        set_metadata: Dict[str, Any],
+        remove_keys: List[str],
+        on_date: Optional[date] = None,
+        ledger_file: str = "",
+    ) -> Tuple[list, bool]:
+        """Set and remove metadata keys on the ``commodity`` directive for ``code``.
+
+        Updates the existing directive in place (keeping its date and source
+        location) or, when there is none and something is being set, creates one
+        dated ``on_date``. Keys not named are kept. Returns ``(entries, changed)``.
+        """
+        for i, entry in enumerate(entries):
+            if isinstance(entry, bd.Commodity) and entry.currency == code:
+                old_meta = entry.meta or {}
+                new_meta = {k: v for k, v in old_meta.items() if k not in remove_keys}
+                new_meta.update(set_metadata)
+                if new_meta == old_meta:
+                    return list(entries), False
+                new_entries = list(entries)
+                new_entries[i] = bd.Commodity(new_meta, entry.date, code)
+                return new_entries, True
+        if not set_metadata:
+            return list(entries), False
+        return self.create_commodity(
+            entries, code=code, metadata=set_metadata,
+            on_date=on_date, ledger_file=ledger_file,
+        ), True
 
     # --- Balance directive CRUD ---
 

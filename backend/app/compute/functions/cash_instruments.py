@@ -39,6 +39,7 @@ from decimal import Decimal
 from typing import Any, Optional
 
 from app.compute.base import ComputeFunction
+from app.core.metadata_vocabulary import CURRENCY_ASSET_CLASSES
 from app.services.sqlite_reader import SqliteReader
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,7 @@ logger = logging.getLogger(__name__)
 # lands in one of these (a CD paying out to checking, incidental checking interest)
 # is a destination/incidental, not a tracked instrument's yield → unattributed
 # unless a linked `interest_account` says otherwise.
-_CASH_CLASSES = {"cash", "currency", "checking"}
+_CASH_CLASSES = CURRENCY_ASSET_CLASSES | {"checking"}
 
 
 def _avg_balance_and_days(

@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from app.core.constants import COMMODITY_CODE_MAX_LENGTH, COMMODITY_CODE_PATTERN
 from app.schemas.account_schemas import AccountCreateRequest
-from app.schemas.commodity_schemas import CommodityCreateRequest
+from app.schemas.commodity_schemas import CommodityMetadataChange
 
 # Codes Beancount accepts. The dashed and dotted forms are the ones that broke.
 VALID_CODES = [
@@ -69,19 +69,19 @@ class TestPatternMatchesBeancount:
 
 class TestCommoditySchema:
     @pytest.mark.parametrize("code", VALID_CODES)
-    def test_commodity_create_accepts_valid_codes(self, code):
-        assert CommodityCreateRequest(code=code).code == code
+    def test_commodity_change_accepts_valid_codes(self, code):
+        assert CommodityMetadataChange(code=code).code == code
 
     @pytest.mark.parametrize("code", INVALID_CODES)
-    def test_commodity_create_rejects_invalid_codes(self, code):
+    def test_commodity_change_rejects_invalid_codes(self, code):
         with pytest.raises(ValidationError):
-            CommodityCreateRequest(code=code)
+            CommodityMetadataChange(code=code)
 
     def test_length_bound_is_not_the_thing_that_rejects_real_codes(self):
         """The old 16-char cap was low enough to hit plausible codes."""
         assert COMMODITY_CODE_MAX_LENGTH >= 32
         code = "A" + "B" * 30
-        assert CommodityCreateRequest(code=code).code == code
+        assert CommodityMetadataChange(code=code).code == code
 
 
 class TestAccountSchema:

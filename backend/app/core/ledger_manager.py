@@ -34,9 +34,8 @@ from app.schemas.account_schemas import (
     AccountCreateRequest, AccountCreateData,
     BalanceDirectiveCreateRequest, BalanceDirectiveUpdateRequest
 )
-from app.schemas.commodity_schemas import (
-    CommodityCreateRequest, CommodityCreateData
-)
+from app.schemas.commodity_schemas import CommodityMetadataChange
+from app.core.metadata_vocabulary import SCOPE_COMMODITY, to_ledger_value
 
 logger = logging.getLogger(__name__)
 
@@ -639,6 +638,7 @@ class LedgerManager:
         open_date: Optional[date] = None,
         currencies: Optional[List[str]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        remove_metadata: Optional[List[str]] = None,
         close_date: Optional[date] = None,
         reopen: bool = False,
     ) -> None:
@@ -650,6 +650,7 @@ class LedgerManager:
             open_date=open_date,
             currencies=currencies,
             metadata=metadata,
+            remove_metadata=remove_metadata,
             close_date=close_date,
             reopen=reopen,
             ledger_file=str(self.ledger_file),
@@ -752,29 +753,47 @@ class LedgerManager:
     # ── Commodity management ────────────────────────────────────────────────
 
     @_serialized_write
-    def create_commodity_directive(self, request: CommodityCreateRequest) -> CommodityCreateData:
+    def upsert_commodity_metadata(self, changes: List[CommodityMetadataChange]) -> List[str]:
+        """Apply a batch of commodity metadata changes in **one** write.
+
+        Each change sets/removes keys on the commodity's `commodity` directive,
+        creating the directive when the commodity has none (dated the
+        commodity's first use, else today). Keys not named are kept. Returns
+        the codes whose directive actually changed; no write happens when
+        nothing changed. See dev-docs/investment-view.md §10.3 (Q2, Q5, Q7).
+        """
         entries, errors, options = self._parse_ledger()
 
-        # Check if commodity already exists
+        first_used: Dict[str, date] = {}
         for e in entries:
-            if isinstance(e, data.Commodity) and e.currency == request.code:
-                raise ValueError(f"Commodity already exists: {request.code}")
+            if isinstance(e, Transaction):
+                for p in e.postings:
+                    if p.units is not None:
+                        code = p.units.currency
+                        if code not in first_used or e.date < first_used[code]:
+                            first_used[code] = e.date
 
-        new_entries = self.engine.create_commodity(
-            list(entries),
-            code=request.code,
-            name=request.name,
-            asset_class=request.asset_class,
-            metadata=request.metadata,
-            ledger_file=str(self.ledger_file),
-        )
-        self._write_and_export(new_entries, errors, options)
+        new_entries = list(entries)
+        changed: List[str] = []
+        for change in changes:
+            typed = {
+                k: to_ledger_value((SCOPE_COMMODITY,), k, v)
+                for k, v in change.set.items()
+            }
+            new_entries, did_change = self.engine.upsert_commodity_metadata(
+                new_entries,
+                code=change.code,
+                set_metadata=typed,
+                remove_keys=list(change.remove),
+                on_date=first_used.get(change.code),
+                ledger_file=str(self.ledger_file),
+            )
+            if did_change and change.code not in changed:
+                changed.append(change.code)
 
-        return CommodityCreateData(
-            commodity_created=True,
-            commodity_details=None,
-            message=f"Commodity '{request.code}' created successfully",
-        )
+        if changed:
+            self._write_and_export(new_entries, errors, options)
+        return changed
 
     @_serialized_write
     def set_operating_currencies(self, currencies: List[str]) -> List[str]:

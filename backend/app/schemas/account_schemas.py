@@ -46,7 +46,8 @@ class AccountUpdateRequest(BaseModel):
     currencies: Optional[List[CurrencyStr]] = Field(None, description="Updated list of currencies for this account")
     open_date: Optional[date] = Field(None, description="Updated opening date")
     close_date: Optional[date] = Field(None, description="Updated closing date (null to reopen)")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Updated metadata (merges with existing)")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Metadata keys to add or overwrite (other keys are kept)")
+    remove_metadata: Optional[List[str]] = Field(None, description="Metadata keys to delete")
 
 class AccountUpdateData(BaseModel):
     """Response data for account update results."""

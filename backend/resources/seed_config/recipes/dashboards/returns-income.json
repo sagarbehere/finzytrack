@@ -3,6 +3,7 @@
   "id": "returns-income",
   "title": "Returns & Income",
   "description": "What your money earned: dividends and interest over time and by source, plus realized capital gains on sales. NOTE: the realized-gains section is derived from your ledger and is NOT a tax document — it applies no wash-sale rules or broker lot-selection, so it can differ from your 1099-B. For tax, use your broker's 1099-B / official statements.",
+  "metadataHint": { "scope": "income-account", "text": "Want interest and dividends shown separately? Add an income type to your income accounts." },
   "parameters": [
     { "name": "currency", "label": "Currency", "type": "select", "default": "*", "optionsFrom": "currencies", "allowAll": true },
     { "name": "asOf", "label": "As of", "type": "date", "default": { "$gen": "today" } }

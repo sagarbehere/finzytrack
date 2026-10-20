@@ -94,6 +94,7 @@
         :dashboard="activeDashboard"
         :key="`${activeTabId ?? ''}:${refreshNonce}`"
         :initialParameters="initialDashboardParams"
+        show-metadata-hint
         @update:parameters="handleDashboardParamsChange"
         @prices-updated="refreshNonce++"
       />

@@ -29,22 +29,15 @@
       </div>
 
       <div class="p-4 sm:p-6">
+        <!-- Setup & Metadata Tab — mounted on first visit, then kept so unsaved edits
+             survive switching tabs. -->
+        <div v-if="metadataVisited" v-show="activeTab === 'metadata'">
+          <SetupMetadataPanel />
+        </div>
+
         <!-- Quick Actions Tab -->
         <div v-if="activeTab === 'quick-actions'">
           <QuickActionForms @staged="stageDrafts" />
-        </div>
-
-        <!-- Setup & Metadata Tab (shell) -->
-        <div v-else-if="activeTab === 'metadata'">
-          <div class="rounded-lg border-2 border-dashed border-gray-300 p-8 text-center dark:border-white/10">
-            <TagIcon class="mx-auto h-10 w-10 text-gray-400 dark:text-gray-500" aria-hidden="true" />
-            <h3 class="mt-2 text-sm font-semibold text-gray-900 dark:text-white">Setup &amp; Metadata</h3>
-            <p class="mx-auto mt-1 max-w-md text-sm text-gray-500 dark:text-gray-400">
-              Review and fill in the optional metadata your holdings and accounts can carry
-              (asset class, income type, and more) to unlock richer dashboard views. Nothing here
-              is required — every tag only adds detail.
-            </p>
-          </div>
         </div>
 
         <!-- Prices Tab (shell) -->
@@ -127,12 +120,11 @@
 </template>
 
 <script setup lang="ts">
-  import { ref, computed, nextTick } from 'vue'
-  import {
-    TagIcon,
-    CurrencyDollarIcon,
-  } from '@heroicons/vue/24/outline'
+  import { ref, computed, nextTick, watch } from 'vue'
+  import { useRoute } from 'vue-router'
+  import { CurrencyDollarIcon } from '@heroicons/vue/24/outline'
   import QuickActionForms from '@/components/investments/QuickActionForms.vue'
+  import SetupMetadataPanel from '@/components/investments/SetupMetadataPanel.vue'
   import TransactionTable from '@/components/common/TransactionTable.vue'
   import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
   import type { TransactionViewModel, ImportContext } from '@/types/transactions'
@@ -154,7 +146,13 @@
     { id: 'prices', label: 'Prices' },
   ] as const
 
-  const activeTab = ref<string>('quick-actions')
+  // `?tab=metadata` opens Setup & Metadata directly (the dashboards' metadata hint links here).
+  const route = useRoute()
+  const activeTab = ref<string>(
+    tabs.some(t => t.id === route.query.tab) ? String(route.query.tab) : 'quick-actions',
+  )
+  const metadataVisited = ref(false)
+  watch(activeTab, tab => { if (tab === 'metadata') metadataVisited.value = true }, { immediate: true })
 
   // Shared review-table state
   const stagedTransactions = ref<TransactionViewModel[]>([])

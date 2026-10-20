@@ -76,6 +76,19 @@ export interface JsonDashboardRecipe {
   id: RecipeId;
   title: string;
   description?: string;
+  /**
+   * Optional, dismissible offer shown above the dashboard when items in this scope have recognized metadata not set (Investments → Setup & Metadata review). Links to that tab. Phrase it as an offer of what tagging adds, never as missing or incomplete data.
+   */
+  metadataHint?: {
+    /**
+     * Which items the offer is about: commodities (holdings), cash and deposit accounts, or income accounts.
+     */
+    scope: "commodity" | "account" | "income-account";
+    /**
+     * The offer shown to the user, e.g. 'Want allocation by asset class? Add asset classes to your holdings.'
+     */
+    text: string;
+  };
   parameters?: RecipeParameter[];
   steps?: Steps;
   layout: {

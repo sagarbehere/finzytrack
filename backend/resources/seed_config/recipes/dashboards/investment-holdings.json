@@ -3,6 +3,7 @@
   "id": "investment-holdings",
   "title": "Holdings & Performance",
   "description": "Your priced holdings (equities, funds, crypto): what you put in, what they're worth, gain/loss, weight and returns — plus purchase lots and price history for a selected holding.",
+  "metadataHint": { "scope": "commodity", "text": "Want allocation and returns by asset class? Add an asset class to your holdings." },
   "parameters": [
     { "name": "currency", "label": "Currency", "type": "select", "default": "*", "optionsFrom": "currencies", "allowAll": true },
     { "name": "asOf", "label": "As of", "type": "date", "default": { "$gen": "today" } },

@@ -15,6 +15,7 @@ from app.schemas.account_schemas import (
 )
 from app.core.ledger_manager import LedgerManager
 from app.core.config_manager import ConfigManager
+from app.core.metadata_vocabulary import SCOPE_ACCOUNT, SCOPE_INCOME_ACCOUNT, to_ledger_value
 from app.services.sqlite_reader import SqliteReader
 from app.dependencies import get_config_manager, get_beancount_manager, get_sqlite_reader
 from app.exceptions import APIError
@@ -26,6 +27,8 @@ from app import error_codes as ec
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_ACCOUNT_SCOPES = (SCOPE_ACCOUNT, SCOPE_INCOME_ACCOUNT)
 
 @router.get("/accounts", response_model=ApiResponse[AccountListData], operation_id="listAccounts")
 async def list_accounts(
@@ -71,6 +74,10 @@ async def create_account_endpoint(
 ):
     """Create and open a new Beancount account with comprehensive configuration."""
     try:
+        if request.metadata:
+            request.metadata = {
+                k: to_ledger_value(_ACCOUNT_SCOPES, k, v) for k, v in request.metadata.items()
+            }
         # Delegate account creation to LedgerManager (business logic & ledger operations)
         create_data = beancount_manager.create_account_directive(request)
         
@@ -225,7 +232,11 @@ async def update_account(
             new_name=request.new_name or None,
             open_date=request.open_date,
             currencies=request.currencies or None,
-            metadata=request.metadata or None,
+            metadata={
+                k: to_ledger_value(_ACCOUNT_SCOPES, k, v)
+                for k, v in request.metadata.items()
+            } if request.metadata else None,
+            remove_metadata=request.remove_metadata or None,
             close_date=request.close_date,
         )
 
@@ -236,6 +247,7 @@ async def update_account(
         updated = bool(
             request.new_name or request.open_date or request.currencies
             or request.close_date is not None or request.metadata
+            or request.remove_metadata
         )
 
         update_data = AccountUpdateData(

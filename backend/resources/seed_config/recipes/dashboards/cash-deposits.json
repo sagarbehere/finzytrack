@@ -3,6 +3,7 @@
   "id": "cash-deposits",
   "title": "Cash & Deposits",
   "description": "Every cash-balance account — checking, savings, CDs, cash-modelled bonds — with balance, rate, and maturity. Accounts tagged with an asset-class group by type; untagged accounts show as plain cash. Nothing is hidden.",
+  "metadataHint": { "scope": "account", "text": "Want interest earned and yield for each account? Add an account type to your cash and deposit accounts." },
   "parameters": [
     { "name": "currency", "label": "Currency", "type": "select", "default": "*", "optionsFrom": "currencies", "allowAll": true },
     { "name": "asOf", "label": "As of", "type": "date", "default": { "$gen": "today" }, "hidden": true }

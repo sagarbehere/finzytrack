@@ -3,7 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ApiResponse_CommodityListData_ } from '../models/ApiResponse_CommodityListData_';
+import type { ApiResponse_CommodityMetadataUpdateData_ } from '../models/ApiResponse_CommodityMetadataUpdateData_';
 import type { ApiResponse_OperatingCurrenciesData_ } from '../models/ApiResponse_OperatingCurrenciesData_';
+import type { CommodityMetadataUpdateRequest } from '../models/CommodityMetadataUpdateRequest';
 import type { OperatingCurrenciesUpdateRequest } from '../models/OperatingCurrenciesUpdateRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -56,6 +58,31 @@ export class CommoditiesService {
         return __request(OpenAPI, {
             method: 'PUT',
             url: '/api/commodities/operating-currencies',
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Update Commodity Metadata
+     * Set and remove metadata keys on commodities, as one ledger write.
+     *
+     * Upsert per commodity: the `commodity` directive is updated in place, or
+     * created if the commodity has none. Keys not named are kept. Only key syntax
+     * is checked — any key and any value may be written (recognized, never
+     * required; dev-docs/investment-view.md §10.3).
+     * @param requestBody
+     * @returns ApiResponse_CommodityMetadataUpdateData_ Successful Response
+     * @throws ApiError
+     */
+    public static updateCommodityMetadata(
+        requestBody: CommodityMetadataUpdateRequest,
+    ): CancelablePromise<ApiResponse_CommodityMetadataUpdateData_> {
+        return __request(OpenAPI, {
+            method: 'PUT',
+            url: '/api/commodities/metadata',
             body: requestBody,
             mediaType: 'application/json',
             errors: {

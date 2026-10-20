@@ -23,8 +23,12 @@ export type AccountUpdateRequest = {
      */
     close_date?: (string | null);
     /**
-     * Updated metadata (merges with existing)
+     * Metadata keys to add or overwrite (other keys are kept)
      */
     metadata?: (Record<string, any> | null);
+    /**
+     * Metadata keys to delete
+     */
+    remove_metadata?: (Array<string> | null);
 };
 

@@ -4,11 +4,16 @@ from fastapi import APIRouter, Depends
 from app.schemas.response_schemas import ApiResponse
 from app.schemas.commodity_schemas import (
     CommodityListData,
+    CommodityMetadataUpdateData,
+    CommodityMetadataUpdateRequest,
     OperatingCurrenciesData,
     OperatingCurrenciesUpdateRequest,
 )
 from app.core.config_manager import ConfigManager
 from app.core.ledger_manager import LedgerManager
+from app.core.metadata_vocabulary import is_valid_key
+from app.exceptions import APIError
+from app import error_codes as ec
 from app.services.sqlite_reader import SqliteReader
 from app.dependencies import (
     get_config_manager,
@@ -79,3 +84,46 @@ async def set_operating_currencies(
     """
     updated = beancount_manager.set_operating_currencies(request.currencies)
     return success_json_response(OperatingCurrenciesData(currencies=updated))
+
+
+@router.put(
+    "/commodities/metadata",
+    response_model=ApiResponse[CommodityMetadataUpdateData],
+    operation_id="updateCommodityMetadata",
+)
+async def update_commodity_metadata(
+    request: CommodityMetadataUpdateRequest,
+    config_manager: ConfigManager = Depends(get_config_manager),
+    sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
+    beancount_manager: LedgerManager = Depends(get_beancount_manager),
+):
+    """Set and remove metadata keys on commodities, as one ledger write.
+
+    Upsert per commodity: the `commodity` directive is updated in place, or
+    created if the commodity has none. Keys not named are kept. Only key syntax
+    is checked — any key and any value may be written (recognized, never
+    required; dev-docs/investment-view.md §10.3).
+    """
+    bad = sorted({
+        k for c in request.changes for k in [*c.set.keys(), *c.remove]
+        if not is_valid_key(k)
+    })
+    if bad:
+        raise APIError(
+            message="Invalid metadata key",
+            code=ec.VALIDATION_ERROR,
+            status_code=422,
+            details={
+                "keys": bad,
+                "help": "Keys start with a lowercase letter and use only letters, digits, '-' and '_'.",
+            },
+        )
+
+    config = config_manager.get_config()
+    with ledger_error_context(config.ledger_file):
+        changed = beancount_manager.upsert_commodity_metadata(request.changes)
+        requested = {c.code for c in request.changes}
+        commodities = [c for c in sqlite_reader.get_commodities() if c.code in requested]
+        return success_json_response(CommodityMetadataUpdateData(
+            changed=changed, commodities=commodities,
+        ))

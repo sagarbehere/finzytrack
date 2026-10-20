@@ -25,7 +25,7 @@ from .config import (
     LOG_FORMAT, CORS_ORIGINS,
 )
 from .api.routers.importer import ofx_accounts, transaction, csv_rules, xls_rules, email as email_import_router, llm_parse, rule_templates
-from .api.routers import accounts, commodities, ledger_export, ledger_transactions, query, config as config_router, filesystem, notices, assistant, recipes, ai_services, setup as setup_router, documents, compute, prices, budgets, startup, dashboard_themes, investments
+from .api.routers import accounts, commodities, ledger_export, ledger_transactions, query, config as config_router, filesystem, notices, assistant, recipes, ai_services, setup as setup_router, documents, compute, prices, budgets, startup, dashboard_themes, investments, metadata
 from .error_handler import setup_error_handlers
 from .service_factory import create_user_services, seed_config, startup_user_services
 from .service_registry import ServiceRegistry
@@ -231,6 +231,7 @@ def create_app(
     app.include_router(rule_templates.router, prefix="/api/import", tags=["import"])
     app.include_router(accounts.router, prefix="/api", tags=["accounts"])
     app.include_router(commodities.router, prefix="/api", tags=["commodities"])
+    app.include_router(metadata.router, prefix="/api", tags=["metadata"])
     app.include_router(ledger_export.router, prefix="/api/ledger", tags=["ledger"])
     app.include_router(ledger_transactions.router, prefix="/api/ledger", tags=["ledger"])
     app.include_router(query.router, prefix="/api/ledger", tags=["ledger"])

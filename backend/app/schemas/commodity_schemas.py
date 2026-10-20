@@ -35,40 +35,28 @@ class CommodityDetails(BaseModel):
     usage: CommodityUsageData = Field(..., description="Transaction usage statistics")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional commodity metadata")
 
-class CommodityCreateRequest(BaseModel):
-    """Request model for creating new Beancount commodities."""
-    code: CommodityStr = Field(..., description="Commodity/currency code (uppercase alphanumeric)")
-    name: Optional[str] = Field(None, max_length=100, description="Optional full name")
-    asset_class: Optional[str] = Field(None, max_length=50, description="Beancount 'asset-class' metadata (e.g., 'cash', 'stock', 'etf')")
-    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Optional commodity metadata")
-
-class CommodityCreateData(BaseModel):
-    """Response data for commodity creation results."""
-    commodity_created: bool = Field(..., description="Whether commodity was created")
-    commodity_details: Optional[CommodityDetails] = Field(None, description="Created commodity details if successful")
-    message: str = Field(..., description="Creation result message")
-
 class CommodityListData(BaseModel):
     """Response data for commodity listing."""
     commodities: List[CommodityDetails] = Field(..., description="List of all commodities")
 
-class CommodityUpdateRequest(BaseModel):
-    """Request model for updating commodity details."""
-    name: Optional[str] = Field(None, max_length=100, description="Updated full name")
-    asset_class: Optional[str] = Field(None, max_length=50, description="Updated 'asset-class' metadata")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Updated metadata (merges with existing)")
+class CommodityMetadataChange(BaseModel):
+    """Set and/or remove metadata keys on one commodity's `commodity` directive.
 
-class CommodityUpdateData(BaseModel):
-    """Response data for commodity update results."""
-    commodity_updated: bool = Field(..., description="Whether commodity was updated")
-    commodity_details: Optional[CommodityDetails] = Field(None, description="Updated commodity details if successful")
-    message: str = Field(..., description="Update result message")
+    Keys not named are kept. The directive is created if the commodity has none
+    and something is being set.
+    """
+    code: CommodityStr
+    set: Dict[str, str] = Field(default_factory=dict, description="Keys to add or overwrite")
+    remove: List[str] = Field(default_factory=list, description="Keys to delete")
 
-class CommodityDeleteData(BaseModel):
-    """Response data for commodity delete results."""
-    commodity_deleted: bool = Field(..., description="Whether commodity was deleted")
-    message: str = Field(..., description="Delete result message")
-    warnings: Optional[List[str]] = Field(None, description="Any warnings about the deletion")
+class CommodityMetadataUpdateRequest(BaseModel):
+    """A batch of commodity metadata changes, written in one ledger write."""
+    changes: List[CommodityMetadataChange] = Field(..., min_length=1)
+
+class CommodityMetadataUpdateData(BaseModel):
+    """Result of a commodity metadata batch."""
+    changed: List[CommodityStr] = Field(..., description="Codes whose directive was created or changed")
+    commodities: List[CommodityDetails] = Field(..., description="Read-back of every commodity named in the request")
 
 class OperatingCurrenciesData(BaseModel):
     """The ledger's operating currencies — the authoritative currency whitelist."""

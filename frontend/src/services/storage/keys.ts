@@ -18,6 +18,8 @@ export const STORAGE_KEYS = {
   DASHBOARDS_TAB_LAYOUT: 'dashboardsTabLayout',
   /** Rules tab editor/preview layout: 'vertical' (stacked) or 'horizontal' (side-by-side) */
   RULES_TAB_LAYOUT: 'rulesTabLayout',
+  /** Dashboard ids whose metadata-hint banner the user dismissed. */
+  DISMISSED_METADATA_HINTS: 'dismissedMetadataHints',
 } as const
 
 export type StorageKey = (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS]

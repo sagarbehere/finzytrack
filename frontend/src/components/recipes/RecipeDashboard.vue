@@ -41,6 +41,13 @@
       </div>
     </div>
 
+    <!-- Optional offer to add the metadata that enriches this dashboard -->
+    <MetadataHintBanner
+      v-if="showMetadataHint && metadataHint && dashboard.id"
+      :dashboard-id="dashboard.id"
+      :hint="metadataHint"
+    />
+
     <!-- Dashboard grid -->
     <div
       class="dashboard-grid"
@@ -96,6 +103,7 @@ import { resolveParameterValues } from '@/recipes/functions'
 import { stepRefs } from '@/recipes/templating'
 import RecipeWidget from './RecipeWidget.vue'
 import RecipeParameters from './RecipeParameters.vue'
+import MetadataHintBanner from './MetadataHintBanner.vue'
 import { PricesService } from '@/services/generated-api'
 import { errorHandler } from '@/utils/ErrorHandler'
 import { useNotifications } from '@/composables/useNotifications'
@@ -103,6 +111,9 @@ import { useNotifications } from '@/composables/useNotifications'
 interface Props {
   dashboard: DashboardRecipe | JsonDashboardRecipe
   initialParameters?: Record<string, string | number>
+  // Show the recipe's metadataHint banner. Only the Dashboards page sets this —
+  // editor and assistant previews never show it.
+  showMetadataHint?: boolean
 }
 
 const props = defineProps<Props>()
@@ -111,6 +122,8 @@ const emit = defineEmits<{
   'update:parameters': [params: Record<string, string | number>]
   'prices-updated': []
 }>()
+
+const metadataHint = computed(() => (props.dashboard as JsonDashboardRecipe).metadataHint)
 
 /**
  * Show the "Update prices" action on investment dashboards — detected by a

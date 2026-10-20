@@ -14,6 +14,50 @@ function getAccountType(fullPath: string): AccountType {
   return 'Assets' // Default fallback
 }
 
+/** A tree node for one real (non-virtual) account, without children. */
+export function toAccountTreeNode(account: AccountDetails): AccountTreeNode {
+  const parts = account.name.split(':')
+  const depth = parts.length - 1
+  const name = parts[parts.length - 1]
+
+  // Calculate balances from currencies
+  const aggregatedBalances: AggregatedBalance[] = account.currencies.map(c => ({
+    currency: c.currency,
+    balance: toMoney(c.balance)
+  }))
+
+  // Extract metadata, filtering out beancount internal keys
+  const INTERNAL_KEYS = new Set(['filename', 'lineno'])
+  const metadata: Record<string, string> = {}
+  if (account.metadata) {
+    for (const [k, v] of Object.entries(account.metadata)) {
+      if (!INTERNAL_KEYS.has(k)) {
+        metadata[k] = String(v)
+      }
+    }
+  }
+
+  const node: AccountTreeNode = {
+    id: account.name,
+    name,
+    fullPath: account.name,
+    depth,
+    isVirtual: false,
+    children: [],
+    type: getAccountType(account.name),
+    status: account.close_date ? 'closed' : 'open',
+    openDate: account.open_date,
+    closeDate: account.close_date || null,
+    aggregatedBalances,
+    notes: account.metadata?.description || null,
+    currencyBadges: account.currencies.map(c => c.currency),
+    declaredCurrencies: account.declared_currencies ?? [],
+    metadata,
+  }
+
+  return node
+}
+
 /**
  * Build a hierarchical tree from flat account list
  */
@@ -23,45 +67,7 @@ export function buildTree(accounts: AccountDetails[]): AccountTreeNode[] {
 
   // First pass: create nodes for all accounts
   for (const account of accounts) {
-    const parts = account.name.split(':')
-    const depth = parts.length - 1
-    const name = parts[parts.length - 1]
-
-    // Calculate balances from currencies
-    const aggregatedBalances: AggregatedBalance[] = account.currencies.map(c => ({
-      currency: c.currency,
-      balance: toMoney(c.balance)
-    }))
-
-    // Extract metadata, filtering out beancount internal keys
-    const INTERNAL_KEYS = new Set(['filename', 'lineno'])
-    const metadata: Record<string, string> = {}
-    if (account.metadata) {
-      for (const [k, v] of Object.entries(account.metadata)) {
-        if (!INTERNAL_KEYS.has(k)) {
-          metadata[k] = String(v)
-        }
-      }
-    }
-
-    const node: AccountTreeNode = {
-      id: account.name,
-      name,
-      fullPath: account.name,
-      depth,
-      isVirtual: false,
-      children: [],
-      type: getAccountType(account.name),
-      status: account.close_date ? 'closed' : 'open',
-      openDate: account.open_date,
-      closeDate: account.close_date || null,
-      aggregatedBalances,
-      notes: account.metadata?.description || null,
-      currencyBadges: account.currencies.map(c => c.currency),
-      declaredCurrencies: account.declared_currencies ?? [],
-      metadata,
-    }
-
+    const node = toAccountTreeNode(account)
     nodeMap.set(account.name, node)
   }
 
