@@ -343,3 +343,23 @@ def test_series_label_formatter_with_b_is_not_flagged():
     })
     errors = validate_widget(good_widget, "(root)")
     assert not any("formatter" in e and "tooltip" in e for e in errors), errors
+
+
+# ── Dashboard actions (dev-docs/dashboard-actions.md) ───────────────────────
+
+def test_dashboard_actions_absent_or_known_are_valid():
+    assert validate_dashboard(_dashboard()) == []
+    assert validate_dashboard(_dashboard(actions=["update-prices"])) == []
+    assert validate_dashboard(_dashboard(actions=[])) == []
+
+
+def test_dashboard_action_unknown_is_rejected():
+    errors = validate_dashboard(_dashboard(actions=["refresh-everything"]))
+    assert len(errors) == 1
+    assert "actions" in errors[0] and "refresh-everything" in errors[0]
+
+
+def test_dashboard_action_duplicate_is_rejected():
+    errors = validate_dashboard(_dashboard(actions=["update-prices", "update-prices"]))
+    assert len(errors) == 1
+    assert "actions" in errors[0]

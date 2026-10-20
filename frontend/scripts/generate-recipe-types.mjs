@@ -53,6 +53,7 @@ const enums = [
   asConst('VALID_VALUE_FORMATS', defs.ValueFormat.enum),
   asConst('VALID_PARAM_TYPES', defs.RecipeParameter.properties.type.enum),
   asConst('QUERY_ENGINES', defs.QueryStep.properties.engine.enum),
+  asConst('DASHBOARD_ACTIONS', defs.DashboardAction.enum),
   '',
 ].join('\n');
 

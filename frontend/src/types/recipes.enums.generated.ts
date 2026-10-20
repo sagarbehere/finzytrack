@@ -9,3 +9,4 @@ export const SUPPORTED_CHART_TYPES = ['bar', 'line', 'pie', 'area', 'scatter', '
 export const VALID_VALUE_FORMATS = ['currency', 'percent', 'number', 'compact', 'signedCurrency', 'date', 'dateShort', 'accountName', 'accountName2'] as const
 export const VALID_PARAM_TYPES = ['date', 'select', 'number', 'boolean'] as const
 export const QUERY_ENGINES = ['sqlite', 'beanquery'] as const
+export const DASHBOARD_ACTIONS = ['update-prices'] as const

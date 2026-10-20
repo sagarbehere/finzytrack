@@ -346,6 +346,11 @@
         "visualization": { "$ref": "#/$defs/JsonRecipeVisualization" }
       }
     },
+    "DashboardAction": {
+      "type": "string",
+      "enum": ["update-prices"],
+      "description": "A built-in dashboard action. 'update-prices': an Update prices button that fetches new prices for your holdings (the same as Investments → Prices) and then refreshes the dashboard. Use it on dashboards that show market values."
+    },
     "JsonDashboardRecipe": {
       "type": "object",
       "required": ["schemaVersion", "id", "title", "layout", "widgets"],
@@ -364,6 +369,12 @@
             "scope": { "type": "string", "enum": ["commodity", "account", "income-account"], "description": "Which items the offer is about: commodities (holdings), cash and deposit accounts, or income accounts." },
             "text": { "type": "string", "minLength": 1, "description": "The offer shown to the user, e.g. 'Want allocation by asset class? Add asset classes to your holdings.'" }
           }
+        },
+        "actions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/DashboardAction" },
+          "description": "Optional buttons in the dashboard header, chosen from a fixed list of built-in actions. Nothing is inferred: a dashboard shows an action only if it lists it here, whatever its steps compute."
         },
         "parameters": { "type": "array", "items": { "$ref": "#/$defs/RecipeParameter" } },
         "steps": {

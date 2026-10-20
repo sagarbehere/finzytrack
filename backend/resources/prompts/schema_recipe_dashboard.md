@@ -455,6 +455,7 @@ The only recipe type. Owns layout, parameters, optional shared steps, and an arr
 | `title` | `string` | yes |  |
 | `description` | `string` | — |  |
 | `metadataHint` | `object` | — | Optional, dismissible offer shown above the dashboard when items in this scope have recognized metadata not set (Investments → Setup & Metadata review). Links to that tab. Phrase it as an offer of what tagging adds, never as missing or incomplete data. |
+| `actions` | `DashboardAction[]` | — | Optional buttons in the dashboard header, chosen from a fixed list of built-in actions. Nothing is inferred: a dashboard shows an action only if it lists it here, whatever its steps compute. |
 | `parameters` | `RecipeParameter[]` | — |  |
 | `steps` | `Steps` | — | Optional dashboard-level shared steps. Run once per dashboard render; widgets reference them via {{dashboard.steps.<id>}}. There is no dashboard-level output. |
 | `layout` | `object` | yes |  |
@@ -486,6 +487,11 @@ Type: `'bar' | 'line' | 'pie' | 'area' | 'scatter' | 'treemap' | 'funnel' | 'gau
 | `kind` | `'compute'` | yes |  |
 | `fn` | `string` | yes | Name of a server-side compute function (fixed catalog; see get_compute_functions). Validated server-side. |
 | `args` | `object` | — | Scalar arguments for the compute function. Values may be literals or {{params.x}} / {{steps.x}} / {{dashboard.steps.x}} template strings. Pass only small scalars — bulk data is read server-side by the function, not shuttled through the client. |
+
+#### `DashboardAction`
+A built-in dashboard action. 'update-prices': an Update prices button that fetches new prices for your holdings (the same as Investments → Prices) and then refreshes the dashboard. Use it on dashboards that show market values.
+
+Type: `'update-prices'`
 
 #### `JsonBudgetProgressVisualization`
 Budget-vs-actual progress list: one row per budgeted account with a fill bar (spent vs budget, over-budget in red) and amounts. Consumes the flat rows from the joinBudgetActual transform. Not an ECharts chart — a purpose-built Vue component.

@@ -24,7 +24,7 @@
            only) sits alongside the dashboard-level parameters. -->
       <div class="flex flex-wrap items-start gap-x-4 gap-y-3">
         <button
-          v-if="usesPriceData"
+          v-if="showUpdatePrices"
           type="button"
           @click="onUpdatePrices"
           :disabled="updatingPrices"
@@ -126,24 +126,14 @@ const emit = defineEmits<{
 const metadataHint = computed(() => (props.dashboard as JsonDashboardRecipe).metadataHint)
 
 /**
- * Show the "Update prices" action on investment dashboards — detected by a
- * compute step that values holdings (portfolio_series / portfolio_returns),
- * rather than hard-coding a dashboard id. The fetch is manual (no scheduling);
- * this button is its user-facing trigger (dev-docs/valuations.md §4).
+ * Dashboard actions are declared by the recipe (`actions`, a closed list in
+ * recipe.schema.json) — never inferred from what its steps compute
+ * (dev-docs/dashboard-actions.md). `update-prices` is the user-facing trigger
+ * of the manual price fetch (dev-docs/valuations.md §4).
  */
-const usesPriceData = computed(() => {
-  type StepLike = { kind?: string; fn?: string }
-  const steps: StepLike[] = []
-  const d = props.dashboard as JsonDashboardRecipe
-  if (Array.isArray(d.steps)) steps.push(...(d.steps as unknown as StepLike[]))
-  for (const w of (d.widgets ?? []) as JsonWidgetRecipe[]) {
-    const ws = (w as unknown as { steps?: unknown }).steps
-    if (Array.isArray(ws)) steps.push(...(ws as StepLike[]))
-  }
-  return steps.some(
-    (s) => s.kind === 'compute' && (s.fn === 'portfolio_series' || s.fn === 'portfolio_returns'),
-  )
-})
+const showUpdatePrices = computed(() =>
+  ((props.dashboard as JsonDashboardRecipe).actions ?? []).includes('update-prices'),
+)
 
 const updatingPrices = ref(false)
 const { addNotification } = useNotifications()

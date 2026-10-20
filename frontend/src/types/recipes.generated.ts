@@ -9,6 +9,10 @@ export type FinzyTrackRecipe = JsonDashboardRecipe;
  */
 export type RecipeId = string;
 /**
+ * A built-in dashboard action. 'update-prices': an Update prices button that fetches new prices for your holdings (the same as Investments → Prices) and then refreshes the dashboard. Use it on dashboards that show market values.
+ */
+export type DashboardAction = "update-prices";
+/**
  * The recipe's data pipeline as an array of named steps. Array order is for readability only; execution order is the topological sort of {{steps.*}} references. Step ids must be unique.
  *
  * @minItems 1
@@ -89,6 +93,10 @@ export interface JsonDashboardRecipe {
      */
     text: string;
   };
+  /**
+   * Optional buttons in the dashboard header, chosen from a fixed list of built-in actions. Nothing is inferred: a dashboard shows an action only if it lists it here, whatever its steps compute.
+   */
+  actions?: DashboardAction[];
   parameters?: RecipeParameter[];
   steps?: Steps;
   layout: {
