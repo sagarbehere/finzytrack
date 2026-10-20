@@ -44,10 +44,11 @@
     <!-- Sale form (own lot picker + live gain preview) -->
     <SaleForm
       v-if="action === 'sell'"
+      ref="saleFormRef"
       :date="form.date"
       :currency="form.currency"
       :is-loading="isLoading"
-      @submit="ev => assembleAndStage(ev)"
+      @submit="ev => assembleAndStage(ev, () => saleFormRef?.reset())"
     />
 
     <template v-if="action !== 'sell'">
@@ -243,6 +244,9 @@
   const emit = defineEmits<{ staged: [vms: TransactionViewModel[]] }>()
 
   const { assembleAndConvert, isLoading } = useInvestmentActions()
+  // The Sale form owns its inputs; reset them after a successful stage, as the
+  // inline forms reset their amounts.
+  const saleFormRef = ref<InstanceType<typeof SaleForm> | null>(null)
   const { accountDetails, fetchAccounts } = useAccounts()
   const { success: showSuccessToast } = useToast()
 
