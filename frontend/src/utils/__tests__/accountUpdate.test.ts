@@ -18,15 +18,15 @@ const form = (metadata: Record<string, string>, extra: Partial<AccountFormSubmit
 
 describe('buildAccountUpdateRequest', () => {
   it('sends nothing for unchanged metadata', () => {
-    const req = buildAccountUpdateRequest(node({ 'asset-class': 'cd' }), form({ 'asset-class': 'cd' }))
+    const req = buildAccountUpdateRequest(node({ 'account-type': 'cd' }), form({ 'account-type': 'cd' }))
     expect(req.metadata).toBeUndefined()
     expect(req.remove_metadata).toBeUndefined()
   })
 
   it('sends only changed and new keys', () => {
     const req = buildAccountUpdateRequest(
-      node({ 'asset-class': 'cd', interest_rate: '4%' }),
-      form({ 'asset-class': 'cd', interest_rate: '4.5%', maturity_date: '2027-01-14' }),
+      node({ 'account-type': 'cd', interest_rate: '4%' }),
+      form({ 'account-type': 'cd', interest_rate: '4.5%', maturity_date: '2027-01-14' }),
     )
     expect(req.metadata).toEqual({ interest_rate: '4.5%', maturity_date: '2027-01-14' })
     expect(req.remove_metadata).toBeUndefined()
@@ -34,8 +34,8 @@ describe('buildAccountUpdateRequest', () => {
 
   it('removes keys the form dropped, including description', () => {
     const req = buildAccountUpdateRequest(
-      node({ 'asset-class': 'cd', branch: 'Main', description: 'old' }),
-      form({ 'asset-class': 'cd' }),
+      node({ 'account-type': 'cd', branch: 'Main', description: 'old' }),
+      form({ 'account-type': 'cd' }),
     )
     expect(req.metadata).toBeUndefined()
     expect(req.remove_metadata).toEqual(['branch', 'description'])
@@ -57,9 +57,9 @@ describe('buildAccountUpdateRequest', () => {
 
   it('does not add a constraint to an unconstrained open from the pre-filled held currencies', () => {
     const unconstrained = { ...node({}), declaredCurrencies: [], currencyBadges: ['USD', 'EUR'] }
-    const req = buildAccountUpdateRequest(unconstrained, form({ 'asset-class': 'savings' }, { currencies: ['EUR', 'USD'] }))
+    const req = buildAccountUpdateRequest(unconstrained, form({ 'account-type': 'savings' }, { currencies: ['EUR', 'USD'] }))
     expect(req.currencies).toBeUndefined()
-    expect(req.metadata).toEqual({ 'asset-class': 'savings' })
+    expect(req.metadata).toEqual({ 'account-type': 'savings' })
   })
 
   it('sends currencies when the user changed them', () => {

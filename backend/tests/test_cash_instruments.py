@@ -41,7 +41,7 @@ def test_compounding_no_link_structural(tmp_path):
     """Interest credited to the CD itself → attributed structurally, no metadata."""
     led = _FUND + """\
 2020-01-01 open Assets:CD USD
-  asset-class: "cd"
+  account-type: "cd"
 2020-01-01 open Income:Interest:CD USD
   income-type: "interest"
 2020-01-01 * "fund"
@@ -63,7 +63,7 @@ def test_linked_paid_out_to_savings(tmp_path):
     led = _FUND + """\
 2020-01-01 open Assets:Savings USD
 2020-01-01 open Assets:FD USD
-  asset-class: "cd"
+  account-type: "cd"
   interest_account: "Income:Interest:FD"
 2020-01-01 open Income:Interest:FD USD
   income-type: "interest"
@@ -87,9 +87,9 @@ def test_maturity_into_tagged_savings_reduced_leg(tmp_path):
     interest attributes to the FD (the reduced/closed leg), not the receiver."""
     led = _FUND + """\
 2020-01-01 open Assets:Savings USD
-  asset-class: "savings"
+  account-type: "savings"
 2020-01-01 open Assets:FD USD
-  asset-class: "cd"
+  account-type: "cd"
 2020-01-01 open Income:Interest:FD USD
   income-type: "interest"
 2020-01-01 * "fund"
@@ -116,7 +116,7 @@ def test_paid_out_no_link_unattributed(tmp_path):
     led = _FUND + """\
 2020-01-01 open Assets:Checking USD
 2020-01-01 open Assets:FD USD
-  asset-class: "cd"
+  account-type: "cd"
 2020-01-01 open Income:Interest:FD USD
   income-type: "interest"
 2020-01-01 * "fund"
@@ -146,9 +146,9 @@ def test_unattributed_interest_split_per_income_account(tmp_path):
     led = _FUND + """\
 2020-01-01 open Assets:Checking USD
 2020-01-01 open Assets:FD1 USD
-  asset-class: "cd"
+  account-type: "cd"
 2020-01-01 open Assets:FD2 USD
-  asset-class: "cd"
+  account-type: "cd"
 2020-01-01 open Income:Interest:FD1 USD
   income-type: "interest"
 2020-01-01 open Income:Interest:FD2 USD
@@ -176,9 +176,9 @@ def test_shared_income_account_compounding_splits_per_cd(tmp_path):
     compounded (credited to each CD) — the counterpart identifies it, no migration."""
     led = _FUND + """\
 2020-01-01 open Assets:CD1 USD
-  asset-class: "cd"
+  account-type: "cd"
 2020-01-01 open Assets:CD2 USD
-  asset-class: "cd"
+  account-type: "cd"
 2020-01-01 open Income:Interest:TermDeposits USD
   income-type: "interest"
 2020-01-01 * "fund"
@@ -205,7 +205,7 @@ def test_untagged_income_account_is_not_interest(tmp_path):
     (it isn't interest at all). One tag on the account's open turns it on."""
     led = _FUND + """\
 2020-01-01 open Assets:CD USD
-  asset-class: "cd"
+  account-type: "cd"
 2020-01-01 open Income:Interest:CD USD
 2020-01-01 * "fund"
   Assets:CD 1000.00 USD

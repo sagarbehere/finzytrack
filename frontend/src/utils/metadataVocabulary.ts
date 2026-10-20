@@ -11,7 +11,7 @@ export function fieldsFor(fields: MetadataFieldSpec[], scope: MetadataScope): Me
   return fields.filter(f => f.scope === scope)
 }
 
-/** Whether `field` is relevant to an item carrying `metadata` (e.g. maturity_date needs asset-class cd/bond). */
+/** Whether `field` is relevant to an item carrying `metadata` (e.g. maturity_date needs account-type cd/bond). */
 export function fieldApplies(field: MetadataFieldSpec, metadata: Record<string, string>): boolean {
   if (!field.requires_key) return true
   const current = metadata[field.requires_key]

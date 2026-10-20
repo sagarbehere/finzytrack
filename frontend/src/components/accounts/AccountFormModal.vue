@@ -425,7 +425,7 @@ const { commodityDetails, fetchCommodities } = useCommodities()
 
 /**
  * Which recognized-metadata scope a NEW account belongs to: Income accounts, and
- * Assets accounts that hold only currencies (account-level asset-class describes
+ * Assets accounts that hold only currencies (account-type describes
  * a currency balance; a brokerage account's holdings carry their own). An
  * existing account's scope comes from the backend review instead, so it follows
  * the same rule as the Setup & Metadata tab (including the held-at-cost check).

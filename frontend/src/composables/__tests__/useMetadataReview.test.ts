@@ -26,7 +26,7 @@ const vocabulary = {
     fields: [
       { key: 'asset-class', scope: 'commodity', kind: 'enum', label: 'Asset class', adds: '', values: ['etf'], review: true },
       { key: 'name', scope: 'commodity', kind: 'text', label: 'Name', adds: '', review: false },
-      { key: 'asset-class', scope: 'account', kind: 'enum', label: 'Account type', adds: '', values: ['cd'], review: true },
+      { key: 'account-type', scope: 'account', kind: 'enum', label: 'Account type', adds: '', values: ['cd'], review: true },
     ],
   },
 }
@@ -37,7 +37,7 @@ const reviewData = {
     items: [
       { scope: 'commodity', item: 'VOO', metadata: {}, unset: ['asset-class'], is_currency: true },
       { scope: 'commodity', item: 'VMFXX', metadata: { name: 'MMF', note: 'x' }, unset: [], is_currency: true },
-      { scope: 'account', item: 'Assets:Bank', metadata: {}, unset: ['asset-class'], closed: false },
+      { scope: 'account', item: 'Assets:Bank', metadata: {}, unset: ['account-type'], closed: false },
     ],
   },
 }
@@ -55,7 +55,7 @@ describe('useMetadataReview', () => {
     const [voo, vmfxx, bank] = r.items.value
     r.setValue(voo, 'asset-class', 'etf')
     r.setValue(vmfxx, 'name', '')
-    r.setValue(bank, 'asset-class', 'cd')
+    r.setValue(bank, 'account-type', 'cd')
 
     expect(r.valueOf(voo, 'asset-class')).toBe('etf')
     expect(r.isEdited(voo, 'asset-class')).toBe(true)

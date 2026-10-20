@@ -41,7 +41,9 @@ COMMODITY_ASSET_CLASSES = (
     "cash", "currency", "stock", "etf", "mutual-fund", "money-market",
     "bond", "cd", "i-bond", "crypto",
 )
-ACCOUNT_ASSET_CLASSES = ("checking", "savings", "cd", "bond", "cash")
+# Account-level `account-type` values — a different key from the commodity's
+# `asset-class` (an account holds a balance; a commodity is a security).
+ACCOUNT_TYPES = ("checking", "savings", "cd", "bond", "cash")
 INCOME_TYPES = (
     "interest", "dividend", "capital-gains", "rental", "royalty",
     "business", "salary", "other",
@@ -61,7 +63,7 @@ class MetadataField:
     # refinements (e.g. `fetch_symbol`) are editable but never listed.
     review: bool = True
     # The key is relevant only when another key on the same item has one of
-    # these values (case-insensitive), e.g. maturity_date needs asset-class cd/bond.
+    # these values (case-insensitive), e.g. maturity_date needs account-type cd/bond.
     requires_key: Optional[str] = None
     requires_values: Tuple[str, ...] = ()
 
@@ -97,26 +99,26 @@ FIELDS: Tuple[MetadataField, ...] = (
     ),
     # ── account (Assets: currency-balance accounts) ──
     MetadataField(
-        key="asset-class", scope=SCOPE_ACCOUNT, kind=KIND_ENUM,
-        label="Account type", values=ACCOUNT_ASSET_CLASSES,
+        key="account-type", scope=SCOPE_ACCOUNT, kind=KIND_ENUM,
+        label="Account type", values=ACCOUNT_TYPES,
         adds="Adds: this account's type in Cash & Deposits, and interest earned and yield for savings, CDs and bonds.",
     ),
     MetadataField(
         key="interest_rate", scope=SCOPE_ACCOUNT, kind=KIND_PERCENT,
         label="Interest rate",
-        requires_key="asset-class", requires_values=("cd", "bond"),
+        requires_key="account-type", requires_values=("checking", "savings", "cd", "bond"),
         adds="Adds: the stated rate in Cash & Deposits.",
     ),
     MetadataField(
         key="maturity_date", scope=SCOPE_ACCOUNT, kind=KIND_DATE,
         label="Maturity date",
-        requires_key="asset-class", requires_values=("cd", "bond"),
+        requires_key="account-type", requires_values=("cd", "bond"),
         adds="Adds: the maturity date in Cash & Deposits.",
     ),
     MetadataField(
         key="interest_account", scope=SCOPE_ACCOUNT, kind=KIND_ACCOUNT,
         label="Interest income account", review=False,
-        requires_key="asset-class", requires_values=("savings", "cd", "bond"),
+        requires_key="account-type", requires_values=("savings", "cd", "bond"),
         adds="Needed only when interest is paid to a different account. Links that interest to this account.",
     ),
     # ── income account ──

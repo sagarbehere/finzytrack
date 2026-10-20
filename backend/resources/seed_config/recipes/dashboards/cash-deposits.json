@@ -2,7 +2,7 @@
   "schemaVersion": 2,
   "id": "cash-deposits",
   "title": "Cash & Deposits",
-  "description": "Every cash-balance account — checking, savings, CDs, cash-modelled bonds — with balance, rate, and maturity. Accounts tagged with an asset-class group by type; untagged accounts show as plain cash. Nothing is hidden.",
+  "description": "Every cash-balance account — checking, savings, CDs, cash-modelled bonds — with balance, rate, and maturity. Accounts with an account-type group by type; untagged accounts show as plain cash. Nothing is hidden.",
   "metadataHint": { "scope": "account", "text": "Want interest earned and yield for each account? Add an account type to your cash and deposit accounts." },
   "parameters": [
     { "name": "currency", "label": "Currency", "type": "select", "default": "*", "optionsFrom": "currencies", "allowAll": true },
@@ -50,7 +50,7 @@
     {
       "id": "accounts",
       "title": "Accounts",
-      "helpText": "Every cash-balance account with its type, rate, maturity, interest earned, and effective yield (interest ÷ average balance, annualized). Interest is attributed to the account that earned it — even when paid out (via the account's interest_account) or at maturity; interest that can't be tied to an account is listed separately under Unattributed Interest below. Tag an account's open with asset-class (checking/savings/cd/bond) to type it.",
+      "helpText": "Every cash-balance account with its type, rate, maturity, interest earned, and effective yield (interest ÷ average balance, annualized). Interest is attributed to the account that earned it — even when paid out (via the account's interest_account) or at maturity; interest that can't be tied to an account is listed separately under Unattributed Interest below. Tag an account's open with account-type (checking/savings/cd/bond) to type it.",
       "steps": [
         { "id": "main", "kind": "compute", "fn": "cash_instruments", "args": { "to": "{{params.asOf}}", "currency": "{{params.currency}}" } },
         { "id": "real", "kind": "transform", "fn": "where", "inputs": ["{{steps.main}}"], "config": { "field": "degraded", "notEquals": true } },
@@ -99,7 +99,7 @@
         { "name": "currency", "label": "Currency", "type": "select", "default": { "$gen": "defaultCurrency" }, "optionsFrom": "currencies" }
       ],
       "steps": [
-        { "id": "main", "kind": "query", "query": "SELECT type AS name, ROUND(SUM(CAST(ab.balance AS REAL)), 2) AS value FROM (SELECT ab.account, ab.balance, COALESCE(json_extract(a.metadata_json, '$.\"asset-class\"'), 'cash') AS type, ab.currency FROM account_balances ab JOIN accounts a ON a.name = ab.account JOIN commodities cc ON cc.code = ab.currency AND cc.is_currency = 1 WHERE ab.account LIKE 'Assets:%' AND ab.currency = :currency) ab GROUP BY type HAVING value > 0 ORDER BY value DESC" },
+        { "id": "main", "kind": "query", "query": "SELECT type AS name, ROUND(SUM(CAST(ab.balance AS REAL)), 2) AS value FROM (SELECT ab.account, ab.balance, COALESCE(json_extract(a.metadata_json, '$.\"account-type\"'), 'cash') AS type, ab.currency FROM account_balances ab JOIN accounts a ON a.name = ab.account JOIN commodities cc ON cc.code = ab.currency AND cc.is_currency = 1 WHERE ab.account LIKE 'Assets:%' AND ab.currency = :currency) ab GROUP BY type HAVING value > 0 ORDER BY value DESC" },
         { "id": "out", "kind": "transform", "fn": "none", "inputs": ["{{steps.main}}"] }
       ],
       "output": "out",

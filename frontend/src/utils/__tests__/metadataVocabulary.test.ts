@@ -12,12 +12,12 @@ import {
 } from '@/utils/metadataVocabulary'
 
 const assetClass: MetadataFieldSpec = {
-  key: 'asset-class', scope: 'account', kind: 'enum', label: 'Account type', adds: '',
+  key: 'account-type', scope: 'account', kind: 'enum', label: 'Account type', adds: '',
   values: ['checking', 'savings', 'cd', 'bond', 'cash'], review: true,
 }
 const maturity: MetadataFieldSpec = {
   key: 'maturity_date', scope: 'account', kind: 'date', label: 'Maturity date', adds: '',
-  review: true, requires_key: 'asset-class', requires_values: ['cd', 'bond'],
+  review: true, requires_key: 'account-type', requires_values: ['cd', 'bond'],
 }
 const incomeType: MetadataFieldSpec = {
   key: 'income-type', scope: 'income-account', kind: 'enum', label: 'Income type', adds: '',
@@ -36,8 +36,8 @@ describe('fieldApplies', () => {
   })
   it('applies only when the required key has a listed value (case-insensitive)', () => {
     expect(fieldApplies(maturity, {})).toBe(false)
-    expect(fieldApplies(maturity, { 'asset-class': 'savings' })).toBe(false)
-    expect(fieldApplies(maturity, { 'asset-class': ' CD ' })).toBe(true)
+    expect(fieldApplies(maturity, { 'account-type': 'savings' })).toBe(false)
+    expect(fieldApplies(maturity, { 'account-type': ' CD ' })).toBe(true)
   })
 })
 
@@ -53,10 +53,10 @@ describe('canonicalValue / isRecognizedValue', () => {
 })
 
 describe('diffMetadata', () => {
-  const original = { 'asset-class': 'cd', interest_rate: '4.5%' }
+  const original = { 'account-type': 'cd', interest_rate: '4.5%' }
 
   it('returns null when nothing changed', () => {
-    expect(diffMetadata(original, { 'asset-class': ' cd ' }, ['asset-class', 'interest_rate'])).toBeNull()
+    expect(diffMetadata(original, { 'account-type': ' cd ' }, ['account-type', 'interest_rate'])).toBeNull()
   })
   it('sets new and changed keys', () => {
     expect(diffMetadata(original, { interest_rate: '5%', maturity_date: '2027-01-14' }, ['interest_rate', 'maturity_date']))
@@ -70,7 +70,7 @@ describe('diffMetadata', () => {
     expect(diffMetadata(original, { maturity_date: '' }, ['maturity_date'])).toBeNull()
   })
   it('ignores keys outside the given list', () => {
-    expect(diffMetadata(original, { note: 'x' }, ['asset-class'])).toBeNull()
+    expect(diffMetadata(original, { note: 'x' }, ['account-type'])).toBeNull()
   })
 })
 

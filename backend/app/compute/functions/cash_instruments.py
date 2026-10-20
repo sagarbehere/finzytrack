@@ -83,7 +83,7 @@ class CashInstrumentsFunction(ComputeFunction):
     name = "cash_instruments"
     description = (
         "Cash & fixed-income accounts (checking/savings/CD/bond/money-market) with "
-        "current balance, type (account asset-class), rate, maturity, attributed "
+        "current balance, type (account-type metadata), rate, maturity, attributed "
         "interest earned, and effective yield as of 'to'. Interest is attributed to "
         "the instrument that earned it: by the instrument's interest_account link, "
         "else by the investment counterpart in the interest transaction (the "
@@ -137,14 +137,14 @@ class CashInstrumentsFunction(ComputeFunction):
         income_link: dict[str, str] = {}
         interest_income_accounts: set[str] = set()
         for a in accounts:
-            ac = str(a.metadata.get("asset-class") or "").strip().lower() or None
+            ac = str(a.metadata.get("account-type") or "").strip().lower() or None
             if str(a.metadata.get("income-type") or "").strip().lower() == "interest":
                 interest_income_accounts.add(a.name)
             link = a.metadata.get("interest_account")
             if link:
                 income_link[str(link)] = a.name
             meta[a.name] = {
-                "asset_class": ac,
+                "type": ac,
                 "open_date": a.open_date,
                 "close_date": a.close_date,
                 "rate": a.metadata.get("interest_rate"),
@@ -154,7 +154,7 @@ class CashInstrumentsFunction(ComputeFunction):
 
         def is_investment(name: str) -> bool:
             m = meta.get(name)
-            ac = m["asset_class"] if m else None
+            ac = m["type"] if m else None
             return ac is not None and ac not in _CASH_CLASSES
 
         # ── Interest attribution ─────────────────────────────────────────────
@@ -252,7 +252,7 @@ class CashInstrumentsFunction(ComputeFunction):
             result.append({
                 "account": name,
                 "filter_account": name,   # drives the row's transactions drill-through
-                "type": m["asset_class"] or "cash",
+                "type": m["type"] or "cash",
                 "currency": ccy,
                 "rate": m["rate"],
                 "maturity": m["maturity"],

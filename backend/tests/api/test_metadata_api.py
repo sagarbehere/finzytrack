@@ -23,7 +23,7 @@ _LEDGER = """\
 
 1970-01-01 open Assets:Bank:Checking   USD
 1970-01-01 open Assets:Bank:CD1        USD
-  asset-class: "cd"
+  account-type: "cd"
 1970-01-01 open Assets:Broker
 1970-01-01 open Income:Dividends:VOO   USD
   income-type: "dividend"
@@ -108,7 +108,7 @@ class TestVocabulary:
         assert keys == {
             ("commodity", "asset-class"), ("commodity", "name"), ("commodity", "fetch_symbol"),
             ("commodity", "issue_date"), ("commodity", "denomination"),
-            ("account", "asset-class"), ("account", "interest_rate"),
+            ("account", "account-type"), ("account", "interest_rate"),
             ("account", "maturity_date"), ("account", "interest_account"),
             ("income-account", "income-type"), ("income-account", "dividend_of"),
         }
@@ -121,9 +121,12 @@ class TestVocabulary:
             "cash", "currency", "stock", "etf", "mutual-fund", "money-market",
             "bond", "cd", "i-bond", "crypto",
         ]
-        assert by[("account", "asset-class")]["values"] == ["checking", "savings", "cd", "bond", "cash"]
-        assert by[("account", "maturity_date")]["requires_key"] == "asset-class"
+        assert by[("account", "account-type")]["values"] == ["checking", "savings", "cd", "bond", "cash"]
+        assert by[("account", "maturity_date")]["requires_key"] == "account-type"
         assert by[("account", "maturity_date")]["requires_values"] == ["cd", "bond"]
+        # Interest rate is shown for any account that can earn interest.
+        assert by[("account", "interest_rate")]["requires_key"] == "account-type"
+        assert by[("account", "interest_rate")]["requires_values"] == ["checking", "savings", "cd", "bond"]
 
 
 class TestReview:
@@ -143,7 +146,7 @@ class TestReview:
         assert items[("commodity", "USD")]["unset"] == []
         # VMFXX is declared but never held at cost or classed → not flagged.
         assert items[("commodity", "VMFXX")]["unset"] == []
-        assert items[("account", "Assets:Bank:Checking")]["unset"] == ["asset-class"]
+        assert items[("account", "Assets:Bank:Checking")]["unset"] == ["account-type"]
         # Tagging an account as a CD makes its CD fields relevant.
         assert items[("account", "Assets:Bank:CD1")]["unset"] == ["interest_rate", "maturity_date"]
         assert items[("income-account", "Income:Dividends:VOO")]["unset"] == ["dividend_of"]
@@ -179,9 +182,9 @@ class TestReview:
             review = _review(client)
         items = _items(review)
         # Both are still listed as "not set"...
-        assert items[("account", "Assets:Bank:Old")]["unset"] == ["asset-class"]
+        assert items[("account", "Assets:Bank:Old")]["unset"] == ["account-type"]
         assert items[("account", "Assets:Bank:Old")]["closed"] is True
-        assert items[("account", "Assets:Bank:Placeholder")]["unset"] == ["asset-class"]
+        assert items[("account", "Assets:Bank:Placeholder")]["unset"] == ["account-type"]
         # ...but neither prompts a banner.
         assert review["summary"]["account"] == 1
 
@@ -306,17 +309,17 @@ class TestCommodityMetadataUpsert:
 class TestAccountMetadataRemoval:
     def test_remove_metadata_deletes_key(self, meta_client):
         resp = meta_client.put("/api/accounts/Assets:Bank:CD1", json={
-            "remove_metadata": ["asset-class"],
+            "remove_metadata": ["account-type"],
         })
         assert resp.status_code == 200, resp.text
-        assert "asset-class" not in _account_meta(meta_client, "Assets:Bank:CD1")
-        assert "asset-class" not in _ledger_text(meta_client).split("Assets:Bank:CD1")[1].split("open")[0]
+        assert "account-type" not in _account_meta(meta_client, "Assets:Bank:CD1")
+        assert "account-type" not in _ledger_text(meta_client).split("Assets:Bank:CD1")[1].split("open")[0]
 
     def test_metadata_without_key_keeps_it(self, meta_client):
         """Omitting a key from `metadata` keeps it — only `remove_metadata` deletes."""
         meta_client.put("/api/accounts/Assets:Bank:CD1", json={"metadata": {"interest_rate": "4.5%"}})
         assert _account_meta(meta_client, "Assets:Bank:CD1") == {
-            "asset-class": "cd", "interest_rate": "4.5%",
+            "account-type": "cd", "interest_rate": "4.5%",
         }
 
     def test_recognized_date_is_written_as_date(self, meta_client):
@@ -355,10 +358,10 @@ def test_update_keeps_directive_in_its_included_file(tmp_path: Path):
 def test_create_account_writes_recognized_date_as_date(meta_client):
     resp = meta_client.post("/api/accounts", json={
         "name": "Assets:Bank:CD2", "open_date": "2025-01-01", "currencies": ["USD"],
-        "metadata": {"asset-class": "cd", "maturity_date": "2026-01-01"},
+        "metadata": {"account-type": "cd", "maturity_date": "2026-01-01"},
     })
     assert resp.status_code == 201, resp.text
     assert "maturity_date: 2026-01-01\n" in _ledger_text(meta_client)
     assert _account_meta(meta_client, "Assets:Bank:CD2") == {
-        "asset-class": "cd", "maturity_date": "2026-01-01",
+        "account-type": "cd", "maturity_date": "2026-01-01",
     }

@@ -43,7 +43,7 @@ def _unset(scope: str, metadata: Dict[str, str]) -> List[str]:
 # like maturity_date are listed as "not set" but never prompt a banner.
 _PRIMARY_KEY = {
     SCOPE_COMMODITY: "asset-class",
-    SCOPE_ACCOUNT: "asset-class",
+    SCOPE_ACCOUNT: "account-type",
     SCOPE_INCOME_ACCOUNT: "income-type",
 }
 
@@ -81,7 +81,7 @@ def build_review(reader: SqliteReader) -> MetadataReviewData:
         ))
 
     # Accounts: `Assets:` accounts that hold only currencies (account-level
-    # asset-class describes a currency balance), and all `Income:` accounts.
+    # account-type describes a currency balance), and all `Income:` accounts.
     for a in sorted(reader.get_accounts(), key=lambda a: a.name):
         meta = _as_text(a.metadata)
         root = a.name.split(":", 1)[0]
