@@ -80,8 +80,12 @@ COMPUTE_TIMEOUT = "COMPUTE_TIMEOUT"
 BUDGET_NOT_FOUND = "BUDGET_NOT_FOUND"
 BUDGET_VALIDATION_ERROR = "BUDGET_VALIDATION_ERROR"
 
-# Price-fetch errors (/api/prices/update — the sidecar price fetcher)
+# Price errors (/api/prices — the sidecar price fetcher and price edits)
 PRICE_UPDATE_FAILED = "PRICE_UPDATE_FAILED"
+PRICE_IN_LEDGER = "PRICE_IN_LEDGER"              # edit targets a price written in the ledger file
+PRICE_NOT_FOUND = "PRICE_NOT_FOUND"              # remove targets a price not in the sidecar
+PRICE_EXISTS = "PRICE_EXISTS"                    # set with replace=false targets a taken date
+PRICE_SIDECAR_INVALID = "PRICE_SIDECAR_INVALID"  # sidecar has unreadable lines, or the render failed its parse check
 
 # Dashboard theme errors (/api/dashboard-theme — chart/widget color themes)
 DASHBOARD_THEME_NOT_FOUND = "DASHBOARD_THEME_NOT_FOUND"

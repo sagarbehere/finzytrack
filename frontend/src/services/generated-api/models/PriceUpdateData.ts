@@ -11,6 +11,10 @@ export type PriceUpdateData = {
      */
     added: number;
     /**
+     * Existing price points whose number changed (the newest stored day is re-fetched).
+     */
+    updated?: number;
+    /**
      * Total price points in the sidecar after the update.
      */
     total: number;

@@ -154,17 +154,24 @@ async function onUpdatePrices() {
   try {
     const resp = await PricesService.updatePrices()
     const added = resp.data?.added ?? 0
+    // The newest stored day is re-fetched each time, so a fetch can refresh
+    // prices without adding any (dev-docs/investment-view.md §10.2 P-Q6).
+    const updated = resp.data?.updated ?? 0
     const total = resp.data?.total ?? 0
     const asOf = resp.data?.as_of
     const failed = resp.data?.failed ?? []
     const failedTail = failed.length ? ` Couldn't fetch: ${failed.join('; ')}. Those are shown at cost.` : ''
 
-    if (added > 0) {
+    if (added > 0 || updated > 0) {
       // Some fetched, some may have failed — report both honestly.
+      const changes = [
+        added > 0 ? `added ${added} new price${added === 1 ? '' : 's'}` : '',
+        updated > 0 ? `updated ${updated}` : '',
+      ].filter(Boolean).join(' and ')
       addNotification({
         type: failed.length ? 'warning' : 'success',
         title: 'Prices updated',
-        message: `Added ${added} new price${added === 1 ? '' : 's'}${asOf ? `, as of ${asOf}` : ''}.${failedTail}`,
+        message: `${changes.charAt(0).toUpperCase()}${changes.slice(1)}${asOf ? `, as of ${asOf}` : ''}.${failedTail}`,
       })
     } else if (failed.length || total === 0) {
       // Nothing added and something failed (or the sidecar is still empty) → the

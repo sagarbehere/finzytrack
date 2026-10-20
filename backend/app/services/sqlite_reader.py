@@ -854,3 +854,45 @@ class SqliteReader:
             sql += " ORDER BY date"
             return [dict(r) for r in con.execute(sql, params).fetchall()]
         return self._query(query)
+
+    def get_latest_prices(self) -> List[dict]:
+        """The newest price per ``(base, quote)`` pair, each as ``{base_currency,
+        quote_currency, date, quote_number, filename, count}`` — ``filename`` is
+        the file the price was read from (sidecar or ledger), ``count`` the pair's
+        number of prices. Ledger and sidecar prices both count."""
+        def query(con: sqlite3.Connection) -> List[dict]:
+            rows = con.execute(
+                "SELECT p.base_currency, p.quote_currency, p.date, p.quote_number, "
+                "json_extract(p.metadata_json, '$.filename') AS filename, g.n AS count "
+                "FROM prices p JOIN ("
+                "  SELECT base_currency, quote_currency, MAX(date) AS d, COUNT(*) AS n "
+                "  FROM prices GROUP BY base_currency, quote_currency"
+                ") g ON g.base_currency = p.base_currency "
+                "AND g.quote_currency = p.quote_currency AND g.d = p.date "
+                "ORDER BY p.base_currency, p.quote_currency, p.id DESC"
+            ).fetchall()
+            out: Dict[Tuple[str, str], dict] = {}
+            for r in rows:  # one row per pair (a same-day tie keeps the last written)
+                out.setdefault((r["base_currency"], r["quote_currency"]), dict(r))
+            return list(out.values())
+        return self._query(query)
+
+    def get_price_history(
+        self, base: str, quote: str, limit: int, offset: int,
+    ) -> Tuple[List[dict], int]:
+        """One ``(base, quote)`` pair's prices, newest first, paged:
+        ``([{date, quote_number, quote_currency, filename}], total)``."""
+        def query(con: sqlite3.Connection) -> Tuple[List[dict], int]:
+            total = con.execute(
+                "SELECT COUNT(*) FROM prices WHERE base_currency = ? AND quote_currency = ?",
+                (base, quote),
+            ).fetchone()[0]
+            rows = con.execute(
+                "SELECT date, quote_number, quote_currency, "
+                "json_extract(metadata_json, '$.filename') AS filename "
+                "FROM prices WHERE base_currency = ? AND quote_currency = ? "
+                "ORDER BY date DESC, id DESC LIMIT ? OFFSET ?",
+                (base, quote, limit, offset),
+            ).fetchall()
+            return [dict(r) for r in rows], total
+        return self._query(query)

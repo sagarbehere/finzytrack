@@ -81,10 +81,9 @@ class FakeSource:
         return SourcePrice(Decimal(price), datetime.combine(d, time.min, tzinfo=timezone.utc), "USD")
 
 
-@pytest.fixture
-def wired(tmp_path):
+def _wire(tmp_path, ledger_text):
     ledger = tmp_path / "main.beancount"
-    ledger.write_text(_LEDGER)
+    ledger.write_text(ledger_text)
     db = tmp_path / "ledger.db"
     exporter = SQLiteExporter(str(db))
     backup_manager = BackupManager(backup_dir=tmp_path / "backups", retention_count=3)
@@ -98,6 +97,11 @@ def wired(tmp_path):
     assert errors == []
     exporter.export_full_sync(entries, errors, options, ledger_file=str(ledger))
     return ledger, db, reader, lm
+
+
+@pytest.fixture
+def wired(tmp_path):
+    return _wire(tmp_path, _LEDGER)
 
 
 def _sidecar_prices(ledger: Path):
@@ -131,14 +135,126 @@ def test_uses_fetch_symbol_metadata(wired):
     assert "ACME.XYZ" in tickers             # fetch_symbol, not the code "ACME"
 
 
-def test_gap_fill_only_requests_dates_after_last_persisted(wired):
+def _voo(ledger: Path) -> list[tuple[date, str]]:
+    return sorted((p.date, str(p.amount.number)) for p in _sidecar_prices(ledger) if p.currency == "VOO")
+
+
+def test_held_fetch_starts_at_and_replaces_the_newest_stored_day(wired):
+    """P-Q6: the window starts AT the newest stored day; its value is replaced
+    (a mid-day price becomes the close) and later days are added."""
     ledger, _, reader, lm = wired
-    # Seed one existing VOO price.
-    lm.write_price_directives([data.Price({}, date(2021, 3, 15), "VOO", Amount(Decimal("130.00"), "USD"))])
-    source = FakeSource({"VOO": [(date(2021, 3, 20), "131.00")], "ACME.XYZ": []})
-    PriceFetcher(reader, lm, source=source, today=date(2021, 3, 25)).fetch_and_persist()
+    lm.write_price_directives([
+        data.Price({}, date(2021, 3, 10), "VOO", Amount(Decimal("128.00"), "USD")),
+        data.Price({}, date(2021, 3, 15), "VOO", Amount(Decimal("130.00"), "USD")),
+    ])
+    source = FakeSource({"VOO": [(date(2021, 3, 10), "999.00"), (date(2021, 3, 15), "130.50"),
+                                 (date(2021, 3, 20), "131.00")], "ACME.XYZ": []})
+    res = PriceFetcher(reader, lm, source=source, today=date(2021, 3, 25)).fetch_and_persist()
     voo_call = next(c for c in source.calls if c[0] == "VOO")
-    assert voo_call[1] == date(2021, 3, 16)   # begins the day after the last persisted price
+    assert voo_call[1:] == (date(2021, 3, 15), date(2021, 3, 25))
+    assert (res["added"], res["updated"]) == (1, 1)
+    assert _voo(ledger) == [  # older day stays fixed history
+        (date(2021, 3, 10), "128.00"), (date(2021, 3, 15), "130.50"), (date(2021, 3, 20), "131.00"),
+    ]
+
+
+def test_second_fetch_on_the_same_day_replaces_todays_price(wired):
+    ledger, _, reader, lm = wired
+    today = date(2021, 2, 1)
+    PriceFetcher(reader, lm, source=FakeSource({"VOO": [(today, "120.00")], "ACME.XYZ": []}),
+                 today=today).fetch_and_persist()
+    PriceFetcher(reader, lm, source=FakeSource({"VOO": [(today, "121.40")], "ACME.XYZ": []}),
+                 today=today).fetch_and_persist()
+    assert _voo(ledger) == [(today, "121.40")]
+    assert [(r["date"], r["quote_number"]) for r in reader.get_prices(currency="VOO")] == [
+        ("2021-02-01", "121.40"),
+    ]
+
+
+def test_hand_price_on_the_newest_day_is_overwritten_by_a_fetch(wired):
+    ledger, _, reader, lm = wired
+    lm.edit_price_directives([data.Price({}, date(2021, 2, 1), "VOO", Amount(Decimal("1.00"), "USD"))], [])
+    PriceFetcher(reader, lm, source=FakeSource({"VOO": [(date(2021, 2, 1), "120.00")], "ACME.XYZ": []}),
+                 today=date(2021, 2, 1)).fetch_and_persist()
+    assert _voo(ledger) == [(date(2021, 2, 1), "120.00")]
+
+
+def test_fetch_never_writes_a_key_that_is_in_the_ledger_file(tmp_path):
+    """A price in the ledger file on the newest day stands; the fetch neither
+    duplicates it into the sidecar nor changes it."""
+    ledger_text = _LEDGER + "\n2021-02-01 price VOO 119.00 USD\n"
+    ledger, _, reader, lm = _wire(tmp_path, ledger_text)
+    source = FakeSource({"VOO": [(date(2021, 2, 1), "120.00"), (date(2021, 2, 2), "121.00")],
+                         "ACME.XYZ": []})
+    PriceFetcher(reader, lm, source=source, today=date(2021, 2, 2)).fetch_and_persist()
+    assert _voo(ledger) == [(date(2021, 2, 2), "121.00")]
+    assert [(r["date"], r["quote_number"]) for r in reader.get_prices(currency="VOO")] == [
+        ("2021-02-01", "119.00"), ("2021-02-02", "121.00"),
+    ]
+
+
+_SOLD = """\
+option "operating_currency" "USD"
+
+2020-01-01 commodity OLD
+  asset-class: "stock"
+2020-01-01 open Assets:Broker USD,OLD
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Income:Gains USD
+
+2021-01-10 * "buy"
+  Assets:Broker  10 OLD {100.00 USD}
+  Assets:Cash  -1000.00 USD
+2021-03-01 * "sell"
+  Assets:Broker  -10 OLD {100.00 USD} @ 110.00 USD
+  Assets:Cash  1100.00 USD
+  Income:Gains  -100.00 USD
+"""
+
+
+def test_sold_out_holding_does_not_refetch_its_last_price(tmp_path):
+    ledger, _, reader, lm = _wire(tmp_path, _SOLD)
+    lm.write_price_directives([data.Price({}, date(2021, 3, 1), "OLD", Amount(Decimal("110.00"), "USD"))])
+    source = FakeSource({"OLD": [(date(2021, 3, 1), "999.00")]})
+    res = PriceFetcher(reader, lm, source=source, today=date(2021, 6, 1)).fetch_and_persist()
+    assert source.calls == []                 # window (Mar 2 → Mar 1) is empty
+    assert res["added"] == 0
+    assert [(r["date"], r["quote_number"]) for r in reader.get_prices(currency="OLD")] == [
+        ("2021-03-01", "110.00"),
+    ]
+
+
+_MONTHLY = """\
+option "operating_currency" "USD"
+
+2020-01-01 commodity BND
+  asset-class: "bond"
+2020-01-01 open Assets:Broker USD,BND
+2020-01-01 open Assets:Cash USD
+
+2021-01-10 * "buy"
+  Assets:Broker  2 BND {1000.00 USD}
+  Assets:Cash  -2000.00 USD
+"""
+
+
+def test_monthly_refresh_keeps_one_point_per_month(tmp_path):
+    """A newer point in the newest month replaces the older one stored in that
+    month; earlier months are untouched."""
+    ledger, _, reader, lm = _wire(tmp_path, _MONTHLY)
+    lm.write_price_directives([
+        data.Price({}, date(2021, 9, 30), "BND", Amount(Decimal("990.00"), "USD")),
+        data.Price({}, date(2021, 10, 5), "BND", Amount(Decimal("995.00"), "USD")),
+    ])
+    source = FakeSource({"BND": [(date(2021, 10, 5), "996.00"), (date(2021, 10, 12), "997.00"),
+                                 (date(2021, 10, 20), "998.00")]})
+    res = PriceFetcher(reader, lm, source=source, today=date(2021, 10, 20)).fetch_and_persist()
+    assert source.calls == [("BND", date(2021, 10, 5), date(2021, 10, 20))]
+    assert sorted((p.date, str(p.amount.number)) for p in _sidecar_prices(ledger)) == [
+        (date(2021, 9, 30), "990.00"), (date(2021, 10, 20), "998.00"),
+    ]
+    assert (res["added"], res["total"]) == (1, 2)
+    assert [r["date"] for r in reader.get_prices(currency="BND")] == ["2021-09-30", "2021-10-20"]
 
 
 def test_falls_back_to_latest_price_when_series_is_empty(wired):
@@ -163,7 +279,8 @@ def test_idempotent_second_run_adds_nothing(wired):
     first = PriceFetcher(reader, lm, source=source, today=date(2021, 2, 1)).fetch_and_persist()
     assert first["added"] == 1
     second = PriceFetcher(reader, lm, source=source, today=date(2021, 2, 1)).fetch_and_persist()
-    assert second["added"] == 0               # nothing new; historical closes immutable
+    assert (second["added"], second["updated"]) == (0, 0)   # same day, same value: no change
+    assert _voo(ledger) == [(date(2021, 2, 1), "120.00")]
 
 
 def test_price_write_does_not_touch_transaction_file(wired):
@@ -207,3 +324,79 @@ def test_endpoint_round_trips(wired, monkeypatch):
     # Verify via a read: the prices are now in the mirror.
     voo = reader.get_prices(currency="VOO")
     assert any(r["date"] == recent.isoformat() and r["quote_number"] == "120.00" for r in voo)
+
+
+def test_a_price_in_another_currency_does_not_move_the_fetch_window(wired):
+    """VOO is bought in USD; a hand EUR price dated today must not make the USD
+    series look up to date (its gap must still be filled)."""
+    ledger, _, reader, lm = wired
+    lm.write_price_directives([
+        data.Price({}, date(2021, 3, 1), "VOO", Amount(Decimal("130.00"), "USD")),
+        data.Price({}, date(2021, 3, 10), "VOO", Amount(Decimal("110.00"), "EUR")),
+    ])
+    source = FakeSource({"VOO": [(date(2021, 3, 1), "130.00"), (date(2021, 3, 5), "132.00")],
+                         "ACME.XYZ": []})
+    PriceFetcher(reader, lm, source=source, today=date(2021, 3, 10)).fetch_and_persist()
+    assert next(c for c in source.calls if c[0] == "VOO")[1] == date(2021, 3, 1)
+    assert [(r["date"], r["quote_currency"]) for r in reader.get_prices(currency="VOO")] == [
+        ("2021-03-01", "USD"), ("2021-03-05", "USD"), ("2021-03-10", "EUR"),
+    ]
+
+
+def test_a_price_dated_after_today_is_reported_not_silently_skipped(wired):
+    ledger, _, reader, lm = wired
+    lm.write_price_directives([data.Price({}, date(2022, 2, 1), "VOO", Amount(Decimal("1.00"), "USD"))])
+    source = FakeSource({"VOO": [(date(2021, 2, 1), "120.00")], "ACME.XYZ": []})
+    res = PriceFetcher(reader, lm, source=source, today=date(2021, 2, 1)).fetch_and_persist()
+    assert all(c[0] != "VOO" for c in source.calls)
+    assert "VOO: newest price is dated after today (2022-02-01)" in res["failed"]
+
+
+def test_a_tiny_price_is_written_without_an_exponent(wired):
+    ledger, _, reader, lm = wired
+    source = FakeSource({"VOO": [(date(2021, 2, 1), "0.0000001")], "ACME.XYZ": []})
+    res = PriceFetcher(reader, lm, source=source, today=date(2021, 2, 1)).fetch_and_persist()
+    assert res["added"] == 1
+    assert "2021-02-01 price VOO 0.0000001 USD" in sidecar_path(ledger).read_text().splitlines()
+
+
+def test_quote_outside_the_window_gives_a_reason(wired):
+    ledger, _, reader, lm = wired
+    source = FakeSource({"VOO": [], "ACME.XYZ": []}, latest={"VOO": (date(2020, 1, 1), "99.00")})
+    res = PriceFetcher(reader, lm, source=source, today=date(2021, 2, 1)).fetch_and_persist()
+    assert "VOO (VOO): no price in the date range" in res["failed"]
+
+
+def test_update_endpoint_refuses_a_price_file_with_unreadable_lines(wired, monkeypatch):
+    ledger, _, reader, lm = wired
+    sidecar_path(ledger).write_text("2021-01-15 price VOO 1OO USD\n")
+    before = sidecar_path(ledger).read_bytes()
+    recent = date.today()
+    monkeypatch.setattr(PriceFetcher, "_get_source",
+                        lambda self: FakeSource({"VOO": [(recent, "120.00")], "ACME.XYZ": []}))
+    from app.api.routers.prices import update_prices
+    from app.exceptions import APIError
+    with pytest.raises(APIError) as exc:
+        asyncio.run(update_prices(reader=reader, ledger_manager=lm))
+    assert (exc.value.code, exc.value.status_code) == ("PRICE_SIDECAR_INVALID", 422)
+    assert sidecar_path(ledger).read_bytes() == before
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (709.4299926757812, "709.43"),   # Yahoo float noise
+    (342.0, "342.0"),                # already short: kept as sent
+    (1.2736, "1.2736"),
+    (67123.456, "67123.456"),
+    (0.000123456789, "0.000123457"),  # tiny: 6 significant digits
+    (1e-7, "0.0000001"),
+])
+def test_clean_price(raw, expected):
+    from app.services.price_fetcher import clean_price
+    assert format(clean_price(raw), "f") == expected
+
+
+def test_fetched_float_noise_is_not_written(wired):
+    ledger, _, reader, lm = wired
+    source = FakeSource({"VOO": [(date(2021, 2, 1), "709.4299926757812")], "ACME.XYZ": []})
+    PriceFetcher(reader, lm, source=source, today=date(2021, 2, 1)).fetch_and_persist()
+    assert "2021-02-01 price VOO 709.43 USD" in sidecar_path(ledger).read_text().splitlines()

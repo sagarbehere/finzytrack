@@ -23,6 +23,7 @@ from app.core.ledger_loader import load_ledger_checked
 from app.services.sqlite_exporter import SQLiteExporter
 from app.services.sqlite_reader import SqliteReader
 from app.services.price_fetcher import PriceFetcher
+from app.services.price_cadence import issue_month
 
 
 # IBONDX: a proper I-Bond issue. NOISSUE: marked i-bond but no issue_date → opt-out.
@@ -68,10 +69,10 @@ def wired(tmp_path):
 
 
 def test_issue_ym_normalisation():
-    assert PriceFetcher._issue_ym("04/2020") == "04/2020"
-    assert PriceFetcher._issue_ym("2020-04-15") == "04/2020"
-    assert PriceFetcher._issue_ym("2020-04") == "04/2020"
-    assert PriceFetcher._issue_ym(None) is None
+    assert issue_month("04/2020") == "04/2020"
+    assert issue_month("2020-04-15") == "04/2020"
+    assert issue_month("2020-04") == "04/2020"
+    assert issue_month(None) is None
 
 
 def test_accrued_price_matches_ibonds_at_fixed_asof(wired):
@@ -110,3 +111,14 @@ def test_no_prices_before_issue(wired):
     PriceFetcher(reader, lm, today=date(2024, 4, 1)).fetch_and_persist()
     dates = [date.fromisoformat(r["date"]) for r in reader.get_prices(currency="IBONDX")]
     assert min(dates) >= date(2020, 4, 1)          # nothing before the issue month
+
+
+def test_up_to_date_ibond_is_neither_skipped_nor_failed(wired):
+    """A second run in the same month has no new month-start value to add: the
+    I-Bond is up to date, not "not fetched" (live check 2026-10-20)."""
+    reader, lm = wired
+    PriceFetcher(reader, lm, today=date(2024, 4, 1)).fetch_and_persist()
+    res = PriceFetcher(reader, lm, today=date(2024, 4, 20)).fetch_and_persist()
+    assert "IBONDX" not in res["skipped"]
+    assert not any(f.startswith("IBONDX") for f in res["failed"])
+    assert "NOISSUE" in res["skipped"]

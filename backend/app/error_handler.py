@@ -5,6 +5,7 @@ Catches all APIError exceptions and converts them to the unified ApiResponse env
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 import logging
 
@@ -31,7 +32,9 @@ def setup_error_handlers(app: FastAPI):
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError):
         """Handle Pydantic validation errors."""
-        error_details = {"validation_errors": exc.errors()}
+        # jsonable_encoder: error contexts can carry non-JSON values (e.g. the
+        # Decimal limit of a `gt=0` constraint).
+        error_details = {"validation_errors": jsonable_encoder(exc.errors())}
         
         response = create_error_response(
             message="Request validation failed",

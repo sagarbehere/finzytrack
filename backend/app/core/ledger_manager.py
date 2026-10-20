@@ -521,67 +521,141 @@ class LedgerManager:
         all_entries = list(entries) + list(new_entries)
         self._write_and_export(all_entries, errors, options, acknowledge=acknowledge)
 
-    # ── Price sidecar (fetcher's dedicated, transaction-free write path) ──────
+    # ── Price sidecar (dedicated, transaction-free write path) ────────────────
 
     @staticmethod
     def _render_price_sidecar(prices) -> str:
         """Render ``data.Price`` entries as a ``prices.beancount`` file, sorted by
-        (date, base, quote)."""
+        (date, base, quote). Every write rewrites the whole file from its
+        entries, so comments and price metadata are not kept."""
         lines = [
             "; -*- mode: beancount; coding: utf-8; -*-",
-            "; Price sidecar — maintained by Finzytrack's price fetcher.",
-            "; Deliberately NOT `include`d in the ledger; loaded only for valuation.",
-            "; See dev-docs/valuations.md §3. Hand-editing is fine.",
+            "; Price sidecar — written by Finzytrack (price fetch and the Prices tab).",
+            "; Not `include`d in the ledger; loaded only for valuation.",
+            "; Edits here are kept; comments are not (every save rewrites this file).",
             "",
         ]
         for p in sorted(prices, key=lambda e: (e.date, e.currency, e.amount.currency)):
+            # format 'f': never an exponent (1E-7), which Beancount can't read.
             lines.append(
-                f"{p.date.isoformat()} price {p.currency} {p.amount.number} {p.amount.currency}"
+                f"{p.date.isoformat()} price {p.currency} {format(p.amount.number, 'f')} {p.amount.currency}"
             )
         return "\n".join(lines) + "\n"
 
-    @_serialized_write
-    def write_price_directives(self, new_prices: List[Any]) -> Dict[str, Any]:
-        """Merge ``new_prices`` (``data.Price``) into the price sidecar and rewrite
-        it atomically, then refresh the mirror. Returns ``{added, total, as_of}``.
+    @staticmethod
+    def _price_key(p) -> Tuple[Any, str, str]:
+        return (p.date, p.currency, p.amount.currency)
 
-        This is the price fetcher's **dedicated** write path. The sidecar is
-        deliberately NOT part of any transaction write's ``known_files``
-        (dev-docs/valuations.md §3, Slice 4 gotcha): a price fetch never rewrites
-        transaction files, and ``_do_write_entries`` — which rewrites *every*
-        known file, blanking those with no entries — never touches the sidecar.
-        Prices carry no auto-generated padding, so writing them straight through
-        ``BackupManager.atomic_write`` is safe (the padding-filter invariant is
-        about transaction rewrites).
+    def _apply_price_changes(
+        self, set_prices: List[Any], remove_keys: List[Tuple[Any, str, str]], *, strict: bool,
+        keep_existing: Optional[set] = None,
+    ) -> Dict[str, Any]:
+        """Shared body of the two sidecar writers: merge by (date, base, quote),
+        check the rendered file parses back to the same prices, swap it in
+        atomically, re-export the mirror. Caller holds the write lock.
 
-        Idempotent: prices are keyed by (date, base, quote); rewriting an existing
-        point replaces it in place. Held under the per-user write lock so a fetch
-        and a transaction edit can't interleave.
+        Keys that also exist as a ``price`` in the ledger file are left to the
+        ledger: ``strict`` (a user edit) rejects them, otherwise (a fetch) they
+        are skipped — two prices for one key make "latest" ambiguous. ``strict``
+        also rejects removing a key the sidecar doesn't have, and setting a key in
+        ``keep_existing`` that the sidecar already has (409 ``PRICE_EXISTS`` — the
+        caller asked not to replace it). A sidecar with lines that don't parse is
+        never rewritten (that would drop them): 422 ``PRICE_SIDECAR_INVALID``.
         """
         path = sidecar_path(self.ledger_file)
         merged: Dict[Tuple[Any, str, str], Any] = {}
         if path.exists():
-            existing, _errs, _opts = load_ledger_checked(str(path))
+            existing, sidecar_errors, _opts = load_ledger_checked(str(path))
+            if sidecar_errors:
+                raise APIError(
+                    message="The price file has lines that can't be read. Fix them in the file, then try again.",
+                    code=ec.PRICE_SIDECAR_INVALID,
+                    status_code=422,
+                    details={"file": str(path), "errors": [
+                        f"line {getattr(e, 'source', {}).get('lineno', '?')}: {getattr(e, 'message', e)}"
+                        for e in sidecar_errors
+                    ][:5]},
+                )
             for e in existing:
                 if isinstance(e, data.Price):
-                    merged[(e.date, e.currency, e.amount.currency)] = e
+                    merged[self._price_key(e)] = e
 
-        added = 0
-        for p in new_prices:
-            key = (p.date, p.currency, p.amount.currency)
+        entries, errors, options = self._parse_ledger()
+        in_ledger = {self._price_key(e) for e in entries if isinstance(e, data.Price)}
+
+        def _fmt(k) -> Dict[str, str]:
+            return {"date": k[0].isoformat(), "commodity": k[1], "quote_currency": k[2]}
+
+        if strict:
+            touched = {self._price_key(p) for p in set_prices} | set(remove_keys)
+            clashes = sorted(k for k in touched if k in in_ledger)
+            if clashes:
+                raise APIError(
+                    message="This date has a price in your ledger file. Change it there.",
+                    code=ec.PRICE_IN_LEDGER,
+                    status_code=422,
+                    details={"prices": [_fmt(k) for k in clashes]},
+                )
+            missing = sorted(k for k in set(remove_keys) if k not in merged)
+            if missing:
+                raise APIError(
+                    message="Price not found in the price file",
+                    code=ec.PRICE_NOT_FOUND,
+                    status_code=404,
+                    details={"prices": [_fmt(k) for k in missing]},
+                )
+            removing = set(remove_keys)
+            taken = sorted(
+                k for k in (keep_existing or set()) if k in merged and k not in removing
+            )
+            if taken:
+                raise APIError(
+                    message="This date already has a price.",
+                    code=ec.PRICE_EXISTS,
+                    status_code=409,
+                    details={"prices": [
+                        {**_fmt(k), "number": format(merged[k].amount.number, "f")} for k in taken
+                    ]},
+                )
+
+        removed = 0
+        for k in remove_keys:
+            if k in merged and k not in in_ledger:
+                del merged[k]
+                removed += 1
+
+        added = updated = 0
+        for p in set_prices:
+            key = self._price_key(p)
+            if key in in_ledger:
+                continue
             if key not in merged:
                 added += 1
+            elif merged[key].amount.number != p.amount.number:
+                updated += 1
             merged[key] = p  # new wins → idempotent replace
 
+        text = self._render_price_sidecar(merged.values())
+        # Check-then-write (cf. §6.6): the file must parse back cleanly to
+        # exactly the prices we meant to write before it replaces the old one.
+        parsed, parse_errors, _ = load_string_checked(text)
+        back = {self._price_key(e): e.amount.number for e in parsed if isinstance(e, data.Price)}
+        if parse_errors or back != {k: v.amount.number for k, v in merged.items()}:
+            raise APIError(
+                message="The price file would not read back correctly; nothing was saved.",
+                code=ec.PRICE_SIDECAR_INVALID,
+                status_code=422,
+                details={"errors": [str(getattr(e, "message", e)) for e in parse_errors][:5]},
+            )
+
         with self.backup_manager.atomic_write(str(path)) as f:
-            f.write(self._render_price_sidecar(merged.values()))
+            f.write(text)
 
         # A sidecar that didn't exist at the last export isn't recorded in the
         # freshness fingerprint (an absent file is deliberately not fingerprinted
         # — Slice 0), so a stat-based staleness check wouldn't notice the first
-        # fetch. Re-export explicitly so new prices are queryable immediately.
+        # write. Re-export explicitly so the prices are queryable immediately.
         if self._sqlite_exporter:
-            entries, errors, options = self._parse_ledger()
             try:
                 self._sqlite_exporter.export_full_sync(
                     entries, errors, options, ledger_file=str(self.ledger_file)
@@ -590,7 +664,49 @@ class LedgerManager:
                 logger.error("SQLite re-export after price write failed: %s", e)
 
         as_of = max((p.date for p in merged.values()), default=None)
-        return {"added": added, "total": len(merged), "as_of": as_of.isoformat() if as_of else None}
+        return {
+            "added": added, "updated": updated, "removed": removed, "total": len(merged),
+            "as_of": as_of.isoformat() if as_of else None,
+        }
+
+    @_serialized_write
+    def write_price_directives(
+        self, new_prices: List[Any], remove_keys: Optional[List[Tuple[Any, str, str]]] = None,
+    ) -> Dict[str, Any]:
+        """The price fetcher's write: merge ``new_prices`` (``data.Price``) into the
+        price sidecar, drop ``remove_keys`` ``(date, base, quote)``, rewrite it
+        atomically and refresh the mirror. Returns ``{added, updated, removed,
+        total, as_of}``.
+
+        The sidecar is deliberately NOT part of any transaction write's
+        ``known_files`` (dev-docs/valuations.md §3, Slice 4 gotcha): a price fetch
+        never rewrites transaction files, and ``_do_write_entries`` — which
+        rewrites *every* known file, blanking those with no entries — never
+        touches the sidecar. Prices carry no auto-generated padding, so writing
+        them straight through ``BackupManager.atomic_write`` is safe (the
+        padding-filter invariant is about transaction rewrites).
+
+        Idempotent: prices are keyed by (date, base, quote); rewriting an existing
+        point replaces it in place. A key that also exists in the ledger file is
+        skipped (the ledger's price stands). Held under the per-user write lock so
+        a fetch and a transaction edit can't interleave.
+        """
+        return self._apply_price_changes(list(new_prices), list(remove_keys or []), strict=False)
+
+    @_serialized_write
+    def edit_price_directives(
+        self, set_prices: List[Any], remove_keys: List[Tuple[Any, str, str]],
+        keep_existing: Optional[set] = None,
+    ) -> Dict[str, Any]:
+        """A user's batch of price edits (the Prices tab): set (add or replace by
+        ``(date, base, quote)``) and remove sidecar prices in **one** write.
+        Rejects (422 ``PRICE_IN_LEDGER``) any key that is a price in the ledger
+        file, (404 ``PRICE_NOT_FOUND``) removing a key the sidecar lacks, and
+        (409 ``PRICE_EXISTS``) setting a ``keep_existing`` key that is taken.
+        See dev-docs/investment-view.md §10.2 (P-Q1, P-Q2, P-Q4)."""
+        return self._apply_price_changes(
+            list(set_prices), list(remove_keys), strict=True, keep_existing=keep_existing,
+        )
 
     # ── Account management (orchestrator: parse → engine → write) ────────────
 

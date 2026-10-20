@@ -40,16 +40,9 @@
           <QuickActionForms @staged="stageDrafts" />
         </div>
 
-        <!-- Prices Tab (shell) -->
+        <!-- Prices Tab -->
         <div v-else-if="activeTab === 'prices'">
-          <div class="rounded-lg border-2 border-dashed border-gray-300 p-8 text-center dark:border-white/10">
-            <CurrencyDollarIcon class="mx-auto h-10 w-10 text-gray-400 dark:text-gray-500" aria-hidden="true" />
-            <h3 class="mt-2 text-sm font-semibold text-gray-900 dark:text-white">Prices</h3>
-            <p class="mx-auto mt-1 max-w-md text-sm text-gray-500 dark:text-gray-400">
-              Manage the prices used to value your holdings — list and edit prices per commodity,
-              see how fresh each one is, and refresh them.
-            </p>
-          </div>
+          <PricesPanel @open-metadata="activeTab = 'metadata'" />
         </div>
       </div>
     </div>
@@ -122,9 +115,9 @@
 <script setup lang="ts">
   import { ref, computed, nextTick, watch } from 'vue'
   import { useRoute } from 'vue-router'
-  import { CurrencyDollarIcon } from '@heroicons/vue/24/outline'
   import QuickActionForms from '@/components/investments/QuickActionForms.vue'
   import SetupMetadataPanel from '@/components/investments/SetupMetadataPanel.vue'
+  import PricesPanel from '@/components/investments/PricesPanel.vue'
   import TransactionTable from '@/components/common/TransactionTable.vue'
   import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
   import type { TransactionViewModel, ImportContext } from '@/types/transactions'
@@ -146,7 +139,7 @@
     { id: 'prices', label: 'Prices' },
   ] as const
 
-  // `?tab=metadata` opens Setup & Metadata directly (the dashboards' metadata hint links here).
+  // `?tab=metadata` / `?tab=prices` open that tab directly (the dashboards' metadata hint links here).
   const route = useRoute()
   const activeTab = ref<string>(
     tabs.some(t => t.id === route.query.tab) ? String(route.query.tab) : 'quick-actions',
