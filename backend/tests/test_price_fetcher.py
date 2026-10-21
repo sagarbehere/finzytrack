@@ -474,3 +474,74 @@ option "operating_currency" "USD"
     assert source.calls == []
     assert res == {"added": 0, "total": 0, "as_of": None, "symbols": [], "skipped": [], "failed": []}
     assert not sidecar_path(ledger).exists()
+
+
+_INR_FUND = """\
+option "operating_currency" "INR"
+
+2020-01-01 commodity PPFAS
+  asset-class: "mutual-fund"
+  fetch_symbol: "amfi:122639"
+2020-01-01 commodity RELIANCE
+  asset-class: "stock"
+  fetch_symbol: "RELIANCE.NS"
+2020-01-01 open Assets:Demat INR,PPFAS,RELIANCE
+2020-01-01 open Assets:Bank INR
+
+2026-10-01 * "buy fund"
+  Assets:Demat  100 PPFAS {88.00 INR}
+  Assets:Bank  -8800.00 INR
+2026-10-01 * "buy stock"
+  Assets:Demat  2 RELIANCE {1200.00 INR}
+  Assets:Bank  -2400.00 INR
+"""
+
+
+class FakeAmfi:
+    def __init__(self, prices):
+        self.prices = prices
+        self.calls = []
+
+    def get_prices_series(self, ticker, time_begin, time_end):
+        self.calls.append(ticker)
+        return [SourcePrice(Decimal(v), datetime.combine(d, time.min, tzinfo=timezone.utc), "INR")
+                for d, v in self.prices if time_begin.date() <= d <= time_end.date()]
+
+    def get_latest_price(self, ticker):
+        return None
+
+
+def test_amfi_symbols_go_to_the_amfi_source(tmp_path):
+    """`fetch_symbol: "amfi:<code>"` fetches that scheme's NAVs from AMFI, never
+    from Yahoo; other holdings still go to Yahoo."""
+    ledger, _, reader, lm = _wire(tmp_path, _INR_FUND)
+    amfi = FakeAmfi([(date(2026, 10, 1), "88.10"), (date(2026, 10, 2), "88.40")])
+    yahoo = FakeSource({"RELIANCE.NS": [(date(2026, 10, 2), "1216.40")]}, currency={"RELIANCE.NS": "INR"})
+    res = PriceFetcher(reader, lm, source=yahoo, amfi_source=amfi, today=date(2026, 10, 2)).fetch_and_persist()
+    assert amfi.calls == ["122639"]
+    assert [c[0] for c in yahoo.calls] == ["RELIANCE.NS"]
+    assert res["failed"] == []
+    assert sorted((p.currency, p.date, p.amount.number, p.amount.currency) for p in _sidecar_prices(ledger)) == [
+        ("PPFAS", date(2026, 10, 1), Decimal("88.10"), "INR"),
+        ("PPFAS", date(2026, 10, 2), Decimal("88.40"), "INR"),
+        ("RELIANCE", date(2026, 10, 2), Decimal("1216.40"), "INR"),
+    ]
+
+
+def test_a_latest_quote_without_a_currency_uses_the_holdings_currency(tmp_path):
+    """Beanprice's Yahoo latest-quote has no currency for NSE/BSE tickers. When it
+    is the only data, it is kept in the currency the holding's prices are in."""
+    ledger, _, reader, lm = _wire(tmp_path, _INR_FUND)
+
+    class NoCurrencyLatest(FakeSource):
+        def get_latest_price(self, ticker):
+            p = super().get_latest_price(ticker)
+            return p._replace(quote_currency=None) if p else None
+
+    yahoo = NoCurrencyLatest({"RELIANCE.NS": []}, latest={"RELIANCE.NS": (date(2026, 10, 2), "1216.40")})
+    amfi = FakeAmfi([(date(2026, 10, 2), "88.40")])
+    res = PriceFetcher(reader, lm, source=yahoo, amfi_source=amfi, today=date(2026, 10, 2)).fetch_and_persist()
+    assert res["failed"] == []
+    assert [(r["date"], r["quote_number"], r["quote_currency"]) for r in reader.get_prices(currency="RELIANCE")] == [
+        ("2026-10-02", "1216.40", "INR"),
+    ]

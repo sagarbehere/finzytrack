@@ -1,8 +1,9 @@
 """price_fetcher — fetch market prices into the price sidecar.
 
-One keyless provider (Beancount's own ``beanprice`` Yahoo source) plus manual
-editing — no adapter framework (dev-docs/valuations.md §4). For each investment
-holding (``is_currency = 0``) it reads the ticker from ``fetch_symbol`` metadata
+Keyless providers only: Beancount's own ``beanprice`` Yahoo source, plus AMFI
+(mfapi.in) for Indian mutual funds named ``amfi:<scheme code>`` — no adapter
+framework (dev-docs/valuations.md §4). For each investment holding
+(``is_currency = 0``) it reads the ticker from ``fetch_symbol`` metadata
 (falling back to the commodity code), gap-fills only the dates since the last
 persisted price, and writes the results to ``prices.beancount`` through the
 ledger manager's dedicated sidecar writer. It is idempotent and never talks to a
@@ -34,6 +35,7 @@ from beancount.core.amount import Amount
 
 from app.core.constants import COMMODITY_CODE_PATTERN
 from app.core.ledger_loader import load_ledger_checked, sidecar_path
+from app.services.amfi_source import AmfiSource, scheme_code as amfi_scheme_code
 from app.services.price_cadence import (
     CADENCE_COMPUTED,
     CADENCE_MONTHLY,
@@ -96,10 +98,12 @@ def _has_month_start(begin: date, end: date) -> bool:
 class PriceFetcher:
     def __init__(self, reader, ledger_manager, source: Any = None,
                  today: Optional[date] = None,
-                 default_lookback_days: int = _DEFAULT_LOOKBACK_DAYS) -> None:
+                 default_lookback_days: int = _DEFAULT_LOOKBACK_DAYS,
+                 amfi_source: Any = None) -> None:
         self._reader = reader
         self._lm = ledger_manager
         self._source = source            # injectable; lazily defaults to Yahoo
+        self._amfi = amfi_source         # injectable; lazily defaults to mfapi.in
         self._today = today
         self._lookback = default_lookback_days
 
@@ -108,6 +112,16 @@ class PriceFetcher:
             from beanprice.sources import yahoo  # imported lazily (network dep)
             self._source = yahoo.Source()
         return self._source
+
+    def _source_for(self, symbol: str) -> tuple[Any, str]:
+        """The source and ticker for a fetch symbol: ``amfi:<scheme code>`` →
+        AMFI (Indian mutual funds), anything else → Yahoo."""
+        code = amfi_scheme_code(symbol)
+        if code is not None:
+            if self._amfi is None:
+                self._amfi = AmfiSource()
+            return self._amfi, code
+        return self._get_source(), symbol
 
     def _ibond_series(self, commodity, begin: date, today: date) -> list[data.Price]:
         """Monthly accrued per-unit prices for an I-Bond commodity, computed
@@ -161,7 +175,8 @@ class PriceFetcher:
             keep[(p.currency, p.amount.currency, p.date.year, p.date.month)] = p
         return list(keep.values())
 
-    def _fetch_series(self, source, symbol: str, begin: date, end: date):
+    def _fetch_series(self, source, symbol: str, begin: date, end: date,
+                      quote: Optional[str] = None):
         """Historical daily prices for ``[begin, end]``, provider-agnostic:
         try the source's ``get_daily_prices`` (Yahoo's real historical method)
         then ``get_prices_series`` (other sources implement this one), and if
@@ -186,6 +201,10 @@ class PriceFetcher:
         try:
             latest = source.get_latest_price(symbol)
             if latest is not None:
+                if latest.quote_currency is None and quote:
+                    # Beanprice's Yahoo latest-quote can't name the currency for
+                    # some markets (e.g. NSE/BSE); it is the series we keep.
+                    latest = latest._replace(quote_currency=quote)
                 return [latest], None
         except Exception as e:
             last_err = str(e)
@@ -271,7 +290,8 @@ class PriceFetcher:
                 continue
 
             symbol = (c.metadata or {}).get("fetch_symbol") or c.code
-            series, reason = self._fetch_series(self._get_source(), symbol, begin, end)
+            source, ticker = self._source_for(symbol)
+            series, reason = self._fetch_series(source, ticker, begin, end, quote)
 
             fetched: list[data.Price] = []
             for sp in series:

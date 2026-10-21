@@ -1,6 +1,7 @@
 """Prices router — fetch, list and edit prices in the price sidecar.
 
-``POST /api/prices/update`` runs the keyless Yahoo fetcher and persists new
+``POST /api/prices/update`` runs the keyless fetcher (Yahoo; AMFI for ``amfi:``
+Indian mutual funds) and persists new
 ``price`` directives to ``<stem>.prices.beancount`` (the dedicated sidecar write
 path, off the transaction edit path; dev-docs/valuations.md §3–§4). The
 Investments → Prices tab reads ``GET /api/prices/overview`` and
