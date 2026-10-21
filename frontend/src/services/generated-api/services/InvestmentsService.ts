@@ -4,7 +4,9 @@
 /* eslint-disable */
 import type { ApiResponse_AssembleData_ } from '../models/ApiResponse_AssembleData_';
 import type { ApiResponse_HoldingsData_ } from '../models/ApiResponse_HoldingsData_';
+import type { ApiResponse_OpenDepositData_ } from '../models/ApiResponse_OpenDepositData_';
 import type { AssembleRequest } from '../models/AssembleRequest';
+import type { OpenDepositRequest } from '../models/OpenDepositRequest';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
 import { request as __request } from '../core/request';
@@ -61,6 +63,30 @@ export class InvestmentsService {
             path: {
                 'commodity': commodity,
             },
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Open Deposit
+     * Open a savings, CD or bond account, optionally with its own interest income
+     * account (linked by `interest_account`) and its first deposit, as one write.
+     *
+     * With `dry_run`, nothing is written: the response is the exact text that would
+     * be written, checked against the current accounts.
+     * @param requestBody
+     * @returns ApiResponse_OpenDepositData_ Successful Response
+     * @throws ApiError
+     */
+    public static openDeposit(
+        requestBody: OpenDepositRequest,
+    ): CancelablePromise<ApiResponse_OpenDepositData_> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/api/investments/open-deposit',
+            body: requestBody,
+            mediaType: 'application/json',
             errors: {
                 422: `Validation Error`,
             },

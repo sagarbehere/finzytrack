@@ -20,6 +20,8 @@ from decimal import Decimal
 from typing import Annotated
 from pydantic import BaseModel, Field
 
+from app.schemas.commodity_schemas import CommodityStr
+
 
 # =====================================
 # Event inputs (the caller supplies accounts — never invented by name)
@@ -236,3 +238,42 @@ class CommodityHoldings(BaseModel):
 class HoldingsData(BaseModel):
     """Response data for GET /api/investments/holdings."""
     holdings: List[CommodityHoldings] = Field(default_factory=list)
+
+
+# =====================================
+# Open Deposit (POST /api/investments/open-deposit)
+# =====================================
+
+class DepositIncomeAccount(BaseModel):
+    """The interest income account for a new deposit: a new one created with it,
+    or an existing one."""
+    mode: Literal["new", "existing"] = Field(..., description="'new' creates it; 'existing' uses an open Income account")
+    account: str = Field(..., description="Income account name")
+
+
+class DepositFirstDeposit(BaseModel):
+    """The transfer that funds the new deposit."""
+    from_account: str = Field(..., description="Assets or Liabilities account the money comes from")
+    amount: Decimal = Field(..., gt=0, description="Amount moved into the deposit (> 0)")
+    date: Optional[DateType] = Field(default=None, description="Transfer date; defaults to the open date")
+
+
+class OpenDepositRequest(BaseModel):
+    """Open a savings, CD or bond account — optionally with its own interest income
+    account and its first deposit — as one ledger write."""
+    account: str = Field(..., description="New Assets account name")
+    account_type: Literal["savings", "cd", "bond"] = Field(..., description="Written as account-type")
+    currency: CommodityStr = Field(..., description="The deposit's currency (also constrains its open)")
+    open_date: DateType
+    interest_rate: Optional[str] = Field(default=None, description="Stated rate as text, e.g. '4.50%'")
+    maturity_date: Optional[DateType] = Field(default=None, description="CD and bond only")
+    income_account: Optional[DepositIncomeAccount] = None
+    first_deposit: Optional[DepositFirstDeposit] = None
+    dry_run: bool = Field(default=False, description="Return the preview only; write nothing")
+
+
+class OpenDepositData(BaseModel):
+    preview: str = Field(..., description="The Beancount text that is (or would be) written")
+    created: bool = Field(..., description="False for a dry run")
+    accounts_created: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list, description="Things that won't block, e.g. an existing income account not tagged interest")

@@ -89,6 +89,18 @@ class ErrorHandler {
   }
 
   /**
+   * The user-facing message of an API error, for a component that shows it
+   * inline instead of as a notification (e.g. a live preview that is expected to
+   * be invalid while the user is still typing). Non-API errors get a generic text.
+   */
+  public messageOf(error: unknown): string {
+    if (error instanceof ApiError) {
+      return error.body?.error?.message || error.statusText || 'Request failed'
+    }
+    return 'An unexpected error occurred'
+  }
+
+  /**
    * Adds a persistent error entry to the notification panel for debugging
    */
   private addPersistentError(errorCode: string, errorMessage: string, errorDetails: unknown) {

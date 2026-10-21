@@ -51,7 +51,14 @@
       @submit="ev => assembleAndStage(ev, () => saleFormRef?.reset())"
     />
 
-    <template v-if="action !== 'sell'">
+    <!-- Open Deposit writes directly, after a preview (accounts can't be staged) -->
+    <OpenDepositForm
+      v-if="action === 'open_deposit'"
+      :date="form.date"
+      :currency="form.currency"
+    />
+
+    <template v-if="action !== 'sell' && action !== 'open_deposit'">
     <!-- Holding account (buy / drip / add-holding) -->
     <div v-if="needs('holding_account')" class="mt-4">
       <AccountDropdown
@@ -209,7 +216,7 @@
       </ul>
     </div>
 
-    <div v-if="action !== 'sell'" class="mt-6 flex justify-end">
+    <div v-if="action !== 'sell' && action !== 'open_deposit'" class="mt-6 flex justify-end">
       <button
         type="button"
         @click="submit"
@@ -231,6 +238,7 @@
   import AccountDropdown from '@/components/common/AccountDropdown.vue'
   import CommodityDropdown from '@/components/common/CommodityDropdown.vue'
   import SaleForm from '@/components/investments/SaleForm.vue'
+  import OpenDepositForm from '@/components/investments/OpenDepositForm.vue'
   import { CommoditiesService } from '@/services/generated-api'
   import type { AssembleRequest, AssembleIssue } from '@/services/generated-api'
   import type { TransactionViewModel } from '@/types/transactions'
@@ -238,7 +246,7 @@
   import { useAccounts } from '@/composables/useAccounts'
   import { useToast } from '@/composables/useNotifications'
 
-  type ActionId = 'buy' | 'drip' | 'cash_dividend' | 'sell' | 'cd_maturity' | 'interest' | 'add_holding'
+  type ActionId = 'buy' | 'drip' | 'cash_dividend' | 'sell' | 'cd_maturity' | 'interest' | 'add_holding' | 'open_deposit'
   type InvestmentEvent = AssembleRequest['events'][number]
 
   const emit = defineEmits<{ staged: [vms: TransactionViewModel[]] }>()
@@ -261,6 +269,7 @@
     { id: 'cd_maturity', label: 'CD Matures', help: 'A CD / term deposit matures — principal (and any final interest) is paid to another account.', fields: ['cd_account', 'principal', 'interest', 'destination_account', 'income_account'] },
     { id: 'interest', label: 'Interest', help: 'Record periodic interest — credited to the instrument (compounding) or paid to another account.', fields: ['deposit_account', 'interest', 'income_account'] },
     { id: 'add_holding', label: 'Add Holding', help: 'Record a position you already hold at its average cost — seeds current value without lot-by-lot history.', fields: ['holding_account', 'security', 'units', 'avg_cost', 'opening_account'] },
+    { id: 'open_deposit', label: 'Open Deposit', help: 'Open a savings, CD or bond account, and optionally its interest income account and first deposit. The Date and Currency above are its open date and currency. This is written to your ledger when you click Create; it does not go to the review table.', fields: [] },
   ]
 
   const action = ref<ActionId>('buy')

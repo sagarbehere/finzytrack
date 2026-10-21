@@ -708,6 +708,60 @@ class LedgerManager:
             list(set_prices), list(remove_keys), strict=True, keep_existing=keep_existing,
         )
 
+    # ── Open Deposit (investments quick action) ──────────────────────────────
+
+    def _deposit_entries(self, plan, *, with_ids: bool) -> List[Any]:
+        """The new entries for an Open Deposit plan: opens, then the transfer."""
+        new: List[Any] = []
+        for spec in plan.opens:
+            new = self.engine.create_account(
+                new, name=spec.name, open_date=spec.open_date, currencies=spec.currencies,
+                metadata=spec.metadata, ledger_file=str(self.ledger_file),
+            )
+        if plan.transfer is not None:
+            when, narration, legs, source = plan.transfer
+            postings = [
+                Posting(acct, data.Amount(amount, ccy), None, None, None, None)
+                for acct, amount, ccy in legs
+            ]
+            if with_ids:
+                new.append(self.create_transaction_with_ids(when, "", narration, postings, source))
+            else:
+                new.append(Transaction(
+                    {"filename": str(self.ledger_file), "lineno": 0}, when, "*", "", narration,
+                    frozenset(), frozenset(), postings,
+                ))
+        return new
+
+    def preview_open_deposit(self, request, accounts) -> Tuple[str, Any]:
+        """Render what Open Deposit would write, without writing or parsing the
+        ledger (``accounts`` is a snapshot from the mirror). Raises DepositError."""
+        from app.services.deposit_opener import plan_open_deposit
+        plan = plan_open_deposit(request, accounts, self.validate_account_format)
+        return self.engine.format_entries(self._deposit_entries(plan, with_ids=False)), plan
+
+    @_serialized_write
+    def open_deposit(self, request) -> Tuple[str, Any]:
+        """Open a deposit account — and optionally its interest income account and
+        first deposit — in **one** write, through the pre-write gate. The checks run
+        again here against the parsed ledger, under the write lock."""
+        from app.services.deposit_opener import AccountInfo, plan_open_deposit
+        entries, errors, options = self._parse_ledger()
+        accounts: Dict[str, AccountInfo] = {}
+        for e in entries:
+            if isinstance(e, data.Open):
+                accounts[e.account] = AccountInfo(
+                    False, {k: v for k, v in (e.meta or {}).items() if k not in ("filename", "lineno")},
+                    tuple(e.currencies or ()), e.date,
+                )
+        for e in entries:
+            if isinstance(e, data.Close) and e.account in accounts:
+                accounts[e.account] = accounts[e.account]._replace(closed=True)
+        plan = plan_open_deposit(request, accounts, self.validate_account_format)
+        preview = self.engine.format_entries(self._deposit_entries(plan, with_ids=False))
+        self._write_and_export(list(entries) + self._deposit_entries(plan, with_ids=True), errors, options)
+        return preview, plan
+
     # ── Account management (orchestrator: parse → engine → write) ────────────
 
     @_serialized_write

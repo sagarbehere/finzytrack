@@ -66,6 +66,7 @@ export type { ApiResponse_MetadataReviewData_ } from './models/ApiResponse_Metad
 export type { ApiResponse_MetadataVocabularyData_ } from './models/ApiResponse_MetadataVocabularyData_';
 export type { ApiResponse_NoticesResponse_ } from './models/ApiResponse_NoticesResponse_';
 export type { ApiResponse_OFXDetectionData_ } from './models/ApiResponse_OFXDetectionData_';
+export type { ApiResponse_OpenDepositData_ } from './models/ApiResponse_OpenDepositData_';
 export type { ApiResponse_OperatingCurrenciesData_ } from './models/ApiResponse_OperatingCurrenciesData_';
 export type { ApiResponse_OrphanDeleteData_ } from './models/ApiResponse_OrphanDeleteData_';
 export type { ApiResponse_OrphanScanData_ } from './models/ApiResponse_OrphanScanData_';
@@ -150,6 +151,8 @@ export type { DashboardThemeWriteRequest } from './models/DashboardThemeWriteReq
 export type { DashboardThemeWriteResponse } from './models/DashboardThemeWriteResponse';
 export type { DeleteTransactionRequest } from './models/DeleteTransactionRequest';
 export type { DeleteTransactionResponse } from './models/DeleteTransactionResponse';
+export type { DepositFirstDeposit } from './models/DepositFirstDeposit';
+export { DepositIncomeAccount } from './models/DepositIncomeAccount';
 export type { DocumentDetails } from './models/DocumentDetails';
 export type { DocumentListData } from './models/DocumentListData';
 export type { DocumentUploadData } from './models/DocumentUploadData';
@@ -187,6 +190,8 @@ export type { NoticeModel } from './models/NoticeModel';
 export type { NoticesResponse } from './models/NoticesResponse';
 export type { OFXDetectionData } from './models/OFXDetectionData';
 export type { OFXDetectionRequest } from './models/OFXDetectionRequest';
+export type { OpenDepositData } from './models/OpenDepositData';
+export { OpenDepositRequest } from './models/OpenDepositRequest';
 export type { OperatingCurrenciesData } from './models/OperatingCurrenciesData';
 export type { OperatingCurrenciesUpdateRequest } from './models/OperatingCurrenciesUpdateRequest';
 export type { OrphanCandidateData } from './models/OrphanCandidateData';

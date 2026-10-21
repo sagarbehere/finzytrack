@@ -15,7 +15,7 @@ export type AccountCreateRequest = {
      */
     open_date: string;
     /**
-     * List of currencies for this account (at least one required)
+     * Currencies and securities this account may hold; empty = any
      */
     currencies: Array<string>;
     /**
