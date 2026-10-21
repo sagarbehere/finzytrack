@@ -25,6 +25,8 @@ export type { AccountUpdateData } from './models/AccountUpdateData';
 export type { AccountUpdateRequest } from './models/AccountUpdateRequest';
 export type { AddHoldingEvent } from './models/AddHoldingEvent';
 export type { AIConfig } from './models/AIConfig';
+export type { AmfiScheme } from './models/AmfiScheme';
+export type { AmfiSearchData } from './models/AmfiSearchData';
 export type { ApiResponse_AccountCloseData_ } from './models/ApiResponse_AccountCloseData_';
 export type { ApiResponse_AccountCreateData_ } from './models/ApiResponse_AccountCreateData_';
 export type { ApiResponse_AccountDeleteData_ } from './models/ApiResponse_AccountDeleteData_';
@@ -33,6 +35,7 @@ export type { ApiResponse_AccountDocumentDeleteData_ } from './models/ApiRespons
 export type { ApiResponse_AccountListData_ } from './models/ApiResponse_AccountListData_';
 export type { ApiResponse_AccountReopenData_ } from './models/ApiResponse_AccountReopenData_';
 export type { ApiResponse_AccountUpdateData_ } from './models/ApiResponse_AccountUpdateData_';
+export type { ApiResponse_AmfiSearchData_ } from './models/ApiResponse_AmfiSearchData_';
 export type { ApiResponse_AssembleData_ } from './models/ApiResponse_AssembleData_';
 export type { ApiResponse_BalanceDirectiveCreateData_ } from './models/ApiResponse_BalanceDirectiveCreateData_';
 export type { ApiResponse_BalanceDirectiveDeleteData_ } from './models/ApiResponse_BalanceDirectiveDeleteData_';

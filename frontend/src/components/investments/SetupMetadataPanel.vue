@@ -85,16 +85,28 @@
                     custom-class="min-w-40"
                     @update:model-value="v => setValue(item, f.key, canonicalValue(f, v))"
                   />
-                  <input
-                    v-else
-                    type="text"
-                    :value="valueOf(item, f.key)"
-                    placeholder="Not set"
-                    :aria-label="`${f.label} for ${item.item}`"
-                    :inputmode="f.kind === 'integer' ? 'numeric' : undefined"
-                    class="block w-full min-w-32 rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
-                    @input="setValue(item, f.key, ($event.target as HTMLInputElement).value)"
-                  />
+                  <div v-else class="flex items-center gap-2">
+                    <input
+                      type="text"
+                      :value="valueOf(item, f.key)"
+                      placeholder="Not set"
+                      :aria-label="`${f.label} for ${item.item}`"
+                      :inputmode="f.kind === 'integer' ? 'numeric' : undefined"
+                      class="block w-full min-w-32 rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
+                      @input="setValue(item, f.key, ($event.target as HTMLInputElement).value)"
+                    />
+                    <!-- Indian mutual funds: look up the AMFI scheme code by name -->
+                    <button
+                      v-if="f.key === 'fetch_symbol' && offersAmfiFinder(item)"
+                      type="button"
+                      :aria-label="`Find the Indian mutual fund for ${item.item}`"
+                      title="Find an Indian mutual fund's scheme code by name"
+                      class="shrink-0 rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+                      @click="openAmfiFinder(item)"
+                    >
+                      Find
+                    </button>
+                  </div>
                 </div>
                 <span v-else class="text-gray-400 dark:text-gray-500" :title="`Only for ${f.requires_values?.join(', ')}`">—</span>
               </td>
@@ -235,6 +247,13 @@
       </p>
     </section>
 
+    <AmfiFinderDialog
+      v-model:open="amfiOpen"
+      :commodity="amfiItem?.item ?? ''"
+      :initial-query="amfiItem ? (effectiveMetadata(amfiItem).name || amfiItem.item) : ''"
+      @select="useAmfiScheme"
+    />
+
     <AccountFormModal
       v-model:open="accountModalOpen"
       mode="edit"
@@ -266,6 +285,8 @@ import type { AccountFormSubmitData, AccountTreeNode } from '@/types/accounts'
 import AccountFormModal from '@/components/accounts/AccountFormModal.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import ValueCombobox from '@/components/common/ValueCombobox.vue'
+import AmfiFinderDialog from '@/components/investments/AmfiFinderDialog.vue'
+import { offersAmfiFinder } from '@/utils/prices'
 import { toAccountTreeNode } from '@/composables/accountTreeUtils'
 import { useAccounts } from '@/composables/useAccounts'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
@@ -321,6 +342,17 @@ function isVisible(item: MetadataReviewItem): boolean {
 }
 
 const visibleCommodities = computed(() => commodityItems.value.filter(isVisible))
+
+// ── Indian mutual funds: find the AMFI scheme code for Price symbol ──
+const amfiItem = ref<MetadataReviewItem | null>(null)
+const amfiOpen = ref(false)
+function openAmfiFinder(item: MetadataReviewItem) {
+  amfiItem.value = item
+  amfiOpen.value = true
+}
+function useAmfiScheme(code: string) {
+  if (amfiItem.value) setValue(amfiItem.value, 'fetch_symbol', `amfi:${code}`)
+}
 
 /** "Not used unless Account type is cd or bond." — labels, not raw keys. */
 function notUsedText(f: MetadataFieldSpec): string {

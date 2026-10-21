@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ApiResponse_AmfiSearchData_ } from '../models/ApiResponse_AmfiSearchData_';
 import type { ApiResponse_PriceEditData_ } from '../models/ApiResponse_PriceEditData_';
 import type { ApiResponse_PriceHistoryData_ } from '../models/ApiResponse_PriceHistoryData_';
 import type { ApiResponse_PriceOverviewData_ } from '../models/ApiResponse_PriceOverviewData_';
@@ -88,6 +89,29 @@ export class PricesService {
             url: '/api/prices',
             body: requestBody,
             mediaType: 'application/json',
+            errors: {
+                422: `Validation Error`,
+            },
+        });
+    }
+    /**
+     * Search Amfi Schemes
+     * Find Indian mutual fund schemes by name, with each one's latest NAV, so the
+     * user can pick the plan and option they hold and set ``fetch_symbol`` to
+     * ``amfi:<scheme code>``. Calls mfapi.in.
+     * @param q
+     * @returns ApiResponse_AmfiSearchData_ Successful Response
+     * @throws ApiError
+     */
+    public static searchAmfiSchemes(
+        q: string,
+    ): CancelablePromise<ApiResponse_AmfiSearchData_> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/api/prices/amfi/search',
+            query: {
+                'q': q,
+            },
             errors: {
                 422: `Validation Error`,
             },

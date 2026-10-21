@@ -365,3 +365,11 @@ def test_create_account_writes_recognized_date_as_date(meta_client):
     assert _account_meta(meta_client, "Assets:Bank:CD2") == {
         "account-type": "cd", "maturity_date": "2026-01-01",
     }
+
+
+def test_review_reports_the_currency_a_holding_was_bought_in(meta_client):
+    """`cost_currency` lets the Price symbol editor offer a fund lookup only for
+    holdings bought in INR. Never-at-cost commodities report none."""
+    items = _items(_review(meta_client))
+    assert items[("commodity", "VOO")]["cost_currency"] == "USD"
+    assert items[("commodity", "VMFXX")]["cost_currency"] is None

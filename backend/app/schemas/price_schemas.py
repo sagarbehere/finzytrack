@@ -89,3 +89,17 @@ class PriceEditData(BaseModel):
     updated: int = Field(..., ge=0, description="Existing prices whose number changed.")
     removed: int = Field(..., ge=0)
     total: int = Field(..., ge=0, description="Prices in the price file after the edit.")
+
+
+class AmfiScheme(BaseModel):
+    """An Indian mutual fund scheme (one plan + option) and its latest NAV."""
+    scheme_code: str = Field(..., description="AMFI scheme code; fetch it with fetch_symbol \"amfi:<code>\".")
+    scheme_name: str = Field(..., description="Full name, including plan (Direct/Regular) and option (Growth/IDCW).")
+    nav: Optional[Decimal] = Field(None, description="Latest NAV in INR; null if the scheme has none.")
+    nav_date: Optional[date] = None
+
+
+class AmfiSearchData(BaseModel):
+    schemes: List[AmfiScheme] = Field(..., description="Matching schemes, those with a recent NAV first.")
+    total: int = Field(..., ge=0, description="How many schemes matched; only the first ones are listed.")
+    nav_warning: Optional[str] = Field(None, description="Set when the latest NAVs could not be loaded; the schemes are still listed.")

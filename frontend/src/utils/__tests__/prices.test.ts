@@ -10,6 +10,7 @@ import {
   formatPrice,
   formatShortDate,
   isCommodityCode,
+  offersAmfiFinder,
   priceFreshness,
   removeRequest,
   validatePriceInput,
@@ -133,5 +134,15 @@ describe('priceFreshness', () => {
 
   it('reports no date while held holdings have no price yet', () => {
     expect(priceFreshness([overviewRow({ out_of_date: true })])).toEqual({ priceable: 1, asOf: null, outOfDate: 1 })
+  })
+})
+
+
+describe('offersAmfiFinder', () => {
+  it('offers the AMFI finder only for holdings bought in INR', () => {
+    expect(offersAmfiFinder({ is_currency: false, cost_currency: 'INR' })).toBe(true)
+    expect(offersAmfiFinder({ is_currency: false, cost_currency: 'USD' })).toBe(false)
+    expect(offersAmfiFinder({ is_currency: false, cost_currency: null })).toBe(false)
+    expect(offersAmfiFinder({ is_currency: true, cost_currency: 'INR' })).toBe(false)
   })
 })

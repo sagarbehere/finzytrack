@@ -83,7 +83,7 @@ FIELDS: Tuple[MetadataField, ...] = (
     MetadataField(
         key="fetch_symbol", scope=SCOPE_COMMODITY, kind=KIND_TEXT,
         label="Price symbol", review=False,
-        adds="Needed only when the price service uses a different symbol than this code. For an Indian mutual fund, use amfi: and its AMFI scheme code, for example amfi:122639.",
+        adds="Needed only when the price service uses a different symbol than this code. For an Indian mutual fund, click Find, or enter amfi: and its AMFI scheme code, for example amfi:122639.",
     ),
     MetadataField(
         key="issue_date", scope=SCOPE_COMMODITY, kind=KIND_TEXT,

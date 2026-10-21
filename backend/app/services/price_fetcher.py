@@ -35,7 +35,9 @@ from beancount.core.amount import Amount
 
 from app.core.constants import COMMODITY_CODE_PATTERN
 from app.core.ledger_loader import load_ledger_checked, sidecar_path
-from app.services.amfi_source import AmfiSource, scheme_code as amfi_scheme_code
+from app.services.amfi_source import (
+    AmfiFormatError, AmfiSource, AmfiUnavailable, scheme_code as amfi_scheme_code,
+)
 from app.services.price_cadence import (
     CADENCE_COMPUTED,
     CADENCE_MONTHLY,
@@ -192,6 +194,8 @@ class PriceFetcher:
                 continue
             try:
                 series = fn(symbol, tb, te)
+            except (AmfiUnavailable, AmfiFormatError):
+                raise  # the whole service is down or changed: the caller stops asking it
             except Exception as e:
                 last_err = str(e)
                 logger.warning("%s failed for %s: %s", name, symbol, e)
@@ -232,6 +236,7 @@ class PriceFetcher:
         symbols: list[str] = []
         skipped: list[str] = []
         failed: list[str] = []
+        amfi_down: Optional[str] = None  # set once mfapi.in is unreachable or changed
 
         for c in commodities:
             cadence = cadence_for(c.asset_class)
@@ -290,8 +295,17 @@ class PriceFetcher:
                 continue
 
             symbol = (c.metadata or {}).get("fetch_symbol") or c.code
+            is_amfi = amfi_scheme_code(symbol) is not None
+            if is_amfi and amfi_down:
+                failed.append(f"{c.code} ({symbol}): {amfi_down}")
+                continue
             source, ticker = self._source_for(symbol)
-            series, reason = self._fetch_series(source, ticker, begin, end, quote)
+            try:
+                series, reason = self._fetch_series(source, ticker, begin, end, quote)
+            except (AmfiUnavailable, AmfiFormatError) as e:
+                amfi_down = str(e)  # same for every other Indian fund: don't ask again
+                failed.append(f"{c.code} ({symbol}): {amfi_down}")
+                continue
 
             fetched: list[data.Price] = []
             for sp in series:

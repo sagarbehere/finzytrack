@@ -82,6 +82,8 @@ BUDGET_VALIDATION_ERROR = "BUDGET_VALIDATION_ERROR"
 
 # Price errors (/api/prices — the sidecar price fetcher and price edits)
 PRICE_UPDATE_FAILED = "PRICE_UPDATE_FAILED"
+PRICE_SOURCE_UNAVAILABLE = "PRICE_SOURCE_UNAVAILABLE"  # a price provider (e.g. mfapi.in) could not be reached
+PRICE_SOURCE_CHANGED = "PRICE_SOURCE_CHANGED"          # a price provider answered in an unexpected format
 PRICE_IN_LEDGER = "PRICE_IN_LEDGER"              # edit targets a price written in the ledger file
 PRICE_NOT_FOUND = "PRICE_NOT_FOUND"              # remove targets a price not in the sidecar
 PRICE_EXISTS = "PRICE_EXISTS"                    # set with replace=false targets a taken date

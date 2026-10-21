@@ -10,6 +10,7 @@ Investments → Prices tab reads ``GET /api/prices/overview`` and
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -22,8 +23,11 @@ from app.dependencies import get_sqlite_reader, get_beancount_manager
 from app.services.sqlite_reader import SqliteReader
 from app.core.ledger_manager import LedgerManager
 from app.services.price_fetcher import PriceFetcher
+from app.services.amfi_source import AmfiError, AmfiFormatError, AmfiSource
 from app.services.price_overview import build_history, build_overview
 from app.schemas.price_schemas import (
+    AmfiScheme,
+    AmfiSearchData,
     PriceEditData,
     PriceEditRequest,
     PriceHistoryData,
@@ -180,3 +184,73 @@ async def edit_prices(
         added=result["added"], updated=result["updated"],
         removed=result["removed"], total=result["total"],
     ))
+
+
+# How many matching schemes get their latest NAV looked up (one request each).
+_AMFI_SEARCH_LIMIT = 20
+# A NAV older than this marks a scheme as no longer priced (closed or merged).
+_AMFI_STALE_DAYS = 30
+
+
+def _amfi_search(query: str, source: AmfiSource) -> AmfiSearchData:
+    matches = source.search(query)
+    shown = matches[:_AMFI_SEARCH_LIMIT]
+
+    failures: list[str] = []
+
+    def latest(code: str):
+        try:
+            return source.latest_nav(code)
+        except Exception as e:  # noqa: BLE001 — one scheme's NAV failing shouldn't lose the list
+            logger.warning("AMFI latest NAV failed for %s: %s", code, e)
+            failures.append(code)
+            return None
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        navs = list(pool.map(latest, [code for code, _ in shown]))
+    schemes = [
+        AmfiScheme(scheme_code=code, scheme_name=name,
+                   nav=nav.price if nav else None, nav_date=nav.time.date() if nav else None)
+        for (code, name), nav in zip(shown, navs)
+    ]
+    cutoff = date.today() - timedelta(days=_AMFI_STALE_DAYS)
+    # Currently-priced schemes first, keeping the provider's order within each group.
+    schemes.sort(key=lambda s: not (s.nav_date and s.nav_date >= cutoff))
+    warning = None
+    if failures and len(failures) == len(shown):
+        warning = ("The latest NAVs could not be loaded, so they can't help you choose. "
+                   "Pick the scheme whose name matches your plan and option exactly.")
+    elif failures:
+        warning = "Some NAVs could not be loaded."
+    return AmfiSearchData(schemes=schemes, total=len(matches), nav_warning=warning)
+
+
+@router.get(
+    "/prices/amfi/search",
+    response_model=ApiResponse[AmfiSearchData],
+    operation_id="searchAmfiSchemes",
+)
+async def search_amfi_schemes(q: str = Query(..., min_length=3, max_length=100)):
+    """Find Indian mutual fund schemes by name, with each one's latest NAV, so the
+    user can pick the plan and option they hold and set ``fetch_symbol`` to
+    ``amfi:<scheme code>``. Calls mfapi.in."""
+    try:
+        data = await run_in_threadpool(_amfi_search, q.strip(), AmfiSource())
+    except AmfiError as e:
+        # The message is written for the user (see amfi_source); the code says
+        # whether retrying later can help.
+        logger.warning("AMFI search failed: %s", e)
+        raise APIError(
+            message=str(e),
+            code=ec.PRICE_SOURCE_CHANGED if isinstance(e, AmfiFormatError) else ec.PRICE_SOURCE_UNAVAILABLE,
+            status_code=502,
+            details={"help": "You can still type amfi: and the scheme code into Price symbol yourself."},
+        )
+    except Exception as e:  # noqa: BLE001 — anything unforeseen still gets a clear message
+        logger.error("AMFI search failed unexpectedly: %s", e, exc_info=True)
+        raise APIError(
+            message="Finding Indian mutual funds failed. Try again later.",
+            code=ec.PRICE_SOURCE_UNAVAILABLE,
+            status_code=502,
+        )
+    return success_json_response(data)

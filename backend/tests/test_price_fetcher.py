@@ -545,3 +545,50 @@ def test_a_latest_quote_without_a_currency_uses_the_holdings_currency(tmp_path):
     assert [(r["date"], r["quote_number"], r["quote_currency"]) for r in reader.get_prices(currency="RELIANCE")] == [
         ("2026-10-02", "1216.40", "INR"),
     ]
+
+
+
+def test_an_unreachable_amfi_is_reported_per_fund_and_asked_once(tmp_path):
+    """mfapi.in down: each Indian fund is listed as not fetched with the reason,
+    the service is asked only once, and Yahoo holdings still update."""
+    from app.services.amfi_source import AmfiUnavailable
+    ledger, _, reader, lm = _wire(tmp_path, _INR_FUND.replace(
+        "2020-01-01 open Assets:Demat INR,PPFAS,RELIANCE",
+        "2020-01-01 commodity AXIS\n  asset-class: \"mutual-fund\"\n  fetch_symbol: \"amfi:120503\"\n"
+        "2020-01-01 open Assets:Demat INR,PPFAS,RELIANCE,AXIS",
+    ) + """
+2026-10-01 * "buy another fund"
+  Assets:Demat  10 AXIS {50.00 INR}
+  Assets:Bank  -500.00 INR
+""")
+
+    class Down(FakeAmfi):
+        def get_prices_series(self, ticker, time_begin, time_end):
+            self.calls.append(ticker)
+            raise AmfiUnavailable("Could not reach the Indian mutual fund price service (mfapi.in).")
+
+    amfi = Down([])
+    yahoo = FakeSource({"RELIANCE.NS": [(date(2026, 10, 2), "1216.40")]}, currency={"RELIANCE.NS": "INR"})
+    res = PriceFetcher(reader, lm, source=yahoo, amfi_source=amfi, today=date(2026, 10, 2)).fetch_and_persist()
+    assert len(amfi.calls) == 1
+    assert sorted(res["failed"]) == [
+        "AXIS (amfi:120503): Could not reach the Indian mutual fund price service (mfapi.in).",
+        "PPFAS (amfi:122639): Could not reach the Indian mutual fund price service (mfapi.in).",
+    ]
+    assert [(p.currency, p.date) for p in _sidecar_prices(ledger)] == [("RELIANCE", date(2026, 10, 2))]
+
+
+def test_an_unknown_scheme_code_is_reported_with_the_reason(tmp_path):
+    from app.services.amfi_source import AmfiUnknownScheme
+    ledger, _, reader, lm = _wire(tmp_path, _INR_FUND)
+
+    class Unknown(FakeAmfi):
+        def get_prices_series(self, ticker, time_begin, time_end):
+            raise AmfiUnknownScheme(f"There is no Indian mutual fund with scheme code {ticker}. Check the code.")
+
+        def get_latest_price(self, ticker):
+            return self.get_prices_series(ticker, None, None)
+
+    yahoo = FakeSource({"RELIANCE.NS": [(date(2026, 10, 2), "1216.40")]}, currency={"RELIANCE.NS": "INR"})
+    res = PriceFetcher(reader, lm, source=yahoo, amfi_source=Unknown([]), today=date(2026, 10, 2)).fetch_and_persist()
+    assert res["failed"] == ["PPFAS (amfi:122639): There is no Indian mutual fund with scheme code 122639. Check the code."]

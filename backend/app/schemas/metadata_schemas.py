@@ -33,6 +33,7 @@ class MetadataReviewItem(BaseModel):
     metadata: Dict[str, str] = Field(default_factory=dict, description="Current metadata, values as text")
     unset: List[str] = Field(default_factory=list, description="Recognized keys that are relevant here and not set")
     is_currency: Optional[bool] = Field(None, description="Commodities only: current currency-vs-holding role")
+    cost_currency: Optional[str] = Field(None, description="Commodities only: the currency it was most often bought in at cost; null if never held at cost")
     closed: bool = Field(False, description="Accounts only: the account is closed")
 
 

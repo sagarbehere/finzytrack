@@ -19,6 +19,7 @@ from app.core.metadata_vocabulary import (
     fields_for,
 )
 from app.schemas.metadata_schemas import MetadataReviewData, MetadataReviewItem
+from app.services.price_cadence import holdings_activity
 from app.services.sqlite_reader import SqliteReader
 
 
@@ -57,6 +58,7 @@ def build_review(reader: SqliteReader) -> MetadataReviewData:
     used_commodities = {c.code: c.usage.transaction_count for c in commodities}
 
     items: List[MetadataReviewItem] = []
+    activity = holdings_activity(reader, [c.code for c in commodities if c.code not in operating])
 
     # Commodities: every one except the declared operating currencies. Only a
     # likely holding is reviewed for unset keys — one held at cost, or already
@@ -78,6 +80,7 @@ def build_review(reader: SqliteReader) -> MetadataReviewData:
             metadata=meta,
             unset=_unset(SCOPE_COMMODITY, meta) if holding else [],
             is_currency=c.is_currency,
+            cost_currency=activity[c.code].cost_currency if c.code in activity else None,
         ))
 
     # Accounts: `Assets:` accounts that hold only currencies (account-level

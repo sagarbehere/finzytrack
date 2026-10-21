@@ -27,6 +27,10 @@ export type MetadataReviewItem = {
      */
     is_currency?: (boolean | null);
     /**
+     * Commodities only: the currency it was most often bought in at cost; null if never held at cost
+     */
+    cost_currency?: (string | null);
+    /**
      * Accounts only: the account is closed
      */
     closed?: boolean;

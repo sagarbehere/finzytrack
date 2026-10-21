@@ -158,3 +158,9 @@ export function priceFreshness(rows: readonly PriceOverviewRow[]): PriceFreshnes
     outOfDate: fetched.filter(r => r.out_of_date).length,
   }
 }
+
+/** Whether a holding's Price symbol offers the Indian mutual fund (AMFI) finder:
+ * holdings bought in INR. Elsewhere the ticker is printed on the statement. */
+export function offersAmfiFinder(item: { is_currency?: boolean | null; cost_currency?: string | null }): boolean {
+  return !item.is_currency && item.cost_currency === 'INR'
+}

@@ -10,20 +10,50 @@ Speaks the beanprice source interface the fetcher already uses
 (``get_prices_series`` / ``get_latest_price`` returning ``SourcePrice``), so the
 fetcher treats it like any other source. NAVs are in INR. mfapi returns a
 scheme's whole history in one response (newest first, dates as DD-MM-YYYY).
+
+mfapi.in is a free third-party service with no stability promise, so every
+failure is raised as an ``AmfiError`` whose message is fit to show the user: the
+fetcher puts it in its "could not fetch" list, the search endpoint in its error.
+A response that parses but isn't the expected shape is an error too — never an
+empty result, which would read as "no such fund".
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from typing import Optional
+from typing import Any, Optional
 
 import requests
 from beanprice.source import SourcePrice
 
 PREFIX = "amfi:"
 _URL = "https://api.mfapi.in/mf/{code}"
+_SEARCH_URL = "https://api.mfapi.in/mf/search"
+_LATEST_URL = "https://api.mfapi.in/mf/{code}/latest"
 _TIMEOUT = 15
+
+
+class AmfiError(Exception):
+    """A failure talking to mfapi.in; the message is written for the user."""
+
+
+class AmfiUnavailable(AmfiError):
+    """mfapi.in could not be reached, or answered with an HTTP error."""
+
+
+class AmfiFormatError(AmfiError):
+    """mfapi.in answered, but not in the shape this code expects (it may have changed)."""
+
+
+class AmfiUnknownScheme(AmfiError):
+    """mfapi.in has no scheme with this code."""
+
+
+_CHANGED = (
+    "The Indian mutual fund price service (mfapi.in) answered in an unexpected way. "
+    "It may have changed. Enter prices by hand on the Prices tab for now."
+)
 
 
 def scheme_code(symbol: str) -> Optional[str]:
@@ -33,22 +63,57 @@ def scheme_code(symbol: str) -> Optional[str]:
     return symbol[len(PREFIX):].strip() or None
 
 
+def _nav_row(row: Any) -> Optional[SourcePrice]:
+    """One ``{"date": "DD-MM-YYYY", "nav": "…"}`` row, or None if it isn't one."""
+    try:
+        when = datetime.strptime(row["date"], "%d-%m-%Y").replace(tzinfo=timezone.utc)
+        nav = Decimal(str(row["nav"]))
+    except (KeyError, TypeError, ValueError, InvalidOperation):
+        return None
+    return SourcePrice(nav, when, "INR") if nav > 0 else None
+
+
 class AmfiSource:
     def __init__(self, session: Optional[requests.Session] = None) -> None:
         self._session = session or requests.Session()
 
+    def _get_json(self, url: str, params: Optional[dict] = None) -> Any:
+        try:
+            resp = self._session.get(url, params=params, timeout=_TIMEOUT)
+        except requests.RequestException as e:
+            raise AmfiUnavailable(
+                "Could not reach the Indian mutual fund price service (mfapi.in). "
+                "Check your internet connection, or try again later."
+            ) from e
+        if resp.status_code == 404:
+            # mfapi answers an unknown *scheme* with 200 and an empty record, so a
+            # 404 means the address itself is gone — the service has changed.
+            raise AmfiFormatError(_CHANGED)
+        if resp.status_code >= 400:
+            raise AmfiUnavailable(
+                f"The Indian mutual fund price service (mfapi.in) is not working right now "
+                f"(error {resp.status_code}). Try again later."
+            )
+        try:
+            return resp.json()
+        except ValueError as e:
+            raise AmfiFormatError(_CHANGED) from e
+
+    def _scheme(self, url: str, code: str) -> list:
+        """The ``data`` rows of a scheme record; raises if the scheme is unknown."""
+        body = self._get_json(url)
+        if not isinstance(body, dict) or not isinstance(body.get("data"), list):
+            raise AmfiFormatError(_CHANGED)
+        meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
+        if not body["data"] and not meta.get("scheme_name"):
+            raise AmfiUnknownScheme(f"There is no Indian mutual fund with scheme code {code}. Check the code.")
+        return body["data"]
+
     def _history(self, code: str) -> list[SourcePrice]:
-        resp = self._session.get(_URL.format(code=code), timeout=_TIMEOUT)
-        resp.raise_for_status()
-        out: list[SourcePrice] = []
-        for row in (resp.json() or {}).get("data") or []:
-            try:
-                when = datetime.strptime(row["date"], "%d-%m-%Y").replace(tzinfo=timezone.utc)
-                nav = Decimal(str(row["nav"]))
-            except (KeyError, TypeError, ValueError, InvalidOperation):
-                continue  # one malformed row shouldn't lose the rest
-            if nav > 0:
-                out.append(SourcePrice(nav, when, "INR"))
+        rows = self._scheme(_URL.format(code=code), code)
+        out = [p for p in (_nav_row(r) for r in rows) if p is not None]
+        if rows and not out:
+            raise AmfiFormatError(_CHANGED)  # rows we can't read at all: the format changed
         return sorted(out, key=lambda p: p.time)
 
     def get_prices_series(self, ticker: str, time_begin: datetime, time_end: datetime) -> list[SourcePrice]:
@@ -58,3 +123,24 @@ class AmfiSource:
     def get_latest_price(self, ticker: str) -> Optional[SourcePrice]:
         history = self._history(ticker)
         return history[-1] if history else None
+
+    # ── Finding a fund's scheme code (Setup & Metadata → Price symbol → Find) ──
+
+    def search(self, query: str) -> list[tuple[str, str]]:
+        """``[(scheme_code, scheme_name)]`` for schemes whose name matches."""
+        body = self._get_json(_SEARCH_URL, {"q": query})
+        if not isinstance(body, list):
+            raise AmfiFormatError(_CHANGED)
+        out = [
+            (str(h["schemeCode"]), str(h["schemeName"]))
+            for h in body
+            if isinstance(h, dict) and h.get("schemeCode") and h.get("schemeName")
+        ]
+        if body and not out:
+            raise AmfiFormatError(_CHANGED)  # matches we can't read at all: the format changed
+        return out
+
+    def latest_nav(self, code: str) -> Optional[SourcePrice]:
+        """The scheme's latest NAV — one small request, unlike the full history."""
+        rows = self._scheme(_LATEST_URL.format(code=code), code)
+        return _nav_row(rows[0]) if rows else None
