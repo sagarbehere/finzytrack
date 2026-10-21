@@ -782,3 +782,36 @@ def test_user_edited_theme_is_never_clobbered(bundle):
     )
     assert edited.read_text() == '{"id":"dusty","MINE":true}\n'  # untouched
     assert "config/dashboard-themes/dusty.json" in [p["path"] for p in report.skipped]
+
+
+# ── the demo ledger's price sidecar travels with it ──────────────────────────
+
+
+def test_demo_price_sidecar_is_delivered_when_missing(bundle):
+    """`fake.prices.beancount` is generated with `fake.beancount` (same anchor),
+    so an install that predates it must receive it."""
+    bundle.seed_all()                                                   # an install from before prices shipped
+    (bundle.seed_data / "ledgers" / "fake.prices.beancount").write_text("2020-01-15 price VOO 300.00 USD\n")
+    sidecar = bundle.target("ledgers/fake.prices.beancount")
+    assert not sidecar.exists()
+
+    report = apply_seed_refresh(UpgradeState(bundle.config_dir), bundle.config_dir, bundle.data_dir, bundle.currency)
+
+    assert sidecar.read_text() == "2020-01-15 price VOO 300.00 USD\n"
+    assert "data/ledgers/fake.prices.beancount" in [p["path"] for p in report.added + report.refreshed]
+
+
+def test_demo_price_sidecar_is_refreshed_with_a_new_release(bundle):
+    """A new release re-dates the demo ledger and its prices together: the old
+    sidecar is replaced (backed up first), even if a fetch had written to it."""
+    (bundle.seed_data / "ledgers" / "fake.prices.beancount").write_text("2020-01-15 price VOO 300.00 USD\n")
+    bundle.seed_all()
+    sidecar = bundle.target("ledgers/fake.prices.beancount")
+    sidecar.write_text("2020-01-15 price VOO 300.00 USD\n2020-02-03 price VOO 310.00 USD\n")  # a fetch added a price
+    (bundle.seed_data / "ledgers" / "fake.prices.beancount").write_text("2021-01-15 price VOO 400.00 USD\n")
+
+    report = apply_seed_refresh(UpgradeState(bundle.config_dir), bundle.config_dir, bundle.data_dir, bundle.currency)
+
+    assert sidecar.read_text() == "2021-01-15 price VOO 400.00 USD\n"
+    assert [p["path"] for p in report.refreshed] == ["data/ledgers/fake.prices.beancount"]
+    assert any("2020-02-03 price VOO" in b.read_text() for b in bundle.data_dir.rglob("*.backup"))

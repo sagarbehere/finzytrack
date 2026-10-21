@@ -8,7 +8,8 @@ the user's disk (`installed`, in the upgrade-state) — the one value that can't
 recomputed. See dev-docs/seed-content-refresh.md §3.
 
 Scope (design §11): dashboards (`seed_config/recipes/dashboards/**`) and the app-owned **demo**
-ledgers only — `fake.beancount` and the whole `fake-multi/` tree. Other ledgers
+ledgers only — `fake.beancount` (+ its `fake.prices.beancount` price sidecar) and the
+whole `fake-multi/` tree. Other ledgers
 under `seed_data/ledgers/**` (notably the `one.beancount` starter, whose name a
 real user's ledger can take) are NOT refreshable content and are excluded from the
 walk via the `demo_only` allowlist — see §7.3a and the walk's gate.
@@ -53,10 +54,14 @@ class _Kind:
     demo_only: frozenset[str] | None = None
 
 
-# The only app-owned demo ledgers: the single-file `fake.beancount` and the whole
-# multi-file `fake-multi/` tree. Everything else under seed_data/ledgers/ (notably
-# the `one.beancount` starter template) is out of the refresh's scope by design.
-_DEMO_LEDGERS = frozenset({"fake.beancount", "fake-multi"})
+# The only app-owned demo ledgers: the single-file `fake.beancount` with its price
+# sidecar `fake.prices.beancount`, and the whole multi-file `fake-multi/` tree.
+# The sidecar is generated together with `fake.beancount` (same build-month
+# anchor), so it must be delivered and refreshed with it: leaving it out meant an
+# upgraded install got a re-dated demo ledger valued against stale (or no)
+# prices. Everything else under seed_data/ledgers/ (notably the `one.beancount`
+# starter template) is out of the refresh's scope by design.
+_DEMO_LEDGERS = frozenset({"fake.beancount", "fake.prices.beancount", "fake-multi"})
 
 
 def _kinds() -> list[_Kind]:
