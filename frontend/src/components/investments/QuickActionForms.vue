@@ -66,7 +66,6 @@
         label="Holding account"
         :account-types="['Assets']"
         :allow-custom="true"
-        placeholder="e.g. Assets:Broker:VOO"
       />
     </div>
 
@@ -77,7 +76,6 @@
         :label="action === 'buy' ? 'Cash account (funds the buy)' : 'Cash account (receives the dividend)'"
         :account-types="['Assets', 'Liabilities']"
         :allow-custom="true"
-        placeholder="e.g. Assets:Cash"
       />
     </div>
 
@@ -99,7 +97,6 @@
         label="CD / term-deposit account"
         :account-types="['Assets']"
         :allow-custom="true"
-        placeholder="e.g. Assets:CD:ValleyCU"
       />
     </div>
 
@@ -124,7 +121,6 @@
         label="Destination account (receives principal + interest)"
         :account-types="['Assets']"
         :allow-custom="true"
-        placeholder="e.g. Assets:Checking"
       />
     </div>
 
@@ -165,7 +161,6 @@
         :label="isInterestKind ? (action === 'cd_maturity' ? 'Interest income account (if interest was paid)' : 'Interest income account') : 'Income account'"
         :account-types="['Income']"
         :allow-custom="true"
-        :placeholder="isInterestKind ? 'e.g. Income:Interest:ValleyCU' : 'e.g. Income:Dividends:VOO'"
       />
       <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
         Tag this account with <code>income-type: "{{ isInterestKind ? 'interest' : 'dividend' }}"</code>
@@ -180,7 +175,6 @@
         label="Opening-balances account"
         :account-types="['Equity']"
         :allow-custom="true"
-        placeholder="e.g. Equity:Opening-Balances"
       />
     </div>
 
@@ -196,7 +190,6 @@
           label="Fee account"
           :account-types="['Expenses']"
           :allow-custom="true"
-          placeholder="e.g. Expenses:Fees"
         />
       </div>
     </div>

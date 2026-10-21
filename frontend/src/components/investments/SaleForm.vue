@@ -6,7 +6,6 @@
         label="Holding account (sell from)"
         :account-types="['Assets']"
         :allow-custom="true"
-        placeholder="e.g. Assets:Broker:VOO"
       />
       <CommodityDropdown
         v-model="security"
@@ -26,7 +25,6 @@
         label="Cash account (proceeds)"
         :account-types="['Assets']"
         :allow-custom="true"
-        placeholder="e.g. Assets:Cash"
       />
     </div>
 
@@ -36,7 +34,6 @@
         label="Capital-gains account"
         :account-types="['Income']"
         :allow-custom="true"
-        placeholder="e.g. Income:CapitalGains"
       />
       <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
         Tag it <code>income-type: "capital-gains"</code> to label it (realized gains are detected
@@ -55,7 +52,6 @@
         label="Fee account"
         :account-types="['Expenses']"
         :allow-custom="true"
-        placeholder="e.g. Expenses:Fees"
       />
     </div>
 

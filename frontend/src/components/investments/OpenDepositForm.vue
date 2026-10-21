@@ -9,7 +9,7 @@
           v-model="form.account"
           type="text"
           :class="inputClass"
-          placeholder="e.g. Assets:Bank:CD-2026"
+          placeholder="Full name of the new account"
         />
       </div>
       <div>
@@ -69,11 +69,10 @@
           <label for="open-deposit-income" class="block text-sm font-medium text-gray-900 dark:text-white">Income account</label>
           <input
             id="open-deposit-income"
-            :value="form.newIncomeAccount"
+            v-model="form.newIncomeAccount"
             type="text"
             :class="inputClass"
-            placeholder="e.g. Income:Interest:CD-2026"
-            @input="onIncomeInput(($event.target as HTMLInputElement).value)"
+            placeholder="Full name of the new income account"
           />
         </template>
         <template v-else>
@@ -111,7 +110,6 @@
             v-model="form.fromAccount"
             label="From account"
             :account-types="['Assets', 'Liabilities']"
-            placeholder="e.g. Assets:Bank:Savings"
           />
         </div>
         <div>
@@ -173,7 +171,6 @@ import { errorHandler } from '@/utils/ErrorHandler'
 import {
   buildOpenDepositRequest,
   missingFields,
-  suggestIncomeAccount,
   type DepositType,
   type OpenDepositForm,
 } from '@/utils/openDeposit'
@@ -181,7 +178,7 @@ import {
 const props = defineProps<{ date: string; currency: string }>()
 const emit = defineEmits<{ created: [accounts: string[]] }>()
 
-const { accountDetails, fetchAccounts } = useAccounts()
+const { fetchAccounts } = useAccounts()
 const { success: showSuccessToast } = useToast()
 
 const inputClass =
@@ -210,26 +207,6 @@ watch(() => props.date, (d, old) => {
   form.openDate = d
 })
 watch(() => props.currency, c => { form.currency = c })
-
-// Suggest the income account name from the deposit name until the user edits it.
-const incomeEdited = ref(false)
-const interestAccounts = computed(() =>
-  accountDetails.value
-    .filter(a => String(a.metadata?.['income-type'] ?? '').toLowerCase() === 'interest')
-    .map(a => a.name),
-)
-watch(
-  () => [form.account, form.createIncome, interestAccounts.value] as const,
-  () => {
-    if (form.createIncome && !incomeEdited.value) {
-      form.newIncomeAccount = suggestIncomeAccount(form.account, interestAccounts.value)
-    }
-  },
-)
-function onIncomeInput(value: string) {
-  incomeEdited.value = true
-  form.newIncomeAccount = value
-}
 
 // ── Live preview (dry run), debounced ──
 const missing = computed(() => missingFields(form))
@@ -305,7 +282,6 @@ async function create() {
     await fetchAccounts(true)   // the new accounts appear in the other forms at once
     emit('created', created)
     Object.assign(form, emptyForm())
-    incomeEdited.value = false
   } catch (err) {
     if (isStale(err)) {
       // Something changed since the preview: show the new one before anything is written.

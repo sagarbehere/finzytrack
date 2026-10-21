@@ -129,4 +129,19 @@ describe('OpenDepositForm', () => {
     expect(success).not.toHaveBeenCalled()
     expect(createButton(w).attributes('disabled')).toBeUndefined()
   })
+
+  it('never fills in an account name for the user', async () => {
+    openDeposit.mockResolvedValue(okPreview('h1'))
+    const w = mountForm()
+    await typeAccount(w, 'Assets:Bank:CD-2026')
+    const box = w.findAll('input[type="checkbox"]').find(c => c.element.closest('label')?.textContent?.includes('interest income account'))!
+    await box.setValue(true)
+    await flushPromises()
+    const income = w.find('#open-deposit-income').element as HTMLInputElement
+    expect(income.value).toBe('')
+    // No placeholder hint names an account either.
+    for (const el of w.findAll('input')) {
+      expect(el.attributes('placeholder') ?? '').not.toMatch(/(Assets|Liabilities|Equity|Income|Expenses):/)
+    }
+  })
 })

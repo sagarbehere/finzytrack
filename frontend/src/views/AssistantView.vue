@@ -514,7 +514,6 @@
             <label class="block text-xs text-gray-400 dark:text-gray-500 mb-0.5">Account</label>
             <AccountDropdown
               v-model="ruleAccount"
-              placeholder="Assets:Bank:Name"
               :account-types="['Assets', 'Liabilities']"
               :allow-custom="true"
               custom-class="!py-1 !text-xs"

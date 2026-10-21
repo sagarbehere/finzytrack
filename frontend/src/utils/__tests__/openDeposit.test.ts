@@ -1,29 +1,13 @@
 // Open Deposit helpers: the suggested income account name, the request, and the
 // fields a preview needs. See dev-docs/investment-view.md §10.4.
 import { describe, it, expect } from 'vitest'
-import { buildOpenDepositRequest, missingFields, suggestIncomeAccount, type OpenDepositForm } from '@/utils/openDeposit'
+import { buildOpenDepositRequest, missingFields, type OpenDepositForm } from '@/utils/openDeposit'
 
 const base: OpenDepositForm = {
   account: 'Assets:Bank:CD-2026', type: 'cd', currency: 'USD', openDate: '2026-01-15',
   interestRate: '', maturityDate: '', createIncome: false, newIncomeAccount: '', existingIncomeAccount: '',
   recordDeposit: false, fromAccount: '', amount: '', depositDate: '2026-01-15',
 }
-
-describe('suggestIncomeAccount', () => {
-  it('follows the common parent of existing interest accounts', () => {
-    expect(suggestIncomeAccount('Assets:Bank:CD-2026', [
-      'Income:Interest:Savings:Ally', 'Income:Interest:Savings:Valley',
-    ])).toBe('Income:Interest:Savings:CD-2026')
-    expect(suggestIncomeAccount('Assets:Bank:CD-2026', [
-      'Income:Interest:Savings:Ally', 'Income:Interest:TermDeposits',
-    ])).toBe('Income:Interest:CD-2026')
-  })
-  it('falls back when there is no shared parent or no interest account', () => {
-    expect(suggestIncomeAccount('Assets:Bank:CD-2026', [])).toBe('Income:Interest:CD-2026')
-    expect(suggestIncomeAccount('Assets:Bank:CD-2026', ['Income:Bank'])).toBe('Income:Interest:CD-2026')
-    expect(suggestIncomeAccount('', ['Income:Interest:X'])).toBe('')
-  })
-})
 
 describe('buildOpenDepositRequest', () => {
   it('sends only what is filled in', () => {

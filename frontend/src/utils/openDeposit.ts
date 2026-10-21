@@ -1,29 +1,10 @@
 /**
- * Pure helpers for the Open Deposit quick action: the suggested interest income
- * account name, and the request sent to POST /api/investments/open-deposit.
+ * Pure helpers for the Open Deposit quick action: the request sent to
+ * POST /api/investments/open-deposit. Account names are always typed or chosen by
+ * the user — never suggested (no proposed account names).
  * See dev-docs/investment-view.md §10.4.
  */
 import { OpenDepositRequest, DepositIncomeAccount } from '@/services/generated-api'
-
-/**
- * A starting name for a deposit's own interest income account: the common parent
- * of your existing interest income accounts plus the deposit's last name part —
- * so it follows how you already name things. Without any, `Income:Interest:<part>`.
- * Only a suggestion the user can edit; nothing is classified by name.
- */
-export function suggestIncomeAccount(depositAccount: string, interestAccounts: string[]): string {
-  const leaf = depositAccount.trim().split(':').filter(Boolean).pop() ?? ''
-  if (!leaf) return ''
-  const parents = interestAccounts.map(a => a.split(':').slice(0, -1))
-  let common: string[] = parents[0] ?? []
-  for (const p of parents.slice(1)) {
-    let i = 0
-    while (i < common.length && i < p.length && common[i] === p[i]) i++
-    common = common.slice(0, i)
-  }
-  const parent = common.length >= 2 ? common.join(':') : 'Income:Interest'
-  return `${parent}:${leaf}`
-}
 
 export type DepositType = 'savings' | 'cd' | 'bond'
 
