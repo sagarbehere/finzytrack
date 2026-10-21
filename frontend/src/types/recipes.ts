@@ -135,6 +135,11 @@ export interface TableColumn {
    * Return null/undefined for no action.
    */
   getSelect?: (context: TableLinkContext) => SelectParams | null | undefined
+  /**
+   * The row field holding each row's currency, for a currency-aware column.
+   * Sorting by this column then sorts within each currency.
+   */
+  currencyField?: string
 }
 
 export interface TableVisualization {

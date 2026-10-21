@@ -7,6 +7,7 @@
             v-for="column in columns"
             :key="column.key"
             scope="col"
+            :aria-sort="sort?.key === column.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined"
             class="px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400"
             :class="{
               'text-left': column.align !== 'center' && column.align !== 'right',
@@ -14,13 +15,29 @@
               'text-right': column.align === 'right',
             }"
           >
-            {{ column.label }}
+            <!-- Click to sort: ascending, then descending, then the query's order -->
+            <button
+              type="button"
+              class="group inline-flex items-center uppercase tracking-wider"
+              :title="`Sort by ${column.label}`"
+              @click="toggleSort(column.key)"
+            >
+              {{ column.label }}
+              <span
+                :class="sort?.key === column.key
+                  ? 'ml-1 flex-none rounded-sm bg-gray-100 text-gray-900 group-hover:bg-gray-200 dark:bg-gray-800 dark:text-white dark:group-hover:bg-gray-700'
+                  : 'invisible ml-1 flex-none rounded-sm text-gray-400 group-hover:visible group-focus-visible:visible dark:text-gray-500'"
+              >
+                <ChevronUpIcon v-if="sort?.key === column.key && sort.dir === 'asc'" class="size-4" aria-hidden="true" />
+                <ChevronDownIcon v-else class="size-4" aria-hidden="true" />
+              </span>
+            </button>
           </th>
         </tr>
       </thead>
       <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
         <tr
-          v-for="(row, rowIndex) in data"
+          v-for="{ row, index: rowIndex } in sortedRows"
           :key="rowIndex"
           :class="isRowActive(row, rowIndex)
             ? 'bg-indigo-50 dark:bg-indigo-500/10'
@@ -73,8 +90,11 @@
 </template>
 
 <script setup lang="ts">
+import { computed, ref, watch } from 'vue'
 import type { RouteLocationRaw } from 'vue-router'
+import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/vue/20/solid'
 import type { TableColumn, TableLinkContext, SelectParams } from '@/types/recipes'
+import { sortTableRows, type TableSort } from '@/utils/tableSort'
 
 interface Props {
   data: Record<string, unknown>[]
@@ -83,10 +103,34 @@ interface Props {
   /** Current dashboard-param values a select would reproduce — the row whose
    *  select matches is highlighted as the active (drilled-in) row (master-detail). */
   activeParams?: SelectParams | null
+  /** Keeps this table's sort across re-mounts (a widget reloading on a parameter
+   *  change) for the session. Tables without one start unsorted each mount. */
+  sortStateKey?: string
 }
 
 const props = defineProps<Props>()
 const emit = defineEmits<{ select: [params: SelectParams] }>()
+
+// ── Sorting ──
+// Rows keep their index in `data` as `rowIndex`, so links, select actions and the
+// active-row highlight refer to the same row however the table is sorted.
+const sort = ref<TableSort | null>(props.sortStateKey ? sessionSorts.get(props.sortStateKey) ?? null : null)
+watch(sort, (s) => {
+  if (!props.sortStateKey) return
+  if (s) sessionSorts.set(props.sortStateKey, s)
+  else sessionSorts.delete(props.sortStateKey)
+})
+
+function toggleSort(key: string) {
+  const s = sort.value
+  if (s?.key !== key) sort.value = { key, dir: 'asc' }
+  else if (s.dir === 'asc') sort.value = { key, dir: 'desc' }
+  else sort.value = null
+}
+
+const sortedRows = computed(() =>
+  sortTableRows(props.data, sort.value, props.columns.find((c) => c.key === sort.value?.key)?.currencyField),
+)
 
 /** A row is "active" when its select action would reproduce the current selection
  *  (e.g. the holdings row whose {holding} equals the dashboard's holding param). */
@@ -150,4 +194,10 @@ function getCellSelect(
   if (!column.getSelect) return null
   return column.getSelect({ row, rowIndex, column, value: row[column.key] }) ?? null
 }
+</script>
+
+<script lang="ts">
+import type { TableSort as SessionTableSort } from '@/utils/tableSort'
+/** Per-table sort, by `sortStateKey`, for the session (not saved across reloads). */
+const sessionSorts = new Map<string, SessionTableSort>()
 </script>

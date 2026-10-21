@@ -45,6 +45,7 @@
     :columns="getTableColumns()"
     :emptyText="getTableEmptyText()"
     :activeParams="getTableActiveParams()"
+    :sortStateKey="tableSortKey()"
     @select="emit('select', $event)"
   />
 
@@ -344,6 +345,7 @@ function getTableColumns(): TableColumn[] {
         key: jsonCol.key,
         label: jsonCol.label,
         align: jsonCol.align,
+        currencyField: jsonCol.currencyField,
         format: jsonCol.format
           ? (value: unknown, row?: Record<string, unknown>) => {
               // Format numbers and numeric (Money) strings; Money flows through
@@ -391,6 +393,7 @@ function getTableColumns(): TableColumn[] {
         key: jsonCol.key,
         label: jsonCol.label,
         align: jsonCol.align,
+        currencyField: jsonCol.currencyField,
       }
       const linkTemplate = jsonCol.link!
       const scope = (context: TableLinkContext) => ({
@@ -421,6 +424,15 @@ function getTableEmptyText(): string | undefined {
 
 // The dashboard-param values a table row's select writes, at their current values —
 // used to highlight the active (drilled-in) row. Mirrors getBudgetProgressActiveParams.
+/** Keeps a table's sort while its widget reloads (e.g. on a parameter change):
+ *  the widget id plus its column keys, so same-named widgets on other dashboards
+ *  only share a sort when they have the same columns. */
+function tableSortKey(): string | undefined {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'table' || !props.recipe.id) return undefined
+  return `${props.recipe.id}|${viz.columns.map((c) => c.key).join(',')}`
+}
+
 function getTableActiveParams(): SelectParams | null {
   const viz = props.recipe.visualization
   if (viz.type !== 'table') return null
