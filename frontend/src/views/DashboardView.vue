@@ -83,6 +83,7 @@
       :reloading="isLoading"
       @select="handleTabSelect"
       @remove="removeTab"
+      @move="moveTab"
       @add="showPicker = true"
       @reload="handleReloadRecipes"
     />
@@ -139,7 +140,7 @@ const { loadUserRecipes, reloadUserRecipes, getAllDashboardIds, getDashboard, is
 
 const bannerDismissed = ref(false)
 const conflictBannerDismissed = ref(false)
-const { tabs, activeTabId, addTab, removeTab, setActiveTab, loadTabs, activeDashboard } = useDashboardTabs()
+const { tabs, activeTabId, addTab, removeTab, moveTab, setActiveTab, loadTabs, activeDashboard } = useDashboardTabs()
 
 const showPicker = ref(false)
 const toast = useToast()

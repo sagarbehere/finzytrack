@@ -131,6 +131,19 @@ export function useDashboardTabs() {
   }
 
   /**
+   * Move a tab to `toIndex` in the tab order (clamped). The active tab is unchanged.
+   */
+  function moveTab(dashboardId: string, toIndex: number): void {
+    const from = tabs.value.findIndex((t) => t.id === dashboardId)
+    if (from === -1) return
+    const to = Math.max(0, Math.min(toIndex, tabs.value.length - 1))
+    if (to === from) return
+    const [tab] = tabs.value.splice(from, 1)
+    tabs.value.splice(to, 0, tab)
+    saveToStorage()
+  }
+
+  /**
    * Set the active tab
    */
   function setActiveTab(dashboardId: string): void {
@@ -161,6 +174,7 @@ export function useDashboardTabs() {
     loadTabs,
     addTab,
     removeTab,
+    moveTab,
     setActiveTab,
   }
 }
