@@ -41,6 +41,7 @@
     :data="Array.isArray(data) ? data : []"
     :columns="getTableColumns()"
     :emptyText="getTableEmptyText()"
+    :sortStateKey="tableSortKey()"
     @select="emit('select', $event)"
   />
 
@@ -384,6 +385,15 @@ function getTableEmptyText(): string | undefined {
   const viz = props.recipe.visualization
   if (viz.type !== 'table') return undefined
   return (viz as { emptyText?: string }).emptyText
+}
+
+/** Keeps a table's sort while its widget reloads (e.g. on a parameter change):
+ *  the widget id plus its column keys, so same-named widgets on other dashboards
+ *  only share a sort when they have the same columns. */
+function tableSortKey(): string | undefined {
+  const viz = props.recipe.visualization
+  if (viz.type !== 'table' || !props.recipe.id) return undefined
+  return `${props.recipe.id}|${viz.columns.map((c) => c.key).join(',')}`
 }
 
 // Get pivot data (transform should return PivotData shape)
