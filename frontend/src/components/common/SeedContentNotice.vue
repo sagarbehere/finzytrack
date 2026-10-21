@@ -113,6 +113,11 @@
 import { computed, ref } from 'vue'
 import { SparklesIcon, CheckCircleIcon } from '@heroicons/vue/20/solid'
 import { useStartupTasks } from '@/composables/useStartupTasks'
+import { useRecipeLoader } from '@/composables/useRecipeLoader'
+import { useDashboardTheme } from '@/composables/useDashboardTheme'
+import { useAccounts } from '@/composables/useAccounts'
+import { useCommodities } from '@/composables/useCommodities'
+import { useAvailableYears } from '@/composables/useAvailableYears'
 import { renderMarkdown } from '@/utils/markdown'
 import AffectedFilesList from '@/components/common/AffectedFilesList.vue'
 import type { AffectedItem } from '@/components/common/AffectedFilesList.vue'
@@ -123,6 +128,8 @@ const {
   infoTasks, isApplying, applyError,
   applyStartupTask, dismissStartupTask, checkStartupTasks, docsUrlFor,
 } = useStartupTasks()
+const { reloadUserRecipes } = useRecipeLoader()
+const { loadTheme } = useDashboardTheme()
 
 const task = computed(() => infoTasks.value.find((t) => t.id === SEED_CONTENT_ID) ?? null)
 const docsUrl = computed(() => (task.value ? docsUrlFor(task.value) : null))
@@ -150,6 +157,26 @@ async function onApply() {
   if (r) {
     result.value = r
     await checkStartupTasks() // task self-retires; result view stays (local copy)
+    await refreshDeliveredContent()
+  }
+}
+
+/**
+ * The app is already running when this notice applies, and the frontend loads
+ * dashboards, the dashboard theme and some ledger-derived lists once per
+ * session. Re-fetch what the apply wrote so it shows without a page reload.
+ * (The backend reads these files fresh, so it needs no restart.)
+ */
+async function refreshDeliveredContent() {
+  if (succeeded.value.length === 0) return
+  await Promise.all([reloadUserRecipes(), loadTheme()])
+  // A refreshed demo ledger may be the active one: drop the cached lists so the
+  // next view that needs them fetches again.
+  if (succeeded.value.some((item) => item.path.endsWith('.beancount'))) {
+    useAccounts().invalidateCache()
+    useCommodities().invalidateCache()
+    const years = useAvailableYears()
+    if (years.hasBeenFetched.value) await years.fetchYears(true).catch(() => {})
   }
 }
 
