@@ -26,6 +26,8 @@ import {
   DatasetComponent,
   VisualMapComponent,
   CalendarComponent,
+  DataZoomInsideComponent,
+  DataZoomSliderComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { LegacyGridContainLabel } from 'echarts/features'
@@ -56,6 +58,8 @@ echarts.use([
   DatasetComponent,
   VisualMapComponent,
   CalendarComponent,
+  DataZoomInsideComponent,
+  DataZoomSliderComponent,
   CanvasRenderer,
   // ECharts 6 moved grid.containLabel behind an opt-in legacy feature; register
   // it so our `grid.containLabel: true` default keeps working without the
@@ -491,7 +495,7 @@ function injectSeriesData(series: EChartsOption['series']): EChartsOption['serie
   })
 }
 
-const { categoricalPalette, resolveTokensDeep, familyOf, orderedFamilyColorer } = useDashboardTheme()
+const { categoricalPalette, resolveTokensDeep, resolveThemeColor, familyOf, orderedFamilyColorer } = useDashboardTheme()
 
 /** True when the recipe already dictates fill colors for this series (an explicit
  * `itemStyle.color`) or the whole chart (`options.color`) — the value-level escape
@@ -647,6 +651,16 @@ const finalOptions = computed<EChartsOption>(() => {
     }
   }
 
+  // Zoom/pan on a cartesian axis (`dataZoom`). A slider gets the dashboard's
+  // light/dark styling; any key the recipe sets on it wins.
+  const dataZoom = (props.chartOptions as Record<string, unknown>).dataZoom
+  if (dataZoom !== undefined && needsAxes) {
+    ;(result as Record<string, unknown>).dataZoom = (Array.isArray(dataZoom) ? dataZoom : [dataZoom]).map(
+      (dz: Record<string, unknown>) =>
+        dz.type === 'slider' ? { ...sliderStyle(dark, textColor, axisLineColor), ...dz } : dz,
+    )
+  }
+
   // Merge runtime-derived radar config with anything the recipe supplied.
   // Recipe-provided fields (e.g. axisName styling, splitArea, custom indicator
   // overrides) win; the runtime fills in `indicator` if the recipe didn't
@@ -756,6 +770,38 @@ const finalOptions = computed<EChartsOption>(() => {
   return result
 })
 
+// Default look of a dataZoom slider, matched to the axes and the theme's brand.
+function sliderStyle(dark: boolean, textColor: string, axisLineColor: string): Record<string, unknown> {
+  const brand = resolveThemeColor('{{theme.brand}}', dark)
+  return {
+    backgroundColor: 'transparent',
+    borderColor: axisLineColor,
+    fillerColor: dark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(17, 24, 39, 0.06)',
+    textStyle: { color: textColor },
+    handleStyle: { color: dark ? '#374151' : '#ffffff', borderColor: axisLineColor },
+    moveHandleStyle: { color: axisLineColor },
+    dataBackground: {
+      lineStyle: { color: axisLineColor },
+      areaStyle: { color: axisLineColor, opacity: 0.2 },
+    },
+    selectedDataBackground: {
+      lineStyle: { color: brand },
+      areaStyle: { color: brand, opacity: 0.15 },
+    },
+    emphasis: { handleStyle: { borderColor: brand }, moveHandleStyle: { color: brand } },
+  }
+}
+
+// ECharts takes a single modifier key for wheel-zoom (`zoomOnMouseWheel: 'ctrl'`).
+// On a Mac the natural one is ⌘, so present ⌘+wheel to ECharts as Ctrl+wheel.
+// Runs in the capture phase, before ECharts' own listener. A chart that doesn't
+// zoom ignores the event, and the browser still scrolls the page as usual.
+function treatMetaAsCtrl(e: Event) {
+  const wheel = e as WheelEvent
+  if (wheel.metaKey && !wheel.ctrlKey) Object.defineProperty(wheel, 'ctrlKey', { value: true })
+}
+const WHEEL_EVENTS = ['wheel', 'mousewheel'] as const
+
 // Initialize chart
 function initChart() {
   if (!chartContainer.value) return
@@ -765,6 +811,9 @@ function initChart() {
   })
   chartInstance = instance
   instance.setOption(finalOptions.value)
+  for (const type of WHEEL_EVENTS) {
+    chartContainer.value.addEventListener(type, treatMetaAsCtrl, { capture: true })
+  }
 
   // Emit click events for series elements
   instance.on('click', (params) => {
@@ -834,6 +883,9 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
+  for (const type of WHEEL_EVENTS) {
+    chartContainer.value?.removeEventListener(type, treatMetaAsCtrl, { capture: true })
+  }
   darkModeObserver?.disconnect()
   chartInstance?.dispose()
 })

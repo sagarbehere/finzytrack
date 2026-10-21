@@ -83,9 +83,13 @@
         "options": {
           "tooltip": { "trigger": "axis" },
           "legend": { "show": true, "top": 0, "left": "center" },
-          "grid": { "left": "3%", "right": "4%", "top": 40, "bottom": "3%", "containLabel": true },
+          "grid": { "left": "3%", "right": "4%", "top": 40, "bottom": 36, "containLabel": true },
           "xAxis": { "type": "time" },
           "yAxis": { "type": "value" },
+          "dataZoom": [
+            { "type": "inside", "zoomOnMouseWheel": "ctrl", "moveOnMouseWheel": false, "moveOnMouseMove": true },
+            { "type": "slider", "height": 18, "bottom": 6 }
+          ],
           "series": [
             { "name": "Market value", "type": "line", "smooth": true, "showSymbol": false, "encode": { "x": "date", "y": "market_value" }, "itemStyle": { "color": "{{theme.series.income}}" }, "areaStyle": { "opacity": 0.08 } },
             { "name": "Cost basis", "type": "line", "smooth": true, "showSymbol": false, "encode": { "x": "date", "y": "cost_basis" }, "itemStyle": { "color": "{{theme.series.budget}}" }, "lineStyle": { "type": "dashed" } }
@@ -253,9 +257,13 @@
         "options": {
           "tooltip": { "trigger": "axis" },
           "legend": { "show": false },
-          "grid": { "left": "3%", "right": "4%", "bottom": "3%", "containLabel": true },
+          "grid": { "left": "3%", "right": "4%", "bottom": 36, "containLabel": true },
           "xAxis": { "type": "time" },
           "yAxis": { "type": "value", "scale": true },
+          "dataZoom": [
+            { "type": "inside", "zoomOnMouseWheel": "ctrl", "moveOnMouseWheel": false, "moveOnMouseMove": true },
+            { "type": "slider", "height": 18, "bottom": 6 }
+          ],
           "series": [
             { "name": "Price", "type": "line", "smooth": true, "showSymbol": false, "encode": { "x": "date", "y": "price" }, "itemStyle": { "color": "{{theme.brand}}" }, "areaStyle": { "opacity": 0.08 } }
           ]
