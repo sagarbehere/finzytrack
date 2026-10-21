@@ -8,6 +8,7 @@
 import type { RecipeParameterOption } from '@/types/recipes'
 import { ACCOUNT_TYPES } from '@/types/accounts'
 import { useConfig } from '@/composables/useConfig'
+import { useCommodities } from '@/composables/useCommodities'
 
 export interface GeneratorConfig {
   [key: string]: unknown
@@ -222,15 +223,46 @@ export function datePresets(): RecipeParameterOption[] {
   ]
 }
 
+/** The usage counts `pickDefaultCurrency` needs from each commodity. */
+export interface CurrencyUsage {
+  code: string
+  is_currency?: boolean
+  usage: { transaction_count: number }
+}
+
 /**
- * Returns the configured default currency
+ * The currency a dashboard should open in: the configured one when the ledger
+ * uses it, else the currency the ledger uses most (ties: alphabetical), else the
+ * configured one. So a ledger in other currencies — the USD/INR demo opened by a
+ * EUR user, or any ledger in a currency other than the one chosen in Setup —
+ * opens on data instead of empty charts.
+ */
+export function pickDefaultCurrency(configured: string, commodities: readonly CurrencyUsage[]): string {
+  const used = commodities.filter((c) => c.is_currency && c.usage.transaction_count > 0)
+  if (used.length === 0 || used.some((c) => c.code === configured)) return configured
+  return [...used].sort(
+    (a, b) => b.usage.transaction_count - a.usage.transaction_count || a.code.localeCompare(b.code),
+  )[0].code
+}
+
+/**
+ * Returns the default currency for the active ledger
  *
  * Usage: { "$gen": "defaultCurrency" }
- * Returns: "USD" (or whatever is configured in accounts.default_currency)
+ * Returns: the configured accounts.default_currency (e.g. "USD") when the ledger
+ * uses it, else the currency the ledger uses most — see pickDefaultCurrency.
  */
 export function defaultCurrency(): string {
   const { config } = useConfig()
-  return config.value?.accounts?.default_currency || 'USD'
+  const configured = config.value?.accounts?.default_currency || 'USD'
+  const { commodityDetails, hasBeenFetched, fetchCommodities } = useCommodities()
+  if (!hasBeenFetched.value) {
+    // Usually already loaded by the dashboard's currency pickers. If not, load it
+    // after this (often computed) evaluation; the reactive read above re-runs it.
+    queueMicrotask(() => fetchCommodities().catch(() => {}))
+    return configured
+  }
+  return pickDefaultCurrency(configured, commodityDetails.value)
 }
 
 /**
