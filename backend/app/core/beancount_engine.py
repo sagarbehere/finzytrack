@@ -14,6 +14,7 @@ from typing import Optional, List, Dict, Any, Tuple, Pattern
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
+from beancount.core import account as bc_account
 from beancount.core import data as bd
 from beancount.core.data import Transaction, Posting
 from beancount.core.amount import Amount as BcAmount
@@ -872,17 +873,29 @@ class BeancountEngine:
                 return new_name + name[len(old_name):]
             return name
 
+        # Metadata can name accounts on any entry, not only transactions — e.g. an
+        # instrument's `interest_account` on its `open`. Rewrite every string value
+        # that is the account (or a sub-account); a value that merely contains the
+        # name is left alone. The parser's filename/lineno are never touched.
+        meta = entry.meta
+        if meta and any(isinstance(v, str) and r(v) != v for k, v in meta.items() if k not in ('filename', 'lineno')):
+            meta = {k: (r(v) if isinstance(v, str) and k not in ('filename', 'lineno') else v) for k, v in meta.items()}
+            entry = entry._replace(meta=meta)
+
         if isinstance(entry, (bd.Open, bd.Close, bd.Balance, bd.Note, bd.Document)):
             return entry._replace(account=r(entry.account))
         if isinstance(entry, bd.Pad):
             return entry._replace(account=r(entry.account), source_account=r(entry.source_account))
         if isinstance(entry, bd.Transaction):
-            new_postings = [p._replace(account=r(p.account)) for p in entry.postings]
-            new_meta = dict(entry.meta)
-            for key, val in new_meta.items():
-                if isinstance(val, str):
-                    new_meta[key] = r(val)
-            return entry._replace(meta=new_meta, postings=new_postings)
+            return entry._replace(postings=[p._replace(account=r(p.account)) for p in entry.postings])
+        if isinstance(entry, bd.Custom):
+            # e.g. `custom "budget" Expenses:Food "monthly" 500 USD` — the account is
+            # an account-typed value, or a quoted string for a bare root (budget_directives).
+            values = [
+                v._replace(value=r(v.value)) if isinstance(v.value, str) and v.dtype in (bc_account.TYPE, str) else v
+                for v in entry.values
+            ]
+            return entry._replace(values=values)
         return entry
 
     def compute_hash_from_transaction(self, txn: Transaction) -> Tuple[str, str]:
