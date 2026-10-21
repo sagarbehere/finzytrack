@@ -58,9 +58,11 @@ class FakeSource:
     """Offline stand-in for beanprice's Yahoo source."""
 
     def __init__(self, by_symbol: dict[str, list[tuple[date, str]]],
-                 latest: dict[str, tuple[date, str]] | None = None):
+                 latest: dict[str, tuple[date, str]] | None = None,
+                 currency: dict[str, str] | None = None):
         self.by_symbol = by_symbol
         self.latest = latest or {}
+        self.currency = currency or {}          # symbol → quote currency (default USD)
         self.calls: list[tuple[str, date, date]] = []
 
     def get_prices_series(self, ticker, time_begin, time_end):
@@ -69,7 +71,8 @@ class FakeSource:
         for d, price in self.by_symbol.get(ticker, []):
             if time_begin.date() <= d <= time_end.date():
                 out.append(SourcePrice(
-                    Decimal(price), datetime.combine(d, time.min, tzinfo=timezone.utc), "USD"
+                    Decimal(price), datetime.combine(d, time.min, tzinfo=timezone.utc),
+                    self.currency.get(ticker, "USD"),
                 ))
         return out
 
@@ -78,7 +81,8 @@ class FakeSource:
         if v is None:
             return None
         d, price = v
-        return SourcePrice(Decimal(price), datetime.combine(d, time.min, tzinfo=timezone.utc), "USD")
+        return SourcePrice(Decimal(price), datetime.combine(d, time.min, tzinfo=timezone.utc),
+                           self.currency.get(ticker, "USD"))
 
 
 def _wire(tmp_path, ledger_text):
@@ -400,3 +404,55 @@ def test_fetched_float_noise_is_not_written(wired):
     source = FakeSource({"VOO": [(date(2021, 2, 1), "709.4299926757812")], "ACME.XYZ": []})
     PriceFetcher(reader, lm, source=source, today=date(2021, 2, 1)).fetch_and_persist()
     assert "2021-02-01 price VOO 709.43 USD" in sidecar_path(ledger).read_text().splitlines()
+
+
+def test_minor_unit_quotes_are_written_in_the_main_currency(wired):
+    """Yahoo quotes London in pence (GBp) and Johannesburg in cents (ZAc): the
+    price is written in GBP / ZAR, divided by 100."""
+    ledger, _, reader, lm = wired
+    source = FakeSource(
+        {"VOO": [(date(2021, 2, 1), "7250")], "ACME.XYZ": [(date(2021, 2, 1), "1234.5")]},
+        currency={"VOO": "GBp", "ACME.XYZ": "ZAc"},
+    )
+    res = PriceFetcher(reader, lm, source=source, today=date(2021, 2, 1)).fetch_and_persist()
+    assert res["added"] == 2
+    assert sorted((p.currency, p.amount.number, p.amount.currency) for p in _sidecar_prices(ledger)) == [
+        ("ACME", Decimal("12.345"), "ZAR"), ("VOO", Decimal("72.5"), "GBP"),
+    ]
+
+
+def test_an_invalid_provider_currency_fails_only_that_holding(wired):
+    """A currency Beancount can't read is dropped for that holding (reported in
+    `failed`); the other holdings are still written."""
+    ledger, _, reader, lm = wired
+    source = FakeSource(
+        {"VOO": [(date(2021, 2, 1), "120.00")], "ACME.XYZ": [(date(2021, 2, 1), "5.00")]},
+        currency={"ACME.XYZ": "xyz"},
+    )
+    res = PriceFetcher(reader, lm, source=source, today=date(2021, 2, 1)).fetch_and_persist()
+    assert res["added"] == 1
+    assert [f.split(":")[0] for f in res["failed"]] == ["ACME (ACME.XYZ)"]
+    assert [(p.currency, p.date, p.amount.currency) for p in _sidecar_prices(ledger)] == [
+        ("VOO", date(2021, 2, 1), "USD"),
+    ]
+
+
+def test_a_holding_quoted_in_another_currency_is_not_refetched_from_first_purchase(wired):
+    """VOO is bought in USD but the provider quotes it in EUR. Once EUR prices
+    are stored, the next fetch starts at the newest of them, not at the first
+    purchase again."""
+    ledger, _, reader, lm = wired
+    source = FakeSource(
+        {"VOO": [(date(2021, 1, 20), "100.00"), (date(2021, 2, 1), "101.00"), (date(2021, 2, 3), "102.00")],
+         "ACME.XYZ": []},
+        currency={"VOO": "EUR"},
+    )
+    PriceFetcher(reader, lm, source=source, today=date(2021, 2, 1)).fetch_and_persist()
+    PriceFetcher(reader, lm, source=source, today=date(2021, 2, 3)).fetch_and_persist()
+    assert [c[1:] for c in source.calls if c[0] == "VOO"] == [
+        (date(2021, 1, 10), date(2021, 2, 1)),   # first fetch: from first purchase
+        (date(2021, 2, 1), date(2021, 2, 3)),    # second: from the newest EUR price
+    ]
+    assert [(r["date"], r["quote_currency"]) for r in reader.get_prices(currency="VOO")] == [
+        ("2021-01-20", "EUR"), ("2021-02-01", "EUR"), ("2021-02-03", "EUR"),
+    ]

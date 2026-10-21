@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from app.services.price_cadence import cadence_for, is_out_of_date
+from app.services.price_cadence import cadence_for, fetch_quote, is_out_of_date
 
 TODAY = date(2026, 10, 20)
 
@@ -45,3 +45,15 @@ def test_sold_out_is_never_out_of_date():
 def test_held_with_no_price_is_out_of_date():
     assert is_out_of_date("daily", True, None, TODAY) is True
     assert is_out_of_date("never", True, None, TODAY) is False
+
+
+@pytest.mark.parametrize("cost,counts,expected", [
+    ("USD", {}, "USD"),                          # nothing stored yet: the bought-in currency
+    ("USD", {"USD": 3, "EUR": 9}, "USD"),        # bought-in series exists: it wins
+    ("USD", {"EUR": 4}, "EUR"),                  # provider quotes it elsewhere: that series
+    ("USD", {"EUR": 2, "GBP": 5}, "GBP"),        # …the one with the most prices
+    (None, {"EUR": 2, "GBP": 2}, "EUR"),         # tie: alphabetical
+    (None, {}, None),
+])
+def test_fetch_quote(cost, counts, expected):
+    assert fetch_quote(cost, counts) == expected

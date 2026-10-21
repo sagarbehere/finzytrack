@@ -107,8 +107,14 @@ def fetch_quote(cost_currency: Optional[str], price_counts: Mapping[str, int]) -
     """The quote currency the fetcher keeps a commodity's price series in: the
     currency it was bought in, else the quote with the most prices. Only this
     series sets the fetch window and can be out of date — a price typed in
-    another currency is never fetched, so it must not stop or start a fetch."""
-    if cost_currency:
+    another currency is never fetched, so it must not stop or start a fetch.
+
+    When the bought-in currency has no prices but another quote does, the
+    provider quotes the holding in that other currency (e.g. bought in USD, but
+    ``fetch_symbol`` names a EUR listing): that is the series the fetcher writes,
+    so it is the one that sets the window. Keying off the empty bought-in series
+    would refetch the whole history on every run."""
+    if cost_currency and (cost_currency in price_counts or not price_counts):
         return cost_currency
     if not price_counts:
         return None

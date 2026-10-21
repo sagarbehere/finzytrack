@@ -24,6 +24,7 @@ offline.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, datetime, time, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal
 from typing import Any, Optional
@@ -31,6 +32,7 @@ from typing import Any, Optional
 from beancount.core import data
 from beancount.core.amount import Amount
 
+from app.core.constants import COMMODITY_CODE_PATTERN
 from app.services.price_cadence import (
     CADENCE_COMPUTED,
     CADENCE_MONTHLY,
@@ -57,6 +59,26 @@ def clean_price(value: Any) -> Decimal:
         return n  # already short: keep it as sent (e.g. 120.00)
     text = format(n.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_EVEN), "f")
     return Decimal(text.rstrip("0").rstrip("."))
+
+# Yahoo quotes some exchanges in the currency's minor unit: London in pence
+# (GBp / GBX), Johannesburg in cents (ZAc), Tel Aviv in agorot (ILA). Convert to
+# the main unit — "GBp" isn't even a valid Beancount currency, and a price in
+# pence would value the holding 100x too high.
+_MINOR_UNITS = {
+    "GBp": ("GBP", Decimal(100)),
+    "GBX": ("GBP", Decimal(100)),
+    "ZAc": ("ZAR", Decimal(100)),
+    "ILA": ("ILS", Decimal(100)),
+}
+
+_CURRENCY = re.compile(COMMODITY_CODE_PATTERN)
+
+
+def to_main_unit(number: Decimal, currency: str) -> tuple[Decimal, str]:
+    """A provider price in its main currency unit (``72.5 GBp`` → ``0.725 GBP``)."""
+    main = _MINOR_UNITS.get(currency)
+    return (number / main[1], main[0]) if main else (number, currency)
+
 
 # How far back to reach on the very first fetch of a holding with no price yet.
 _DEFAULT_LOOKBACK_DAYS = 5 * 365
@@ -250,7 +272,13 @@ class PriceFetcher:
                 if d < begin or d > end:
                     reason = reason or "no price in the date range"
                     continue
-                fetched.append(data.Price({}, d, c.code, Amount(clean_price(sp.price), sp.quote_currency)))
+                number, currency = to_main_unit(Decimal(str(sp.price)), sp.quote_currency)
+                if not _CURRENCY.match(currency):
+                    # One unreadable currency would make the whole price file
+                    # fail its read-back check; drop just this holding.
+                    reason = f"the provider's currency '{currency}' is not a valid currency code"
+                    continue
+                fetched.append(data.Price({}, d, c.code, Amount(clean_price(number), currency)))
 
             if cadence == CADENCE_MONTHLY:
                 fetched = self._thin_monthly(fetched)
