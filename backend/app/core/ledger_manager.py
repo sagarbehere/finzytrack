@@ -734,8 +734,9 @@ class LedgerManager:
         return new
 
     def preview_open_deposit(self, request, accounts) -> Tuple[str, Any]:
-        """Render what Open Deposit would write, without writing or parsing the
-        ledger (``accounts`` is a snapshot from the mirror). Raises DepositError."""
+        """Render what Open Deposit would write (apart from the transfer's IDs),
+        without writing or parsing the ledger (``accounts`` is a snapshot from the
+        mirror). Raises DepositError."""
         from app.services.deposit_opener import plan_open_deposit
         plan = plan_open_deposit(request, accounts, self.validate_account_format)
         return self.engine.format_entries(self._deposit_entries(plan, with_ids=False)), plan
@@ -744,8 +745,10 @@ class LedgerManager:
     def open_deposit(self, request) -> Tuple[str, Any]:
         """Open a deposit account — and optionally its interest income account and
         first deposit — in **one** write, through the pre-write gate. The checks run
-        again here against the parsed ledger, under the write lock."""
-        from app.services.deposit_opener import AccountInfo, plan_open_deposit
+        again here against the parsed ledger, under the write lock. With
+        ``request.expected_preview_hash``, the write must match the preview the
+        user saw, or nothing is written (409 ``PREVIEW_STALE``)."""
+        from app.services.deposit_opener import AccountInfo, plan_open_deposit, preview_hash
         entries, errors, options = self._parse_ledger()
         accounts: Dict[str, AccountInfo] = {}
         for e in entries:
@@ -759,6 +762,13 @@ class LedgerManager:
                 accounts[e.account] = accounts[e.account]._replace(closed=True)
         plan = plan_open_deposit(request, accounts, self.validate_account_format)
         preview = self.engine.format_entries(self._deposit_entries(plan, with_ids=False))
+        expected = getattr(request, "expected_preview_hash", None)
+        if expected and expected != preview_hash(preview, plan.warnings):
+            raise APIError(
+                message="Your accounts changed since the preview. Check the new preview, then create again.",
+                code=ec.PREVIEW_STALE,
+                status_code=409,
+            )
         self._write_and_export(list(entries) + self._deposit_entries(plan, with_ids=True), errors, options)
         return preview, plan
 

@@ -18,6 +18,8 @@ from datetime import date
 from decimal import Decimal
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
+import hashlib
+
 from app import error_codes as ec
 from app.schemas.investment_schemas import OpenDepositRequest
 
@@ -113,6 +115,14 @@ def plan_open_deposit(
             if info.closed:
                 raise DepositError(ec.ACCOUNT_ALREADY_CLOSED, "This income account is closed.",
                                    details={"field": "income_account", "account": inc_name})
+            # Interest booked to it must be valid: the currency allowed, and open in time.
+            if info.currencies and req.currency not in info.currencies:
+                raise DepositError(ec.VALIDATION_ERROR, f"{inc_name} doesn't allow {req.currency}.",
+                                   details={"field": "income_account", "account": inc_name})
+            if info.open_date is not None and info.open_date > req.open_date:
+                raise DepositError(ec.VALIDATION_ERROR,
+                                   f"{inc_name} is opened on {info.open_date.isoformat()}, after this account.",
+                                   details={"field": "income_account", "account": inc_name})
             if str(info.metadata.get("income-type") or "").strip().lower() != "interest":
                 warnings.append(f"{inc_name} has no income type of interest, so its interest is not matched to accounts.")
             linked_by = [n for n, a in accounts.items()
@@ -145,6 +155,9 @@ def plan_open_deposit(
         if when < req.open_date:
             raise DepositError(ec.VALIDATION_ERROR, "The first deposit can't be before the open date.",
                                details={"field": "first_deposit_date"})
+        if req.maturity_date is not None and when >= req.maturity_date:
+            raise DepositError(ec.VALIDATION_ERROR, "The first deposit must be before the maturity date.",
+                               details={"field": "first_deposit_date"})
         # The ledger write check only blocks booking errors, so catch this one here:
         # a posting before an account's open is a ledger error.
         if info.open_date is not None and when < info.open_date:
@@ -155,3 +168,9 @@ def plan_open_deposit(
                     [(name, fd.amount, req.currency), (src, -fd.amount, req.currency)], src)
 
     return DepositPlan(opens=opens, transfer=transfer, warnings=warnings)
+
+
+def preview_hash(preview: str, warnings: List[str]) -> str:
+    """Fingerprint of what the user is shown (the text and the warnings), so a
+    write can confirm it would write exactly that."""
+    return hashlib.sha256((preview + "\0" + "\n".join(warnings)).encode("utf-8")).hexdigest()

@@ -29,7 +29,7 @@ from app.services.investment_assembler import InvestmentAssembler
 from app.core.ledger_manager import LedgerManager
 from app.dependencies import get_beancount_manager, get_config_manager, get_sqlite_reader
 from app.exceptions import APIError
-from app.services.deposit_opener import AccountInfo, DepositError
+from app.services.deposit_opener import AccountInfo, DepositError, preview_hash
 from app.helpers.error_context import ledger_error_context
 from app.helpers.response_helpers import success_json_response
 
@@ -108,8 +108,10 @@ async def open_deposit(
     """Open a savings, CD or bond account, optionally with its own interest income
     account (linked by `interest_account`) and its first deposit, as one write.
 
-    With `dry_run`, nothing is written: the response is the exact text that would
-    be written, checked against the current accounts.
+    With `dry_run`, nothing is written: the response is the text that would be
+    written (apart from the transfer's IDs), checked against the current accounts,
+    and its `preview_hash`. Send that back as `expected_preview_hash` so the write
+    refuses (409 PREVIEW_STALE) if it would write anything different.
     """
     config = config_manager.get_config()
     with ledger_error_context(config.ledger_file):
@@ -133,6 +135,7 @@ async def open_deposit(
             raise APIError(message=e.message, code=e.code, status_code=e.status_code, details=e.details)
         return success_json_response(OpenDepositData(
             preview=preview,
+            preview_hash=preview_hash(preview, plan.warnings),
             created=created,
             accounts_created=[o.name for o in plan.opens] if created else [],
             warnings=plan.warnings,

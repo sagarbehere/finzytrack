@@ -48,7 +48,7 @@ export type CdMaturityEvent = {
     note?: (string | null);
     type: string;
     /**
-     * The CD/term-deposit account (Assets, asset-class: cd)
+     * The CD/term-deposit account (Assets, account-type: cd)
      */
     cd_account: string;
     /**

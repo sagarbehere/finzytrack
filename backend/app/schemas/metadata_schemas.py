@@ -38,7 +38,7 @@ class MetadataReviewItem(BaseModel):
 
 class MetadataReviewData(BaseModel):
     items: List[MetadataReviewItem]
-    summary: Dict[str, int] = Field(..., description="Per scope: open, in-use items whose main key (asset-class or income-type) is not set. Drives the dashboard banners.")
+    summary: Dict[str, int] = Field(..., description="Per scope: open, in-use items whose main key (asset-class for commodities, account-type for accounts, income-type for income accounts) is not set. Drives the dashboard banners.")
     has_operating_currencies: bool = Field(
         ..., description="When false, a commodity's asset-class decides whether it counts as a currency",
     )

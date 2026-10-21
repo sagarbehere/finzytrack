@@ -29,6 +29,12 @@ option "operating_currency" "USD"
 2020-01-01 open Income:Interest:Shared USD
   income-type: "interest"
 2020-01-01 open Income:Other USD
+2027-01-01 open Income:Interest:Later USD
+2020-01-01 open Assets:Bank:Old USD
+2024-01-01 close Assets:Bank:Old
+2020-01-01 open Income:Interest:Closed USD
+2024-01-01 close Income:Interest:Closed
+2020-01-01 open Liabilities:Card USD
 2020-01-01 open Equity:Opening-Balances
 
 2020-01-02 * "Opening"
@@ -192,6 +198,14 @@ class TestRejects:
         ({"first_deposit": {"from_account": "Assets:Bank:Savings", "amount": "1", "date": "2026-01-01"}},
          422, "VALIDATION_ERROR"),                                            # before the open date
         ({"first_deposit": {"from_account": "Assets:Bank:Savings", "amount": "0"}}, 422, "VALIDATION_ERROR"),
+        ({"first_deposit": {"from_account": "Assets:Bank:Savings", "amount": "1", "date": "2027-01-15"}},
+         422, "VALIDATION_ERROR"),                                            # on/after maturity
+        ({"first_deposit": {"from_account": "Assets:Bank:Old", "amount": "1"}}, 422, "ACCOUNT_ALREADY_CLOSED"),
+        ({"income_account": {"mode": "existing", "account": "Income:Interest:Closed"}}, 422, "ACCOUNT_ALREADY_CLOSED"),
+        ({"currency": "EUR", "income_account": {"mode": "existing", "account": "Income:Interest:Shared"}},
+         422, "VALIDATION_ERROR"),                                            # income account doesn't allow EUR
+        ({"income_account": {"mode": "existing", "account": "Income:Interest:Later"}},
+         422, "VALIDATION_ERROR"),                                            # income account opens later
     ])
     def test_rejected_and_nothing_written(self, client, over, status, code):
         before = _ledger(client).read_bytes()
@@ -211,3 +225,65 @@ class TestRejects:
         assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
         assert resp.json()["error"]["details"]["field"] == "first_deposit_date"
         assert _ledger(client).read_bytes() == before
+
+
+class TestPreviewHash:
+    KW = dict(income_account={"mode": "existing", "account": "Income:Other"})
+
+    def test_write_with_the_previewed_hash_succeeds(self, client):
+        h = _post(client, dry_run=True, **self.KW).json()["data"]["preview_hash"]
+        resp = _post(client, expected_preview_hash=h, **self.KW)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["preview_hash"] == h
+        assert _meta(_open(client, "Assets:Bank:CD-2026"))["interest_account"] == "Income:Other"
+
+    def test_write_that_would_differ_from_the_preview_is_refused(self, client):
+        """After the preview, another account links Income:Other, so the write
+        would no longer add the link the user saw: nothing is written."""
+        h = _post(client, dry_run=True, **self.KW).json()["data"]["preview_hash"]
+        upd = client.put("/api/accounts/Assets:Bank:Savings",
+                         json={"metadata": {"interest_account": "Income:Other"}})
+        assert upd.status_code == 200, upd.text
+        before = _ledger(client).read_bytes()
+        resp = _post(client, expected_preview_hash=h, **self.KW)
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "PREVIEW_STALE"
+        assert _ledger(client).read_bytes() == before
+
+
+def test_first_deposit_from_a_liabilities_account(client):
+    resp = _post(client, first_deposit={"from_account": "Liabilities:Card", "amount": "500.00"})
+    assert resp.status_code == 200, resp.text
+    t = next(e for e in _entries(client) if isinstance(e, data.Transaction)
+             and any(p.account == "Assets:Bank:CD-2026" for p in e.postings))
+    assert sorted((p.account, str(p.units)) for p in t.postings) == [
+        ("Assets:Bank:CD-2026", "500.00 USD"), ("Liabilities:Card", "-500.00 USD"),
+    ]
+
+
+def test_multi_file_ledger_writes_to_the_root_and_leaves_included_files(tmp_path):
+    """New entries go to the root file (as Accounts → create does); an included
+    file keeps exactly its own entries (every write re-prints all files, so its
+    formatting may change)."""
+    from app.main import create_app
+    root = _make_root(tmp_path)
+    ledger = root / "data" / "ledgers" / "main.beancount"
+    accounts_file = root / "data" / "ledgers" / "accounts.beancount"
+    accounts_file.write_text(_LEDGER.replace('option "operating_currency" "USD"\n', ""))
+    ledger.write_text('option "operating_currency" "USD"\ninclude "accounts.beancount"\n')
+    def own_entries(path):
+        from beancount.parser import parser
+        entries, _e, _o = parser.parse_file(str(path))
+        return sorted(f"{type(e).__name__} {e.date} {getattr(e, 'account', getattr(e, 'narration', ''))}"
+                      for e in entries)
+    included_before = own_entries(accounts_file)
+    with TestClient(create_app(_build_config(root))) as c:
+        resp = c.post("/api/investments/open-deposit", json={
+            **CD, "first_deposit": {"from_account": "Assets:Bank:Savings", "amount": "100.00"},
+        })
+        assert resp.status_code == 200, resp.text
+    root_text = ledger.read_text()
+    assert "open Assets:Bank:CD-2026" in root_text
+    assert "Opening deposit to Assets:Bank:CD-2026" in root_text
+    assert own_entries(accounts_file) == included_before
+    assert "CD-2026" not in accounts_file.read_text()

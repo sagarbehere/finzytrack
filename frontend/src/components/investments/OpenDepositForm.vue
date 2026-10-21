@@ -128,10 +128,13 @@
     <!-- Preview -->
     <div class="mt-6">
       <h3 class="text-sm font-medium text-gray-900 dark:text-white">Will be written to your ledger</h3>
+      <p v-if="stale && preview && !previewError" role="alert" class="mt-2 text-sm text-yellow-700 dark:text-yellow-400">
+        Your accounts changed since the preview. Check the new preview below, then create again.
+      </p>
       <p v-if="missing.length > 0" class="mt-2 text-sm text-gray-500 dark:text-gray-400">
         Enter {{ missing.join(', ') }} to see what will be written.
       </p>
-      <p v-else-if="previewError" class="mt-2 text-sm text-red-600 dark:text-red-400">{{ previewError }}</p>
+      <p v-else-if="previewError" role="alert" class="mt-2 text-sm text-red-600 dark:text-red-400">{{ previewError }}</p>
       <pre
         v-else-if="preview"
         class="mt-2 overflow-x-auto rounded-md bg-gray-50 p-4 font-mono text-xs/5 text-gray-800 outline-1 -outline-offset-1 outline-gray-200 dark:bg-white/5 dark:text-gray-200 dark:outline-white/10"
@@ -163,7 +166,7 @@
  */
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import AccountDropdown from '@/components/common/AccountDropdown.vue'
-import { InvestmentsService } from '@/services/generated-api'
+import { ApiError, InvestmentsService } from '@/services/generated-api'
 import { useAccounts } from '@/composables/useAccounts'
 import { useToast } from '@/composables/useNotifications'
 import { errorHandler } from '@/utils/ErrorHandler'
@@ -234,17 +237,24 @@ const preview = ref('')
 const previewError = ref('')
 const warnings = ref<string[]>([])
 const previewFor = ref('')   // the request the current preview belongs to
+const previewHash = ref('')  // its fingerprint, sent with Create
 let timer: ReturnType<typeof setTimeout> | undefined
 let seq = 0
 
 const requestKey = computed(() => JSON.stringify(buildOpenDepositRequest(form, true)))
 
-watch(requestKey, key => {
-  clearTimeout(timer)
+function clearPreview() {
   preview.value = ''
   previewError.value = ''
   warnings.value = []
   previewFor.value = ''
+  previewHash.value = ''
+}
+
+watch(requestKey, key => {
+  clearTimeout(timer)
+  seq++   // a reply for the previous values is now stale
+  clearPreview()
   if (missing.value.length > 0) return
   timer = setTimeout(() => runPreview(key), 400)
 }, { immediate: true })
@@ -258,6 +268,8 @@ async function runPreview(key: string) {
     // The ledger printer separates entries by two blank lines; one reads better here.
     preview.value = (resp.data?.preview ?? '').replace(/\n{3,}/g, '\n\n').trim()
     warnings.value = resp.data?.warnings ?? []
+    previewError.value = ''
+    previewHash.value = resp.data?.preview_hash ?? ''
     previewFor.value = key
   } catch (err) {
     if (id !== seq) return
@@ -271,24 +283,46 @@ async function runPreview(key: string) {
 const creating = ref(false)
 // Only what was previewed can be created.
 const canCreate = computed(() =>
-  !creating.value && previewFor.value !== '' && previewFor.value === requestKey.value,
+  !creating.value && !previewError.value && previewHash.value !== ''
+  && previewFor.value !== '' && previewFor.value === requestKey.value,
 )
+
+function isStale(err: unknown): boolean {
+  return err instanceof ApiError && err.body?.error?.code === 'PREVIEW_STALE'
+}
 
 async function create() {
   if (!canCreate.value) return
   creating.value = true
   try {
-    const resp = await InvestmentsService.openDeposit(buildOpenDepositRequest(form, false))
+    const resp = await InvestmentsService.openDeposit({
+      ...buildOpenDepositRequest(form, false),
+      expected_preview_hash: previewHash.value,
+    })
     const created = resp.data?.accounts_created ?? []
-    showSuccessToast('Created', `Opened ${created.join(' and ')}.`)
+    const note = (resp.data?.warnings ?? []).join(' ')
+    showSuccessToast('Created', `Opened ${created.join(' and ')}.${note ? ` ${note}` : ''}`)
     await fetchAccounts(true)   // the new accounts appear in the other forms at once
     emit('created', created)
     Object.assign(form, emptyForm())
     incomeEdited.value = false
   } catch (err) {
-    errorHandler.display(err)
+    if (isStale(err)) {
+      // Something changed since the preview: show the new one before anything is written.
+      const key = requestKey.value
+      seq++
+      clearPreview()
+      await runPreview(key)
+      stale.value = !previewError.value
+    } else {
+      errorHandler.display(err)
+    }
   } finally {
     creating.value = false
   }
 }
+
+// Shown above a refreshed preview after a stale Create; cleared by any edit.
+const stale = ref(false)
+watch(requestKey, () => { stale.value = false })
 </script>

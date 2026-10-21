@@ -36,6 +36,10 @@ export type OpenDepositRequest = {
      * Return the preview only; write nothing
      */
     dry_run?: boolean;
+    /**
+     * preview_hash of the preview the user saw. When given and the write would differ, it fails with 409 PREVIEW_STALE and writes nothing.
+     */
+    expected_preview_hash?: (string | null);
 };
 export namespace OpenDepositRequest {
     /**

@@ -109,7 +109,7 @@ class SellEvent(InvestmentEventBase):
 class CdMaturityEvent(InvestmentEventBase):
     """CD / term-deposit matures: principal (+ any final interest) paid to a destination."""
     type: Literal["cd_maturity"]
-    cd_account: str = Field(..., description="The CD/term-deposit account (Assets, asset-class: cd)")
+    cd_account: str = Field(..., description="The CD/term-deposit account (Assets, account-type: cd)")
     principal: Decimal = Field(..., description="Principal returned (> 0)")
     interest: Decimal = Field(default=Decimal("0"), description="Final interest paid at maturity (>= 0)")
     destination_account: str = Field(..., description="Account receiving principal + interest (checking/savings)")
@@ -270,10 +270,15 @@ class OpenDepositRequest(BaseModel):
     income_account: Optional[DepositIncomeAccount] = None
     first_deposit: Optional[DepositFirstDeposit] = None
     dry_run: bool = Field(default=False, description="Return the preview only; write nothing")
+    expected_preview_hash: Optional[str] = Field(
+        default=None,
+        description="preview_hash of the preview the user saw. When given and the write would differ, it fails with 409 PREVIEW_STALE and writes nothing.",
+    )
 
 
 class OpenDepositData(BaseModel):
-    preview: str = Field(..., description="The Beancount text that is (or would be) written")
+    preview: str = Field(..., description="The Beancount text that is (or would be) written, apart from the transfer's id, content_hash and source_account lines")
+    preview_hash: str = Field(..., description="Fingerprint of the preview and warnings; send it back as expected_preview_hash")
     created: bool = Field(..., description="False for a dry run")
     accounts_created: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list, description="Things that won't block, e.g. an existing income account not tagged interest")

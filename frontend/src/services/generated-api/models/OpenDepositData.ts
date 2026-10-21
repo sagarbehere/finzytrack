@@ -4,9 +4,13 @@
 /* eslint-disable */
 export type OpenDepositData = {
     /**
-     * The Beancount text that is (or would be) written
+     * The Beancount text that is (or would be) written, apart from the transfer's id, content_hash and source_account lines
      */
     preview: string;
+    /**
+     * Fingerprint of the preview and warnings; send it back as expected_preview_hash
+     */
+    preview_hash: string;
     /**
      * False for a dry run
      */

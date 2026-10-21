@@ -73,8 +73,10 @@ export class InvestmentsService {
      * Open a savings, CD or bond account, optionally with its own interest income
      * account (linked by `interest_account`) and its first deposit, as one write.
      *
-     * With `dry_run`, nothing is written: the response is the exact text that would
-     * be written, checked against the current accounts.
+     * With `dry_run`, nothing is written: the response is the text that would be
+     * written (apart from the transfer's IDs), checked against the current accounts,
+     * and its `preview_hash`. Send that back as `expected_preview_hash` so the write
+     * refuses (409 PREVIEW_STALE) if it would write anything different.
      * @param requestBody
      * @returns ApiResponse_OpenDepositData_ Successful Response
      * @throws ApiError

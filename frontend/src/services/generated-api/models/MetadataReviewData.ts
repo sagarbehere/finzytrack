@@ -6,7 +6,7 @@ import type { MetadataReviewItem } from './MetadataReviewItem';
 export type MetadataReviewData = {
     items: Array<MetadataReviewItem>;
     /**
-     * Per scope: open, in-use items whose main key (asset-class or income-type) is not set. Drives the dashboard banners.
+     * Per scope: open, in-use items whose main key (asset-class for commodities, account-type for accounts, income-type for income accounts) is not set. Drives the dashboard banners.
      */
     summary: Record<string, number>;
     /**
