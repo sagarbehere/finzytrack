@@ -20,18 +20,28 @@
           {{ dashboard.description }}
         </p>
       </div>
-      <!-- Right-side controls: the price-update action (investment dashboards
-           only) sits alongside the dashboard-level parameters. -->
+      <!-- Right-side controls: the price-update action (dashboards that declare
+           it, and only while something held needs prices) with the date of the
+           prices in use, alongside the dashboard-level parameters. -->
       <div class="flex flex-wrap items-start gap-x-4 gap-y-3">
-        <button
-          v-if="showUpdatePrices"
-          type="button"
-          @click="onUpdatePrices"
-          :disabled="updatingPrices"
-          class="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
-        >
-          {{ updatingPrices ? 'Updating…' : 'Update prices' }}
-        </button>
+        <div v-if="showUpdatePrices" class="flex flex-col items-end gap-1">
+          <button
+            type="button"
+            @click="onUpdatePrices"
+            :disabled="updatingPrices"
+            class="rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+          >
+            {{ updatingPrices ? 'Updating…' : 'Update prices' }}
+          </button>
+          <p class="text-xs text-gray-500 dark:text-gray-400" data-test="prices-as-of">
+            {{ freshness!.asOf ? `Prices as of ${formatShortDate(freshness!.asOf, priceToday)}` : 'No prices yet' }}<template v-if="freshness!.outOfDate > 0">
+              ·
+              <RouterLink
+                :to="{ path: '/investments', query: { tab: 'prices' } }"
+                class="font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+              >{{ freshness!.outOfDate }} out of date</RouterLink></template>
+          </p>
+        </div>
         <!-- Dashboard-level parameters -->
         <RecipeParameters
           v-if="dashboard.parameters && dashboard.parameters.length > 0"
@@ -104,7 +114,9 @@ import { stepRefs } from '@/recipes/templating'
 import RecipeWidget from './RecipeWidget.vue'
 import RecipeParameters from './RecipeParameters.vue'
 import MetadataHintBanner from './MetadataHintBanner.vue'
+import { RouterLink } from 'vue-router'
 import { PricesService } from '@/services/generated-api'
+import { formatShortDate, priceFreshness, type PriceFreshness } from '@/utils/prices'
 import { errorHandler } from '@/utils/ErrorHandler'
 import { useNotifications } from '@/composables/useNotifications'
 
@@ -131,8 +143,30 @@ const metadataHint = computed(() => (props.dashboard as JsonDashboardRecipe).met
  * (dev-docs/dashboard-actions.md). `update-prices` is the user-facing trigger
  * of the manual price fetch (dev-docs/valuations.md §4).
  */
-const showUpdatePrices = computed(() =>
+const declaresUpdatePrices = computed(() =>
   ((props.dashboard as JsonDashboardRecipe).actions ?? []).includes('update-prices'),
+)
+
+// Which held holdings get prices, and how fresh they are — from the same overview
+// as Investments → Prices. The action shows only once that has loaded and finds
+// something to price, so a ledger with no holdings never offers it.
+const freshness = ref<PriceFreshness | null>(null)
+const priceToday = ref('')
+
+async function loadPriceFreshness() {
+  try {
+    const resp = await PricesService.getPriceOverview()
+    freshness.value = priceFreshness(resp.data?.rows ?? [])
+    priceToday.value = resp.data?.today ?? ''
+  } catch (err) {
+    errorHandler.display(err)
+  }
+}
+
+watch(declaresUpdatePrices, (declared) => { if (declared) loadPriceFreshness() }, { immediate: true })
+
+const showUpdatePrices = computed(
+  () => declaresUpdatePrices.value && (freshness.value?.priceable ?? 0) > 0,
 )
 
 const updatingPrices = ref(false)
@@ -162,6 +196,13 @@ async function onUpdatePrices() {
         type: failed.length ? 'warning' : 'success',
         title: 'Prices updated',
         message: `${changes.charAt(0).toUpperCase()}${changes.slice(1)}${asOf ? `, as of ${asOf}` : ''}.${failedTail}`,
+      })
+    } else if (failed.length === 0 && (resp.data?.symbols ?? []).length === 0) {
+      // Nothing was fetched and nothing failed: no holding needed a new price.
+      addNotification({
+        type: 'success',
+        title: 'Prices up to date',
+        message: 'No holding needed a new price.',
       })
     } else if (failed.length || total === 0) {
       // Nothing added and something failed (or the sidecar is still empty) → the

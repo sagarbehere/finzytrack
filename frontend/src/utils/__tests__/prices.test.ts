@@ -1,7 +1,7 @@
 // Prices tab helpers: display, input checks, and the PUT /api/prices batches.
 // See dev-docs/investment-view.md §10.2.
 import { describe, it, expect } from 'vitest'
-import type { PricePoint } from '@/services/generated-api'
+import type { PriceOverviewRow, PricePoint } from '@/services/generated-api'
 import {
   addRequest,
   cadenceLabel,
@@ -10,6 +10,7 @@ import {
   formatPrice,
   formatShortDate,
   isCommodityCode,
+  priceFreshness,
   removeRequest,
   validatePriceInput,
   withReplace,
@@ -102,5 +103,35 @@ describe('batches', () => {
     expect(removeRequest(point('2026-10-14', '400.00'), 'VOO')).toEqual({
       remove: [{ date: '2026-10-14', commodity: 'VOO', quote_currency: 'USD' }],
     })
+  })
+})
+
+
+function overviewRow(over: Record<string, unknown>): PriceOverviewRow {
+  return {
+    commodity: 'VOO', quote_currency: 'USD', cadence: 'daily', held: true,
+    latest: null, count: 0, out_of_date: false, not_fetched_reason: null, ...over,
+  } as unknown as PriceOverviewRow
+}
+const latest = (date: string) => ({ date, number: '1', source: 'sidecar' }) as PriceOverviewRow['latest']
+
+describe('priceFreshness', () => {
+  it('counts only held holdings the fetcher prices', () => {
+    const f = priceFreshness([
+      overviewRow({ commodity: 'VOO', latest: latest('2026-10-15') }),
+      overviewRow({ commodity: 'BND', cadence: 'monthly', latest: latest('2026-09-30'), out_of_date: true }),
+      overviewRow({ commodity: 'OLD', held: false, latest: latest('2026-10-20') }),               // sold out
+      overviewRow({ commodity: 'VMFXX', cadence: 'never', not_fetched_reason: 'Never fetched (money market)' }),
+      overviewRow({ commodity: 'IB', cadence: 'computed', not_fetched_reason: 'Needs an issue month' }),
+    ])
+    expect(f).toEqual({ priceable: 2, asOf: '2026-10-15', outOfDate: 1 })
+  })
+
+  it('has nothing to price for a ledger with no holdings', () => {
+    expect(priceFreshness([])).toEqual({ priceable: 0, asOf: null, outOfDate: 0 })
+  })
+
+  it('reports no date while held holdings have no price yet', () => {
+    expect(priceFreshness([overviewRow({ out_of_date: true })])).toEqual({ priceable: 1, asOf: null, outOfDate: 1 })
   })
 })

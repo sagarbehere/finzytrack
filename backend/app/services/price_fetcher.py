@@ -33,6 +33,7 @@ from beancount.core import data
 from beancount.core.amount import Amount
 
 from app.core.constants import COMMODITY_CODE_PATTERN
+from app.core.ledger_loader import load_ledger_checked, sidecar_path
 from app.services.price_cadence import (
     CADENCE_COMPUTED,
     CADENCE_MONTHLY,
@@ -191,6 +192,14 @@ class PriceFetcher:
             logger.warning("get_latest_price failed for %s: %s", symbol, e)
         return [], (last_err or "provider returned no data")
 
+    def _stored_prices(self) -> list[data.Price]:
+        """The prices in the price file now (none when it doesn't exist)."""
+        path = sidecar_path(self._lm.ledger_file)
+        if not path.exists():
+            return []
+        entries, _errors, _options = load_ledger_checked(str(path))
+        return [e for e in entries if isinstance(e, data.Price)]
+
     def fetch_and_persist(self) -> dict:
         """Fetch and persist prices for every fetchable holding. Returns
         ``{added, total, as_of, symbols, skipped, failed}`` — ``failed`` lists
@@ -300,7 +309,11 @@ class PriceFetcher:
             logger.warning("Price fetch got no data for: %s", "; ".join(failed))
 
         if not new_prices:
-            return {"added": 0, "total": 0, "as_of": None,
+            # Nothing to write: report the price file as it stands, so "no new
+            # prices" isn't mistaken for "no prices at all".
+            stored = self._stored_prices()
+            as_of = max((p.date for p in stored), default=None)
+            return {"added": 0, "total": len(stored), "as_of": as_of.isoformat() if as_of else None,
                     "symbols": [], "skipped": skipped, "failed": failed}
 
         result = self._lm.write_price_directives(new_prices, remove_keys)

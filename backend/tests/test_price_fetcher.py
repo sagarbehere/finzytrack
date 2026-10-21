@@ -223,6 +223,8 @@ def test_sold_out_holding_does_not_refetch_its_last_price(tmp_path):
     res = PriceFetcher(reader, lm, source=source, today=date(2021, 6, 1)).fetch_and_persist()
     assert source.calls == []                 # window (Mar 2 → Mar 1) is empty
     assert res["added"] == 0
+    # Nothing fetched: the result describes the price file as it stands.
+    assert (res["symbols"], res["failed"], res["total"], res["as_of"]) == ([], [], 1, "2021-03-01")
     assert [(r["date"], r["quote_number"]) for r in reader.get_prices(currency="OLD")] == [
         ("2021-03-01", "110.00"),
     ]
@@ -456,3 +458,19 @@ def test_a_holding_quoted_in_another_currency_is_not_refetched_from_first_purcha
     assert [(r["date"], r["quote_currency"]) for r in reader.get_prices(currency="VOO")] == [
         ("2021-01-20", "EUR"), ("2021-02-01", "EUR"), ("2021-02-03", "EUR"),
     ]
+
+
+def test_a_ledger_with_no_holdings_fetches_nothing(tmp_path):
+    ledger, _, reader, lm = _wire(tmp_path, """\
+option "operating_currency" "USD"
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Income:Salary USD
+2021-01-10 * "pay"
+  Assets:Cash  100.00 USD
+  Income:Salary  -100.00 USD
+""")
+    source = FakeSource({})
+    res = PriceFetcher(reader, lm, source=source, today=date(2021, 2, 1)).fetch_and_persist()
+    assert source.calls == []
+    assert res == {"added": 0, "total": 0, "as_of": None, "symbols": [], "skipped": [], "failed": []}
+    assert not sidecar_path(ledger).exists()

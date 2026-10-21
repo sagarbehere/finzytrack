@@ -136,3 +136,25 @@ export function editRequest(
 export function removeRequest(original: PricePoint, commodity: string): PriceEditRequest {
   return { remove: [{ date: original.date, commodity, quote_currency: original.quote_currency }] }
 }
+
+export interface PriceFreshness {
+  /** Held holdings the fetcher prices (by cadence or computed). */
+  priceable: number
+  /** Newest latest-price date among them (ISO), or null when none has a price. */
+  asOf: string | null
+  /** How many of them need a newer price (per their cadence). */
+  outOfDate: number
+}
+
+/** The price state a dashboard with the Update prices action shows beside it.
+ * Only held holdings the fetcher actually prices count: currencies, money-market
+ * funds, sold-out holdings and prices typed in another currency don't. */
+export function priceFreshness(rows: readonly PriceOverviewRow[]): PriceFreshness {
+  const fetched = rows.filter(r => r.held && r.cadence !== 'never' && !r.not_fetched_reason)
+  const dates = fetched.map(r => r.latest?.date).filter((d): d is string => !!d).sort()
+  return {
+    priceable: fetched.length,
+    asOf: dates.length ? dates[dates.length - 1] : null,
+    outOfDate: fetched.filter(r => r.out_of_date).length,
+  }
+}

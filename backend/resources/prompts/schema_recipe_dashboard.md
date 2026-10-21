@@ -489,7 +489,7 @@ Type: `'bar' | 'line' | 'pie' | 'area' | 'scatter' | 'treemap' | 'funnel' | 'gau
 | `args` | `object` | — | Scalar arguments for the compute function. Values may be literals or {{params.x}} / {{steps.x}} / {{dashboard.steps.x}} template strings. Pass only small scalars — bulk data is read server-side by the function, not shuttled through the client. |
 
 #### `DashboardAction`
-A built-in dashboard action. 'update-prices': an Update prices button that fetches new prices for your holdings (the same as Investments → Prices) and then refreshes the dashboard. Use it on dashboards that show market values.
+A built-in dashboard action. 'update-prices': an Update prices button that fetches new prices for your holdings (the same as Investments → Prices) and then refreshes the dashboard. Below it, the date of the prices in use and how many holdings need a newer price. It appears only while you hold something whose prices are fetched, so it is safe on dashboards everyone uses. Use it on dashboards that show market values.
 
 Type: `'update-prices'`
 

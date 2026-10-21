@@ -3,6 +3,7 @@
   "id": "financial-overview",
   "title": "Financial Overview",
   "description": "Overview of your financial status with net worth, assets, liabilities, and breakdowns",
+  "actions": ["update-prices"],
   "layout": {
     "columns": 12,
     "gap": "1.5rem",

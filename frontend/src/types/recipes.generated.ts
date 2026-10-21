@@ -9,7 +9,7 @@ export type FinzyTrackRecipe = JsonDashboardRecipe;
  */
 export type RecipeId = string;
 /**
- * A built-in dashboard action. 'update-prices': an Update prices button that fetches new prices for your holdings (the same as Investments → Prices) and then refreshes the dashboard. Use it on dashboards that show market values.
+ * A built-in dashboard action. 'update-prices': an Update prices button that fetches new prices for your holdings (the same as Investments → Prices) and then refreshes the dashboard. Below it, the date of the prices in use and how many holdings need a newer price. It appears only while you hold something whose prices are fetched, so it is safe on dashboards everyone uses. Use it on dashboards that show market values.
  */
 export type DashboardAction = "update-prices";
 /**
