@@ -9,7 +9,15 @@
       </div>
       <div class="ml-3 flex-1 md:flex md:justify-between">
         <p class="text-sm text-blue-700 dark:text-blue-300">{{ hint.text }}</p>
-        <p class="mt-3 text-sm md:mt-0 md:ml-6">
+        <p class="mt-3 flex gap-x-4 text-sm md:mt-0 md:ml-6">
+          <a
+            :href="docsUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="whitespace-nowrap text-blue-700 underline hover:text-blue-600 dark:text-blue-300 dark:hover:text-blue-200"
+          >
+            Learn more
+          </a>
           <RouterLink
             :to="{ path: '/investments', query: { tab: 'metadata' } }"
             class="font-medium whitespace-nowrap text-blue-700 hover:text-blue-600 dark:text-blue-300 dark:hover:text-blue-200"
@@ -42,7 +50,7 @@
  * stays dismissed per dashboard in this browser (localStorage). Never a gate —
  * the dashboard is complete without it. See dev-docs/investment-view.md §10.3 (Q8).
  */
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { InformationCircleIcon, XMarkIcon } from '@heroicons/vue/20/solid'
 import { MetadataService } from '@/services/generated-api'
@@ -55,6 +63,18 @@ const props = defineProps<{
 }>()
 
 const visible = ref(false)
+
+// The Metadata reference section for the hint's scope (anchors of the docs site's headings).
+const DOCS = 'https://docs.finzytrack.com/reference/metadata/'
+const SECTION: Record<string, string> = {
+  'commodity': 'on-a-commodity',
+  'account': 'on-an-assets-accounts-open',
+  'income-account': 'on-an-income-accounts-open',
+}
+const docsUrl = computed(() => {
+  const section = SECTION[props.hint.scope]
+  return section ? `${DOCS}#${section}` : DOCS
+})
 
 function dismissedIds(): string[] {
   return getStorageAdapter().get<string[]>(STORAGE_KEYS.DISMISSED_METADATA_HINTS) ?? []

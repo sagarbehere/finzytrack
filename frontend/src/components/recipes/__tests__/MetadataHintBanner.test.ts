@@ -31,6 +31,22 @@ describe('MetadataHintBanner', () => {
     getMetadataReview.mockReset()
   })
 
+  it.each([
+    ['income-account', 'https://docs.finzytrack.com/reference/metadata/#on-an-income-accounts-open'],
+    ['account', 'https://docs.finzytrack.com/reference/metadata/#on-an-assets-accounts-open'],
+    ['commodity', 'https://docs.finzytrack.com/reference/metadata/#on-a-commodity'],
+  ] as const)('links "Learn more" to the Metadata reference section for %s', async (scope, url) => {
+    getMetadataReview.mockResolvedValue(review({ commodity: 1, account: 1, 'income-account': 1 }))
+    const wrapper = mount(MetadataHintBanner, {
+      props: { dashboardId: `d-${scope}`, hint: { scope, text: 'Offer' } },
+      global: { stubs: { RouterLink: RouterLinkStub } },
+    })
+    await flushPromises()
+    const link = wrapper.findAll('a').find(a => a.text() === 'Learn more')!
+    expect(link.attributes('href')).toBe(url)
+    expect(link.attributes('target')).toBe('_blank')
+  })
+
   it('shows the offer when its scope has unset items, linking to the Setup tab', async () => {
     getMetadataReview.mockResolvedValue(review({ commodity: 0, account: 3, 'income-account': 0 }))
     const wrapper = mountBanner()
