@@ -262,6 +262,7 @@
               @toggle="toggleFund(f)"
               @code="(code: string) => setCode(f, code)"
               @hand-entries="(choice: 'replace' | 'after_latest') => (mapping.hand_entries[f.security_key] = choice)"
+              @exclude="(on: boolean) => setExcluded(f, on)"
             >
               <StatementFundDetail
                 :fund="f"
@@ -291,6 +292,7 @@
                 @toggle="toggleFund(f)"
                 @code="(code: string) => setCode(f, code)"
                 @hand-entries="(choice: 'replace' | 'after_latest') => (mapping.hand_entries[f.security_key] = choice)"
+              @exclude="(on: boolean) => setExcluded(f, on)"
               >
                 <StatementFundDetail
                   :fund="f"
@@ -444,10 +446,11 @@
   )
   const stats = computed(() => {
     const s = plan.value!.summary
-    const reconciled = plan.value!.funds.filter(f => f.reconciled).length
+    const included = plan.value!.funds.filter(f => !f.excluded)
+    const reconciled = included.filter(f => f.reconciled).length
     return [
       { label: 'Transactions to write', value: s.transactions.toLocaleString('en-IN') },
-      { label: 'Funds matching the statement', value: `${reconciled} of ${s.funds}` },
+      { label: 'Funds matching the statement', value: `${reconciled} of ${included.length}` },
       { label: 'Matched / other account', value: `${s.matched} / ${s.fallback}` },
       { label: 'Already in the ledger', value: s.already_imported.toLocaleString('en-IN') },
     ]
@@ -471,6 +474,12 @@
   function toggleFund(f: FundPlan) {
     openFund.value = openFund.value === fundKey(f) ? null : fundKey(f)
   }
+  /** Leave a fund out of the import (e.g. someone else's) or bring it back. */
+  function setExcluded(f: FundPlan, on: boolean) {
+    const others = mapping.excluded_funds.filter(k => !(k.folio === f.folio && k.security_key === f.security_key))
+    mapping.excluded_funds = on ? [...others, { folio: f.folio, security_key: f.security_key }] : others
+  }
+
   function setCode(f: FundPlan, code: string) {
     const c = code.trim().toUpperCase()
     if (!c || c === f.commodity) return

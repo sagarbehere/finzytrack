@@ -772,3 +772,51 @@ def test_row_messages_say_which_fund_date_and_amount():
     r, *_ = plan_of(s)
     w = next(w for w in r.data.warnings if w.row_id == out)
     assert w.message.startswith("Fund Alpha, 2022-06-29, -500.00: ")
+
+
+# ── Funds left out (e.g. a spouse's) ─────────────────────────────────────────
+
+def _with_spouse_fund():
+    s = Stmt()
+    mine = s.fund("MINE", name="My Fund", institution="DSP Mutual Fund", folio="F1", advisor="ARN-1")
+    hers = s.fund("HERS", name="Her Fund", institution="DSP Mutual Fund", folio="F9", advisor="ARN-9")
+    s.row(mine, date(2020, 1, 1), T.KIND_PURCHASE, amount="1000.00", units="100.000", nav="10")
+    s.row(hers, date(2020, 1, 1), T.KIND_PURCHASE, amount="500.00", units="50.000", nav="10")
+    s.row(hers, date(2020, 1, 1), T.KIND_STAMP_DUTY_TAX, amount="0.03")
+    return s, mine, hers
+
+
+def test_a_fund_left_out_writes_nothing_and_needs_no_account():
+    s, _mine, _hers = _with_spouse_fund()
+    r, b, m = plan_of(s, excluded_funds=[{"folio": "F9", "security_key": "HERS"}])
+    ok(r, b, m)  # ARN-9 has no holding account, and that's fine: its only fund is left out
+    assert [t.narration for t in r.data.transactions] == [f"Buy {fund(r, 'MINE').commodity}"]
+    hers = fund(r, "HERS")
+    assert (hers.excluded, hers.reconciled, hers.counts) == (True, True, {"excluded": 2})
+    assert [b.commodity for b in r.data.balances] == [fund(r, "MINE").commodity]
+    assert [c.security_key for c in r.data.commodities] == ["MINE"]
+    assert [p.commodity for p in r.data.prices] == [fund(r, "MINE").commodity]
+    assert "NOT_RECONCILED" not in [w.code for w in r.data.warnings]
+
+
+def test_including_the_fund_again_needs_its_account():
+    s, _mine, _hers = _with_spouse_fund()
+    r, *_ = plan_of(s)
+    assert [i.code for i in r.data.blocking] == ["ACCOUNT_REQUIRED"]
+
+
+def test_a_switch_with_a_fund_left_out_keeps_the_imported_half_on_the_cash_side():
+    s = Stmt()
+    mine = s.fund("MINE", name="My Fund", folio="F1")
+    hers = s.fund("HERS", name="Her Fund", folio="F1")
+    s.row(mine, date(2020, 1, 1), T.KIND_PURCHASE, amount="1000.00", units="100.000", nav="10")
+    s.row(mine, date(2021, 1, 1), T.KIND_SWITCH_OUT, amount="-500.00", units="-50.000", nav="10")
+    s.row(hers, date(2021, 1, 1), T.KIND_SWITCH_IN, amount="500.00", units="50.000", nav="10")
+    r, b, m = plan_of(s, excluded_funds=[{"folio": "F1", "security_key": "HERS"}])
+    ok(r, b, m)
+    assert [t.kind for t in r.data.transactions] == ["buy", "sell"]
+    assert legs(txn(r, "sell"))[-2][0] == "Equity:Funding"
+    codes = [w.code for w in r.data.warnings]
+    assert codes.count("SWITCH_WITH_EXCLUDED_FUND") == 1 and "UNPAIRED_SWITCH" not in codes
+    assert "Her Fund" in next(w.message for w in r.data.warnings if w.code == "SWITCH_WITH_EXCLUDED_FUND")
+    assert fund(r, "MINE").reconciled is True

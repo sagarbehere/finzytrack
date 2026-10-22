@@ -291,3 +291,19 @@ def test_ai_import_hands_a_cas_over_without_calling_the_model(client, monkeypatc
     res = client.post("/api/import/llm-parse", files={"file": ("cas.pdf", b"%PDF-1.4", "application/pdf")},
                       data={"account": "Assets:Bank", "currency": "INR", "pdf_password": "pw"})
     assert (res.status_code, res.json()["error"]["code"]) == (422, ec.STATEMENT_IS_CAS)
+
+
+def test_a_fund_left_out_never_reaches_the_ledger(client):
+    mapping = {**MAPPING, "excluded_funds": [{"folio": "F1", "security_key": "B"}]}
+    token = _parse(client).json()["data"]["token"]
+    prev = _preview(client, token, mapping).json()["data"]
+    assert next(f for f in prev["funds"] if f["security_key"] == "B")["excluded"] is True
+    res = _commit(client, token, prev["preview_hash"], mapping).json()["data"]
+    entries = _entries(client._ledger)
+    b_code = next(f["commodity"] for f in prev["funds"] if f["security_key"] == "B")
+    touched = {p.units.currency for t in _txns(entries) for p in t.postings if p.units}
+    assert b_code not in touched
+    assert b_code not in {e.currency for e in entries if isinstance(e, data.Commodity)}
+    assert [b.amount.currency for b in entries if isinstance(b, data.Balance)] == [
+        next(f["commodity"] for f in prev["funds"] if f["security_key"] == "A")]
+    assert res["balances"] == 1

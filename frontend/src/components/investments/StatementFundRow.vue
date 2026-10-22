@@ -2,17 +2,24 @@
   <li class="px-4 py-4">
     <div class="flex flex-wrap items-start justify-between gap-4">
       <div class="min-w-0 flex-1">
-        <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ fund.name }}</p>
+        <p :class="['text-sm font-semibold', fund.excluded ? 'text-gray-500 line-through dark:text-gray-400' : 'text-gray-900 dark:text-white']">
+          {{ fund.name }}
+        </p>
         <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
           Folio {{ fund.folio }} · {{ fund.institution }}<span v-if="fund.investor"> · {{ fund.investor }}</span>
           <span v-if="fund.amfi"> · AMFI {{ fund.amfi }}</span>
         </p>
-        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        <p v-if="fund.excluded" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          Not imported: no transactions, balance check or price are written for this fund.
+        </p>
+        <p v-else class="mt-1 text-xs text-gray-500 dark:text-gray-400">
           {{ countsText }}<span v-if="fund.matched || fund.fallback"> · cash: {{ fund.matched }} matched, {{ fund.fallback }} other account</span>
         </p>
       </div>
 
       <div class="flex shrink-0 flex-wrap items-center gap-3">
+        <span v-if="fund.excluded" :class="[badgeBase, badge.gray]">Not imported</span>
+        <template v-else>
         <div>
           <label :for="`code-${id}`" class="sr-only">Commodity code</label>
           <input
@@ -34,6 +41,14 @@
           <ExclamationTriangleIcon class="size-4" aria-hidden="true" />
           {{ fund.ledger_units }} units, statement {{ fund.close_units }}
         </span>
+        </template>
+        <button
+          type="button"
+          class="text-sm font-medium text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300"
+          @click="emit('exclude', !fund.excluded)"
+        >
+          {{ fund.excluded ? 'Import this fund' : "Don't import" }}
+        </button>
         <button
           type="button"
           class="text-sm font-medium text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300"
@@ -46,7 +61,7 @@
     </div>
 
     <!-- Hand-entered holdings of this fund (§8): never both silently -->
-    <div v-if="fund.hand_entries" class="mt-3 rounded-md bg-yellow-50 p-3 dark:bg-yellow-500/10 dark:outline dark:outline-yellow-500/15">
+    <div v-if="fund.hand_entries && !fund.excluded" class="mt-3 rounded-md bg-yellow-50 p-3 dark:bg-yellow-500/10 dark:outline dark:outline-yellow-500/15">
       <p class="text-sm text-yellow-800 dark:text-yellow-100">
         Your ledger already has {{ fund.hand_entries }} transaction{{ fund.hand_entries === 1 ? '' : 's' }} in
         {{ fund.commodity }} that you entered yourself (latest {{ fund.hand_entries_latest }}).
@@ -85,6 +100,7 @@
     toggle: []
     code: [code: string]
     handEntries: [choice: 'replace' | 'after_latest']
+    exclude: [on: boolean]
   }>()
 
   const id = computed(() => `${props.fund.folio}-${props.fund.security_key}`.replace(/[^A-Za-z0-9-]/g, '-'))

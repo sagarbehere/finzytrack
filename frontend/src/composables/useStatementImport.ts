@@ -36,7 +36,7 @@ const codeOf = (err: unknown) => (err instanceof ApiError ? err.body?.error?.cod
 type AccountRole = 'cash_fallback_account' | 'cash_matching_account' | 'cash_before_cutoff_account'
   | 'dividend_account' | 'taxes_account' | 'gains_account'
 type UiMapping = Omit<StatementMapping, AccountRole> & Record<AccountRole, string>
-  & Required<Pick<StatementMapping, 'holding_accounts' | 'commodity_codes' | 'hand_entries'>>
+  & Required<Pick<StatementMapping, 'holding_accounts' | 'commodity_codes' | 'hand_entries' | 'excluded_funds'>>
 
 function emptyMapping(): UiMapping {
   return {
@@ -54,6 +54,7 @@ function emptyMapping(): UiMapping {
     hand_entries: {},
     target_file: null,
     tag_dividend_account: false,
+    excluded_funds: [],
   }
 }
 

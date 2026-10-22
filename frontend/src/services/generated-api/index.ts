@@ -176,6 +176,7 @@ export type { ExportData } from './models/ExportData';
 export type { ExportStatusData } from './models/ExportStatusData';
 export type { FetchRequest } from './models/FetchRequest';
 export { FileEntry } from './models/FileEntry';
+export type { FundKey } from './models/FundKey';
 export { FundPlan } from './models/FundPlan';
 export type { GenerateQueryData } from './models/GenerateQueryData';
 export { GenerateQueryRequest } from './models/GenerateQueryRequest';

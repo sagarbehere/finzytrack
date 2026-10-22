@@ -20,7 +20,7 @@ function state(over: Record<string, unknown> = {}) {
     mapping: reactive({ holding_accounts: {}, commodity_codes: {}, hand_entries: {}, cash_fallback_account: '',
       cash_matching_account: '', cash_before_cutoff_account: '', dividend_account: '', taxes_account: '',
       gains_account: '', match_window_days: 7, cutoff_date: null, history_start: null, target_file: null,
-      tag_dividend_account: false }),
+      tag_dividend_account: false, excluded_funds: [] }),
     reading: ref(false), previewing: ref(false), committing: ref(false),
     readError: ref(null), previewError: ref(null), commitError: ref(null),
     read: vi.fn(), preview: vi.fn(), correct: vi.fn(), undoCorrection: vi.fn(), commit: vi.fn(),
@@ -122,5 +122,21 @@ describe('StatementImportPanel — messages', () => {
     await flushPromises()
     expect(text(w)).toContain('Hide details')                       // the redeemed fund is open
     expect(w.find('#row-r2').classes()).toContain('bg-yellow-50')    // its year is open, the row highlighted
+  })
+})
+
+describe('StatementImportPanel — leaving a fund out', () => {
+  it("adds the fund to the import's excluded funds, and brings it back", async () => {
+    s.state = state({ parsed: ref(parseData()), plan: ref(planData()) })
+    const w = render()
+    await button(w, "Don't import").trigger('click')
+    expect(s.state.mapping.excluded_funds).toEqual([{ folio: 'F1', security_key: 'INF1' }])
+
+    s.state.plan.value = planData({ funds: [fund({ excluded: true, counts: { excluded: 1 } })] })
+    await flushPromises()
+    expect(text(w)).toContain('Not imported: no transactions, balance check or price are written for this fund.')
+    expect(text(w)).toContain('0 of 0')  // left out of "Funds matching the statement"
+    await button(w, 'Import this fund').trigger('click')
+    expect(s.state.mapping.excluded_funds).toEqual([])
   })
 })

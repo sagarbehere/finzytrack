@@ -110,6 +110,7 @@ class _Row:
     tds_in_description: Decimal = ZERO
     status: str = "import"
     txn: Optional[int] = None
+    partner_not_imported: bool = False  # its switch half is in a fund the user left out
 
     @property
     def id(self) -> str:
@@ -418,6 +419,7 @@ class _Ctx:
     blocking: List[StatementIssue]
     warnings: List[StatementIssue]
     codes: Dict[str, str]
+    skipped: Set[Tuple[str, str]] = field(default_factory=set)
     claimed: Set[str] = field(default_factory=set)
     used_roles: Set[str] = field(default_factory=set)
 
@@ -450,6 +452,26 @@ def build_plan(
     _attach_taxes(ordered, warnings)
     _pair_rows(ordered, lambda r: acct_by_id[r.src.account_id].institution, warnings)
 
+    # Funds the user leaves out (e.g. someone else's): every row excluded. A switch half
+    # in an imported fund loses its partner and falls back to the cash side, so money
+    # never appears or vanishes — said per row, naming the fund.
+    skipped: Set[Tuple[str, str]] = {(f.folio, f.security_key) for f in mapping.excluded_funds}
+    for r in ordered:
+        if r.pos not in skipped:
+            continue
+        partner = rows.get(r.pair) if r.pair else None
+        if partner is not None and partner.pos not in skipped:
+            partner.pair = None
+            partner.partner_not_imported = True
+            warnings.append(StatementIssue(
+                code="SWITCH_WITH_EXCLUDED_FUND", row_id=partner.id, security_key=partner.src.security_key,
+                message=(f"The other half of this switch is in {sec_by_key[r.src.security_key].name}, which you "
+                         "chose not to import, so this half is recorded against the cash side."),
+            ))
+        r.pair = None
+        r.excluded = True
+        r.reason = "You chose not to import this fund."
+
     # ── commodity codes (match existing by isin / amfi:, else generate; user override wins) ──
     codes: Dict[str, str] = {}
     code_status: Dict[str, str] = {}
@@ -480,7 +502,8 @@ def build_plan(
             blocking.append(StatementIssue(code="COMMODITY_CODE_DUPLICATE", security_key=keys[1],
                                            message=f"Two different funds would use the code {c}; give one of them another code."))
 
-    ctx = _Ctx(stmt=stmt, mapping=mapping, snap=snap, blocking=blocking, warnings=warnings, codes=codes)
+    ctx = _Ctx(stmt=stmt, mapping=mapping, snap=snap, blocking=blocking, warnings=warnings, codes=codes,
+               skipped=skipped)
 
     # ── per-position starting state ──
     def holding_account(pos_key) -> Optional[str]:
@@ -495,6 +518,9 @@ def build_plan(
     hand_info: Dict[str, Tuple[int, date, Optional[str]]] = {}
 
     for pos in stmt.positions:
+        if pos.key in skipped:
+            mode[pos.key] = "zero"
+            continue
         sec = sec_by_key[pos.security_key]
         code = codes[sec.key]
         hold = holding_account(pos.key)
@@ -718,7 +744,7 @@ def build_plan(
     bal_totals: Dict[Tuple[str, str], Decimal] = defaultdict(Decimal)
     for pos in stmt.positions:
         hold = holding_account(pos.key)
-        if hold:
+        if hold and pos.key not in skipped:
             bal_totals[(hold, codes[pos.security_key])] += pos.close_units
     balances = []
     for (a, c), u in sorted(bal_totals.items()):
@@ -793,7 +819,8 @@ def build_plan(
             ))
 
     for r in ordered:
-        if r.interp in ("switch_out", "switch_in", "merge_out", "merge_in") and not r.pair and r.status == "import":
+        if (r.interp in ("switch_out", "switch_in", "merge_out", "merge_in") and not r.pair
+                and r.status == "import" and not r.partner_not_imported):
             warnings.append(StatementIssue(
                 code="UNPAIRED_SWITCH", row_id=r.id, security_key=r.src.security_key,
                 message="No matching other half was found in the statement, so it is recorded against the cash side.",
@@ -809,7 +836,8 @@ def build_plan(
         sec = sec_by_key[pos.security_key]
         acct = acct_by_id[pos.account_id]
         prs = rows_by_pos.get(pk, [])
-        reconciled = ledger_units[pk] == pos.close_units
+        excluded = pk in skipped
+        reconciled = excluded or ledger_units[pk] == pos.close_units
         if not reconciled:
             warnings.append(StatementIssue(
                 code="NOT_RECONCILED", security_key=sec.key,
@@ -826,6 +854,7 @@ def build_plan(
             close_units=pos.close_units, ledger_units=ledger_units[pk], reconciled=reconciled,
             statement_consistent=(pos.close_calculated is None or pos.close_calculated == pos.close_units),
             held=pos.close_units != 0,
+            excluded=excluded,
             counts=dict(Counter(r.status for r in prs)),
             matched=matched_count[pk], fallback=fallback_count[pk],
             hand_entries=hand[0] if hand else None, hand_entries_latest=hand[1] if hand else None,
@@ -1132,7 +1161,7 @@ def _check_accounts(ctx: _Ctx, txns: List[_Txn], balances: List[PlannedBalance])
     m, snap = ctx.mapping, ctx.snap
     missing_roles = []
     if "holding" in ctx.used_roles or balances:
-        needed = {_distributor_key(p.advisor) for p in ctx.stmt.positions}
+        needed = {_distributor_key(p.advisor) for p in ctx.stmt.positions if p.key not in ctx.skipped}
         if any(not m.holding_accounts.get(k) for k in needed):
             missing_roles.append("holding")
     role_value = {

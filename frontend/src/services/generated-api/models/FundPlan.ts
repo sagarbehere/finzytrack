@@ -28,6 +28,10 @@ export type FundPlan = {
     statement_consistent: boolean;
     held: boolean;
     /**
+     * The user chose not to import this fund
+     */
+    excluded?: boolean;
+    /**
      * Status → row count
      */
     counts: Record<string, number>;

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FundKey } from './FundKey';
 /**
  * The user's choices. Every account is one they picked (never proposed).
  */
@@ -47,5 +48,9 @@ export type StatementMapping = {
      * Set income-type: dividend on the dividend account
      */
     tag_dividend_account?: boolean;
+    /**
+     * Funds not to import (e.g. someone else's): no transactions, balance check or price
+     */
+    excluded_funds?: Array<FundKey>;
 };
 

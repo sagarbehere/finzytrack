@@ -89,6 +89,12 @@ class StatementParseData(BaseModel):
 
 # ── Mapping + corrections (preview / commit input) ───────────────────────────
 
+class FundKey(BaseModel):
+    """One fund in one folio, as the plan's FundPlan identifies it."""
+    folio: str
+    security_key: str
+
+
 class StatementMapping(BaseModel):
     """The user's choices. Every account is one they picked (never proposed)."""
     holding_accounts: Dict[str, str] = Field(default_factory=dict, description="Distributor key → holding account")
@@ -107,6 +113,9 @@ class StatementMapping(BaseModel):
     )
     target_file: Optional[str] = Field(default=None, description="Ledger file to write to (one of ledger_files); default the root")
     tag_dividend_account: bool = Field(default=False, description="Set income-type: dividend on the dividend account")
+    excluded_funds: List[FundKey] = Field(
+        default_factory=list, description="Funds not to import (e.g. someone else's): no transactions, balance check or price",
+    )
 
 
 class RowCorrection(BaseModel):
@@ -199,6 +208,7 @@ class FundPlan(BaseModel):
     reconciled: bool
     statement_consistent: bool = Field(..., description="The statement's own rows add up to its closing units")
     held: bool
+    excluded: bool = Field(default=False, description="The user chose not to import this fund")
     counts: Dict[str, int] = Field(..., description="Status → row count")
     matched: int = 0
     fallback: int = 0
