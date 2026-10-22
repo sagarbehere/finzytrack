@@ -20,7 +20,7 @@ empty result, which would read as "no such fund".
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
@@ -99,9 +99,9 @@ class AmfiSource:
         except ValueError as e:
             raise AmfiFormatError(_CHANGED) from e
 
-    def _scheme(self, url: str, code: str) -> list:
+    def _scheme(self, url: str, code: str, params: Optional[dict] = None) -> list:
         """The ``data`` rows of a scheme record; raises if the scheme is unknown."""
-        body = self._get_json(url)
+        body = self._get_json(url, params)
         if not isinstance(body, dict) or not isinstance(body.get("data"), list):
             raise AmfiFormatError(_CHANGED)
         meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
@@ -109,8 +109,13 @@ class AmfiSource:
             raise AmfiUnknownScheme(f"There is no Indian mutual fund with scheme code {code}. Check the code.")
         return body["data"]
 
-    def _history(self, code: str) -> list[SourcePrice]:
-        rows = self._scheme(_URL.format(code=code), code)
+    def _history(self, code: str, begin: date, end: date) -> list[SourcePrice]:
+        """NAVs from ``begin`` to ``end``. mfapi filters by date itself (``startDate`` /
+        ``endDate``), so a fetch that fills the last few days downloads those days, not
+        the scheme's whole history; a scheme with no NAV in the range still answers
+        with its name, so an empty range is never mistaken for an unknown scheme."""
+        rows = self._scheme(_URL.format(code=code), code,
+                            {"startDate": begin.isoformat(), "endDate": end.isoformat()})
         out = [p for p in (_nav_row(r) for r in rows) if p is not None]
         if rows and not out:
             raise AmfiFormatError(_CHANGED)  # rows we can't read at all: the format changed
@@ -118,11 +123,11 @@ class AmfiSource:
 
     def get_prices_series(self, ticker: str, time_begin: datetime, time_end: datetime) -> list[SourcePrice]:
         begin, end = time_begin.date(), time_end.date()
-        return [p for p in self._history(ticker) if begin <= p.time.date() <= end]
+        # Filter here too: the result stays right if the service ever ignores the range.
+        return [p for p in self._history(ticker, begin, end) if begin <= p.time.date() <= end]
 
     def get_latest_price(self, ticker: str) -> Optional[SourcePrice]:
-        history = self._history(ticker)
-        return history[-1] if history else None
+        return self.latest_nav(ticker)
 
     # ── Finding a fund's scheme code (Setup & Metadata → Price symbol → Find) ──
 

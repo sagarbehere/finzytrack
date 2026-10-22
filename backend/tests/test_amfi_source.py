@@ -27,11 +27,18 @@ class FakeSession:
     def __init__(self, by_code):
         self.by_code = by_code
         self.urls = []
+        self.params = []
 
     def get(self, url, timeout, params=None):
         self.urls.append(url)
+        self.params.append(params)
         # mfapi answers an unknown scheme with 200 and an empty record.
-        return FakeResponse(self.by_code.get(url.rsplit("/", 1)[-1], {"meta": {"scheme_name": ""}, "data": []}))
+        path = url.split("/mf/", 1)[-1]
+        code, _, endpoint = path.partition("/")
+        record = self.by_code.get(code, {"meta": {"scheme_name": ""}, "data": []})
+        if endpoint == "latest":  # one row: the newest NAV
+            record = {**record, "data": sorted(record["data"], key=lambda r: _key(r["date"]), reverse=True)[:1]}
+        return FakeResponse(record)
 
 
 _PPFAS = {"meta": {"scheme_name": "Parag Parikh Flexi Cap Fund - Direct Plan - Growth"}, "data": [
@@ -40,6 +47,13 @@ _PPFAS = {"meta": {"scheme_name": "Parag Parikh Flexi Cap Fund - Direct Plan - G
     {"date": "bad", "nav": "1"},                 # malformed: skipped
     {"date": "16-10-2026", "nav": "89.10000"},
 ]}
+
+
+def _key(text):
+    try:
+        return datetime.strptime(text, "%d-%m-%Y")
+    except ValueError:
+        return datetime.min
 
 
 def _dt(d):
@@ -61,12 +75,22 @@ def test_series_is_in_inr_oldest_first_and_windowed():
         (date(2026, 10, 19), Decimal("90.35460"), "INR"),
     ]
     assert session.urls == ["https://api.mfapi.in/mf/122639"]
+    # Only the window is asked for, not the whole history.
+    assert session.params == [{"startDate": "2026-10-17", "endDate": "2026-10-19"}]
+
+
+def test_an_empty_window_of_a_known_scheme_is_just_empty():
+    # mfapi keeps the scheme's name when no NAV falls in the range.
+    session = FakeSession({"151050": {"meta": {"scheme_name": "HSBC Money Market Fund"}, "data": []}})
+    assert AmfiSource(session).get_prices_series("151050", _dt(date(2018, 8, 20)), _dt(date(2020, 12, 21))) == []
 
 
 def test_latest_and_unknown_scheme():
-    src = AmfiSource(FakeSession({"122639": _PPFAS}))
+    session = FakeSession({"122639": _PPFAS})
+    src = AmfiSource(session)
     latest = src.get_latest_price("122639")
     assert (latest.time.date(), latest.price) == (date(2026, 10, 19), Decimal("90.35460"))
+    assert session.urls == ["https://api.mfapi.in/mf/122639/latest"]  # one row, not the history
     with pytest.raises(AmfiUnknownScheme):
         src.get_prices_series("999999", _dt(date(2026, 1, 1)), _dt(date(2026, 12, 31)))
 
