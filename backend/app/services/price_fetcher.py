@@ -87,6 +87,9 @@ def to_main_unit(number: Decimal, currency: str) -> tuple[Decimal, str]:
 
 # How far back to reach on the very first fetch of a holding with no price yet.
 _DEFAULT_LOOKBACK_DAYS = 5 * 365
+# How far after the first purchase stored prices may start before the fetcher
+# back-fills the gap (see fetch_and_persist).
+_BACKFILL_SLACK = timedelta(days=31)
 
 
 def _has_month_start(begin: date, end: date) -> bool:
@@ -178,7 +181,7 @@ class PriceFetcher:
         return list(keep.values())
 
     def _fetch_series(self, source, symbol: str, begin: date, end: date,
-                      quote: Optional[str] = None):
+                      quote: Optional[str] = None, *, allow_latest: bool = True):
         """Historical daily prices for ``[begin, end]``, provider-agnostic:
         try the source's ``get_daily_prices`` (Yahoo's real historical method)
         then ``get_prices_series`` (other sources implement this one), and if
@@ -202,6 +205,8 @@ class PriceFetcher:
                 continue
             if series:
                 return series, None
+        if not allow_latest:  # a back-fill wants history, not today's quote
+            return [], (last_err or "provider returned no data")
         try:
             latest = source.get_latest_price(symbol)
             if latest is not None:
@@ -214,6 +219,28 @@ class PriceFetcher:
             last_err = str(e)
             logger.warning("get_latest_price failed for %s: %s", symbol, e)
         return [], (last_err or "provider returned no data")
+
+    @staticmethod
+    def _to_prices(code: str, series, begin: date, end: date,
+                   reason: Optional[str]) -> tuple[list[data.Price], Optional[str]]:
+        """A provider's series as price directives within ``[begin, end]``, and the
+        reason when some or all of it can't be used."""
+        fetched: list[data.Price] = []
+        for sp in series:
+            if sp.price is None or sp.quote_currency is None:
+                continue
+            d = sp.time.date() if isinstance(sp.time, datetime) else sp.time
+            if d < begin or d > end:
+                reason = reason or "no price in the date range"
+                continue
+            number, currency = to_main_unit(Decimal(str(sp.price)), sp.quote_currency)
+            if not _CURRENCY.match(currency):
+                # One unreadable currency would make the whole price file
+                # fail its read-back check; drop just this holding.
+                reason = f"the provider's currency '{currency}' is not a valid currency code"
+                continue
+            fetched.append(data.Price({}, d, code, Amount(clean_price(number), currency)))
+        return fetched, reason
 
     def _stored_prices(self) -> list[data.Price]:
         """The prices in the price file now (none when it doesn't exist)."""
@@ -255,10 +282,19 @@ class PriceFetcher:
             for r in existing:
                 counts[r["quote_currency"]] = counts.get(r["quote_currency"], 0) + 1
             quote = fetch_quote(act.cost_currency, counts)
-            last_priced = max(
-                (date.fromisoformat(r["date"]) for r in existing if r["quote_currency"] == quote),
-                default=None,
-            )
+            series_dates = [date.fromisoformat(r["date"]) for r in existing if r["quote_currency"] == quote]
+            last_priced = max(series_dates, default=None)
+            # History that doesn't reach back to the first purchase (e.g. one price
+            # typed in, or a statement's valuation written by an import before any
+            # fetch) is back-filled up to the earliest stored day, never over it. A
+            # month of slack: a provider's data may start a little after a purchase,
+            # and asking again on every update would be pointless.
+            first_priced = min(series_dates, default=None)
+            backfill: Optional[tuple[date, date]] = None
+            if first_priced is not None and first_priced > act.first + _BACKFILL_SLACK:
+                # Like the forward window, it stops at a sold-out holding's last transaction.
+                last_needed = today if act.held else min(act.last, today)
+                backfill = (act.first, min(first_priced - timedelta(days=1), last_needed))
             if last_priced is not None and last_priced > today:
                 # Newest price is dated after today (a typo, most likely): say so
                 # rather than silently never fetching this holding again.
@@ -277,7 +313,7 @@ class PriceFetcher:
             # Stop at today while still held; a fully-sold holding needs no prices
             # past its last transaction (its value is 0 after that).
             end = today if act.held else min(act.last, today)
-            if begin > end:
+            if begin > end and backfill is None:
                 continue  # sold out and already priced to its last transaction
 
             # I-Bonds are valued formulaically (offline), not fetched.
@@ -301,27 +337,24 @@ class PriceFetcher:
                 continue
             source, ticker = self._source_for(symbol)
             try:
+                if backfill is not None:
+                    # Silent when the provider has nothing older: that's not a failure.
+                    older, _why = self._fetch_series(source, ticker, *backfill, quote, allow_latest=False)
+                    filled, _why = self._to_prices(c.code, older, *backfill, None)
+                    if cadence == CADENCE_MONTHLY:
+                        filled = self._thin_monthly(filled)
+                    new_prices.extend(filled)
+                    if begin > end:
+                        if filled:
+                            symbols.append(symbol)
+                        continue
                 series, reason = self._fetch_series(source, ticker, begin, end, quote)
             except (AmfiUnavailable, AmfiFormatError) as e:
                 amfi_down = str(e)  # same for every other Indian fund: don't ask again
                 failed.append(f"{c.code} ({symbol}): {amfi_down}")
                 continue
 
-            fetched: list[data.Price] = []
-            for sp in series:
-                if sp.price is None or sp.quote_currency is None:
-                    continue
-                d = sp.time.date() if isinstance(sp.time, datetime) else sp.time
-                if d < begin or d > end:
-                    reason = reason or "no price in the date range"
-                    continue
-                number, currency = to_main_unit(Decimal(str(sp.price)), sp.quote_currency)
-                if not _CURRENCY.match(currency):
-                    # One unreadable currency would make the whole price file
-                    # fail its read-back check; drop just this holding.
-                    reason = f"the provider's currency '{currency}' is not a valid currency code"
-                    continue
-                fetched.append(data.Price({}, d, c.code, Amount(clean_price(number), currency)))
+            fetched, reason = self._to_prices(c.code, series, begin, end, reason)
 
             if cadence == CADENCE_MONTHLY:
                 fetched = self._thin_monthly(fetched)

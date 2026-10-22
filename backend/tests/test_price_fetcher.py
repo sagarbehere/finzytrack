@@ -154,8 +154,11 @@ def test_held_fetch_starts_at_and_replaces_the_newest_stored_day(wired):
     source = FakeSource({"VOO": [(date(2021, 3, 10), "999.00"), (date(2021, 3, 15), "130.50"),
                                  (date(2021, 3, 20), "131.00")], "ACME.XYZ": []})
     res = PriceFetcher(reader, lm, source=source, today=date(2021, 3, 25)).fetch_and_persist()
-    voo_call = next(c for c in source.calls if c[0] == "VOO")
-    assert voo_call[1:] == (date(2021, 3, 15), date(2021, 3, 25))
+    voo_calls = [c[1:] for c in source.calls if c[0] == "VOO"]
+    assert voo_calls == [
+        (date(2021, 1, 10), date(2021, 3, 9)),    # back-fill: first purchase → before the earliest stored day
+        (date(2021, 3, 15), date(2021, 3, 25)),   # forward: from the newest stored day
+    ]
     assert (res["added"], res["updated"]) == (1, 1)
     assert _voo(ledger) == [  # older day stays fixed history
         (date(2021, 3, 10), "128.00"), (date(2021, 3, 15), "130.50"), (date(2021, 3, 20), "131.00"),
@@ -221,7 +224,9 @@ def test_sold_out_holding_does_not_refetch_its_last_price(tmp_path):
     lm.write_price_directives([data.Price({}, date(2021, 3, 1), "OLD", Amount(Decimal("110.00"), "USD"))])
     source = FakeSource({"OLD": [(date(2021, 3, 1), "999.00")]})
     res = PriceFetcher(reader, lm, source=source, today=date(2021, 6, 1)).fetch_and_persist()
-    assert source.calls == []                 # window (Mar 2 → Mar 1) is empty
+    # The last price isn't refetched (forward window Mar 2 → Mar 1 is empty); only the
+    # history before it is asked for, and the provider has none: not a failure.
+    assert source.calls == [("OLD", date(2021, 1, 10), date(2021, 2, 28))]
     assert res["added"] == 0
     # Nothing fetched: the result describes the price file as it stands.
     assert (res["symbols"], res["failed"], res["total"], res["as_of"]) == ([], [], 1, "2021-03-01")
@@ -255,7 +260,10 @@ def test_monthly_refresh_keeps_one_point_per_month(tmp_path):
     source = FakeSource({"BND": [(date(2021, 10, 5), "996.00"), (date(2021, 10, 12), "997.00"),
                                  (date(2021, 10, 20), "998.00")]})
     res = PriceFetcher(reader, lm, source=source, today=date(2021, 10, 20)).fetch_and_persist()
-    assert source.calls == [("BND", date(2021, 10, 5), date(2021, 10, 20))]
+    assert source.calls == [
+        ("BND", date(2021, 1, 10), date(2021, 9, 29)),   # back-fill (nothing older at the provider)
+        ("BND", date(2021, 10, 5), date(2021, 10, 20)),  # forward, from the newest stored day
+    ]
     assert sorted((p.date, str(p.amount.number)) for p in _sidecar_prices(ledger)) == [
         (date(2021, 9, 30), "990.00"), (date(2021, 10, 20), "998.00"),
     ]
@@ -343,7 +351,10 @@ def test_a_price_in_another_currency_does_not_move_the_fetch_window(wired):
     source = FakeSource({"VOO": [(date(2021, 3, 1), "130.00"), (date(2021, 3, 5), "132.00")],
                          "ACME.XYZ": []})
     PriceFetcher(reader, lm, source=source, today=date(2021, 3, 10)).fetch_and_persist()
-    assert next(c for c in source.calls if c[0] == "VOO")[1] == date(2021, 3, 1)
+    assert [c[1:] for c in source.calls if c[0] == "VOO"] == [
+        (date(2021, 1, 10), date(2021, 2, 28)),  # back-fill of the USD series
+        (date(2021, 3, 1), date(2021, 3, 10)),   # forward: the EUR price doesn't move it
+    ]
     assert [(r["date"], r["quote_currency"]) for r in reader.get_prices(currency="VOO")] == [
         ("2021-03-01", "USD"), ("2021-03-05", "USD"), ("2021-03-10", "EUR"),
     ]
@@ -592,3 +603,49 @@ def test_an_unknown_scheme_code_is_reported_with_the_reason(tmp_path):
     yahoo = FakeSource({"RELIANCE.NS": [(date(2026, 10, 2), "1216.40")]}, currency={"RELIANCE.NS": "INR"})
     res = PriceFetcher(reader, lm, source=yahoo, amfi_source=Unknown([]), today=date(2026, 10, 2)).fetch_and_persist()
     assert res["failed"] == ["PPFAS (amfi:122639): There is no Indian mutual fund with scheme code 122639. Check the code."]
+
+
+def test_history_is_back_filled_from_first_purchase_without_touching_stored_days(tmp_path):
+    """A holding whose stored prices start long after its first purchase (an
+    import wrote the statement's valuation before any fetch) gets its history
+    from the first purchase, up to the earliest stored day, which stays as it is."""
+    ledger, _, reader, lm = _wire(tmp_path, _SOLD.replace(
+        '2021-03-01 * "sell"\n  Assets:Broker  -10 OLD {100.00 USD} @ 110.00 USD\n'
+        '  Assets:Cash  1100.00 USD\n  Income:Gains  -100.00 USD\n', ''))
+    lm.write_price_directives([
+        data.Price({}, date(2021, 5, 3), "OLD", Amount(Decimal("118.00"), "USD")),   # earliest stored
+        data.Price({}, date(2021, 6, 1), "OLD", Amount(Decimal("120.00"), "USD")),   # newest stored
+    ])
+    source = FakeSource({"OLD": [(date(2021, 1, 11), "100.50"), (date(2021, 3, 1), "105.00"),
+                                 (date(2021, 5, 3), "555.00"), (date(2021, 6, 1), "120.50"),
+                                 (date(2021, 6, 2), "121.00")]})
+    PriceFetcher(reader, lm, source=source, today=date(2021, 6, 2)).fetch_and_persist()
+    assert [c[1:] for c in source.calls] == [
+        (date(2021, 1, 10), date(2021, 5, 2)),   # back-fill: up to the day before the earliest stored
+        (date(2021, 6, 1), date(2021, 6, 2)),    # forward: from (and replacing) the newest stored day
+    ]
+    assert [(r["date"], r["quote_number"]) for r in reader.get_prices(currency="OLD")] == [
+        ("2021-01-11", "100.50"), ("2021-03-01", "105.00"),
+        ("2021-05-03", "118.00"),                # the earliest stored day is never overwritten
+        ("2021-06-01", "120.50"), ("2021-06-02", "121.00"),
+    ]
+
+
+def test_history_starting_within_a_month_of_purchase_is_not_back_filled(wired):
+    ledger, _, reader, lm = wired
+    lm.write_price_directives([data.Price({}, date(2021, 2, 5), "VOO", Amount(Decimal("101.00"), "USD"))])
+    source = FakeSource({"VOO": [(date(2021, 2, 5), "101.00")], "ACME.XYZ": []})
+    PriceFetcher(reader, lm, source=source, today=date(2021, 2, 6)).fetch_and_persist()
+    assert [c[1:] for c in source.calls if c[0] == "VOO"] == [(date(2021, 2, 5), date(2021, 2, 6))]
+
+
+def test_a_sold_holding_is_back_filled_only_while_it_was_held(tmp_path):
+    """A statement can price a fund long after it was sold (its valuation date). The
+    back-fill stops at the last transaction: no prices for years nobody held it."""
+    ledger, _, reader, lm = _wire(tmp_path, _SOLD)
+    lm.write_price_directives([data.Price({}, date(2026, 10, 19), "OLD", Amount(Decimal("150.00"), "USD"))])
+    source = FakeSource({"OLD": [(date(2021, 1, 11), "100.50"), (date(2021, 3, 1), "110.00"),
+                                 (date(2022, 1, 3), "130.00")]})
+    PriceFetcher(reader, lm, source=source, today=date(2026, 10, 22)).fetch_and_persist()
+    assert [c[1:] for c in source.calls] == [(date(2021, 1, 10), date(2021, 3, 1))]
+    assert [r["date"] for r in reader.get_prices(currency="OLD")] == ["2021-01-11", "2021-03-01", "2026-10-19"]
