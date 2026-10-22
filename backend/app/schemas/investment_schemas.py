@@ -146,8 +146,25 @@ class AddHoldingEvent(InvestmentEventBase):
     )
 
 
+class ConversionEvent(InvestmentEventBase):
+    """A tax-neutral conversion of one holding into another — a scheme merger or a
+    face-value change. The ``from_units`` (FIFO lots) become ``to_units`` of
+    ``to_security``: every lot keeps its acquisition date and total cost, its units
+    scaled by the ratio; no gain is realized (dev-docs/cas-import.md §6.4)."""
+    type: Literal["conversion"]
+    holding_account: str = Field(..., description="Assets account the units leave")
+    security: str = Field(..., description="Commodity converted from (is_currency=0)")
+    from_units: Decimal = Field(..., description="Units converted (> 0), taken oldest first")
+    to_account: Optional[str] = Field(default=None, description="Account the new units go to (default: holding_account)")
+    to_security: str = Field(..., description="Commodity converted into")
+    to_units: Decimal = Field(..., description="Units received (> 0)")
+    gains_account: str = Field(
+        ..., description="Income account for a 0.00 leg that lets the carried costs' rounding balance (no gain is booked)",
+    )
+
+
 InvestmentEvent = Annotated[
-    Union[BuyEvent, DripEvent, CashDividendEvent, SellEvent, CdMaturityEvent, InterestEvent, AddHoldingEvent],
+    Union[BuyEvent, DripEvent, CashDividendEvent, SellEvent, CdMaturityEvent, InterestEvent, AddHoldingEvent, ConversionEvent],
     Field(discriminator="type"),
 ]
 

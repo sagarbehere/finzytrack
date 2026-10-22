@@ -593,6 +593,11 @@ export class ImportService {
     /**
      * Llm Parse
      * Parse transactions from a file using the configured LLM.
+     *
+     * A password-protected PDF is decrypted locally with ``pdf_password`` first (never
+     * stored). A mutual fund CAS is not sent to the model at all: the response is
+     * ``STATEMENT_IS_CAS`` so the UI can hand it to Investments → Import statement,
+     * which reads it exactly and without AI (dev-docs/cas-import.md §3.1).
      * @param formData
      * @returns any Successful Response
      * @throws ApiError

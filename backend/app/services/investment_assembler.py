@@ -26,6 +26,7 @@ from typing import Any, List, Optional, Tuple
 from pydantic import TypeAdapter, ValidationError
 
 from app.services.sqlite_reader import SqliteReader
+from app.services.lot_math import InsufficientUnits, LotPiece, consume_fifo, convert_lots
 from app.schemas.investment_schemas import (
     InvestmentEvent,
     BuyEvent,
@@ -35,6 +36,7 @@ from app.schemas.investment_schemas import (
     CdMaturityEvent,
     InterestEvent,
     AddHoldingEvent,
+    ConversionEvent,
     DraftPosting,
     DraftTransaction,
     AssembleIssue,
@@ -213,6 +215,8 @@ class InvestmentAssembler:
             return self._build_interest(index, ev)
         if isinstance(ev, AddHoldingEvent):
             return self._build_add_holding(index, ev, commodities)
+        if isinstance(ev, ConversionEvent):
+            return self._build_conversion(index, ev, commodities)
         raise _EventError("UNKNOWN_EVENT_TYPE", f"Unsupported event type: {getattr(ev, 'type', '?')}")
 
     # ── Event builders ───────────────────────────────────────────────────────
@@ -449,6 +453,51 @@ class InvestmentAssembler:
         ]
         return self._finalize(
             index, ev, ev.holding_account, f"Opening holding {ev.security}", postings, warnings
+        )
+
+    def _build_conversion(self, index, ev: ConversionEvent, commodities):
+        """A scheme merger or face-value change: FIFO lots of ``security`` become lots of
+        ``to_security`` with the same acquisition dates and total cost (units scaled), so
+        no gain is realized and later sales keep their true holding period. A ``0.00``
+        leg on the gains account gives Beancount the currency's tolerance for the carried
+        per-unit costs' rounding (a cost-only transaction otherwise has zero tolerance)."""
+        warnings = self._check_holding_security(index, ev.security, commodities)
+        warnings += self._check_holding_security(index, ev.to_security, commodities)
+        self._require_positive(ev.from_units, "from_units")
+        self._require_positive(ev.to_units, "to_units")
+
+        held = [
+            LotPiece(Decimal(l["units_number"]), Decimal(l["cost_number"]), l["cost_currency"],
+                     date.fromisoformat(l["acquisition_date"]))
+            for l in self.reader.get_lots(ev.holding_account)
+            if l["units_currency"] == ev.security and Decimal(l["units_number"]) > 0
+        ]
+        try:
+            consumed = consume_fifo(held, ev.from_units)
+        except InsufficientUnits as e:
+            raise _EventError(
+                "INSUFFICIENT_LOTS",
+                f"Only {e.held} units of {ev.security} held in {ev.holding_account}; cannot convert {ev.from_units}",
+            )
+        if any(p.currency != ev.currency for p in consumed):
+            raise _EventError("COST_CURRENCY_MISMATCH", f"Lot cost currency differs from {ev.currency}")
+        quantum = Decimal(1).scaleb(ev.to_units.as_tuple().exponent)
+        new = convert_lots(consumed, ev.to_units, quantum)
+
+        to_account = ev.to_account or ev.holding_account
+        postings = [
+            DraftPosting(account=ev.holding_account, amount=-p.units, currency=ev.security,
+                         cost_amount=p.cost, cost_currency=p.currency, cost_date=p.date)
+            for p in consumed
+        ]
+        postings += [
+            DraftPosting(account=to_account, amount=p.units, currency=ev.to_security,
+                         cost_amount=p.cost, cost_currency=p.currency, cost_date=p.date)
+            for p in new
+        ]
+        postings.append(DraftPosting(account=ev.gains_account, amount=Decimal("0.00"), currency=ev.currency))
+        return self._finalize(
+            index, ev, ev.holding_account, f"Convert {ev.security} into {ev.to_security}", postings, warnings,
         )
 
     # ── Shared helpers ───────────────────────────────────────────────────────

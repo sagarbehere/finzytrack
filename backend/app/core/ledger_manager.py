@@ -412,6 +412,33 @@ class LedgerManager:
         """
         return type(err).__module__.startswith("beancount.parser.booking")
 
+    def _load_candidate(self, entries, options) -> Optional[List[Any]]:
+        """Load a candidate entry list **in memory** — formatted as one self-contained
+        string (options + plugins preamble, no ``include`` lines; the entry stream
+        already carries every file's entries) — and return its load errors. Nothing
+        touches disk. Returns ``None`` when the validation itself couldn't run."""
+        try:
+            preamble_parts: List[str] = []
+            if options:
+                opt_text = self.engine.format_options(options)
+                if opt_text:
+                    preamble_parts.append(opt_text)
+                plugin_text = self.engine.format_plugins(options)
+                if plugin_text:
+                    preamble_parts.append(plugin_text)
+            preamble = ''.join(preamble_parts)
+            candidate_text = (preamble + '\n' if preamble else '') + self.engine.format_entries(list(entries))
+            _cand_entries, cand_errors, _cand_options = load_string_checked(candidate_text)
+            return list(cand_errors)
+        except MemoryPressureError:
+            raise
+        except Exception:
+            # A validator bug must never block an otherwise-valid write. Fall back to
+            # the historical write-then-surface behavior (the post-write reparse still
+            # records any real errors into the mirror).
+            logger.exception("Pre-write validation could not run; proceeding without the gate")
+            return None
+
     def _candidate_new_errors(self, entries, baseline_errors, options) -> List[str]:
         """Validate a candidate entry list **in memory** and return the **booking**
         errors this change would introduce (the write-path gate; §6.6).
@@ -426,25 +453,8 @@ class LedgerManager:
         increase is treated as introduced (biased to over-report). Returns ``[]`` when no
         new booking error (so the write proceeds).
         """
-        try:
-            preamble_parts: List[str] = []
-            if options:
-                opt_text = self.engine.format_options(options)
-                if opt_text:
-                    preamble_parts.append(opt_text)
-                plugin_text = self.engine.format_plugins(options)
-                if plugin_text:
-                    preamble_parts.append(plugin_text)
-            preamble = ''.join(preamble_parts)
-            candidate_text = (preamble + '\n' if preamble else '') + self.engine.format_entries(list(entries))
-            _cand_entries, cand_errors, _cand_options = load_string_checked(candidate_text)
-        except MemoryPressureError:
-            raise
-        except Exception:
-            # A validator bug must never block an otherwise-valid write. Fall back to
-            # the historical write-then-surface behavior (the post-write reparse still
-            # records any real errors into the mirror).
-            logger.exception("Pre-write validation could not run; proceeding without the gate")
+        cand_errors = self._load_candidate(entries, options)
+        if cand_errors is None:
             return []
 
         baseline_booking = sum(1 for e in (baseline_errors or []) if self._is_booking_error(e))
@@ -771,6 +781,192 @@ class LedgerManager:
             )
         self._write_and_export(list(entries) + self._deposit_entries(plan, with_ids=True), errors, options)
         return preview, plan
+
+    # ── Statement import (CAS; dev-docs/cas-import.md) ────────────────────────
+
+    def _statement_snapshot(self, entries, options):
+        from app.services.statement_import.snapshot import build_snapshot
+        try:
+            files = list(discover_includes_per_file(self.ledger_file).keys())
+        except Exception:
+            logger.exception("discover_includes_per_file failed; statement import offers the root file only")
+            files = [str(Path(self.ledger_file).resolve())]
+        return build_snapshot(list(entries), options, str(self.ledger_file), files)
+
+    def plan_statement(self, stmt, mapping, corrections):
+        """Plan a statement import against a fresh parse of the ledger (no write).
+        Returns ``(plan, snapshot)``. The commit plans the same way, so its hash
+        check compares like with like (§13.4)."""
+        from app.services.statement_import.plan import build_plan
+        entries, _errors, options = self._parse_ledger()
+        snap = self._statement_snapshot(entries, options)
+        return build_plan(stmt, mapping, corrections, snap), snap
+
+    @_serialized_write
+    def import_statement(self, stmt, mapping, corrections, expected_preview_hash: str, *, today: Optional[date] = None):
+        """Write a statement import in **one** ledger write: new commodities and
+        metadata, the transactions, one balance assertion per fund and holding account,
+        and the import record — then the statement's prices to the price sidecar.
+
+        The plan is recomputed here, under the write lock, from a fresh parse; it must
+        match the preview the user saw (409 ``PREVIEW_STALE``) and have no blocking
+        issue (422 ``STATEMENT_NOT_READY``). The candidate ledger is loaded in memory
+        first: any new error other than a failing balance assertion refuses the write
+        (422 ``STATEMENT_INVALID``). A failing assertion is the user's informed choice
+        (the preview showed the fund unreconciled) and is reported back.
+        """
+        import secrets
+        from beancount.core.amount import Amount
+        from app.services.statement_import.entries import build_entries, record_choices
+        from app.services.statement_import.plan import build_plan
+        from app.services.statement_import.snapshot import entry_ref
+
+        today = today or date.today()
+        entries, errors, options = self._parse_ledger()
+        snap = self._statement_snapshot(entries, options)
+        plan = build_plan(stmt, mapping, corrections, snap)
+        if plan.data.blocking:
+            raise APIError(
+                message="The import isn't ready: " + "; ".join(i.message for i in plan.data.blocking[:3]),
+                code=ec.STATEMENT_NOT_READY, status_code=422,
+                details={"blocking": [i.model_dump() for i in plan.data.blocking]},
+            )
+        if plan.data.preview_hash != expected_preview_hash:
+            raise APIError(
+                message="Your ledger changed since the preview. Check the new preview, then register again.",
+                code=ec.PREVIEW_STALE, status_code=409,
+            )
+
+        import_id = f"{stmt.source}-{today.strftime('%Y%m%d')}-{secrets.token_hex(3)}"
+        removed = set(plan.removed_refs)
+        new_entries = [e for e in entries if not (isinstance(e, Transaction) and entry_ref(e) in removed)]
+
+        first_use: Dict[str, date] = {}
+        for t in plan.transactions:
+            for p in t.postings:
+                if p.cost is not None and (p.currency not in first_use or t.date < first_use[p.currency]):
+                    first_use[p.currency] = t.date
+        created = updated = 0
+        for c in plan.commodities:
+            typed = {k: to_ledger_value((SCOPE_COMMODITY,), k, v) for k, v in c.set_metadata.items()}
+            on = first_use.get(c.code) or stmt.period_end
+            if c.status == "new":
+                new_entries = self.engine.create_commodity(
+                    new_entries, code=c.code, metadata=typed, on_date=on, ledger_file=plan.target_file,
+                )
+                created += 1
+            elif typed:
+                new_entries, changed = self.engine.upsert_commodity_metadata(
+                    new_entries, code=c.code, set_metadata=typed, remove_keys=[], on_date=on,
+                    ledger_file=plan.target_file,
+                )
+                updated += int(changed)
+
+        for acct, keys in plan.account_metadata.items():
+            for i, e in enumerate(new_entries):
+                if isinstance(e, data.Open) and e.account == acct:
+                    new_entries[i] = e._replace(meta={**(e.meta or {}), **keys})
+
+        def make(d, payee, narration, postings, source_account, meta):
+            return self.create_transaction_with_ids(d, payee, narration, postings, source_account, additional_meta=meta)
+
+        new_entries += build_entries(
+            plan, import_id=import_id, today=today, make_transaction=make, source=stmt.source,
+            period_start=stmt.period_start, period_end=stmt.period_end, choices=record_choices(mapping),
+        )
+
+        def counted(errs):
+            # Balance assertions are informational (§7: a failing one is a visible gap
+            # the user chose to register); document references are unrelated.
+            return [e for e in errs if type(e).__name__ not in ("BalanceError", "DocumentError")]
+
+        cand = self._load_candidate(new_entries, options)
+        failed_balances: List[str] = []
+        if cand is not None:
+            new_errs = counted(cand)
+            if len(new_errs) > len(counted(errors)):
+                raise APIError(
+                    message="The import can't be saved — it would put the ledger in an invalid state: "
+                            + "; ".join(str(getattr(e, "message", e)) for e in new_errs[:3]),
+                    code=ec.STATEMENT_INVALID, status_code=422,
+                    details={"errors": [str(getattr(e, "message", e)) for e in new_errs[:20]]},
+                )
+            planned = {(b.account, b.commodity) for b in plan.balances}
+            for e in cand:
+                if type(e).__name__ == "BalanceError":
+                    entry = getattr(e, "entry", None)
+                    if entry is not None and (entry.account, entry.amount.currency) in planned:
+                        failed_balances.append(str(getattr(e, "message", e)))
+
+        # The candidate was validated above against every error class (a superset of the
+        # gate's booking check), so the gate's own in-memory load would only repeat it.
+        self._write_and_export(new_entries, None, options)
+
+        prices_written = 0
+        if plan.prices:
+            price_entries = [
+                data.Price({"filename": "<statement>", "lineno": 0}, p.date, p.commodity, Amount(p.price, p.currency))
+                for p in plan.prices
+            ]
+            result = self.write_price_directives(price_entries)
+            prices_written = result.get("added", 0) + result.get("updated", 0)
+
+        return {
+            "import_id": import_id,
+            "transactions": len(plan.transactions),
+            "balances": len(plan.balances),
+            "commodities_created": created,
+            "commodities_updated": updated,
+            "prices": prices_written,
+            "removed_hand_entries": len(removed),
+            "failed_balance_checks": failed_balances,
+        }
+
+    def list_statement_imports(self) -> List[Dict[str, Any]]:
+        """Every statement import recorded in the ledger (newest first)."""
+        from app.services.statement_import.snapshot import META_STMT_IMPORT
+        entries, _errors, options = self._parse_ledger()
+        snap = self._statement_snapshot(entries, options)
+        counts: Dict[str, int] = defaultdict(int)
+        for e in entries:
+            if isinstance(e, Transaction) and (e.meta or {}).get(META_STMT_IMPORT):
+                counts[str(e.meta[META_STMT_IMPORT])] += 1
+        out = []
+        for r in reversed(snap.imports):
+            out.append({
+                "import_id": r.import_id, "date": r.date, "source": str(r.meta.get("source", "")),
+                "period_start": r.meta.get("period_start") if isinstance(r.meta.get("period_start"), date) else None,
+                "period_end": r.meta.get("period_end") if isinstance(r.meta.get("period_end"), date) else None,
+                "transactions": counts.get(r.import_id, 0), "file": r.file,
+            })
+        return out
+
+    @_serialized_write
+    def undo_statement_import(self, import_id: str) -> Dict[str, Any]:
+        """Remove one import as a unit: every transaction and balance assertion carrying
+        ``stmt_import: <id>`` and its record, in one write through the gate (§13.5).
+        Commodities and prices stay (other entries may use them). A later import whose
+        sells use this import's lots makes the removal a booking error → refused."""
+        from app.services.statement_import.snapshot import META_STMT_IMPORT, RECORD_TYPE
+        entries, errors, options = self._parse_ledger()
+        kept, txns, bals, record = [], 0, 0, False
+        for e in entries:
+            meta = e.meta or {}
+            if isinstance(e, data.Custom) and e.type == RECORD_TYPE and e.values and str(e.values[0].value) == import_id:
+                record = True
+                continue
+            if str(meta.get(META_STMT_IMPORT, "")) == import_id and isinstance(e, (Transaction, data.Balance)):
+                if isinstance(e, Transaction):
+                    txns += 1
+                else:
+                    bals += 1
+                continue
+            kept.append(e)
+        if not record and not txns and not bals:
+            raise APIError(message="No import with this id in the ledger.", code=ec.STATEMENT_IMPORT_NOT_FOUND,
+                           status_code=404, details={"import_id": import_id})
+        self._write_and_export(kept, errors, options)
+        return {"import_id": import_id, "removed_transactions": txns, "removed_balances": bals}
 
     # ── Account management (orchestrator: parse → engine → write) ────────────
 

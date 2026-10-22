@@ -110,6 +110,16 @@
         class="mb-4"
       />
 
+      <!-- A mutual fund CAS is handed to Import statement, never sent to the model -->
+      <div v-if="casHandOver" class="mb-4 rounded-md bg-blue-50 p-4 dark:bg-blue-500/10 dark:outline dark:outline-blue-500/15" role="status">
+        <p class="text-sm font-medium text-blue-800 dark:text-blue-200">This is a mutual fund statement (CAS).</p>
+        <p class="mt-2 text-sm text-blue-700 dark:text-blue-300">
+          Import it exactly, with its full history and without AI, in
+          <router-link to="/investments?tab=statement" class="font-medium underline hover:text-blue-600 dark:hover:text-blue-200">Investments → Import statement</router-link>.
+          Nothing was sent to the AI.
+        </p>
+      </div>
+
       <!-- Warning display -->
       <FormFeedback
         v-if="parseWarning && !parseError"
@@ -136,6 +146,19 @@
               :allow-custom="true"
               placeholder="Select or type currency..."
             />
+          </div>
+          <div v-if="isPdf">
+            <label for="ai-pdf-password" class="block text-sm/6 font-medium text-gray-900 dark:text-white">
+              PDF password <span class="text-gray-400">(if the file has one)</span>
+            </label>
+            <input
+              id="ai-pdf-password"
+              v-model="pdfPassword"
+              type="password"
+              autocomplete="off"
+              class="mt-2 block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:placeholder:text-gray-500 dark:focus:outline-indigo-500"
+            />
+            <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">The PDF is opened on this computer. The password is not saved or sent to the AI.</p>
           </div>
         </div>
 
@@ -194,6 +217,9 @@
   const parseWarning = ref<string | null>(null)
   const parsingStatus = ref<string | null>(null)
   const fileInput = ref<HTMLInputElement | null>(null)
+  const pdfPassword = ref('')
+  const casHandOver = ref(false)
+  const isPdf = computed(() => !!selectedFile.value && /\.pdf$/i.test(selectedFile.value.name))
   const isDragOver = ref(false)
 
   const canProceed = computed(() =>
@@ -233,12 +259,16 @@
     selectedFile.value = file
     parseError.value = null
     parseWarning.value = null
+    casHandOver.value = false
+    pdfPassword.value = ''
   }
 
   const handleClearFile = () => {
     selectedFile.value = null
     parseError.value = null
     parseWarning.value = null
+    casHandOver.value = false
+    pdfPassword.value = ''
     if (fileInput.value) fileInput.value.value = ''
     emit('fileCleared')
   }
@@ -250,6 +280,7 @@
       account: selectedAccount.value,
       currency: selectedCurrency.value,
       text_extraction: forceTextExtraction ? 'true' : 'false',
+      ...(isPdf.value && pdfPassword.value ? { pdf_password: pdfPassword.value } : {}),
     })
   }
 
@@ -273,6 +304,7 @@
     parseError.value = null
     parseWarning.value = null
     parsingStatus.value = null
+    casHandOver.value = false
 
     try {
       let response: any
@@ -280,6 +312,10 @@
         response = await callLlmParse()
       } catch (error: any) {
         const { code, message } = extractError(error)
+        if (code === 'STATEMENT_IS_CAS') {
+          casHandOver.value = true
+          return
+        }
         if (code === 'PDF_NATIVE_NOT_SUPPORTED') {
           // Show warning immediately and retry with text extraction
           parseWarning.value = 'Your model does not support native PDF input. Retrying with local text extraction...'

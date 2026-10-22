@@ -25,6 +25,8 @@ from app.core.config_manager import ConfigManager
 from app.dependencies import get_config_manager, get_sqlite_reader
 from app.services.sqlite_reader import SqliteReader
 from app.services.investment_assembler import InvestmentAssembler, parse_investment_events
+from app.services.statement_import.parsers.cas import is_cas_pdf
+from app.helpers.pdf_password import decrypt_pdf
 from app.exceptions import APIError
 from app.helpers.response_helpers import success_json_response
 from app.schemas.llm_parse_schemas import LlmParsedTransaction, LlmParseResult
@@ -417,20 +419,20 @@ async def llm_parse(
     account: str = Form(...),
     currency: str = Form(...),
     text_extraction: str = Form(default="false"),
+    pdf_password: str = Form(default=""),
     config_manager: ConfigManager = Depends(get_config_manager),
     sqlite_reader: SqliteReader = Depends(get_sqlite_reader),
 ):
-    """Parse transactions from a file using the configured LLM."""
+    """Parse transactions from a file using the configured LLM.
+
+    A password-protected PDF is decrypted locally with ``pdf_password`` first (never
+    stored). A mutual fund CAS is not sent to the model at all: the response is
+    ``STATEMENT_IS_CAS`` so the UI can hand it to Investments → Import statement,
+    which reads it exactly and without AI (dev-docs/cas-import.md §3.1).
+    """
     config = config_manager.get_config()
     llm_config = config.ai.llm
     force_text_extraction = text_extraction.lower() == "true"
-
-    if not llm_config.is_configured:
-        raise APIError(
-            "AI is not configured. Enable Finzytrack AI or configure a model under Settings → AI.",
-            code=ec.LLM_NOT_CONFIGURED,
-            status_code=400,
-        )
 
     # Read and validate file
     file_bytes = await file.read()
@@ -446,6 +448,22 @@ async def llm_parse(
     filename = file.filename or "unknown"
     file_ext = Path(filename).suffix.lower()
     file_type = _detect_file_type(file_ext)
+
+    if file_type == "pdf":
+        file_bytes = decrypt_pdf(file_bytes, pdf_password)
+        if is_cas_pdf(file_bytes, None):
+            raise APIError(
+                "This is a mutual fund statement (CAS). Import it exactly, without AI: Investments → Import statement.",
+                code=ec.STATEMENT_IS_CAS,
+                status_code=422,
+            )
+
+    if not llm_config.is_configured:
+        raise APIError(
+            "AI is not configured. Enable Finzytrack AI or configure a model under Settings → AI.",
+            code=ec.LLM_NOT_CONFIGURED,
+            status_code=400,
+        )
 
     # Load system prompt and inject the available accounts (so investment events can
     # reference real account paths, the same way the NL parser does).

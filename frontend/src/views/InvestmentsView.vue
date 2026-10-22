@@ -40,6 +40,11 @@
           <QuickActionForms @staged="stageDrafts" />
         </div>
 
+        <!-- Import statement Tab — kept mounted so a long review survives switching tabs. -->
+        <div v-if="statementVisited" v-show="activeTab === 'statement'">
+          <StatementImportPanel />
+        </div>
+
         <!-- Prices Tab -->
         <div v-else-if="activeTab === 'prices'">
           <PricesPanel @open-metadata="activeTab = 'metadata'" />
@@ -118,6 +123,7 @@
   import QuickActionForms from '@/components/investments/QuickActionForms.vue'
   import SetupMetadataPanel from '@/components/investments/SetupMetadataPanel.vue'
   import PricesPanel from '@/components/investments/PricesPanel.vue'
+  import StatementImportPanel from '@/components/investments/StatementImportPanel.vue'
   import TransactionTable from '@/components/common/TransactionTable.vue'
   import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
   import type { TransactionViewModel, ImportContext } from '@/types/transactions'
@@ -135,17 +141,23 @@
 
   const tabs = [
     { id: 'quick-actions', label: 'Quick Actions' },
+    { id: 'statement', label: 'Import statement' },
     { id: 'metadata', label: 'Setup & Metadata' },
     { id: 'prices', label: 'Prices' },
   ] as const
 
-  // `?tab=metadata` / `?tab=prices` open that tab directly (the dashboards' metadata hint links here).
+  // `?tab=metadata` / `?tab=prices` / `?tab=statement` open that tab directly (the dashboards'
+  // metadata hint and the Import view's CAS signpost link here).
   const route = useRoute()
   const activeTab = ref<string>(
     tabs.some(t => t.id === route.query.tab) ? String(route.query.tab) : 'quick-actions',
   )
   const metadataVisited = ref(false)
-  watch(activeTab, tab => { if (tab === 'metadata') metadataVisited.value = true }, { immediate: true })
+  const statementVisited = ref(false)
+  watch(activeTab, tab => {
+    if (tab === 'metadata') metadataVisited.value = true
+    if (tab === 'statement') statementVisited.value = true
+  }, { immediate: true })
 
   // Shared review-table state
   const stagedTransactions = ref<TransactionViewModel[]>([])

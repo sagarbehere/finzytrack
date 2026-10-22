@@ -64,3 +64,31 @@ describe('QuickActionForms — Sell', () => {
     expect(reset).not.toHaveBeenCalled()
   })
 })
+
+describe('QuickActionForms — Merger', () => {
+  beforeEach(() => { assembleAndConvert.mockReset() })
+
+  it('assembles a conversion event from the form', async () => {
+    assembleAndConvert.mockResolvedValue({ bundle: { transactions: [{ id: 't1' }] }, warnings: [], errors: [] })
+    const wrapper = mountForms()
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'Merger')!.trigger('click')
+    const accounts = wrapper.findAllComponents({ name: 'AccountDropdown' })
+    const commodities = wrapper.findAllComponents({ name: 'CommodityDropdown' })
+    // [currency, fund merged away, new fund]
+    commodities[1].vm.$emit('update:modelValue', 'OLD')
+    commodities[2].vm.$emit('update:modelValue', 'NEW')
+    // [holding, gains]
+    accounts[0].vm.$emit('update:modelValue', 'Assets:Broker')
+    accounts[1].vm.$emit('update:modelValue', 'Income:Gains')
+    const amountInputs = wrapper.findAll('input[inputmode="decimal"]')
+    await amountInputs[0].setValue('696.767')
+    await amountInputs[1].setValue('1875.574')
+    await wrapper.findAll('button').find(b => b.text() === 'Add to review')!.trigger('click')
+    await flushPromises()
+    expect(assembleAndConvert.mock.calls[0][0][0]).toMatchObject({
+      type: 'conversion', currency: 'USD', holding_account: 'Assets:Broker', security: 'OLD', from_units: '696.767',
+      to_security: 'NEW', to_units: '1875.574', gains_account: 'Income:Gains',
+    })
+  })
+})

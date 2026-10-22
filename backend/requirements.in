@@ -48,3 +48,9 @@ python-multipart>=0.0.18  # required by FastAPI for File/Form uploads
 python-dotenv>=1.2.2
 jsonschema>=4.20.0  # validates recipe.schema.json against AI-authored recipes
 portalocker>=3.0.0  # cross-platform file lock for inter-process write serialisation
+# CAS (Indian mutual fund statement) import — deterministic PDF parser (MIT) and its
+# ISIN/AMFI database. Pinned exactly: the parser's output shape is load-bearing for
+# app/services/statement_import/parsers/cas.py, and casparser_isin ships a data file
+# (isin.db) the PyInstaller spec bundles. See dev-docs/cas-import.md §3.
+casparser==1.4.1
+casparser-isin==2026.6.9

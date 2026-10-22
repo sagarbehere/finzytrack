@@ -573,3 +573,50 @@ def test_sell_draft_rebooks_cleanly_against_the_ledger(tmp_path):
     combined = _MULTI + _render_draft(data.drafts[0])
     _entries, errors, _options = loader.load_string(combined)
     assert errors == [], [str(e.message) for e in errors]
+
+
+# ── Conversion (scheme merger / face-value change; dev-docs/cas-import.md §6.4) ──
+
+def _conversion(**over) -> "ConversionEvent":
+    from app.schemas.investment_schemas import ConversionEvent
+    fields = dict(type="conversion", date=date(2023, 1, 1), currency="USD",
+                  holding_account="Assets:Broker:VOO", security="VOO", from_units=Decimal("15"),
+                  to_security="VMFXX", to_units=Decimal("30.000"), gains_account="Income:CapitalGains")
+    return ConversionEvent(**{**fields, **over})
+
+
+def test_conversion_carries_every_lot_date_and_cost_without_a_gain(tmp_path):
+    a = _assembler(tmp_path, _MULTI)
+    out = a.assemble([_conversion()])
+    assert out.errors == []
+    d = out.drafts[0]
+    reduced = [(p.amount, p.cost_amount, p.cost_date) for p in d.postings if p.currency == "VOO"]
+    assert reduced == [(Decimal("-5"), Decimal("100.00"), date(2021, 1, 10)),
+                       (Decimal("-5"), Decimal("120.00"), date(2021, 6, 20)),
+                       (Decimal("-5"), Decimal("110.00"), date(2022, 3, 5))]
+    added = [(p.amount, p.cost_amount, p.cost_date) for p in d.postings if p.currency == "VMFXX"]
+    assert added == [(Decimal("10.000"), Decimal("50.0000000000"), date(2021, 1, 10)),
+                     (Decimal("10.000"), Decimal("60.0000000000"), date(2021, 6, 20)),
+                     (Decimal("10.000"), Decimal("55.0000000000"), date(2022, 3, 5))]
+    assert (d.postings[-1].account, d.postings[-1].amount) == ("Income:CapitalGains", Decimal("0.00"))
+
+    # It books: write it after the ledger and load.
+    text = _MULTI + "\n2023-01-01 * \"Convert\"\n" + "".join(
+        f"  {p.account} {p.amount} {p.currency}"
+        + (f" {{{p.cost_amount} {p.cost_currency}, {p.cost_date}}}" if p.cost_amount is not None else "") + "\n"
+        for p in d.postings)
+    _entries, errors, _ = loader.load_string(text)
+    assert errors == []
+
+
+def test_conversion_takes_partial_units_oldest_first(tmp_path):
+    a = _assembler(tmp_path, _MULTI)
+    d = a.assemble([_conversion(from_units=Decimal("7"), to_units=Decimal("14.000"))]).drafts[0]
+    assert [(p.amount, p.cost_date) for p in d.postings if p.currency == "VOO"] == [
+        (Decimal("-5"), date(2021, 1, 10)), (Decimal("-2"), date(2021, 6, 20))]
+
+
+def test_conversion_refuses_more_units_than_held(tmp_path):
+    a = _assembler(tmp_path, _MULTI)
+    out = a.assemble([_conversion(from_units=Decimal("16"))])
+    assert [e.code for e in out.errors] == ["INSUFFICIENT_LOTS"]

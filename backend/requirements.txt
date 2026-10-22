@@ -12,11 +12,13 @@ beancount==3.2.0
 beanprice==2.1.0
 beanquery==0.2.0
 beautifulsoup4==4.14.3
+casparser==1.4.1
+casparser-isin==2026.6.9
 certifi==2025.10.5
 cffi==2.0.0 ; platform_python_implementation != 'PyPy'
 charset-normalizer==3.4.6
 click==8.3.0
-colorama==0.4.6 ; sys_platform == 'win32'
+colorama==0.4.6
 cryptography==46.0.2
 curl-cffi==0.16.0
 diskcache==5.6.3
@@ -38,10 +40,13 @@ joblib==1.5.2
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 keyring==25.6.0
+markdown-it-py==4.0.0
+mdurl==0.1.2
 more-itertools==10.8.0
 numpy==2.3.3
 openai==2.29.0
 openpyxl==3.1.5
+packaging==26.0
 pandas==2.3.3
 pdfminer-six==20251230
 pdfplumber==0.11.9
@@ -50,6 +55,7 @@ portalocker==3.2.0
 pycparser==2.23 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
 pydantic==2.11.9
 pydantic-core==2.33.2
+pygments==2.20.0
 pypdfium2==5.6.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
@@ -62,6 +68,7 @@ rapidfuzz==3.14.1
 referencing==0.37.0
 regex==2025.9.1
 requests==2.34.2
+rich==14.3.3
 rpds-py==0.30.0
 ruamel-yaml==0.18.15
 ruamel-yaml-clib==0.2.12 ; python_full_version < '3.14' and platform_python_implementation == 'CPython'

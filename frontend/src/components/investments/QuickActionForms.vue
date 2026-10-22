@@ -83,11 +83,43 @@
     <div v-if="needs('security')" class="mt-4">
       <CommodityDropdown
         v-model="form.security"
-        label="Security"
+        :label="action === 'conversion' ? 'Fund that merged away' : 'Security'"
         :holdings-only="true"
         :allow-custom="true"
         placeholder="e.g. VOO"
       />
+    </div>
+
+    <!-- Merger: the fund the units become, and how many -->
+    <div v-if="needs('to_security')" class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div>
+        <label class="block text-sm font-medium text-gray-900 dark:text-white">Units given up</label>
+        <input v-model="form.from_units" type="text" inputmode="decimal" :class="inputClass" placeholder="e.g. 696.767" />
+      </div>
+      <div>
+        <CommodityDropdown
+          v-model="form.to_security"
+          label="New security"
+          :holdings-only="true"
+          :allow-custom="true"
+          placeholder="the fund it merged into"
+        />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-900 dark:text-white">Units received</label>
+        <input v-model="form.to_units" type="text" inputmode="decimal" :class="inputClass" placeholder="e.g. 1875.574" />
+      </div>
+      <div>
+        <AccountDropdown
+          v-model="form.gains_account"
+          label="Capital gains account"
+          :account-types="['Income']"
+          :allow-custom="true"
+        />
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          No gain is booked. The entry gets a 0.00 line here, which lets the carried costs round correctly.
+        </p>
+      </div>
     </div>
 
     <!-- CD / term-deposit account (cd-maturity) -->
@@ -239,7 +271,7 @@
   import { useAccounts } from '@/composables/useAccounts'
   import { useToast } from '@/composables/useNotifications'
 
-  type ActionId = 'buy' | 'drip' | 'cash_dividend' | 'sell' | 'cd_maturity' | 'interest' | 'add_holding' | 'open_deposit'
+  type ActionId = 'buy' | 'drip' | 'cash_dividend' | 'sell' | 'conversion' | 'cd_maturity' | 'interest' | 'add_holding' | 'open_deposit'
   type InvestmentEvent = AssembleRequest['events'][number]
 
   const emit = defineEmits<{ staged: [vms: TransactionViewModel[]] }>()
@@ -259,6 +291,7 @@
     { id: 'drip', label: 'Reinvest', help: 'A reinvested dividend/income buys more units — no cash changes hands.', fields: ['holding_account', 'security', 'units', 'unit_price', 'income_account'] },
     { id: 'cash_dividend', label: 'Dividend', help: 'A dividend paid to cash (not reinvested).', fields: ['cash_account', 'security', 'amount', 'income_account'] },
     { id: 'sell', label: 'Sell', help: 'Sell units of a holding — pick the lots (or a strategy) and see the realized gain before staging.', fields: [] },
+    { id: 'conversion', label: 'Merger', help: 'A fund merged into another (or changed its face value): its units become units of the new fund. Every lot keeps its purchase date and cost, so no gain is booked.', fields: ['holding_account', 'security', 'from_units', 'to_security', 'to_units', 'gains_account'] },
     { id: 'cd_maturity', label: 'CD Matures', help: 'A CD / term deposit matures — principal (and any final interest) is paid to another account.', fields: ['cd_account', 'principal', 'interest', 'destination_account', 'income_account'] },
     { id: 'interest', label: 'Interest', help: 'Record periodic interest — credited to the instrument (compounding) or paid to another account.', fields: ['deposit_account', 'interest', 'income_account'] },
     { id: 'add_holding', label: 'Add Holding', help: 'Record a position you already hold at its average cost — seeds current value without lot-by-lot history.', fields: ['holding_account', 'security', 'units', 'avg_cost', 'opening_account'] },
@@ -288,6 +321,10 @@
     deposit_account: '',
     principal: '',
     interest: '',
+    from_units: '',
+    to_security: '',
+    to_units: '',
+    gains_account: '',
     narration: '',
   })
 
@@ -310,6 +347,7 @@
       case 'cd_maturity': return 'CD matured'
       case 'interest': return 'Interest'
       case 'add_holding': return `Opening holding ${s}`
+      case 'conversion': return `Convert ${s} into ${form.to_security || 'SECURITY'}`
     }
     return ''
   })
@@ -326,7 +364,7 @@
     return Number.isFinite(n) && n >= 0
   }
 
-  const NUMERIC_REQUIRED = new Set(['units', 'unit_price', 'amount', 'avg_cost', 'principal'])
+  const NUMERIC_REQUIRED = new Set(['units', 'unit_price', 'amount', 'avg_cost', 'principal', 'from_units', 'to_units'])
 
   const canSubmit = computed(() => {
     if (!form.date || !form.currency) return false
@@ -408,6 +446,12 @@
           holding_account: form.holding_account, security: form.security,
           units: form.units, avg_cost: form.avg_cost, opening_account: form.opening_account,
         } as InvestmentEvent
+      case 'conversion':
+        return {
+          ...base, type: 'conversion',
+          holding_account: form.holding_account, security: form.security, from_units: form.from_units,
+          to_security: form.to_security, to_units: form.to_units, gains_account: form.gains_account,
+        } as InvestmentEvent
     }
     throw new Error('unreachable')
   }
@@ -444,6 +488,8 @@
     form.avg_cost = ''
     form.principal = ''
     form.interest = ''
+    form.from_units = ''
+    form.to_units = ''
     form.fee = ''
     form.narration = ''
   }

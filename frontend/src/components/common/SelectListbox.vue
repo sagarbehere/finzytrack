@@ -5,7 +5,7 @@
         class="relative w-full cursor-default rounded-md bg-white py-1.5 pl-3 pr-8 text-left text-sm text-gray-900 outline-1 -outline-offset-1 outline-gray-300 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 dark:bg-white/5 dark:text-white dark:outline-white/10"
       >
         <span class="block truncate" :class="!modelValue ? 'text-gray-400 dark:text-gray-500' : ''">
-          {{ modelValue || placeholder }}
+          {{ modelValue ? display(modelValue) : placeholder }}
         </span>
         <span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
           <ChevronUpDownIcon class="h-4 w-4 text-gray-400" aria-hidden="true" />
@@ -29,7 +29,7 @@
                 active ? 'bg-indigo-600 text-white dark:bg-indigo-500' : 'text-gray-900 dark:text-white',
               ]"
             >
-              <span :class="['block truncate', selected ? 'font-semibold' : 'font-normal']" :title="option">{{ option }}</span>
+              <span :class="['block truncate', selected ? 'font-semibold' : 'font-normal']" :title="display(option)">{{ display(option) }}</span>
             </li>
           </ListboxOption>
           <li v-if="options.length === 0" class="px-3 py-2 text-gray-500 dark:text-gray-400">No options</li>
@@ -43,11 +43,15 @@
 import { Listbox, ListboxButton, ListboxOptions, ListboxOption } from '@headlessui/vue'
 import { ChevronUpDownIcon } from '@heroicons/vue/20/solid'
 
-defineProps<{
+const props = defineProps<{
   modelValue: string
   options: string[]
   placeholder?: string
+  /** How to show an option (default: the option itself), for options that are ids. */
+  labelOf?: (option: string) => string
 }>()
+
+const display = (option: string) => (props.labelOf ? props.labelOf(option) : option)
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void

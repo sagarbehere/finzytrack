@@ -90,6 +90,16 @@ PRICE_EXISTS = "PRICE_EXISTS"                    # set with replace=false target
 PREVIEW_STALE = "PREVIEW_STALE"                  # Open Deposit: the write would differ from the shown preview
 PRICE_SIDECAR_INVALID = "PRICE_SIDECAR_INVALID"  # sidecar has unreadable lines, or the render failed its parse check
 
+# Statement import errors (/api/investments/statement — CAS import; dev-docs/cas-import.md)
+CAS_WRONG_PASSWORD = "CAS_WRONG_PASSWORD"        # the PDF's password is wrong (or missing)
+CAS_UNRECOGNIZED = "CAS_UNRECOGNIZED"            # not a CAMS / KFintech CAS
+CAS_PARSE_FAILED = "CAS_PARSE_FAILED"            # a CAS, but it could not be read
+CAS_INTEGRITY = "CAS_INTEGRITY"                  # the statement's rows don't add up to its balances
+STATEMENT_EXPIRED = "STATEMENT_EXPIRED"          # the parsed statement is no longer held (re-upload)
+STATEMENT_NOT_READY = "STATEMENT_NOT_READY"      # commit asked while the plan has blocking issues
+STATEMENT_INVALID = "STATEMENT_INVALID"          # the import would introduce ledger errors
+STATEMENT_IMPORT_NOT_FOUND = "STATEMENT_IMPORT_NOT_FOUND"  # undo of an unknown import id
+
 # Dashboard theme errors (/api/dashboard-theme — chart/widget color themes)
 DASHBOARD_THEME_NOT_FOUND = "DASHBOARD_THEME_NOT_FOUND"
 DASHBOARD_THEME_VALIDATION_ERROR = "DASHBOARD_THEME_VALIDATION_ERROR"
@@ -121,6 +131,9 @@ INVALID_ENGINE = "INVALID_ENGINE"
 MISSING_DEPENDENCY = "MISSING_DEPENDENCY"
 PDF_NATIVE_NOT_SUPPORTED = "PDF_NATIVE_NOT_SUPPORTED"
 PDF_NO_TEXT = "PDF_NO_TEXT"
+PDF_PASSWORD_REQUIRED = "PDF_PASSWORD_REQUIRED"  # encrypted PDF, no password given
+PDF_WRONG_PASSWORD = "PDF_WRONG_PASSWORD"        # encrypted PDF, password doesn't open it
+STATEMENT_IS_CAS = "STATEMENT_IS_CAS"            # AI import got a mutual fund CAS: hand over to Import statement
 
 # CRUD operation errors
 DELETE_FAILED = "DELETE_FAILED"

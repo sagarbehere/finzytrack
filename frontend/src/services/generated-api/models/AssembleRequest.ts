@@ -6,6 +6,7 @@ import type { AddHoldingEvent } from './AddHoldingEvent';
 import type { BuyEvent } from './BuyEvent';
 import type { CashDividendEvent } from './CashDividendEvent';
 import type { CdMaturityEvent } from './CdMaturityEvent';
+import type { ConversionEvent } from './ConversionEvent';
 import type { DripEvent } from './DripEvent';
 import type { InterestEvent } from './InterestEvent';
 import type { SellEvent } from './SellEvent';
@@ -16,6 +17,6 @@ export type AssembleRequest = {
     /**
      * One or more typed investment events
      */
-    events: Array<(BuyEvent | DripEvent | CashDividendEvent | SellEvent | CdMaturityEvent | InterestEvent | AddHoldingEvent)>;
+    events: Array<(BuyEvent | DripEvent | CashDividendEvent | SellEvent | CdMaturityEvent | InterestEvent | AddHoldingEvent | ConversionEvent)>;
 };
 

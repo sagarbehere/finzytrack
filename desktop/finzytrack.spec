@@ -60,6 +60,12 @@ webview_datas, webview_binaries, webview_hidden = collect_all('webview')
 pythonnet_datas, pythonnet_binaries, pythonnet_hidden = collect_all('pythonnet')
 clr_loader_datas, clr_loader_binaries, clr_loader_hidden = collect_all('clr_loader')
 
+# CAS import (dev-docs/cas-import.md §3): casparser_isin resolves a scheme's ISIN and
+# AMFI code from a SQLite database shipped inside the package (isin.db), which
+# PyInstaller's analysis doesn't see; casparser imports its parsers lazily.
+casparser_isin_datas = collect_data_files('casparser_isin')
+casparser_hidden = collect_submodules('casparser') + collect_submodules('casparser_isin')
+
 BACKEND = ROOT / 'backend'
 FRONTEND_DIST = ROOT / 'frontend' / 'dist'
 
@@ -99,6 +105,7 @@ a = Analysis(
         *webview_datas,
         *pythonnet_datas,
         *clr_loader_datas,
+        *casparser_isin_datas,
         # Seed config template (copied to user's config/ on first run)
         (str(BACKEND / 'resources' / 'seed_config'), 'backend/seed_config'),
         # Seed data template (copied to user's data/ on first run)
@@ -129,6 +136,7 @@ a = Analysis(
         *webview_hidden,
         *pythonnet_hidden,
         *clr_loader_hidden,
+        *casparser_hidden,
         # FastAPI / uvicorn
         'uvicorn.logging',
         'uvicorn.loops',
