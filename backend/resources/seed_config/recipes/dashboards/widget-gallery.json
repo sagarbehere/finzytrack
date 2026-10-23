@@ -61,36 +61,40 @@
         "gridArea": "14 / 1 / 17 / 13"
       },
       {
-        "widgetId": "gallery-pivot",
+        "widgetId": "gallery-tree-table",
         "gridArea": "17 / 1 / 21 / 13"
       },
       {
+        "widgetId": "gallery-pivot",
+        "gridArea": "21 / 1 / 25 / 13"
+      },
+      {
         "widgetId": "gallery-funnel",
-        "gridArea": "21 / 1 / 24 / 7"
+        "gridArea": "25 / 1 / 28 / 7"
       },
       {
         "widgetId": "gallery-gauge",
-        "gridArea": "21 / 7 / 24 / 13"
+        "gridArea": "25 / 7 / 28 / 13"
       },
       {
         "widgetId": "gallery-calendar",
-        "gridArea": "24 / 1 / 27 / 13"
+        "gridArea": "28 / 1 / 31 / 13"
       },
       {
         "widgetId": "gallery-sankey",
-        "gridArea": "27 / 1 / 31 / 13"
+        "gridArea": "31 / 1 / 35 / 13"
       },
       {
         "widgetId": "gallery-radar",
-        "gridArea": "31 / 1 / 34 / 7"
+        "gridArea": "35 / 1 / 38 / 7"
       },
       {
         "widgetId": "gallery-sunburst",
-        "gridArea": "31 / 7 / 34 / 13"
+        "gridArea": "35 / 7 / 38 / 13"
       },
       {
         "widgetId": "gallery-budget-progress",
-        "gridArea": "34 / 1 / 38 / 13"
+        "gridArea": "38 / 1 / 42 / 13"
       }
     ]
   },
@@ -679,6 +683,42 @@
         }
       ],
       "output": "out"
+    },
+    {
+      "id": "gallery-tree-table",
+      "title": "Balances by Account (Tree Table)",
+      "helpText": "Tree table. The query returns only leaf rows with a path field (here the account name); the widget builds the hierarchy. Every path prefix becomes a collapsible parent row, and parents show the sum of columns marked aggregate 'sum'. groupBy adds a top level per distinct value (here currency, so currencies are never added together). skipLevels drops leading path segments, labelField gives a row a display label, and expandDepth sets how many levels start open. Link on the tree column: {{row.account}} is each row's own path, including parents; group rows have no link. Value columns are resizable.",
+      "visualization": {
+        "type": "tree-table",
+        "pathField": "account",
+        "groupBy": "currency",
+        "label": "Account",
+        "expandDepth": 2,
+        "link": {
+          "name": "transactions",
+          "query": {
+            "accountContains": "{{row.account}}"
+          }
+        },
+        "columns": [
+          {
+            "key": "balance",
+            "label": "Balance",
+            "format": "currency",
+            "currencyField": "currency",
+            "align": "right",
+            "aggregate": "sum"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "id": "main",
+          "kind": "query",
+          "query": "SELECT p.account, p.currency, ROUND(SUM(CAST(p.amount AS REAL)), 2) AS balance FROM postings p JOIN commodities c ON c.code = p.currency AND c.is_currency = 1 WHERE p.account_type IN ('Assets', 'Liabilities') GROUP BY p.account, p.currency HAVING ROUND(SUM(CAST(p.amount AS REAL)), 2) != 0 ORDER BY p.currency, p.account"
+        }
+      ],
+      "output": "main"
     },
     {
       "id": "gallery-funnel",

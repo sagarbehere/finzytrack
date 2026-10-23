@@ -49,6 +49,13 @@
     @select="emit('select', $event)"
   />
 
+  <!-- Tree table -->
+  <RecipeTreeTable
+    v-else-if="recipe.visualization.type === 'tree-table'"
+    :rows="Array.isArray(data) ? (data as Record<string, unknown>[]) : []"
+    v-bind="getTreeTableProps()"
+  />
+
   <!-- Pivot Table -->
   <RecipePivotTable
     v-else-if="recipe.visualization.type === 'pivot'"
@@ -94,6 +101,7 @@ import type {
   JsonTableColumn,
   JsonValueLinkConfig,
   JsonPivotVisualization,
+  JsonTreeTableVisualization,
   ValueFormat,
   PivotData,
   PivotVisualization,
@@ -114,6 +122,7 @@ import RecipeChart from './RecipeChart.vue'
 import RecipeKPI from './RecipeKPI.vue'
 import RecipeTable from './RecipeTable.vue'
 import RecipePivotTable from './RecipePivotTable.vue'
+import RecipeTreeTable from './RecipeTreeTable.vue'
 import RecipeBudgetProgress, { type BudgetProgressFields } from './RecipeBudgetProgress.vue'
 
 interface Props {
@@ -331,88 +340,94 @@ function resolveSelectParams(
   return out
 }
 
+/**
+ * A JSON column (format string, per-row currency, template link) as a
+ * TableColumn with format/link functions. Shared by table and tree-table so both
+ * format and link cells identically.
+ */
+function jsonColumnToTableColumn(jsonCol: JsonTableColumn): TableColumn {
+  const result: TableColumn = {
+    key: jsonCol.key,
+    label: jsonCol.label,
+    align: jsonCol.align,
+    currencyField: jsonCol.currencyField,
+  }
+  if (jsonCol.format) {
+    result.format = (value: unknown, row?: Record<string, unknown>) => {
+      // Format numbers and numeric (Money) strings; Money flows through
+      // the data path as a decimal string and is display-formatted here.
+      // Per-row currency: when the column declares `currencyField`, format
+      // each cell in its OWN currency (multi-currency tables, §6.2), falling
+      // back to the widget currency when a row lacks the field.
+      const fmts =
+        jsonCol.currencyField && row && row[jsonCol.currencyField]
+          ? getFormats(String(row[jsonCol.currencyField]))
+          : formats.value
+      const fmt = jsonCol.format as ValueFormat
+      if (typeof value === 'number') {
+        return fmts[fmt](value)
+      }
+      if (typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Number(value))) {
+        return fmts[fmt](Number(value))
+      }
+      return String(value ?? '—')
+    }
+  }
+  if (jsonCol.link) {
+    const linkTemplate = jsonCol.link
+    const scope = (context: TableLinkContext) => ({
+      row: context.row,
+      value: context.value,
+      column: context.column.key,
+      parameters: props.mergedParameters,
+    })
+    // A grand-total / summary row (isTotal) isn't a real entity — no action.
+    result.getLink = (context) =>
+      context.row?.isTotal ? null : resolveTemplateLink(linkTemplate, scope(context))
+    if (isSelectLink(linkTemplate)) {
+      result.getSelect = (context) =>
+        context.row?.isTotal ? null : resolveSelectParams(linkTemplate, scope(context))
+    }
+  }
+  return result
+}
+
 // Get table columns (handles both TypeScript and JSON recipes)
 function getTableColumns(): TableColumn[] {
   const viz = props.recipe.visualization
   if (viz.type !== 'table') return []
 
-  // Convert JSON table columns to TableColumn format
   return viz.columns.map((col: TableColumn | JsonTableColumn) => {
-    if ('format' in col && typeof col.format === 'string') {
-      // JSON column with format string (and optional template link)
-      const jsonCol = col as JsonTableColumn
-      const result: TableColumn = {
-        key: jsonCol.key,
-        label: jsonCol.label,
-        align: jsonCol.align,
-        currencyField: jsonCol.currencyField,
-        format: jsonCol.format
-          ? (value: unknown, row?: Record<string, unknown>) => {
-              // Format numbers and numeric (Money) strings; Money flows through
-              // the data path as a decimal string and is display-formatted here.
-              // Per-row currency: when the column declares `currencyField`, format
-              // each cell in its OWN currency (multi-currency tables, §6.2), falling
-              // back to the widget currency when a row lacks the field.
-              const fmts =
-                jsonCol.currencyField && row && row[jsonCol.currencyField]
-                  ? getFormats(String(row[jsonCol.currencyField]))
-                  : formats.value
-              const fmt = jsonCol.format as ValueFormat
-              if (typeof value === 'number') {
-                return fmts[fmt](value)
-              }
-              if (typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Number(value))) {
-                return fmts[fmt](Number(value))
-              }
-              return String(value ?? '—')
-            }
-          : undefined,
-      }
-      if (jsonCol.link) {
-        const linkTemplate = jsonCol.link
-        const scope = (context: TableLinkContext) => ({
-          row: context.row,
-          value: context.value,
-          column: context.column.key,
-          parameters: props.mergedParameters,
-        })
-        // A grand-total / summary row (isTotal) isn't a real entity — no action.
-        result.getLink = (context) =>
-          context.row?.isTotal ? null : resolveTemplateLink(linkTemplate, scope(context))
-        if (isSelectLink(linkTemplate)) {
-          result.getSelect = (context) =>
-            context.row?.isTotal ? null : resolveSelectParams(linkTemplate, scope(context))
-        }
-      }
-      return result
-    }
-    // Check for JSON column without format but with a link/select action
-    if ('link' in col && col.link && typeof col.link === 'object' && ('name' in col.link || 'select' in col.link)) {
-      const jsonCol = col as JsonTableColumn
-      const result: TableColumn = {
-        key: jsonCol.key,
-        label: jsonCol.label,
-        align: jsonCol.align,
-        currencyField: jsonCol.currencyField,
-      }
-      const linkTemplate = jsonCol.link!
-      const scope = (context: TableLinkContext) => ({
-        row: context.row,
-        value: context.value,
-        column: context.column.key,
-        parameters: props.mergedParameters,
-      })
-      result.getLink = (context) =>
-        context.row?.isTotal ? null : resolveTemplateLink(linkTemplate, scope(context))
-      if (isSelectLink(linkTemplate)) {
-        result.getSelect = (context) =>
-          context.row?.isTotal ? null : resolveSelectParams(linkTemplate, scope(context))
-      }
-      return result
-    }
+    // JSON column with a format string, or with a link/select action
+    const isJsonFormat = 'format' in col && typeof col.format === 'string'
+    const isJsonLink = 'link' in col && col.link && typeof col.link === 'object' && ('name' in col.link || 'select' in col.link)
+    if (isJsonFormat || isJsonLink) return jsonColumnToTableColumn(col as JsonTableColumn)
     // TypeScript column with function
     return col as TableColumn
   })
+}
+
+// tree-table: the build options, value columns, and tree-column link.
+function getTreeTableProps() {
+  const viz = props.recipe.visualization as JsonTreeTableVisualization
+  const columns = viz.columns.map((c) => jsonColumnToTableColumn(c))
+  return {
+    treeOptions: {
+      pathField: viz.pathField,
+      separator: viz.separator,
+      skipLevels: viz.skipLevels,
+      groupBy: viz.groupBy,
+      labelField: viz.labelField,
+      sumKeys: viz.columns.filter((c) => c.aggregate === 'sum').map((c) => c.key),
+    },
+    treeLabel: viz.label,
+    treeColumn: viz.link
+      ? jsonColumnToTableColumn({ key: viz.pathField, label: viz.label ?? 'Name', link: viz.link })
+      : undefined,
+    columns,
+    expandDepth: viz.expandDepth,
+    emptyText: viz.emptyText,
+  }
 }
 
 // Custom empty-state message for a table viz (JSON recipes).

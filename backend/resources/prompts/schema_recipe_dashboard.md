@@ -561,7 +561,7 @@ Budget-vs-actual progress list: one row per budgeted account with a fill bar (sp
 
 #### `JsonRecipeVisualization`
 
-Type: `JsonChartVisualization | JsonKPIVisualization | JsonTableVisualization | JsonPivotVisualization | JsonBudgetProgressVisualization`
+Type: `JsonChartVisualization | JsonKPIVisualization | JsonTableVisualization | JsonTreeTableVisualization | JsonPivotVisualization | JsonBudgetProgressVisualization`
 
 #### `JsonRouteLinkConfig`
 NAVIGATE click action: clicking the value/row/series routes to a Vue route with a templated query.
@@ -596,6 +596,34 @@ SELECT click action: clicking sets dashboard parameters from the clicked context
 | `type` | `'table'` | yes |  |
 | `columns` | `JsonTableColumn[]` | yes |  |
 | `emptyText` | `string` | — | Message shown when the table has no rows (default: 'No data available'). |
+
+#### `JsonTreeTableColumn`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `key` | `string` | yes |  |
+| `label` | `string` | yes |  |
+| `format` | `ValueFormat` | — |  |
+| `align` | `'left' | 'center' | 'right'` | — |  |
+| `currencyField` | `string` | — | Row field holding each row's currency code, so money cells format in their own currency (as for table columns). Parent rows have it when everything beneath shares one currency — always true under a currency groupBy. |
+| `aggregate` | `'sum'` | — | How parent and group rows show this column: 'sum' adds up everything beneath (exact decimal arithmetic). Without it, a parent shows the value only when every row beneath has the same one, else it is blank. |
+
+#### `JsonTreeTableVisualization`
+Expandable tree table built from flat rows with a hierarchical path (e.g. account names). Every path prefix becomes a collapsible parent row; parent and group rows show totals of the columns marked aggregate 'sum'. Columns are resizable. The query returns only the leaf rows — no total rows.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `'tree-table'` | yes |  |
+| `pathField` | `string` | yes | Row field holding the hierarchical path, e.g. 'account' for 'Assets:Liquid:Checking:BofA'. |
+| `separator` | `string` | — | Path separator (default ':'). |
+| `skipLevels` | `integer` | — | Leading path segments to leave out of the hierarchy, e.g. 1 to drop a shared 'Assets' root (default 0). |
+| `groupBy` | `string` | — | Optional row field whose distinct values form the top level, each with its own total — e.g. 'currency', so amounts in different currencies are never added together. |
+| `label` | `string` | — | Header of the tree column (default 'Name'). |
+| `labelField` | `string` | — | Row field with a display label for a row (e.g. an account's display-name). Falls back to the row's last path segment. Parent rows without their own row show their path segment. |
+| `link` | `JsonValueLinkConfig` | — | Click-through on the tree column. {{row.<pathField>}} is the row's own path at every level (a parent's is its prefix), and empty on group rows, which therefore get no link. |
+| `expandDepth` | `integer` | — | How many levels start expanded (0 = only the top level shows). Default: everything expanded. |
+| `columns` | `JsonTreeTableColumn[]` | yes | Value columns shown to the right of the tree column. |
+| `emptyText` | `string` | — | Message shown when there are no rows. |
 
 #### `JsonValueLinkConfig`
 A click action on a widget value/row/series: either NAVIGATE to a route or SELECT dashboard parameters (master-detail).

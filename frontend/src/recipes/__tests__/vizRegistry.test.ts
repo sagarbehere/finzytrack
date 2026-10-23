@@ -19,6 +19,11 @@ describe('validateVizInput', () => {
     expect(validateVizInput({ type: 'table' }, pivot)).toMatch(/array of row objects/)
   })
 
+  it('tree-table accepts a rows array and rejects a PivotData object', () => {
+    expect(validateVizInput({ type: 'tree-table' }, rows)).toBeNull()
+    expect(validateVizInput({ type: 'tree-table' }, pivot)).toMatch(/array of row objects/)
+  })
+
   it('pivot accepts PivotData and rejects a plain rows array', () => {
     expect(validateVizInput({ type: 'pivot' }, pivot)).toBeNull()
     expect(validateVizInput({ type: 'pivot' }, rows)).toMatch(/PivotData/)
@@ -49,6 +54,6 @@ describe('validateVizInput', () => {
     for (const ct of SUPPORTED_CHART_TYPES) {
       expect(ct in VIZ_REGISTRY.chart).toBe(true)
     }
-    expect(supportedGrains()).toEqual(['kpi', 'table', 'pivot', 'budget-progress', ...SUPPORTED_CHART_TYPES])
+    expect(supportedGrains()).toEqual(['kpi', 'table', 'tree-table', 'pivot', 'budget-progress', ...SUPPORTED_CHART_TYPES])
   })
 })

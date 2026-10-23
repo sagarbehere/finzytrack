@@ -36,6 +36,7 @@ export type JsonRecipeVisualization =
   | JsonChartVisualization
   | JsonKPIVisualization
   | JsonTableVisualization
+  | JsonTreeTableVisualization
   | JsonPivotVisualization
   | JsonBudgetProgressVisualization;
 export type ChartType =
@@ -383,6 +384,68 @@ export interface JsonTableColumn {
    */
   currencyField?: string;
   link?: JsonValueLinkConfig;
+  [k: string]: unknown;
+}
+/**
+ * Expandable tree table built from flat rows with a hierarchical path (e.g. account names). Every path prefix becomes a collapsible parent row; parent and group rows show totals of the columns marked aggregate 'sum'. Columns are resizable. The query returns only the leaf rows — no total rows.
+ */
+export interface JsonTreeTableVisualization {
+  type: "tree-table";
+  /**
+   * Row field holding the hierarchical path, e.g. 'account' for 'Assets:Liquid:Checking:BofA'.
+   */
+  pathField: string;
+  /**
+   * Path separator (default ':').
+   */
+  separator?: string;
+  /**
+   * Leading path segments to leave out of the hierarchy, e.g. 1 to drop a shared 'Assets' root (default 0).
+   */
+  skipLevels?: number;
+  /**
+   * Optional row field whose distinct values form the top level, each with its own total — e.g. 'currency', so amounts in different currencies are never added together.
+   */
+  groupBy?: string;
+  /**
+   * Header of the tree column (default 'Name').
+   */
+  label?: string;
+  /**
+   * Row field with a display label for a row (e.g. an account's display-name). Falls back to the row's last path segment. Parent rows without their own row show their path segment.
+   */
+  labelField?: string;
+  /**
+   * A click action on a widget value/row/series: either NAVIGATE to a route or SELECT dashboard parameters (master-detail).
+   */
+  link?: JsonRouteLinkConfig | JsonSelectLinkConfig;
+  /**
+   * How many levels start expanded (0 = only the top level shows). Default: everything expanded.
+   */
+  expandDepth?: number;
+  /**
+   * Value columns shown to the right of the tree column.
+   */
+  columns: JsonTreeTableColumn[];
+  /**
+   * Message shown when there are no rows.
+   */
+  emptyText?: string;
+  [k: string]: unknown;
+}
+export interface JsonTreeTableColumn {
+  key: string;
+  label: string;
+  format?: ValueFormat;
+  align?: "left" | "center" | "right";
+  /**
+   * Row field holding each row's currency code, so money cells format in their own currency (as for table columns). Parent rows have it when everything beneath shares one currency — always true under a currency groupBy.
+   */
+  currencyField?: string;
+  /**
+   * How parent and group rows show this column: 'sum' adds up everything beneath (exact decimal arithmetic). Without it, a parent shows the value only when every row beneath has the same one, else it is blank.
+   */
+  aggregate?: "sum";
   [k: string]: unknown;
 }
 export interface JsonPivotVisualization {

@@ -364,6 +364,8 @@ export type {
   JsonRecipeVisualization,
   JsonTableColumn,
   JsonTableVisualization,
+  JsonTreeTableColumn,
+  JsonTreeTableVisualization,
   JsonValueLinkConfig,
   JsonRouteLinkConfig,
   JsonSelectLinkConfig,

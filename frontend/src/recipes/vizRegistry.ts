@@ -99,6 +99,12 @@ const tableGrain: VizGrain = {
   validateInput: rowsValidator('table'),
 }
 
+// tree-table builds its hierarchy from flat rows carrying a path field.
+const treeTableGrain: VizGrain = {
+  expectedShape: 'an array of row objects with a path field (e.g. account names)',
+  validateInput: rowsValidator('tree-table'),
+}
+
 const pivotGrain: VizGrain = {
   expectedShape: 'a PivotData object ({ columns: [], rows: [] })',
   validateInput: (data) =>
@@ -137,6 +143,7 @@ function chartGrain(chartType: string): VizGrain {
 export const VIZ_REGISTRY = {
   kpi: kpiGrain,
   table: tableGrain,
+  'tree-table': treeTableGrain,
   pivot: pivotGrain,
   'budget-progress': budgetProgressGrain,
   chart: Object.fromEntries(
