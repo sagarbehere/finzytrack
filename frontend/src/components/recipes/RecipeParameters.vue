@@ -58,9 +58,18 @@
           :value="resolveParameterValue(modelValue[param.name])"
           :min="boundFor(param, 'min')"
           :max="boundFor(param, 'max')"
-          @input="updateParam(param.name, ($event.target as HTMLInputElement).value)"
+          @input="updateDateParam(param, ($event.target as HTMLInputElement).value)"
           class="block rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6 dark:bg-white/5 dark:text-white dark:outline-white/10 dark:focus:outline-indigo-500"
         />
+        <!-- Back to the live templated default (e.g. "Today") after picking a date -->
+        <button
+          v-if="param.type === 'date' && templatedDefaultLabel(param) && modelValue[param.name] !== param.default"
+          type="button"
+          @click="updateParam(param.name, param.default as string)"
+          class="rounded-md bg-white px-2.5 py-1.5 text-sm font-semibold text-gray-900 shadow-xs inset-ring inset-ring-gray-300 hover:bg-gray-50 dark:bg-white/10 dark:text-white dark:shadow-none dark:inset-ring-white/5 dark:hover:bg-white/20"
+        >
+          {{ templatedDefaultLabel(param) }}
+        </button>
 
         <!-- Boolean input (checkbox); stored as 'true'/'false' strings -->
         <input
@@ -225,9 +234,8 @@ function getOptions(param: RecipeParameter): RecipeParameterOption[] {
     ? [{ value: ALL_CURRENCIES_SENTINEL, label: 'All currencies' }, ...base]
     : base
   const def = param.default
-  if (typeof def === 'string' && isGenSelection(def)) {
-    const name = genSelectionName(def)
-    const label = GENERATOR_LABELS[name] ?? name
+  const label = templatedDefaultLabel(param)
+  if (typeof def === 'string' && label) {
     // Show the live resolved value in parens so the user can tell at a glance
     // what the template currently means (e.g. "Current Month (May)"). If the
     // resolved value matches a labeled option (e.g. month number 5 → "May"),
@@ -237,6 +245,21 @@ function getOptions(param: RecipeParameter): RecipeParameterOption[] {
     return [{ value: def, label: `${label} (${resolvedLabel})` }, ...withAll]
   }
   return withAll
+}
+
+/** Label of a templated default (e.g. "Today" for "$gen:today"), or null when
+ * the default is a literal or absent. */
+function templatedDefaultLabel(param: RecipeParameter): string | null {
+  const def = param.default
+  if (typeof def !== 'string' || !isGenSelection(def)) return null
+  const name = genSelectionName(def)
+  return GENERATOR_LABELS[name] ?? name
+}
+
+/** A cleared date falls back to the parameter's default instead of binding an
+ * empty value (which would be remembered and leave the dashboard blank). */
+function updateDateParam(param: RecipeParameter, value: string) {
+  updateParam(param.name, value === '' && param.default != null ? (param.default as string | number) : value)
 }
 
 function getButtonLabel(param: RecipeParameter): string {
