@@ -48,7 +48,7 @@ class BudgetForRangeFunction(ComputeFunction):
     def __init__(self, reader: SqliteReader) -> None:
         self._reader = reader
 
-    async def execute(self, **args: Any) -> list[dict]:
+    def execute(self, **args: Any) -> list[dict]:
         try:
             date_to = date.fromisoformat(str(args["to"]))
             raw_from = args.get("from")
