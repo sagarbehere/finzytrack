@@ -19,6 +19,8 @@ const DEFAULT_DASHBOARD_IDS = ['financial-overview', 'year-summary', 'month-summ
 const tabs = ref<DashboardTab[]>([])
 const activeTabId = ref<string | null>(null)
 const isInitialized = ref(false)
+// One cross-tab subscription per page (the state above is module-level too).
+let unsubscribeOtherTabs: (() => void) | null = null
 
 function loadFromStorage(): StoredTabState | null {
   return getStorageAdapter().get<StoredTabState>(STORAGE_KEYS.DASHBOARD_TABS)
@@ -72,6 +74,32 @@ export function useDashboardTabs() {
     }
 
     isInitialized.value = true
+
+    // Keep the tab list in step with other browser tabs: without this, the tab
+    // the user touches last saves its own (stale) list over the other's.
+    unsubscribeOtherTabs?.()
+    unsubscribeOtherTabs = getStorageAdapter().subscribe?.<StoredTabState>(
+      STORAGE_KEYS.DASHBOARD_TABS,
+      (state) => applyOtherTabState(state),
+    ) ?? null
+  }
+
+  /**
+   * Adopt the tab list another browser tab saved. This tab keeps showing its
+   * own dashboard when that is still open; nothing is saved back, so two tabs
+   * can't ping-pong writes.
+   */
+  function applyOtherTabState(state: StoredTabState | null): void {
+    if (!state) return
+    const next: DashboardTab[] = []
+    for (const id of state.tabs) {
+      const dashboard = getDashboard(id)
+      if (dashboard) next.push({ id, title: dashboard.title })
+    }
+    tabs.value = next
+    if (!next.some((t) => t.id === activeTabId.value)) {
+      activeTabId.value = next.some((t) => t.id === state.activeTabId) ? state.activeTabId : next[0]?.id ?? null
+    }
   }
 
   /**
