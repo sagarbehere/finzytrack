@@ -9,7 +9,6 @@ effective yield = interest ÷ time-weighted average balance, annualized; gracefu
 with no metadata.
 """
 
-import asyncio
 from pathlib import Path
 
 from app.core.ledger_loader import load_ledger_checked, sidecar_path
@@ -27,7 +26,7 @@ def _run(tmp_path, ledger_text, to):
     entries, errors, options = load_ledger_checked(str(ledger))
     assert errors == [], errors
     exporter.export_full_sync(entries, errors, options, ledger_file=str(ledger))
-    rows = asyncio.run(CashInstrumentsFunction(reader).execute(to=to, currency="*"))
+    rows = CashInstrumentsFunction(reader).execute(to=to, currency="*")
     return {r["account"]: r for r in rows}
 
 

@@ -117,7 +117,7 @@ class CashInstrumentsFunction(ComputeFunction):
     def __init__(self, reader: SqliteReader) -> None:
         self._reader = reader
 
-    async def execute(self, **args: Any) -> list[dict]:
+    def execute(self, **args: Any) -> list[dict]:
         try:
             to_date = date.fromisoformat(str(args["to"]))
         except (ValueError, KeyError) as e:

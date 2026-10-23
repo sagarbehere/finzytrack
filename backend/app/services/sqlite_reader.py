@@ -855,6 +855,23 @@ class SqliteReader:
             return [dict(r) for r in con.execute(sql, params).fetchall()]
         return self._query(query)
 
+    def get_prices_involving(self, commodities: List[str]) -> List[dict]:
+        """Price rows where any of ``commodities`` is the base *or* the quote
+        currency (so inverse-declared prices are included), ordered by
+        ``(date, id)`` — ledger declaration order within a day."""
+        if not commodities:
+            return []
+
+        def query(con: sqlite3.Connection) -> List[dict]:
+            marks = ",".join("?" * len(commodities))
+            sql = (
+                "SELECT id, date, base_currency, quote_number, quote_currency FROM prices "
+                f"WHERE base_currency IN ({marks}) OR quote_currency IN ({marks}) "
+                "ORDER BY date, id"
+            )
+            return [dict(r) for r in con.execute(sql, [*commodities, *commodities]).fetchall()]
+        return self._query(query)
+
     def get_latest_prices(self) -> List[dict]:
         """The newest price per ``(base, quote)`` pair, each as ``{base_currency,
         quote_currency, date, quote_number, filename, count}`` — ``filename`` is

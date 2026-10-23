@@ -14,8 +14,10 @@ from typing import Any
 
 class ComputeFunction(ABC):
     """One named computation. Subclasses declare a JSON-Schema for their args
-    (small scalars), an output-shape description (for AI discovery / G1), and an
-    async `execute`."""
+    (small scalars), an output-shape description (for AI discovery / G1), and a
+    synchronous `execute`. It is deliberately not `async`: the work is blocking
+    CPU + SQLite, so the registry runs it in a worker thread — an `async def`
+    here would run on the event loop and stall every other request."""
 
     #: Unique function name addressed from a recipe `compute` step's `fn`.
     name: str
@@ -27,7 +29,7 @@ class ComputeFunction(ABC):
     output_shape: str = "arbitrary JSON"
 
     @abstractmethod
-    async def execute(self, **args: Any) -> Any:
+    def execute(self, **args: Any) -> Any:
         """Run the computation and return JSON-serialisable output. Money values
         are returned as decimal strings (money-types.md)."""
         raise NotImplementedError

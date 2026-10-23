@@ -7,6 +7,7 @@ Returns structured dicts so the router can map cleanly to APIError codes:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -74,7 +75,8 @@ class FunctionRegistry:
             }
 
         try:
-            result = await fn.execute(**filtered)
+            # Off the event loop: functions are blocking (ComputeFunction docstring).
+            result = await asyncio.to_thread(fn.execute, **filtered)
             return {"success": True, "result": result}
         except Exception as e:  # noqa: BLE001 — surfaced as a structured error
             logger.error("Compute function '%s' raised: %s", name, e, exc_info=True)

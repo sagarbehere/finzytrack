@@ -116,7 +116,7 @@ class PortfolioReturnsFunction(ComputeFunction):
     def __init__(self, reader: SqliteReader) -> None:
         self._reader = reader
 
-    async def execute(self, **args: Any) -> list[dict]:
+    def execute(self, **args: Any) -> list[dict]:
         try:
             date_to = date.fromisoformat(str(args["to"]))
             raw_from = args.get("from")
@@ -159,7 +159,7 @@ class PortfolioReturnsFunction(ComputeFunction):
 
         # Terminal market value + cost basis at `to`, per group, from the tested
         # value-over-time function (its last sample is exactly `to`).
-        series = await PortfolioSeriesFunction(self._reader).execute(
+        series = PortfolioSeriesFunction(self._reader).execute(
             to=date_to.isoformat(),
             scope=("overall" if scope == "portfolio" else "asset-class"),
             currency=want_currency,

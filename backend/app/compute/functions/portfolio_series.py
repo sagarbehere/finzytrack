@@ -7,8 +7,9 @@ holdings held as-of that date (units-as-of × price-on-or-before) and their
 investment dashboards (dev-docs/investment-dashboards.md §4.1).
 
 Design points it honours (dev-docs/valuations.md §5):
-- **As-of pricing**: the latest price on or before the date, never a future one
-  (Beancount's `build_price_map` / `get_price` — reused, not reimplemented).
+- **As-of pricing**: the latest price on or before the date, never a future one.
+  `_AsOfPrices` gives exactly Beancount's `build_price_map` + `get_price` answers
+  but only for the pairs being valued (see its docstring for why).
 - **No cross-currency conversion**: each holding is valued in its own quote
   currency; totals are per currency, never summed across (valuations.md §1).
 - **Missing price → degraded**: fall back to cost basis and flag the point, so a
@@ -21,13 +22,12 @@ from __future__ import annotations
 
 import calendar
 import logging
+from bisect import bisect_right
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, Iterable
 
-from beancount.core import data
-from beancount.core.amount import Amount
-from beancount.core.prices import build_price_map, get_price
+from beancount.utils.misc_utils import sorted_uniquify
 
 from app.compute.base import ComputeFunction
 from app.services.sqlite_reader import SqliteReader
@@ -67,6 +67,74 @@ def _sample_dates(d_from: date, d_to: date, cadence: str) -> list[date]:
     return out
 
 
+class _AsOfPrices:
+    """As-of price lookup for a known set of ``(base, quote)`` pairs, giving the
+    same answers as Beancount's ``get_price(build_price_map(prices), ...)``.
+
+    Building Beancount's full price map means a ``Price``/``Amount`` object per
+    row plus an inverted copy of every pair — for a ledger with years of daily
+    fund prices that dominated the cost of each call. This builds only the pairs
+    asked for, keeps prices as decimal strings until looked up, and keeps
+    nothing between calls. Beancount's rules, reproduced:
+
+    - A pair declared in both directions keeps the direction with more points
+      (first-declared on a tie); the other is inverted and merged into it.
+    - Several prices on one date: the last declared wins (``sorted_uniquify``).
+    - Looking up the reverse of the kept direction inverts it, skipping zeros.
+    - A price is the latest on or before the date; a commodity in itself is 1.
+
+    ``rows`` must hold every price involving the pairs' currencies, in
+    declaration order (``SqliteReader.get_prices_involving``).
+    """
+
+    def __init__(self, rows: Iterable[dict], pairs: Iterable[tuple[str, str]]) -> None:
+        raw: dict[tuple[str, str], list[tuple[str, Any]]] = {}
+        for r in rows:
+            raw.setdefault((r["base_currency"], r["quote_currency"]), []).append(
+                (r["date"], r["quote_number"])
+            )
+        # dict insertion order = first declaration of each pair (the tie-break).
+        first_seen = {pair: i for i, pair in enumerate(raw)}
+        self._prices: dict[tuple[str, str], tuple[list[str], list[Any]]] = {}
+        for pair in set(pairs):
+            resolved = self._resolve(raw, first_seen, pair)
+            if resolved is not None:
+                self._prices[pair] = (
+                    [d for d, _ in resolved], [n for _, n in resolved]
+                )
+
+    @staticmethod
+    def _resolve(raw, first_seen, pair):
+        base, quote = pair
+        forward, backward = raw.get((base, quote)), raw.get((quote, base))
+        if forward is None and backward is None:
+            return None
+        if forward is not None and backward is not None:
+            first, second = sorted([(base, quote), (quote, base)], key=first_seen.__getitem__)
+            removed = first if len(raw[first]) < len(raw[second]) else second
+            kept = second if removed == first else first
+            merged = list(raw[kept]) + [
+                (d, Decimal(1) / Decimal(n)) for d, n in raw[removed] if Decimal(n) != 0
+            ]
+        else:
+            kept = (base, quote) if forward is not None else (quote, base)
+            merged = raw[kept]
+        uniq = list(sorted_uniquify(merged, lambda x: x[0], last=True))
+        if kept == pair:
+            return uniq
+        return [(d, Decimal(1) / Decimal(n)) for d, n in uniq if Decimal(n) != 0]
+
+    def get(self, base: str, quote: str, on: date) -> Decimal | None:
+        if base == quote:
+            return Decimal(1)
+        found = self._prices.get((base, quote))
+        if found is None:
+            return None
+        dates, numbers = found
+        i = bisect_right(dates, on.isoformat())
+        return Decimal(numbers[i - 1]) if i else None
+
+
 class PortfolioSeriesFunction(ComputeFunction):
     name = "portfolio_series"
     description = (
@@ -102,7 +170,7 @@ class PortfolioSeriesFunction(ComputeFunction):
     def __init__(self, reader: SqliteReader) -> None:
         self._reader = reader
 
-    async def execute(self, **args: Any) -> list[dict]:
+    def execute(self, **args: Any) -> list[dict]:
         try:
             date_to = date.fromisoformat(str(args["to"]))
             raw_from = args.get("from")
@@ -143,14 +211,12 @@ class PortfolioSeriesFunction(ComputeFunction):
             if code not in quote_of and p["cost_currency"]:
                 quote_of[code] = p["cost_currency"]
 
-        # Price map from the mirror's prices (main-ledger + sidecar already merged
-        # at export). Reused Beancount as-of lookup.
-        price_entries = [
-            data.Price({}, date.fromisoformat(r["date"]), r["base_currency"],
-                       Amount(Decimal(r["quote_number"]), r["quote_currency"]))
-            for r in self._reader.get_prices()
-        ]
-        price_map = build_price_map(price_entries)
+        # As-of prices for exactly the (holding, quote) pairs being valued, from
+        # the mirror's prices (main-ledger + sidecar already merged at export).
+        prices = _AsOfPrices(
+            self._reader.get_prices_involving(list(quote_of)),
+            quote_of.items(),
+        )
 
         if date_from is None:
             date_from = min(ev[0] for evs in events.values() for ev in evs)
@@ -191,7 +257,7 @@ class PortfolioSeriesFunction(ComputeFunction):
                 if want_currency and quote != want_currency:
                     continue
                 basis = basis_run[code]
-                _, pnum = get_price(price_map, (code, quote), d)
+                pnum = prices.get(code, quote, d)
                 if pnum is not None:
                     market = units * pnum
                     degraded = False

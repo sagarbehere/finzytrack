@@ -7,7 +7,6 @@ graceful null on degenerate series; simple gain alongside; money + rate as
 decimal strings.
 """
 
-import asyncio
 from datetime import date
 from pathlib import Path
 
@@ -106,7 +105,7 @@ def _reader(tmp_path, ledger_text, sidecar_text):
 
 def test_end_to_end_xirr_and_simple_gain(tmp_path):
     r = _reader(tmp_path, _LEDGER_30PCT, _SIDECAR_30PCT)
-    rows = asyncio.run(PortfolioReturnsFunction(r).execute(**{"to": "2022-01-01", "scope": "portfolio"}))
+    rows = PortfolioReturnsFunction(r).execute(**{"to": "2022-01-01", "scope": "portfolio"})
     assert len(rows) == 1
     row = rows[0]
     assert row["group"] == "Portfolio" and row["currency"] == "USD"
@@ -118,7 +117,7 @@ def test_end_to_end_xirr_and_simple_gain(tmp_path):
 
 def test_degenerate_series_returns_null_xirr(tmp_path):
     r = _reader(tmp_path, _LEDGER_DRIP, None)
-    rows = asyncio.run(PortfolioReturnsFunction(r).execute(**{"to": "2022-06-01", "scope": "portfolio"}))
+    rows = PortfolioReturnsFunction(r).execute(**{"to": "2022-06-01", "scope": "portfolio"})
     assert len(rows) == 1
     assert rows[0]["xirr"] is None            # single flow → no XIRR
     assert rows[0]["simple_gain"] == "0.00"   # unpriced MMF: market == cost
@@ -126,14 +125,14 @@ def test_degenerate_series_returns_null_xirr(tmp_path):
 
 def test_cash_dividend_attributes_to_asset_class_only_when_linked(tmp_path):
     d1 = tmp_path / "linked"; d1.mkdir()
-    etf = {x["group"]: x for x in asyncio.run(
-        PortfolioReturnsFunction(_reader(d1, _LEDGER_DIV_LINKED, _SIDECAR_DIV))
-        .execute(**{"to": "2022-01-01", "scope": "asset-class"}))}["etf"]
+    etf = {x["group"]: x for x in PortfolioReturnsFunction(
+        _reader(d1, _LEDGER_DIV_LINKED, _SIDECAR_DIV)
+    ).execute(**{"to": "2022-01-01", "scope": "asset-class"})}["etf"]
 
     d2 = tmp_path / "unlinked"; d2.mkdir()
-    etf2 = {x["group"]: x for x in asyncio.run(
-        PortfolioReturnsFunction(_reader(d2, _LEDGER_DIV_UNLINKED, _SIDECAR_DIV))
-        .execute(**{"to": "2022-01-01", "scope": "asset-class"}))}["etf"]
+    etf2 = {x["group"]: x for x in PortfolioReturnsFunction(
+        _reader(d2, _LEDGER_DIV_UNLINKED, _SIDECAR_DIV)
+    ).execute(**{"to": "2022-01-01", "scope": "asset-class"})}["etf"]
 
     # Same terminal facts either way; only the dividend's inclusion in XIRR changes.
     assert etf["market_value"] == etf2["market_value"] == "1300.00"
@@ -145,17 +144,17 @@ def test_dividend_link_never_changes_portfolio_scope(tmp_path):
     # The cash dividend's cash leg is always in the portfolio-scope flows, link or
     # not — the link only governs *asset-class* attribution.
     d1 = tmp_path / "linked"; d1.mkdir()
-    p = asyncio.run(PortfolioReturnsFunction(_reader(d1, _LEDGER_DIV_LINKED, _SIDECAR_DIV))
-                    .execute(**{"to": "2022-01-01", "scope": "portfolio"}))[0]
+    p = PortfolioReturnsFunction(_reader(d1, _LEDGER_DIV_LINKED, _SIDECAR_DIV)).execute(
+        **{"to": "2022-01-01", "scope": "portfolio"})[0]
     d2 = tmp_path / "unlinked"; d2.mkdir()
-    p2 = asyncio.run(PortfolioReturnsFunction(_reader(d2, _LEDGER_DIV_UNLINKED, _SIDECAR_DIV))
-                     .execute(**{"to": "2022-01-01", "scope": "portfolio"}))[0]
+    p2 = PortfolioReturnsFunction(_reader(d2, _LEDGER_DIV_UNLINKED, _SIDECAR_DIV)).execute(
+        **{"to": "2022-01-01", "scope": "portfolio"})[0]
     assert p["xirr"] == p2["xirr"]
 
 
 def test_no_holdings_returns_empty(tmp_path):
     r = _reader(tmp_path, "option \"operating_currency\" \"USD\"\n2020-01-01 open Assets:Cash USD\n", None)
-    rows = asyncio.run(PortfolioReturnsFunction(r).execute(**{"to": "2022-01-01"}))
+    rows = PortfolioReturnsFunction(r).execute(**{"to": "2022-01-01"})
     assert rows == []
 
 
@@ -185,7 +184,7 @@ option "operating_currency" "USD"
 
 def test_add_holding_counts_as_money_in_on_its_date(tmp_path):
     r = _reader(tmp_path, _LEDGER_ADD_HOLDING, _SIDECAR_30PCT)
-    rows = asyncio.run(PortfolioReturnsFunction(r).execute(**{"to": "2022-01-01", "scope": "portfolio"}))
+    rows = PortfolioReturnsFunction(r).execute(**{"to": "2022-01-01", "scope": "portfolio"})
     assert len(rows) == 1
     assert abs(float(rows[0]["xirr"]) - 0.30) < 1e-4   # same as a cash-funded buy
     assert rows[0]["simple_gain"] == "300.00"
@@ -201,6 +200,6 @@ def test_add_holding_and_buy_together_give_the_money_weighted_return(tmp_path):
         "  Assets:Cash  -1000.00 USD\n"
     )
     r = _reader(tmp_path, ledger, _SIDECAR_30PCT)
-    rows = asyncio.run(PortfolioReturnsFunction(r).execute(**{"to": "2022-01-01", "scope": "portfolio"}))
+    rows = PortfolioReturnsFunction(r).execute(**{"to": "2022-01-01", "scope": "portfolio"})
     assert abs(float(rows[0]["xirr"]) - 0.30) < 1e-4
     assert rows[0]["market_value"] == "2600.00" and rows[0]["cost_basis"] == "2000.00"

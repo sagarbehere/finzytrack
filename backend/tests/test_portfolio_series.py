@@ -10,7 +10,6 @@ decimal strings.
 Tests assert exact values against a hand-computed fixture.
 """
 
-import asyncio
 from pathlib import Path
 
 import pytest
@@ -81,7 +80,7 @@ def _reader(tmp_path: Path, ledger_text: str, sidecar_text: str | None) -> Sqlit
 
 def _run(reader, **args):
     fn = PortfolioSeriesFunction(reader)
-    rows = asyncio.run(fn.execute(**args))
+    rows = fn.execute(**args)
     return {(r["date"], r["group"]): r for r in rows}
 
 
@@ -137,21 +136,21 @@ def test_asset_class_scope_groups_by_class(tmp_path):
 def test_currency_filter_excludes_other_quote_currencies(tmp_path):
     r = _reader(tmp_path, _LEDGER, _SIDECAR)
     fn = PortfolioSeriesFunction(r)
-    assert asyncio.run(fn.execute(**{"to": "2022-06-30", "currency": "EUR"})) == []
-    usd = asyncio.run(fn.execute(**{"to": "2022-06-30", "currency": "USD"}))
+    assert fn.execute(**{"to": "2022-06-30", "currency": "EUR"}) == []
+    usd = fn.execute(**{"to": "2022-06-30", "currency": "USD"})
     assert usd and all(row["currency"] == "USD" for row in usd)
 
 
 def test_no_holdings_returns_empty(tmp_path):
     r = _reader(tmp_path, _CASH_ONLY, None)
     fn = PortfolioSeriesFunction(r)
-    assert asyncio.run(fn.execute(**{"to": "2022-01-01"})) == []
+    assert fn.execute(**{"to": "2022-01-01"}) == []
 
 
 def test_last_sample_is_exactly_the_to_date(tmp_path):
     r = _reader(tmp_path, _LEDGER, _SIDECAR)
     fn = PortfolioSeriesFunction(r)
-    rows = asyncio.run(fn.execute(**{"from": "2021-01-01", "to": "2021-03-15", "cadence": "monthly"}))
+    rows = fn.execute(**{"from": "2021-01-01", "to": "2021-03-15", "cadence": "monthly"})
     assert rows[-1]["date"] == "2021-03-15"  # the 'current' point, not just month-ends
 
 
