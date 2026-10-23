@@ -51,6 +51,7 @@
     :data="getPivotData()"
     :rowHeader="recipe.visualization.rowHeader"
     :valueFormat="getPivotValueFormat()"
+    :currency="currencyParam"
     :showRowTotals="recipe.visualization.showRowTotals"
     :showColumnTotals="recipe.visualization.showColumnTotals"
     :getValueLink="getPivotGetValueLink()"

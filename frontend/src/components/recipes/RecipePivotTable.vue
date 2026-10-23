@@ -127,11 +127,14 @@ import type { PivotData, PivotRow, PivotLinkContext, ValueLinkConfig, SelectPara
 import { budgetStatusOf, hexToRgba, type BudgetStatusColors } from '@/utils/budgetStatus'
 import { useDashboardTheme } from '@/composables/useDashboardTheme'
 import { useTheme } from '@/composables/useTheme'
+import { getLocale } from '@/utils/currencyFormat'
 
 interface Props {
   data: PivotData
   rowHeader?: string
   valueFormat?: (value: number) => string
+  /** Widget currency; sets the digit grouping of the default formatter (e.g. INR → 12,34,567). */
+  currency?: string
   showRowTotals?: boolean
   showColumnTotals?: boolean
   /**
@@ -168,7 +171,7 @@ function formatValue(value: number): string {
     return props.valueFormat(value)
   }
   // Default: format with commas and 2 decimal places, but hide .00
-  const formatted = value.toLocaleString('en-US', {
+  const formatted = value.toLocaleString(getLocale(props.currency ?? ''), {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   })

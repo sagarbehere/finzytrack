@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatAmount } from '@/utils/currencyFormat'
+import { formatAmount, formatCompact } from '@/utils/currencyFormat'
 
 describe('formatAmount', () => {
   it('formats a normal currency amount', () => {
@@ -20,5 +20,19 @@ describe('formatAmount', () => {
   it('degrades to a plain number for an invalid currency code', () => {
     expect(() => formatAmount(42, 'NOTACODE')).not.toThrow()
     expect(formatAmount(42, 'NOTACODE')).toBe('42.00')
+  })
+})
+
+describe('formatCompact', () => {
+  it('uses lakh/crore units for INR', () => {
+    expect(formatCompact(32400, 'INR')).toBe('32.4K')
+    expect(formatCompact(2639679, 'INR')).toBe('26.4L')
+    expect(formatCompact(-18070724, 'INR')).toBe('-1.8Cr')
+  })
+
+  it('keeps k/M for other currencies', () => {
+    expect(formatCompact(832606, 'USD')).toBe('832.6k')
+    expect(formatCompact(2639679, 'EUR')).toBe('2.6M')
+    expect(formatCompact(999, '')).toBe('999')
   })
 })
