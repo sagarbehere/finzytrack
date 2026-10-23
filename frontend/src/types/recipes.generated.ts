@@ -387,7 +387,7 @@ export interface JsonTableColumn {
   [k: string]: unknown;
 }
 /**
- * Expandable tree table built from flat rows with a hierarchical path (e.g. account names). Every path prefix becomes a collapsible parent row; parent and group rows show totals of the columns marked aggregate 'sum'. Columns are resizable. The query returns only the leaf rows — no total rows.
+ * Expandable tree table built from flat rows with a hierarchical path (e.g. account names). Every path prefix becomes a collapsible parent row; parent and group rows show aggregates (e.g. totals) of the columns that declare one. The query returns only the leaf rows — no total rows. Users can search, sort siblings by a column, expand to a level, show/hide and resize columns, and copy the visible rows for a spreadsheet; expansion, sort, column choices and widths are remembered.
  */
 export interface JsonTreeTableVisualization {
   type: "tree-table";
@@ -420,9 +420,43 @@ export interface JsonTreeTableVisualization {
    */
   link?: JsonRouteLinkConfig | JsonSelectLinkConfig;
   /**
-   * How many levels start expanded (0 = only the top level shows). Default: everything expanded.
+   * How many levels start expanded (0 = only the top level shows). Default: everything expanded. The user's own expansion is remembered and wins.
    */
   expandDepth?: number;
+  /**
+   * Fold a parent that has exactly one child (and no row of its own) into that child, shown as 'Bonds › TreasuryDirect › IBonds', so chains don't repeat the same total. Default true.
+   */
+  foldSingleChildren?: boolean;
+  /**
+   * Adds a share column with a small bar: each row's value of `column` as a percentage of its top-level total (base 'total' — the group, or all rows when there is no groupBy) or of its parent (base 'parent').
+   */
+  share?: {
+    /**
+     * Key of the value column to take shares of (normally one with aggregate 'sum').
+     */
+    column: string;
+    /**
+     * Header of the share column (default '% of total' or '% of parent').
+     */
+    label?: string;
+    /**
+     * What the share is of (default 'total').
+     */
+    base?: "total" | "parent";
+    /**
+     * Start with the share column hidden.
+     */
+    hidden?: boolean;
+    /**
+     * Explanation shown from an info icon next to the share column's heading.
+     */
+    description?: string;
+    [k: string]: unknown;
+  };
+  /**
+   * Row field that, when true (or 1), shows the row dimmed — e.g. a stale account. A parent is dimmed when every row beneath it is.
+   */
+  dimField?: string;
   /**
    * Value columns shown to the right of the tree column.
    */
@@ -443,9 +477,17 @@ export interface JsonTreeTableColumn {
    */
   currencyField?: string;
   /**
-   * How parent and group rows show this column: 'sum' adds up everything beneath (exact decimal arithmetic). Without it, a parent shows the value only when every row beneath has the same one, else it is blank.
+   * How parent and group rows show this column: 'sum' adds up everything beneath (exact decimal arithmetic); 'max'/'min' show the largest/smallest (numbers, or ISO dates — 'max' of a date is the latest). Without it, a parent shows the value only when every row beneath has the same one, else it is blank.
    */
-  aggregate?: "sum";
+  aggregate?: "sum" | "max" | "min";
+  /**
+   * Start with this column hidden. Every value column can be shown or hidden from the table's Columns menu; the choice is remembered.
+   */
+  hidden?: boolean;
+  /**
+   * Short explanation of the column, shown when hovering or focusing an info icon next to its heading.
+   */
+  description?: string;
   [k: string]: unknown;
 }
 export interface JsonPivotVisualization {

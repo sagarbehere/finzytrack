@@ -606,10 +606,12 @@ SELECT click action: clicking sets dashboard parameters from the clicked context
 | `format` | `ValueFormat` | — |  |
 | `align` | `'left' | 'center' | 'right'` | — |  |
 | `currencyField` | `string` | — | Row field holding each row's currency code, so money cells format in their own currency (as for table columns). Parent rows have it when everything beneath shares one currency — always true under a currency groupBy. |
-| `aggregate` | `'sum'` | — | How parent and group rows show this column: 'sum' adds up everything beneath (exact decimal arithmetic). Without it, a parent shows the value only when every row beneath has the same one, else it is blank. |
+| `aggregate` | `'sum' | 'max' | 'min'` | — | How parent and group rows show this column: 'sum' adds up everything beneath (exact decimal arithmetic); 'max'/'min' show the largest/smallest (numbers, or ISO dates — 'max' of a date is the latest). Without it, a parent shows the value only when every row beneath has the same one, else it is blank. |
+| `hidden` | `boolean` | — | Start with this column hidden. Every value column can be shown or hidden from the table's Columns menu; the choice is remembered. |
+| `description` | `string` | — | Short explanation of the column, shown when hovering or focusing an info icon next to its heading. |
 
 #### `JsonTreeTableVisualization`
-Expandable tree table built from flat rows with a hierarchical path (e.g. account names). Every path prefix becomes a collapsible parent row; parent and group rows show totals of the columns marked aggregate 'sum'. Columns are resizable. The query returns only the leaf rows — no total rows.
+Expandable tree table built from flat rows with a hierarchical path (e.g. account names). Every path prefix becomes a collapsible parent row; parent and group rows show aggregates (e.g. totals) of the columns that declare one. The query returns only the leaf rows — no total rows. Users can search, sort siblings by a column, expand to a level, show/hide and resize columns, and copy the visible rows for a spreadsheet; expansion, sort, column choices and widths are remembered.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -621,7 +623,10 @@ Expandable tree table built from flat rows with a hierarchical path (e.g. accoun
 | `label` | `string` | — | Header of the tree column (default 'Name'). |
 | `labelField` | `string` | — | Row field with a display label for a row (e.g. an account's display-name). Falls back to the row's last path segment. Parent rows without their own row show their path segment. |
 | `link` | `JsonValueLinkConfig` | — | Click-through on the tree column. {{row.<pathField>}} is the row's own path at every level (a parent's is its prefix), and empty on group rows, which therefore get no link. |
-| `expandDepth` | `integer` | — | How many levels start expanded (0 = only the top level shows). Default: everything expanded. |
+| `expandDepth` | `integer` | — | How many levels start expanded (0 = only the top level shows). Default: everything expanded. The user's own expansion is remembered and wins. |
+| `foldSingleChildren` | `boolean` | — | Fold a parent that has exactly one child (and no row of its own) into that child, shown as 'Bonds › TreasuryDirect › IBonds', so chains don't repeat the same total. Default true. |
+| `share` | `object` | — | Adds a share column with a small bar: each row's value of `column` as a percentage of its top-level total (base 'total' — the group, or all rows when there is no groupBy) or of its parent (base 'parent'). |
+| `dimField` | `string` | — | Row field that, when true (or 1), shows the row dimmed — e.g. a stale account. A parent is dimmed when every row beneath it is. |
 | `columns` | `JsonTreeTableColumn[]` | yes | Value columns shown to the right of the tree column. |
 | `emptyText` | `string` | — | Message shown when there are no rows. |
 

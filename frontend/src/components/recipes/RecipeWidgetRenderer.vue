@@ -418,15 +418,27 @@ function getTreeTableProps() {
       skipLevels: viz.skipLevels,
       groupBy: viz.groupBy,
       labelField: viz.labelField,
-      sumKeys: viz.columns.filter((c) => c.aggregate === 'sum').map((c) => c.key),
+      aggregates: Object.fromEntries(
+        viz.columns.filter((c) => c.aggregate).map((c) => [c.key, c.aggregate!]),
+      ),
     },
     treeLabel: viz.label,
     treeColumn: viz.link
       ? jsonColumnToTableColumn({ key: viz.pathField, label: viz.label ?? 'Name', link: viz.link })
       : undefined,
     columns,
+    hiddenColumns: viz.columns.filter((c) => c.hidden).map((c) => c.key),
+    columnDescriptions: Object.fromEntries(
+      viz.columns.filter((c) => c.description).map((c) => [c.key, c.description!]),
+    ),
     expandDepth: viz.expandDepth,
+    foldSingleChildren: viz.foldSingleChildren ?? true,
+    share: viz.share,
+    dimField: viz.dimField,
     emptyText: viz.emptyText,
+    exportName: props.recipe.title,
+    // Same scheme as tableSortKey: widget id + column keys.
+    stateKey: `${props.recipe.id}:${viz.pathField}:${viz.columns.map((c) => c.key).join(',')}`,
   }
 }
 

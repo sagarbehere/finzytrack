@@ -195,13 +195,15 @@
         "format": { "$ref": "#/$defs/ValueFormat" },
         "align": { "type": "string", "enum": ["left", "center", "right"] },
         "currencyField": { "type": "string", "description": "Row field holding each row's currency code, so money cells format in their own currency (as for table columns). Parent rows have it when everything beneath shares one currency — always true under a currency groupBy." },
-        "aggregate": { "type": "string", "enum": ["sum"], "description": "How parent and group rows show this column: 'sum' adds up everything beneath (exact decimal arithmetic). Without it, a parent shows the value only when every row beneath has the same one, else it is blank." }
+        "aggregate": { "type": "string", "enum": ["sum", "max", "min"], "description": "How parent and group rows show this column: 'sum' adds up everything beneath (exact decimal arithmetic); 'max'/'min' show the largest/smallest (numbers, or ISO dates — 'max' of a date is the latest). Without it, a parent shows the value only when every row beneath has the same one, else it is blank." },
+        "hidden": { "type": "boolean", "description": "Start with this column hidden. Every value column can be shown or hidden from the table's Columns menu; the choice is remembered." },
+        "description": { "type": "string", "description": "Short explanation of the column, shown when hovering or focusing an info icon next to its heading." }
       }
     },
     "JsonTreeTableVisualization": {
       "type": "object",
       "required": ["type", "pathField", "columns"],
-      "description": "Expandable tree table built from flat rows with a hierarchical path (e.g. account names). Every path prefix becomes a collapsible parent row; parent and group rows show totals of the columns marked aggregate 'sum'. Columns are resizable. The query returns only the leaf rows — no total rows.",
+      "description": "Expandable tree table built from flat rows with a hierarchical path (e.g. account names). Every path prefix becomes a collapsible parent row; parent and group rows show aggregates (e.g. totals) of the columns that declare one. The query returns only the leaf rows — no total rows. Users can search, sort siblings by a column, expand to a level, show/hide and resize columns, and copy the visible rows for a spreadsheet; expansion, sort, column choices and widths are remembered.",
       "properties": {
         "type": { "const": "tree-table" },
         "pathField": { "type": "string", "description": "Row field holding the hierarchical path, e.g. 'account' for 'Assets:Liquid:Checking:BofA'." },
@@ -211,7 +213,21 @@
         "label": { "type": "string", "description": "Header of the tree column (default 'Name')." },
         "labelField": { "type": "string", "description": "Row field with a display label for a row (e.g. an account's display-name). Falls back to the row's last path segment. Parent rows without their own row show their path segment." },
         "link": { "$ref": "#/$defs/JsonValueLinkConfig", "description": "Click-through on the tree column. {{row.<pathField>}} is the row's own path at every level (a parent's is its prefix), and empty on group rows, which therefore get no link." },
-        "expandDepth": { "type": "integer", "minimum": 0, "description": "How many levels start expanded (0 = only the top level shows). Default: everything expanded." },
+        "expandDepth": { "type": "integer", "minimum": 0, "description": "How many levels start expanded (0 = only the top level shows). Default: everything expanded. The user's own expansion is remembered and wins." },
+        "foldSingleChildren": { "type": "boolean", "description": "Fold a parent that has exactly one child (and no row of its own) into that child, shown as 'Bonds › TreasuryDirect › IBonds', so chains don't repeat the same total. Default true." },
+        "share": {
+          "type": "object",
+          "required": ["column"],
+          "description": "Adds a share column with a small bar: each row's value of `column` as a percentage of its top-level total (base 'total' — the group, or all rows when there is no groupBy) or of its parent (base 'parent').",
+          "properties": {
+            "column": { "type": "string", "description": "Key of the value column to take shares of (normally one with aggregate 'sum')." },
+            "label": { "type": "string", "description": "Header of the share column (default '% of total' or '% of parent')." },
+            "base": { "type": "string", "enum": ["total", "parent"], "description": "What the share is of (default 'total')." },
+            "hidden": { "type": "boolean", "description": "Start with the share column hidden." },
+            "description": { "type": "string", "description": "Explanation shown from an info icon next to the share column's heading." }
+          }
+        },
+        "dimField": { "type": "string", "description": "Row field that, when true (or 1), shows the row dimmed — e.g. a stale account. A parent is dimmed when every row beneath it is." },
         "columns": { "type": "array", "items": { "$ref": "#/$defs/JsonTreeTableColumn" }, "description": "Value columns shown to the right of the tree column." },
         "emptyText": { "type": "string", "description": "Message shown when there are no rows." }
       }
