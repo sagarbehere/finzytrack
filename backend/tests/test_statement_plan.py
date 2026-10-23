@@ -820,3 +820,51 @@ def test_a_switch_with_a_fund_left_out_keeps_the_imported_half_on_the_cash_side(
     assert codes.count("SWITCH_WITH_EXCLUDED_FUND") == 1 and "UNPAIRED_SWITCH" not in codes
     assert "Her Fund" in next(w.message for w in r.data.warnings if w.code == "SWITCH_WITH_EXCLUDED_FUND")
     assert fund(r, "MINE").reconciled is True
+
+
+# ── Existing balance checks the import would break ───────────────────────────
+
+SHARED = BASE + """
+2010-01-01 commodity ABSL
+  isin: "INF000ABSL"
+2020-01-01 * "Buy ABSL"
+  stmt_import: "cas-mine"
+  stmt_id: "x1"
+  Assets:Broker   10.000 ABSL {10 INR}
+  Equity:Funding  -100.00 INR
+2021-01-01 * "Sell ABSL"
+  stmt_import: "cas-mine"
+  stmt_id: "x2"
+  Assets:Broker   -10.000 ABSL {10 INR, 2020-01-01} @ 12 INR
+  Equity:Funding  120.00 INR
+  Income:Gains    -20.00 INR
+2024-01-01 balance Assets:Broker  0 ~ 0.001 ABSL
+"""
+
+
+def _spouse_statement():
+    s = Stmt(end=date(2024, 6, 30))
+    f = s.fund("ABSL", isin="INF000ABSL", folio="SPOUSE-1")
+    s.row(f, date(2022, 5, 1), T.KIND_PURCHASE, amount="500.00", units="50.000", nav="10")
+    return s
+
+
+def test_warns_when_the_import_would_break_an_existing_balance_check():
+    r, *_ = plan_of(_spouse_statement(), base=SHARED)
+    w = [w for w in r.data.warnings if w.code == "BREAKS_EXISTING_BALANCE"]
+    assert len(w) == 1
+    assert "0 ABSL in Assets:Broker on 2024-01-01" in w[0].message and "by 50.000" in w[0].message
+
+
+def test_no_warning_with_a_separate_holding_account():
+    r, *_ = plan_of(_spouse_statement(), base=SHARED, holding_accounts={"ARN-1": "Assets:Broker2"})
+    assert "BREAKS_EXISTING_BALANCE" not in [w.code for w in r.data.warnings]
+
+
+def test_no_warning_when_the_change_before_the_check_nets_to_zero():
+    s = Stmt(end=date(2024, 6, 30))
+    f = s.fund("ABSL", isin="INF000ABSL", folio="SPOUSE-1")
+    s.row(f, date(2022, 5, 1), T.KIND_PURCHASE, amount="500.00", units="50.000", nav="10")
+    s.row(f, date(2023, 5, 1), T.KIND_REDEMPTION, amount="-600.00", units="-50.000", nav="12")
+    r, *_ = plan_of(s, base=SHARED)
+    assert "BREAKS_EXISTING_BALANCE" not in [w.code for w in r.data.warnings]

@@ -69,8 +69,11 @@ def record_choices(mapping) -> Dict[str, str]:
     """The account choices to remember on the import record, so the next import can
     pre-select the user's own earlier choice for each role (§5.1)."""
     out: Dict[str, str] = {}
-    if mapping.holding_accounts:
-        out["holding_accounts"] = ";".join(f"{k}={v}" for k, v in sorted(mapping.holding_accounts.items()))
+    # One key per distributor and one per account: an account name that is a whole
+    # metadata value is updated when the account is renamed.
+    for i, (distributor, account) in enumerate(sorted(mapping.holding_accounts.items()), start=1):
+        out[f"holding-{i}-distributor"] = distributor
+        out[f"holding-{i}-account"] = account
     for key in ("cash_fallback_account", "cash_matching_account", "dividend_account", "taxes_account", "gains_account"):
         value = getattr(mapping, key)
         if value:

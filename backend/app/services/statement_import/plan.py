@@ -788,6 +788,25 @@ def build_plan(
             if p not in prices:
                 prices.append(p)
 
+    # ── existing balance checks this import would break ──
+    # A check dated after units this import adds or removes in the same account and
+    # commodity no longer holds — typically another person's funds put into your
+    # holding account. Said before Register; the statement's own end-date checks are
+    # covered by BALANCE_DIFFERS above.
+    for (b_date, b_acct, b_code), b_units in sorted(snap.balances.items()):
+        if b_date == bal_date:
+            continue
+        change = sum((p.units for t in txns if t.date < b_date for p in t.postings
+                      if p.account == b_acct and p.currency == b_code), ZERO)
+        if change == 0:
+            continue
+        warnings.append(StatementIssue(
+            code="BREAKS_EXISTING_BALANCE",
+            message=(f"Your ledger checks {b_units} {b_code} in {b_acct} on {b_date.isoformat()}. This import "
+                     f"changes that account's {b_code} units before then (by {change}), so that check would fail. "
+                     "If these funds belong to someone else, give them their own holding account."),
+        ))
+
     # ── account checks ──
     _check_accounts(ctx, txns, balances)
     account_metadata: Dict[str, Dict[str, str]] = {}

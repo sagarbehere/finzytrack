@@ -307,3 +307,23 @@ def test_a_fund_left_out_never_reaches_the_ledger(client):
     assert [b.amount.currency for b in entries if isinstance(b, data.Balance)] == [
         next(f["commodity"] for f in prev["funds"] if f["security_key"] == "A")]
     assert res["balances"] == 1
+
+
+def test_a_renamed_holding_account_is_still_preselected(client):
+    _import(client)
+    res = client.put("/api/accounts/Assets:Broker", json={"new_name": "Assets:Broker:Sagar"})
+    assert res.status_code == 200
+    parsed = _parse(client).json()["data"]
+    assert parsed["preselected"]["holding_accounts"] == {"ARN-1": "Assets:Broker:Sagar"}
+
+
+def test_records_from_before_the_split_holding_keys_are_still_read(tmp_path, statement):
+    old = _LEDGER + """
+2024-01-01 custom "statement-import" "cas-old"
+  source: "cas"
+  holding_accounts: "ARN-1=Assets:Broker"
+  cash_fallback_account: "Equity:Funding"
+"""
+    with _client(_make_root(tmp_path, ledger=old)) as c:
+        pre = _parse(c).json()["data"]["preselected"]
+        assert (pre["holding_accounts"], pre["cash_fallback_account"]) == ({"ARN-1": "Assets:Broker"}, "Equity:Funding")

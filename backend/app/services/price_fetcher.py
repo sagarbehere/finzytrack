@@ -92,6 +92,16 @@ _DEFAULT_LOOKBACK_DAYS = 5 * 365
 _BACKFILL_SLACK = timedelta(days=31)
 
 
+def _day(d: date) -> str:
+    """A date as people read it in a message: 20 Aug 2018."""
+    return f"{d.day} {d.strftime('%b %Y')}"
+
+
+def _is_indian_fund(meta) -> bool:
+    """An Indian mutual fund (ISIN INF…): priced from AMFI by its scheme code, never by ticker."""
+    return str((meta or {}).get("isin", "")).strip().upper().startswith("INF")
+
+
 def _has_month_start(begin: date, end: date) -> bool:
     """Whether ``[begin, end]`` contains the 1st of a month (an I-Bond value point)."""
     first = begin if begin.day == 1 else date(
@@ -231,7 +241,7 @@ class PriceFetcher:
                 continue
             d = sp.time.date() if isinstance(sp.time, datetime) else sp.time
             if d < begin or d > end:
-                reason = reason or "no price in the date range"
+                reason = reason or f"no price between {_day(begin)} and {_day(end)}"
                 continue
             number, currency = to_main_unit(Decimal(str(sp.price)), sp.quote_currency)
             if not _CURRENCY.match(currency):
@@ -331,6 +341,10 @@ class PriceFetcher:
                 continue
 
             symbol = (c.metadata or {}).get("fetch_symbol") or c.code
+            if not (c.metadata or {}).get("fetch_symbol") and _is_indian_fund(c.metadata):
+                # Yahoo knows nothing by our own code for an Indian fund; only AMFI prices it.
+                failed.append(f"{c.code}: no AMFI scheme code — set its price symbol (Find, in Setup & Metadata)")
+                continue
             is_amfi = amfi_scheme_code(symbol) is not None
             if is_amfi and amfi_down:
                 failed.append(f"{c.code} ({symbol}): {amfi_down}")

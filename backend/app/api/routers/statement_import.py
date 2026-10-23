@@ -53,11 +53,13 @@ def _preselect(snap, source: str) -> StatementPreselection:
     last = next((r for r in reversed(snap.imports) if str(r.meta.get("source", "")) == source), None)
     open_accounts = {n for n, a in snap.accounts.items() if a.close_date is None}
     if last is not None:
-        for pair in str(last.meta.get("holding_accounts", "")).split(";"):
-            if "=" in pair:
-                k, v = pair.split("=", 1)
-                if v in open_accounts:
-                    pre.holding_accounts[k] = v
+        pairs = [(str(last.meta[k]), str(last.meta.get(k[: -len("distributor")] + "account", "")))
+                 for k in last.meta if k.startswith("holding-") and k.endswith("-distributor")]
+        # Records written before 2026-10-23 kept them in one "ARN=Account;…" string.
+        pairs += [tuple(p.split("=", 1)) for p in str(last.meta.get("holding_accounts", "")).split(";") if "=" in p]
+        for k, v in pairs:
+            if v in open_accounts:
+                pre.holding_accounts[k] = v
         for key in ("cash_fallback_account", "cash_matching_account", "dividend_account", "taxes_account", "gains_account"):
             v = last.meta.get(key)
             if v and str(v) in open_accounts:

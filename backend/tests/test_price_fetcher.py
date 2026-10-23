@@ -381,7 +381,8 @@ def test_quote_outside_the_window_gives_a_reason(wired):
     ledger, _, reader, lm = wired
     source = FakeSource({"VOO": [], "ACME.XYZ": []}, latest={"VOO": (date(2020, 1, 1), "99.00")})
     res = PriceFetcher(reader, lm, source=source, today=date(2021, 2, 1)).fetch_and_persist()
-    assert "VOO (VOO): no price in the date range" in res["failed"]
+    # Says which dates had no price, so a provider's history ending reads as that.
+    assert "VOO (VOO): no price between 10 Jan 2021 and 1 Feb 2021" in res["failed"]
 
 
 def test_update_endpoint_refuses_a_price_file_with_unreadable_lines(wired, monkeypatch):
@@ -649,3 +650,21 @@ def test_a_sold_holding_is_back_filled_only_while_it_was_held(tmp_path):
     PriceFetcher(reader, lm, source=source, today=date(2026, 10, 22)).fetch_and_persist()
     assert [c[1:] for c in source.calls] == [(date(2021, 1, 10), date(2021, 3, 1))]
     assert [r["date"] for r in reader.get_prices(currency="OLD")] == ["2021-01-11", "2021-03-01", "2026-10-19"]
+
+
+def test_an_indian_fund_without_an_amfi_code_is_never_sent_to_yahoo(tmp_path):
+    ledger, _, reader, lm = _wire(tmp_path, """\
+option "operating_currency" "INR"
+2015-01-01 commodity DSP-ULTRASHORT-RIW
+  asset-class: "mutual-fund"
+  isin: "INF740K01FU8"
+2015-01-01 open Assets:MF
+2015-01-01 open Equity:Funding
+2015-07-09 * "buy"
+  Assets:MF  69.718 DSP-ULTRASHORT-RIW {1004.0448664620 INR}
+  Equity:Funding  -70000.00 INR
+""")
+    source = FakeSource({"DSP-ULTRASHORT-RIW": [(date(2015, 7, 9), "1004.04")]})
+    res = PriceFetcher(reader, lm, source=source, today=date(2015, 8, 1)).fetch_and_persist()
+    assert source.calls == []
+    assert res["failed"] == ["DSP-ULTRASHORT-RIW: no AMFI scheme code — set its price symbol (Find, in Setup & Metadata)"]

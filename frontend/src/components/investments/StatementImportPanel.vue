@@ -44,6 +44,29 @@
     </section>
 
     <!-- ── Result of Register ──────────────────────────────────────────────── -->
+    <section
+      v-if="result && (result.failed_balance_checks ?? []).length"
+      class="rounded-md bg-red-50 p-4 dark:bg-red-500/15 dark:outline dark:outline-red-500/25"
+      role="alert"
+    >
+      <div class="flex gap-3">
+        <XCircleIcon class="size-5 shrink-0 text-red-400" aria-hidden="true" />
+        <div>
+          <h3 class="text-sm font-medium text-red-800 dark:text-red-200">
+            {{ result.failed_balance_checks!.length }} balance check{{ result.failed_balance_checks!.length === 1 ? '' : 's' }}
+            no longer hold{{ result.failed_balance_checks!.length === 1 ? 's' : '' }}
+          </h3>
+          <ul class="mt-2 list-inside list-disc text-sm text-red-700 dark:text-red-200/80">
+            <li v-for="(m, i) in result.failed_balance_checks" :key="i">{{ m }}</li>
+          </ul>
+          <p class="mt-2 text-sm text-red-700 dark:text-red-200/80">
+            Your ledger shows this as an error until it is fixed. If these funds belong to someone else, undo this
+            import below and import it again with their own holding account.
+          </p>
+        </div>
+      </div>
+    </section>
+
     <section v-if="result" class="rounded-md bg-green-50 p-4 dark:bg-green-500/10 dark:outline dark:outline-green-500/15">
       <div class="flex gap-3">
         <CheckCircleIcon class="size-5 shrink-0 text-green-400 dark:text-green-300" aria-hidden="true" />
@@ -53,12 +76,6 @@
           </h3>
           <div class="mt-2 text-sm text-green-700 dark:text-green-100/80">
             <p v-if="resultSentence(result, resultFacts)">{{ resultSentence(result, resultFacts) }}</p>
-            <p v-if="(result.failed_balance_checks ?? []).length" class="mt-2">
-              These balance checks don't hold — the ledger and the statement differ:
-            </p>
-            <ul v-if="(result.failed_balance_checks ?? []).length" class="mt-1 list-inside list-disc">
-              <li v-for="(m, i) in result.failed_balance_checks ?? []" :key="i">{{ m }}</li>
-            </ul>
             <p class="mt-2">
               To see values over time, fetch each fund's full price history (NAVs back to its first purchase).
             </p>
@@ -358,7 +375,7 @@
 
 <script setup lang="ts">
   import { computed, nextTick, onMounted, ref, watch } from 'vue'
-  import { CheckCircleIcon, ChevronRightIcon } from '@heroicons/vue/20/solid'
+  import { CheckCircleIcon, ChevronRightIcon, XCircleIcon } from '@heroicons/vue/20/solid'
   import AccountDropdown from '@/components/common/AccountDropdown.vue'
   import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
   import FormFeedback from '@/components/common/FormFeedback.vue'

@@ -140,3 +140,17 @@ describe('StatementImportPanel — leaving a fund out', () => {
     expect(s.state.mapping.excluded_funds).toEqual([])
   })
 })
+
+describe('StatementImportPanel — after Register', () => {
+  it('shows balance checks that no longer hold as an error, apart from the success message', async () => {
+    s.state = state({ result: ref({ import_id: 'x', transactions: 119, balances: 8, commodities_created: 7,
+      commodities_updated: 0, prices: 8, removed_hand_entries: 0,
+      failed_balance_checks: ["Balance failed for 'Assets:Broker': expected 0 ABSL != accumulated 141117.371 ABSL"] }) })
+    const w = render()
+    const alert = w.find('[role="alert"]')
+    expect(alert.classes()).toContain('bg-red-50')
+    expect(alert.text()).toContain('1 balance check no longer holds')
+    expect(alert.text()).toContain('expected 0 ABSL')
+    expect(w.find('.bg-green-50').text()).not.toContain('expected 0 ABSL')
+  })
+})
