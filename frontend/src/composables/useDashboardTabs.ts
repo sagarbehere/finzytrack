@@ -35,7 +35,7 @@ function saveToStorage(): void {
 }
 
 export function useDashboardTabs() {
-  const { getDashboard, getAllDashboardIds } = useRecipeLoader()
+  const { getDashboard, getAllDashboardIds, loadError } = useRecipeLoader()
 
   /**
    * Initialize tabs from storage or defaults.
@@ -46,6 +46,11 @@ export function useDashboardTabs() {
 
     const stored = loadFromStorage()
     const availableIds = new Set(getAllDashboardIds())
+
+    // Dashboards didn't load (e.g. the backend is restarting): every saved tab
+    // would look like a deleted dashboard. Leave the saved tabs untouched and
+    // stay uninitialized, so the next load (reload button or page) restores them.
+    if (loadError.value || availableIds.size === 0) return
 
     if (stored && stored.tabs.length > 0) {
       // Filter out any tabs that reference non-existent dashboards
@@ -116,11 +121,12 @@ export function useDashboardTabs() {
     if (defaultTabs.length > 0) {
       tabs.value = defaultTabs
       activeTabId.value = defaultTabs[0].id
+      saveToStorage()
     } else {
+      // Nothing to show; never save an empty list over the user's tabs.
       tabs.value = []
       activeTabId.value = null
     }
-    saveToStorage()
   }
 
   /**
