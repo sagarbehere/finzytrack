@@ -32,4 +32,21 @@ export class LocalStorageAdapter implements StorageAdapter {
       // ignore
     }
   }
+
+  // The browser fires `storage` only in OTHER tabs of the same origin, which is
+  // exactly "changed elsewhere".
+  subscribe<T>(key: string, onChange: (value: T | null) => void): () => void {
+    if (typeof window === 'undefined') return () => {}
+    const full = this.prefixed(key)
+    const listener = (e: StorageEvent) => {
+      if (e.storageArea !== localStorage || e.key !== full) return
+      try {
+        onChange(e.newValue === null ? null : (JSON.parse(e.newValue) as T))
+      } catch {
+        onChange(null)
+      }
+    }
+    window.addEventListener('storage', listener)
+    return () => window.removeEventListener('storage', listener)
+  }
 }
