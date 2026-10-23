@@ -1,19 +1,31 @@
-// Dashboard tabs stay in step across browser tabs: when another tab saves its
-// tab list, this tab adopts it (keeping its own active dashboard while that is
-// still open) instead of later overwriting it with a stale list.
+// Dashboard tabs survive two failure modes:
+// - another browser tab saving its list: this tab adopts it (keeping its own
+//   active dashboard while that is still open) instead of later overwriting it;
+// - dashboards failing to load (backend down/restarting): the saved tabs are
+//   left untouched instead of being replaced by an empty list.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const DASHBOARDS: Record<string, { id: string; title: string }> = {
+const ALL: Record<string, { id: string; title: string }> = {
   a: { id: 'a', title: 'A' },
   b: { id: 'b', title: 'B' },
   c: { id: 'c', title: 'C' },
 }
-vi.mock('@/composables/useRecipeLoader', () => ({
-  useRecipeLoader: () => ({
-    getDashboard: (id: string) => DASHBOARDS[id],
-    getAllDashboardIds: () => Object.keys(DASHBOARDS),
-  }),
-}))
+// What the recipe loader currently holds; a failed load has none and an error.
+const loader = { dashboards: ALL, loadError: null as string | null }
+vi.mock('@/composables/useRecipeLoader', async () => {
+  const { ref } = await import('vue')
+  const loadError = ref<string | null>(null)
+  return {
+    useRecipeLoader: () => {
+      loadError.value = loader.loadError
+      return {
+        getDashboard: (id: string) => loader.dashboards[id],
+        getAllDashboardIds: () => Object.keys(loader.dashboards),
+        loadError,
+      }
+    },
+  }
+})
 
 const KEY = 'finzytrack:dashboardTabs'
 
@@ -33,6 +45,8 @@ async function freshTabs() {
 }
 
 beforeEach(() => {
+  loader.dashboards = ALL
+  loader.loadError = null
   localStorage.clear()
   localStorage.setItem(KEY, JSON.stringify({ tabs: ['a', 'b'], activeTabId: 'b' }))
 })
@@ -57,5 +71,33 @@ describe('dashboard tabs across browser tabs', () => {
     otherTabSaves({ tabs: ['a', 'b', 'c'], activeTabId: 'a' })
     t.setActiveTab('a')
     expect(JSON.parse(localStorage.getItem(KEY)!).tabs).toEqual(['a', 'b', 'c'])
+  })
+})
+
+describe('dashboards failing to load', () => {
+  it('leaves the saved tabs untouched, and restores them on the next load', async () => {
+    loader.dashboards = {}
+    loader.loadError = 'Failed to fetch /api/recipes/manifest.json: Bad Gateway'
+    vi.resetModules()
+    const { useDashboardTabs } = await import('@/composables/useDashboardTabs')
+    const t = useDashboardTabs()
+    await t.loadTabs()
+    expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({ tabs: ['a', 'b'], activeTabId: 'b' })
+    expect(t.isInitialized.value).toBe(false)
+
+    loader.dashboards = ALL // the backend is back
+    loader.loadError = null
+    const again = useDashboardTabs()
+    await again.loadTabs()
+    expect(again.tabs.value.map((x) => x.id)).toEqual(['a', 'b'])
+    expect(again.activeTabId.value).toBe('b')
+  })
+
+  it('never saves an empty list when there are no dashboards at all', async () => {
+    loader.dashboards = {}
+    vi.resetModules()
+    const { useDashboardTabs } = await import('@/composables/useDashboardTabs')
+    await useDashboardTabs().loadTabs()
+    expect(JSON.parse(localStorage.getItem(KEY)!).tabs).toEqual(['a', 'b'])
   })
 })

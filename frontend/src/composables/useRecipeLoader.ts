@@ -96,10 +96,16 @@ function checkIdConflict(
  * for `$gen` template processing. The generated client wraps everything in
  * `ApiResponse[T]` and can't represent the unwrapped envelope.
  */
+class FetchError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+  }
+}
+
 async function fetchJson<T>(path: string): Promise<T> {
   const response = await fetch(path)
   if (!response.ok) {
-    throw new Error(`Failed to fetch ${path}: ${response.statusText}`)
+    throw new FetchError(`Failed to fetch ${path}: ${response.statusText}`, response.status)
   }
   return response.json()
 }
@@ -120,8 +126,12 @@ async function loadUserRecipes(): Promise<void> {
     let manifest: RecipeManifest
     try {
       manifest = await fetchJson<RecipeManifest>(`${RECIPES_BASE_PATH}/manifest.json`)
-    } catch {
-      // No manifest file - that's okay, just means no user recipes
+    } catch (err) {
+      // Only a 404 means "no user recipes". Anything else (the backend is down
+      // or restarting, a proxy error) is a failed load: reported below, and
+      // left retryable — treating it as "no dashboards" would make callers
+      // discard state that refers to dashboards (e.g. the saved tabs).
+      if (!(err instanceof FetchError && err.status === 404)) throw err
       console.log('[RecipeLoader] No user recipes manifest found')
       isLoaded.value = true
       isLoading.value = false
@@ -193,7 +203,8 @@ async function loadUserRecipes(): Promise<void> {
       isPersistent: true,
     })
   } finally {
-    isLoaded.value = true
+    // A failed load stays retryable (loadError says why).
+    isLoaded.value = loadError.value === null
     isLoading.value = false
   }
 }
