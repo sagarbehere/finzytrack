@@ -52,6 +52,7 @@ _NEW_TABLES = [
     "balance_assertions",
     "pad_directives",
     "prices",
+    "latest_prices",
     "notes",
     "events",
     "documents",
@@ -467,6 +468,19 @@ class SQLiteExporter:
             "CREATE INDEX idx_prices_base_quote_date "
             "ON prices(base_currency, quote_currency, date)"
         )
+
+        # Newest price per (base, quote), derived from `prices` at export time.
+        # Recipes join this instead of a correlated `MAX(date)` subquery, which
+        # SQLite expands to lots × price-history and gets slow as history grows.
+        con.execute("""
+            CREATE TABLE latest_prices (
+                date            TEXT NOT NULL,
+                base_currency   TEXT NOT NULL,
+                quote_number    TEXT NOT NULL,
+                quote_currency  TEXT NOT NULL,
+                PRIMARY KEY (base_currency, quote_currency)
+            )
+        """)
 
         con.execute("""
             CREATE TABLE notes (
@@ -1000,6 +1014,17 @@ class SQLiteExporter:
                 "INSERT INTO prices (date, base_currency, quote_number, quote_currency, metadata_json) "
                 "VALUES (?,?,?,?,?)",
                 price_rows,
+            )
+        with self._sub_export("latest_prices"):
+            # Ties on the same date resolve to the last-declared price (highest
+            # id), matching Beancount's price map.
+            con.execute(
+                "INSERT INTO latest_prices (date, base_currency, quote_number, quote_currency) "
+                "SELECT date, base_currency, quote_number, quote_currency FROM ("
+                "  SELECT *, ROW_NUMBER() OVER ("
+                "    PARTITION BY base_currency, quote_currency ORDER BY date DESC, id DESC"
+                "  ) AS rn FROM prices"
+                ") WHERE rn = 1"
             )
         with self._sub_export("notes", lambda: note_rows[0] if note_rows else None):
             self._executemany_diagnosed(

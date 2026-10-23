@@ -51,16 +51,14 @@ Currencies vs holdings:
 - To analyze the holdings themselves (e.g. how many VOO shares over time), filter WHERE c.is_currency = 0, or query the raw quantities directly.
 
 Valuing investments:
-- A holding's MARKET VALUE = units held × its latest price. "Latest price" is the row with MAX(date) per (base_currency, quote_currency) in the "prices" table; join it on prices.base_currency = the holding's commodity code. Value each holding in its OWN quote currency — never convert or sum a holding's value across currencies.
+- A holding's MARKET VALUE = units held × its latest price. The "latest_prices" table holds the newest price per (base_currency, quote_currency) — join it on latest_prices.base_currency = the holding's commodity code. Do not compute the latest price with a MAX(date) subquery over "prices": it is equivalent but very slow on long price histories. Value each holding in its OWN quote currency — never convert or sum a holding's value across currencies.
     -- current market value per holding, in its quote currency:
     SELECT l.units_currency AS holding, lp.quote_currency AS currency,
-           SUM(CAST(l.units_number AS REAL)) * lp.price AS market_value
+           SUM(CAST(l.units_number AS REAL)) * CAST(lp.quote_number AS REAL) AS market_value
     FROM lots l
-    JOIN (SELECT base_currency, quote_currency, CAST(quote_number AS REAL) AS price
-          FROM prices x WHERE x.date = (SELECT MAX(date) FROM prices y
-            WHERE y.base_currency = x.base_currency AND y.quote_currency = x.quote_currency)) lp
-      ON lp.base_currency = l.units_currency
+    JOIN latest_prices lp ON lp.base_currency = l.units_currency
     GROUP BY l.units_currency, lp.quote_currency
+- For a price AS OF a past date, use "prices" with date <= that date (latest_prices only holds the newest price).
 - REALIZED GAIN on a sale is derived STRUCTURALLY from the reducing posting (units < 0 with both cost_amount and price_amount set): gain = |units| × (price_amount − cost_amount). This works in ANY account — do not rely on an "Income:CapitalGains" account name. The sold lot's acquisition date is in the cost_date column, so the holding period = transaction_date − cost_date (over 365 days = long term). Use julianday(transaction_date) − julianday(cost_date) in SQLite.
 - For portfolio VALUE-OVER-TIME or RETURNS (XIRR), do NOT hand-roll SQL — use the compute functions "portfolio_series" (as-of value/cost series) and "portfolio_returns" (XIRR + simple gain) via execute_compute or a recipe `compute` step. SQL cannot do as-of series or money-weighted return well.
 
@@ -79,6 +77,6 @@ Query rules:
 Beyond "postings", additional tables exist for account metadata, price history, investment lots, balance assertions, and more. If the user's question involves data not in the postings table (e.g. "what accounts are open?", "show price history for AAPL", "what are my lot positions?"), discover the available tables and their columns by running:
   SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;
   PRAGMA table_info(<table_name>);
-Key tables: accounts, account_balances, commodities, prices, lots, balance_assertions.
+Key tables: accounts, account_balances, commodities, prices, latest_prices, lots, balance_assertions.
 Numeric columns in these tables use TEXT for decimal precision — cast with CAST(value AS REAL) for arithmetic.
 The "commodities" table has one row per commodity (declared or merely used) with: code, name, asset_class (e.g. "cash", "stock", "etf"), is_currency (1 = a currency / unit of account, 0 = an investment holding), declaration_date, metadata_json. Join it on postings.currency = commodities.code to separate currencies from holdings (see "Currencies vs holdings" above).
