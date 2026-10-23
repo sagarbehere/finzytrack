@@ -687,7 +687,7 @@
     {
       "id": "gallery-tree-table",
       "title": "Balances by Account (Tree Table)",
-      "helpText": "Tree table. The query returns only leaf rows with a path field (here the account name); the widget builds the hierarchy. Every path prefix becomes a collapsible parent row, and parents show the aggregate of columns that declare one ('sum' totals, 'max'/'min' e.g. the latest date). groupBy adds a top level per distinct value (here currency, so currencies are never added together). skipLevels drops leading path segments, labelField gives a row a display label, expandDepth sets how many levels start open, and single-child chains fold into one row (foldSingleChildren, default true). share adds a % column with a bar; dimField dims rows (here accounts with no transaction in 90 days); columns[].hidden starts a column hidden (here Postings); columns[].description adds an info icon to the heading (here Last activity). Link on the tree column: {{row.account}} is each row's own path, including parents; group rows have no link. Users can search, sort, expand to a level, show/hide and resize columns, and copy rows; those choices are remembered.",
+      "helpText": "Tree table. The query returns only leaf rows with a path field (here the account name); the widget builds the hierarchy. Every path prefix becomes a collapsible parent row, and parents show the aggregate of columns that declare one ('sum' totals, 'max'/'min' e.g. the latest date). groupBy adds a top level per distinct value (here currency, so currencies are never added together). skipLevels drops leading path segments, labelField gives a row a display label (here the account's display-name metadata, else its name), expandDepth sets how many levels start open, and single-child chains fold into one row (foldSingleChildren, default true). share adds a % column with a bar; dimField dims rows (here accounts with no transaction in 90 days); columns[].hidden starts a column hidden (here Postings); columns[].description adds an info icon to the heading (here Last activity); columns[].leafOnly keeps a per-row fact off grouping rows (here Opened); emptyText sets the no-rows message. Link on the tree column: {{row.account}} is each row's own path, including parents; group rows have no link. Users can search, sort, expand to a level, show/hide and resize columns, and copy rows; those choices are remembered.",
       "visualization": {
         "type": "tree-table",
         "pathField": "account",
@@ -724,18 +724,28 @@
             "align": "right",
             "aggregate": "sum",
             "hidden": true
+          },
+          {
+            "key": "opened",
+            "label": "Opened",
+            "format": "dateShort",
+            "align": "right",
+            "leafOnly": true,
+            "description": "Date the account was opened. Shown only on account rows (leafOnly), never on rows that group accounts."
           }
         ],
         "share": {
           "column": "balance"
         },
-        "dimField": "is_quiet"
+        "dimField": "is_quiet",
+        "labelField": "display_name",
+        "emptyText": "No asset or liability accounts with a balance."
       },
       "steps": [
         {
           "id": "main",
           "kind": "query",
-          "query": "SELECT p.account, p.currency, ROUND(SUM(CAST(p.amount AS REAL)), 2) AS balance, MAX(p.transaction_date) AS last_activity, COUNT(*) AS postings, CASE WHEN julianday('now') - julianday(MAX(p.transaction_date)) > 90 THEN 1 ELSE 0 END AS is_quiet FROM postings p JOIN commodities c ON c.code = p.currency AND c.is_currency = 1 WHERE p.account_type IN ('Assets', 'Liabilities') GROUP BY p.account, p.currency HAVING ROUND(SUM(CAST(p.amount AS REAL)), 2) != 0 ORDER BY p.currency, p.account"
+          "query": "SELECT p.account, p.currency, ROUND(SUM(CAST(p.amount AS REAL)), 2) AS balance, MAX(p.transaction_date) AS last_activity, COUNT(*) AS postings, CASE WHEN julianday('now') - julianday(MAX(p.transaction_date)) > 90 THEN 1 ELSE 0 END AS is_quiet, MAX(json_extract(a.metadata_json, '$.\"display-name\"')) AS display_name, MAX(a.open_date) AS opened FROM postings p JOIN commodities c ON c.code = p.currency AND c.is_currency = 1 LEFT JOIN accounts a ON a.name = p.account WHERE p.account_type IN ('Assets', 'Liabilities') GROUP BY p.account, p.currency HAVING ROUND(SUM(CAST(p.amount AS REAL)), 2) != 0 ORDER BY p.currency, p.account"
         }
       ],
       "output": "main"
