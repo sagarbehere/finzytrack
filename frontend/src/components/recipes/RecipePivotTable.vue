@@ -1,8 +1,8 @@
 <template>
   <div class="overflow-auto h-full">
-    <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-sm">
+    <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-sm" @mouseleave="clearHover">
       <thead class="bg-gray-50 dark:bg-gray-800 sticky top-0 z-10">
-        <tr>
+        <tr class="divide-x divide-gray-200 dark:divide-white/10">
           <!-- Row header column -->
           <th
             scope="col"
@@ -16,6 +16,8 @@
             :key="col"
             scope="col"
             class="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400 whitespace-nowrap"
+            :class="col === hoveredCol ? HEADER_HIGHLIGHT : ''"
+            @mouseenter="setHover(null, col)"
           >
             {{ col }}
           </th>
@@ -34,11 +36,13 @@
         <tr
           v-for="row in data.rows"
           :key="row.label"
-          class="hover:bg-gray-50 dark:hover:bg-gray-800/50"
+          class="divide-x divide-gray-200 dark:divide-white/10"
         >
-          <!-- Row label -->
+          <!-- Row label (sticky, so its background must stay opaque) -->
           <td
-            class="px-3 py-2 whitespace-nowrap text-gray-900 dark:text-gray-100 sticky left-0 bg-white dark:bg-gray-900"
+            class="px-3 py-2 whitespace-nowrap text-gray-900 dark:text-gray-100 sticky left-0"
+            :class="row.label === hoveredRow ? STICKY_HIGHLIGHT : 'bg-white dark:bg-gray-900'"
+            @mouseenter="setHover(row.label, null)"
           >
             {{ row.label }}
           </td>
@@ -47,7 +51,9 @@
             v-for="(col, colIndex) in data.columns"
             :key="col"
             class="px-3 py-2 whitespace-nowrap text-right text-gray-700 dark:text-gray-200"
+            :class="row.label === hoveredRow || col === hoveredCol ? CELL_HIGHLIGHT : ''"
             :style="cellStyle(row.values[col])"
+            @mouseenter="setHover(row.label, col)"
           >
             <template v-if="row.values[col] !== undefined && row.values[col] !== 0">
               <!-- Clickable link if available -->
@@ -76,7 +82,9 @@
           <!-- Row total -->
           <td
             v-if="showRowTotals"
-            class="px-3 py-2 whitespace-nowrap text-right font-semibold text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-gray-800"
+            class="px-3 py-2 whitespace-nowrap text-right font-semibold text-gray-900 dark:text-gray-100"
+            :class="row.label === hoveredRow ? TOTAL_HIGHLIGHT : 'bg-gray-50 dark:bg-gray-800'"
+            @mouseenter="setHover(row.label, null)"
           >
             {{ formatValue(row.total || 0) }}
           </td>
@@ -85,10 +93,11 @@
         <!-- Column totals row -->
         <tr
           v-if="showColumnTotals && data.columnTotals"
-          class="bg-gray-100 dark:bg-gray-800/75 font-semibold"
+          class="bg-gray-100 dark:bg-gray-800/75 font-semibold divide-x divide-gray-200 dark:divide-white/10"
         >
           <td
             class="px-3 py-2 whitespace-nowrap text-gray-900 dark:text-gray-100 sticky left-0 bg-gray-100 dark:bg-gray-800/75"
+            @mouseenter="clearHover"
           >
             Grand totals
           </td>
@@ -96,12 +105,15 @@
             v-for="col in data.columns"
             :key="col"
             class="px-3 py-2 whitespace-nowrap text-right text-gray-900 dark:text-gray-100"
+            :class="col === hoveredCol ? TOTAL_HIGHLIGHT : ''"
+            @mouseenter="setHover(null, col)"
           >
             {{ formatValue(data.columnTotals[col] || 0) }}
           </td>
           <td
             v-if="showRowTotals"
             class="px-3 py-2 whitespace-nowrap text-right text-gray-900 dark:text-gray-100 bg-gray-200 dark:bg-gray-600"
+            @mouseenter="clearHover"
           >
             {{ formatValue(data.grandTotal || 0) }}
           </td>
@@ -122,6 +134,7 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
 import type { RouteLocationRaw } from 'vue-router'
 import type { PivotData, PivotRow, PivotLinkContext, ValueLinkConfig, SelectParams } from '@/types/recipes'
 import { budgetStatusOf, hexToRgba, type BudgetStatusColors } from '@/utils/budgetStatus'
@@ -156,6 +169,24 @@ const props = withDefaults(defineProps<Props>(), {
   showColumnTotals: true,
 })
 const emit = defineEmits<{ select: [params: SelectParams] }>()
+
+// Crosshair hover: the row and the column under the cursor are both tinted,
+// so a value (or a grand total) can be traced back to its account and month.
+const hoveredRow = ref<string | null>(null)
+const hoveredCol = ref<string | null>(null)
+function setHover(row: string | null, col: string | null) {
+  hoveredRow.value = row
+  hoveredCol.value = col
+}
+function clearHover() {
+  setHover(null, null)
+}
+const CELL_HIGHLIGHT = 'bg-gray-100 dark:bg-gray-800/50'
+// Same shade as CELL_HIGHLIGHT, but opaque: the sticky label column must hide
+// the cells scrolling underneath it.
+const STICKY_HIGHLIGHT = 'bg-gray-100 dark:bg-[color-mix(in_oklab,var(--color-gray-800)_50%,var(--color-gray-900))]'
+const HEADER_HIGHLIGHT = 'bg-gray-200 dark:bg-gray-700/60'
+const TOTAL_HIGHLIGHT = 'bg-gray-200 dark:bg-gray-700/60'
 
 // Cell tint from the active theme's valence band; strength = theme tints.heatmapAlpha.
 const { valenceColor, heatmapAlpha, warnAtDefault } = useDashboardTheme()
