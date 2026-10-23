@@ -153,3 +153,23 @@ def test_an_empty_search_is_just_empty():
 def test_history_failures_are_explained(response, error):
     with pytest.raises(error):
         AmfiSource(OneResponse(response)).get_prices_series("122639", _dt(date(2026, 1, 1)), _dt(date(2026, 12, 31)))
+
+
+def test_a_zero_nav_is_a_price_of_zero_not_a_format_change():
+    """A written-off segregated portfolio ends at NAV 0.00000: worth nothing from then on.
+    It is a price (so the fetcher stores it and stops asking), never "the service
+    changed" (which would stop the update for every other fund)."""
+    record = {"meta": {"scheme_name": "Franklin India Income Opportunities Fund- Segregated Portfolio 1"},
+              "data": [{"date": "20-07-2020", "nav": "0.00000"}, {"date": "17-07-2020", "nav": "0.38190"}]}
+    src = AmfiSource(OneResponse(FakeResponse(record)))
+    series = src.get_prices_series("147962", _dt(date(2020, 7, 1)), _dt(date(2020, 7, 31)))
+    assert [(p.time.date(), p.price) for p in series] == [
+        (date(2020, 7, 17), Decimal("0.38190")), (date(2020, 7, 20), Decimal("0.00000"))]
+    assert src.latest_nav("147962").price == Decimal("0.00000")
+
+
+def test_a_negative_nav_is_not_a_price():
+    record = {"meta": {"scheme_name": "X"}, "data": [{"date": "20-07-2020", "nav": "-1"}]}
+    with pytest.raises(AmfiFormatError):
+        AmfiSource(OneResponse(FakeResponse(record))).get_prices_series(
+            "1", _dt(date(2020, 7, 1)), _dt(date(2020, 7, 31)))

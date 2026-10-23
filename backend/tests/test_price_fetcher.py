@@ -668,3 +668,37 @@ option "operating_currency" "INR"
     res = PriceFetcher(reader, lm, source=source, today=date(2015, 8, 1)).fetch_and_persist()
     assert source.calls == []
     assert res["failed"] == ["DSP-ULTRASHORT-RIW: no AMFI scheme code — set its price symbol (Find, in Setup & Metadata)"]
+
+
+_WRITTEN_OFF = """\
+option "operating_currency" "INR"
+2020-01-01 commodity SEG
+  asset-class: "mutual-fund"
+  isin: "INF090I01XY1"
+  fetch_symbol: "amfi:147962"
+2020-01-01 open Assets:MF
+2020-01-01 open Equity:Funding
+2020-01-01 open Income:Gains
+2020-01-24 * "segregated"
+  Assets:MF  100.000 SEG {0 INR}
+2020-07-20 * "written off"
+  Assets:MF  -100.000 SEG {0 INR, 2020-01-24} @ 0 INR
+  Income:Gains  0.00 INR
+"""
+
+
+def test_a_written_off_fund_is_priced_at_zero_and_not_asked_about_again(tmp_path):
+    """mfapi's last NAV for a written-off segregated portfolio is 0.00000: stored as a
+    price of 0, so the next update has nothing left to ask for and reports nothing."""
+    ledger, _, reader, lm = _wire(tmp_path, _WRITTEN_OFF)
+    amfi = FakeAmfi([(date(2020, 1, 24), "1.00"), (date(2020, 7, 17), "0.38190"), (date(2020, 7, 20), "0.00000")])
+    first = PriceFetcher(reader, lm, source=FakeSource({}), amfi_source=amfi, today=date(2026, 10, 23)).fetch_and_persist()
+    assert first["failed"] == []
+    assert [(r["date"], r["quote_number"]) for r in reader.get_prices(currency="SEG")] == [
+        ("2020-01-24", "1.00"), ("2020-07-17", "0.38190"), ("2020-07-20", "0.00000")]
+    _entries, errors, _ = load_ledger_checked(str(sidecar_path(ledger)))
+    assert errors == []
+
+    amfi.calls.clear()
+    second = PriceFetcher(reader, lm, source=FakeSource({}), amfi_source=amfi, today=date(2026, 10, 23)).fetch_and_persist()
+    assert (amfi.calls, second["failed"], second["added"]) == ([], [], 0)

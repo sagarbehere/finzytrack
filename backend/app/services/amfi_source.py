@@ -63,14 +63,19 @@ def scheme_code(symbol: str) -> Optional[str]:
     return symbol[len(PREFIX):].strip() or None
 
 
-def _nav_row(row: Any) -> Optional[SourcePrice]:
-    """One ``{"date": "DD-MM-YYYY", "nav": "…"}`` row, or None if it isn't one."""
+def _parse_row(row: Any) -> Optional[SourcePrice]:
+    """One ``{"date": "DD-MM-YYYY", "nav": "…"}`` row as a price, or None if it isn't one.
+    A NAV of 0 is a real price: a written-off segregated portfolio ends at 0.00000, and
+    is then worth nothing (not its cost)."""
     try:
         when = datetime.strptime(row["date"], "%d-%m-%Y").replace(tzinfo=timezone.utc)
         nav = Decimal(str(row["nav"]))
     except (KeyError, TypeError, ValueError, InvalidOperation):
         return None
-    return SourcePrice(nav, when, "INR") if nav > 0 else None
+    return SourcePrice(nav, when, "INR") if nav >= 0 else None
+
+
+_nav_row = _parse_row
 
 
 class AmfiSource:
@@ -116,7 +121,7 @@ class AmfiSource:
         with its name, so an empty range is never mistaken for an unknown scheme."""
         rows = self._scheme(_URL.format(code=code), code,
                             {"startDate": begin.isoformat(), "endDate": end.isoformat()})
-        out = [p for p in (_nav_row(r) for r in rows) if p is not None]
+        out = [p for p in (_parse_row(r) for r in rows) if p is not None]
         if rows and not out:
             raise AmfiFormatError(_CHANGED)  # rows we can't read at all: the format changed
         return sorted(out, key=lambda p: p.time)
