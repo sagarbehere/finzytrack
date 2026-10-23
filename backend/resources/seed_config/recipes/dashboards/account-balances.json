@@ -28,12 +28,12 @@
     {
       "id": "balances",
       "title": "Account Balances",
-      "helpText": "Balance of each open asset account on the selected date, in the account's own currency, grouped by currency with totals at every level. Investment accounts show market value: units held × the latest price on or before that date (cost when there is no price). Click a row to see its transactions. To show a friendlier name, add display-name to the account's open directive.",
+      "helpText": "Balance of each open asset account on the selected date, in the account's own currency, grouped by currency with totals at every level. Investment accounts show market value: units held × the latest price on or before that date (cost when there is no price). Last activity is the latest transaction; Last balance check is the latest balance directive; Check result says whether it passed. A cash account is dimmed when it had no transaction and no balance check in the 60 days before the date (accounts with account-type cd or bond are never dimmed). Use the Columns menu to show or hide columns. To show a friendlier name, add display-name to the account's open directive.",
       "steps": [
         {
           "id": "main",
           "kind": "query",
-          "query": "WITH open_accts AS ( SELECT name, metadata_json FROM accounts WHERE name LIKE 'Assets:%' AND open_date <= :asOf AND (close_date IS NULL OR close_date > :asOf) ), cash AS ( SELECT p.account, p.currency, SUM(CAST(p.amount AS REAL)) AS value FROM postings p JOIN commodities c ON c.code = p.currency AND c.is_currency = 1 WHERE p.account_type = 'Assets' AND p.transaction_date <= :asOf GROUP BY p.account, p.currency ), held AS ( SELECT p.account, p.currency AS holding, p.cost_currency AS currency, SUM(CAST(p.amount AS REAL)) AS units, SUM(CAST(p.amount AS REAL) * COALESCE(CAST(p.cost_amount AS REAL), 0)) AS cost_basis FROM postings p JOIN commodities c ON c.code = p.currency AND c.is_currency = 0 WHERE p.account_type = 'Assets' AND p.transaction_date <= :asOf AND p.cost_currency IS NOT NULL GROUP BY p.account, p.currency, p.cost_currency ), px AS ( SELECT base_currency, quote_currency, CAST(quote_number AS REAL) AS price FROM ( SELECT base_currency, quote_currency, quote_number, ROW_NUMBER() OVER (PARTITION BY base_currency, quote_currency ORDER BY date DESC, id DESC) AS rn FROM prices WHERE date <= :asOf ) WHERE rn = 1 ), holdings AS ( SELECT h.account, h.currency, SUM(CASE WHEN px.price IS NOT NULL THEN h.units * px.price ELSE h.cost_basis END) AS value FROM held h LEFT JOIN px ON px.base_currency = h.holding AND px.quote_currency = h.currency WHERE ABS(h.units) > 0.000001 GROUP BY h.account, h.currency ) SELECT v.account, v.currency, ROUND(SUM(v.value), 2) AS balance, json_extract(o.metadata_json, '$.\"display-name\"') AS display_name FROM (SELECT * FROM cash UNION ALL SELECT * FROM holdings) v JOIN open_accts o ON o.name = v.account GROUP BY v.account, v.currency HAVING ROUND(SUM(v.value), 2) != 0 ORDER BY v.currency, v.account"
+          "query": "WITH open_accts AS ( SELECT name, metadata_json FROM accounts WHERE name LIKE 'Assets:%' AND open_date <= :asOf AND (close_date IS NULL OR close_date > :asOf) ), cash AS ( SELECT p.account, p.currency, SUM(CAST(p.amount AS REAL)) AS value, 0 AS holds FROM postings p JOIN commodities c ON c.code = p.currency AND c.is_currency = 1 WHERE p.account_type = 'Assets' AND p.transaction_date <= :asOf GROUP BY p.account, p.currency ), held AS ( SELECT p.account, p.currency AS holding, p.cost_currency AS currency, SUM(CAST(p.amount AS REAL)) AS units, SUM(CAST(p.amount AS REAL) * COALESCE(CAST(p.cost_amount AS REAL), 0)) AS cost_basis FROM postings p JOIN commodities c ON c.code = p.currency AND c.is_currency = 0 WHERE p.account_type = 'Assets' AND p.transaction_date <= :asOf AND p.cost_currency IS NOT NULL GROUP BY p.account, p.currency, p.cost_currency ), px AS ( SELECT base_currency, quote_currency, CAST(quote_number AS REAL) AS price FROM ( SELECT base_currency, quote_currency, quote_number, ROW_NUMBER() OVER (PARTITION BY base_currency, quote_currency ORDER BY date DESC, id DESC) AS rn FROM prices WHERE date <= :asOf ) WHERE rn = 1 ), holdings AS ( SELECT h.account, h.currency, SUM(CASE WHEN px.price IS NOT NULL THEN h.units * px.price ELSE h.cost_basis END) AS value, 1 AS holds FROM held h LEFT JOIN px ON px.base_currency = h.holding AND px.quote_currency = h.currency WHERE ABS(h.units) > 0.000001 GROUP BY h.account, h.currency ), activity AS ( SELECT account, MAX(transaction_date) AS last_activity FROM postings WHERE account_type = 'Assets' AND transaction_date <= :asOf GROUP BY account ), checks AS ( SELECT account, MAX(date) AS last_check FROM balance_assertions WHERE date <= :asOf GROUP BY account ), check_status AS ( SELECT b.account, CASE WHEN MIN(b.passed) = 1 THEN 'Passed' ELSE 'Failed' END AS check_status FROM balance_assertions b JOIN checks c ON c.account = b.account AND b.date = c.last_check GROUP BY b.account ), balances AS ( SELECT v.account, v.currency, ROUND(SUM(v.value), 2) AS balance, MAX(v.holds) AS holds FROM (SELECT * FROM cash UNION ALL SELECT * FROM holdings) v GROUP BY v.account, v.currency HAVING ROUND(SUM(v.value), 2) != 0 ) SELECT b.account, b.currency, b.balance, json_extract(o.metadata_json, '$.\"display-name\"') AS display_name, a.last_activity, c.last_check, s.check_status, CASE WHEN b.holds = 0 AND COALESCE(json_extract(o.metadata_json, '$.\"account-type\"'), '') NOT IN ('cd', 'bond') AND julianday(:asOf) - julianday(MAX(COALESCE(a.last_activity, '0000-01-01'), COALESCE(c.last_check, '0000-01-01'))) > 60 THEN 1 ELSE 0 END AS is_stale FROM balances b JOIN open_accts o ON o.name = b.account LEFT JOIN activity a ON a.account = b.account LEFT JOIN checks c ON c.account = b.account LEFT JOIN check_status s ON s.account = b.account ORDER BY b.currency, b.account"
         }
       ],
       "output": "main",
@@ -58,9 +58,38 @@
             "format": "currency",
             "currencyField": "currency",
             "align": "right",
-            "aggregate": "sum"
+            "aggregate": "sum",
+            "description": "The account's balance on the selected date, in its own currency. For investments: units held × the latest price on or before that date (the cost when there is no price). Parent rows show the total."
+          },
+          {
+            "key": "last_activity",
+            "label": "Last activity",
+            "format": "dateShort",
+            "align": "right",
+            "aggregate": "max",
+            "description": "Date of the latest transaction in this account, on or before the selected date. Parent rows show the latest date among their accounts."
+          },
+          {
+            "key": "last_check",
+            "label": "Last balance check",
+            "format": "dateShort",
+            "align": "right",
+            "aggregate": "max",
+            "description": "Date of the latest balance directive for this account: a directive in your ledger that states what the balance should be on a date (for example, from a bank statement)."
+          },
+          {
+            "key": "check_status",
+            "label": "Check result",
+            "align": "center",
+            "description": "Did your ledger agree with your latest balance directive? Example: the directive says the account held $500 on 1 March. If your transactions before 1 March add up to $500, it passed. Failed means they don't; a transaction before that date is missing or wrong."
           }
-        ]
+        ],
+        "dimField": "is_stale",
+        "share": {
+          "column": "balance",
+          "base": "total",
+          "description": "This row's share of the total for its currency. It can be above 100% when some accounts in that currency have a negative balance."
+        }
       }
     }
   ]
