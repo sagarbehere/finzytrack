@@ -24,6 +24,11 @@ export function useBreakpoint() {
     isLg.value = w >= breakpoints.lg
   }
 
+  // Set the real values now, not only on mount: a first render with every flag
+  // false would mount the mobile variant of a component and then swap it out
+  // (for the transaction table that means rendering every row's editors twice).
+  if (typeof window !== 'undefined') update()
+
   let mql: MediaQueryList | undefined
 
   onMounted(() => {

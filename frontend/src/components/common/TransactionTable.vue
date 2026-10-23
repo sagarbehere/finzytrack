@@ -81,10 +81,10 @@
 
     <!-- Desktop: Table layout (md and above) -->
     <div v-if="isMd" class="overflow-hidden rounded-lg ring-1 ring-gray-200 dark:ring-white/10">
-      <div class="table-scroll-container">
-        <table class="w-full table-fixed" :class="{ 'has-select-col': enableBulkEdit }">
+      <div ref="scrollContainer" class="table-scroll-container">
+        <table class="w-full table-fixed" :class="{ 'has-select-col': enableBulkEdit }" @focusin="onTableFocusIn">
           <!-- Table Header -->
-          <thead class="bg-gray-50 dark:bg-gray-800/50">
+          <thead ref="tableHead" class="bg-gray-50 dark:bg-gray-800/50">
             <tr v-for="headerGroup in table.getHeaderGroups()" :key="headerGroup.id">
               <th
                 v-for="header in headerGroup.headers"
@@ -109,48 +109,62 @@
             </tr>
           </thead>
 
-          <!-- Table Body -->
-          <tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-800">
-            <template v-for="row in table.getRowModel().rows" :key="row.id">
-              <tr
-                :data-row="row.original.transactionIndex"
-                :class="[
-                  'transaction-row',
-                  `transaction-${row.original.transaction.id}`,
-                  getTransactionRowClasses(row.original),
-                ]"
-                @dragover="(e) => onRowDragOver(e, row.original.transaction.id)"
-                @dragenter.prevent
-                @dragleave="onRowDragLeave"
-                @drop="(e) => onRowDrop(e, row.original.transaction)"
-              >
-                <template v-for="cell in row.getVisibleCells()" :key="cell.id">
-                  <td
-                    v-if="!shouldSkipCell(cell)"
-                    :rowspan="getRowSpan(cell)"
-                    :data-column-id="cell.column.id"
-                    :data-row="row.original.transactionIndex"
-                    :data-posting="row.original.postingIndex"
-                    :style="{ width: `${cell.column.getSize()}px` }"
-                    :class="[
-                      getCellClasses(cell),
-                      showDiff && cellDiffOld(cell, row.original) ? 'diff-cell' : '',
-                      dragOverTransactionId === row.original.transaction.id
-                        ? '!bg-indigo-50 dark:!bg-indigo-900/30'
-                        : ''
-                    ]"
-                    @keydown.capture="(e) => handleCellKeydown(e, cell, row.original)"
-                    @click="(e) => handleCellClick(e, cell, row.original)"
-                  >
-                    <div v-if="showDiff && cellDiffOld(cell, row.original)" class="flex flex-col gap-0.5 py-1 text-sm leading-tight">
-                      <span class="text-red-600 line-through decoration-red-400 break-words dark:text-red-400">{{ cellDiffOld(cell, row.original) }}</span>
-                      <span class="font-medium text-green-700 break-words dark:text-green-400">{{ cellDiffNew(cell, row.original) }}</span>
-                    </div>
-                    <FlexRender v-else :render="cell.column.columnDef.cell" :props="cell.getContext()" />
-                  </td>
-                </template>
-              </tr>
-            </template>
+          <!-- Table Body: one <tbody> per transaction so rowspanned cells stay
+               whole; large tables render only the transactions near the
+               viewport, with spacer rows standing in for the rest. -->
+          <template v-for="group in renderedGroups" :key="group.key">
+            <tbody v-if="group.gapBefore > 0" aria-hidden="true" class="bg-white dark:bg-gray-900">
+              <tr><td :colspan="table.getVisibleLeafColumns().length" class="p-0 border-0" :style="{ height: `${group.gapBefore}px` }" /></tr>
+            </tbody>
+            <tbody
+              :ref="measureGroup"
+              :data-index="group.index"
+              class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-800"
+            >
+              <template v-for="row in group.rows" :key="row.id">
+                <tr
+                  :data-row="row.original.transactionIndex"
+                  :class="[
+                    'transaction-row',
+                    `transaction-${row.original.transaction.id}`,
+                    getTransactionRowClasses(row.original),
+                  ]"
+                  @dragover="(e) => onRowDragOver(e, row.original.transaction.id)"
+                  @dragenter.prevent
+                  @dragleave="onRowDragLeave"
+                  @drop="(e) => onRowDrop(e, row.original.transaction)"
+                >
+                  <template v-for="cell in row.getVisibleCells()" :key="cell.id">
+                    <td
+                      v-if="!shouldSkipCell(cell)"
+                      :rowspan="getRowSpan(cell)"
+                      :data-column-id="cell.column.id"
+                      :data-row="row.original.transactionIndex"
+                      :data-posting="row.original.postingIndex"
+                      :style="{ width: `${cell.column.getSize()}px` }"
+                      :class="[
+                        getCellClasses(cell),
+                        showDiff && cellDiffOld(cell, row.original) ? 'diff-cell' : '',
+                        dragOverTransactionId === row.original.transaction.id
+                          ? '!bg-indigo-50 dark:!bg-indigo-900/30'
+                          : ''
+                      ]"
+                      @keydown.capture="(e) => handleCellKeydown(e, cell, row.original)"
+                      @click="(e) => handleCellClick(e, cell, row.original)"
+                    >
+                      <div v-if="showDiff && cellDiffOld(cell, row.original)" class="flex flex-col gap-0.5 py-1 text-sm leading-tight">
+                        <span class="text-red-600 line-through decoration-red-400 break-words dark:text-red-400">{{ cellDiffOld(cell, row.original) }}</span>
+                        <span class="font-medium text-green-700 break-words dark:text-green-400">{{ cellDiffNew(cell, row.original) }}</span>
+                      </div>
+                      <FlexRender v-else :render="cell.column.columnDef.cell" :props="cell.getContext()" />
+                    </td>
+                  </template>
+                </tr>
+              </template>
+            </tbody>
+          </template>
+          <tbody v-if="bottomGap > 0" aria-hidden="true" class="bg-white dark:bg-gray-900">
+            <tr><td :colspan="table.getVisibleLeafColumns().length" class="p-0 border-0" :style="{ height: `${bottomGap}px` }" /></tr>
           </tbody>
         </table>
       </div>
@@ -194,13 +208,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, h, toRef, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, h, toRef, nextTick, type ComponentPublicInstance } from 'vue'
 import {
   useVueTable,
   createColumnHelper,
   getCoreRowModel,
   FlexRender,
 } from '@tanstack/vue-table'
+import { useVirtualizer, defaultRangeExtractor, type Range } from '@tanstack/vue-virtual'
 import { MagnifyingGlassIcon } from '@heroicons/vue/20/solid'
 import { useBreakpoint } from '@/composables/useBreakpoint'
 import AccountDropdown from '@/components/common/AccountDropdown.vue'
@@ -231,7 +246,7 @@ import { buildTanStackColumns, type TransactionColumnDef, type TableRowData } fr
 import { flattenTransactionRows } from '@/utils/flattenTransactionRows'
 import { sign, toFixed, type Money } from '@/utils/money'
 import type { TransactionViewModel, ImportContext, LedgerContext } from '@/types/transactions'
-import type { Cell } from '@tanstack/vue-table'
+import type { Cell, Row } from '@tanstack/vue-table'
 
 // Define props
 interface Props {
@@ -284,7 +299,7 @@ const {
 const {
   setCellFocus,
   handleKeyNavigation
-} = useTableKeyboardNavigation()
+} = useTableKeyboardNavigation({ ensureRowRendered: (rowIndex) => ensureRowRendered(rowIndex) })
 
 const confirmDialog = useConfirmDialog()
 const { isMd } = useBreakpoint()
@@ -1186,6 +1201,120 @@ const table = useVueTable({
   getCoreRowModel: getCoreRowModel(),
   getRowId: (row) => `${row.transaction.id}::${row.postingIndex}`,
 })
+
+// ── Row virtualization ─────────────────────────────────────────────────────
+// Every posting row mounts several editors (account/commodity comboboxes,
+// inputs), so rendering a large result set at once freezes the page. Above the
+// threshold, only transactions near the viewport are rendered. The unit is a
+// whole transaction (its own <tbody>), so rowspanned cells are never split.
+// Below the threshold everything renders, exactly as before.
+const VIRTUALIZE_MIN_TRANSACTIONS = 100
+const ESTIMATED_POSTING_ROW_PX = 46
+
+const scrollContainer = ref<HTMLElement | null>(null)
+const tableHead = ref<HTMLElement | null>(null)
+// The sticky header sits inside the scroll container, above the first row.
+const headHeight = ref(0)
+watch(tableHead, (el, _old, onCleanup) => {
+  if (!el || typeof ResizeObserver === 'undefined') return
+  const observer = new ResizeObserver(() => { headHeight.value = el.offsetHeight })
+  observer.observe(el)
+  onCleanup(() => observer.disconnect())
+})
+
+interface RowGroup {
+  key: string
+  transactionIndex: number
+  rows: Row<TableRowData>[]
+}
+
+const rowGroups = computed<RowGroup[]>(() => {
+  const groups: RowGroup[] = []
+  for (const row of table.getRowModel().rows) {
+    const last = groups[groups.length - 1]
+    if (last && last.transactionIndex === row.original.transactionIndex) {
+      last.rows.push(row)
+    } else {
+      groups.push({ key: row.original.transaction.id, transactionIndex: row.original.transactionIndex, rows: [row] })
+    }
+  }
+  return groups
+})
+
+const groupIndexByTransactionIndex = computed(() => {
+  const m = new Map<number, number>()
+  rowGroups.value.forEach((g, i) => m.set(g.transactionIndex, i))
+  return m
+})
+
+const isVirtualized = computed(() => rowGroups.value.length >= VIRTUALIZE_MIN_TRANSACTIONS)
+
+// The transaction holding focus stays rendered even when scrolled out of view,
+// so an in-progress edit (or open dropdown) is never unmounted under the user.
+const pinnedGroupIndex = ref<number | null>(null)
+const onTableFocusIn = (e: FocusEvent) => {
+  const body = (e.target as Element | null)?.closest('tbody[data-index]') as HTMLElement | null
+  if (body) pinnedGroupIndex.value = Number(body.dataset.index)
+}
+
+const virtualizer = useVirtualizer(computed(() => ({
+  count: rowGroups.value.length,
+  enabled: isVirtualized.value,
+  getScrollElement: () => scrollContainer.value,
+  estimateSize: (i: number) => ESTIMATED_POSTING_ROW_PX * (rowGroups.value[i]?.rows.length ?? 1),
+  getItemKey: (i: number) => rowGroups.value[i]?.key ?? i,
+  overscan: 6,
+  paddingStart: headHeight.value,
+  scrollPaddingStart: headHeight.value,
+  rangeExtractor: (range: Range) => {
+    const indexes = defaultRangeExtractor(range)
+    const pinned = pinnedGroupIndex.value
+    if (pinned !== null && pinned < range.count && !indexes.includes(pinned)) {
+      indexes.push(pinned)
+      indexes.sort((a, b) => a - b)
+    }
+    return indexes
+  },
+})))
+
+// Groups to render, each with the empty space (px) to leave above it. The
+// pinned group can sit far from the visible window, so gaps are per group.
+const renderedGroups = computed(() => {
+  const groups = rowGroups.value
+  if (!isVirtualized.value) {
+    return groups.map((g, index) => ({ ...g, index, gapBefore: 0 }))
+  }
+  const out: (RowGroup & { index: number; gapBefore: number })[] = []
+  let prevEnd = headHeight.value
+  for (const item of virtualizer.value.getVirtualItems()) {
+    const g = groups[item.index]
+    if (!g) continue
+    out.push({ ...g, index: item.index, gapBefore: Math.max(0, item.start - prevEnd) })
+    prevEnd = item.end
+  }
+  return out
+})
+
+const bottomGap = computed(() => {
+  if (!isVirtualized.value) return 0
+  const items = virtualizer.value.getVirtualItems()
+  const end = items.length ? items[items.length - 1].end : headHeight.value
+  return Math.max(0, virtualizer.value.getTotalSize() - end)
+})
+
+const measureGroup = (el: Element | ComponentPublicInstance | null) => {
+  if (isVirtualized.value && el instanceof HTMLElement) virtualizer.value.measureElement(el)
+}
+
+// Keyboard navigation can target a transaction that isn't rendered (e.g. F2
+// from far down the list): scroll it into the rendered window first.
+const ensureRowRendered = async (rowIndex: number) => {
+  if (!isVirtualized.value) return
+  const groupIndex = groupIndexByTransactionIndex.value.get(rowIndex + 1)
+  if (groupIndex === undefined) return
+  virtualizer.value.scrollToIndex(groupIndex, { align: 'auto' })
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+}
 
 const onGlobalFilterChange = (e: Event) => {
   globalFilter.value = (e.target as HTMLInputElement).value

@@ -6,7 +6,16 @@ export interface CellPosition {
   postingIndex?: number
 }
 
-export function useTableKeyboardNavigation() {
+export interface TableKeyboardNavigationOptions {
+  /**
+   * Called when the target cell isn't in the DOM — a virtualized table renders
+   * only rows near the viewport. Should bring the row (0-based transaction
+   * index) into the rendered window; focus is retried afterwards.
+   */
+  ensureRowRendered?: (rowIndex: number) => Promise<void>
+}
+
+export function useTableKeyboardNavigation(options: TableKeyboardNavigationOptions = {}) {
   // Columns that span across all postings
   const spannedColumns = ['date', 'flag', 'payee', 'memo', 'narration', 'tags_links']
 
@@ -65,7 +74,11 @@ export function useTableKeyboardNavigation() {
     }
 
     // Look for focusable elements within the cell
-    const cell = document.querySelector(cellSelector)
+    let cell = document.querySelector(cellSelector)
+    if (!cell && options.ensureRowRendered) {
+      await options.ensureRowRendered(position.rowIndex)
+      cell = document.querySelector(cellSelector)
+    }
     if (!cell) {
       console.warn('Cell not found:', cellSelector)
       return
