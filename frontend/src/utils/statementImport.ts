@@ -173,3 +173,65 @@ export function resultSentence(r: StatementCommitData, facts: ImportFacts | null
   const text = parts.join(', ')
   return text.charAt(0).toUpperCase() + text.slice(1) + '.'
 }
+
+export interface StatCard { label: string; value: string; note: string }
+
+/** The preview's summary cards, each saying what it counts in plain words. ``choices``
+ *  are the user's cash-side accounts; the cash card reads differently with and without
+ *  bank matching (no "0 matched" when matching was never asked for). */
+export function statCards(
+  plan: StatementPlanData,
+  choices: { cash_fallback_account?: string | null; cash_matching_account?: string | null;
+             cutoff_date?: string | null; cash_before_cutoff_account?: string | null },
+): StatCard[] {
+  const s = plan.summary
+  const n = (x: number) => x.toLocaleString('en-IN')
+  const included = plan.funds.filter(f => !f.excluded)
+  const reconciled = included.filter(f => f.reconciled).length
+  const checks = plan.balances.length
+
+  const moved = s.matched + s.fallback
+  const fallback = choices.cash_fallback_account || choices.cash_matching_account || 'the cash-side account'
+  const cutoff = choices.cutoff_date && choices.cash_before_cutoff_account
+    ? `; before ${choices.cutoff_date}, ${choices.cash_before_cutoff_account}` : ''
+  let cash: StatCard
+  if (!choices.cash_matching_account) {
+    cash = { label: 'Cash movements', value: n(moved), note: `Money paid in or out, all to ${fallback}${cutoff}.` }
+  } else if (moved > 0 && s.matched === 0) {
+    cash = {
+      label: 'Matched to bank transactions', value: `0 of ${n(moved)}`,
+      note: `None matched. Check the amounts and dates of the bank transactions in ${choices.cash_matching_account}.`,
+    }
+  } else {
+    cash = {
+      label: 'Matched to bank transactions', value: `${n(s.matched)} of ${n(moved)}`,
+      note: s.fallback ? `The other ${n(s.fallback)} go to ${choices.cash_fallback_account || fallback}${cutoff}.`
+        : `All matched to transactions in ${choices.cash_matching_account}.`,
+    }
+  }
+
+  return [
+    {
+      label: 'Transactions to write', value: n(s.transactions),
+      note: `One can cover several statement rows (a switch, its stamp duty). Plus ${n(checks)} balance check${checks === 1 ? '' : 's'}.`,
+    },
+    {
+      label: 'Funds matching the statement', value: `${n(reconciled)} of ${n(included.length)}`,
+      note: 'Units after the import equal the statement\'s closing units.',
+    },
+    cash,
+    {
+      label: 'Already in the ledger', value: n(s.already_imported),
+      note: 'Rows an earlier import already wrote. They are skipped.',
+    },
+  ]
+}
+
+/** A fund's cash movements, for its row: matched ones only when there are any. */
+export function fundCashText(f: { matched?: number; fallback?: number }): string {
+  const matched = f.matched ?? 0
+  const other = f.fallback ?? 0
+  if (!matched && !other) return ''
+  if (!matched) return `${other} cash movement${other === 1 ? '' : 's'}`
+  return `cash: ${matched} matched to bank transactions${other ? `, ${other} not` : ''}`
+}

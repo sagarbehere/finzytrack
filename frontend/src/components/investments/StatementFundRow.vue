@@ -13,7 +13,7 @@
           Not imported: no transactions, balance check or price are written for this fund.
         </p>
         <p v-else class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          {{ countsText }}<span v-if="fund.matched || fund.fallback"> · cash: {{ fund.matched }} matched, {{ fund.fallback }} other account</span>
+          {{ countsText }}<span v-if="fundCashText(fund)"> · {{ fundCashText(fund) }}</span>
         </p>
       </div>
 
@@ -94,6 +94,7 @@
   import { computed } from 'vue'
   import { CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/vue/20/solid'
   import type { FundPlan } from '@/services/generated-api'
+  import { fundCashText } from '@/utils/statementImport'
 
   const props = defineProps<{ fund: FundPlan; open: boolean }>()
   const emit = defineEmits<{

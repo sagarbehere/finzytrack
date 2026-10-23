@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  groupFunds, importFacts, pairCandidates, resultSentence, postingLine, setCorrection, spanSentence, yearCountsText, clearCorrection,
+  fundCashText, groupFunds, importFacts, pairCandidates, resultSentence, statCards, postingLine, setCorrection, spanSentence, yearCountsText, clearCorrection,
 } from '@/utils/statementImport'
 import { fund, planData, row } from '@/components/investments/__tests__/statementFixtures'
 
@@ -68,5 +68,41 @@ describe('the result message after Register', () => {
   it('counts a fund once even when it is in two folios', () => {
     const plan = planData({ funds: [fund({ commodity_status: 'existing' as never }), fund({ folio: 'F2', commodity_status: 'existing' as never })] })
     expect(importFacts(plan)).toEqual({ existingFunds: 1, statementPrices: 0 })
+  })
+})
+
+describe('the preview summary cards', () => {
+  const summary = (matched: number, fallback: number) => planData({
+    summary: { ...planData().summary, matched, fallback, transactions: 119, already_imported: 0 },
+    balances: [{ date: '2025-01-01', account: 'A', units: '1', commodity: 'X', tolerance: '0.001' }],
+  })
+  const cash = (cards: ReturnType<typeof statCards>) => cards[2]
+
+  it('without bank matching, counts cash movements and names the account (no "0 matched")', () => {
+    const c = cash(statCards(summary(0, 50), { cash_fallback_account: 'Equity:Transfers' }))
+    expect(c).toEqual({ label: 'Cash movements', value: '50', note: 'Money paid in or out, all to Equity:Transfers.' })
+  })
+
+  it('with bank matching, shows matched of all and where the rest go', () => {
+    const c = cash(statCards(summary(12, 38), { cash_fallback_account: 'Equity:T', cash_matching_account: 'Assets:Transfer' }))
+    expect([c.label, c.value, c.note]).toEqual(['Matched to bank transactions', '12 of 50', 'The other 38 go to Equity:T.'])
+  })
+
+  it('says what to check when matching was asked for but nothing matched', () => {
+    const c = cash(statCards(summary(0, 5), { cash_fallback_account: 'Equity:T', cash_matching_account: 'Assets:Transfer' }))
+    expect(c.note).toBe('None matched. Check the amounts and dates of the bank transactions in Assets:Transfer.')
+  })
+
+  it('explains transactions and counts balance checks; funds left out are not counted', () => {
+    const plan = { ...summary(0, 1), funds: [fund(), fund({ security_key: 'X', excluded: true })] }
+    const [txns, funds] = statCards(plan, { cash_fallback_account: 'E' })
+    expect([txns.value, txns.note]).toEqual(['119', 'One can cover several statement rows (a switch, its stamp duty). Plus 1 balance check.'])
+    expect(funds.value).toBe('1 of 1')
+  })
+
+  it("words a fund's cash movements by whether any were matched", () => {
+    expect(fundCashText({ matched: 0, fallback: 1 })).toBe('1 cash movement')
+    expect(fundCashText({ matched: 3, fallback: 1 })).toBe('cash: 3 matched to bank transactions, 1 not')
+    expect(fundCashText({ matched: 0, fallback: 0 })).toBe('')
   })
 })

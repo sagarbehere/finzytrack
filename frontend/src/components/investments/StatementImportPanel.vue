@@ -238,6 +238,7 @@
           <div v-for="s in stats" :key="s.label" class="overflow-hidden rounded-lg bg-white px-4 py-5 shadow-sm sm:p-6 dark:bg-gray-800/75 dark:inset-ring dark:inset-ring-white/10">
             <dt class="truncate text-sm font-medium text-gray-500 dark:text-gray-400">{{ s.label }}</dt>
             <dd class="mt-1 text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">{{ s.value }}</dd>
+            <dd class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ s.note }}</dd>
           </div>
         </dl>
 
@@ -370,7 +371,7 @@
   import { useServerNotices } from '@/composables/useServerNotices'
   import { useToast } from '@/composables/useNotifications'
   import { errorHandler } from '@/utils/ErrorHandler'
-  import { groupFunds, resultSentence, spanSentence } from '@/utils/statementImport'
+  import { groupFunds, resultSentence, spanSentence, statCards } from '@/utils/statementImport'
 
   const GUIDE_URL = 'https://docs.finzytrack.com/guides/import-cas/'
   const WARNINGS_SHOWN = 6
@@ -444,17 +445,7 @@
   const dividendUntagged = computed(() =>
     mapping.tag_dividend_account || (plan.value?.warnings ?? []).some(w => w.code === 'DIVIDEND_ACCOUNT_UNTAGGED'),
   )
-  const stats = computed(() => {
-    const s = plan.value!.summary
-    const included = plan.value!.funds.filter(f => !f.excluded)
-    const reconciled = included.filter(f => f.reconciled).length
-    return [
-      { label: 'Transactions to write', value: s.transactions.toLocaleString('en-IN') },
-      { label: 'Funds matching the statement', value: `${reconciled} of ${included.length}` },
-      { label: 'Matched / other account', value: `${s.matched} / ${s.fallback}` },
-      { label: 'Already in the ledger', value: s.already_imported.toLocaleString('en-IN') },
-    ]
-  })
+  const stats = computed(() => statCards(plan.value!, mapping))
 
   const fundKey = (f: FundPlan) => `${f.folio}|${f.security_key}`
   const openFund = ref<string | null>(null)
