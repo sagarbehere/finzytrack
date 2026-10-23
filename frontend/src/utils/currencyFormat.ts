@@ -29,6 +29,21 @@ export function formatAmount(value: Money | number | string, currencyCode: strin
 
 const NUMBER_OPTS: Intl.NumberFormatOptions = { minimumFractionDigits: 2, maximumFractionDigits: 2 }
 
+// Short form for chart labels/axes. Currencies grouped the Indian way use the
+// lakh/crore units (2.6L, 1.8Cr); everything else keeps k/M.
+export function formatCompact(n: number, currencyCode: string): string {
+  if (getLocale(currencyCode) === 'en-IN') {
+    return n.toLocaleString('en-IN', { notation: 'compact', maximumFractionDigits: 1 })
+  }
+  if (Math.abs(n) >= 1000000) {
+    return (n / 1000000).toFixed(1) + 'M'
+  }
+  if (Math.abs(n) >= 1000) {
+    return (n / 1000).toFixed(1) + 'k'
+  }
+  return n.toFixed(0)
+}
+
 export function formatSignedAmount(value: Money | number | string, currencyCode: string): string {
   const n = typeof value === 'number' ? value : toNumber(toMoney(value))
   const formatted = formatAmount(Math.abs(n), currencyCode)

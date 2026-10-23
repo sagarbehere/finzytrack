@@ -10,7 +10,7 @@ import type {
 } from '@/types/recipes'
 import { LedgerService, ComputeService } from '@/services/generated-api'
 import type { QueryRequest } from '@/services/generated-api'
-import { formatAmount, formatSignedAmount } from '@/utils/currencyFormat'
+import { formatAmount, formatSignedAmount, formatCompact } from '@/utils/currencyFormat'
 import { errorHandler } from '@/utils/ErrorHandler'
 import { applyTransform } from '@/composables/useRecipeTransforms'
 import {
@@ -102,16 +102,7 @@ export function getFormats(currency?: string): Record<ValueFormat, (value: unkno
       })
     },
 
-    compact: (value) => {
-      const num = toNum(value)
-      if (Math.abs(num) >= 1000000) {
-        return (num / 1000000).toFixed(1) + 'M'
-      }
-      if (Math.abs(num) >= 1000) {
-        return (num / 1000).toFixed(1) + 'k'
-      }
-      return num.toFixed(0)
-    },
+    compact: (value) => formatCompact(toNum(value), curr),
 
     // Date formats
     date: (value) => {
