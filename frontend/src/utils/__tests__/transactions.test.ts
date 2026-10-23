@@ -1,4 +1,4 @@
-import { toMoney } from '@/utils/money'
+import { toMoney, type Money } from '@/utils/money'
 import { isTransactionBalanced } from '@/utils/transactions'
 import { makeTx } from '@/test/factories'
 
@@ -163,5 +163,41 @@ describe('isTransactionBalanced', () => {
       postings: [{ amount: toMoney(0), currency: 'USD' }],
     })
     expect(isTransactionBalanced(tx)).toBe(true)
+  })
+
+  // Beancount accepts a residual up to half the smallest unit written in the currency's
+  // plain amounts (0.005 for cents). The Transactions view must agree with it.
+  it('balanced: a sale whose gain is rounded to the paisa against an exact cost (as Beancount accepts)', () => {
+    const tx = makeTx({
+      postings: [
+        { amount: '-49.905' as Money, currency: 'ICICI-DYN',
+          cost: { amount: '59.1221029874' as Money, currency: 'INR' },
+          price: { amount: '120.2279' as Money, currency: 'INR', type: '@' } },
+        { amount: '6000.00' as Money, currency: 'INR' },
+        { amount: '-3049.51' as Money, currency: 'INR' },
+      ],
+    })
+    expect(isTransactionBalanced(tx)).toBe(true)  // residual 0.00145 INR ≤ 0.005
+  })
+
+  it('unbalanced: beyond half a paisa is still flagged', () => {
+    const tx = makeTx({
+      postings: [
+        { amount: '-49.905' as Money, currency: 'ICICI-DYN', cost: { amount: '59.1221029874' as Money, currency: 'INR' } },
+        { amount: '6000.00' as Money, currency: 'INR' },
+        { amount: '-3049.50' as Money, currency: 'INR' },
+      ],
+    })
+    expect(isTransactionBalanced(tx)).toBe(false)  // residual 0.0114 INR > 0.005
+  })
+
+  it('trailing zeros count, as Beancount reads the written number', () => {
+    const tx = makeTx({
+      postings: [
+        { amount: '10.000' as Money, currency: 'X', cost: { amount: '3.3333333333' as Money, currency: 'EUR' } },
+        { amount: '-33.30' as Money, currency: 'EUR' },
+      ],
+    })
+    expect(isTransactionBalanced(tx)).toBe(false)  // residual 0.0333 > 0.005
   })
 })
