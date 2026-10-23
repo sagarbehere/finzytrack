@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 2,
+  "id": "account-balances",
+  "title": "Account Balances",
+  "description": "Every open asset account with its balance in its own currency. Investment accounts are valued at market price.",
+  "parameters": [
+    {
+      "name": "asOf",
+      "label": "As of",
+      "type": "date",
+      "default": {
+        "$gen": "today"
+      }
+    }
+  ],
+  "layout": {
+    "columns": 12,
+    "gap": "1.5rem",
+    "rowHeight": "140px",
+    "widgets": [
+      {
+        "widgetId": "balances",
+        "gridArea": "1 / 1 / 7 / 13"
+      }
+    ]
+  },
+  "widgets": [
+    {
+      "id": "balances",
+      "title": "Account Balances",
+      "helpText": "Balance of each open asset account on the selected date, in the account's own currency, grouped by currency with totals at every level. Investment accounts show market value: units held × the latest price on or before that date (cost when there is no price). Click a row to see its transactions. To show a friendlier name, add display-name to the account's open directive.",
+      "steps": [
+        {
+          "id": "main",
+          "kind": "query",
+          "query": "WITH open_accts AS ( SELECT name, metadata_json FROM accounts WHERE name LIKE 'Assets:%' AND open_date <= :asOf AND (close_date IS NULL OR close_date > :asOf) ), cash AS ( SELECT p.account, p.currency, SUM(CAST(p.amount AS REAL)) AS value FROM postings p JOIN commodities c ON c.code = p.currency AND c.is_currency = 1 WHERE p.account_type = 'Assets' AND p.transaction_date <= :asOf GROUP BY p.account, p.currency ), held AS ( SELECT p.account, p.currency AS holding, p.cost_currency AS currency, SUM(CAST(p.amount AS REAL)) AS units, SUM(CAST(p.amount AS REAL) * COALESCE(CAST(p.cost_amount AS REAL), 0)) AS cost_basis FROM postings p JOIN commodities c ON c.code = p.currency AND c.is_currency = 0 WHERE p.account_type = 'Assets' AND p.transaction_date <= :asOf AND p.cost_currency IS NOT NULL GROUP BY p.account, p.currency, p.cost_currency ), px AS ( SELECT base_currency, quote_currency, CAST(quote_number AS REAL) AS price FROM ( SELECT base_currency, quote_currency, quote_number, ROW_NUMBER() OVER (PARTITION BY base_currency, quote_currency ORDER BY date DESC, id DESC) AS rn FROM prices WHERE date <= :asOf ) WHERE rn = 1 ), holdings AS ( SELECT h.account, h.currency, SUM(CASE WHEN px.price IS NOT NULL THEN h.units * px.price ELSE h.cost_basis END) AS value FROM held h LEFT JOIN px ON px.base_currency = h.holding AND px.quote_currency = h.currency WHERE ABS(h.units) > 0.000001 GROUP BY h.account, h.currency ) SELECT v.account, v.currency, ROUND(SUM(v.value), 2) AS balance, json_extract(o.metadata_json, '$.\"display-name\"') AS display_name FROM (SELECT * FROM cash UNION ALL SELECT * FROM holdings) v JOIN open_accts o ON o.name = v.account GROUP BY v.account, v.currency HAVING ROUND(SUM(v.value), 2) != 0 ORDER BY v.currency, v.account"
+        }
+      ],
+      "output": "main",
+      "visualization": {
+        "type": "tree-table",
+        "pathField": "account",
+        "skipLevels": 1,
+        "groupBy": "currency",
+        "label": "Account",
+        "labelField": "display_name",
+        "link": {
+          "name": "transactions",
+          "query": {
+            "accountContains": "{{row.account}}"
+          }
+        },
+        "emptyText": "No asset accounts with a balance on this date.",
+        "columns": [
+          {
+            "key": "balance",
+            "label": "Balance",
+            "format": "currency",
+            "currencyField": "currency",
+            "align": "right",
+            "aggregate": "sum"
+          }
+        ]
+      }
+    }
+  ]
+}
