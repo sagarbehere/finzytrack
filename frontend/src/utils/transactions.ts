@@ -1,5 +1,5 @@
 import type { TransactionViewModel } from '@/types/transactions'
-import { abs, add, eq, gt, mul, neg, sign, zero, type Money } from '@/utils/money'
+import { abs, add, eq, gt, mul, neg, sign, toMoney, zero, type Money } from '@/utils/money'
 
 const ZERO = zero()
 
@@ -12,6 +12,15 @@ const ZERO = zero()
 // genuine off-by-one errors in normal-sized transactions still fail.
 const PRICED_UNITS_EPSILON = 1e-8
 
+/** Decimal places of a number as written ("6000.00" → 2), which is what Beancount
+ *  infers a currency's tolerance from — so trailing zeros count. */
+function writtenDecimals(amount: Money): number {
+  const text = String(amount).trim()
+  if (/e/i.test(text)) return 0 // exponent form: no written precision to infer from
+  const dot = text.indexOf('.')
+  return dot < 0 ? 0 : text.length - dot - 1
+}
+
 export function isTransactionBalanced(transaction: TransactionViewModel): boolean {
   // Decimal arithmetic is exact, so same-currency transactions must sum to
   // exactly zero per currency — no tolerance fudge, so a 1-cent off-by-one
@@ -20,6 +29,11 @@ export function isTransactionBalanced(transaction: TransactionViewModel): boolea
   // Beancount applies at parse time loses precision proportional to the
   // priced units.
   const currencyTotals: Record<string, Money> = {}
+  // Beancount's inferred tolerance per currency: half the smallest unit written in that
+  // currency's plain (no cost, no price) amounts — 0.005 for amounts in cents/paise. A
+  // transaction it accepts must not be flagged here (e.g. a sale whose gain is rounded
+  // to the cent against an exact cost basis).
+  const inferred: Record<string, Money> = {}
   let pricedUnits: Money = ZERO
 
   for (const posting of transaction.postings) {
@@ -49,12 +63,21 @@ export function isTransactionBalanced(transaction: TransactionViewModel): boolea
     } else {
       effectiveCurrency = posting.currency || 'UNKNOWN'
       effectiveAmount = amount
+      const places = writtenDecimals(amount)
+      if (places > 0) {
+        const half = toMoney(`5e-${places + 1}`)
+        if (!inferred[effectiveCurrency] || gt(half, inferred[effectiveCurrency])) inferred[effectiveCurrency] = half
+      }
     }
 
     currencyTotals[effectiveCurrency] = add(currencyTotals[effectiveCurrency] ?? ZERO, effectiveAmount)
   }
 
-  const tolerance: Money = eq(pricedUnits, ZERO) ? ZERO : mul(pricedUnits, PRICED_UNITS_EPSILON)
+  const drift: Money = eq(pricedUnits, ZERO) ? ZERO : mul(pricedUnits, PRICED_UNITS_EPSILON)
 
-  return Object.values(currencyTotals).every(total => !gt(abs(total), tolerance))
+  return Object.entries(currencyTotals).every(([currency, total]) => {
+    const beancount = inferred[currency]
+    const tolerance = beancount && gt(beancount, drift) ? beancount : drift
+    return !gt(abs(total), tolerance)
+  })
 }
