@@ -19,4 +19,9 @@
   [role="button"]:not(:disabled) {
     cursor: pointer;
   }
+
+  /* Equal-width digits in every table so right-aligned numbers line up. */
+  table {
+    font-variant-numeric: tabular-nums;
+  }
 }

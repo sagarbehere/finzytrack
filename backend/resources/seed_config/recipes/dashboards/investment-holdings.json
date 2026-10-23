@@ -113,7 +113,7 @@
           { "key": "holding", "label": "Holding", "link": { "select": { "holding": "{{row.holding}}" } } },
           { "key": "asset_class", "label": "Class" },
           { "key": "currency", "label": "Currency" },
-          { "key": "units", "label": "Units", "format": "number", "align": "right" },
+          { "key": "units", "label": "Units", "format": "units", "currencyField": "currency", "align": "right" },
           { "key": "avg_cost", "label": "Avg Cost", "format": "currency", "currencyField": "currency", "align": "right" },
           { "key": "cost_basis", "label": "Cost Basis", "format": "currency", "currencyField": "currency", "align": "right" },
           { "key": "last_price", "label": "Last Price", "format": "currency", "currencyField": "currency", "align": "right" },
@@ -235,7 +235,7 @@
         "emptyText": "Pick a holding above to see its purchase lots.",
         "columns": [
           { "key": "acquisition_date", "label": "Acquired", "format": "dateShort", "link": { "name": "transactions", "query": { "currency": "{{parameters.holding}}", "dateFrom": "{{row.acquisition_date}}", "dateTo": "{{row.acquisition_date}}" } } },
-          { "key": "units", "label": "Units", "format": "number", "align": "right" },
+          { "key": "units", "label": "Units", "format": "units", "currencyField": "currency", "align": "right" },
           { "key": "cost", "label": "Unit Cost", "format": "currency", "currencyField": "currency", "align": "right" },
           { "key": "book_value", "label": "Cost Basis", "format": "currency", "currencyField": "currency", "align": "right" }
         ]

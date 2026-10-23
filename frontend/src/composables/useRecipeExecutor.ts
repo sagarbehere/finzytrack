@@ -10,7 +10,7 @@ import type {
 } from '@/types/recipes'
 import { LedgerService, ComputeService } from '@/services/generated-api'
 import type { QueryRequest } from '@/services/generated-api'
-import { formatAmount, formatSignedAmount, formatCompact } from '@/utils/currencyFormat'
+import { formatAmount, formatSignedAmount, formatCompact, getLocale } from '@/utils/currencyFormat'
 import { errorHandler } from '@/utils/ErrorHandler'
 import { applyTransform } from '@/composables/useRecipeTransforms'
 import {
@@ -99,6 +99,16 @@ export function getFormats(currency?: string): Record<ValueFormat, (value: unkno
       return num.toLocaleString('en-US', {
         minimumFractionDigits: 0,
         maximumFractionDigits: 0,
+      })
+    },
+
+    // Holding quantities (fund units, shares): at least 3 decimals so columns
+    // align, up to 6 so fractional units are never rounded away.
+    units: (value) => {
+      const num = toNum(value)
+      return num.toLocaleString(getLocale(curr), {
+        minimumFractionDigits: 3,
+        maximumFractionDigits: 6,
       })
     },
 

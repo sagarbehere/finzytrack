@@ -170,12 +170,11 @@ function formatValue(value: number): string {
   if (props.valueFormat) {
     return props.valueFormat(value)
   }
-  // Default: format with commas and 2 decimal places, but hide .00
-  const formatted = value.toLocaleString(getLocale(props.currency ?? ''), {
-    minimumFractionDigits: 0,
+  // Default: grouped in the widget currency's style, always 2 decimal places
+  return value.toLocaleString(getLocale(props.currency ?? ''), {
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })
-  return formatted
 }
 
 /**

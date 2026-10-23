@@ -139,7 +139,7 @@
           { "key": "sale_date", "label": "Sold", "format": "dateShort" },
           { "key": "holding", "label": "Holding", "link": { "name": "transactions", "query": { "currency": "{{row.holding}}", "dateFrom": "{{row.sale_date}}", "dateTo": "{{row.sale_date}}" } } },
           { "key": "currency", "label": "Currency" },
-          { "key": "units", "label": "Units", "format": "number", "align": "right" },
+          { "key": "units", "label": "Units", "format": "units", "currencyField": "currency", "align": "right" },
           { "key": "acquired", "label": "Acquired", "format": "dateShort" },
           { "key": "holding_days", "label": "Days Held", "format": "number", "align": "right" },
           { "key": "term", "label": "Term" },

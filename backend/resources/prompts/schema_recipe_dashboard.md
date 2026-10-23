@@ -586,7 +586,7 @@ SELECT click action: clicking sets dashboard parameters from the clicked context
 | `label` | `string` | yes |  |
 | `format` | `ValueFormat` | — |  |
 | `align` | `'left' | 'center' | 'right'` | — |  |
-| `currencyField` | `string` | — | For a money column in a multi-currency table: the row field holding that row's currency code, so each cell is formatted in its OWN currency (symbol + locale) instead of the single widget `currency` param. Use with a `currency`/`signedCurrency` `format`. Without it, all cells format with the widget currency (defaulting to USD), which mis-renders mixed-currency rows. See dev-docs/dashboard-multi-currency.md §6.2. |
+| `currencyField` | `string` | — | For a money column in a multi-currency table: the row field holding that row's currency code, so each cell is formatted in its OWN currency (symbol + locale) instead of the single widget `currency` param. Use with a `currency`/`signedCurrency` `format`; on a `units` column it sets the digit grouping (e.g. INR → 10,78,850.400). Without it, all cells format with the widget currency (defaulting to USD), which mis-renders mixed-currency rows. See dev-docs/dashboard-multi-currency.md §6.2. |
 | `link` | `JsonValueLinkConfig` | — |  |
 
 #### `JsonTableVisualization`
@@ -696,7 +696,7 @@ Type: `Step[]`
 #### `ValueFormat`
 Predefined value formatter applied at render time.
 
-Type: `'currency' | 'percent' | 'number' | 'compact' | 'signedCurrency' | 'date' | 'dateShort' | 'accountName' | 'accountName2'`
+Type: `'currency' | 'percent' | 'number' | 'units' | 'compact' | 'signedCurrency' | 'date' | 'dateShort' | 'accountName' | 'accountName2'`
 
 #### `WidgetLayout`
 
