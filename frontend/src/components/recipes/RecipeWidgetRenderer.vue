@@ -421,6 +421,7 @@ function getTreeTableProps() {
       aggregates: Object.fromEntries(
         viz.columns.filter((c) => c.aggregate).map((c) => [c.key, c.aggregate!]),
       ),
+      leafOnly: viz.columns.filter((c) => c.leafOnly && !c.aggregate).map((c) => c.key),
     },
     treeLabel: viz.label,
     treeColumn: viz.link

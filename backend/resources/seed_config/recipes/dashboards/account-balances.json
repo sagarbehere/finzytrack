@@ -74,14 +74,15 @@
             "label": "Last balance check",
             "format": "dateShort",
             "align": "right",
-            "aggregate": "max",
-            "description": "Date of the latest balance directive for this account: a directive in your ledger that states what the balance should be on a date (for example, from a bank statement)."
+            "description": "Date of the latest balance directive for this account: a directive in your ledger that states what the balance should be on a date (for example, from a bank statement). Blank means the account has no balance directive. Rows that group several accounts are always blank.",
+            "leafOnly": true
           },
           {
             "key": "check_status",
             "label": "Check result",
             "align": "center",
-            "description": "Did your ledger agree with your latest balance directive? Example: the directive says the account held $500 on 1 March. If your transactions before 1 March add up to $500, it passed. Failed means they don't; a transaction before that date is missing or wrong."
+            "description": "Did your ledger agree with your latest balance directive? Example: the directive says the account held $500 on 1 March. If your transactions before 1 March add up to $500, it passed. Failed means they don't; a transaction before that date is missing or wrong. Blank means the account has no balance directive. Rows that group several accounts are always blank.",
+            "leafOnly": true
           }
         ],
         "dimField": "is_stale",

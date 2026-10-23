@@ -609,6 +609,7 @@ SELECT click action: clicking sets dashboard parameters from the clicked context
 | `aggregate` | `'sum' | 'max' | 'min'` | — | How parent and group rows show this column: 'sum' adds up everything beneath (exact decimal arithmetic); 'max'/'min' show the largest/smallest (numbers, or ISO dates — 'max' of a date is the latest). Without it, a parent shows the value only when every row beneath has the same one, else it is blank. |
 | `hidden` | `boolean` | — | Start with this column hidden. Every value column can be shown or hidden from the table's Columns menu; the choice is remembered. |
 | `description` | `string` | — | Short explanation of the column, shown when hovering or focusing an info icon next to its heading. |
+| `leafOnly` | `boolean` | — | Show this column only on rows that come from the query (e.g. one account), never on parent or group rows — for per-row facts that don't combine, such as a status. Ignored with aggregate. |
 
 #### `JsonTreeTableVisualization`
 Expandable tree table built from flat rows with a hierarchical path (e.g. account names). Every path prefix becomes a collapsible parent row; parent and group rows show aggregates (e.g. totals) of the columns that declare one. The query returns only the leaf rows — no total rows. Users can search, sort siblings by a column, expand to a level, show/hide and resize columns, and copy the visible rows for a spreadsheet; expansion, sort, column choices and widths are remembered.

@@ -11,9 +11,9 @@ import { add, toMoney, zero, type Money } from '@/utils/money'
  *   one per currency), so totals never mix values that must not be summed.
  * - Parent and group nodes aggregate the `aggregates` columns over everything
  *   beneath them: `sum` in decimal arithmetic (dev-docs/money-types.md), `max` /
- *   `min` for the latest/earliest (numbers, or ISO dates compared as text). Other
- *   fields show on a parent only when every row beneath agrees (e.g. the
- *   currency); otherwise they are empty.
+ *   `min` for the latest/earliest (numbers, or ISO dates compared as text).
+ *   `leafOnly` fields never show on them. Other fields show on a parent only
+ *   when every row beneath agrees (e.g. the currency); otherwise they are empty.
  * - A node's `path` (and `row[pathField]`) is its own path prefix, so links
  *   templated on `{{row.<pathField>}}` work at every level; group nodes have an
  *   empty path.
@@ -47,6 +47,8 @@ export interface TreeOptions {
   labelField?: string
   /** Column key → how parent and group rows combine it. */
   aggregates: Record<string, Aggregate>
+  /** Columns that parent and group rows never show (per-row facts). */
+  leafOnly?: string[]
 }
 
 interface Building {
@@ -125,7 +127,7 @@ function finish(b: Building, opts: TreeOptions): Record<string, unknown>[] {
     }
   }
   for (const [k, v] of Object.entries(seen)) {
-    if (v !== MIXED && !(k in opts.aggregates)) common[k] = v
+    if (v !== MIXED && !(k in opts.aggregates) && !opts.leafOnly?.includes(k)) common[k] = v
   }
   for (const [key, how] of Object.entries(opts.aggregates)) {
     common[key] = aggregate(below.map((r) => r[key]), how)

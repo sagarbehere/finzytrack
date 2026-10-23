@@ -78,6 +78,17 @@ describe('buildTreeRows', () => {
   })
 })
 
+describe('leafOnly', () => {
+  it('keeps a per-row field off parent rows even when every row beneath agrees', () => {
+    const tree = buildTreeRows(
+      [{ account: 'A:B', status: 'Passed' }, { account: 'A:C', status: 'Passed' }],
+      { pathField: 'account', aggregates: {}, leafOnly: ['status'] },
+    )
+    expect(tree[0].row.status).toBeUndefined()
+    expect(tree[0].children.map((c) => c.row.status)).toEqual(['Passed', 'Passed'])
+  })
+})
+
 describe('foldSingleChildChains', () => {
   it('folds single-child parents into one row and renumbers depths', () => {
     const tree = buildTreeRows(

@@ -197,7 +197,8 @@
         "currencyField": { "type": "string", "description": "Row field holding each row's currency code, so money cells format in their own currency (as for table columns). Parent rows have it when everything beneath shares one currency — always true under a currency groupBy." },
         "aggregate": { "type": "string", "enum": ["sum", "max", "min"], "description": "How parent and group rows show this column: 'sum' adds up everything beneath (exact decimal arithmetic); 'max'/'min' show the largest/smallest (numbers, or ISO dates — 'max' of a date is the latest). Without it, a parent shows the value only when every row beneath has the same one, else it is blank." },
         "hidden": { "type": "boolean", "description": "Start with this column hidden. Every value column can be shown or hidden from the table's Columns menu; the choice is remembered." },
-        "description": { "type": "string", "description": "Short explanation of the column, shown when hovering or focusing an info icon next to its heading." }
+        "description": { "type": "string", "description": "Short explanation of the column, shown when hovering or focusing an info icon next to its heading." },
+        "leafOnly": { "type": "boolean", "description": "Show this column only on rows that come from the query (e.g. one account), never on parent or group rows — for per-row facts that don't combine, such as a status. Ignored with aggregate." }
       }
     },
     "JsonTreeTableVisualization": {

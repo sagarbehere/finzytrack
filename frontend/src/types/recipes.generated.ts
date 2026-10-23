@@ -488,6 +488,10 @@ export interface JsonTreeTableColumn {
    * Short explanation of the column, shown when hovering or focusing an info icon next to its heading.
    */
   description?: string;
+  /**
+   * Show this column only on rows that come from the query (e.g. one account), never on parent or group rows — for per-row facts that don't combine, such as a status. Ignored with aggregate.
+   */
+  leafOnly?: boolean;
   [k: string]: unknown;
 }
 export interface JsonPivotVisualization {
