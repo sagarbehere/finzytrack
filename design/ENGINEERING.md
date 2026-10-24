@@ -1,5 +1,7 @@
 # Engineering principles (EP-nn)
 
+> **Frontend framework (2026-10-25): Vue 3, per ADR-0053** (spike S13). Where this document describes the React target, read the Vue equivalents: hooks → composables, `.tsx` → `.vue`, TanStack Vue Query/Table/Virtual, shadcn-vue on Reka UI, `@xstate/vue`, `@ai-sdk/vue`, `eslint-plugin-vue` + `eslint-plugin-vuejs-accessibility`, `vue-tsc`; pins in ARCHITECTURE.md §10 (Vue fallback rows).
+
 This file holds the engineering principles that shape Finzytrack v0.4's code, how each is enforced, and the verifier checklist.
 
 - **Status:** current. Migrated on 2026-10-24 from the review's engineering-principles document (review:26), with the final review's corrections applied (review:F §3.11): size thresholds are report-only (EP-02); the account grammar and tolerance live in `ledger` behind the port (EP-03); concept counters are bans with one allowed home (EP-23); a test-design principle is added (EP-28); findings cite one of the listed ID forms (§3).

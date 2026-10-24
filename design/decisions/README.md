@@ -21,7 +21,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0003](ADR-0003-workspace-invariant-numbering.md) | Workspace invariants are numbered INV-28–31 | Accepted | 2026-10-24 | process, invariants |
 | [ADR-0004](ADR-0004-python-3-13-and-beancount-3-2-0.md) | Python 3.13 and Beancount 3.2.0 are pinned for v0.4.0 | Accepted | 2026-10-24 | stack |
 | [ADR-0005](ADR-0005-portalocker-3-2-0-pinned.md) | portalocker 3.2.0 is pinned on purpose | Accepted | 2026-10-24 | stack, data safety |
-| [ADR-0006](ADR-0006-frontend-framework-react-pending-s13.md) | Frontend framework: React, conditional on spike S13 | Proposed (pending S13) | 2026-10-24 | frontend, stack |
+| [ADR-0006](ADR-0006-frontend-framework-react-pending-s13.md) | Frontend framework: React, conditional on spike S13 | Superseded by ADR-0053 | 2026-10-24 | frontend, stack |
 | [ADR-0007](ADR-0007-tauri-2-desktop-shell.md) | Tauri 2 desktop shell with a Python sidecar | Accepted | 2026-10-24 | desktop, release |
 | [ADR-0008](ADR-0008-write-safety-contract.md) | Every ledger write passes the write-safety contract | Accepted | 2026-10-24 | write path, data safety |
 | [ADR-0009](ADR-0009-fava-style-source-splicing.md) | Fava-style source splicing; mutators are edit producers | Accepted | 2026-10-24 | write path |
@@ -68,6 +68,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0050](ADR-0050-agent-level-architecture-and-toolchain-choices.md) | Agent-level architecture and toolchain choices | Accepted | 2026-10-24 | architecture, stack, verification |
 | [ADR-0051](ADR-0051-working-principles-from-the-review.md) | Working principles carried over from the review | Accepted | 2026-10-24 | process, engineering |
 | [ADR-0052](ADR-0052-default-currency-lives-in-the-ledger.md) | The default currency lives in the ledger; the tool setting is only an override | Accepted | 2026-10-24 | workspaces, settings, ledger |
+| [ADR-0053](ADR-0053-frontend-framework-is-vue.md) | The frontend framework is Vue 3 (spike S13 outcome) | Accepted | 2026-10-25 | frontend, stack |
 
 ## Template
 

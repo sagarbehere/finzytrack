@@ -1,5 +1,7 @@
 # Architecture of Finzytrack v0.4
 
+> **Frontend framework (2026-10-25): Vue 3, per ADR-0053** (spike S13). Where this document describes the React target, read the Vue equivalents: hooks → composables, `.tsx` → `.vue`, TanStack Vue Query/Table/Virtual, shadcn-vue on Reka UI, `@xstate/vue`, `@ai-sdk/vue`, `eslint-plugin-vue` + `eslint-plugin-vuejs-accessibility`, `vue-tsc`; pins in ARCHITECTURE.md §10 (Vue fallback rows).
+
 This file is the target system picture of the v0.4.0 rebuild: components, package map, API shape, flows, the stack pins and the repository layout.
 
 - **Status:** current as of the owner decisions of 2026-10-24 (including the final review's decisions: ad-hoc-signed macOS without notarization, M1 split into M1a/M1b, replace by atomic swap, the write-intent journal, the workspace invariants INV-28–31). Migrated from the review's architecture overview (review:25).

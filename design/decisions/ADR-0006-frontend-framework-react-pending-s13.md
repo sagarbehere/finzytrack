@@ -2,7 +2,7 @@
 
 This record states the target frontend stack, the spike that confirms it, the decision rule, and the fallback.
 
-- **Status:** Proposed (pending spike S13). The orchestrator finalizes it from the S13 result.
+- **Status:** Superseded by ADR-0053 (S13 result, 2026-10-25: the frontend stays on Vue 3). The decision rule below is what ADR-0053 applied.
 - **Date:** 2026-10-24
 - **Deciders:** owner (direction and decision rule); the S13 result decides
 - **Area:** frontend, stack
