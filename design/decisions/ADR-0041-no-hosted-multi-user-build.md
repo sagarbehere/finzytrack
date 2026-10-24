@@ -22,7 +22,7 @@ A hosted service on a cheap, memory-limited server may come later. The per-user 
 - the workspace format is shared with hosted, and `assess_portability(ws, 'hosted')` is the hosted import validator (ADR-0017);
 - an **effect-based isolation matrix** (tenant × workspace) asserts that attacks change nothing for the other tenant or a sibling workspace.
 
-**Deferred until hosting is planned** (CAP-HOSTED-WORKSPACES): quotas, multi-worker coordination, proxy authentication and the trust model, provisioning, billing and an admin UI, the hosted `LoadPolicy` body and plugin allowlist (the desktop trust prompt for ledgers that run code, and its restrictive `LoadPolicy`, are NOT deferred: they ship in v0.4.0 per ADR-0010 and ADR-0040), the per-user secret store, SSRF controls, eviction refcounting, whether hosted tenants get BQL, sharing a workspace between users, hosted legacy adoption.
+**Deferred until hosting is planned** (CAP-HOSTED-WORKSPACES): quotas, multi-worker coordination, proxy authentication and the trust model, provisioning, billing and an admin UI, the hosted `LoadPolicy` body and plugin allowlist (the desktop trust prompt for ledgers that run code, and its restrictive `LoadPolicy`, are NOT deferred: they ship in v0.4.0 per ADR-0010 and ADR-0040), the per-user secret store, SSRF controls, eviction refcounting, whether hosted tenants get BQL, sharing a workspace between users, hosted legacy adoption, and the hosted consent flow for lifecycle runs (review:15 Q5).
 
 ## Alternatives considered and rejected
 

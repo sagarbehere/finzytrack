@@ -66,6 +66,8 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0048](ADR-0048-v0-2-2-names-kept-through-0-4-x.md) | v0.2.2 mirror tables and compute functions keep their names through 0.4.x | Accepted; the `lots` part awaits the owner's re-confirmation | 2026-10-24 | mirror, recipes, compatibility |
 | [ADR-0049](ADR-0049-account-move-merge-delete.md) | Account rename, merge and delete are built on one move-postings primitive | Accepted | 2026-10-24 | accounts, write path |
 | [ADR-0050](ADR-0050-agent-level-architecture-and-toolchain-choices.md) | Agent-level architecture and toolchain choices | Accepted | 2026-10-24 | architecture, stack, verification |
+| [ADR-0051](ADR-0051-working-principles-from-the-review.md) | Working principles carried over from the review | Accepted | 2026-10-24 | process, engineering |
+| [ADR-0052](ADR-0052-default-currency-lives-in-the-ledger.md) | The default currency lives in the ledger; the tool setting is only an override | Accepted | 2026-10-24 | workspaces, settings, ledger |
 
 ## Template
 
