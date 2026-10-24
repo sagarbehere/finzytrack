@@ -1,0 +1,41 @@
+# ADR-0011: No resident ledger; bounded memory and serialized writes
+
+This record decides how the backend holds ledger data in memory and how it serializes writes and heavy work.
+
+- **Status:** Accepted
+- **Date:** 2026-10-24
+- **Deciders:** owner
+- **Area:** backend, performance, memory
+
+## Context
+
+A parsed ledger retains about 15 MB (demo) and about 152 MB (54k transactions), and 2.5–3× that during a commit. A future hosted service on a small, memory-limited server cannot keep one per user. In v0.3, one write blocked the whole event loop.
+
+## Decision
+
+(owner, 2026-10-24)
+- **No resident parsed ledger.** Every load is per operation and released when it ends. "Snapshot" always means a transient load.
+- **Reads never load the ledger.** They go to the on-disk mirror (ADR-0015) or the hardened `QueryRunner` (ADR-0016).
+- **Planning parses only the files being edited** (parser only). The contract's baseline errors come from the mirror's `ledger_errors`, not from re-loading the old ledger. The mirror build uses the candidate's load result while it is still in memory.
+- **BQL stays a transient full load** (it runs over Beancount entries). All BQL steps of one recipe run share one load. The recipe memo avoids repeated loads. An optional short-TTL entries cache is allowed on desktop and is off or tightly bounded in hosted mode.
+- **A process-wide heavy-load semaphore** (1–2 slots, configurable) caps peak memory. It is the **only** process-wide mutable state.
+- **Write serialization:** a per-workspace `anyio.CapacityLimiter(1)` plus thread offload, keeping the re-entrant lock and the file locks inside it.
+- **The async edge only awaits:** every `async def` handler awaits; blocking work runs on worker threads behind the limiter or the semaphore (an AST test enforces it).
+- **Every other cache** (recipe memo, chat history, plans, import sessions, model handles) is per user or per workspace, **bounded by a configurable limit** (generous on desktop, never a fixed development target), evictable, and optional in hosted mode (INV-10). Each is registered with its bound in the state registry.
+- **Accepted costs:** booking, plugins and validation stay whole-ledger (about 0.18 s on the demo, 2.3 s at 54k). A two-phase write (preview, then confirm) runs the full load twice.
+
+## Alternatives considered and rejected
+
+- **A resident `LedgerStore` snapshot.** Rejected: memory per user is too large for hosting, and it was the source of stale-state bugs.
+- **A dedicated writer thread.** Rejected: the limiter gives the same FIFO guarantee without thread lifecycle or deadlock risk.
+- **Incremental booking.** Rejected: a correctness trap.
+- **An incremental mirror diff.** Deferred (CAP-MIRROR-INCREMENTAL): a second code path for a modest saving.
+
+## Consequences
+
+- The user-facing write targets are ≤ 1 s at demo size and ≤ 5 s at 54k (ADR-0046, INV-20).
+- Full-parse read paths of the old app (statement planning, notices, document scans) move to the mirror.
+
+## References
+
+review:D1 §10; review:10 D3, D4, D6, D7; review:18 §3; review:25 §2.5; ADR-0015, ADR-0016, ADR-0046; INV-10, INV-11, INV-20, INV-31.
