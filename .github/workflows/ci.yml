@@ -1,0 +1,33 @@
+# T1 (design/process/PROCESS.md §6): deterministic gates only; no AI, no agent runs, no secrets.
+# Jobs for backend/, frontend/ and shell/ are added by the slice that creates each package (BL-0037).
+name: ci
+on:
+  push:
+    branches: [next]
+permissions:
+  contents: read
+jobs:
+  repo-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Check-script meta-tests
+        run: python3 -m unittest discover -s scripts/tests -v
+      - name: Privacy scan of every tracked file (INV-23)
+        run: python3 scripts/privacy_scan.py --all
+      - name: Staged-file guard over every tracked file (INV-23)
+        run: git ls-files -z | xargs -0 python3 scripts/check_staged.py --paths
+      - name: Invariants
+        run: python3 scripts/check_invariants.py
+      - name: Capability map
+        run: python3 scripts/check_capabilities.py
+      - name: Generated artifacts (INV-19)
+        run: python3 scripts/check_generated.py --all
+      - name: Licences and THIRD_PARTY_NOTICES
+        run: python3 scripts/check_licences.py

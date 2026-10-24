@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# T0 pre-commit (design/process/PROCESS.md, "Gates"): staged files only, budget <= 30 s.
+# Enforces INV-23 (privacy scan, staged-file guard) and INV-19 (generated headers).
+# Install once per clone:  git config core.hooksPath .githooks
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+start=$(date +%s)
+fail=0
+
+run() {  # run <label> <command...>
+  local label="$1"; shift
+  if ! "$@"; then echo "pre-commit: FAILED: $label" >&2; fail=1; fi
+}
+
+run "staged-file guard" python3 scripts/check_staged.py
+run "privacy scan" python3 scripts/privacy_scan.py --staged --quiet
+run "generated headers" python3 scripts/check_generated.py --staged
+
+staged="$(git diff --cached --name-only --diff-filter=ACMR)"
+
+# Format and lint the staged files of each package, once the package exists. Fail closed: a package
+# that exists must have its tools installed.
+py_files="$(printf '%s\n' "$staged" | grep -E '^backend/.*\.py$' || true)"
+if [[ -n "$py_files" ]]; then
+  if [[ -x backend/.venv/bin/ruff ]]; then
+    # shellcheck disable=SC2086
+    run "ruff format" backend/.venv/bin/ruff format --check --config backend/ruff.toml $py_files
+    # shellcheck disable=SC2086
+    run "ruff lint" backend/.venv/bin/ruff check --config backend/ruff.toml $py_files
+  else
+    echo "pre-commit: backend/.venv/bin/ruff missing; run 'uv sync' in backend/" >&2; fail=1
+  fi
+fi
+fe_files="$(printf '%s\n' "$staged" | grep -E '^frontend/.*\.(ts|tsx|vue|js|mjs|css|json)$' || true)"
+if [[ -n "$fe_files" ]]; then
+  if [[ -x frontend/node_modules/.bin/prettier && -x frontend/node_modules/.bin/eslint ]]; then
+    rel="$(printf '%s\n' "$fe_files" | sed 's#^frontend/##')"
+    # shellcheck disable=SC2086
+    run "prettier" bash -c "cd frontend && node_modules/.bin/prettier --check $(echo $rel)"
+    lint="$(printf '%s\n' "$rel" | grep -E '\.(ts|tsx|vue|js|mjs)$' || true)"
+    # shellcheck disable=SC2086
+    [[ -n "$lint" ]] && run "eslint" bash -c "cd frontend && node_modules/.bin/eslint --max-warnings 0 $(echo $lint)"
+  else
+    echo "pre-commit: frontend tools missing; run 'pnpm install' in frontend/" >&2; fail=1
+  fi
+fi
+
+elapsed=$(( $(date +%s) - start ))
+if (( elapsed > 30 )); then
+  echo "pre-commit: took ${elapsed}s, over the 30 s T0 budget (only the owner raises it)." >&2
+fi
+exit "$fail"

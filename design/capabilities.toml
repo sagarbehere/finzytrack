@@ -1,0 +1,5771 @@
+# Capability map source (design/capabilities.md is generated from this file by scripts/gen_capabilities.py).
+# One [[capability]] per user-visible capability. Fields: see scripts/check_capabilities.py.
+# Seeded at next setup from review:24 (v0.3.0 inventory + decided additions) and review:27 App. A.1 (milestones).
+
+[[capability]]
+id = "CAP-SETUP-WIZARD"
+area = "Setup and workspaces"
+capability = "First-run wizard: currency → ledger mode (fresh / demo / existing) → optional AI → done. Every route redirects to `/setup` until complete; \"done\" routes to `/dashboard` or `/accounts?expanded=1` after re-checking startup tasks"
+v04 = "change"
+v04_note = "replaced by a Welcome screen (Create / Open existing / Import workspace / Try the demo) driven by boot phases; setup = plan → review → apply → re-boot (review:15 §2; review:23 §8 S17, §4.1)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "quick-start.md"
+legacy_entry = "`views/SetupWizardView.vue`; `POST /api/setup/complete` `setup.complete_setup`; guard in `router/index.ts:147-171`"
+demo = "no"
+backlog = ["L10-02", "L10-03", "L10-04", "L10.M-4"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SETUP-CURRENCY"
+area = "Setup and workspaces"
+capability = "Pick the default currency from 30 ISO codes or type a custom code; written as `option \"operating_currency\"` into the starter ledger"
+v04 = "change"
+v04_note = "the code is validated against the backend commodity grammar before seeding; the list comes from the backend (review:L8 §1.5 #8; review:15 Q2)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "quick-start.md#1-default-currency"
+legacy_entry = "`SetupWizardView.vue` step 1; `core/seed.py:seed_data_with_currency`"
+demo = "no"
+backlog = ["L8-16"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SETUP-FRESH"
+area = "Setup and workspaces"
+capability = "Create a starter ledger with common accounts in the chosen currency"
+v04 = "change"
+v04_note = "\"New workspace → Blank\"; the plan lists every file it creates and never overwrites an existing ledger (review:23 §3.1, CAP-WS-CREATE; review:15 §2)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "quick-start.md#path-a-starting-fresh"
+legacy_entry = "`resources/seed_data/ledgers/one.beancount`; `core/ledger_initializer.py`"
+demo = "no"
+backlog = ["L10-02", "L10-05"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SETUP-EXISTING"
+area = "Setup and workspaces"
+capability = "Use an existing ledger in place, without copying it (multi-file allowed)"
+v04 = "change"
+v04_note = "\"Open existing\" creates a workspace (`.finzytrack/` beside the ledger, or an external-ledger reference), with a preflight (exists, parses, error count) before continuing (review:23 §1.4, CAP-WS-ADOPT)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "quick-start.md#path-c-you-have-an-existing-ledger"
+legacy_entry = "`setup.complete_setup` (existing mode); `SetupWizardView.vue` step 2"
+demo = "no"
+backlog = ["L10.M-4"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SETUP-DEMO-MODE"
+area = "Setup and workspaces"
+capability = "Wizard \"demo\" mode points `ledger_file` at `data/ledgers/fake.beancount` inside the user's own install; every mode also copies the fake ledger"
+v04 = "change"
+v04_note = "the demo is a separate workspace (CAP-WS-DEMO); the \"copy for troubleshooting\" is dropped (review:22 §1.6; review:23 §8 S17)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "quick-start.md#path-b-exploring-with-demo-data"
+legacy_entry = "`setup.complete_setup` (demo mode)"
+demo = "yes: the whole demo"
+backlog = ["L10-14"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SETUP-AI"
+area = "Setup and workspaces"
+capability = "Wizard step: skip, or bring your own model (provider, URL, key, model)"
+v04 = "keep"
+v04_note = ", sharing one AI-settings form with Settings, with one URL convention (review:L8 §1.5 #8 defects 3–4)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "quick-start.md#3-ai-configuration-optional"
+legacy_entry = "`SetupWizardView.vue` step 3"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-LEDGER-SWITCH"
+area = "Setup and workspaces"
+capability = "Switch ledger by typing a path (or Browse) in Settings → Data; hot switch with no restart; \"Ledger switched\" toast"
+v04 = "change"
+v04_note = "the workspace switcher in the shell; workspace-addressed API (`/api/w/{ws}/…`); validate, open, then record; no ledger-path text field (review:23 §3, §8 S1–S3, S11–S13; INV-28, INV-29)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "reference/configuration.md#ledger-file"
+legacy_entry = "`components/settings/GeneralSettingsTab.vue` (Data); `PATCH /api/config`; `core/config_manager.py:switch_ledger`"
+demo = "no"
+backlog = ["I6", "L8-14", "L8-15", "L1-04", "L10-03"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-AUTOCREATE"
+area = "Setup and workspaces"
+capability = "A nonexistent ledger path (a typo, a moved file, a sync client mid-replace) silently creates a template ledger, at switch or at boot"
+v04 = "cut"
+v04_note = "a missing ledger is the `LEDGER_UNAVAILABLE` state (Retry / Locate / Stay / Forget); creating a ledger is always an explicit plan (review:23 §8 S4, S15; INV-29; review:15 M-1)"
+status = "cut"
+milestone = "M2"
+release_blocking = "n/a"
+doc = "—"
+legacy_entry = "`core/ledger_manager.py:110-120`"
+demo = "no"
+backlog = ["L8-15", "L10.M-1", "L10-13"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-MULTI-ROOT"
+area = "Setup and workspaces"
+capability = "Several root ledgers in one folder, switched freely"
+v04 = "keep"
+v04_note = "one in-place workspace per folder; each other root gets an external-reference or copied workspace; files are never moved (review:23 §8 S21)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "reference/configuration.md"
+legacy_entry = "`data/ledgers/`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-SHARED-CONFIG"
+area = "Setup and workspaces"
+capability = "Rules, dashboards, themes and settings shared by every ledger (one `config/`)"
+v04 = "change"
+v04_note = "per workspace; legacy adoption copies the shared set into each workspace; shipped items are shared by pack reference; \"create from settings of…\" and \"Copy to workspace…\" cover the rest (review:23 §2, §8 S7)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "reference/configuration.md#file-locations"
+legacy_entry = "`config/`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-SWITCH"
+area = "Setup and workspaces"
+capability = "Switch between registered workspaces from the shell header (pinned and recent, with status per row); leave guard; validated open; instant when the mirror is fresh; window title \"<Workspace> — Finzytrack\""
+v04 = "new"
+v04_note = "(review:23 §3.1–3.4)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no (the acceptance suite seeds two)"
+backlog = ["I6", "L8-14"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-PALETTE"
+area = "Setup and workspaces"
+capability = "Command palette (⌘/Ctrl-K) with \"Switch workspace\" over the recents"
+v04 = "new"
+v04_note = "(review:23 §3.1)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-CREATE"
+area = "Setup and workspaces"
+capability = "New workspace: Blank (currency + starter accounts) or \"from settings of <workspace>\" (copies dashboards, rules, themes and settings, never the ledger or secret values)"
+v04 = "new"
+v04_note = "(review:23 §2, §4.1)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["L10-02"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-ADOPT"
+area = "Setup and workspaces"
+capability = "Open an existing folder or `.beancount` as a workspace; root-candidate detection; registry deduplicated by canonical root"
+v04 = "new"
+v04_note = "(review:23 §1.4, §4.1, §6)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-PORTABLE"
+area = "Setup and workspaces"
+capability = "One folder layout that is safe to sync, version and tar: no secrets, caches, absolute paths or per-open churn in the folder (INV-27, INV-30)"
+v04 = "new"
+v04_note = "(review:23 §1)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-PORTABILITY-CHECK"
+area = "Setup and workspaces"
+capability = "\"Portable ✓\" or a per-file issue list, in Settings and as a switcher badge (same check as the hosted import validator)"
+v04 = "new"
+v04_note = "(review:23 §1.4)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: the demo shows \"Portable ✓\""
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-EXPORT"
+area = "Setup and workspaces"
+capability = "Export a locked, consistent `.tar.zst` of the ledger set and `.finzytrack/` with file list and hashes; refused during a lifecycle run; backups opt-in"
+v04 = "new"
+v04_note = "(review:23 §1.5); deferred to after v0.4.0 (DECIDED (owner, 2026-10-24), F §2 item 3)"
+status = "planned"
+milestone = "M3"
+release_blocking = "no"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-IMPORT"
+area = "Setup and workspaces"
+capability = "Import a workspace archive: safe extract, assessment and portability check, \"same workspace or a copy?\", Connect card for missing secrets"
+v04 = "new"
+v04_note = "(review:23 §1.5); deferred to after v0.4.0 (DECIDED (owner, 2026-10-24), F §2 item 3)"
+status = "planned"
+milestone = "M3"
+release_blocking = "no"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["L10-08"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-BRING-IN"
+area = "Setup and workspaces"
+capability = "\"Bring the ledger into this folder\": copy an externally referenced ledger set in, making the workspace portable"
+v04 = "new"
+v04_note = "(review:23 §1.4)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-TEST-COPY"
+area = "Setup and workspaces"
+capability = "Make a test copy: copies files (never an external reference) into a new workspace marked `test_copy: true`; the only way a workspace becomes a test copy; unpromoted mutators run only here (M3)"
+v04 = "new"
+v04_note = "(per F, 2026-10-24) (review:27 §0.4 R2; F27)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-SECRETS"
+area = "Setup and workspaces"
+capability = "Per-workspace secret scope; secret names declared in the folder, values machine-local; Connect card; rules missing a secret are disabled"
+v04 = "new"
+v04_note = "(review:23 §1.5, §2a)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["L11.M-3", "L6-02"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-TRUST"
+area = "Setup and workspaces"
+capability = "Desktop trust prompt for ledgers that run code (plugins, `insert_pythonpath`); answer kept machine-local"
+v04 = "new"
+v04_note = "(review:23 §5.1; review:18 §2.4)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["L11.M-1", "L11-02"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-SYNC-CONFLICT"
+area = "Setup and workspaces"
+capability = "Detect sync-client conflicted copies in the ledger set and `.finzytrack/`; block writes; never auto-delete"
+v04 = "new"
+v04_note = "(review:23 §3.3)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-DEMO"
+area = "Setup and workspaces"
+capability = "\"Try the demo\": a separate demo workspace (`kind: demo`), replaced on each release without asking (one-line notice), never mixed with real data, stale ids redirected; if the demo was edited, one previous copy is kept in a hidden folder and the notice mentions it (DECIDED (owner, 2026-10-24), F §2 item 11)"
+v04 = "new"
+v04_note = "(review:22 §1.6; review:23 §4.4; INV-25)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: the demo itself"
+backlog = ["L10-14"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-REGISTRY"
+area = "Setup and workspaces"
+capability = "Manage workspaces: recents, pin, rename, reveal, locate, forget (never deletes files)"
+v04 = "new"
+v04_note = "(review:23 §3.1, §4.2)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-UNAVAILABLE"
+area = "Setup and workspaces"
+capability = "\"Ledger unavailable\" screen with Retry / Locate / Stay / Forget; sync-placeholder detection"
+v04 = "new"
+v04_note = "(review:23 §3.3)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["L10.M-1", "L10-13"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-COPY-ITEM"
+area = "Setup and workspaces"
+capability = "\"Copy to workspace…\" on a dashboard, rule or theme, keeping its origin; accounts missing in the target are reported, never fixed"
+v04 = "new"
+v04_note = "(review:23 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-UI-MEMORY"
+area = "Setup and workspaces"
+capability = "UI memory (tabs, selections, layouts) scoped per workspace in localStorage; versioned keys; purged on forget"
+v04 = "new"
+v04_note = "(review:23 §3.6)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`services/storage/keys.ts` (11 unscoped keys)"
+demo = "no"
+backlog = ["L11.M-8"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-RESUME"
+area = "Setup and workspaces"
+capability = "Import sessions and AI threads survive a switch and come back with their workspace"
+v04 = "new"
+v04_note = "(review:23 §3.7)"
+status = "planned"
+milestone = "M9"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes (optional): import-session-in-progress"
+backlog = ["L8.M-10"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-ALLOW-AI"
+area = "Setup and workspaces"
+capability = "\"Allow AI in this workspace\" switch, stored in the folder so the policy travels (default on; AI stays unavailable until a provider is configured)"
+v04 = "new"
+v04_note = "(review:23 §1.3, Q1)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-SETTINGS"
+area = "Setup and workspaces"
+capability = "Settings → Workspace: name, folder, ledger root or external reference, documents folder, portability result, mirror path (Copy / Reveal), Locate, Bring in, Export"
+v04 = "new"
+v04_note = "(review:23 §3.1, §8 S19)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-MIRROR-EXTERNAL"
+area = "Setup and workspaces"
+capability = "Stable read-only mirror path with Copy / Reveal, and a documented `r_*` view surface for outside tools"
+v04 = "new"
+v04_note = "(review:23 §1.2; review:00 §1b)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["L5-20"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SHELL-OPEN"
+area = "Setup and workspaces"
+capability = "File association (alternate handler), single-instance forward, drag-and-drop a ledger, CLI `--workspace`, `--app-root`, stable-port headless"
+v04 = "new"
+v04_note = "(review:23 §6)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SHELL-RECENTS"
+area = "Setup and workspaces"
+capability = "OS \"Open Recent\" menu / jump list from the registry"
+v04 = "new"
+v04_note = "(review:23 §6)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-LEGACY-ADOPT"
+area = "Setup and workspaces"
+capability = "Bring in a v0.2/v0.3 install: detect it, classify each ledger, copy settings, rules and dashboards; Copy each ledger (default) or Share it (gated); split secrets; legacy root left unchanged; detects a v0.3 install at a custom location too, through an explicit \"Choose your old Finzytrack data folder\" path (the owner's own v0.3 data lives in `~/FinzytrackData/`), not only at `backend/config`"
+v04 = "new"
+v04_note = "(review:23 §4.5, Q5; review:21 §3 step 7; INV-26; custom location DECIDED (owner, 2026-10-24), A2)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-LEGACY-COEXIST"
+area = "Setup and workspaces"
+capability = "Share a ledger with a running legacy app: take every legacy lock, banner when a legacy app runs, detect I2/I3-shaped damage after a foreign rewrite"
+v04 = "new"
+v04_note = "(review:23 §4.6)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["I2", "I3", "I9"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-TREE"
+area = "Accounts"
+capability = "Accounts view: hierarchy with implicit (virtual) parents, rolled-up per-currency balances (top 2 plus \"+N more\"), type, status and currency badges, Expand/Collapse all, `?expanded=1`, tree expansion kept for the session"
+v04 = "change"
+v04_note = "D10 split into an account catalog and a period-balances endpoint; DataTable with tree rows (review:10 D10; review:L8 §1.6 #1)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "views/accounts.md"
+legacy_entry = "`views/AccountsView.vue`, `components/accounts/AccountsTable.vue`, `composables/accountTreeUtils.ts`; `GET /api/accounts` `accounts.list_accounts`"
+demo = "yes: household"
+backlog = ["L8-27", "L2-03"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-PERIOD-BAL"
+area = "Accounts"
+capability = "Period balances: Assets/Liabilities/Equity cumulative to the end date, Income/Expenses within the range (header tooltip)"
+v04 = "change"
+v04_note = "exact sums; Equity not treated as a flow; Retained Earnings and Net Income synthesized when totals are shown; future-dated entries excluded unless \"include scheduled\" (review:11 Q6, Q8; L3-06)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "views/accounts.md#rolled-up-balances"
+legacy_entry = "`accounts.list_accounts` (period query in `services/sqlite_reader.py`)"
+demo = "yes: household"
+backlog = ["L3-06", "L3-08"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-FILTERS"
+area = "Accounts"
+capability = "Filters: date preset or range, search (300 ms debounce), type, status; URL-synced (`search, type, status, startDate, endDate, preset`); back/forward refetches on date change"
+v04 = "change"
+v04_note = "the preset is the source of truth (dates recomputed); \"All Time\" keeps null dates (review:L8 §1.6 #23–30)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "views/accounts.md#filter-panel"
+legacy_entry = "`components/accounts/AccountsFilterPanel.vue`; `AccountsView.vue` URL sync"
+demo = "no"
+backlog = ["L8-27"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-CARDS"
+area = "Accounts"
+capability = "Phone card list for accounts"
+v04 = "cut"
+v04_note = "card views deleted; tables scroll horizontally (review:17 §5, Q4)"
+status = "cut"
+milestone = "M4"
+release_blocking = "n/a"
+doc = "—"
+legacy_entry = "`components/accounts/AccountsCardList.vue`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-CREATE"
+area = "Accounts"
+capability = "Create an account: name, open date, currencies (or any), description, banking details (`account_number`, `ifsc_code`, `swift_bic`), typed investment metadata by scope, custom metadata with key grammar"
+v04 = "change"
+v04_note = "name validity from Beancount's parser grammar via the backend (accepts `401k`, `Café`); currencies from a combobox with no free text; `account_number` (already on the form) is the statement-matching key, plus `ofx-bank-id` (per 28, owner 2026-10-24); booking-method field (CAP-INV-BOOKING-METHODS); the backend returns the applicable metadata fields; drafts survive Escape (review:11 L3-04; review:17 L9-09, L9-03; review:12 Q3; review:19 §5)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "views/accounts.md#new-account; reference/metadata.md (v)"
+legacy_entry = "`components/accounts/AccountFormModal.vue`; `POST /api/accounts` `accounts.create_account_endpoint`"
+demo = "no"
+backlog = ["L3-04", "L9-09", "L9-03", "L4-10"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-EDIT"
+area = "Accounts"
+capability = "Edit an account: metadata as a diff (set/remove), currencies, open date, close date of a closed account; \"not applicable\" values shown read-only with Clear"
+v04 = "change"
+v04_note = "typed metadata merged against the parsed source (dates and numbers stay typed); an unconstrained open shows \"Any\" instead of a prefill of observed currencies (review:11 L3-15; review:L8 §1.6 AccountForm #6)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "views/accounts.md#edit-pencil-icon"
+legacy_entry = "`AccountFormModal.vue`; `utils/accountUpdate.ts:buildAccountUpdateRequest`; `PUT /api/accounts/{name}`"
+demo = "no"
+backlog = ["L3-15", "L8-25"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-RENAME"
+area = "Accounts"
+capability = "Rename an account, updating every transaction that references it"
+v04 = "change"
+v04_note = "built on the one `move_postings(A→B)` primitive with a backend preview; spliced, not rewritten (review:10 §1a; review:D1 §5)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "views/accounts.md#edit-pencil-icon"
+legacy_entry = "`PUT /api/accounts/{name}` (`new_name`); `core/beancount_engine.py`"
+demo = "no"
+backlog = ["I10"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-MERGE"
+area = "Accounts"
+capability = "\"Merge into…\" an existing account, with preview rules (target open over the span, currency constraints, newly failing assertions, booking-method match for holdings at cost)"
+v04 = "new"
+v04_note = "(review:10 §1a)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["I1", "I11"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-DELETE"
+area = "Accounts"
+capability = "Delete an account, with an \"also delete N transactions\" checkbox whose count comes from the period-filtered table"
+v04 = "change"
+v04_note = "an all-time backend preview (count and date span) and one question with no default: \"Move them to [account]\" or \"Delete them\" (lists other balances that change and assertions that will fail, to acknowledge); Close always offered; blocked while subaccounts exist; removes the account's `balance`, `pad`, `note`, `document` and budget directives (review:10 §1a)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "views/accounts.md#delete-trash-icon"
+legacy_entry = "`components/accounts/AccountDeleteModal.vue`; `DELETE /api/accounts/{name}`; `beancount_engine.py:434-458`"
+demo = "no"
+backlog = ["I1", "I11", "L1-08"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-CLOSE"
+area = "Accounts"
+capability = "Close an account (date ≥ open date, optional reason); reopen it"
+v04 = "keep"
+v04_note = ", with a local-time default date and a backend check for postings after the close date (review:L8 §1.6 #5)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "views/accounts.md#close--reopen-circle-x-or-arrow-path-icon"
+legacy_entry = "`components/accounts/AccountCloseModal.vue`; `POST /api/accounts/{name}/close`, `/reopen`"
+demo = "no"
+backlog = ["L3-10"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-ASSERTIONS"
+area = "Accounts"
+capability = "Balance assertions per account: list with Pass/Fail and the error, add / edit / delete, optional `pad` with a source account (delete the pad too), amount prefilled with the balance"
+v04 = "change"
+v04_note = "prefill from the backend balance as of the chosen date (start of day), MoneyInput, confirm with Cancel focused; assertions become the durable \"reconciled through\" record (review:L8 §1.6 #3; review:12 §4)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "views/accounts.md#balance-assertions-scale-icon"
+legacy_entry = "`components/accounts/BalanceDirectivesModal.vue`; `/api/accounts/{name}/balance-directives` GET/POST/PUT/DELETE"
+demo = "yes: reconciliation-assertions"
+backlog = ["L8-24", "L3-09", "L9-01"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-STATEMENT"
+area = "Accounts"
+capability = "Account statement (register): transactions with a posting on the exact account, per-currency running balances unaffected by filters, date and search filters, currency chips, sort, \"Showing N of M\""
+v04 = "change"
+v04_note = "a backend account-statement endpoint with running balances and no silent 50,000-row cap (review:19 §3; review:L8 Q3; review:L8v §2.5 #5)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "views/accounts.md#account-statement-document-icon"
+legacy_entry = "`components/accounts/AccountStatementModal.vue`"
+demo = "yes: household"
+backlog = ["L8.M-6"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-BREAKDOWN"
+area = "Accounts"
+capability = "\"+N more\" balance breakdown with currency search and sort"
+v04 = "keep"
+v04_note = "(with the inverted balance sort fixed)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "views/accounts.md#columns"
+legacy_entry = "`components/accounts/BalanceBreakdownModal.vue`"
+demo = "yes: multi-currency"
+backlog = ["L8.M-7"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-DRAWER"
+area = "Accounts"
+capability = "Account detail drawer: dates, declared currencies, balance with a range note, current budget per currency (with \"Manage\" link), banking details, custom fields, notes, documents"
+v04 = "change"
+v04_note = "the effective budget comes from the backend `as_of`; typed investment keys grouped, not shown as custom fields (review:14 L5.M5; review:L8 §1.6 #4)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "views/accounts.md#account-detail-drawer"
+legacy_entry = "`components/accounts/AccountDetailDrawer.vue`"
+demo = "yes: documents"
+backlog = ["L5.M5"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-DRILL"
+area = "Accounts"
+capability = "\"View transactions\" drill-through (Income/Expenses add `dateFrom`; balance sheet is cumulative) and clickable balance cells"
+v04 = "change"
+v04_note = "exact-account or subtree filter, not a substring match (`Assets:Bank` no longer matches `Assets:Bank2`) (review:L8v §2.5 #16)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "views/accounts.md#deep-linking"
+legacy_entry = "`AccountsView.vue:474-493`"
+demo = "no"
+backlog = ["L8.M-6"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-DOC-COUNT"
+area = "Accounts"
+capability = "Paperclip badge with the document count per account"
+v04 = "change"
+v04_note = "a catalog field instead of raw SQL from the view (review:L8 §1.6 #32)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "views/accounts.md#columns"
+legacy_entry = "`AccountsView.vue:357-375`"
+demo = "yes: documents"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-CUSTOM-ROOTS"
+area = "Accounts"
+capability = "Ledgers with custom root names (`option \"name_assets\"` etc.) work end to end; unknown roots are not mapped to Assets"
+v04 = "new"
+v04_note = "(review:11 Q7; L3-04)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["L3-04", "L5-19"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ACCT-NEW-FROM-PICKER"
+area = "Accounts"
+capability = "\"New account…\" inside account pickers opens the normal account form blank; nothing is created until Save, then it is selected"
+v04 = "new"
+v04_note = "(review:17 Q3)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["L9-09"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TXN-QUERY"
+area = "Transactions"
+capability = "Filter panel: date range with presets (default last 90 days), amount > / < (absolute), search, payee / narration / account / tags / links contain, currency, flag, account type, year, quarter, documents (any, with, without, ≥ N, ≤ N), limit; \"Showing X of Y\""
+v04 = "change"
+v04_note = "a backend transaction-filter endpoint (exact account or subtree, bound parameters, canonical postings including `cost_date` and price kind); the URL parameter names stay as a public contract for recipe links (review:19 §3; review:L8v §2.1 #2, #5)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "views/transactions.md#filter-panel"
+legacy_entry = "`components/transactions/TransactionFilterPanel.vue`; `composables/useTransactionQuery.ts` → `POST /api/ledger/query`"
+demo = "yes: household"
+backlog = ["L2-12", "L8.M-3", "L8.M-6", "L8.M-16"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TXN-DEEPLINK"
+area = "Transactions"
+capability = "URL parameters prefill the filters and run the query; same-route navigation (global search, drill-through) re-applies them; a missing `dateTo` means today"
+v04 = "change"
+v04_note = "Apply also writes the URL; re-querying never discards unsaved edits (review:L8v §2.1 #3–4; L8-01)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "views/transactions.md#deep-linking"
+legacy_entry = "`views/TransactionsView.vue`"
+demo = "no"
+backlog = ["L8-01"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TXN-GRID"
+area = "Transactions"
+capability = "Ledger grid: one row per posting, transaction columns rowspanned, 19 columns with visibility and width persisted, sticky header and left columns, resize, virtualization from 100 transactions, focused transaction pinned while scrolling"
+v04 = "change"
+v04_note = "shared DataTable on TanStack Table v9; column layouts per surface (`transactions`/`review`); sticky offsets computed; the disabled \"Balance\" column dropped (review:19 §3, Q3, Q4; review:17 §2)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "views/transactions.md#transaction-table"
+legacy_entry = "`components/common/TransactionTable.vue`; `composables/useTransactionColumns.ts`, `useTableColumns.ts`"
+demo = "no"
+backlog = ["L9-15", "L8-08", "L8-32"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TXN-INLINE-EDIT"
+area = "Transactions"
+capability = "Inline edit of date, flag, payee, memo, narration, tags/links (`#`, `^`, macOS `ˆ`), account, amount, currency, cost and price; add or remove a posting; cost date defaults to the transaction date; raw-string numeric editing"
+v04 = "change"
+v04_note = "the view owns the edit buffer (no expose/echo); written scale kept (`10.50` stays `10.50`); new-posting currency from the other legs or the profile; invalid tag tokens get a field error instead of being dropped; transactions with a cost or price become editable (review:19 §3; review:11 L3-02, L3-05; L8-06)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "views/transactions.md#editing-transactions"
+legacy_entry = "`composables/useTransactionStore.ts`; `TransactionTable.vue`"
+demo = "no"
+backlog = ["L8-32", "L2-08", "L3-02", "L3-05", "L8-06", "L8-07"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TXN-SAVE"
+area = "Transactions"
+capability = "Save only the modified transactions (\"Save Changes (N)\"), Reset, unsaved guard on route leave and reload"
+v04 = "change"
+v04_note = "D1 replace that merges the request against the parsed source entry (keeps `@@`, typed metadata, cost dates, lot labels, comments); edits typed during a save are not lost; the guard also covers Apply and other re-queries; targets addressed by `(TransactionId, entry_hash)`, so hand-written entries (not editable or deletable in v0.3) become editable, and the response's old→new id map is applied to the selection, the oplog and drawers (per 28, owner 2026-10-24) (review:D1 §12.8; review:19 §1)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "views/transactions.md#editing-transactions"
+legacy_entry = "`composables/useTransactionUpdater.ts`; `PUT /api/ledger/transactions` `ledger_transactions.update_ledger_transactions`"
+demo = "no"
+backlog = ["L8-01", "L8-02", "L3-02", "L3-03", "L3-15", "I10"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TXN-MODIFIED"
+area = "Transactions"
+capability = "Modified marker per row and an in-table diff (\"Show changes\": old struck through over new)"
+v04 = "keep"
+v04_note = ", with modification compared at written scale (review:L8 §1.1 A3, B9)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "views/transactions.md#transaction-table"
+legacy_entry = "`utils/transactionModification.ts`; `TransactionTable.vue`"
+demo = "no"
+backlog = ["L3-05"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TXN-QUICKFIND"
+area = "Transactions"
+capability = "Quick-find over the loaded rows (date, payee, narration, tags, links, account, currency, amount)"
+v04 = "change"
+v04_note = "also matches memo; bulk actions act only on visible rows (review:L8 §1.1 B11; review:L8v §2.1 #6)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "views/transactions.md#transaction-table"
+legacy_entry = "`TransactionTable.vue:498-519`"
+demo = "no"
+backlog = ["L8.M-4"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TXN-SELECT"
+area = "Transactions"
+capability = "Select transactions: per row, select all visible, Shift-click ranges"
+v04 = "keep"
+v04_note = ", plus keyboard selection (Space, Shift+Arrow) (review:L8 §1.1 C1–C3)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "views/transactions.md"
+legacy_entry = "`TransactionTable.vue:521-566`"
+demo = "no"
+backlog = ["L8.M-4"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TXN-BULK"
+area = "Transactions"
+capability = "Bulk edits on the selection: replace account, add/remove tag or link, set flag, set/append payee or narration, set/remove/rename metadata; none can unbalance a transaction; \"No changes\" warning"
+v04 = "change"
+v04_note = "tag, flag and metadata-key grammar from the Ledger Profile; rename never overwrites an existing key; reserved keys protected (review:L8v §2.1 #8)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "views/transactions.md"
+legacy_entry = "`components/transactions/BulkActionBar.vue`; `utils/bulkOperations.ts`"
+demo = "no"
+backlog = ["L8.M-5"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TXN-OPLOG"
+area = "Transactions"
+capability = "Staged operation list with per-operation Undo"
+v04 = "change"
+v04_note = "undo by per-operation inverse patches with conflict rules (an undone change can't come back) (review:L8v §2.1 #7)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`components/transactions/OperationSummary.vue`; `useTransactionStore.ts:264-292`"
+demo = "no"
+backlog = ["L8.M-1"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TXN-BULK-CATEGORIZE"
+area = "Transactions"
+capability = "Autocategorize the selected transactions that have one unknown-account leg, as one undoable operation with confidence marks"
+v04 = "change"
+v04_note = "the one categorization service (batch prediction, direction features, transfers as labels, confidence floor) (review:12 §2)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "reference/auto-categorization.md"
+legacy_entry = "`composables/useCategorizeExisting.ts`; `POST /api/ledger/categorize`"
+demo = "no"
+backlog = ["L4-08", "L4-13", "L4-14"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TXN-DELETE"
+area = "Transactions"
+capability = "Delete one row or the selection, written immediately after a confirm"
+v04 = "change"
+v04_note = "confirm with Cancel focused, plus D1 undo; acts only on visible rows (review:19 Q2; review:17 L9-01)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "views/transactions.md#deleting-transactions"
+legacy_entry = "`composables/useTransactionDeleter.ts`; `DELETE /api/ledger/transactions`"
+demo = "no"
+backlog = ["L9-01", "L8.M-4"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TXN-STATUS"
+area = "Transactions"
+capability = "Info cell: document count, unbalanced ⚠, duplicate, categorize confidence, modified, new"
+v04 = "change"
+v04_note = "\"unbalanced\" uses Beancount's tolerance (backend, or \"indeterminate\" when booking is needed); see question Q8 for the dead reconciled/pending marks (review:11 L3-09; review:L8v §2.1 #10)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "views/transactions.md"
+legacy_entry = "`components/common/TransactionStatusIndicator.vue`, `components/documents/DetailsBadge.vue`"
+demo = "no"
+backlog = ["L3-09"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TXN-SUMMARY"
+area = "Transactions"
+capability = "Summary: edited, unbalanced, per top-level account totals over the quick-find set"
+v04 = "change"
+v04_note = "import-only figures (net flow, duplicates) key on the Draft anchor; dropped from the ledger view (review:L8 §1.1 B13)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "views/transactions.md#summary"
+legacy_entry = "`components/common/TransactionTableSummary.vue`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TXN-KEYBOARD"
+area = "Transactions"
+capability = "Keyboard: ↑/↓ between cells and postings, Alt+←/→ across columns, F2 to the first editable cell, text selected on focus"
+v04 = "change"
+v04_note = "WAI-ARIA grid with navigation and edit modes (F2/Enter in, Esc out; line-aware ↑/↓ in multi-line cells; Alt+↑/↓ always navigates); shortcuts scoped to the grid (review:19 Q6; L8-03)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`composables/useTableKeyboardNavigation.ts`"
+demo = "no"
+backlog = ["L8-03"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TXN-METADATA"
+area = "Transactions"
+capability = "Edit free metadata fields in the transaction drawer, with key validation, reserved and duplicate keys"
+v04 = "keep"
+v04_note = ", with typed values preserved and a memo that can be cleared (review:11 L3-15; review:L8v §2.1 #9)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "views/transactions.md#documents"
+legacy_entry = "`components/documents/TransactionDocumentsDrawer.vue`"
+demo = "no"
+backlog = ["L3-15", "L8.M-2"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TXN-CARDS"
+area = "Transactions"
+capability = "Phone card-list editor"
+v04 = "cut"
+v04_note = "(review:17 §5; review:L8 §1.1 B14)"
+status = "cut"
+milestone = "M5"
+release_blocking = "n/a"
+doc = "—"
+legacy_entry = "`components/common/TransactionCardList.vue`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-OFX"
+area = "Import"
+capability = "OFX/QFX import: parsed in the browser, file summary (count, date range, balance), account and currency, Proceed"
+v04 = "change"
+v04_note = "a backend adapter; OFX, CSV and XLS collapse into one file drop with sniffed format; per-mapping sign flip; every row bucketed; dates shown in local time (review:12 §2; L4 M4)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "views/import.md#ofx"
+legacy_entry = "`components/import/OFXFilePicker.vue`; `composables/useOfxParser.ts`"
+demo = "no"
+backlog = ["L4-04", "L4.M4", "L4-16", "L8.M-12"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-OFX-DETECT"
+area = "Import"
+capability = "Detect the account from the OFX `ACCTID` via `ofx_mappings.yaml`; \"Learn account\" saves the mapping"
+v04 = "change"
+v04_note = "bank ids live on the account's `open` (`account_number`, `ofx-bank-id` (per 28, owner 2026-10-24)); \"remember this bank account\" writes that metadata through D1; one-time migration of `ofx_mappings.yaml` (review:12 Q3)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "views/import.md#ofx"
+legacy_entry = "`composables/useAccountDetector.ts`; `POST /api/import/detect-ofx-account`, `/learn-ofx-account`"
+demo = "no"
+backlog = ["L4-12"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-OFX-CREATE-ACCT"
+area = "Import"
+capability = "\"Learn account\" offers to create a missing account (native confirm, opened today)"
+v04 = "cut"
+v04_note = "accounts are never created from import; the user picks an existing one (review:17 L9-09, M-4; L4-10; owner rule)"
+status = "cut"
+milestone = "M6"
+release_blocking = "n/a"
+doc = "—"
+legacy_entry = "`useAccountDetector.ts:113-175`"
+demo = "no"
+backlog = ["L9.M-4", "L4-10"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-OFX-MAPPINGS"
+area = "Import"
+capability = "Settings → Import Rules → OFX: raw YAML editor for `ofx_mappings.yaml`"
+v04 = "cut"
+v04_note = ", once the account form has the bank-id keys and the migration has landed (review:19 §2; review:12 Q3)"
+status = "cut"
+milestone = "M6"
+release_blocking = "n/a"
+doc = "views/import.md#ofx"
+legacy_entry = "`components/settings/RulesTab.vue` (OFX); `GET /api/import/ofx-mappings/raw`, `PUT /api/import/ofx-mappings`"
+demo = "no"
+backlog = ["L4-12"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-CSV"
+area = "Import"
+capability = "CSV import with a rule: rule picker, invalid-rule banner, Reload, 5-row preview, \"account not in ledger\" hint, Proceed"
+v04 = "change"
+v04_note = "one backend tabular reader on the L3 parser (`0.00` in the empty column and `-` handled; \"Dr\", U+2212, exponents); upload before a rule when rules auto-match (review:12 §2; L4-03; L3-11)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "views/import.md#csv"
+legacy_entry = "`components/import/CSVFilePicker.vue`; `composables/useFilePicker.ts`, `useCsvParser.ts`"
+demo = "no"
+backlog = ["L4-03", "L3-11"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-XLS"
+area = "Import"
+capability = "XLS/XLSX import with a rule (sheet by index or name)"
+v04 = "change"
+v04_note = "backend reader, after characterizing today's SheetJS semantics (review:12 §5 step 1; L4 M5)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "views/import.md#xls"
+legacy_entry = "`components/import/XLSFilePicker.vue`; `composables/useXlsParser.ts`"
+demo = "no"
+backlog = ["L4.M5", "L4-03"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-RULES-TABULAR"
+area = "Import"
+capability = "CSV/XLS rule files: column mappings, date formats, amount parsing (decimal separator, cleanup, accounting negatives, debit/credit columns, negate), skip lines start/end, encoding, sheet, row filtering and error handling"
+v04 = "change"
+v04_note = "one tabular rule format for CSV and XLS; the v1→v2 reader keeps existing files working; typo warnings first, then errors; one RuleStore write path (review:12 §2)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "reference/file-import-rules.md"
+legacy_entry = "`core/csv_rules_manager.py`, `core/xls_rules_manager.py`; `/api/import/csv-rules`, `/xls-rules` (list, get, raw, create, update, delete)"
+demo = "no"
+backlog = ["L4-12", "L3-11"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-RULE-EDITOR"
+area = "Import"
+capability = "Settings → Import Rules: list per type (valid and invalid with reason), YAML editor, New from template, Save, Delete, dirty and route-leave guards, example-file preview (CSV/XLS) with row and column numbers, stacked/side-by-side layout"
+v04 = "change"
+v04_note = "the preview runs the editor's current rule against the sample on the backend and shows the resulting Drafts; the backend returns the canonical filename; one unsaved guard covering tab switches (review:L8 §1.5 #4; review:17 M-1)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "reference/file-import-rules.md#step-by-step-guide-writing-a-new-rule"
+legacy_entry = "`components/settings/RulesTab.vue`; `GET /api/import/rule-templates/{rule_type}`"
+demo = "no"
+backlog = ["L8-13", "L9.M-1", "L9.M-3", "L4-12"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-SEED-RULES"
+area = "Import"
+capability = "Shipped example rules: BofA and Axis CSV, Axis and ICICI XLS, Axis and ICICI email"
+v04 = "change"
+v04_note = "delivered as read-only content-pack templates (review:15 §2)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "reference/file-import-rules.md#complete-examples"
+legacy_entry = "`resources/seed_config/{csv,xls,email}_rules/`"
+demo = "no"
+backlog = ["L10-05"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-EMAIL"
+area = "Import"
+capability = "Email import: IMAP profiles, date range, regex or AI mode, Test Connection, Reload, fetch with streamed progress, auto-stage, unmatched/errors tables, truncation warning"
+v04 = "change"
+v04_note = "a backend Draft source; IMAP TLS certificates verified; secrets through the per-workspace resolver; status pending/posted per transaction type; header dates in the user's time zone; results survive a tab switch (review:12 Q1; review:18 M-3, M-4; review:23 §2a; L3-10)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "views/import.md#email"
+legacy_entry = "`components/import/EmailImportPanel.vue`; `composables/useEmailImporter.ts`; `email_import/fetch_service.py`, `imap_client.py`; `POST /api/import/email/fetch` (SSE), `/email/test-connection`, `/email/profiles`, `/email/reload`"
+demo = "no"
+backlog = ["L11.M-4", "L11.M-3", "L4-11", "L3-10", "L8.M-10"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-EMAIL-RULES"
+area = "Import"
+capability = "Email rule files: `imap_server` with `${ENV}` expansion, `bank_emails`, `body_keyword`, `lookback_days`, `parsing_mode`, `transaction_types` (email filter, regex extraction, mapping, `amount_sign`), `error_handling`; HTML bodies extracted"
+v04 = "change"
+v04_note = "`status: pending/posted` per type; per-line currency (no silent USD); secret names declared; one RuleStore write path (review:12 Q1, §2; review:23 §1.4)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "reference/email-import-rules.md"
+legacy_entry = "`email_import/rule_parser.py`, `rule_schemas.py`, `regex_extractor.py`, `html_extractor.py`; `/api/import/email/rules` (raw, create, update, delete)"
+demo = "no"
+backlog = ["L4-11", "L4-12", "L6-02"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-EMAIL-AI"
+area = "Import"
+capability = "AI parsing mode for email bodies"
+v04 = "change"
+v04_note = "structured output with explicit direction and confidence; a missing amount rejects the row (review:13 L6-07)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "reference/email-import-rules.md#ai-parsing-mode"
+legacy_entry = "`email_import/llm_extractor.py`"
+demo = "no"
+backlog = ["L6-07"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-EMAIL-TRIAL"
+area = "Import"
+capability = "Try a rule's extraction on one email (used when writing rules)"
+v04 = "keep"
+v04_note = ", using the real extractor and body (review:13 L6-10)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "reference/email-import-rules.md#validation-rules"
+legacy_entry = "`POST /api/import/email/trial-extract`"
+demo = "no"
+backlog = ["L6-10"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-AI-PARSE"
+area = "Import"
+capability = "AI file import: CSV, TSV, XLS/XLSX, PDF, EML, JPG/PNG/GIF/WebP; PDF password (never sent to the AI); automatic retry with local text extraction when the model can't read PDFs; returns cash rows and investment drafts"
+v04 = "change"
+v04_note = "a backend Draft source `llm` with a declared statement date order, a period-range check, a sign anchor and a currency; errors through the one error path (review:12 L4-09; review:L8 §1.3 #5)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "views/import.md#ai"
+legacy_entry = "`components/import/AIImportPanel.vue`; `POST /api/import/llm-parse` `llm_parse.llm_parse`; `ai/file_processor.py`; `helpers/pdf_password.py`"
+demo = "no"
+backlog = ["L4-09", "L6-16", "N5"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-CAS-HANDOVER"
+area = "Import"
+capability = "The AI import recognizes a mutual-fund CAS and hands over without sending it to the AI"
+v04 = "change"
+v04_note = "hands over to the broker/CAS one-upload sync (CAP-INV-ONE-UPLOAD-SYNC) instead of the retired statement import (review:16 §5)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "views/import.md#ai"
+legacy_entry = "`STATEMENT_IS_CAS` in `api/routers/importer/llm_parse.py`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-NL"
+area = "Import"
+capability = "Natural-language entry (\"Paid $45 for dinner…\", ⌘/Ctrl+Enter); the AI returns transactions, including investment events"
+v04 = "change"
+v04_note = "returns Drafts; checks use the L3 tolerance per currency and the profile's reporting currency (review:13 L6-12)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "views/import.md#natural-language-entry"
+legacy_entry = "`components/import/ManualEntryPanel.vue`; `POST /api/ai/parse-nl-transaction`"
+demo = "no"
+backlog = ["L6-12"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-BLANK"
+area = "Import"
+capability = "Add a blank transaction row for a chosen account and currency"
+v04 = "keep"
+v04_note = ", with pickers that take existing accounts only (review:L8 §1.3 #6.4)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "views/import.md#blank-transaction-entry"
+legacy_entry = "`ManualEntryPanel.vue`"
+demo = "no"
+backlog = ["L9-09"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-REVIEW"
+area = "Import"
+capability = "Review table: drafts from several files and sources accumulate; edit, attach documents, Reset"
+v04 = "change"
+v04_note = "one backend import session over `Draft`s, each with its own anchor posting; statement-sourced fields read-only; removing a source drops only its drafts; the Investments staging uses the same session (review:12 §2; review:19 §3)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "views/import.md#reviewing-transactions"
+legacy_entry = "`views/ImportView.vue`; `TransactionTable.vue` (importContext)"
+demo = "no"
+backlog = ["L4-15", "L4-07", "L8-11"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-SESSION-PERSIST"
+area = "Import"
+capability = "An import session survives tab switches and an app restart (spilled to a machine-local file, deleted on commit, discard or after N days)"
+v04 = "new"
+v04_note = "(review:19 Q5; review:23 §1.2)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes (optional): import-session-in-progress"
+backlog = ["L8.M-10"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-AUTOCAT"
+area = "Import"
+capability = "Autocategorize staged rows with the classifier or the AI engine; confidence marks; warnings panel"
+v04 = "change"
+v04_note = "only open slots are targets (the cash leg of a buy or a CD posting is never overwritten); direction features; transfers proposed as labels; confidence floor; batch prediction with a model cached per ledger version (review:12 §1 L4-01, L4-08, L4-13)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "views/import.md#autocategorize; reference/auto-categorization.md"
+legacy_entry = "`ImportView.vue:764-853`; `POST /api/import/categorize`; `services/categorizer.py`, `ai_categorizer.py`, `categorization.py`"
+demo = "no"
+backlog = ["L4-01", "L4-08", "L4-13", "L4-14", "L4.M2", "L8-12"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-DEDUPE"
+area = "Import"
+capability = "Duplicate detection (exact id/hash, then fuzzy) with a comparison dialog: Keep this / Remove as duplicate"
+v04 = "change"
+v04_note = "posting-level matching on the anchor account against every ledger entry, whoever wrote it; versioned idempotency key (not hashing the account); date window; one-to-one assignment; re-run at commit with duplicates skipped and reported and an explicit override (review:12 §2)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "views/import.md#duplicate-detection; reference/auto-categorization.md#duplicate-detection"
+legacy_entry = "`services/duplicate_detector.py`; `components/import/DuplicateComparisonModal.vue`"
+demo = "no"
+backlog = ["L4-05", "L4-02", "I5", "L8-10", "L4.M8"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-TRANSFER-PAIR"
+area = "Import"
+capability = "Matching outcomes beyond \"duplicate\": an imported line that is the other side of a transfer already in the ledger, and a line that settles a pending entry"
+v04 = "new"
+v04_note = "(review:12 §2)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: household (own-account transfers)"
+backlog = ["L4-05"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-BUCKETS"
+area = "Import"
+capability = "Every row of a file is accounted for: a line, rejected with a reason, or a recognised non-transaction, with the counts shown"
+v04 = "new"
+v04_note = "(review:12 §2 principle 3)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["L4-04"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-ANCHOR-CHECK"
+area = "Import"
+capability = "The source account must be an open Assets/Liabilities account over the lines' dates (v0.3 shows only a CSV/XLS hint)"
+v04 = "change"
+v04_note = "validated for every source (review:12 L4-10)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`useFilePicker.ts:96-100`"
+demo = "no"
+backlog = ["L4-10"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-FX-PENDING"
+area = "Import"
+capability = "Foreign-currency card lines (original amount in metadata, price on the expense leg if shown) and card alerts committed as pending, then settled from the statement"
+v04 = "new"
+v04_note = "pending is derived (`!` and only `auth`-kind `import-key` elements; no `status` key), with a \"Drop this authorization\" action for one the bank never posts (per 28, owner 2026-10-24) (review:12 Q1, Q2; owner: pending is low priority, review:12 §4); settling pending card alerts from a statement is release-blocking (DECIDED (owner, 2026-10-24), F §2 item 3)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: multi-currency"
+backlog = ["L4-11", "L4.M7"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-IMP-COMMIT"
+area = "Import"
+capability = "Register: confirm when duplicates or unbalanced rows exist (\"Register Anyway\"), then write, routed to the right file"
+v04 = "change"
+v04_note = "commit re-matches and is idempotent; tags and links carried; entry meta only from the review:28 §4.1 contract (`import-key` on every anchor posting, plus `txn-date`/`original`/`statement-amount`/`memo` when they apply; no `id`, `content_hash`, `source_account`, `import-batch` or client-supplied keys) (per 28, owner 2026-10-24); blank amounts auto-balance or are rejected; D1 inserts under the write contract; confirm with Cancel focused (review:12 §5)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "views/import.md#registering"
+legacy_entry = "`composables/useTransactionImporter.ts`; `POST /api/import/commit`"
+demo = "no"
+backlog = ["L4-02", "L4-06", "L8.M-11", "L9-01"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-RECON-STATEMENT"
+area = "Reconciliation"
+capability = "\"My balance doesn't match\": give a statement (PDF, CSV/XLS, OFX, a pasted list or screenshot) and its closing balance for one account; get matched / missing in ledger / only in ledger / amount differs, plus the arithmetic and any residual; apply the chosen fixes and write a `balance` assertion dated closing + 1"
+v04 = "new"
+v04_note = "(review:12 §4)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: reconciliation-assertions (plus a deliberately missing line)"
+backlog = ["L4-05", "L4-04"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-RECON-IMPORT-CHECK"
+area = "Reconciliation"
+capability = "During import, opening balance + lines = closing balance is checked, and a `balance` assertion is offered (as_of + 1, last fully closed day, not while unsettled pending entries exist)"
+v04 = "new"
+v04_note = "(review:12 §2)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: reconciliation-assertions"
+backlog = ["L4-04", "L4.M7"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-RECON-AUTO-ACCEPT"
+area = "Reconciliation"
+capability = "The offered assertion is accepted by default only when the internal check passed, the day is fully closed and nothing pending is unsettled; otherwise off, with the reason"
+v04 = "new"
+v04_note = "(review:12 Q4)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["L4.M7"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-RECON-THROUGH"
+area = "Reconciliation"
+capability = "Per account and currency: \"reconciled through <date>\" and the difference, derived from `balance` assertions"
+v04 = "new"
+v04_note = "(review:14 L5-22; review:12 §4 note to L5)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: reconciliation-assertions"
+backlog = ["L5-22"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-RECON-ASSISTANT"
+area = "Reconciliation"
+capability = "The assistant can parse a pasted statement and explain a residual, using the same matcher"
+v04 = "new"
+v04_note = "(review:12 §4 note to L6; review:13 §3)"
+status = "planned"
+milestone = "M9"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["L6-05"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-TABS"
+area = "Runtime, authoring and format"
+capability = "Dashboard tabs: open, close, reorder (drag, Alt+←/→), persisted and synced across browser tabs, defaults (Financial Overview, Year Summary, Month Summary), invalid tabs pruned, untouched when loading fails"
+v04 = "keep"
+v04_note = ", with workspace-scoped storage (review:L8v §2.4 #1–2; review:23 §3.6)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/dashboards.md#tabs"
+legacy_entry = "`components/dashboard/DashboardTabs.vue`; `composables/useDashboardTabs.ts`"
+demo = "no"
+backlog = ["L11.M-8"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-PICKER"
+area = "Runtime, authoring and format"
+capability = "Dashboard picker: add, \"Added\" badge, delete a user recipe (timestamped backup kept)"
+v04 = "keep"
+v04_note = ", with the shared confirm instead of native `confirm()` (review:L8v §2.4 #3)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/dashboards.md#dashboard-picker"
+legacy_entry = "`components/dashboard/DashboardPicker.vue`; `DELETE /api/recipes/{path}`"
+demo = "no"
+backlog = ["L9-02"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-URL"
+area = "Runtime, authoring and format"
+capability = "URL state `?tab=<id>&<param>=…`; `$gen:` sentinels stay live in bookmarks; cross-dashboard link targets; unknown tab → toast"
+v04 = "change"
+v04_note = "parameters don't leak into another tab; a link to the same dashboard with new parameters applies (review:L8 §1.4 #10; L8-28)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/dashboards.md#parameters"
+legacy_entry = "`views/DashboardView.vue`"
+demo = "no"
+backlog = ["L8-28"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-LOAD-ERRORS"
+area = "Runtime, authoring and format"
+capability = "Banners for recipe files that fail to load (invalid JSON, N validation errors) and for duplicate recipe ids"
+v04 = "change"
+v04_note = "from the one backend validator with located issues (review:14 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/dashboards.md"
+legacy_entry = "`DashboardView.vue:3-77`; `composables/useRecipeLoader.ts`"
+demo = "no"
+backlog = ["L5-03"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-RELOAD"
+area = "Runtime, authoring and format"
+capability = "Reload recipes from the toolbar"
+v04 = "change"
+v04_note = "actually refreshes titles and prunes removed tabs (today a no-op) (review:L8v §2.4 #2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/dashboards.md#toolbar"
+legacy_entry = "`DashboardView.vue:235-241`"
+demo = "no"
+backlog = ["L8.M-13"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-RUN"
+area = "Runtime, authoring and format"
+capability = "Run a dashboard: per-widget steps (query, compute, transform) as a DAG, dashboard-level shared steps, results per widget"
+v04 = "change"
+v04_note = "the interpreter runs on the backend (`POST /api/recipes/run`), memoized on the data version plus each step's input hash, shared steps once per board; per-widget queries with a run token; gzip; generators resolved after the profile loads (review:14 §2; review:10 I7, I8)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#steps"
+legacy_entry = "`composables/useRecipeExecutor.ts`, `useRecipeTransforms.ts`; `POST /api/compute` `compute.execute_compute`; `POST /api/ledger/query`"
+demo = "yes: every seed dashboard non-empty (review:22 §1.3)"
+backlog = ["L5-02", "L5-06", "I7", "I8", "L2-04", "L2.M-3.3", "L5.M4"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-PARAMS"
+area = "Runtime, authoring and format"
+capability = "Parameter bar: date / select / number / boolean controls, `optionsFrom` sources, `minParam`/`maxParam`, `hidden`, `allowAll` (\"All\" = `*`), `showWhen`, persisted selections, templated defaults, dashboard vs widget parameters"
+v04 = "change"
+v04_note = "option sources served by the backend; saved selections keyed per dashboard (review:14 L5-17; review:L8 §1.4 #12.6)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#parameters"
+legacy_entry = "`components/recipes/RecipeParameters.vue`"
+demo = "no"
+backlog = ["L5-17", "L5-16"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-LINKS"
+area = "Runtime, authoring and format"
+capability = "Click-through links: route links with templated queries, per-series chart links, `select` master-detail, opt-outs (`isTotal`, `noLink`, all-blank query)"
+v04 = "change"
+v04_note = "link capability and opt-outs declared per viz in the registry; tree-table `select` and `query: {}` work (review:L8v §2.4 #5)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#click-through-links"
+legacy_entry = "`RecipeWidgetRenderer.vue:resolveTemplateLink`; `recipes/templating.ts`"
+demo = "no"
+backlog = ["L8.M-13"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-TITLE-TOKENS"
+area = "Runtime, authoring and format"
+capability = "`{{params.x:format}}` tokens in widget titles"
+v04 = "keep"
+v04_note = "(declarative, review:L8 §1.4 #12.8)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#references--interpolation"
+legacy_entry = "`recipes/templating.ts`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-HELP"
+area = "Runtime, authoring and format"
+capability = "Widget help text on hover"
+v04 = "change"
+v04_note = "a popover reachable by keyboard and screen readers, not clipped by the card (review:17 L9-10, M-6)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#optional-fields-1"
+legacy_entry = "`components/recipes/RecipeWidget.vue`"
+demo = "no"
+backlog = ["L9-10", "L9.M-6"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-MULTICURRENCY"
+area = "Runtime, authoring and format"
+capability = "Dashboard currency filter (All or one) cascading to widget pickers; multi-currency KPIs stacked; currency-aware tables and formats"
+v04 = "change"
+v04_note = "typed per-currency money columns (pivot and tabular sums never mix currencies); conversion to the reporting currency through the PriceIndex (review:14 L5-12, L5-13)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#multi-currency-tips"
+legacy_entry = "`RecipeWidget.vue`, `RecipeTable.vue`, `useRecipeTransforms.ts`"
+demo = "yes: multi-currency"
+backlog = ["L5-12", "L5-13"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-THEMES"
+area = "Runtime, authoring and format"
+capability = "Dashboard color themes (Dusty Spectrum, Quiet Slate, Vivid Jewel), picker in Settings → Dashboards applied live, tiered recoloring, `theme.*` colors in recipes"
+v04 = "change"
+v04_note = "themes map onto CSS tokens; the active theme is a workspace setting (review:17 §2; review:23 §1.3)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-themes.md"
+legacy_entry = "`components/settings/DashboardsTab.vue`; `composables/useDashboardTheme.ts`; `GET /api/dashboard-theme(s)`, `PUT /api/dashboard-theme/{id}`"
+demo = "no"
+backlog = ["L11.M-5"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-DARK"
+area = "Runtime, authoring and format"
+capability = "Charts and tables follow dark mode"
+v04 = "keep"
+v04_note = "(a reactive dark flag for ECharts, review:L8v §2.5 #2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#dark-mode"
+legacy_entry = "`components/recipes/RecipeChart.vue`"
+demo = "no"
+backlog = ["L9-11"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-METAHINT"
+area = "Runtime, authoring and format"
+capability = "Dismissible \"add details\" offer above a dashboard when recognized metadata is unset, linking to Setup & Metadata"
+v04 = "keep"
+v04_note = ", with the dismissal key workspace-scoped (review:L8v §2.4 #4)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#metadata-hint"
+legacy_entry = "`components/recipes/MetadataHintBanner.vue`; `GET /api/metadata/review`"
+demo = "yes: unattributed-income"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-ACTION-PRICES"
+area = "Runtime, authoring and format"
+capability = "Dashboard action `update-prices`: button with the price date in use and how many holdings need a newer price"
+v04 = "keep"
+v04_note = ""
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#dashboard-actions"
+legacy_entry = "`components/recipes/RecipeDashboard.vue`"
+demo = "yes: prices-staleness"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-EDITOR"
+area = "Runtime, authoring and format"
+capability = "Settings → Dashboards: recipe file list, JSON editor, New, Save (backup on overwrite), Delete, id-conflict confirm, Refresh Preview (single widget wrapped in a throwaway board), layout toggle"
+v04 = "change"
+v04_note = "the preview sends the unsaved recipe to the backend `run` (same validator, generators and DAG); validation errors inline per JSON path; conflict detection on the backend; one unsaved guard (review:L8 §1.5 #5; review:14 §0)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/dashboards.md#using-the-settings-editor"
+legacy_entry = "`components/settings/DashboardsTab.vue`; `/api/recipes/manifest.json`, `/api/recipes/{path}` GET/PUT/DELETE, `/raw`"
+demo = "no"
+backlog = ["L8-13", "L5-03", "L9.M-1"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-FILES"
+area = "Runtime, authoring and format"
+capability = "Edit recipe files directly in `config/recipes/dashboards/`"
+v04 = "change"
+v04_note = "they live in the workspace's `.finzytrack/dashboards/` (review:23 §1.1)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/dashboards.md#editing-recipe-files-directly"
+legacy_entry = "`config/recipes/`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-VALIDATION"
+area = "Runtime, authoring and format"
+capability = "Recipe validation (dashboard, widget and step rules; id-conflict detection) on save and for the AI"
+v04 = "change"
+v04_note = "one strict backend validator; unknown arguments rejected; located structured issues; warn-first period for existing files (review:14 §0, §1)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#validation-rules"
+legacy_entry = "`helpers/recipe_validation.py`; `composables/useRecipeValidator.ts`"
+demo = "no"
+backlog = ["L5-03", "L5-08", "L5-10"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-SCHEMA"
+area = "Runtime, authoring and format"
+capability = "Recipe format v2 (`schemaVersion: 2`, steps/DAG), one JSON Schema with generated TS, enums and AI appendix"
+v04 = "change"
+v04_note = "schema v3 (strict); catalogs generated from the registries into the docs and AI guide (review:14 §0 #1; review:20 §7; RESUME 1(e))"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#dashboard-structure"
+legacy_entry = "`frontend/src/types/recipe.schema.json`"
+demo = "no"
+backlog = ["L5-10", "L5-14", "L5-15"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-OPTIONS-SAFE"
+area = "Runtime, authoring and format"
+capability = "ECharts `options` pass-through (silent allow-list: `calendar`, `visualMap`, `radar`, `graphic`, `dataZoom`) with template strings"
+v04 = "change"
+v04_note = "options are data; HTML and JavaScript formatters rejected; tooltip values escaped (review:13 N1; review:14 §0; L8-20)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#chart--echarts-visualizations"
+legacy_entry = "`RecipeChart.vue`"
+demo = "no"
+backlog = ["N1", "L8-20"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-SEED-FIX"
+area = "Runtime, authoring and format"
+capability = "Updated shipped dashboards: pristine copies refreshed; edited copies get a notice with one-click replace (backup)"
+v04 = "change"
+v04_note = "shipped dashboards reference a widget library with overrides; notice-plus-replace until then (review:14 §0a.3, Q4; review:15 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "upgrade-notes/seed-content.md#getting-the-new-colors-on-a-dashboard-youve-edited"
+legacy_entry = "`seed_refresh/refresh.py`; `startup_tasks/tasks/seed_content_task.py`"
+demo = "no"
+backlog = ["L10-06", "L10-05"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-WIDGET-LIBRARY"
+area = "Runtime, authoring and format"
+capability = "Dashboards reference shipped widgets by id and override only what changes, so fixes flow through; full copy-and-edit still possible"
+v04 = "new"
+v04_note = "(review:14 §0a.3; review:15 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: seed dashboards"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-LEDGER-STEP"
+area = "Runtime, authoring and format"
+capability = "Semantic `ledger` step: measures (balance, flow, value, cost, unrealized and realized gain, income, budget, budget actual) by dimensions (account and level, kind, currency, period, payee, tag, metadata), with as-of, filters and conversion"
+v04 = "new"
+v04_note = "(review:14 §0a.1; review:16 §4)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: seed dashboards"
+backlog = ["L5-01", "L5.M2", "L5.M1"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-SQL-OVER-STEPS"
+area = "Runtime, authoring and format"
+capability = "SQL over the outputs of earlier steps (an in-memory `steps` schema)"
+v04 = "new"
+v04_note = "(review:14 §0a.2 (ii))"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-SQL-HELPERS"
+area = "Runtime, authoring and format"
+capability = "SQL helpers for exact, composable user SQL: `dsum` (REAL from an exact sum), `price_asof`"
+v04 = "new"
+v04_note = "(review:11 Q9; review:14 §0a.2 (iii))"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["L3-07"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-PARTIAL-RUN"
+area = "Runtime, authoring and format"
+capability = "Run a single widget or a partial recipe and get column metadata, for live preview"
+v04 = "new"
+v04_note = "(review:14 §0 builder requirement 3)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-SEED-OVERVIEW"
+area = "Shipped (seed) dashboards"
+capability = "Financial Overview: Net Worth, Total Assets, Total Liabilities, assets and liabilities breakdown, allocation by asset class; Update prices action"
+v04 = "change"
+v04_note = "one net-worth computation from the `ledger` step (as-of, future excluded, holdings without cost basis valued, same-day prices deduplicated) (review:14 L5-01, M-NC)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/dashboards.md#financial-overview"
+legacy_entry = "`seed_config/recipes/dashboards/financial-overview.json`"
+demo = "yes: household, prices"
+backlog = ["L5-01", "L5.M2", "L5.M1"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-SEED-MONTH"
+area = "Shipped (seed) dashboards"
+capability = "Month Summary: income, expenses, savings, expense treemap (year and month pickers)"
+v04 = "keep"
+v04_note = "(exact sums)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/dashboards.md#month-summary"
+legacy_entry = "`month-summary.json`"
+demo = "yes: household"
+backlog = ["L3-07"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-SEED-YEAR"
+area = "Shipped (seed) dashboards"
+capability = "Year Summary: income, expenses, savings, monthly income vs expenses, expenses pivot"
+v04 = "keep"
+v04_note = ""
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/dashboards.md#year-summary"
+legacy_entry = "`year-summary.json`"
+demo = "yes: household"
+backlog = ["L3-07", "L5-13"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-SEED-BALANCES"
+area = "Shipped (seed) dashboards"
+capability = "Account Balances: tree-table as of a date with the assertion check"
+v04 = "change"
+v04_note = "checks per account and currency, with \"reconciled through\" (review:14 L5-22)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/dashboards.md#account-balances"
+legacy_entry = "`account-balances.json`"
+demo = "yes: reconciliation-assertions"
+backlog = ["L5-22"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-SEED-HOLDINGS"
+area = "Shipped (seed) dashboards"
+capability = "Holdings & Performance: Invested, Current Value, Unrealized Gain, Value Over Time, Holdings, Market Value by Holding, Unattributed Dividends (and by account), Portfolio Return (XIRR), Returns by Asset Class, Purchase Lots, Price History"
+v04 = "change"
+v04_note = "XIRR and per-class returns removed, simple total return % instead; lots from Beancount's booked inventory; values from `ledger` measures (review:16 §4; see Q3, Q4)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "views/dashboards.md#investment-dashboards (v); reference/investments.md#returns (v)"
+legacy_entry = "`investment-holdings.json`"
+demo = "yes: drip-splits, prices-staleness, unattributed-income"
+backlog = ["L7-01", "L7-02", "L7.M1", "L7.M4", "L7-07", "L5.M1", "L5.M2"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-SEED-CASH"
+area = "Shipped (seed) dashboards"
+capability = "Cash & Deposits: total cash and deposits, Unattributed Interest KPI (\"All interest attributed\" when none), accounts with interest earned and effective yield, unattributed interest by account, cash by type, upcoming maturities"
+v04 = "change"
+v04_note = "true as-of balances; ISO currencies count as cash by default; effective yield only if it stays simple (review:16 §4.4, L7-08; review:11 Q3; see Q2)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "views/dashboards.md#investment-dashboards (v)"
+legacy_entry = "`cash-deposits.json`"
+demo = "yes: interest-attribution, cds, unattributed-income"
+backlog = ["L7-08", "L3-13"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-SEED-RETURNS"
+area = "Shipped (seed) dashboards"
+capability = "Returns & Income: interest and dividends (KPI, over time, by source), realized gain (KPI, by year short vs long term), sales"
+v04 = "change"
+v04_note = "realized gain from Beancount booking (hand-written and imported sales included, fees counted); short/long-term labels removed (review:16 §4; review:14 L5-11)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "views/dashboards.md#investment-dashboards (v)"
+legacy_entry = "`returns-income.json`"
+demo = "yes: booking methods, unattributed-income"
+backlog = ["L5-11", "L5.M6"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-SEED-GALLERY"
+area = "Shipped (seed) dashboards"
+capability = "Widget Gallery: one example of every viz and chart type"
+v04 = "keep"
+v04_note = "(labels get a finance pass)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/dashboards.md#widget-gallery"
+legacy_entry = "`widget-gallery.json`"
+demo = "yes: household, budgets"
+backlog = ["L5-18"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-FN-BUDGET-FOR-RANGE"
+area = "Catalog: compute functions"
+capability = "`budget_for_range`: resolve budgets over a date range, one row per budgeted (account, currency)"
+v04 = "change"
+v04_note = "(was cut as a named function; DECIDED (owner, 2026-10-24), F §2 item 10): v0.2.2 compute functions keep their names working through 0.4.x, so `budget_for_range` stays callable as a deprecated compatibility name over the `ledger` step's budget measures / `budget_status` (nesting-aware, income sign-normalized), with a located notice naming the replacement; removed after 0.4.x (review:14 §2, Q1; review:21 §3 step 8 item 8)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/budgeting.md#the-budget_for_range-compute-function"
+legacy_entry = "`compute/functions/budget_for_range.py`; `compute/budget_resolver.py`"
+demo = "yes: budgets"
+backlog = ["L5-04", "L5-05"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-FN-CASH-INSTRUMENTS"
+area = "Catalog: compute functions"
+capability = "`cash_instruments`: cash and fixed-income accounts with interest earned (attributed), effective yield, maturity; unattributed row"
+v04 = "change"
+v04_note = "honest as-of balances; rebuilt on the kernel (see Q2 on whether it stays a named function or becomes `ledger` measures) (review:16 §4.4; L7-08); effective yield kept, labelled \"effective yield (per year)\" (DECIDED (owner, 2026-10-24), F §2 item 11)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "reference/investments.md#cash--deposit-accounts (v)"
+legacy_entry = "`compute/functions/cash_instruments.py`"
+demo = "yes: interest-attribution, cds"
+backlog = ["L7-08"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-FN-PORTFOLIO-RETURNS"
+area = "Catalog: compute functions"
+capability = "`portfolio_returns`: XIRR (money-weighted, windowed, per asset class) and simple gain"
+v04 = "cut"
+v04_note = "XIRR and windowed/per-class returns removed by the investment scope reset; v0.3-only, so no removal note (review:16 §4; review:21 §3 step 8 item 8)"
+status = "cut"
+milestone = "M8"
+release_blocking = "n/a"
+doc = "reference/investments.md#returns (v)"
+legacy_entry = "`compute/functions/portfolio_returns.py`"
+demo = "no"
+backlog = ["L7-01", "L7-02", "L7.M1", "L7-17", "L3.M-11"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-FN-PORTFOLIO-SERIES"
+area = "Catalog: compute functions"
+capability = "`portfolio_series`: market value and cost of holdings at sampled dates"
+v04 = "cut"
+v04_note = "as a named function (v0.3-only, review:21 §3 step 8 item 8); the \"value over time\" need moves to the `ledger` step's value/cost measures by period (see Q3)"
+status = "cut"
+milestone = "M8"
+release_blocking = "n/a"
+doc = "reference/investments.md (v)"
+legacy_entry = "`compute/functions/portfolio_series.py`"
+demo = "no"
+backlog = ["L7-14"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-FN-LEDGER-MEASURES"
+area = "Catalog: compute functions"
+capability = "The financial primitives as parameterized server functions: as-of balances, valuation, flows, budget status, realized gains, reconciliation status"
+v04 = "new"
+v04_note = "(review:14 §0, §2, §0a.1)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: seed dashboards"
+backlog = ["L5-01", "L5-04", "L5-11", "L5-22"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-NONE"
+area = "Catalog: transforms"
+capability = "`none`: rows unchanged"
+v04 = "change"
+v04_note = "runs on the backend (review:14 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#catalog"
+legacy_entry = "`types/transforms.catalog.json`; `composables/useRecipeTransforms.ts`"
+demo = "no"
+backlog = ["L5-02"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-FIRSTROW"
+area = "Catalog: transforms"
+capability = "`firstRow`: the first row object"
+v04 = "change"
+v04_note = "backend (review:14 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#catalog"
+legacy_entry = "same"
+demo = "no"
+backlog = ["L5-02"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-FIRSTVALUE"
+area = "Catalog: transforms"
+capability = "`firstValue`: first value of the first row"
+v04 = "change"
+v04_note = "backend (review:14 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#catalog"
+legacy_entry = "same"
+demo = "no"
+backlog = ["L5-02"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-SORTBY"
+area = "Catalog: transforms"
+capability = "`sortBy`: sorted rows"
+v04 = "change"
+v04_note = "backend (review:14 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#catalog"
+legacy_entry = "same"
+demo = "no"
+backlog = ["L5-02"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-LIMIT"
+area = "Catalog: transforms"
+capability = "`limit`: first N rows"
+v04 = "change"
+v04_note = "backend (review:14 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#catalog"
+legacy_entry = "same"
+demo = "no"
+backlog = ["L5-02"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-PLUCK"
+area = "Catalog: transforms"
+capability = "`pluck`: an array of one field"
+v04 = "change"
+v04_note = "backend (review:14 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#catalog"
+legacy_entry = "same"
+demo = "no"
+backlog = ["L5-02"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-WHERE"
+area = "Catalog: transforms"
+capability = "`where`: rows matching a predicate"
+v04 = "change"
+v04_note = "backend (review:14 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#catalog"
+legacy_entry = "same"
+demo = "no"
+backlog = ["L5-02"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-PIVOT"
+area = "Catalog: transforms"
+capability = "`pivot`: rows → pivot data (rows × columns)"
+v04 = "change"
+v04_note = "backend; duplicate cells no longer overwrite each other; currencies never summed together (review:14 L5-13)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#pivot"
+legacy_entry = "same"
+demo = "no"
+backlog = ["L5-13"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-APPENDTOTAL"
+area = "Catalog: transforms"
+capability = "`appendTotal`: rows (optionally top N) plus a grand-total row over the full input"
+v04 = "change"
+v04_note = "backend; exact per-currency sums (review:14 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#catalog"
+legacy_entry = "same"
+demo = "no"
+backlog = ["L5-13"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-GROUPBY"
+area = "Catalog: transforms"
+capability = "`groupBy`: one row per key with exact sums"
+v04 = "change"
+v04_note = "backend, per currency (review:14 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#catalog"
+legacy_entry = "same"
+demo = "no"
+backlog = ["L5-13"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-RUNNINGSUM"
+area = "Catalog: transforms"
+capability = "`runningSum`: cumulative columns"
+v04 = "change"
+v04_note = "backend (review:14 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#catalog"
+legacy_entry = "same"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-JOINBUDGETACTUAL"
+area = "Catalog: transforms"
+capability = "`joinBudgetActual`: budget vs actual variance rows (remainder mode adds Unbudgeted and Total)"
+v04 = "change"
+v04_note = "backend; nesting-aware, income budgets sign-normalized; see Q1 (transform vs `ledger` measure) (review:14 L5-04, L5-05)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#budget-transforms; reference/budgeting.md#budget-transforms"
+legacy_entry = "same"
+demo = "yes: budgets"
+backlog = ["L5-04", "L5-05"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-JOINBYPERIOD"
+area = "Catalog: transforms"
+capability = "`joinByPeriod`: budget and actual per period with calendar bounds"
+v04 = "change"
+v04_note = "as above (review:14 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/budgeting.md#budget-transforms"
+legacy_entry = "same"
+demo = "yes: budgets"
+backlog = ["L5-04"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-JOINBUDGETACTUALBYPERIOD"
+area = "Catalog: transforms"
+capability = "`joinBudgetActualByPeriod`: one row per budgeted (account, currency, period) with remaining and % used"
+v04 = "change"
+v04_note = "as above (review:14 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/budgeting.md#budget-transforms"
+legacy_entry = "same"
+demo = "yes: budgets"
+backlog = ["L5-04"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-BUDGETSUMMARY"
+area = "Catalog: transforms"
+capability = "`budgetSummary`: one aggregate row (maximal named subtree, no double count)"
+v04 = "change"
+v04_note = "as above (review:14 L5-04)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/budgeting.md#budget-transforms"
+legacy_entry = "same"
+demo = "yes: budgets"
+backlog = ["L5-04", "L5-05"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-UNBUDGETED"
+area = "Catalog: transforms"
+capability = "`unbudgetedSpending`: actuals for accounts covered by no budget"
+v04 = "change"
+v04_note = "as above (review:14 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/budgeting.md#budget-transforms"
+legacy_entry = "same"
+demo = "yes: budgets"
+backlog = ["L5-12"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-ENVELOPEROLLOVER"
+area = "Catalog: transforms"
+capability = "`envelopeRollover`: stateless rollover per period (available, carryover, overspent)"
+v04 = "change"
+v04_note = "backend; negative carry-forward kept and documented (review:14 Q2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/budgeting.md#budget-transforms"
+legacy_entry = "same"
+demo = "yes: budgets"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-ENVELOPEBALANCES"
+area = "Catalog: transforms"
+capability = "`envelopeBalances`: inception-aware running envelope balance per account"
+v04 = "change"
+v04_note = "as above (review:14 Q2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/budgeting.md#budget-transforms"
+legacy_entry = "same"
+demo = "yes: budgets"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-TX-BUDGETTREE"
+area = "Catalog: transforms"
+capability = "`budgetTree`: the total split into maximal budgeted children plus an `:Unbudgeted` remainder"
+v04 = "change"
+v04_note = "backend (review:14 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/budgeting.md#budget-transforms"
+legacy_entry = "same"
+demo = "yes: budgets"
+backlog = ["L5-04"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-VIZ-REGISTRY"
+area = "Catalog: visualization types"
+capability = "Viz types declared in six places (schema, `vizRegistry.ts`, chart part lists, renderer chain, per-chart field defaults, parameter sources)"
+v04 = "change"
+v04_note = "one self-describing registry (input frame contract, config schema, link slots, allowed options, formats) served by the backend and generated into docs and the AI guide; a contract test per entry (review:14 §0 #1, L5-14; review:L8 §1.4 #12)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#visualizations"
+legacy_entry = "`recipes/vizRegistry.ts`; `RecipeWidgetRenderer.vue`"
+demo = "no"
+backlog = ["L5-14", "L5-15"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-VIZ-KPI"
+area = "Catalog: visualization types"
+capability = "`kpi`: one metric with icon and color, format, trend, secondary value, `multiCurrency` stack, `colorBySign`, `emptyText`, click link"
+v04 = "change"
+v04_note = "KPI shaping moves to a backend viz-input adapter in decimal (review:19 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#kpi--single-metric-display"
+legacy_entry = "`components/recipes/RecipeKPI.vue`"
+demo = "yes: seed dashboards"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-VIZ-CHART"
+area = "Catalog: visualization types"
+capability = "`chart`: ECharts with `chartType`, `options`, `encode`, series/axis label formats, click and per-series links, resize, zoom/legend kept"
+v04 = "change"
+v04_note = "resizes with its container; no reset on every change; options are data (review:19 §2; L2-09, L5-21; N1)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#chart--echarts-visualizations"
+legacy_entry = "`components/recipes/RecipeChart.vue`"
+demo = "yes: seed dashboards"
+backlog = ["L2-09", "L5-21", "N1", "L8-20"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-VIZ-TABLE"
+area = "Catalog: visualization types"
+capability = "`table`: columns with formats, alignment, per-row currency, column links, `emptyText`; sort with total rows pinned; sort kept across tab switches"
+v04 = "change"
+v04_note = "shared DataTable; sort memory as a module store (review:17 §2; review:19 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#table"
+legacy_entry = "`components/recipes/RecipeTable.vue`; `utils/tableSort.ts`"
+demo = "yes: seed dashboards"
+backlog = ["L9-15"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-VIZ-TREETABLE"
+area = "Catalog: visualization types"
+capability = "`tree-table`: hierarchy from a path field (separator, skip levels, group by, label field, fold single children, expand depth), columns with `aggregate` sum/max/min and `leafOnly`, share-of-total/parent column, treegrid keyboard, column visibility and resize, Copy (TSV) and Download CSV"
+v04 = "keep"
+v04_note = "(its treegrid keyboard model is the model for DataTable) (review:17 §1 positives)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#tree-table"
+legacy_entry = "`components/recipes/RecipeTreeTable.vue`; `utils/buildTreeRows.ts`"
+demo = "yes: reconciliation-assertions (Account Balances)"
+backlog = ["L8-08"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-VIZ-PIVOT"
+area = "Catalog: visualization types"
+capability = "`pivot`: row header, row and column totals, color by value, `warnAt`, value links, column lines, crosshair hover, two-decimal tabular figures"
+v04 = "keep"
+v04_note = "(with typed money cells)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#pivot-table"
+legacy_entry = "`components/recipes/RecipePivotTable.vue`"
+demo = "yes: budgets (adherence heat-map)"
+backlog = ["L5-13"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-VIZ-BUDGET"
+area = "Catalog: visualization types"
+capability = "`budget-progress`: bars per account (budget, actual, remaining, % used, direction), `warnAt`, colors, links"
+v04 = "change"
+v04_note = "shaping on the backend; `noLink` honoured for select links; progressbar semantics (review:19 §2; review:L8v §2.4 #5, #10)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#budget-progress"
+legacy_entry = "`components/recipes/RecipeBudgetProgress.vue`"
+demo = "yes: budgets"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-CHART-BAR"
+area = "Catalog: visualization types"
+capability = "Chart type `bar`"
+v04 = "keep"
+v04_note = ""
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#chart--echarts-visualizations"
+legacy_entry = "`RecipeChart.vue` (`SUPPORTED_CHART_TYPES`)"
+demo = "yes: seed dashboards"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-CHART-LINE"
+area = "Catalog: visualization types"
+capability = "Chart type `line`"
+v04 = "keep"
+v04_note = ""
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "same"
+legacy_entry = "same"
+demo = "yes: seed dashboards"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-CHART-PIE"
+area = "Catalog: visualization types"
+capability = "Chart type `pie`"
+v04 = "keep"
+v04_note = ""
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "same"
+legacy_entry = "same"
+demo = "yes: seed dashboards"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-CHART-AREA"
+area = "Catalog: visualization types"
+capability = "Chart type `area`"
+v04 = "keep"
+v04_note = ""
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "same"
+legacy_entry = "same"
+demo = "yes: budgets"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-CHART-SCATTER"
+area = "Catalog: visualization types"
+capability = "Chart type `scatter`"
+v04 = "keep"
+v04_note = ""
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "same"
+legacy_entry = "same"
+demo = "yes: gallery"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-CHART-TREEMAP"
+area = "Catalog: visualization types"
+capability = "Chart type `treemap` (data injected into the series; ≤ 0 values handled)"
+v04 = "keep"
+v04_note = ""
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "same"
+legacy_entry = "same"
+demo = "yes: household"
+backlog = ["L3-17"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-CHART-FUNNEL"
+area = "Catalog: visualization types"
+capability = "Chart type `funnel`"
+v04 = "keep"
+v04_note = ""
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "same"
+legacy_entry = "same"
+demo = "yes: gallery"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-CHART-GAUGE"
+area = "Catalog: visualization types"
+capability = "Chart type `gauge`"
+v04 = "keep"
+v04_note = ""
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "same"
+legacy_entry = "same"
+demo = "yes: gallery"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-CHART-CALENDAR"
+area = "Catalog: visualization types"
+capability = "Chart type `calendar` (heat map by date)"
+v04 = "change"
+v04_note = "the range follows new runs (today frozen after the first) (L8-19)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "same"
+legacy_entry = "same"
+demo = "yes: gallery"
+backlog = ["L8-19"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-CHART-SANKEY"
+area = "Catalog: visualization types"
+capability = "Chart type `sankey` (source, target, value, optional accounts)"
+v04 = "change"
+v04_note = "shaping moves to the backend adapter (review:19 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "same"
+legacy_entry = "same"
+demo = "yes: gallery"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-CHART-RADAR"
+area = "Catalog: visualization types"
+capability = "Chart type `radar`"
+v04 = "change"
+v04_note = "shaping moves to the backend adapter (review:19 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "same"
+legacy_entry = "same"
+demo = "yes: gallery"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-CHART-SUNBURST"
+area = "Catalog: visualization types"
+capability = "Chart type `sunburst`"
+v04 = "keep"
+v04_note = ""
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "same"
+legacy_entry = "same"
+demo = "yes: budgets (zero-based)"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-VIZ-A11Y"
+area = "Catalog: visualization types"
+capability = "Accessible charts: ECharts `aria` description, decal/marker patterns beyond colour, and a \"Show as table\" toggle per chart (M7)"
+v04 = "new"
+v04_note = "(per F, 2026-10-24) (INV-18; B-2.2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-GEN-VALUE"
+area = "Catalog: generators, formats, parameter sources, engines"
+capability = "Value generators `currentYear`, `currentMonth`, `defaultCurrency`"
+v04 = "change"
+v04_note = "resolved on the backend, pure, after the profile loads (fixes the USD→INR double run); `today` in the user's time zone (review:14 L5-16; review:10 I8; review:11 L3-10)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#available-generators"
+legacy_entry = "`recipes/functions/generators.ts`"
+demo = "no"
+backlog = ["I8", "L5-16", "L3-10"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-GEN-OPTIONS"
+area = "Catalog: generators, formats, parameter sources, engines"
+capability = "Option generators `yearRange`, `monthOptions`, `quarterOptions`, `accountTypeOptions`, `datePresets`, `currencyOptions`"
+v04 = "change"
+v04_note = "backend; account types from the profile's roots (review:14 L5-16, L5-19)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#available-generators"
+legacy_entry = "`generators.ts`"
+demo = "no"
+backlog = ["L5-16", "L5-19"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-GEN-DATES"
+area = "Catalog: generators, formats, parameter sources, engines"
+capability = "Date generators `today`, `startOfMonth`, `endOfMonth`, `startOfYear`, `endOfYear`"
+v04 = "change"
+v04_note = "backend, local civil dates (review:11 L3-10)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#available-generators"
+legacy_entry = "`generators.ts`"
+demo = "no"
+backlog = ["L3-10"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-GEN-OPTIONS-FROM"
+area = "Catalog: generators, formats, parameter sources, engines"
+capability = "Parameter `optionsFrom` sources: `currencies`, `holdings`, `commodities`, `years`, `accounts`, `expenseAccounts`, `incomeAccounts`, `budgetTotals`"
+v04 = "change"
+v04_note = "served as option-source endpoints, not derived in the FE (review:L8 §1.4 #12.6)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#parameter-fields"
+legacy_entry = "`RecipeParameters.vue`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-FMT-VALUE"
+area = "Catalog: generators, formats, parameter sources, engines"
+capability = "Value formats: `currency`, `signedCurrency`, `percent`, `number`, `units`, `compact`, `date`, `dateShort`, `accountName`, `accountName2`"
+v04 = "change"
+v04_note = "one `format.ts` with per-commodity precision and currency-based grouping; `dateShort`/`accountName2` actually applied (review:11 Q1, L3-08; L8-18)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#formats"
+legacy_entry = "`recipes.enums.generated.ts:VALID_VALUE_FORMATS`"
+demo = "no"
+backlog = ["L3-08", "L8-18"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ENGINE-SQLITE"
+area = "Catalog: generators, formats, parameter sources, engines"
+capability = "`query` steps in SQLite SQL over the mirror"
+v04 = "change"
+v04_note = "the single hardened QueryRunner; versioned `r_*` views; `dsum`/`price_asof` (review:14 §0a.2; L5-07)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#query-step"
+legacy_entry = "`POST /api/ledger/query`"
+demo = "no"
+backlog = ["L5-07", "L5-20", "L3-07"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-ENGINE-BQL"
+area = "Catalog: generators, formats, parameter sources, engines"
+capability = "`query` steps with `engine: beanquery` (BQL)"
+v04 = "change"
+v04_note = "statement allowlist; one shared transient load per recipe run, memoized; native `%(name)s` binding (review:18 L11-07; review:14 L5-09; review:D1 §10)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/dashboard-recipes.md#query-step"
+legacy_entry = "`services/beanquery_service.py`"
+demo = "no"
+backlog = ["L11-07", "L5-09"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-QUERY-SQL"
+area = "Analyze (SQL / BQL)"
+capability = "Query view, SQLite mode: editor, ⌘/Ctrl+Enter, \"N rows in T ms\", inline DB error, Clear"
+v04 = "change"
+v04_note = "the single hardened runner (`query_only`, no `ATTACH`, authorizer, timeout, string-length limit); documented versioned view surface; errors through the one inline-error helper (review:14 L5-07, L5-20; review:L8 §1.4 #11)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/query.md#query-editor; reference/querying-data.md#sql-reference"
+legacy_entry = "`views/AnalyzeView.vue`; `POST /api/ledger/query` `query.execute_query`"
+demo = "no"
+backlog = ["L5-07", "L1-10", "L5-20"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-QUERY-BQL"
+area = "Analyze (SQL / BQL)"
+capability = "Query view, BQL mode (language toggle changes copy, placeholder and docs links)"
+v04 = "change"
+v04_note = "statement allowlist (`SELECT`, `BALANCES`, `JOURNAL`, `PRINT`), load under the heavy-load semaphore (review:18 L11-07; review:D1 §10)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/query.md#language-toggle; reference/querying-data.md#bql-reference"
+legacy_entry = "`AnalyzeView.vue`; `services/beanquery_service.py`"
+demo = "no"
+backlog = ["L11-07"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-QUERY-SURFACE"
+area = "Analyze (SQL / BQL)"
+capability = "The queryable mirror: `postings`, `accounts`, `account_balances`, `balance_assertions`, `commodities`, `commodity_usage`, `custom_directives`, `documents`, `events`, `ledger_errors`, `ledger_options`, `notes`, `pad_directives`, `prices`, `latest_prices`, `lots`, `stored_queries`, `training_data`; postings schema endpoint"
+v04 = "change"
+v04_note = "a documented, versioned `r_*` view surface exposing at least today's data; every mirror table name that existed at `v0.2.2` keeps working through 0.4.x, `lots` included (served from as-of booked inventory; the end-of-ledger computation stays deleted) (DECIDED (owner, 2026-10-24), F §2 item 10; the owner's note said v0.2.x had no `lots` table, but the `v0.2.2` tag has one, `services/sqlite_exporter.py:525`, so `lots` falls under the rule; re-confirmed by the owner 2026-10-24: keep working through 0.4.x); `latest_prices` (v0.3-only) replaced by `price_asof`; existing user SQL needs no dialect migration (review:14 §0; review:21 §3 step 8 item 8)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/querying-data.md#ledger-mirror-tables"
+legacy_entry = "`services/sqlite_exporter.py`; `GET /api/ledger/schema/postings`"
+demo = "no"
+backlog = ["L5-20", "L7-07", "L3-12"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-QUERY-NL"
+area = "Analyze (SQL / BQL)"
+capability = "Quick query builder: describe a query in words, the AI writes SQL or BQL (⌘/Ctrl+Enter; disabled without AI)"
+v04 = "keep"
+v04_note = "(see Q5: stays in the Query view or folds into the assistant)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/query.md#quick-query-builder; reference/ai-data-sharing.md#query-assistant"
+legacy_entry = "`AnalyzeView.vue`; `POST /api/ai/generate-query`; prompts `sql_assistant.md`, `bql_assistant.md`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-QUERY-RESULTS"
+area = "Analyze (SQL / BQL)"
+capability = "Results table (raw columns; integers grouped, other numbers to 2 dp)"
+v04 = "change"
+v04_note = "money-aware DataTable with per-commodity precision; integer years not grouped; empty state for zero rows; row cap (review:11 L3-08; review:L8v §2.4 #9)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/query.md#table"
+legacy_entry = "`AnalyzeView.vue:147-196`"
+demo = "no"
+backlog = ["L3-08", "L8.M-16"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-QUERY-CHART"
+area = "Analyze (SQL / BQL)"
+capability = "Chart the results: bar, line, pie, area, scatter, treemap; X/name and Y/value column pickers with defaults"
+v04 = "change"
+v04_note = "emits a registry viz spec, money string columns chartable, picks kept when columns are unchanged (review:L8 §1.4 #11.7–8)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/query.md#chart"
+legacy_entry = "`AnalyzeView.vue:199-308`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-BUD-DIRECTIVE"
+area = "Budgets"
+capability = "Budgets as `custom \"budget\"` directives: effective-dating, `none` ends a budget, inclusive-parent inheritance, total budgets on a root, several currencies, last wins, periods daily/weekly/monthly/quarterly/yearly"
+v04 = "change"
+v04_note = "income budgets computed correctly (sign-normalized; over target is good; kept apart from expense totals) (review:14 Q1, L5-05)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "reference/budgeting.md"
+legacy_entry = "`core/budget_directives.py`; `compute/budget_resolver.py`"
+demo = "yes: budgets (including an income budget)"
+backlog = ["L5-05"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-BUD-VIEW"
+area = "Budgets"
+capability = "Budgets view: account filter, \"budget as of\" date, currency filter; one row per account and currency with the current budget; quick-add (parent accounts allowed); staged forward-dated changes with \"Save Changes (N)\" (failed rows keep their input); unsaved guard"
+v04 = "change"
+v04_note = "drafts kept per row (not wiped by a refresh, no duplicate directives on re-save); filters URL-synced; default currency from the profile; MoneyInput validation; phone card layout deleted (review:L8 §1.6 #6; L8-23; review:17 §5)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/budgets.md#setting-a-budget"
+legacy_entry = "`views/BudgetsView.vue`; `/api/budgets` GET/POST/PUT/DELETE"
+demo = "yes: budgets"
+backlog = ["L8-23", "L8.M-17", "L8-06"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-BUD-HISTORY"
+area = "Budgets"
+capability = "Budget history per row: end the budget as of a date (tombstone), edit or delete each directive"
+v04 = "keep"
+v04_note = ""
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/budgets.md#managing-budget-history"
+legacy_entry = "`components/budgets/BudgetHistoryPanel.vue`"
+demo = "yes: budgets"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-BUD-DASH-OVERVIEW"
+area = "Budgets"
+capability = "Budget: Overview (Budgeted, Spent, Remaining, Unbudgeted spending, progress by account)"
+v04 = "change"
+v04_note = "nesting-aware totals; income separate; foreign spending converted to the reporting currency; labels fixed (review:14 L5-04, L5-05, L5-12, L5-18)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/budgets.md#choosing-a-budgeting-style"
+legacy_entry = "`budget-overview.json`"
+demo = "yes: budgets"
+backlog = ["L5-04", "L5-05", "L5-12", "L5-18"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-BUD-DASH-ENVELOPES"
+area = "Budgets"
+capability = "Budget: Envelopes (envelope balances, available, spent, in envelope now, balance over time)"
+v04 = "change"
+v04_note = "on the `ledger` budget measures; negative carry-forward kept and documented (review:14 Q2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/budgets.md#choosing-a-budgeting-style"
+legacy_entry = "`budget-envelopes.json`"
+demo = "yes: budgets"
+backlog = ["L5-12"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-BUD-DASH-ZERO"
+area = "Budgets"
+capability = "Budget: Zero-based (total budget carved into children plus Unbudgeted)"
+v04 = "change"
+v04_note = "on the budget measures (review:14 §2)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/budgets.md#choosing-a-budgeting-style"
+legacy_entry = "`budget-zero-based.json`"
+demo = "yes: budgets"
+backlog = ["L5-04"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-BUD-DASH-HISTORY"
+area = "Budgets"
+capability = "Budget: History (total budget vs actual by month, adherence heat-map)"
+v04 = "change"
+v04_note = "the 16.8% overstatement from summing nested parent and child budgets fixed (review:14 L5-04)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/budgets.md#choosing-a-budgeting-style"
+legacy_entry = "`budget-history.json`"
+demo = "yes: budgets"
+backlog = ["L5-04"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-BUD-BUILD-OWN"
+area = "Budgets"
+capability = "Build your own budget dashboard (copy a demo, or ask the assistant with its budget guide)"
+v04 = "change"
+v04_note = "via the widget library and the backend validator/run; the AI uses the same catalog docs (review:14 §0, §0a)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "views/budgets.md#build-your-own-budget-dashboard"
+legacy_entry = "prompt `budget_guide.md`; tool `get_budget_guide`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-QA-BUY"
+area = "Recording activity"
+capability = "Quick action Buy: holding account, security, units, unit price, cash account, optional fee and fee account"
+v04 = "keep"
+v04_note = "(event builder on the kernel; exact units, never rounded to 2 dp) (review:16 §2; L3-01)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "views/investments.md#quick-actions (v)"
+legacy_entry = "`components/investments/QuickActionForms.vue`; `POST /api/investments/assemble`; `services/investment_assembler.py:_build_buy`"
+demo = "yes: household (brokerage)"
+backlog = ["L3-01"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-QA-DRIP"
+area = "Recording activity"
+capability = "Quick action Reinvest: a reinvested dividend buys more units"
+v04 = "keep"
+v04_note = ", as a first-class action (the most common cause of unit drift) (review:16 §5.4)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "views/investments.md#quick-actions (v)"
+legacy_entry = "`_build_drip`"
+demo = "yes: drip-splits"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-QA-DIVIDEND"
+area = "Recording activity"
+capability = "Quick action Dividend paid to cash; income account suggested from `dividend-of` / `income-type` metadata (`dividend_of` renamed, per 28, owner 2026-10-24)"
+v04 = "keep"
+v04_note = ", with suggestions kept per field (not sticking across actions) (L8-26)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "views/investments.md#quick-actions (v)"
+legacy_entry = "`_build_cash_dividend`"
+demo = "yes: unattributed-income"
+backlog = ["L8-26"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-QA-SELL"
+area = "Recording activity"
+capability = "Quick action Sell: app-side lot picking (FIFO, LIFO, HIFO, specific lots) with a live realized-gain preview; gains account suggested from `income-type: capital-gains`"
+v04 = "change"
+v04_note = "the sale is a lot reduction that Beancount books per the account's booking method; lots listed from Beancount's booked inventory as of the sale date; the preview is a D1 dry-run; app lot math deleted (review:16 §4; review:19 §5)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "views/investments.md#quick-actions (v)"
+legacy_entry = "`components/investments/SaleForm.vue`; `_build_sell`, `_select_lots`; `services/lot_math.py`"
+demo = "yes: one fragment per booking method"
+backlog = ["L3-01", "L7-07"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-QA-MERGER"
+area = "Recording activity"
+capability = "Quick action Merger: a fund merges into another or changes face value; lots keep date and cost, no gain"
+v04 = "keep"
+v04_note = "(review:16 §2 event builders)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "views/investments.md#quick-actions (v)"
+legacy_entry = "`_build_conversion`"
+demo = "yes: drip-splits"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-QA-CD-MATURITY"
+area = "Recording activity"
+capability = "Quick action CD Matures: principal and any final interest to another account"
+v04 = "change"
+v04_note = "checks the CD balance and closes the account (review:16 L7-12, §4.4)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "views/investments.md#quick-actions (v)"
+legacy_entry = "`_build_cd_maturity`"
+demo = "yes: cds"
+backlog = ["L7-12"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-QA-INTEREST"
+area = "Recording activity"
+capability = "Quick action Interest: credited to the instrument (compounding) or paid to another account"
+v04 = "keep"
+v04_note = ""
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "views/investments.md#quick-actions (v)"
+legacy_entry = "`_build_interest`"
+demo = "yes: interest-attribution"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-QA-ADD-HOLDING"
+area = "Recording activity"
+capability = "Quick action Add Holding: an existing position at average cost against an Equity opening account"
+v04 = "keep"
+v04_note = "(review:L8 §1.6 #8)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "views/investments.md#quick-actions (v)"
+legacy_entry = "`_build_add_holding`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-OPEN-DEPOSIT"
+area = "Recording activity"
+capability = "Open Deposit: a new savings, CD or bond account with rate and maturity, an optional linked interest income account (new or existing), and an optional first deposit; live dry-run preview; written directly with a preview hash"
+v04 = "keep"
+v04_note = "(review:16 §4.4; review:L8 §1.6 #10)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "views/investments.md#open-deposit (v)"
+legacy_entry = "`components/investments/OpenDepositForm.vue`; `POST /api/investments/open-deposit`; `services/deposit_opener.py`"
+demo = "yes: cds"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-STAGING"
+area = "Recording activity"
+capability = "Quick actions stage drafts into a review table below the tabs; Register writes them; Clear"
+v04 = "change"
+v04_note = "the same import session and commit as Import (review:L8 §1.3 #9)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "views/investments.md#quick-actions (v)"
+legacy_entry = "`views/InvestmentsView.vue` (`stageDrafts`)"
+demo = "no"
+backlog = ["L8-26"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-AI-EVENTS"
+area = "Recording activity"
+capability = "AI file import and natural-language entry produce investment events (buys, sales, dividends, reinvestments, interest, CD maturities)"
+v04 = "change"
+v04_note = "through the Draft session; sales follow the booking-method rules (review:12 §2; review:19 §5)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "views/investments.md#quick-actions (v)"
+legacy_entry = "`investment_assembler.parse_investment_events`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-CAS-IMPORT"
+area = "Statement (CAS) import, v0.3 only"
+capability = "Import statement: read a CAMS/KFintech CAS PDF locally (password, not saved), map accounts per distributor, cash fallback, matching window, cutoff, history start, dividend / taxes / gains accounts, target file; per-fund rows with code edit, exclude, units tick; row corrections; Register in one write; result with Update prices"
+v04 = "cut"
+v04_note = "full-history replay retired by the investment scope reset; replaced by the one-upload holdings sync (CAP-INV-ONE-UPLOAD-SYNC), whose first import records opening positions at the registrar's cost (review:16 §4; review:D1 §12.7; review:21 §3 step 5)"
+status = "cut"
+milestone = "M8"
+release_blocking = "n/a"
+doc = "guides/import-cas.md (v); views/investments.md#import-statement (v)"
+legacy_entry = "`components/investments/StatementImportPanel.vue`, `StatementFundRow.vue`, `StatementFundDetail.vue`; `services/statement_import/`; `POST /api/investments/statement/parse`, `/preview`, `/commit`"
+demo = "no"
+backlog = ["L7-03", "L7-04", "L7-05", "L7-10", "L7-11", "L7-15"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-CAS-REPLACE"
+area = "Statement (CAS) import, v0.3 only"
+capability = "\"Replace hand entries\" per fund"
+v04 = "cut"
+v04_note = "it deleted hand entries by commodity across accounts (review:16 Q5; L7-03)"
+status = "cut"
+milestone = "M8"
+release_blocking = "n/a"
+doc = "guides/import-cas.md (v)"
+legacy_entry = "`services/statement_import/plan.py`"
+demo = "no"
+backlog = ["L7-03"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-CAS-UNDO"
+area = "Statement (CAS) import, v0.3 only"
+capability = "List of earlier statement imports, each with Undo"
+v04 = "cut"
+v04_note = "statement import and its undo are not built (review:D1 §12.7)"
+status = "cut"
+milestone = "M8"
+release_blocking = "n/a"
+doc = "guides/import-cas.md#7-later-import-again-or-undo (v)"
+legacy_entry = "`GET /api/investments/statement/imports`, `DELETE …/imports/{id}`"
+demo = "no"
+backlog = ["L7.M6"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-TAX-ROLES"
+area = "Statement (CAS) import, v0.3 only"
+capability = "Taxes account for stamp duty, STT and TDS in statement import"
+v04 = "cut"
+v04_note = "tax modelling removed; fees recorded as the broker shows them (review:16 §4)"
+status = "cut"
+milestone = "M8"
+release_blocking = "n/a"
+doc = "guides/import-cas.md (v)"
+legacy_entry = "`StatementImportPanel.vue` mapping"
+demo = "no"
+backlog = ["L7-06"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-SETUP-META"
+area = "Holdings, metadata, gains"
+capability = "Setup & Metadata tab: per holding (`asset-class`, `name`, `fetch-symbol`, I-bond `issue-date`/`denomination`) and per account (`account-type`, `interest-rate`, `maturity-date`, `interest-account`; Income `income-type`, `dividend-of`); the snake_case spellings are read during the transition and rewritten by the optional cleanup (per 28, owner 2026-10-24); \"only not set\" filter; role-change previews; batch save; guards"
+v04 = "change"
+v04_note = "the backend returns the applicable fields; `exposure` added; ISO currencies are cash by default (review:16 Q3; review:11 Q3; review:L8v §2.5 #7)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "views/investments.md#setup--metadata (v); reference/metadata.md (v)"
+legacy_entry = "`components/investments/SetupMetadataPanel.vue`; `composables/useMetadataReview.ts`; `GET /api/metadata/vocabulary`, `/api/metadata/review`; `PUT /api/commodities/metadata`"
+demo = "yes: unattributed-income"
+backlog = ["L8.M-14", "L3-13", "L7.M5"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-AMFI-FINDER"
+area = "Holdings, metadata, gains"
+capability = "Find an Indian mutual fund's AMFI scheme code (search by name; NAV older than 30 days flagged) and set `fetch-symbol: amfi:<code>` (per 28, owner 2026-10-24)"
+v04 = "keep"
+v04_note = ""
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "reference/investments.md#finding-amfi-scheme-codes-by-hand (v)"
+legacy_entry = "`components/investments/AmfiFinderDialog.vue`; `GET /api/prices/amfi/search`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-ASSET-CLASS"
+area = "Holdings, metadata, gains"
+capability = "Cash vs holding decided by operating currencies (`is_currency`) and `asset-class`; Allocation by Asset Class"
+v04 = "change"
+v04_note = "`operating_currency` means only \"report in these\"; ISO-4217 codes count as cash by default (one-time reclassification) (review:11 Q3)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "reference/commodities-and-currencies.md"
+legacy_entry = "`commodities.is_currency` in the mirror; `GET /api/commodities`"
+demo = "yes: multi-currency"
+backlog = ["L3-13"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-EXPOSURE"
+area = "Holdings, metadata, gains"
+capability = "`exposure` metadata (equity, debt, hybrid, gold, cash, real-estate), filled from the CAS/SEBI category, for allocation separate from instrument type and tax class"
+v04 = "new"
+v04_note = "(review:16 Q3)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: drip-splits (tagged funds)"
+backlog = ["L7-10", "L7.M5"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-INCOME-TYPE"
+area = "Holdings, metadata, gains"
+capability = "Income kind from `income-type` on the Income account's `open`, never from account names; untagged income still shows by source"
+v04 = "keep"
+v04_note = ""
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "reference/metadata.md#on-an-income-accounts-open (v)"
+legacy_entry = "`returns-income.json`; `cash_instruments.py`"
+demo = "yes: unattributed-income"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-INTEREST-ATTR"
+area = "Holdings, metadata, gains"
+capability = "Interest attributed to the instrument that earned it (`interest-account` link (per 28, owner 2026-10-24), else the structural counterpart, else \"unattributed\", never misattributed)"
+v04 = "keep"
+v04_note = "(review:16 §4.4)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "reference/investments.md#attributing-interest-to-the-account-that-earned-it (v)"
+legacy_entry = "`compute/functions/cash_instruments.py`"
+demo = "yes: interest-attribution"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-DIVIDEND-ATTR"
+area = "Holdings, metadata, gains"
+capability = "Dividends attributed to the holding via `dividend-of` (per 28, owner 2026-10-24); unattributed dividends listed by account"
+v04 = "keep"
+v04_note = "(review:16 §4.3, income per holding)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "reference/investments.md#attributing-dividends-to-the-holding-that-paid-them (v)"
+legacy_entry = "`investment-holdings.json`"
+demo = "yes: unattributed-income"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-UNREALIZED"
+area = "Holdings, metadata, gains"
+capability = "Unrealized gain = value − cost; holdings without a cost basis"
+v04 = "change"
+v04_note = "every position valued (units × price as of the date) whatever its cost; labelled clearly (review:14 M-NC; review:16 §4.3; L7.M4)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "reference/investments.md#returns (v)"
+legacy_entry = "`investment-holdings.json`"
+demo = "yes: prices-staleness"
+backlog = ["L5.M2", "L7.M4"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-REALIZED"
+area = "Holdings, metadata, gains"
+capability = "Realized gains (from sale-leg `@` annotations)"
+v04 = "change"
+v04_note = "from Beancount's own booking (lot reductions), fees included; no app lot math; \"gains not tracked\" for booking NONE (review:16 §4.3; review:14 L5-11; review:19 §5)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "reference/investments.md#realized-gains-need-no-metadata (v)"
+legacy_entry = "`returns-income.json` SQL"
+demo = "yes: booking methods"
+backlog = ["L5-11", "L5.M6"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-SIMPLE-RETURN"
+area = "Holdings, metadata, gains"
+capability = "Simple total return % = (unrealized + realized + income) ÷ cost, per holding, category, account or instrument"
+v04 = "new"
+v04_note = "(review:16 §4.3)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: drip-splits"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-XIRR"
+area = "Holdings, metadata, gains"
+capability = "XIRR (money-weighted return), windowed returns, per-asset-class returns"
+v04 = "cut"
+v04_note = "(review:16 §4; TWR is cut with it, though v0.3 never had it)"
+status = "cut"
+milestone = "M8"
+release_blocking = "n/a"
+doc = "reference/investments.md#returns (v)"
+legacy_entry = "`portfolio_returns.py`"
+demo = "no"
+backlog = ["L7-01", "L7-02", "L7.M1", "L7-17"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-HOLDING-PERIOD"
+area = "Holdings, metadata, gains"
+capability = "Short vs long-term labels on realized gains"
+v04 = "cut"
+v04_note = "tax modelling removed (review:16 §4; supersedes review:14 Q3)"
+status = "cut"
+milestone = "M8"
+release_blocking = "n/a"
+doc = "—"
+legacy_entry = "`returns-income.json` (\"by year, short vs long term\")"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-LOTS-WIDGET"
+area = "Holdings, metadata, gains"
+capability = "Purchase lots per holding (from the end-of-ledger `lots` table)"
+v04 = "change"
+v04_note = "from Beancount's booked inventory as of a date, label-aware (review:16 L7-07; review:19 §5.2; see Q4); the user-SQL `lots` name keeps working through 0.4.x (CAP-QUERY-SURFACE; DECIDED (owner, 2026-10-24), F §2 item 10)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`investment-holdings.json` \"Purchase Lots\"; mirror `lots`; `GET /api/investments/holdings/{commodity}`"
+demo = "yes: booking methods"
+backlog = ["L7-07"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-HOLDINGS-VIEW"
+area = "Holdings, metadata, gains"
+capability = "Per-account Holdings view laid out like a broker's positions page: symbol, units, price, price date with age, value, cost, gain, account total; stale prices highlighted; one-click Refresh prices"
+v04 = "new"
+v04_note = "(review:16 §5.1)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: prices-staleness"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-COMPARE-BROKER"
+area = "Holdings, metadata, gains"
+capability = "\"Compare with broker\": type the broker's total, paste/upload a positions export, or give a full statement; per-holding diff explained in plain language (units differ → suggest a reinvestment; price differs → both prices and dates, Refresh; cost differs → usual explanations)"
+v04 = "new"
+v04_note = "(review:16 §5.2); v0.4.0 reads CAS; broker formats beyond CAS follow after v0.4.0 (DECIDED (owner, 2026-10-24), F §2 item 3)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: drip-splits (one missing reinvestment)"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-ONE-UPLOAD-SYNC"
+area = "Holdings, metadata, gains"
+capability = "\"One upload, one confirm\": upload one broker statement or CAS; Finzytrack infers every event that explains the difference (reinvestments, splits, buys, sells, fees, dividends), shows one summary, writes everything through D1 and records units assertions; anything ambiguous is listed, never guessed"
+v04 = "new"
+v04_note = "(review:16 §5 clarification, §2; review:19 §5.6); v0.4.0 reads CAS; broker formats beyond CAS follow after v0.4.0 (DECIDED (owner, 2026-10-24), F §2 item 3)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "(CAS parser `services/statement_import/parsers/cas.py` may port as an adapter)"
+demo = "yes: drip-splits"
+backlog = ["L7-11"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-POSITIONS-ADAPTERS"
+area = "Holdings, metadata, gains"
+capability = "Positions/holdings CSV exports (Fidelity, E*Trade, Indian brokers) read as import adapters"
+v04 = "new"
+v04_note = "(review:16 §5.2 (b)); deferred to after v0.4.0 (DECIDED (owner, 2026-10-24), F §2 item 3)"
+status = "planned"
+milestone = "M8"
+release_blocking = "no"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-UNITS-ASSERT"
+area = "Holdings, metadata, gains"
+capability = "Units `balance` assertions as the durable \"matches broker as of X\" record, written only when units reconcile"
+v04 = "new"
+v04_note = "(review:16 §5.3, §2; L7-04)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: reconciliation-assertions"
+backlog = ["L7-04"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-BOOKING-METHODS"
+area = "Holdings, metadata, gains"
+capability = "Every booking method Beancount books: ledger default (`option \"booking_method\"`) and per-account override on `open`; FIFO/LIFO/HIFO with a preview of the lots used; \"choose lots instead\"; STRICT/STRICT_WITH_SIZE lot picker; NONE (\"gains not tracked\"); AVERAGE listed as unavailable with Beancount's reason; first ambiguous sale offers a choice; changing a method previews re-booked past sales"
+v04 = "new"
+v04_note = "(review:19 §5)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "(to add: reference/investments.md booking-methods section)"
+legacy_entry = "—"
+demo = "yes: one fragment per method"
+backlog = ["L7-07"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-PRICE-UPDATE"
+area = "Prices"
+capability = "Update prices: Yahoo (via beanprice), AMFI NAVs (mfapi.in), I-bonds computed from `issue-date`/`denomination` (per 28, owner 2026-10-24); cadence from `asset-class` (daily, monthly for bond/CD, computed for I-bonds, never for cash and money-market); history back-filled"
+v04 = "change"
+v04_note = "sources behind one interface; the symbol is read from `fetch-symbol`, `fetch_symbol` or bean-price's `price:`, and only `fetch-symbol` is written (per 28, owner 2026-10-24); history unadjusted for splits, or units adjusted consistently (Yahoo `close` is split-adjusted today); manual prices not overwritten; price writes through D1 (review:16 §2; L7-13; L7-05)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "reference/investments.md#fetching-prices (v)"
+legacy_entry = "`services/price_fetcher.py`, `amfi_source.py`, `price_cadence.py`; `POST /api/prices/update`"
+demo = "yes: prices-staleness"
+backlog = ["L7-13", "L7-05", "L3-12"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-PRICE-AUTO"
+area = "Prices"
+capability = "Prices kept current automatically"
+v04 = "new"
+v04_note = "(review:16 §4.2 \"automatic price updates\"; see Q6 for the trigger); trigger DECIDED (owner, 2026-10-24), F §2 item 11: in the background when a workspace opens and prices are stale, with an off switch (fetching tells Yahoo/AMFI which symbols you hold)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: prices-staleness"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-PRICE-OVERVIEW"
+area = "Prices"
+capability = "Prices tab: one row per (commodity, quote) with asset class, cadence, latest price (written decimals), as-of date with age, \"Out of date\" and \"In ledger file\" badges; Held / All filter; last-run summary with skipped and failed and a link to fix the symbol"
+v04 = "change"
+v04_note = "one PriceIndex (as-of, quote-specific, future-dated prices excluded, same-day duplicates removed); stale positions never excluded from totals, shown at the last price with its date; thresholds daily 7 d, monthly 45 d, manual never (review:11 Q5, L3-12)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "views/investments.md#prices (v)"
+legacy_entry = "`components/investments/PricesPanel.vue`; `GET /api/prices/overview`"
+demo = "yes: prices-staleness"
+backlog = ["L3-12", "L8-09", "L5.M1"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-PRICE-HISTORY"
+area = "Prices"
+capability = "Price history per pair: paginated, inline edit (Enter saves, Esc cancels), delete; ledger-file prices read-only"
+v04 = "keep"
+v04_note = ""
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "reference/investments.md#entering-and-changing-prices (v)"
+legacy_entry = "`components/investments/PriceHistoryDrawer.vue`; `GET /api/prices/history`"
+demo = "yes: prices-staleness"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-PRICE-ADD"
+area = "Prices"
+capability = "Add a price; on a taken date ask \"Replace price?\""
+v04 = "keep"
+v04_note = ", with the shared confirm (Cancel focused)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "reference/investments.md#entering-and-changing-prices (v)"
+legacy_entry = "`components/investments/AddPriceModal.vue`, `PriceForm.vue`; `PUT /api/prices` `prices.edit_prices`"
+demo = "no"
+backlog = ["L9-01"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-PRICE-SIDECAR"
+area = "Prices"
+capability = "Fetched and manual prices live in `<stem>.prices.beancount`, outside the include tree"
+v04 = "change"
+v04_note = "the sidecar becomes a D1-written member file under the write contract; \"include prices in the ledger\" offered as an opt-in migration (review:16 Q2)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "reference/investments.md#prices-give-holdings-a-market-value (v)"
+legacy_entry = "`core/ledger_manager.py` (sidecar)"
+demo = "yes: prices-staleness"
+backlog = ["L7-09", "L1.M5"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-PRICE-FX"
+area = "Prices"
+capability = "Totals in the reporting currency via exchange rates"
+v04 = "new"
+v04_note = "(review:16 §4.2; review:14 L5-12; review:11 L3-13)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: multi-currency"
+backlog = ["L5-12", "L7-14"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DOC-TXN"
+area = "Documents"
+capability = "Attach files to a transaction: drop onto its row or use the drawer's upload zone; named from date and payee; stored as `document`, `document2`… metadata; staged like any edit; per-document remove"
+v04 = "keep"
+v04_note = ", with one `is_document_key` rule and typed metadata preserved (review:11 L3-15)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "reference/documents.md#transaction-documents"
+legacy_entry = "`components/documents/TransactionDocumentsDrawer.vue`, `DocumentUploadZone.vue`; `POST /api/documents/upload`"
+demo = "yes: documents"
+backlog = ["L3-15"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DOC-ACCOUNT"
+area = "Documents"
+capability = "Account documents (`document` directives): list, upload and attach, detach"
+v04 = "keep"
+v04_note = "(detach gets a confirm)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "reference/documents.md#account-documents"
+legacy_entry = "`AccountDetailDrawer.vue`; `/api/documents/account` GET/POST/DELETE"
+demo = "yes: documents"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DOC-PREVIEW"
+area = "Documents"
+capability = "Preview images and PDFs; download anything else; Linux hint when no PDF viewer is available"
+v04 = "keep"
+v04_note = "(see Q9 on the Linux hint under Tauri)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "reference/documents.md#viewing-documents"
+legacy_entry = "`components/documents/DocumentPreviewModal.vue`; `GET /api/documents/file`"
+demo = "yes: documents"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DOC-ORPHANS"
+area = "Documents"
+capability = "Find and remove unreferenced files: scan, recent files (24 h grace) unselected, range selection, preview, delete with re-check and skipped count"
+v04 = "change"
+v04_note = "never offers the ledger's own files (includes, sidecar, any `*.beancount`) even when the documents folder contains the ledger (review:18 M-2)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "reference/documents.md#orphaned-documents"
+legacy_entry = "`components/settings/DocumentMaintenanceSection.vue`, `components/documents/OrphanSweepModal.vue`; `POST /api/documents/orphans/scan`, `/delete`"
+demo = "yes: documents"
+backlog = ["L11.M-2"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DOC-LOCATION"
+area = "Documents"
+capability = "Documents folder: `option \"documents\"` wins, else `data/documents/<stem>-<hash>/`, written as the option on first use"
+v04 = "change"
+v04_note = "new workspaces use `<folder>/documents/`; copy-adoption brings the folder in and rewrites an escaping option; nothing is moved (review:23 §8 S8)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "reference/documents.md#where-files-are-stored"
+legacy_entry = "`core/document_store.py`"
+demo = "yes: documents"
+backlog = ["L11-06"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DOC-PATH-SAFETY"
+area = "Documents"
+capability = "Uploads and served files confined to the documents folder"
+v04 = "keep"
+v04_note = ", plus the `LoadPolicy` seam that confines documents roots (review:18 §2.4)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "reference/documents.md#path-safety"
+legacy_entry = "`helpers/path_guard.py`"
+demo = "no"
+backlog = ["L11-06"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-AI-CHAT"
+area = "AI assistant"
+capability = "Chat: streamed answers, reasoning (\"thinking\") block, tool-call badges, New Chat, composer with attachments, resizable sidebar"
+v04 = "change"
+v04_note = "Pydantic AI agent loop + `@ai-sdk/react` `useChat` + our own thin components; server-side append-only history (in memory, TTL); visible streaming; Stop cancels on the server (review:13 §4, Q3) (React stack, DECIDED (owner, 2026-10-24), conditional on M0 spike S13; Vue fallback otherwise)"
+status = "planned"
+milestone = "M9"
+release_blocking = "yes"
+doc = "views/ai-assistant.md#chat-interface"
+legacy_entry = "`views/AssistantView.vue`; `POST /api/assistant/chat` (SSE) `assistant.assistant_chat`; `api/assistant.ts`"
+demo = "no"
+backlog = ["L6-08", "L6-09", "L6-14", "L6-15", "L8-04", "L8-05", "N4"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-AI-MARKDOWN"
+area = "AI assistant"
+capability = "Answers rendered as markdown"
+v04 = "change"
+v04_note = "markdown-it (raw HTML off) + DOMPurify, plus a strict CSP; model output can't run script (review:13 §1, §4)"
+status = "planned"
+milestone = "M9"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`AssistantView.vue:renderMarkdown`; `utils/markdown.ts`"
+demo = "no"
+backlog = ["L6-01", "N2", "N3"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-AI-MODES"
+area = "AI assistant"
+capability = "Two modes: attaching a file forces rule-setup mode (no ledger tools); no file = analyst mode"
+v04 = "change"
+v04_note = "one intent-driven assistant with capability profiles (small default tool set plus on-demand expansion, keeping prompts small for local models); attachments are untrusted, tool-read artifacts (review:13 §3)"
+status = "planned"
+milestone = "M9"
+release_blocking = "yes"
+doc = "views/ai-assistant.md#attaching-files"
+legacy_entry = "`ai/system_prompt.py`; `api/routers/assistant.py:609-611`"
+demo = "no"
+backlog = ["L6-05", "L6-04", "L6-03"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-AI-RULES"
+area = "AI assistant"
+capability = "Create CSV, XLS or email import rules from an attached file: quick-fill fields (save as, account, currency, expected transactions), the rule is written, validated against the file and auto-fixed on failure"
+v04 = "change"
+v04_note = "every write is a proposal (preview → confirm → commit → undo) through RuleStore, bound to a server-side `proposal_id.preview_hash`; validation server-side, keyed to the proposal; secrets always as `${…}` references, redacted on read (review:13 §3, Q1, Q2)"
+status = "planned"
+milestone = "M9"
+release_blocking = "yes"
+doc = "views/ai-assistant.md#setup-mode-creating-import-rules"
+legacy_entry = "tools `write_csv_rule`, `write_xls_rule`, `write_email_rule`, `list_rule_files`, `read_file`, `match_email_against_rules`, `test_email_extraction`; prompts `workflow_csv_xls.md`, `workflow_email.md`"
+demo = "no"
+backlog = ["L6-02", "L6-03", "L6-10", "L6-13", "L8.M-8", "L4-12"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-AI-ANALYST"
+area = "AI assistant"
+capability = "Financial questions answered with SQL and compute tools over the ledger"
+v04 = "change"
+v04_note = "figures come from tools that use the kernel's financial functions, at full precision (net worth includes holdings) (review:13 L6-06)"
+status = "planned"
+milestone = "M9"
+release_blocking = "yes"
+doc = "views/ai-assistant.md#analyst-mode-financial-queries"
+legacy_entry = "tools `execute_query`, `execute_compute`, `get_compute_functions`, `get_ledger_context`, `list_accounts`, `read_reference`; prompt `assistant_analyst.md`, `schema_postings.md`"
+demo = "no"
+backlog = ["L6-06", "L6-11"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-AI-VALIDATION"
+area = "AI assistant"
+capability = "Response validation warnings after an answer: unknown account, date out of range, amount mismatch, wrong currency"
+v04 = "change"
+v04_note = "the heuristic warning cards are dropped; each number shows where it came from (\"from: <tool or query>\") instead (DECIDED (owner, 2026-10-24), F §2 item 11) (review:13 L6-06)"
+status = "planned"
+milestone = "M9"
+release_blocking = "yes"
+doc = "views/ai-assistant.md#response-validation"
+legacy_entry = "`ai/validation.py`; `AssistantView.vue:207-274`"
+demo = "no"
+backlog = ["L6-06"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-AI-DASHBOARDS"
+area = "AI assistant"
+capability = "Build dashboards and widgets: read the schema and examples, preview in the sidebar, save the recipe"
+v04 = "change"
+v04_note = "dashboard proposals with server-bound approval; preview mode with no persistence and actions disabled; the AI runs the same backend validator and `run` (so it can check what it writes); schema-describe helper instead of `PRAGMA` (review:13 §3; review:14 §0, §0a.2; L11-04)"
+status = "planned"
+milestone = "M9"
+release_blocking = "yes"
+doc = "views/ai-assistant.md#analyst-mode-building-dashboards"
+legacy_entry = "tools `get_recipe_schema`, `get_example_widget`, `list_recipes`, `read_recipe`, `preview_recipe`, `write_recipe`, `get_budget_guide`"
+demo = "no"
+backlog = ["L11-04", "L1-11", "L8.M-9", "N1", "L5-02"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-AI-FILE-PREVIEW"
+area = "AI assistant"
+capability = "Sidebar preview of an attached CSV/XLS with row and column numbers and sheet tabs"
+v04 = "change"
+v04_note = "decodes with the import's decoder (encodings beyond UTF-8) (review:L8v §2.2 #3)"
+status = "planned"
+milestone = "M9"
+release_blocking = "yes"
+doc = "views/ai-assistant.md#sidebar"
+legacy_entry = "`components/FilePreviewTable.vue`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-AI-PROVIDERS"
+area = "AI assistant"
+capability = "Providers: OpenAI-compatible (LM Studio, Ollama, OpenAI, Groq…) and Anthropic; temperature, max tokens, tool rounds, timeout, extra request body; reasoning models"
+v04 = "change"
+v04_note = "per-model capabilities (no `temperature` where rejected; thinking blocks kept); JSON-mode fallback for local models, native tool use required for proposals; one app-level provider (review:13 L6-08, Q5; review:23 Q1)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "reference/choosing-an-ai-model.md; reference/reasoning-models.md"
+legacy_entry = "`ai/client.py`; config `ai.llm.*`"
+demo = "no"
+backlog = ["L6-08"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-AI-FINZYTRACK"
+area = "AI assistant"
+capability = "\"Finzytrack AI\" provider mode (hosted proxy with a token)"
+v04 = "change"
+v04_note = "(the proxy is to be rewritten as a provider-compatible pass-through) (review:13 §4). **Deferred to after v0.4.0** (DECIDED (owner, 2026-10-24), A1): bring-your-own cloud providers (OpenAI-compatible or Anthropic: URL, model, key) and local models stay in v0.4.0"
+status = "planned"
+milestone = "M9"
+release_blocking = "no"
+doc = "reference/choosing-an-ai-model.md#provider-modes"
+legacy_entry = "config `ai.llm.finzytrack_ai*`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-AI-DIAGNOSTICS"
+area = "AI assistant"
+capability = "AI diagnostics log and endpoint"
+v04 = "keep"
+v04_note = ", with a root-relative path (review:18 L11-09/M-9)"
+status = "planned"
+milestone = "M9"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`GET /api/ai/diagnostics`; `ai/diagnostics.py`"
+demo = "no"
+backlog = ["L11.M-9", "L6-16"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-AI-DATA-SHARING"
+area = "AI assistant"
+capability = "\"What is shared with the AI\" links on every AI surface, and the reference page"
+v04 = "keep"
+v04_note = "(no in-app opt-in; the docs stay accurate as capabilities change) (review:13 Q4)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "reference/ai-data-sharing.md"
+legacy_entry = "links in Import, Query, Assistant, Settings"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-AI-PROPOSALS"
+area = "AI assistant"
+capability = "One write model for everything the AI changes: propose → preview (diff) → confirm → commit → undo; nothing auto-applied; a session that read untrusted content can't auto-apply"
+v04 = "new"
+v04_note = "(review:13 §3, Q1)"
+status = "planned"
+milestone = "M9"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["L6-03", "L1-11"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-AI-LEDGER-WRITES"
+area = "AI assistant"
+capability = "AI ledger proposals: create/update an account, recategorize, reconcile"
+v04 = "new"
+v04_note = "(review:13 §3 gating step 3)"
+status = "planned"
+milestone = "M9"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["L6-04"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-AI-ATTACH-INTENT"
+area = "AI assistant"
+capability = "Attach a statement and ask to reconcile it, import it once, or analyse it (one clarifying question when the intent is unclear)"
+v04 = "new"
+v04_note = "(review:13 §3)"
+status = "planned"
+milestone = "M9"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["L6-05"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SET-TABS"
+area = "Settings"
+capability = "Settings page: General / Import Rules / Dashboards / About tabs, `?tab=`, `?type=`, `#ai-settings` deep links; per-section Save and Reset; \"restart required\" banner"
+v04 = "change"
+v04_note = "one unsaved guard across sections and tabs; no restart banner (no restarts); a Workspace section (review:17 M-1; review:23 §3.1, §8 S11, S22)"
+status = "planned"
+milestone = "M10"
+release_blocking = "yes"
+doc = "reference/configuration.md"
+legacy_entry = "`views/SettingsView.vue`; `components/settings/SettingsSection.vue`"
+demo = "no"
+backlog = ["L9.M-1", "L9.M-3"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SET-DATA"
+area = "Settings"
+capability = "Data section: read-only config-file path; ledger file path with Browse"
+v04 = "change"
+v04_note = "moved to Settings → Workspace; no path field (CAP-WS-SETTINGS) (review:23 §3.1, §8 S1, S19)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "reference/configuration.md#ledger-file"
+legacy_entry = "`GeneralSettingsTab.vue` (Data)"
+demo = "no"
+backlog = ["I6", "L8-15"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SET-ACCOUNTS"
+area = "Settings"
+capability = "Default currency and default unknown account (free text)"
+v04 = "change"
+v04_note = "the currency is derived from the ledger (a workspace override is flagged if it disagrees); the unknown account is picked from existing accounts, per workspace (review:23 §1.3; review:17 L9-09)"
+status = "planned"
+milestone = "M10"
+release_blocking = "yes"
+doc = "reference/configuration.md#accounts"
+legacy_entry = "`PATCH /api/config` (`accounts`)"
+demo = "no"
+backlog = ["L9.M-8", "L3-14", "L8-06"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SET-OPCURRENCY"
+area = "Settings"
+capability = "Operating currencies: chips, add with validation, save writes `option \"operating_currency\"` to the root file, then pickers reclassify"
+v04 = "change"
+v04_note = "validated by the backend; set comparison; a D1 ledger write that refreshes every ledger-scoped view (review:L8 §1.5 #3.3; review:11 Q3)"
+status = "planned"
+milestone = "M10"
+release_blocking = "yes"
+doc = "reference/commodities-and-currencies.md#setting-your-operating-currencies"
+legacy_entry = "`GeneralSettingsTab.vue`; `GET/PUT /api/commodities/operating-currencies`"
+demo = "yes: multi-currency"
+backlog = ["L3-13"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SET-AI"
+area = "Settings"
+capability = "AI section: Finzytrack AI toggle and token (hidden in v0.4.0 with Finzytrack AI mode, DECIDED (owner, 2026-10-24), A1), or provider, API URL, key, model; temperature, max tokens, tool rounds, timeout; Advanced extra request body (JSON object)"
+v04 = "change"
+v04_note = "app-level; secrets with explicit set / replace / clear (a stored key can be removed); backend-driven field set (review:L8 §1.5 #3.4; L8-17; review:23 §1.3)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "reference/configuration.md#llm"
+legacy_entry = "`GeneralSettingsTab.vue` (AI)"
+demo = "no"
+backlog = ["L8-17", "L6-08"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SET-CATEGORIZATION"
+area = "Settings"
+capability = "Categorization on/off and engine (classifier or AI)"
+v04 = "keep"
+v04_note = ", as a workspace setting (review:23 §1.3)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "reference/auto-categorization.md#configuration"
+legacy_entry = "`GeneralSettingsTab.vue`; config `ai.categorization`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SET-EMAIL"
+area = "Settings"
+capability = "Email import: enabled, default lookback days, max emails, IMAP timeout, default parsing mode"
+v04 = "keep"
+v04_note = ", as a workspace setting (review:23 §1.3)"
+status = "planned"
+milestone = "M6"
+release_blocking = "yes"
+doc = "reference/configuration.md#email-import"
+legacy_entry = "config `email_import`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SET-BACKUP"
+area = "Settings"
+capability = "Backups on/off and retention count (applied live)"
+v04 = "change"
+v04_note = "(per F, 2026-10-24): backups are always on for every ledger, tool-state and run write (INV-01, INV-16); the setting controls retention only. Retention has pin classes: journal-referenced, run and pre-migration backups are never pruned automatically. It adds a total size budget and uses monotonic sequence names. A 'Show backups folder' action is included; restore is manual and documented, an in-app restore screen comes after v0.4.0 (DECIDED (owner, 2026-10-24), F §2 item 11) (review:23 §1.3; review:15 M-2)"
+status = "planned"
+milestone = "M10"
+release_blocking = "yes"
+doc = "reference/backups-and-logs.md#configuration-reference"
+legacy_entry = "config `backup`"
+demo = "no"
+backlog = ["L10.M-2"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SET-LOGGING"
+area = "Settings"
+capability = "Log level (live), max file size, rotated files kept"
+v04 = "keep"
+v04_note = ", app-level"
+status = "planned"
+milestone = "M10"
+release_blocking = "yes"
+doc = "reference/backups-and-logs.md#logs"
+legacy_entry = "config `logging`"
+demo = "no"
+backlog = ["L11-03"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SET-SERVER"
+area = "Settings"
+capability = "Server host and port (restart required)"
+v04 = "change"
+v04_note = "headless / CLI only; under Tauri the shell picks the port; LAN guard (review:23 §1.3, §8 S24)"
+status = "planned"
+milestone = "M10"
+release_blocking = "yes"
+doc = "reference/configuration.md#server"
+legacy_entry = "config `server`"
+demo = "no"
+backlog = ["L10-15"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SET-NOTICES"
+area = "Settings"
+capability = "\"Show dismissed notices\""
+v04 = "keep"
+v04_note = "(no \"nothing to re-open\" toast on error)"
+status = "planned"
+milestone = "M10"
+release_blocking = "yes"
+doc = "upgrade-notes/seed-content.md#bring-a-notice-back-after-dismissing-it"
+legacy_entry = "`POST /api/startup/notices/reopen`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SET-ABOUT"
+area = "Settings"
+capability = "About: version, links (docs, website, source, discussions), diagnostics with Copy, \"Report an issue\" prefilled, acknowledgements"
+v04 = "keep"
+v04_note = "(typed about endpoint; acknowledgements updated for the new stack)"
+status = "planned"
+milestone = "M10"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`components/settings/AboutTab.vue`; `GET /health`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SET-YAML"
+area = "Settings"
+capability = "Hand-edit `config.yaml` (comment-preserving merge, validated, atomic with backup)"
+v04 = "change"
+v04_note = "split into app `settings.yaml` and workspace `.finzytrack/settings.yaml`; the registry is app state, not hand-edited; versioned and migrated (review:23 §1.3, §8 S27; review:15 §2)"
+status = "planned"
+milestone = "M10"
+release_blocking = "yes"
+doc = "reference/configuration.md#example-configyaml"
+legacy_entry = "`core/config_manager.py`; `PATCH /api/config`"
+demo = "no"
+backlog = ["L10-15", "L10-01", "L11.M-5"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SET-NUMBER-FORMAT"
+area = "Settings"
+capability = "App-wide decimal mark and group separator, plus a per-currency override; grouping follows the currency"
+v04 = "new"
+v04_note = "(review:11 Q1)"
+status = "planned"
+milestone = "M10"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: multi-currency"
+backlog = ["L3-08"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SET-BOOKING-DEFAULT"
+area = "Settings"
+capability = "Ledger default booking method"
+v04 = "new"
+v04_note = "(review:19 §5.1)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: booking methods"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SET-UPDATE-CHANNEL"
+area = "Settings"
+capability = "Update channel (stable / beta)"
+v04 = "new"
+v04_note = "(review:22 §2); the beta channel is deferred to after v0.4.0; v0.4.0 has the stable channel only (DECIDED (owner, 2026-10-24), F §2 item 3)"
+status = "planned"
+milestone = "M11"
+release_blocking = "no"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-NOTIFY-TOASTS"
+area = "Notifications"
+capability = "Toasts: auto-dismiss after 5 s unless persistent; identical ones coalesce with ×N; click marks read; \"Dismiss all\""
+v04 = "change"
+v04_note = "sonner mounted outside dialog-inert regions, announced to screen readers, coalescing kept; only modal-class errors stay (review:10 D11; review:17 §2) (React stack, DECIDED (owner, 2026-10-24), conditional on M0 spike S13; Vue fallback otherwise)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`components/common/ToastNotifications.vue`; `composables/useNotifications.ts`"
+demo = "no"
+backlog = ["L9-13", "L8.M-15", "L10-17"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-NOTIFY-PANEL"
+area = "Notifications"
+capability = "Notification bell with unread badge and a history panel (mark all read, clear, expandable details, 1-hour pruning)"
+v04 = "change"
+v04_note = "a Radix popover (Esc no longer closes it under a modal) (review:L8 §1.6 #12.5) (React stack, DECIDED (owner, 2026-10-24), conditional on M0 spike S13; Vue fallback otherwise)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`components/common/NotificationPanel.vue`"
+demo = "no"
+backlog = ["L8-29"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-NOTIFY-SERVER"
+area = "Notifications"
+capability = "Server notice banners: ledger parse errors (with details), plugin not loaded, multi-file `pushtag`/`pushmeta` advisory; \"Learn more\"; dismissed per session by signature"
+v04 = "change"
+v04_note = "refreshed through the ledger version instead of scattered checks (review:10 D8, D9)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "reference/ledger-rewrites.md"
+legacy_entry = "`core/notice_service.py`; `GET /api/notices`; `composables/useServerNotices.ts`"
+demo = "no"
+backlog = ["L2-03"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-NOTIFY-STARTUP"
+area = "Notifications"
+capability = "Startup tasks: a blocking gate for migrations needing consent and dismissible notices (seed content, recipe migration) with summary, affected files and result"
+v04 = "change"
+v04_note = "boot phases and one lifecycle prompt over the migration framework and content packs (review:15 §2; review:L8v §2.5 #12)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "upgrade-notes/index.md"
+legacy_entry = "`components/common/StartupGate.vue`, `SeedContentNotice.vue`, `AffectedFilesList.vue`; `/api/startup/tasks`, `…/{id}/apply`, `…/{id}/dismiss`"
+demo = "no"
+backlog = ["L10-04", "L10-09", "L9-04"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-NOTIFY-ERRORS"
+area = "Notifications"
+capability = "Errors shown with code and details"
+v04 = "change"
+v04_note = "one `AppError` path; backend messages kept; no duplicates (review:10 D11; L2-05)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`services/errorHandler`; `composables/useConfigPatch.ts`"
+demo = "no"
+backlog = ["L2-05", "L2-13", "L8-30"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DESK-WINDOW"
+area = "Desktop app"
+capability = "A native window on the system webview (WebKit, WebView2, WebKitGTK) with the Python backend in one process"
+v04 = "change"
+v04_note = "Tauri 2 shell with a PyInstaller sidecar; `GET /api/boot` handshake; clean shutdown, orphan kill, restart; the shell stays thin (review:22 §2)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "installation.md"
+legacy_entry = "`desktop/launcher.py:main`; `desktop/finzytrack.spec`"
+demo = "no"
+backlog = ["L10-09"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DESK-INSTALLERS"
+area = "Desktop app"
+capability = "macOS `.app` (ad-hoc signed, Gatekeeper warnings), Linux AppImage, Windows build"
+v04 = "change"
+v04_note = "Tauri bundles (`.dmg`, `.msi`/NSIS, `.deb`/`.rpm`/AppImage); ad-hoc signed on macOS (not notarized, review:22 owner decision); Windows unsigned (per F, 2026-10-24). Platforms DECIDED (owner, 2026-10-24), F §2 item 8: Apple-silicon macOS, Windows 10/11 x64, Linux x64 (Ubuntu 22.04+); Intel Macs dropped. A third-party notices file ships in every bundle (CAP-DESK-LICENSE-NOTICES) (review:22 §2)"
+status = "planned"
+milestone = "M11"
+release_blocking = "yes"
+doc = "installation.md#download"
+legacy_entry = "`desktop/build.py`; `desktop/linux/`"
+demo = "no"
+backlog = ["L10-18"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DESK-AUTOUPDATE"
+area = "Desktop app"
+capability = "Signed auto-update from GitHub Releases; never migrates silently; rollback = previous version + \"restore pre-upgrade backup\""
+v04 = "new"
+v04_note = "(review:22 §2); on Linux the updater updates the AppImage only (verify in spike S1) (per F, 2026-10-24)"
+status = "planned"
+milestone = "M11"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DESK-STARTUP"
+area = "Desktop app"
+capability = "The launcher waits up to 180 s for the backend with no window; a missing ledger folder stops startup"
+v04 = "change"
+v04_note = "boot states shown in the window (review:15 L10-13)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "installation.md"
+legacy_entry = "`launcher.py:wait_for_backend`"
+demo = "no"
+backlog = ["L10-13"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DESK-HEADLESS"
+area = "Desktop app"
+capability = "`--headless` server-only mode for browser, phone or self-hosting"
+v04 = "keep"
+v04_note = ", with a stable port and the LAN guard (review:23 §8 S24, §5.1)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "installation.md#running-without-a-graphical-session; installation.md#advanced-self-hosting-on-a-server"
+legacy_entry = "`launcher.py --headless`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DESK-CLI"
+area = "Desktop app"
+capability = "Command-line options `--config/-c`, `--host`, `--port`, `--ledger-file`, `--log-level`, `--debug`"
+v04 = "change"
+v04_note = "`--workspace PATH` (alias `--ledger-file`), `--app-root PATH`; the shell picks the port (review:23 §8 S16, S23)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "installation.md#command-line-options"
+legacy_entry = "`launcher.py:parse_args`"
+demo = "no"
+backlog = ["L10-15"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DESK-DATA-DIRS"
+area = "Desktop app"
+capability = "User data in the per-OS Finzytrack folder (`config/`, `data/`, logs); uninstall instructions"
+v04 = "change"
+v04_note = "v0.4 uses its own Tauri identifier dirs (app, demo, local, locks, cache) under the identifier `com.finzytrack.desktop`, product name \"Finzytrack\" (DECIDED (owner, 2026-10-24), F §2 item 8); legacy roots are never written (review:23 §1.2; INV-26)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "installation.md#user-data"
+legacy_entry = "`launcher.py:161-176`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DESK-FILE-PICKER"
+area = "Desktop app"
+capability = "In-app server file browser for choosing ledger files"
+v04 = "change"
+v04_note = "native dialogs through one small shell interface; a keyboard-usable server picker for headless (review:22 §2; review:17 L9-10)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`components/common/FilePickerModal.vue`; `GET /api/filesystem/browse`"
+demo = "no"
+backlog = ["L9-10"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DESK-ZOOM"
+area = "Desktop app"
+capability = "Ctrl/Cmd +/−/0 zoom"
+v04 = "keep"
+v04_note = "(not covered by a decision; see Q9)"
+status = "planned"
+milestone = "M10"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`launcher.py` (zoom shortcuts)"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DESK-CACHE-RESET"
+area = "Desktop app"
+capability = "Drop the webview's cached frontend after an upgrade"
+v04 = "change"
+v04_note = "(Tauri serves bundled assets; see Q9)"
+status = "planned"
+milestone = "M11"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`launcher.py:clear_webview_cache_on_version_change`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DESK-LICENSE-NOTICES"
+area = "Desktop app"
+capability = "Third-party licence notices (`THIRD_PARTY_NOTICES`) shipped in every bundle and shown in About; an automated licence check in T1"
+v04 = "new"
+v04_note = "(DECIDED (owner, 2026-10-24), F §2 item 9: legal advice before v0.4.0; the owner's own code is declared GPL-2.0-or-later)"
+status = "planned"
+milestone = "M11"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-SEED"
+area = "Data and lifecycle"
+capability = "First-run seeding of rules, dashboards and themes from the shipped template"
+v04 = "change"
+v04_note = "read-only, versioned content packs that workspaces reference; one seeding path (review:15 §2)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "reference/configuration.md#file-locations"
+legacy_entry = "`main.py:_seed_config`; `core/seed.py`; `desktop/launcher.py` seeding"
+demo = "no"
+backlog = ["L10-05"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-SEED-REFRESH"
+area = "Data and lifecycle"
+capability = "Demo refresh: demo ledger replaced with consent and a backup; demo dashboards updated only if pristine; notices"
+v04 = "change"
+v04_note = "the demo workspace is replaced on release without asking; if it was edited, one previous copy is kept in a hidden folder and the notice says so (DECIDED (owner, 2026-10-24), F §2 item 11); pristine = bytes equal any shipped version (supersedes review:15 Q1) (review:22 §1.6; L10-06)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "upgrade-notes/seed-content.md"
+legacy_entry = "`seed_refresh/refresh.py`, `bundle.py`, `legacy_recipe_hashes.py`"
+demo = "yes: the demo"
+backlog = ["L10-06", "L10-14", "L1-04"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-DEMO-GEN"
+area = "Data and lifecycle"
+capability = "Demo ledger: one hand-written generator on a fixed calendar, date-shifted at build time (interest showcase, asset-class tags, multi-file variant)"
+v04 = "change"
+v04_note = "a composition of scenario fragments anchored at the release tag date; reproducible; CI checks (0 errors, non-empty seeds, oracle totals, one assertion per fragment); it writes only the review:28 §4 metadata contract and the kebab-case vocabulary, with no random `content_hash` (per 28, owner 2026-10-24); the same generator makes the 5k/54k corpora (review:22 §1)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "development/building.md#4-generate-the-demo-ledger"
+legacy_entry = "`backend/scripts/generate_fake.py`; `resources/seed_data/ledgers/fake-multi/`"
+demo = "yes: all fragments"
+backlog = ["L10-18"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-RECIPE-MIGRATION"
+area = "Data and lifecycle"
+capability = "Dashboard v1 → v2 (steps) migration with backups, as a startup task"
+v04 = "change"
+v04_note = "one migration framework (declarative, idempotent, dry-runnable, backed up; per-artifact versions; lossless steps automatic with an \"Upgraded — undo\" notice; semantic steps need consent); lazy per workspace, never on open (review:15 §2, Q4; review:23 §4.3)"
+status = "planned"
+milestone = "M7"
+release_blocking = "yes"
+doc = "upgrade-notes/dashboards-step-format.md"
+legacy_entry = "`migrations/recipe_migration.py`, `runner.py`; `startup_tasks/tasks/recipe_migration_task.py`"
+demo = "no"
+backlog = ["L10-07", "L10-10"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-CURRENCY-UPGRADE"
+area = "Data and lifecycle"
+capability = "Currencies vs holdings upgrade (Layer 1/2)"
+v04 = "change"
+v04_note = "the ISO-codes-are-cash reclassification arrives as a migration (review:11 Q3)"
+status = "planned"
+milestone = "M8"
+release_blocking = "yes"
+doc = "upgrade-notes/currencies-and-holdings.md"
+legacy_entry = "`startup_tasks/upgrade_state.py`"
+demo = "no"
+backlog = ["L3-13"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-NEWER-REFUSE"
+area = "Data and lifecycle"
+capability = "A workspace written by a newer app is refused, with \"restore backup of run X\"; a file in a newer format is never rewritten"
+v04 = "new"
+v04_note = "(review:15 §2, Q3; review:23 §7.2 INV-17 amend)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["L10-08"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-BOOT"
+area = "Data and lifecycle"
+capability = "Boot phases with a screen for each (unprovisioned, recovering, config invalid, needs ledger, ledger unavailable, newer workspace, upgrade pending, ready)"
+v04 = "new"
+v04_note = "(review:15 §2; review:19 §3)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "(`startup_tasks/registry.py`, client-initiated)"
+demo = "no"
+backlog = ["L10-04", "L10-09", "L10-13"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-BACKUPS"
+area = "Data and lifecycle"
+capability = "A timestamped backup of every file before each write, retention, atomic writes, backups during upgrades"
+v04 = "change"
+v04_note = "machine-local per workspace (opt-in in Export); no backup, no write; per-run backups with \"restore backup of run X\" (review:15 §2; review:23 §1.2, §8 S10)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "reference/backups-and-logs.md#backups"
+legacy_entry = "`core/backup_manager.py`, `core/atomic_backup.py`"
+demo = "no"
+backlog = ["L10.M-2", "L10-16"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-LOGS"
+area = "Data and lifecycle"
+capability = "Rotating log file and console output"
+v04 = "keep"
+v04_note = "(one app log)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "reference/backups-and-logs.md#logs"
+legacy_entry = "`logging_context.py`; `app/main.py` logging setup"
+demo = "no"
+backlog = ["L11-03", "L11.M-9"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-MIRROR"
+area = "Data and lifecycle"
+capability = "SQLite mirror of the ledger, rebuilt after each write and on every switch"
+v04 = "change"
+v04_note = "atomic publish of a new generation file; one mirror per workspace in the cache dir with a corrected fingerprint (instant switch back); readers always see a complete mirror (review:D1 §11; review:23 §3.4)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "reference/querying-data.md#ledger-mirror-tables"
+legacy_entry = "`services/sqlite_exporter.py`, `sqlite_reader.py`"
+demo = "no"
+backlog = ["I4", "L1-10", "L1.M5"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-EXPORT-API"
+area = "Data and lifecycle"
+capability = "Manual mirror export endpoints"
+v04 = "cut"
+v04_note = "(no UI caller) (review:10 D5)"
+status = "cut"
+milestone = "M2"
+release_blocking = "n/a"
+doc = "—"
+legacy_entry = "`POST /api/ledger/export`, `GET /api/ledger/export/status`"
+demo = "no"
+backlog = ["L1-04", "L1-12"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-MULTIFILE"
+area = "Data and lifecycle"
+capability = "Multi-file ledgers: new entries routed by Fava's `insert-entry` / `default-file` options; `include` kept at any depth; `option`/`plugin` root-only"
+v04 = "keep"
+v04_note = ", with glob includes expanded (no duplication into the root, no `*.beancount` file created) (review:D1 §4; I2)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "reference/multi-file-ledgers.md"
+legacy_entry = "`core/beancount_engine.py:185-242`"
+demo = "see Q11"
+backlog = ["I2"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-WRITE"
+area = "Data and lifecycle"
+capability = "Writes re-render whole files: comments dropped, elided amounts and `{}` reductions baked in, plugin entries persisted (documented)"
+v04 = "change"
+v04_note = "Fava-style in-place splicing; only the intended text changes (review:D1; review:10 D1)"
+status = "planned"
+milestone = "M1"
+release_blocking = "yes"
+doc = "reference/ledger-rewrites.md"
+legacy_entry = "`core/ledger_manager.py`, `core/beancount_engine.py`"
+demo = "no"
+backlog = ["I10", "I2", "I3", "L1-03"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-WRITE-GATE"
+area = "Data and lifecycle"
+capability = "A write that adds booking errors is refused"
+v04 = "change"
+v04_note = "the full write-safety contract, every step failing closed: semantic diff equals the intended change, no new errors of any type (unless acknowledged), hash and fingerprint checks, atomic with backup, read-back (review:D1 §3, §12.2)"
+status = "planned"
+milestone = "M1"
+release_blocking = "yes"
+doc = "reference/ledger-rewrites.md"
+legacy_entry = "write gate in `core/ledger_manager.py`"
+demo = "no"
+backlog = ["I11", "L1-08", "L7-04"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-EXTERNAL-EDIT"
+area = "Data and lifecycle"
+capability = "A ledger changed outside the app (Fava, an editor, a legacy app) is detected: the write is refused and retried, and the UI refreshes on focus"
+v04 = "new"
+v04_note = "(review:10 I9, D9; review:21 §3 step 6)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["I9"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-UNDO"
+area = "Data and lifecycle"
+capability = "Undo for the app's ledger writes (delete, edits, proposals)"
+v04 = "new"
+v04_note = "(review:19 §3, Q2; review:13 §3)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-PLUGINS"
+area = "Data and lifecycle"
+capability = "Ledgers using plugins (`implicit_prices`, documents, others)"
+v04 = "change"
+v04_note = "plugin-generated entries are never written to disk; ledgers that run code need desktop trust (review:10 I3; CAP-WS-TRUST)"
+status = "planned"
+milestone = "M3"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`core/ledger_loader.py`"
+demo = "no"
+backlog = ["I3", "L11.M-1"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DATA-ENCRYPTED"
+area = "Data and lifecycle"
+capability = "Encrypted (`.gpg`) ledger files, as far as Beancount's loader reads them"
+v04 = "cut"
+v04_note = "the overlay loader refuses encrypted files (review:10 D2; review:D1 §9)"
+status = "cut"
+milestone = "M1"
+release_blocking = "n/a"
+doc = "—"
+legacy_entry = "Beancount loader"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-UI-NAV"
+area = "Shell and cross-cutting UI"
+capability = "Sidebar navigation (Dashboards, Import, Transactions, Accounts, Budgets, Investments, Query, AI Assistant; Settings pinned) and a mobile drawer"
+v04 = "keep"
+v04_note = ", as one nav component; the shell does not hard-wire the sidebar into views (review:17 §5)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "views/index.md"
+legacy_entry = "`components/layout/AppShell.vue`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-UI-SIDEBAR-RESIZE"
+area = "Shell and cross-cutting UI"
+capability = "Drag to resize the sidebar (200–500 px, persisted)"
+v04 = "keep"
+v04_note = ", plus pointer capture, keyboard resize, double-click reset, persist on release (review:L8 §1.6 #12.4)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`composables/useSidebarWidth.ts`"
+demo = "no"
+backlog = ["L8-08"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-UI-HISTORY-BUTTONS"
+area = "Shell and cross-cutting UI"
+capability = "Back, Forward and Refresh buttons in the top bar"
+v04 = "keep"
+v04_note = "(the desktop window has no browser chrome)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`AppShell.vue`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-UI-GLOBAL-SEARCH"
+area = "Shell and cross-cutting UI"
+capability = "Global search: top 6 account matches plus \"Search transactions for…\", keyboard navigation"
+v04 = "keep"
+v04_note = "(route contracts `/accounts?search=`, `/transactions?search=`)"
+status = "planned"
+milestone = "M5"
+release_blocking = "yes"
+doc = "quick-start.md#global-search"
+legacy_entry = "`components/layout/GlobalSearch.vue`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-UI-THEME"
+area = "Shell and cross-cutting UI"
+capability = "Theme toggle system → light → dark, following the OS live"
+v04 = "change"
+v04_note = "CSS tokens with one dark-mode source and a pre-paint script (no light flash on cold load); darker helper text for WCAG AA (review:17 §2, Q1)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`composables/useTheme.ts`"
+demo = "no"
+backlog = ["L9-11", "L9-12", "L2-07"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-UI-DATE-PRESETS"
+area = "Shell and cross-cutting UI"
+capability = "Date preset selector: All Time, YTD, This Month, Last Month, Last Quarter, Last Year, Last 30 / 90 Days, Last N Days"
+v04 = "change"
+v04_note = "a DateRangeField on `Temporal.PlainDate`; \"Last N Days\" covers N days; local time zone (review:17 §2; review:11 libs; L8.M-16)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "views/transactions.md#date-filters"
+legacy_entry = "`components/common/DatePresetSelector.vue`"
+demo = "no"
+backlog = ["L8.M-16", "L3-10"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-UI-MONEY-FORMAT"
+area = "Shell and cross-cutting UI"
+capability = "Money and number display"
+v04 = "change"
+v04_note = "one `format.ts`; per-commodity precision from the ledger (no `BTC 0.00`); grouping by currency (lakh/crore for INR, NPR, PKR, BDT, LKR); HALF_EVEN on both sides (review:11 Q1, L3-08)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "26 local formatters, e.g. `utils/formatters.ts`"
+demo = "yes: multi-currency"
+backlog = ["L3-08", "L3.M-9", "L3.M-10", "L9-19"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-UI-TODAY"
+area = "Shell and cross-cutting UI"
+capability = "\"Today\" defaults across forms and filters"
+v04 = "change"
+v04_note = "the user's local civil date (an IST user after midnight gets today) (review:11 L3-10)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "~12 UTC defaults"
+demo = "no"
+backlog = ["L3-10"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-UI-INCLUDE-SCHEDULED"
+area = "Shell and cross-cutting UI"
+capability = "\"Include scheduled\" toggle: current balances and net worth exclude future-dated entries unless asked"
+v04 = "new"
+v04_note = "(review:11 Q8)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "yes: household (a scheduled transaction)"
+backlog = ["L5-01"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-UI-CONFIRM"
+area = "Shell and cross-cutting UI"
+capability = "Confirmation dialogs"
+v04 = "change"
+v04_note = "one `useConfirm` with Cancel focused (Enter never does the destructive thing); no native `confirm()` (review:17 L9-01, §3 1a)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`components/common/ConfirmDialog.vue`; `composables/useConfirmDialog.ts`"
+demo = "no"
+backlog = ["L9-01", "L9-02"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-UI-UNSAVED-GUARD"
+area = "Shell and cross-cutting UI"
+capability = "Unsaved-change guards (five versions with different coverage)"
+v04 = "change"
+v04_note = "one `useUnsavedGuard` covering route leave, in-view tabs, reload and dialog close (review:17 §2, §3 1a)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "per-view `onBeforeRouteLeave` / `beforeunload`"
+demo = "no"
+backlog = ["L9.M-1", "L9.M-3", "L9-03"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-UI-PICKERS"
+area = "Shell and cross-cutting UI"
+capability = "Account and commodity dropdowns (about 19 implementations, free text accepted)"
+v04 = "change"
+v04_note = "`AccountCombobox`/`CommodityCombobox` on Radix, existing items only, menus that flip and aren't clipped (review:17 §2, L9-08, L9-09) (React stack, DECIDED (owner, 2026-10-24), conditional on M0 spike S13; Vue fallback otherwise)"
+status = "planned"
+milestone = "M4"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`components/common/AccountDropdown.vue`, `CommodityDropdown.vue`, `SelectListbox.vue`, `ValueCombobox.vue`"
+demo = "no"
+backlog = ["L9-08", "L9-09"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-UI-A11Y"
+area = "Shell and cross-cutting UI"
+capability = "Accessible names, linked labels and errors, tab semantics, keyboard alternatives to mouse-only actions"
+v04 = "change"
+v04_note = "enforced by the primitives and lint rules (review:17 §1–2)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = ["L9-05", "L9-06", "L9-07", "L9-10", "L9-14", "L9-16", "L9-17"]
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-UI-ROUTER"
+area = "Shell and cross-cutting UI"
+capability = "Per-route scroll restoration of the main pane; document title \"<page> - Finzytrack\""
+v04 = "keep"
+v04_note = "(review:L8v §2.5 #13)"
+status = "planned"
+milestone = "M2"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "`router/index.ts:98-152`"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-APP-OFFLINE"
+area = "Shell and cross-cutting UI"
+capability = "Everything works offline except prices, AI, IMAP and the update check; one acceptance flow with the network blocked"
+v04 = "new"
+v04_note = "(per F, 2026-10-24) (B-2.10)"
+status = "planned"
+milestone = "M10"
+release_blocking = "yes"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-LEGACY-REIMPORT"
+area = "Deferred by decision (listed so \"did we do X?\" has an answer; not counted below)"
+capability = "Re-import settings from the legacy install later, with a per-file diff"
+v04 = "deferred"
+v04_note = "deferred (review:23 §7.1)"
+status = "deferred"
+release_blocking = "no"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-MULTIWINDOW"
+area = "Deferred by decision (listed so \"did we do X?\" has an answer; not counted below)"
+capability = "Several native windows on different workspaces"
+v04 = "deferred"
+v04_note = "deferred (review:23 Q3)"
+status = "deferred"
+release_blocking = "no"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-WS-LIBRARY"
+area = "Deferred by decision (listed so \"did we do X?\" has an answer; not counted below)"
+capability = "App-level user library of dashboards/rules referenced by workspaces"
+v04 = "deferred"
+v04_note = "deferred (review:23 Q2)"
+status = "deferred"
+release_blocking = "no"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-HOSTED-WORKSPACES"
+area = "Deferred by decision (listed so \"did we do X?\" has an answer; not counted below)"
+capability = "Hosted multi-user workspaces"
+v04 = "deferred"
+v04_note = "deferred, \"don't build\" (review:18 §4; review:23 §5)"
+status = "deferred"
+release_blocking = "no"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-FISCAL-YEAR"
+area = "Deferred by decision (listed so \"did we do X?\" has an answer; not counted below)"
+capability = "Fiscal year (start month and day) for presets, budgets, dashboards"
+v04 = "deferred"
+v04_note = "deferred (review:11 Q2)"
+status = "deferred"
+release_blocking = "no"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-BUD-GOALS"
+area = "Deferred by decision (listed so \"did we do X?\" has an answer; not counted below)"
+capability = "Asset/Liability goals (a target balance by a date)"
+v04 = "deferred"
+v04_note = "not a budget; \"whether and when\" open (review:14 Q1)"
+status = "deferred"
+release_blocking = "no"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-DASH-GUI-BUILDER"
+area = "Deferred by decision (listed so \"did we do X?\" has an answer; not counted below)"
+capability = "GUI dashboard builder"
+v04 = "deferred"
+v04_note = "not planned, must stay possible (review:14 §0)"
+status = "deferred"
+release_blocking = "no"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-PHONE-UI"
+area = "Deferred by decision (listed so \"did we do X?\" has an answer; not counted below)"
+capability = "A phone UI"
+v04 = "deferred"
+v04_note = "later, only where its UX can be excellent (review:17 §5)"
+status = "deferred"
+release_blocking = "no"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-TAX-PROFILE"
+area = "Deferred by decision (listed so \"did we do X?\" has an answer; not counted below)"
+capability = "Jurisdiction rules (Indian debt MFs, holding periods)"
+v04 = "deferred"
+v04_note = "later tax-feature scope (review:14 Q3; review:16 §4)"
+status = "deferred"
+release_blocking = "no"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-INV-TWR"
+area = "Deferred by decision (listed so \"did we do X?\" has an answer; not counted below)"
+capability = "Time-weighted return beside a benchmark"
+v04 = "deferred"
+v04_note = "cut with XIRR (review:16 §4; review:16 Q4 moot)"
+status = "deferred"
+release_blocking = "no"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-SEC-KEYCHAIN"
+area = "Deferred by decision (listed so \"did we do X?\" has an answer; not counted below)"
+capability = "OS keychain for secrets"
+v04 = "deferred"
+v04_note = "later hardening (review:13 Q2)"
+status = "deferred"
+release_blocking = "no"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []
+
+[[capability]]
+id = "CAP-MIRROR-INCREMENTAL"
+area = "Deferred by decision (listed so \"did we do X?\" has an answer; not counted below)"
+capability = "Incremental mirror diff"
+v04 = "deferred"
+v04_note = "deferred (review:10 D4)"
+status = "deferred"
+release_blocking = "no"
+doc = "—"
+legacy_entry = "—"
+demo = "no"
+backlog = []
+adrs = []
+code = []
+tests = []

@@ -1,0 +1,14 @@
+# Licence allowlist for bundled third-party dependencies (T1 licence check; ADR on licensing).
+# SPDX identifiers. A dependency whose licence is not listed fails CI until it is added here with a reason.
+# PROVISIONAL: the owner gets legal advice before v0.4.0 on bundling GPL-2.0-only Beancount next to
+# Apache-2.0 components (review:F §2 item 9). Entries marked "pending legal advice" may change.
+
+allowed = [
+  "MIT", "MIT-0", "ISC", "BSD-2-Clause", "BSD-3-Clause", "0BSD", "Zlib", "Unlicense", "CC0-1.0",
+  "PSF-2.0", "Python-2.0", "MPL-2.0", "LGPL-2.1-or-later", "LGPL-3.0-or-later",
+  "GPL-2.0-only", "GPL-2.0-or-later", "Unicode-3.0", "Unicode-DFS-2016", "BSL-1.0",
+]
+
+[pending_legal_advice]
+"Apache-2.0" = "echarts, the openai SDK, several Rust crates; the FSF considers Apache-2.0 incompatible with GPL-2.0"
+"Apache-2.0 WITH LLVM-exception" = "Rust toolchain-adjacent crates"

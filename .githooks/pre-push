@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# T0 pre-push (design/process/PROCESS.md, "Gates"): repo checks, types and changed-area tests, <= 2 min.
+# Install once per clone:  git config core.hooksPath .githooks
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+remote_name="${1:-}"
+remote_url="${2:-}"
+
+# Owner review gate: nothing from this branch reaches a remote until the owner has reviewed it and
+# switched the gate on in THIS clone:  git config finzytrack.allowPush true
+if [[ "$(git config --bool finzytrack.allowPush || echo false)" != "true" ]]; then
+  echo "pre-push: refused. Pushing is off in this clone until the owner reviews and runs" >&2
+  echo "          git config finzytrack.allowPush true      (remote: ${remote_name} ${remote_url})" >&2
+  exit 1
+fi
+
+fail=0
+run() { local label="$1"; shift; if ! "$@"; then echo "pre-push: FAILED: $label" >&2; fail=1; fi; }
+
+run "check-script meta-tests" python3 -m unittest discover -s scripts/tests -q
+run "privacy scan (all tracked files)" python3 scripts/privacy_scan.py --all --quiet
+run "invariants" python3 scripts/check_invariants.py
+run "capability map" python3 scripts/check_capabilities.py
+run "generated artifacts" python3 scripts/check_generated.py --all
+
+if [[ -f backend/pyproject.toml ]]; then
+  run "pyright" bash -c "cd backend && .venv/bin/pyright"
+  run "backend unit tests" bash -c "cd backend && .venv/bin/pytest -q -x tests/unit"
+fi
+if [[ -f frontend/package.json ]]; then
+  run "tsc" bash -c "cd frontend && node_modules/.bin/tsc --noEmit"
+  run "frontend unit tests" bash -c "cd frontend && node_modules/.bin/vitest run --changed origin/next"
+fi
+exit "$fail"
