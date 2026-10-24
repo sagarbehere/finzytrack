@@ -39,6 +39,8 @@ ALLOWED_EMAIL_DOMAINS = re.compile(
     r"(^|\.)(example\.(com|org|net)|example|test|invalid|localhost)$|^users\.noreply\.github\.com$",
     re.IGNORECASE,
 )
+# "icon@2x.png", "chunk@1.js": file names, not addresses
+FILE_TLD = re.compile(r"\.(png|jpe?g|gif|webp|svg|ico|icns|js|mjs|cjs|ts|tsx|css|map|json|md|txt|py|wasm|woff2?)$", re.I)
 ALLOWED_EMAILS = {"noreply@anthropic.com"}
 # Obviously fake numbers that docs and tests may use (see the public-scrub rules).
 ALLOWED_NUMBERS = {
@@ -212,7 +214,7 @@ def scan_text(path: str, text: str, denylist: list[str]) -> list[Finding]:
                 add("iban", m.group(0))
         for m in EMAIL.finditer(line):
             addr, domain = m.group(0), m.group(1)
-            if addr.lower() in ALLOWED_EMAILS or ALLOWED_EMAIL_DOMAINS.search(domain):
+            if addr.lower() in ALLOWED_EMAILS or ALLOWED_EMAIL_DOMAINS.search(domain) or FILE_TLD.search(domain):
                 continue
             add("email", addr)
         for rule, rx in SECRETS:

@@ -139,6 +139,9 @@ class MustPass(unittest.TestCase):
     def test_placeholder_credentials(self) -> None:
         self.assertEqual(rules('api_key = "${OPENAI_API_KEY}"\ntoken: "xxxxxxxxxxxxxxxx"'), [])
 
+    def test_retina_asset_names_are_not_emails(self) -> None:
+        self.assertEqual(rules('"icons/128x128@2x.png", "logo@3x.webp"'), [])
+
     def test_package_versions_are_not_emails(self) -> None:
         self.assertEqual(rules("  react@19.3.0:\n    '@types/node@24.1.0': {}"), [])
 
