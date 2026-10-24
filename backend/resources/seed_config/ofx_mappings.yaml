@@ -1,9 +1,0 @@
-# OFX account mappings — map OFX institution/account IDs to Beancount accounts.
-# The block below is a template; review and adapt every value to your own
-# institution and accounts before uncommenting it.
-# - institution: CHASE
-#   institution_fid: '1001'
-#   account_type: CHECKING
-#   account_id: '123456789'
-#   currency: USD
-#   beancount_account: Assets:Chase:Checking

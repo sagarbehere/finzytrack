@@ -1,70 +1,72 @@
-venv
+# Finzytrack v0.4 (`next`). This repo is PUBLIC.
+#
+# --- Real data never enters the repo (INV-23, INV-24). These lines stay forever. ---
+# `data` matches a file or folder named "data" anywhere in the tree; pick another
+# name for source folders (e.g. `fixtures/`, `content/`).
 data
-ignore
-
-# User's active config (personal rules, recipes, API keys) — seeded from resources/seed_config/
 backend/config/
-
-# AI reference files and JSON Schemas — synced from frontend/src/ by scripts/sync_ai_reference.py
-backend/resources/ai_reference/
-backend/resources/schemas/
-
-# Demo ledger — a generated build artifact, NOT committed. Bootstrapped by the
-# standalone scripts/generate_fake.py (dev: run it once; CI: regenerated at build
-# time by desktop/finzytrack.spec; tests: conftest generates if missing). The
-# per-ledger price sidecar (fake.prices.beancount) is generated alongside it.
-backend/resources/seed_data/ledgers/fake.beancount
-backend/resources/seed_data/ledgers/fake.prices.beancount
-
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.egg-info/
-build/
-dist/
-.pytest_cache/
-.coverage
-.mutmut-cache
-mutants/
-
-.DS_Store
-*.local
-*.swp
-*~
-dist
-dist-ssr
-# Editor directories and files
-.idea
-.vscode
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-# Logs
-logs
-*.log
-npm-debug.log*
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
-# Dependency directories
-node_modules
-# Optional npm cache directory
-.npm
-# Optional eslint cache
-.eslintcache
-# dotenv environment variables file
+dev-docs/
+ignore/
+.local-corpus/
 .env
 .env.*
 !.env.example
-.vite
-.astro/
-.claude/
-dev-docs/
+ledger.db
+ledger.db-*
+*.sqlite
+*.sqlite3
+# Staged real-data files are also refused by .githooks/pre-commit (scripts/check_staged.py).
 
-# Per-build commit stamp written by desktop/build.py (never committed)
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+mutants/
+.mutmut-cache
+
+# --- JavaScript ---
+node_modules/
+.pnpm-store/
+dist/
+dist-ssr/
+.vite/
+.eslintcache
+playwright-report/
+test-results/
+reports/stryker/
+.stryker-tmp/
+
+# --- Rust / Tauri ---
+target/
+shell/src-tauri/gen/
+
+# --- Packaging ---
+build/
 BUILD_INFO
+
+# --- TLA+ ---
+formal/tla/tools/
+formal/tla/states/
+*.tlc.out
+
+# --- Logs, OS, editors ---
+logs/
+*.log
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+
+# --- Claude Code: agents, skills, hooks and settings.json are tracked; personal state is not ---
+.claude/settings.local.json
+.claude/worktrees/

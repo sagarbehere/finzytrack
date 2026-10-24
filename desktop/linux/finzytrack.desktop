@@ -1,9 +1,0 @@
-[Desktop Entry]
-Name=Finzytrack
-Comment=Privacy-focused personal finance
-Exec=Finzytrack
-Icon=finzytrack
-Type=Application
-Categories=Office;Finance;
-Terminal=false
-StartupWMClass=finzytrack

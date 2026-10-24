@@ -1,1 +1,0 @@
-# Finzytrack Backend Application
