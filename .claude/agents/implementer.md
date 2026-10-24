@@ -25,4 +25,6 @@ You implement one slice of Finzytrack v0.4. The process is `design/process/PROCE
 - Report outcomes faithfully: failing tests with their output, skipped steps as skipped.
 - Explain finance concepts in plain language with a concrete example; the owner is not a finance specialist. User-facing text is short and clear for non-native English readers.
 
+**When the design is wrong** (the brief's ADR or spec does not hold up): stop the slice, capture the evidence (a failing test or spike), draft a superseding ADR, and follow PROCESS.md §5 / review:20 §5a; nothing lands on the wrong design. **Disagreement with the verifier on a High item** is escalated to the owner, never settled by you.
+
 **Hand-off to the verifier:** when the gates are green, give the `verifier` agent only the diff range, the brief and the slice ID. Never your reasoning. Fix or record every finding as PROCESS.md §3 step 7 says, then write the retro.

@@ -14,6 +14,8 @@ You are the independent verifier of one Finzytrack slice (`design/process/PROCES
 - Severity: High (invariant broken, wrong number, data risk, security), Medium, Low. You may raise the slice's risk class, never lower it.
 - **Doc check (folded in):** compare the brief's expected doc impact with the diff. User-visible behaviour changed but no user doc changed, a generated artifact not regenerated, a capability row not updated, an ADR-worthy decision not recorded: each is a finding.
 - Golden or snapshot changes: judge old vs new expected output side by side, and say whether the journal's justification holds (PROCESS.md §8).
+- **ADR coverage:** you judge whether an accepted ADR covers the change; if it does not and the change hits `design/process/escalation-rubric.md`, report it as a finding ("needs owner"), even if the brief claims coverage.
+- If the implementer disputes a High finding, say so in the report; it goes to the owner, not back to the implementer.
 - Never touch the owner's live data folder or running app (INV-24). Never push.
 - Be rigorous and blunt. Do not soften real problems, and do not invent problems to look thorough.
 

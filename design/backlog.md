@@ -45,7 +45,7 @@ This file is the tracked home of the private review backlog (`review:99`). The r
 | of which `removed` (investment scope reset) | 4 |
 | Doubles (merged onto a canonical row) | 47 |
 | Invariant-enforcement items (`BL-0001`…`BL-0031`) | 31 |
-| Other new items (`BL-0032`…) | 1 |
+| Other new items (`BL-0032`…) | 9 |
 
 Canonical findings to build, by milestone: M0 4, M1 16, M2 47, M3 15, M4 18, M5 20, M6 40, M7 37, M8 23, M9 12, M10–M12 0 (total 232).
 
@@ -194,7 +194,7 @@ Sixteen workstreams. Each one specifies a module or package of the new tree by i
 
 ## 3. Finding index
 
-Every review finding, post-verification. Severity is the verified desktop value unless marked hosted. Titles state the target behaviour. "Area" is the owning workstream; "Milestone" is where the finding is closed (`review:27 App. A.2`). Refuted findings are not listed.
+Every review finding, post-verification. Severity is the verified desktop value unless marked hosted. Security findings show `security` instead of a level until v0.4.0 ships (the levels are in the private review archive). Titles state the target behaviour. "Area" is the owning workstream; "Milestone" is where the finding is closed (`review:27 App. A.2`). Refuted findings are not listed.
 
 ### 3.1 I-series (integrity) (11 canonical)
 
@@ -226,7 +226,7 @@ Evidence: `review:L1`, `review:L1-verif`; index `review:99 §4.2`.
 | L1-05 | One backend error model: DomainError mapped to APIError at the edge | Medium | WS-BACKEND-CORE | M1 | open | — | `review:L1` |
 | L1-06 | Layering enforced from the first commit (core imports nothing from api, services or the app entry) | Medium | WS-BACKEND-CORE | M0 | open | — | `review:L1` |
 | L1-07 | One composition root per user (UserContainer) | Low | WS-BACKEND-CORE | M2 | open | — | `review:L1` |
-| L1-09 | Beancount's pickle cache is disabled; no cache file is created or read | Medium | WS-SECURITY | M1 | open | — | `review:L1` |
+| L1-09 | Beancount's pickle cache is disabled; no cache file is created or read | security | WS-SECURITY | M1 | open | — | `review:L1` |
 | L1-10 | One QueryRunner with a freshness check, row cap and working timeout | Medium | WS-MIRROR | M1 | open | — | `review:L1` |
 | L1-11 | AI saves are bound to their proposal; no process-global preview or token state | Low-Med (desktop) / High (hosted) | WS-ISOLATION | M9 | open | L11-04, L11-05 | `review:L1` |
 | L1-12 | Dead code and misnamed modules are not carried over | Low | WS-BACKEND-CORE | M2 | open | — | `review:L1` |
@@ -345,9 +345,9 @@ Evidence: `review:L6`, `review:L6-verif`, `review:13`; index `review:99 §4.7`.
 
 | ID | Title | Sev | Area | Milestone | Status | Doubles | Ref |
 |---|---|---|---|---|---|---|---|
-| L6-01 | Assistant markdown is rendered with HTML disabled and sanitized, under a strict CSP (INV-09) | Critical | WS-SECURITY | M2 | open | N3 | `review:L6` |
-| L6-02 | Secrets in rule files are `${VAR}` references and are redacted before any model request | High | WS-SECURITY | M3 | open | — | `review:L6` |
-| L6-03 | Attachments are untrusted input; AI writes are proposals that need confirmation | High | WS-SECURITY | M9 | open | — | `review:L6` |
+| L6-01 | Assistant markdown is rendered with HTML disabled and sanitized, under a strict CSP (INV-09) | security | WS-SECURITY | M2 | open | N3 | `review:L6` |
+| L6-02 | Secrets in rule files are `${VAR}` references and are redacted before any model request | security | WS-SECURITY | M3 | open | — | `review:L6` |
+| L6-03 | Attachments are untrusted input; AI writes are proposals that need confirmation | security | WS-SECURITY | M9 | open | — | `review:L6` |
 | L6-04 | AI capabilities are adapters over the UI's use cases | High | WS-AI | M9 | open | — | `review:L6` |
 | L6-05 | One intent-driven assistant; an attached file keeps the ledger tools available | High | WS-AI | M9 | open | — | `review:L6` |
 | L6-06 | Analyst figures come from tools on the kernel (exact, holdings included) | High | WS-AI | M9 | open | — | `review:L6` |
@@ -359,8 +359,8 @@ Evidence: `review:L6`, `review:L6-verif`, `review:13`; index `review:99 §4.7`.
 | L6-14 | One LLM gateway with history caching and usage capture | Medium | WS-AI | M6 | open | — | `review:L6` |
 | L6-15 | Server-side conversation store; typed, generated event protocol | Medium | WS-AI | M9 | open | — | `review:L6` |
 | L6-16 | Prompt loading and AI error handling in one module | Low | WS-AI | M6 | open | N5 | `review:L6` |
-| N1 | Dashboard options are data: HTML-bearing formatters are rejected by the validator | High | WS-SECURITY | M7 | open | — | `review:L6-verif §4` |
-| N2 | One sanitized markdown renderer replaces the hand-written one | High | WS-SECURITY | M2 | open | — | `review:L6-verif §4` |
+| N1 | Dashboard options are data: HTML-bearing formatters are rejected by the validator | security | WS-SECURITY | M7 | open | — | `review:L6-verif §4` |
+| N2 | One sanitized markdown renderer replaces the hand-written one | security | WS-SECURITY | M2 | open | — | `review:L6-verif §4` |
 | N4 | Client context is validated by the typed protocol | Low | WS-AI | M9 | open | — | `review:L6-verif §4` |
 
 ### 3.8 L7 investments (21 canonical)
@@ -413,10 +413,10 @@ Evidence: `review:L8`, `review:L8-verif`, `review:19`; index `review:99 §4.9`.
 | L8-14 | A workspace switch keeps unsaved Settings edits (no remount) | Medium | WS-FE-REWRITE | M2 | open | — | `review:L8` |
 | L8-15 | A wrong ledger path never creates a new ledger | Medium | WS-LIFECYCLE | M3 | open | — | `review:L8` |
 | L8-16 | The setup-wizard currency is validated against the commodity grammar | Medium | WS-LIFECYCLE | M3 | open | — | `review:L8` |
-| L8-17 | Stored API keys and tokens can be set, replaced and cleared | Low-Med | WS-SECURITY | M6 | open | — | `review:L8` |
+| L8-17 | Stored API keys and tokens can be set, replaced and cleared | security | WS-SECURITY | M6 | open | — | `review:L8` |
 | L8-18 | Seed column formats are applied; dates are parsed as civil dates | Medium | WS-RECIPES | M7 | open | — | `review:L8` |
 | L8-19 | The calendar heatmap range follows parameter changes | Medium | WS-FE-REWRITE | M7 | open | — | `review:L8` |
-| L8-20 | Chart tooltips escape interpolated ledger values | High | WS-SECURITY | M7 | open | — | `review:L8` |
+| L8-20 | Chart tooltips escape interpolated ledger values | security | WS-SECURITY | M7 | open | — | `review:L8` |
 | L8-23 | Budget drafts survive refreshes; a re-save never duplicates directives | Med-High | WS-FE-REWRITE | M7 | open | L8.M-17 | `review:L8` |
 | L8-24 | Balance assertions use exact amounts and the as-of balance | Medium | WS-FE-REWRITE | M4 | open | — | `review:L8` |
 | L8-25 | Busy states block double submit; edit mode starts clean | Low-Med | WS-FE-REWRITE | M4 | open | — | `review:L8` |
@@ -514,7 +514,7 @@ Evidence: `review:L11`, `review:L11-verif`, `review:18`; index `review:99 §4.12
 | L11.M-1 | Plugins and `pythonpath` are controlled by LoadPolicy | Critical (hosted) | WS-ISOLATION | M1 | open | — | `review:L11-verif` |
 | L11.M-2 | Document cleanup never offers ledger, include or sidecar files | Medium (data loss) | WS-ISOLATION | M5 | open | — | `review:L11-verif` |
 | L11.M-3 | Secret references are resolved by an injected resolver, scoped per workspace | Critical (hosted) | WS-ISOLATION | M3 | open | — | `review:L11-verif` |
-| L11.M-4 | IMAP verifies server certificates | Medium (security) | WS-SECURITY | M6 | open | — | `review:L11-verif` |
+| L11.M-4 | IMAP verifies server certificates | security | WS-SECURITY | M6 | open | — | `review:L11-verif` |
 | L11.M-6 | The background reconciliation load goes through LoadPolicy | Critical (hosted) condition | WS-ISOLATION | M1 | open | — | `review:L11-verif` |
 | L11.M-7 | Outbound URLs and hosts are validated (hosted) | Hosted | WS-ISOLATION | post-v0.4 | post-v0.4 | — | `review:L11-verif` |
 | L11.M-8 | localStorage is namespaced by workspace | Low | WS-ISOLATION | M2 | open | — | `review:L11-verif` |
@@ -624,3 +624,6 @@ Each item builds the check that turns one invariant from "pending" into "enforce
 | BL-0035 | Add detect-secrets 1.5.0 (entropy checks) to the T0 privacy scanner once a pinned Python dev environment exists; today the scanner is pattern-only, stdlib | WS-QA | M0 | open | `review:27 §1(d)` |
 | BL-0036 | Protected-file guard: refuse agent edits that loosen `design/INVARIANTS.md`, type-checker strictness, import-linter contracts, `.claude/settings.json`, `.githooks/*`, CI workflows or `scripts/check_*.py` without an owner-approval quote in the slice journal; plus a SubagentStop check that a verifier report has all required sections | WS-QA | M0 | open | `review:E §3.3` |
 | BL-0037 | CI workflow `ci.yml` grows with each package: backend (ruff, pyright, pytest, import-linter, deptry), frontend (eslint, tsc, vitest, knip, Playwright Chromium + WebKit), shell (cargo check, clippy); then `nightly.yml` and `packaged.yml` | WS-QA | M0 | open | `review:27 §1(d)` |
+| BL-0038 | PROCESS.md no-drift checks (review:20 §10b): generate the gate table from the hook/CI config and the agent roster from `.claude/agents/`; a check that every kept IMPROVEMENTS entry names a PROCESS.md section | WS-QA | M0 | open | `review:G R-9` |
+| BL-0039 | Capability map: link each `cut` and `deferred` row to its ADR (`adrs` field), then make `check_capabilities.py` require it | WS-QA | M0 | open | `review:G F-11` |
+| BL-0040 | Tighten `check_invariants.py`: detect skip/xfail/fixme on the tagged tests, count only T1 runners (not pre-commit), require evidence for `review-only`, and guard the owner-owned rule text with a hash that only an owner-approved change updates | WS-QA | M0 | open | `review:G F-8, F-9` |

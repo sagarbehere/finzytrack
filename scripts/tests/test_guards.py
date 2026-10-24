@@ -86,8 +86,48 @@ class GuardTest(unittest.TestCase):
         self.assertTrue(guards.path_problem(str(gen), self.repo, writing=True))
         self.assertIsNone(guards.path_problem(str(gen), self.repo, writing=False))
 
+    def test_bypasses_found_by_review(self) -> None:
+        """review:G G-12..G-20 and G-14: each must be refused."""
+        L = self.legacy
+        refused = [
+            # G-12 hook skipping
+            "git commit -qnm msg", "git -c core.hooksPath=/dev/null commit -m x", "git config core.hooksPath /tmp/h",
+            "git commit --no-v -m x",
+            # G-13 push gate and refspecs
+            "git config finzytrack.allowPush true", "git -c core.hooksPath=/dev/null push", "git push origin +next",
+            "git push origin HEAD:main", "git push -d origin next",
+            # G-14 the owner's running app over HTTP
+            "curl -X POST http://localhost:8001/api/transactions -d x", "curl -X DELETE 127.0.0.1:8001/api/x",
+            "wget -qO- http://[::1]:8001/health",
+            # G-15 live data by indirection
+            "find ~ -name '*.beancount'", "ls ~/Finzy*Data", 'cat "$FT_LIVE_DATA/config/config.yaml"',
+            "ls ~/finzytrack-data",
+            # G-16 case-insensitive disk
+            f"ls {str(self.live).upper()}", f"rm -rf {str(L).upper()}/x",
+            # G-17 writes into the legacy worktree
+            f"cd {L} && rm -rf backend", f"touch {L}/x", f"sed -i '' s/a/b/ {L}/f.py", f"cp -t {L} x.py",
+            f"dd if=/dev/zero of={L}/f", f"npm --prefix {L}/frontend install", f"find {L} -name '*.pyc' -delete",
+            f"git -C {L} branch -D main", "git tag -d v0.3.0", f"git worktree remove --force {L}",
+            f"rm -rf {L.parent}/*legacy*", f"cd {L} && python3 -m app.main",
+            # G-19 kills
+            "fuser -k 8001/tcp", "killall Python", "kill -TERM -1", "pkill -f backend",
+            # G-20 clean / stash
+            "git -c x=y clean -fdx", "git stash --all", "git clean -e '!*' -fd",
+        ]
+        for cmd in refused:
+            self.assertTrue(self.blocked(cmd), cmd)
+
     def test_ordinary_commands(self) -> None:
-        for cmd in ("python3 -m unittest discover -s scripts/tests", "git status", "ls -la design"):
+        L = self.legacy
+        allowed = [
+            "python3 -m unittest discover -s scripts/tests", "git status", "ls -la design",
+            "git commit -m 'scripts: add -n flag to orient'", "git push origin next", "git log --oneline main..next",
+            f"grep -rn def {L}/backend", f"cat {L}/backend/app/main.py", f"git -C {L} log -3", f"git -C {L} show HEAD:README.md",
+            f"cd {L} && grep -rn foo backend", "find . -name '*.py'", "lsof -iTCP -sTCP:LISTEN -nP",
+            "curl -s http://127.0.0.1:18950/health", "kill 12345", "uv run pytest -q", "pnpm install --frozen-lockfile",
+            "git stash", "git clean -n", "git branch -a",
+        ]
+        for cmd in allowed:
             self.assertFalse(self.blocked(cmd), cmd)
 
 

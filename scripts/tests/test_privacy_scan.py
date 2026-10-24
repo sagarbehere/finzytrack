@@ -72,6 +72,48 @@ class MustFlag(unittest.TestCase):
         self.assertEqual(rules(line), ["home-path"])
 
 
+class BypassesFoundByReview(unittest.TestCase):
+    """Bypass attempts from the adversarial review of the seed (review:G, G-2..G-7)."""
+
+    def test_account_number_after_separators(self) -> None:
+        n = j("5010", "0987", "6543", "22")
+        for text in (f"acct:{n}", f"UPI/P2A/{n}/JOHN", f'"accounts": {n}', f"ref_{n}"):
+            self.assertIn("account-number", rules(text), text)
+
+    def test_grouped_and_masked_account_numbers(self) -> None:
+        self.assertIn("account-number", rules(j("account ", "5010 ", "0987 ", "6543 ", "22")))
+        self.assertIn("account-number", rules(j("a/c ", "5010-", "0987-", "6543-", "22")))
+        self.assertIn("account-number", rules(j("card ", "XXXXXXXX", "4321")))
+
+    def test_card_with_odd_separators(self) -> None:
+        for sep in (".", "/", "_", "  ", "\u00a0"):
+            self.assertIn("card-number", rules(sep.join(["4539", "1488", "0343", "6467"])), repr(sep))
+
+    def test_lowercase_or_dashed_iban_and_labelled_pan(self) -> None:
+        self.assertIn("iban", rules(j("gb82", "west", "1234", "5698", "7654", "32")))
+        self.assertIn("iban", rules(j("GB82-", "WEST-", "1234-", "5698-", "7654-", "32")))
+        self.assertIn("pan", rules(j("pan: ", "abcpe", "1234", "f")))
+
+    def test_credential_shapes(self) -> None:
+        val = j("Zq9", "xW2", "pL7", "mN4", "vB8")
+        for text in (f"OPENAI_API_KEY={val}", f'"apiKey": "{val}"', f"api_key: {val}",
+                     j("Authorization: Bearer ", val, val), j("https://bob:", "s3cr3tpass", "@db.example.org"),
+                     j("sk_", "live_", val, val), j("hf_", val, val, val), j("eyJ", "hbGciOi", "JIUzI1N.", "eyJ", "zdWIiOi", "IxMjM0.", "abcdefghij")):
+            self.assertIn("secret", rules(text), text)
+
+    def test_home_paths_in_other_forms(self) -> None:
+        self.assertIn("home-path", rules(j("~", "alice", "/notes")))
+        self.assertIn("home-path", rules(j("/Vol", "umes/", "Backup/x")))
+        self.assertIn("live-data-path", rules(j("~/", "Finzytrack", "Data/config")))
+
+    def test_utf16_text_is_scanned(self) -> None:
+        data = j("mail ", "someone", "@", "gmail.com").encode("utf-16")
+        text = ps.decode(data)
+        self.assertIsNotNone(text)
+        self.assertIn("email", rules(text or ""))
+        self.assertIsNone(ps.decode(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\x01\x02\x03"))
+
+
 class MustPass(unittest.TestCase):
     def test_allowlisted_fake_numbers(self) -> None:
         self.assertEqual(rules(j("account ", "0000", "1234", "5678", " and test card ", "4111", "1111", "1111", "1111")), [])
@@ -105,6 +147,15 @@ class MustPass(unittest.TestCase):
 
     def test_account_number_still_caught_in_json(self) -> None:
         self.assertIn("account-number", rules(j('"number": "', "5010", "0234", "5678", '91"')))
+
+    def test_shared_folder_and_config_home(self) -> None:
+        self.assertEqual(rules("/Users/Shared/x and ~/.config/finzytrack/denylist.txt"), [])
+
+    def test_env_placeholders_and_code_references(self) -> None:
+        self.assertEqual(rules('OPENAI_API_KEY=${OPENAI_API_KEY}\napi_key = os.environ["OPENAI_API_KEY"]\ntoken: settings.ai.token_value'), [])
+
+    def test_dates_near_bank_words(self) -> None:
+        self.assertEqual(rules("bank statement 2026-10-24 to 2026-11-23, 31 days"), [])
 
     def test_uppercase_words_are_not_pan(self) -> None:
         self.assertEqual(rules("CHECKING ACCOUNT EXPENSES"), [])

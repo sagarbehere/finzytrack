@@ -8,7 +8,7 @@ Implementation structure, naming, library choice within the decided stack (`ARCH
 
 ## Escalate to the owner, with a recommendation in plain language
 
-Only when **no accepted ADR already covers the change** (a slice that implements an accepted ADR as written does not escalate; the verifier checks conformance):
+Only when **no accepted ADR already covers the change** (a slice that implements an accepted ADR as written does not escalate; the verifier checks conformance). Items 4 and the list below the numbered items always go to the owner, ADR or not:
 
 1. Anything that changes **what is written to the ledger** (format, metadata keys, directive choice) or **how existing ledgers are interpreted**.
 2. **Finance semantics** a user sees: what a number means, sign or period conventions, gains, booking.
@@ -19,7 +19,7 @@ Only when **no accepted ADR already covers the change** (a slice that implements
 7. **Implementer–verifier disagreement** on a High item.
 8. Anything **truly ambiguous**, where both readings are plausible and costly to reverse.
 
-Also the owner's alone: raising the 30 s T0 budget or the per-change process-cost ceiling; loosening any gate.
+Always the owner's: raising the 30 s T0 budget or the per-change process-cost ceiling; loosening any gate or narrowing the verifier's scope; any change to an invariant (adding, tightening, weakening); a broken user-facing absolute (a write over 1 s at demo size or over 5 s at 54k entries); clearance sign-off per kind of edit; the G1 go/no-go; approving changes to `PROCESS.md` (agents may apply tightenings first); reviewing anonymized real exports before they are committed; opening the first-push gate.
 
 ## How
 

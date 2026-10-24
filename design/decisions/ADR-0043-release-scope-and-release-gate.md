@@ -14,7 +14,7 @@ Without a mark, any one of about 65 new features could hold the release. The fin
 ## Decision
 
 (owner, 2026-10-24)
-- **Every capability row in `design/capabilities.md` is release-blocking except exactly four**, deferred to after v0.4.0:
+- **Every `planned` capability row in `design/capabilities.md` is release-blocking except exactly four**, deferred to after v0.4.0 (rows with status `deferred` or `cut`, e.g. the twelve deferred-by-decision rows of review:24 §17, were never in v0.4.0's scope):
   1. the workspace export/import archive (CAP-WS-EXPORT, CAP-WS-IMPORT);
   2. broker formats beyond CAS;
   3. the beta update channel (CAP-SET-UPDATE-CHANNEL beyond stable);
@@ -27,9 +27,10 @@ Without a mark, any one of about 65 new features could hold the release. The fin
   3. a **4-week dogfood window** on real data, including one month-end reconciliation and one broker sync, with synchronous D2 reconciliation and zero mismatches;
   4. the upgrade matrix from v0.2.2: adoption of fixtures and real copies, run twice and interrupted mid-run; the old install byte-identical and still starting afterwards;
   5. packaged builds on the three platforms (ADR-0007) pass `--smoke-test` and an acceptance subset;
-  6. architecture checks green with no exemptions; every full load through the overlay and the semaphore; the 54k memory test;
-  7. a mutation-score floor on `app/ledger` and `app/domain` (the floor is set by a later ADR from M1 data);
-  8. release notes listing every capability removed relative to v0.2.2 with its ADR, the keys Finzytrack no longer writes, the downgrade comment-loss warning, and an upgrade recommendation. User docs ship from the docs branch `v0.4`.
+  6. legal advice on the licence and the bundle obtained and applied (ADR-0042);
+  7. architecture checks green with no exemptions; every full load through the overlay and the semaphore; the 54k memory test;
+  8. a mutation-score floor on `app/ledger` and `app/domain` (the floor is set by a later ADR from M1 data);
+  9. release notes listing every capability removed relative to v0.2.2 with its ADR, the keys Finzytrack no longer writes, the downgrade comment-loss warning, and an upgrade recommendation. User docs ship from the docs branch `v0.4`.
 
 ## Alternatives considered and rejected
 

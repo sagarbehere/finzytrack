@@ -43,7 +43,49 @@ class Refuses(unittest.TestCase):
         self.assertTrue(cs.check(["Statement.PDF"], blobs({"Statement.PDF": b"%PDF"})))
 
 
+class RefusesBypassesFoundByReview(unittest.TestCase):
+    """review:G G-1, G-8..G-11."""
+
+    def test_renamed_statement(self) -> None:
+        rows = b"".join(b"2026-01-%02d,Coffee shop,-4.50,1234.56\n" % d for d in range(1, 8))
+        for name in ("notes.txt", "export", "data.json"):
+            self.assertTrue(cs.check([name], blobs({name: rows})), name)
+
+    def test_ofx_in_xml(self) -> None:
+        self.assertTrue(cs.check(["bank.xml"], blobs({"bank.xml": b"<?xml?><OFX><BANKTRANLIST>"})))
+
+    def test_other_export_and_archive_types(self) -> None:
+        for name in ("a.tsv", "a.xlsm", "a.ods", "a.numbers", "a.zip", "a.csv.gz", "a.msg"):
+            self.assertTrue(cs.check([name], blobs({name: b"x"})), name)
+
+    def test_binary_blob(self) -> None:
+        self.assertTrue(cs.check(["notes.bin"], blobs({"notes.bin": b"\x00\x01\x02"})))
+
+    def test_other_ledger_formats_and_backups(self) -> None:
+        for name in ("main.ledger", "x.journal", "main.beancount.bak", "main.beancount.gpg", "mirror.db"):
+            self.assertTrue(cs.check([name], blobs({name: b""})), name)
+
+    def test_secret_files_even_in_fixtures(self) -> None:
+        for name in ("backend/tests/fixtures/.env", ".envrc", ".netrc", "config/secrets.yaml", "id_rsa"):
+            self.assertTrue(cs.check([name], blobs({name: b""})), name)
+
+    def test_symlink_outside_repo(self) -> None:
+        self.assertTrue(cs.check(["link"], blobs({}), {"link": "/elsewhere/data/ledger.beancount"}))
+        self.assertTrue(cs.check(["link"], blobs({}), {"link": "../../outside"}))
+        self.assertEqual(cs.check(["link"], blobs({}), {"link": "design/README.md"}), [])
+
+
 class Allows(unittest.TestCase):
+    def test_images_and_manifest(self) -> None:
+        self.assertEqual(cs.check(["icon.png", cs.MANIFEST], blobs({"icon.png": b"\x89PNG\0\0", cs.MANIFEST: b"# h\n"})), [])
+
+    def test_markdown_and_code_with_dated_tables(self) -> None:
+        rows = b"".join(b"| 2026-01-%02d | pin | 1.25 |\n" % d for d in range(1, 9))
+        self.assertEqual(cs.check(["design/x.md", "backend/tests/test_x.py"], blobs({"design/x.md": rows, "backend/tests/test_x.py": rows})), [])
+
+    def test_shipped_starter_ledger(self) -> None:
+        self.assertEqual(cs.check(["backend/src/app/content/starter/one.beancount"], blobs({})), [])
+
     def test_env_example(self) -> None:
         self.assertEqual(cs.check([".env.example"], blobs({})), [])
 

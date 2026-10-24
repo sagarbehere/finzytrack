@@ -56,9 +56,9 @@ def runs_somewhere(path: str, root: Path) -> bool:
 
 
 def backlog_state(backlog: str, bl_id: str) -> str | None:
-    """Return the line that defines the backlog item, or None if it is absent."""
+    """The table row that defines the backlog item (its first cell is the ID), or None if absent."""
     for line in backlog.splitlines():
-        if re.search(rf"(?<![\w-]){re.escape(bl_id)}(?![\w-])", line) and ("|" in line or line.lstrip().startswith(("-", "#"))):
+        if re.match(rf"^\|\s*{re.escape(bl_id)}\s*\|", line):
             return line
     return None
 

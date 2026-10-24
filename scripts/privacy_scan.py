@@ -13,7 +13,8 @@ Rules (design/process/PROCESS.md, "Privacy gate"):
   iban          IBAN with a valid mod-97 checksum
   email         any address outside the reserved example/test domains
   secret        API keys, tokens, private-key blocks, assigned credentials
-  home-path     a real home directory (/Users/<name>, /home/<name>, C:\\Users\\<name>)
+  home-path     a real home directory (/Users/<name>, /home/<name>, /Volumes/<name>, ~<name>/, C:\\Users\\<name>)
+  live-data-path the name of the owner's live data folder
   denylist      a literal from the owner's denylist (kept OUTSIDE the repo)
 
 The owner's denylist (amounts, names, account fragments) is read from $FT_PRIVACY_DENYLIST or
@@ -46,33 +47,56 @@ ALLOWED_NUMBERS = {
     "4242424242424242",  # common test card
     "5555555555554444",  # Mastercard test card
 }
-ACCOUNT_WORDS = re.compile(r"\b(acc(oun)?t|a/c|acct|card|iban|routing|ifsc|bank-account|account[-_]number)\b", re.I)
-# JSON/YAML keys whose numeric values are sizes, counts or timestamps, never account numbers
-NUMERIC_KEY = re.compile(r"[\"']?\w*(size|bytes|quota|time|_at|^at|\bat|ts|ms|count|total|length|duration|epoch|nanos|micros)\w*[\"']?\s*[:=]\s*$", re.I)
+ACCOUNT_WORDS = re.compile(r"(?i)(acc(oun)?t|a/c|acct|card|iban|routing|ifsc|bank|upi|neft|imps|rtgs|ach|swift|sort.?code)")
+# JSON/YAML keys whose numeric values are sizes, counts or timestamps, never account numbers (whole key only)
+NUMERIC_KEY = re.compile(
+    r"""["']?(?:[a-z0-9]+_)*(size|bytes|quota|at|ts|ms|time|timestamp|count|total|length|duration|epoch|nanos|micros|offset|seed)["']?\s*[:=]\s*$""",
+    re.I,
+)
 EPOCH_MS = (1_000_000_000_000, 4_102_444_800_000)  # 2001..2100 in milliseconds
-HOME_PLACEHOLDERS = {"<user>", "<name>", "you", "user", "me", "runner", "username", "$user", "${user}", "<username>"}
+HOME_PLACEHOLDERS = {"<user>", "<name>", "you", "user", "me", "runner", "username", "$user", "${user}", "<username>", "shared"}
+SEP = r"[ \-/_\u00a0]{1,2}"  # separators people put between digit groups (dots: DOTTED_CARD only)
 
-CARD = re.compile(r"(?<![\w.-])(?:\d[ -]?){12,18}\d(?![\w.-])")
-DIGIT_RUN = re.compile(r"(?<![\w.:/-])\d{9,18}(?![\w.:/-])")
+CARD = re.compile(rf"(?<![A-Za-z0-9])(?:\d(?:{SEP})?){{12,18}}\d(?![A-Za-z0-9])")
+CARD_GROUPS = re.compile(r"^\d{4}(?:\D{1,2}\d{4}){2,3}(?:\D{1,2}\d{1,4})?$")  # 4-4-4-4 style
+DOTTED_CARD = re.compile(r"(?<![\d.])\d{4}(?:\.\d{4}){2}\.\d{1,7}(?![\d.])")  # dddd.dddd.dddd.dddd, not floats
+DIGIT_RUN = re.compile(r"(?<![A-Za-z0-9.])\d{9,18}(?![A-Za-z0-9.])")
+GROUPED = re.compile(r"(?<![A-Za-z0-9.])\d{2,6}(?:[ \-]\d{2,6}){1,5}(?![A-Za-z0-9.])")
+MASKED = re.compile(r"(?i)(?<![A-Za-z0-9])[x*•]{4,}[ \-]?\d{3,6}\b")
 PAN = re.compile(r"\b[A-Z]{3}[ABCFGHLJPTK][A-Z]\d{4}[A-Z]\b")
-IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?\b")
+PAN_LABELLED = re.compile(r"(?i)\bpan\b\W{0,5}([a-z]{3}[abcfghljptk][a-z]\d{4}[a-z])\b")
+IBAN = re.compile(r"(?i)\b[A-Z]{2}\d{2}(?:[ \-]?[A-Z0-9]{4}){2,7}(?:[ \-]?[A-Z0-9]{1,4})?\b")
 EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,63})\b")  # TLD letters: not pkg@1.2.3
-HOME = re.compile(r"(?:/Users/|/home/|[A-Za-z]:\\+Users\\+)([A-Za-z0-9][A-Za-z0-9._-]*)")
+HOME = re.compile(r"(?:/Users/|/home/|/Volumes/|[A-Za-z]:\\+Users\\+)([A-Za-z0-9][A-Za-z0-9._-]*)")
+OTHER_USER_HOME = re.compile(r"(?<![\w/])~([a-z][a-z0-9._-]*)/")  # another user's home, e.g. ~<name>/
+LIVE_DATA_NAME = re.compile(r"(?i)finzytrack[_-]?data\b")  # the owner's live data folder, by name  privacy-scan: allow live-data-path
 SECRETS: list[tuple[str, re.Pattern[str]]] = [
     ("openai-key", re.compile(r"\bsk-(?:proj-|ant-[a-z0-9]+-)?[A-Za-z0-9_-]{20,}")),
+    ("stripe-like-key", re.compile(r"\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}")),
+    ("hf-groq-key", re.compile(r"\b(?:hf|gsk)_[A-Za-z0-9]{30,}")),
     ("aws-key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("github-token", re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{30,}")),
     ("slack-token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}")),
     ("google-key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
+    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")),
+    ("bearer", re.compile(r"(?i)\bbearer\s+([A-Za-z0-9._~+/-]{20,}=*)")),
+    ("url-credentials", re.compile(r"\b[a-z][a-z0-9+.-]*://([^/\s:@]+):([^/\s@]{3,})@")),
     ("private-key", re.compile(r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----|untrusted comment: rsign encrypted secret" r" key")),
     (
         "assigned-credential",
         re.compile(
-            r"(?i)\b(api[_-]?key|secret|token|password|passwd)\b\s*[:=]\s*['\"]([^'\"\s]{12,})['\"]"
+            r"(?i)[\"']?\b[a-z0-9_-]{0,40}?(api[_-]?key|apikey|secret|token|password|passwd|pwd|credentials?)[a-z0-9_-]{0,40}[\"']?"
+            r"\s*[:=]\s*[\"']?([^\"'\s,}]{12,})"
         ),
     ),
 ]
-PLACEHOLDER_VALUE = re.compile(r"(?i)^(x+|\*+|<[^>]+>|\$\{?[A-Z_]+\}?|changeme|placeholder|your[-_].*|dummy.*|test.*|fake.*)$")
+PLACEHOLDER_VALUE = re.compile(
+    r"(?i)^(x+|\*+|\.+|<[^>]+>|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|changeme|placeholder|your[-_].*|dummy.*|test.*|fake.*|example.*"
+    r"|redacted|none|null|true|false|[a-z_]+\(.*|[a-z_]+\.[a-z_.]+.*|os\.environ.*)$"
+)
+# Files whose job is to guard the live data folder must name it; nothing else may (scrub rule 2).
+LIVE_DATA_GUARD_FILES = (".claude/settings.json", ".claude/hooks/", "scripts/oracle/", "scripts/tests/test_guards.py",
+                         "scripts/tests/test_privacy_scan.py")
 ALLOW_MARK = re.compile(r"privacy-scan:\s*allow\s+([a-z-]+(?:\s*,\s*[a-z-]+)*)")
 
 
@@ -107,7 +131,7 @@ def luhn_ok(digits: str) -> bool:
 
 
 def iban_ok(raw: str) -> bool:
-    s = raw.replace(" ", "")
+    s = re.sub(r"[ \-]", "", raw).upper()
     if not 15 <= len(s) <= 34:
         return False
     moved = s[4:] + s[:4]
@@ -128,6 +152,10 @@ def load_denylist() -> list[str]:
     return items
 
 
+def _digits(s: str) -> str:
+    return re.sub(r"\D", "", s)
+
+
 def scan_text(path: str, text: str, denylist: list[str]) -> list[Finding]:
     out: list[Finding] = []
     lowered_deny = [(d, d.lower()) for d in denylist]
@@ -135,14 +163,21 @@ def scan_text(path: str, text: str, denylist: list[str]) -> list[Finding]:
         allowed: set[str] = set()
         for m in ALLOW_MARK.finditer(line):
             allowed.update(r.strip() for r in m.group(1).split(","))
+        account_context = bool(ACCOUNT_WORDS.search(line))
 
         def add(rule: str, sample: str) -> None:
             if rule not in allowed:
                 out.append(Finding(path, lineno, rule, redact(sample)))
 
         card_spans: list[tuple[int, int]] = []
-        for m in CARD.finditer(line):
-            digits = re.sub(r"[ -]", "", m.group(0))
+        for m in [*CARD.finditer(line), *DOTTED_CARD.finditer(line)]:
+            digits = _digits(m.group(0))
+            if not account_context:
+                raw = m.group(0)
+                if raw != digits and not CARD_GROUPS.match(raw):
+                    continue  # irregular grouping (a short prefix, then a long id) is not a card
+                if raw == digits and len(digits) == 13 and EPOCH_MS[0] <= int(digits) < EPOCH_MS[1]:
+                    continue  # epoch milliseconds
             if 13 <= len(digits) <= 19 and digits not in ALLOWED_NUMBERS and luhn_ok(digits) and len(set(digits)) > 2:
                 add("card-number", digits)
                 card_spans.append(m.span())
@@ -152,14 +187,26 @@ def scan_text(path: str, text: str, denylist: list[str]) -> list[Finding]:
                 continue
             if len(set(digits)) <= 2:  # 000000000000, 111111111 and the like are placeholders
                 continue
-            if NUMERIC_KEY.search(line[: m.start()]):
-                continue
-            if len(digits) == 13 and EPOCH_MS[0] <= int(digits) < EPOCH_MS[1] and not ACCOUNT_WORDS.search(line):
-                continue
-            if len(digits) >= 11 or ACCOUNT_WORDS.search(line):
+            if not account_context:
+                if NUMERIC_KEY.search(line[: m.start()]):
+                    continue
+                if len(digits) == 13 and EPOCH_MS[0] <= int(digits) < EPOCH_MS[1]:
+                    continue
+            if len(digits) >= 11 or account_context:
                 add("account-number", digits)
+        if account_context:
+            for m in GROUPED.finditer(line):
+                digits = _digits(m.group(0))
+                if 9 <= len(digits) <= 18 and digits not in ALLOWED_NUMBERS and len(set(digits)) > 2 \
+                        and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", m.group(0)):
+                    add("account-number", digits)
+            for m in MASKED.finditer(line):
+                add("account-number", m.group(0))
         for m in PAN.finditer(line):
             add("pan", m.group(0))
+        for m in PAN_LABELLED.finditer(line):
+            if not PAN.fullmatch(m.group(1)):
+                add("pan", m.group(1))
         for m in IBAN.finditer(line):
             if iban_ok(m.group(0)):
                 add("iban", m.group(0))
@@ -170,17 +217,42 @@ def scan_text(path: str, text: str, denylist: list[str]) -> list[Finding]:
             add("email", addr)
         for rule, rx in SECRETS:
             for m in rx.finditer(line):
-                if rule == "assigned-credential" and PLACEHOLDER_VALUE.match(m.group(2)):
+                if rule == "assigned-credential":
+                    value = m.group(m.lastindex or 0)
+                    # secrets mix letters and digits; plain identifiers and type names are code
+                    if PLACEHOLDER_VALUE.match(value) or not (re.search(r"\d", value) and re.search(r"[A-Za-z]", value)):
+                        continue
+                if rule == "url-credentials" and PLACEHOLDER_VALUE.match(m.group(2)):
                     continue
                 add("secret", m.group(0))
         for m in HOME.finditer(line):
             if m.group(1).lower() not in HOME_PLACEHOLDERS:
                 add("home-path", m.group(0))
+        for m in OTHER_USER_HOME.finditer(line):
+            add("home-path", m.group(0))
+        if not path.startswith(LIVE_DATA_GUARD_FILES):
+            for m in LIVE_DATA_NAME.finditer(line):
+                add("live-data-path", m.group(0))
         low = line.lower()
         for original, d in lowered_deny:
             if d in low:
                 add("denylist", original)
     return out
+
+
+def decode(data: bytes) -> str | None:
+    """Text content of a blob, including UTF-16/32 text; None for real binaries."""
+    for bom, enc in ((b"\xff\xfe\x00\x00", "utf-32"), (b"\x00\x00\xfe\xff", "utf-32"), (b"\xff\xfe", "utf-16"), (b"\xfe\xff", "utf-16")):
+        if data.startswith(bom):
+            return data.decode(enc, errors="replace")
+    head = data[:8192]
+    if b"\0" not in head:
+        return data.decode("utf-8", errors="replace")
+    if len(head) >= 4 and head[1::2].count(0) > 0.9 * len(head[1::2]):
+        return data.decode("utf-16-le", errors="replace")
+    if len(head) >= 4 and head[0::2].count(0) > 0.9 * len(head[0::2]):
+        return data.decode("utf-16-be", errors="replace")
+    return None
 
 
 def is_binary(data: bytes) -> bool:
@@ -192,7 +264,7 @@ def git(*args: str) -> bytes:
 
 
 def staged_files() -> list[str]:
-    out = git("diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z")
+    out = git("diff", "--cached", "--name-only", "--diff-filter=ACMRT", "-z")
     return [p for p in out.decode("utf-8").split("\0") if p]
 
 
@@ -208,10 +280,11 @@ def run(paths: list[str], reader, denylist: list[str]) -> tuple[list[Finding], l
         data = reader(p)
         if data is None:
             continue
-        if is_binary(data):
-            binaries.append(p)
+        text = decode(data)
+        if text is None:
+            binaries.append(p)  # refused by scripts/check_staged.py unless an allowed media type
             continue
-        findings.extend(scan_text(p, data.decode("utf-8", errors="replace"), denylist))
+        findings.extend(scan_text(p, text, denylist))
     return findings, binaries
 
 

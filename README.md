@@ -4,7 +4,7 @@ Open-source personal finance software built on [Beancount](https://beancount.git
 
 ## This branch: the v0.4 rebuild
 
-`next` holds Finzytrack **v0.4**, rebuilt from an empty tree. It is under construction and not usable yet. The latest release is **v0.2.2** on `main` (download it from the GitHub releases page; documentation at [docs.finzytrack.com](https://docs.finzytrack.com)). When v0.4.0 is ready, it adopts an existing v0.2 install without changing it, and `next` is merged into `main`.
+`next` holds Finzytrack **v0.4**, rebuilt from an empty tree. It is under construction and not usable yet. The latest release is **v0.2.2** on `main` (download it from the GitHub releases page; documentation at [docs.finzytrack.com](https://docs.finzytrack.com)). When v0.4.0 is ready, it adopts an existing v0.2 install without changing it, and `next` is merged into `main`. v0.2.x gets no further releases, including security fixes; please upgrade to v0.4.0 when it is out (see [`SECURITY.md`](SECURITY.md)).
 
 Everything about how v0.4 is designed and built is in [`design/`](design/README.md): the rules it must keep, the architecture, every decision with its reasons, the capability map and the development process.
 

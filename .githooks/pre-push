@@ -7,8 +7,9 @@ cd "$root"
 remote_name="${1:-}"
 remote_url="${2:-}"
 
-# Owner review gate: nothing from this branch reaches a remote until the owner has reviewed it and
-# switched the gate on in THIS clone:  git config finzytrack.allowPush true
+# Temporary first-push gate (IMPROVEMENTS IMP-0003): nothing reaches a remote until the owner has reviewed
+# the setup of next and switched pushing on in THIS clone:  git config finzytrack.allowPush true
+# Agents never set it. After that, agents commit and push per ADR-0045.
 if [[ "$(git config --bool finzytrack.allowPush || echo false)" != "true" ]]; then
   echo "pre-push: refused. Pushing is off in this clone until the owner reviews and runs" >&2
   echo "          git config finzytrack.allowPush true      (remote: ${remote_name} ${remote_url})" >&2

@@ -2,7 +2,7 @@
 
 This record decides compatibility for users' own SQL and dashboards written against v0.2.2.
 
-- **Status:** Accepted; the `lots` part awaits the owner's re-confirmation
+- **Status:** Accepted (the `lots` part re-confirmed by the owner, 2026-10-24)
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** mirror, recipes, compatibility
@@ -16,7 +16,7 @@ v0.4 changes the mirror and the compute catalog. Users' saved queries and dashbo
 (owner, 2026-10-24)
 - **Mirror tables and compute functions that existed in v0.2.2 keep their old names working through 0.4.x**, served by the versioned `r_*` surface as compatibility views. They are dropped later with a warning.
 - **Removed functions** (only `budget_for_range`) keep working through 0.4.x with a **located deprecation message** naming the replacement.
-- **`lots`:** under this rule the v0.2.2 `lots` table keeps working through 0.4.x, served from Beancount's as-of booked inventory; the end-of-ledger computation stays deleted. **Pending:** the owner's note said v0.2.x had no `lots` table, but the v0.2.2 tag creates one (also v0.2.0 and v0.2.1). The owner is asked to re-confirm; until then the general rule applies.
+- **`lots`:** under this rule the v0.2.2 `lots` table keeps working through 0.4.x, served from Beancount's as-of booked inventory; the end-of-ledger computation stays deleted. The owner's earlier note said v0.2.x had no `lots` table, but the v0.2.2 tag creates one (also v0.2.0 and v0.2.1); the owner re-confirmed on 2026-10-24 that `lots` keeps working through 0.4.x.
 - Capabilities that existed only in v0.3.0 (for example `latest_prices`, `portfolio_returns`, `portfolio_series`) were never released and need no compatibility.
 
 ## Alternatives considered and rejected

@@ -29,7 +29,7 @@ Ledger text, payees, metadata, import files, emails, recipes and model output ar
 
 ## Alternatives considered and rejected
 
-- **A separate security release of the v0.2 line.** Rejected by the owner (few users); v0.4.0 ships quickly instead.
+- **Patch releases of the v0.2 line during the rebuild.** Rejected by the owner (few users); v0.4.0 ships quickly instead, and users are encouraged to upgrade.
 - **A hand-written markdown renderer or a "safe" regex escaper.** Rejected: not safe by construction.
 - **A security review only at the end.** Rejected: the security red team runs once per area and for each change that adds a new input (ADR-0044).
 

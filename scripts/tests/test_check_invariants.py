@@ -68,6 +68,11 @@ class InvariantCheck(unittest.TestCase):
     def test_pending_on_closed_item(self) -> None:
         self.assertTrue(self.run_check(GOOD, backlog="| BL-0002 | x | done | M3 |\n"))
 
+    def test_a_mention_elsewhere_is_not_the_item(self) -> None:
+        backlog = "| Invariant items (`BL-0002`) | 31 |\n| BL-0002 | x | done | M3 |\n"
+        self.assertTrue(any("closed" in e for e in self.run_check(GOOD, backlog=backlog)))
+        self.assertTrue(self.run_check(GOOD, backlog="- see BL-0002 for details\n"))
+
     def test_pending_past_milestone_exit(self) -> None:
         self.assertEqual(self.run_check(GOOD, exit_ms="M2"), [])
         self.assertTrue(self.run_check(GOOD, exit_ms="M3"))
