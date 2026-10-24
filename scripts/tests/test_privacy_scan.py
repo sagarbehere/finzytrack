@@ -97,6 +97,15 @@ class MustPass(unittest.TestCase):
     def test_placeholder_credentials(self) -> None:
         self.assertEqual(rules('api_key = "${OPENAI_API_KEY}"\ntoken: "xxxxxxxxxxxxxxxx"'), [])
 
+    def test_package_versions_are_not_emails(self) -> None:
+        self.assertEqual(rules("  react@19.3.0:\n    '@types/node@24.1.0': {}"), [])
+
+    def test_sizes_and_epoch_millis_are_not_account_numbers(self) -> None:
+        self.assertEqual(rules('"quota": 20615843021,\n"at": 1792862321002\nsize_bytes = 123456789012'), [])
+
+    def test_account_number_still_caught_in_json(self) -> None:
+        self.assertIn("account-number", rules(j('"number": "', "5010", "0234", "5678", '91"')))
+
     def test_uppercase_words_are_not_pan(self) -> None:
         self.assertEqual(rules("CHECKING ACCOUNT EXPENSES"), [])
 

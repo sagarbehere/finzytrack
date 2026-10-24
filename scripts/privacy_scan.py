@@ -47,13 +47,16 @@ ALLOWED_NUMBERS = {
     "5555555555554444",  # Mastercard test card
 }
 ACCOUNT_WORDS = re.compile(r"\b(acc(oun)?t|a/c|acct|card|iban|routing|ifsc|bank-account|account[-_]number)\b", re.I)
+# JSON/YAML keys whose numeric values are sizes, counts or timestamps, never account numbers
+NUMERIC_KEY = re.compile(r"[\"']?\w*(size|bytes|quota|time|_at|^at|\bat|ts|ms|count|total|length|duration|epoch|nanos|micros)\w*[\"']?\s*[:=]\s*$", re.I)
+EPOCH_MS = (1_000_000_000_000, 4_102_444_800_000)  # 2001..2100 in milliseconds
 HOME_PLACEHOLDERS = {"<user>", "<name>", "you", "user", "me", "runner", "username", "$user", "${user}", "<username>"}
 
 CARD = re.compile(r"(?<![\w.-])(?:\d[ -]?){12,18}\d(?![\w.-])")
 DIGIT_RUN = re.compile(r"(?<![\w.:/-])\d{9,18}(?![\w.:/-])")
 PAN = re.compile(r"\b[A-Z]{3}[ABCFGHLJPTK][A-Z]\d{4}[A-Z]\b")
 IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){2,7}(?:[ ]?[A-Z0-9]{1,4})?\b")
-EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)\b")
+EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,63})\b")  # TLD letters: not pkg@1.2.3
 HOME = re.compile(r"(?:/Users/|/home/|[A-Za-z]:\\+Users\\+)([A-Za-z0-9][A-Za-z0-9._-]*)")
 SECRETS: list[tuple[str, re.Pattern[str]]] = [
     ("openai-key", re.compile(r"\bsk-(?:proj-|ant-[a-z0-9]+-)?[A-Za-z0-9_-]{20,}")),
@@ -148,6 +151,10 @@ def scan_text(path: str, text: str, denylist: list[str]) -> list[Finding]:
             if digits in ALLOWED_NUMBERS or any(a <= m.start() < b for a, b in card_spans):
                 continue
             if len(set(digits)) <= 2:  # 000000000000, 111111111 and the like are placeholders
+                continue
+            if NUMERIC_KEY.search(line[: m.start()]):
+                continue
+            if len(digits) == 13 and EPOCH_MS[0] <= int(digits) < EPOCH_MS[1] and not ACCOUNT_WORDS.search(line):
                 continue
             if len(digits) >= 11 or ACCOUNT_WORDS.search(line):
                 add("account-number", digits)
