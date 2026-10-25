@@ -37,6 +37,13 @@ Each file is replaced atomically (ADR-0008 step 5), children first and the root 
 - `NoPartialMultiFileCommitVisibleAfterRecovery` and `RecoveryNeverClobbersForeignBytes` are TLA+ properties.
 - A refusal may say "your ledger is unchanged" only when the disk equals the pre-image.
 
+## Amendment (2026-10-25): protocol gaps found by the TLA+ model (spike S5)
+
+Owner: "I accept 29 and 30." (owner, 2026-10-25, in session).
+- **Q29, one lock for the whole ledger set:** every write takes the lock for the whole ledger set of its workspace, not only the files it changes (S5 gap F-7: with one journal and a whole-set fingerprint, two writes to different files could overwrite each other's journal). Writes are already serialized per workspace, so nothing is lost.
+- **Q30, a leftover journal seen by a second running instance:** a second process that finds a journal it did not write refuses writes and asks the user to reopen the workspace; recovery runs only on open, under the rules of this ADR (S5 gap F-3).
+- The other S5 gaps are agent-level tightenings applied with the writer in M1b: hash each backup against the planned pre-hash and fail closed (F-1); re-hash every target before saying "unchanged" (F-2); acknowledge a commit only after the journal close is durable (F-4); restore the root first (F-5); the WARMING rebuild and snapshot reads take the locks and refuse while a journal is open (F-6); a unique journal name per commit and an fsync of the journal directory before trusting "no journal" (F-8); the `FileSystem` port exposes `atomic_swap`, not `os.replace`.
+
 ## References
 
 review:D1 §12.10, §13.1, §13.3; review:15 §2; review:25 §8.3, §9.2, §9.7, §9.8, §14 item 4; ADR-0007, ADR-0008, ADR-0050; INV-01, INV-22, INV-30.
