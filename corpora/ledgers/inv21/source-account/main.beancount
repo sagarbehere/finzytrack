@@ -7,6 +7,8 @@ option "operating_currency" "USD"
 2020-01-01 open Liabilities:Card USD
 2020-01-01 open Expenses:Food USD
 2020-01-01 open Income:Salary USD
+2020-01-01 open Assets:Wallet BTC
+2020-01-01 open Expenses:Fees BTC
 
 ; The `source_account` key names the second asset leg: it wins over the
 ; first Assets posting.
@@ -69,3 +71,31 @@ option "operating_currency" "USD"
 2020-07-10 * "Employer" "salary"
   Assets:Bank      1,000.00 USD
   Income:Salary   -1,000.00 USD
+
+; A tiny amount: the hash reads Python's str(Decimal), which writes
+; 0.00000001 as 1E-8 (not the mirror's plain 0.00000001).
+2020-07-11 * "Exchange" "dust fee"
+  Expenses:Fees    0.00000001 BTC
+  Assets:Wallet   -0.00000001 BTC
+
+; The same for a number Beancount computes (the wallet amount is left out).
+2020-07-12 * "Exchange" "computed dust"
+  Assets:Wallet
+  Expenses:Fees    0.00000002 BTC
+
+; Values that are not text and that Python treats as true: the hash uses
+; their Python text (True, 2020-01-01, 5) and, matching no posting, amount 0.
+2020-07-13 * "Grocer" "true source account"
+  source_account: TRUE
+  Expenses:Food    15.00 USD
+  Assets:Bank     -15.00 USD
+
+2020-07-14 * "Grocer" "date source account"
+  source_account: 2020-01-01
+  Expenses:Food    16.00 USD
+  Assets:Bank     -16.00 USD
+
+2020-07-15 * "Grocer" "number source account"
+  source_account: 5
+  Expenses:Food    17.00 USD
+  Assets:Bank     -17.00 USD

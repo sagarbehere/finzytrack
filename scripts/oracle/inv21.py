@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from beancount import loader
-from beancount.core import account_types, data
+from beancount.core import account_types, amount, data
 
 REPO = Path(__file__).resolve().parents[2]
 CORPUS = REPO / "corpora" / "ledgers" / "inv21"
@@ -59,7 +59,7 @@ def hash_input(txn: data.Transaction) -> str:
     value, text = chosen_account(txn)
     amount = "0"
     for p in txn.postings:
-        if p.account == value and p.units is not None:
+        if isinstance(value, str) and p.account == value and p.units is not None:  # text against text
             amount = f"{p.units.number} {p.units.currency}"
             break
     return f"{txn.date.isoformat()}|{txn.payee or ''}|{txn.narration or ''}|{amount}|{text.strip()}"
@@ -78,17 +78,26 @@ def first_import_key(txn: data.Transaction) -> str | None:
     return None
 
 
+def id_rule(txn: data.Transaction) -> str:
+    """Which TransactionId rule settles the entry: "id", "transaction_id", "k" or "fallback"."""
+    meta = txn.meta or {}
+    if "id" in meta:
+        return "id"
+    if "transaction_id" in meta:
+        return "transaction_id"
+    return "k" if first_import_key(txn) is not None else "fallback"
+
+
 def transaction_ids(txns: list[data.Transaction]) -> list[str]:
     seen: Counter[str] = Counter()
     out = []
     for t in txns:
         meta = t.meta or {}
-        if "id" in meta:
-            out.append(meta_text(meta["id"]))
-        elif "transaction_id" in meta:
-            out.append(meta_text(meta["transaction_id"]))
-        elif (key := first_import_key(t)) is not None:
-            out.append("k:" + key)
+        rule = id_rule(t)
+        if rule in ("id", "transaction_id"):
+            out.append(meta_text(meta[rule]))
+        elif rule == "k":
+            out.append("k:" + str(first_import_key(t)))
         else:
             h = content_hash(t)
             out.append(h if seen[h] == 0 else f"{h}-{seen[h]}")
@@ -177,8 +186,9 @@ Detector = Callable[[Case, list[dict[str, Any]], dict[str, "Case"], dict[str, An
 HEX64 = re.compile(r"[0-9a-f]{64}")
 
 
-def _fallback(row: dict[str, Any]) -> bool:
-    return bool(HEX64.fullmatch(row["transaction_id"].split("-")[0]))
+def _fallback(c: Case, i: int) -> bool:
+    """Settled by the content fallback (by rule, not by the id's shape: a legacy id can look like a hash)."""
+    return id_rule(c.txns[i]) == "fallback"
 
 
 def _accounts(t: data.Transaction) -> tuple[str, ...]:
@@ -221,11 +231,11 @@ def _variant_changed(case: Case, rows: list[dict[str, Any]], cases: dict[str, Ca
 
 
 def d_twins(c, rows, cases, goldens, cfg=None):
-    return any(sum(_fallback(rows[i]) for i in g) >= 2 for g in _same_hash_groups(rows))
+    return any(sum(_fallback(c, i) for i in g) >= 2 for g in _same_hash_groups(rows))
 
 
 def d_twins_differ(c, rows, cases, goldens, cfg=None):
-    return any(len({_accounts(c.txns[i]) for i in g if _fallback(rows[i])}) >= 2 for g in _same_hash_groups(rows))
+    return any(len({_accounts(c.txns[i]) for i in g if _fallback(c, i)}) >= 2 for g in _same_hash_groups(rows))
 
 
 def d_pipe(c, rows, cases, goldens, cfg=None):
@@ -242,7 +252,7 @@ def d_lineno_tie(c, rows, cases, goldens, cfg=None):
 def d_identified_twin(c, rows, cases, goldens, cfg=None):
     """A same-hash group where an entry with a legacy id or import key sits between two fallback entries."""
     for g in _same_hash_groups(rows):
-        kinds = [_fallback(rows[i]) for i in g]
+        kinds = [_fallback(c, i) for i in g]
         if any(not kinds[j] and any(kinds[:j]) and any(kinds[j + 1:]) for j in range(len(kinds))):
             return True
     return False
@@ -358,6 +368,21 @@ FEATURES: dict[str, tuple[str, Detector]] = {
                          lambda c, r, cs, g, cfg=None: any(
                              any((p.meta or {}).get("import-key") == "" for p in t.postings)
                              and not x["transaction_id"].startswith("k:") for t, x in zip(c.txns, r))),
+    "exponent-amount": ("README Ids: the amount is `str(Decimal)`, not plain notation",
+                        lambda c, r, cs, g, cfg=None: any("E" in x["hash_input"].rsplit("|", 2)[1] for x in r)),
+    "empty-text-id": ("README Ids: `id: \"\"` is used as is",
+                      lambda c, r, cs, g, cfg=None: any((t.meta or {}).get("id") == "" for t in c.txns)),
+    "truthy-non-text-source-account": ("README Ids: a non-text value's Python text, matching no posting",
+                                       lambda c, r, cs, g, cfg=None: len({type(_src(t)) for t in c.txns
+                                           if "source_account" in t.meta and not isinstance(_src(t), str)
+                                           and _src(t)}) >= 3),
+    "amount-source-account": ("README Ids: text against text, a v0.4 difference (v0.2.2 failed the export)",
+                              lambda c, r, cs, g, cfg=None: any(isinstance(_src(t), amount.Amount) for t in c.txns)),
+    "hash-shaped-legacy-id": ("README Ids: a legacy id equal to another entry's fallback id (BL-0059)",
+                              lambda c, r, cs, g, cfg=None: any(
+                                  id_rule(t) in ("id", "transaction_id") and HEX64.fullmatch(x["transaction_id"])
+                                  and any(id_rule(u) == "fallback" and y["transaction_id"] == x["transaction_id"]
+                                          for u, y in zip(c.txns, r)) for t, x in zip(c.txns, r))),
     # Metadata.
     "every-released-key": ("inv21-goldens.md: keys.toml, each key on its directive",
                            lambda c, r, cs, g, cfg=None: bool((cfg or {}).get("directive_metadata"))),
@@ -386,7 +411,7 @@ def check_cases(cases_cfg: dict[str, Any], folders: list[str], goldens: dict[str
         problems.append(f"{name}: a case folder without a cases.toml table, or the reverse")
     for name in sorted(set(cases_cfg) ^ set(goldens)):
         problems.append(f"{name}: in cases.toml or goldens.json but not both")
-    allowed = {"features", "variant_of", "v04_overrides", "directive_metadata", "user_keys"}
+    allowed = {"features", "variant_of", "v04_overrides", "directive_metadata", "user_keys", "v022_fails", "v04_expected"}
     for name, cfg in cases_cfg.items():
         if extra := set(cfg) - allowed:
             problems.append(f"{name}: unknown fields {sorted(extra)}")
@@ -396,6 +421,12 @@ def check_cases(cases_cfg: dict[str, Any], folders: list[str], goldens: dict[str
             problems.append(f"{name}: unknown features {sorted(unknown)}")
         if "variant_of" in cfg and cfg["variant_of"] not in cases_cfg:
             problems.append(f"{name}: variant_of names no case")
+        if ("v022_fails" in cfg) != ("v04_expected" in cfg):
+            problems.append(f"{name}: v022_fails (the reason) and v04_expected (the spec's values) go together")
+        if "v022_fails" in cfg and not str(cfg["v022_fails"]).strip():
+            problems.append(f"{name}: v022_fails must say why v0.2.2 has no value")
+        if "v022_fails" in cfg and "v04_overrides" in cfg:
+            problems.append(f"{name}: a case v0.2.2 cannot read has no v0.2.2 ids to override")
     declared = {f for cfg in cases_cfg.values() for f in cfg.get("features", [])}
     for f in sorted(set(FEATURES) - declared):
         problems.append(f"coverage: no case declares {f!r} ({FEATURES[f][0]})")
@@ -425,12 +456,26 @@ def check_case(case: Case, cfg: dict[str, Any], golden: dict[str, Any], cases: d
         problems.append(f"{n}: directives pinned without directive_metadata")
     # The v0.2.2-equality promise (ADR-0048, surface.toml `transaction_id`): only import-key entries, and the
     # ordinals they free, may differ, each listed in v04_overrides.
+    if "v022_fails" in cfg:
+        # v0.2.2 failed on this ledger (no released value): every expected value comes from the spec, written by hand
+        # in v04_expected (hash input per transaction), and no v0.2.2 id may be claimed.
+        expected = cfg.get("v04_expected", {})
+        if set(expected) != {r.get("at") for r in rows}:
+            problems.append(f"{n}: v04_expected must give the hash input of exactly every transaction")
+        for r in rows:
+            if r.get("v022_transaction_id") is not None:
+                problems.append(f"{n} {r.get('at')}: a v0.2.2 id on a ledger v0.2.2 could not read")
+            if r.get("at") in expected and expected[r.get("at")] != r.get("hash_input"):
+                problems.append(f"{n} {r.get('at')}: hash_input is not its v04_expected value")
+        rows_for_v022: list[dict[str, Any]] = []
+    else:
+        rows_for_v022 = rows
     overrides = cfg.get("v04_overrides", {})
     has_key = any(first_import_key(t) for t in case.txns)
     if overrides and not has_key:
         problems.append(f"{n}: v04_overrides on a case without a posting import-key")
     v022_hashes = {r.get("sha256") for r in rows}
-    for r in rows:
+    for r in rows_for_v022:
         at, tid, old = r.get("at"), r.get("transaction_id"), r.get("v022_transaction_id")
         if at in overrides:
             if overrides[at] != tid:

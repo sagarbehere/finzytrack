@@ -343,6 +343,45 @@
       "{\"filename\": \"main.beancount\", \"lineno\": 65}",
       "{\"filename\": \"main.beancount\", \"lineno\": 66}"
      ]
+    },
+    {
+     "at": "main.beancount:69",
+     "flag": "*",
+     "transaction_id": "",
+     "v022_transaction_id": "",
+     "sha256": "bde4cb58fa07c527c33d2459c22a2fbe584a7f58e9982a7ca3a7cfe3526901aa",
+     "hash_input": "2020-03-08|Grocer|empty text id|-8.00 USD|Assets:Bank",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 69, \"id\": \"\", \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 71}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 72}"
+     ]
+    },
+    {
+     "at": "main.beancount:77",
+     "flag": "*",
+     "transaction_id": "30d3154ef049de4112e93406e85f5ce13172d07d015429bc944b8fd8f2b7e61b",
+     "v022_transaction_id": "30d3154ef049de4112e93406e85f5ce13172d07d015429bc944b8fd8f2b7e61b",
+     "sha256": "30d3154ef049de4112e93406e85f5ce13172d07d015429bc944b8fd8f2b7e61b",
+     "hash_input": "2020-03-09|Cafe|tea|-3.00 USD|Assets:Bank",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 77, \"transaction_id\": \"30d3154ef049de4112e93406e85f5ce13172d07d015429bc944b8fd8f2b7e61b\", \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 79}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 80}"
+     ]
+    },
+    {
+     "at": "main.beancount:82",
+     "flag": "*",
+     "transaction_id": "30d3154ef049de4112e93406e85f5ce13172d07d015429bc944b8fd8f2b7e61b",
+     "v022_transaction_id": "30d3154ef049de4112e93406e85f5ce13172d07d015429bc944b8fd8f2b7e61b",
+     "sha256": "30d3154ef049de4112e93406e85f5ce13172d07d015429bc944b8fd8f2b7e61b",
+     "hash_input": "2020-03-09|Cafe|tea|-3.00 USD|Assets:Bank",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 82, \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 83}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 84}"
+     ]
     }
    ]
   },
@@ -649,134 +688,216 @@
   "source-account": {
    "transactions": [
     {
-     "at": "main.beancount:13",
+     "at": "main.beancount:15",
      "flag": "*",
      "transaction_id": "418821f4ba9fd8d77594a88b68036091ee3ff960edf43ba0014379517eb6407c",
      "v022_transaction_id": "418821f4ba9fd8d77594a88b68036091ee3ff960edf43ba0014379517eb6407c",
      "sha256": "418821f4ba9fd8d77594a88b68036091ee3ff960edf43ba0014379517eb6407c",
      "hash_input": "2020-07-01|Transfer|to savings|100.00 USD|Assets:Savings",
-     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 13, \"source_account\": \"Assets:Savings\", \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 15, \"source_account\": \"Assets:Savings\", \"__tolerances__\": {\"USD\": \"0.005\"}}",
      "posting_metadata_json": [
-      "{\"filename\": \"main.beancount\", \"lineno\": 15}",
-      "{\"filename\": \"main.beancount\", \"lineno\": 16}"
+      "{\"filename\": \"main.beancount\", \"lineno\": 17}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 18}"
      ]
     },
     {
-     "at": "main.beancount:20",
+     "at": "main.beancount:22",
      "flag": "*",
      "transaction_id": "86386cdf47e26809bb5e2d67032fe93e5a546f9330cc44b4f42742941cba8c36",
      "v022_transaction_id": "86386cdf47e26809bb5e2d67032fe93e5a546f9330cc44b4f42742941cba8c36",
      "sha256": "86386cdf47e26809bb5e2d67032fe93e5a546f9330cc44b4f42742941cba8c36",
      "hash_input": "2020-07-02|Grocer|empty source account|8.00 USD|Expenses:Food",
-     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 20, \"source_account\": \"\", \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 22, \"source_account\": \"\", \"__tolerances__\": {\"USD\": \"0.005\"}}",
      "posting_metadata_json": [
-      "{\"filename\": \"main.beancount\", \"lineno\": 22}",
-      "{\"filename\": \"main.beancount\", \"lineno\": 23}"
+      "{\"filename\": \"main.beancount\", \"lineno\": 24}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 25}"
      ]
     },
     {
-     "at": "main.beancount:27",
+     "at": "main.beancount:29",
      "flag": "*",
      "transaction_id": "3ce8839f423deee4237e017de8a413f04bbb864b3ea67413c5b8d2c1cfbb912d",
      "v022_transaction_id": "3ce8839f423deee4237e017de8a413f04bbb864b3ea67413c5b8d2c1cfbb912d",
      "sha256": "3ce8839f423deee4237e017de8a413f04bbb864b3ea67413c5b8d2c1cfbb912d",
      "hash_input": "2020-07-03|Grocer|padded source account|0|Assets:Bank",
-     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 27, \"source_account\": \" Assets:Bank \", \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 29, \"source_account\": \" Assets:Bank \", \"__tolerances__\": {\"USD\": \"0.005\"}}",
      "posting_metadata_json": [
-      "{\"filename\": \"main.beancount\", \"lineno\": 29}",
-      "{\"filename\": \"main.beancount\", \"lineno\": 30}"
+      "{\"filename\": \"main.beancount\", \"lineno\": 31}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 32}"
      ]
     },
     {
-     "at": "main.beancount:33",
+     "at": "main.beancount:35",
      "flag": "*",
      "transaction_id": "cc8877fc96d15e05d448492e710dc7f78016705a035b430e799c7a15f80e9df4",
      "v022_transaction_id": "cc8877fc96d15e05d448492e710dc7f78016705a035b430e799c7a15f80e9df4",
      "sha256": "cc8877fc96d15e05d448492e710dc7f78016705a035b430e799c7a15f80e9df4",
      "hash_input": "2020-07-04|Grocer|unknown source account|0|Assets:Elsewhere",
-     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 33, \"source_account\": \"Assets:Elsewhere\", \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 35, \"source_account\": \"Assets:Elsewhere\", \"__tolerances__\": {\"USD\": \"0.005\"}}",
      "posting_metadata_json": [
-      "{\"filename\": \"main.beancount\", \"lineno\": 35}",
-      "{\"filename\": \"main.beancount\", \"lineno\": 36}"
+      "{\"filename\": \"main.beancount\", \"lineno\": 37}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 38}"
      ]
     },
     {
-     "at": "main.beancount:39",
+     "at": "main.beancount:41",
      "flag": "*",
      "transaction_id": "e6fd05ecf729ec6c48c4d3ea65aa0c78f2569dad4b9fdaf65b4e5d2c8390de5e",
      "v022_transaction_id": "e6fd05ecf729ec6c48c4d3ea65aa0c78f2569dad4b9fdaf65b4e5d2c8390de5e",
      "sha256": "e6fd05ecf729ec6c48c4d3ea65aa0c78f2569dad4b9fdaf65b4e5d2c8390de5e",
      "hash_input": "2020-07-05|Grocer|zero source account|11.00 USD|Expenses:Food",
-     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 39, \"source_account\": \"0\", \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 41, \"source_account\": \"0\", \"__tolerances__\": {\"USD\": \"0.005\"}}",
      "posting_metadata_json": [
-      "{\"filename\": \"main.beancount\", \"lineno\": 41}",
-      "{\"filename\": \"main.beancount\", \"lineno\": 42}"
+      "{\"filename\": \"main.beancount\", \"lineno\": 43}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 44}"
      ]
     },
     {
-     "at": "main.beancount:46",
+     "at": "main.beancount:48",
      "flag": "*",
      "transaction_id": "8844534108431f84d72b3028b6bb4bab256103d56b429a535c36ac0a2fddbefb",
      "v022_transaction_id": "8844534108431f84d72b3028b6bb4bab256103d56b429a535c36ac0a2fddbefb",
      "sha256": "8844534108431f84d72b3028b6bb4bab256103d56b429a535c36ac0a2fddbefb",
      "hash_input": "2020-07-06|Card shop|card purchase|-12.00 USD|Liabilities:Card",
-     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 46, \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 48, \"__tolerances__\": {\"USD\": \"0.005\"}}",
      "posting_metadata_json": [
-      "{\"filename\": \"main.beancount\", \"lineno\": 47}",
-      "{\"filename\": \"main.beancount\", \"lineno\": 48}"
+      "{\"filename\": \"main.beancount\", \"lineno\": 49}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 50}"
      ]
     },
     {
-     "at": "main.beancount:51",
+     "at": "main.beancount:53",
      "flag": "*",
      "transaction_id": "7b34943a144bd224a1b133dd2da58d3b1a0a244fee83cb9a17fef7c2ae5b393e",
      "v022_transaction_id": "7b34943a144bd224a1b133dd2da58d3b1a0a244fee83cb9a17fef7c2ae5b393e",
      "sha256": "7b34943a144bd224a1b133dd2da58d3b1a0a244fee83cb9a17fef7c2ae5b393e",
      "hash_input": "2020-07-07|Employer|salary to food|13.00 USD|Expenses:Food",
-     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 51, \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 53, \"__tolerances__\": {\"USD\": \"0.005\"}}",
      "posting_metadata_json": [
-      "{\"filename\": \"main.beancount\", \"lineno\": 52}",
-      "{\"filename\": \"main.beancount\", \"lineno\": 53}"
+      "{\"filename\": \"main.beancount\", \"lineno\": 54}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 55}"
      ]
     },
     {
-     "at": "main.beancount:56",
+     "at": "main.beancount:58",
      "flag": "*",
      "transaction_id": "8426711445ad1f41df1c5a21099d5937a89345155b90ee2d5095b59a28ae0395",
      "v022_transaction_id": "8426711445ad1f41df1c5a21099d5937a89345155b90ee2d5095b59a28ae0395",
      "sha256": "8426711445ad1f41df1c5a21099d5937a89345155b90ee2d5095b59a28ae0395",
      "hash_input": "2020-07-08|Grocer|split bank legs|-4.00 USD|Assets:Bank",
-     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 56, \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 58, \"__tolerances__\": {\"USD\": \"0.005\"}}",
      "posting_metadata_json": [
-      "{\"filename\": \"main.beancount\", \"lineno\": 57}",
-      "{\"filename\": \"main.beancount\", \"lineno\": 58}",
-      "{\"filename\": \"main.beancount\", \"lineno\": 59}"
+      "{\"filename\": \"main.beancount\", \"lineno\": 59}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 60}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 61}"
      ]
     },
     {
-     "at": "main.beancount:64",
+     "at": "main.beancount:66",
      "flag": "*",
      "transaction_id": "ffef3ab48cbf9779b072e8dee9eeb8c85cb2075e64d8f232f9150a0415777e59",
      "v022_transaction_id": "ffef3ab48cbf9779b072e8dee9eeb8c85cb2075e64d8f232f9150a0415777e59",
      "sha256": "ffef3ab48cbf9779b072e8dee9eeb8c85cb2075e64d8f232f9150a0415777e59",
      "hash_input": "2020-07-09|Broker|buy with price|-3.3333 USD|Assets:Bank",
-     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 64, \"__tolerances__\": {}}",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 66, \"__tolerances__\": {}}",
      "posting_metadata_json": [
-      "{\"filename\": \"main.beancount\", \"lineno\": 65, \"__automatic__\": true}",
-      "{\"filename\": \"main.beancount\", \"lineno\": 66}"
+      "{\"filename\": \"main.beancount\", \"lineno\": 67, \"__automatic__\": true}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 68}"
      ]
     },
     {
-     "at": "main.beancount:69",
+     "at": "main.beancount:71",
      "flag": "*",
      "transaction_id": "63d5bcc2db7cb4d8cbafe4ed96518af5d54d9aea6ad4ffebe2e80d1a93065889",
      "v022_transaction_id": "63d5bcc2db7cb4d8cbafe4ed96518af5d54d9aea6ad4ffebe2e80d1a93065889",
      "sha256": "63d5bcc2db7cb4d8cbafe4ed96518af5d54d9aea6ad4ffebe2e80d1a93065889",
      "hash_input": "2020-07-10|Employer|salary|1000.00 USD|Assets:Bank",
-     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 69, \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 71, \"__tolerances__\": {\"USD\": \"0.005\"}}",
      "posting_metadata_json": [
-      "{\"filename\": \"main.beancount\", \"lineno\": 70}",
-      "{\"filename\": \"main.beancount\", \"lineno\": 71}"
+      "{\"filename\": \"main.beancount\", \"lineno\": 72}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 73}"
+     ]
+    },
+    {
+     "at": "main.beancount:77",
+     "flag": "*",
+     "transaction_id": "763d0c6bf6f3d955d6c4564c70581aad866e20505593fb8a3e4b77a722bde9b8",
+     "v022_transaction_id": "763d0c6bf6f3d955d6c4564c70581aad866e20505593fb8a3e4b77a722bde9b8",
+     "sha256": "763d0c6bf6f3d955d6c4564c70581aad866e20505593fb8a3e4b77a722bde9b8",
+     "hash_input": "2020-07-11|Exchange|dust fee|-1E-8 BTC|Assets:Wallet",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 77, \"__tolerances__\": {\"BTC\": \"5E-9\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 78}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 79}"
+     ]
+    },
+    {
+     "at": "main.beancount:82",
+     "flag": "*",
+     "transaction_id": "40b2897bf2aaf353c0696cc3f60902935db65fb4b5ce1df9f6a9175149904471",
+     "v022_transaction_id": "40b2897bf2aaf353c0696cc3f60902935db65fb4b5ce1df9f6a9175149904471",
+     "sha256": "40b2897bf2aaf353c0696cc3f60902935db65fb4b5ce1df9f6a9175149904471",
+     "hash_input": "2020-07-12|Exchange|computed dust|-2E-8 BTC|Assets:Wallet",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 82, \"__tolerances__\": {\"BTC\": \"5E-9\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 83, \"__automatic__\": true}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 84}"
+     ]
+    },
+    {
+     "at": "main.beancount:88",
+     "flag": "*",
+     "transaction_id": "43dbaff1366183e0848bdab7b904624729998c4f93c64c72b53fc8c8ebf26baa",
+     "v022_transaction_id": "43dbaff1366183e0848bdab7b904624729998c4f93c64c72b53fc8c8ebf26baa",
+     "sha256": "43dbaff1366183e0848bdab7b904624729998c4f93c64c72b53fc8c8ebf26baa",
+     "hash_input": "2020-07-13|Grocer|true source account|0|True",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 88, \"source_account\": true, \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 90}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 91}"
+     ]
+    },
+    {
+     "at": "main.beancount:93",
+     "flag": "*",
+     "transaction_id": "f9a1069332bb1e960bdbc6702a853c5dbf5de19615f512eae720f0b946a5633f",
+     "v022_transaction_id": "f9a1069332bb1e960bdbc6702a853c5dbf5de19615f512eae720f0b946a5633f",
+     "sha256": "f9a1069332bb1e960bdbc6702a853c5dbf5de19615f512eae720f0b946a5633f",
+     "hash_input": "2020-07-14|Grocer|date source account|0|2020-01-01",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 93, \"source_account\": \"2020-01-01\", \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 95}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 96}"
+     ]
+    },
+    {
+     "at": "main.beancount:98",
+     "flag": "*",
+     "transaction_id": "07ebd63901d564f3540108d78eb0a132b5e3f3404c3e87b529272db6c77da11e",
+     "v022_transaction_id": "07ebd63901d564f3540108d78eb0a132b5e3f3404c3e87b529272db6c77da11e",
+     "sha256": "07ebd63901d564f3540108d78eb0a132b5e3f3404c3e87b529272db6c77da11e",
+     "hash_input": "2020-07-15|Grocer|number source account|0|5",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 98, \"source_account\": \"5\", \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 100}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 101}"
+     ]
+    }
+   ]
+  },
+  "source-account-amount": {
+   "transactions": [
+    {
+     "at": "main.beancount:10",
+     "flag": "*",
+     "transaction_id": "3b87f04a64615465d383e583cfa333cc431355d2ddcf67ce5b68e67bc7f7349b",
+     "v022_transaction_id": null,
+     "sha256": "3b87f04a64615465d383e583cfa333cc431355d2ddcf67ce5b68e67bc7f7349b",
+     "hash_input": "2020-07-20|Grocer|amount as source account|0|10.00 USD",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 10, \"source_account\": [\"10.00\", \"USD\"], \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 12}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 13}"
      ]
     }
    ]

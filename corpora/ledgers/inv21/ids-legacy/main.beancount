@@ -64,3 +64,21 @@ option "operating_currency" "USD"
 2020-03-07 * "Cafe" "coffee"
   Expenses:Food   2.00 USD
   Assets:Bank    -2.00 USD
+
+; An empty text id is used as is: the TransactionId is "".
+2020-03-08 * "Grocer" "empty text id"
+  id: ""
+  Expenses:Food   8.00 USD
+  Assets:Bank    -8.00 USD
+
+; Before v0.1 the `transaction_id` was the entry's own content hash. Here it
+; is, and an identical entry without ids gets the same hash as its fallback
+; id: two entries, one TransactionId (BL-0059).
+2020-03-09 * "Cafe" "tea"
+  transaction_id: "30d3154ef049de4112e93406e85f5ce13172d07d015429bc944b8fd8f2b7e61b"
+  Expenses:Food   3.00 USD
+  Assets:Bank    -3.00 USD
+
+2020-03-09 * "Cafe" "tea"
+  Expenses:Food   3.00 USD
+  Assets:Bank    -3.00 USD

@@ -4,10 +4,13 @@
 # v04_overrides:      "<file>:<line>" = v0.4's TransactionId where it differs from v0.2.2's (only with `import-key`).
 # directive_metadata: also pin the metadata JSON of every non-transaction directive.
 # user_keys:          keys on the case that are the user's own (not in keys.toml); only for metadata-keys.
+# v022_fails:         why v0.2.2 has no value for this ledger (it raised an error); then v04_expected gives, per
+#                     "<file>:<line>", the hash input the spec (README "Ids") defines, written by hand.
 
 [ids-legacy]
 features = ["legacy-id", "legacy-transaction-id", "id-over-transaction-id", "non-text-id", "shared-legacy-id",
-            "id-over-import-key", "identified-twin-takes-no-ordinal", "twins"]
+            "id-over-import-key", "identified-twin-takes-no-ordinal", "twins", "empty-text-id",
+            "hash-shaped-legacy-id"]
 
 [fallback-twins]
 features = ["twins", "twins-differ-outside-hash", "pipe-collision", "no-payee", "non-ascii", "padding-transaction"]
@@ -29,7 +32,15 @@ variant_of = "move-files-a"
 [source-account]
 features = ["source-account-key", "empty-source-account", "padded-source-account", "unmatched-source-account",
             "falsy-non-text-source-account", "liabilities-source", "no-balance-sheet-posting",
-            "repeated-source-posting", "interpolated-source-amount", "thousands-separator"]
+            "repeated-source-posting", "interpolated-source-amount", "thousands-separator", "exponent-amount",
+            "truthy-non-text-source-account"]
+
+[source-account-amount]
+features = ["amount-source-account"]
+v022_fails = "v0.2.2 compares the Amount with each posting's account text, which raises an error and fails the whole mirror export"
+
+[source-account-amount.v04_expected]
+"main.beancount:10" = "2020-07-20|Grocer|amount as source account|0|10.00 USD"
 
 [custom-roots]
 features = ["custom-root-names", "source-account-key", "no-balance-sheet-posting"]

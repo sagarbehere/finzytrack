@@ -151,6 +151,35 @@ def rel_meta_json(js: str | None, root: str) -> str | None:
     return json.dumps(d)
 
 
+def spec_only_case(oracle: Oracle, cfg: dict[str, Any], txns: list[Transaction], root: str, at: Any) -> dict[str, Any]:
+    """A ledger v0.2.2 cannot read (cases.toml `v022_fails`): confirm that it fails, then take the hash input of each
+    transaction from the hand-written `v04_expected` (README "Ids"). Kept simple on purpose: every transaction must
+    reach the content fallback with a distinct hash input, so its TransactionId is its hash."""
+    try:
+        oracle.fallback_ids(txns)
+    except Exception:
+        pass
+    else:
+        raise SystemExit("a v022_fails case that v0.2.2 reads without error")
+    expected = cfg["v04_expected"]
+    rows = []
+    for t in txns:
+        if {"id", "transaction_id"} & set(t.meta) or any("import-key" in (p.meta or {}) for p in t.postings):
+            raise SystemExit("a v022_fails case may hold only entries that reach the content fallback")
+        text = expected[at(t.meta)]
+        h = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        rows.append({
+            "at": at(t.meta), "flag": t.flag, "transaction_id": h, "v022_transaction_id": None,
+            "sha256": h, "hash_input": text,
+            "metadata_json": rel_meta_json(oracle.exporter._metadata_to_json(t.meta), root),
+            "posting_metadata_json": [rel_meta_json(oracle.exporter._metadata_to_json(p.meta), root)
+                                      if p.meta else None for p in t.postings],
+        })
+    if len({r["hash_input"] for r in rows}) != len(rows):
+        raise SystemExit("a v022_fails case needs distinct hash inputs")
+    return {"transactions": rows}
+
+
 def generate() -> str:
     oracle = Oracle()
     cases = tomllib.loads((CORPUS / "cases.toml").read_text(encoding="utf-8"))
@@ -168,6 +197,9 @@ def generate() -> str:
                 return f"{os.path.relpath(meta['filename'], root).replace(os.sep, '/')}:{meta['lineno']}"
 
             txns = [e for e in entries if isinstance(e, Transaction)]
+            if "v022_fails" in cases[name]:
+                out[name] = spec_only_case(oracle, cases[name], txns, root, at)
+                continue
             fallback = oracle.fallback_ids(txns)
             overrides = cases[name].get("v04_overrides", {})
             rows = []

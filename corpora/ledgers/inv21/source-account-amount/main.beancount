@@ -1,0 +1,13 @@
+; INV-21 goldens: an Amount as the `source_account` value (synthetic data).
+; v0.2.2 raised an error on this entry and failed the whole mirror export, so
+; there is no released id; the expected values come from the spec (README "Ids":
+; text against text, so amount 0 and the account text "10.00 USD").
+option "operating_currency" "USD"
+
+2020-01-01 open Assets:Bank USD
+2020-01-01 open Expenses:Food USD
+
+2020-07-20 * "Grocer" "amount as source account"
+  source_account: 10.00 USD
+  Expenses:Food   10.00 USD
+  Assets:Bank    -10.00 USD

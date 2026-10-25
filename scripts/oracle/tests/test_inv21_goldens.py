@@ -29,8 +29,8 @@ class RealCorpus(unittest.TestCase):
         # Inventory and corpus sizes, so a silently shrunk corpus or inventory is noticed (journal Hand-off).
         doc = json.loads((inv21.CORPUS / "goldens.json").read_text(encoding="utf-8"))
         keys = tomllib.loads((inv21.CORPUS / "keys.toml").read_text(encoding="utf-8"))["key"]
-        self.assertEqual(len(doc["cases"]), 10)
-        self.assertEqual(sum(len(c["transactions"]) for c in doc["cases"].values()), 58)
+        self.assertEqual(len(doc["cases"]), 11)
+        self.assertEqual(sum(len(c["transactions"]) for c in doc["cases"].values()), 67)
         self.assertEqual(len(keys), 22)
         self.assertEqual(sum(k["class"] == "read" for k in keys), 18)
 
@@ -161,14 +161,48 @@ class Mutated(unittest.TestCase):
         self.edit("cases.toml", '"main.beancount:60"', '"main.beancount:61" = "k:x"\n"main.beancount:60"')
         self.assertReports("which is no transaction")
 
+    # --- ledgers v0.2.2 could not read ---
+    def test_a_v022_id_claimed_on_a_ledger_v022_could_not_read(self) -> None:
+        self.rows("source-account-amount")[0]["v022_transaction_id"] = "x"
+        self.assertReports("a v0.2.2 id on a ledger v0.2.2 could not read")
+
+    def test_a_spec_only_hash_input_changed_with_its_golden(self) -> None:
+        self.edit("cases.toml", '|0|10.00 USD"', '|10.00 USD|10.00 USD"')
+        self.assertReports("hash_input is not its v04_expected value")
+
+    def test_v04_expected_missing_a_transaction(self) -> None:
+        self.edit("cases.toml", '"main.beancount:10" = "2020-07-20', '"main.beancount:11" = "2020-07-20')
+        self.assertReports("v04_expected must give the hash input of exactly every transaction")
+
+    def test_v04_expected_leaving_a_transaction_out(self) -> None:
+        self.edit("cases.toml", '"main.beancount:10" = "2020-07-20|Grocer|amount as source account|0|10.00 USD"', "")
+        self.assertReports("v04_expected must give the hash input of exactly every transaction")
+
+    def test_v022_fails_without_v04_expected_or_reason(self) -> None:
+        self.edit("cases.toml", "[source-account-amount.v04_expected]", "[source-account-amount.not_expected]")
+        problems = self.problems()
+        self.assertTrue(any("go together" in p for p in problems), problems)
+
+    def test_v022_fails_with_an_empty_reason(self) -> None:
+        self.edit("cases.toml", 'v022_fails = "v0.2.2 compares', 'v022_fails = " "\nnote_was = "v0.2.2 compares')
+        self.assertReports("v022_fails must say why")
+
+    def test_v022_fails_with_overrides(self) -> None:
+        self.edit("cases.toml", "[source-account-amount.v04_expected]",
+                  '[source-account-amount.v04_overrides]\n"main.beancount:10" = "k:x"\n\n[source-account-amount.v04_expected]')
+        self.assertReports("has no v0.2.2 ids to override")
+
+    def test_a_missing_v022_id_elsewhere(self) -> None:
+        self.rows("custom-roots")[0]["v022_transaction_id"] = None
+        self.assertReports("without an override")
+
     # --- labels and coverage ---
     def test_a_declared_feature_that_is_not_there(self) -> None:
         self.edit("cases.toml", 'features = ["custom-root-names",', 'features = ["custom-root-names", "pipe-collision",')
         self.assertReports("declares 'pipe-collision' but its detector does not find it")
 
     def test_a_feature_no_case_declares(self) -> None:
-        self.edit("cases.toml", '"thousands-separator"]', ']')
-        self.edit("cases.toml", '"interpolated-source-amount", ]', '"interpolated-source-amount"]')
+        self.edit("cases.toml", '"thousands-separator", "exponent-amount"', '"exponent-amount"')
         self.assertReports("coverage: no case declares 'thousands-separator'")
 
     def test_an_unknown_feature(self) -> None:
@@ -324,6 +358,15 @@ NEAR_MISS: dict[str, str] = {
                                    '  Assets:Bank\n    import-key: "v1:ofx:A"\n',
     "import-key-several-elements": '2020-02-01 * "A" "b"\n  Expenses:Food  1 USD\n  Assets:Bank\n    import-key: " v1:ofx:A "\n',
     "import-key-on-transaction": '2020-02-01 * "A" "b"\n  Expenses:Food  1 USD\n  Assets:Bank\n    import-key: "v1:ofx:A"\n',
+    "exponent-amount": '2020-02-01 * "A" "b"\n  Expenses:Food  0.000001 USD\n  Assets:Bank\n',
+    "empty-text-id": '2020-02-01 * "A" "b"\n  id: " "\n  Expenses:Food  1 USD\n  Assets:Bank\n',
+    "truthy-non-text-source-account": '2020-02-01 * "A" "b"\n  source_account: TRUE\n  Expenses:Food  1 USD\n  Assets:Bank\n\n'
+                                      '2020-02-01 * "A" "c"\n  source_account: 5\n  Expenses:Food  1 USD\n  Assets:Bank\n\n'
+                                      '2020-02-01 * "A" "d"\n  source_account: "2020-01-01"\n  Expenses:Food  1 USD\n'
+                                      '  Assets:Bank\n',
+    "amount-source-account": '2020-02-01 * "A" "b"\n  source_account: "10.00 USD"\n  Expenses:Food  1 USD\n  Assets:Bank\n',
+    "hash-shaped-legacy-id": '2020-02-01 * "A" "b"\n  transaction_id: "' + "ab" * 32 + '"\n  Expenses:Food  1 USD\n'
+                             '  Assets:Bank\n\n' + COFFEE,
     "import-key-empty": '2020-02-01 * "A" "b"\n  Expenses:Food  1 USD\n  Assets:Bank\n    import-key: "  x"\n',
 }
 # Features whose near miss needs more than one ledger text or a case setting.
@@ -381,6 +424,17 @@ class Detectors(unittest.TestCase):
         other = self.load(COFFEE + "\n" + COFFEE.replace("Cafe", "Bar"))
         g[other.name], cs[other.name] = inv21.derive(other, False), other
         self.assertFalse(self.detect("reorder-variant", other, {"variant_of": a.name}, cs, g))
+
+    def test_a_hash_shaped_legacy_id_is_no_fallback_twin(self) -> None:
+        import hashlib
+        h = hashlib.sha256(b"2020-02-01|Cafe|coffee|-2 USD|Assets:Bank").hexdigest()
+        case = self.load(COFFEE.replace('"coffee"\n', f'"coffee"\n  transaction_id: "{h}"\n') + "\n" + COFFEE)
+        rows = inv21.derive(case, False)["transactions"]
+        self.assertEqual(rows[0]["transaction_id"], rows[1]["transaction_id"])  # the collision itself
+        for feature in ("twins", "twins-differ-outside-hash", "identified-twin-takes-no-ordinal"):
+            with self.subTest(feature=feature):
+                self.assertFalse(self.detect(feature, case))
+        self.assertTrue(self.detect("hash-shaped-legacy-id", case))
 
     def test_every_released_key_needs_directive_metadata(self) -> None:
         self.assertFalse(self.detect("every-released-key", self.load(COFFEE), {}))

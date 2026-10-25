@@ -12,8 +12,7 @@
 key = "id"
 on = "transaction"
 class = "read"
-writers = ["v0.2.x backend/app/core/beancount_engine.py:489 (create_transaction: every import commit)",
-           "v0.2.x backend/app/core/beancount_engine.py:520 (add_ids_to_transaction)",
+writers = ["v0.2.x backend/app/core/beancount_engine.py:489 (create_transaction, reached from the import commit importer/transaction.py:319)",
            "v0.2.x backend/resources/seed_data/ledgers (every demo transaction)"]
 reader = "TransactionId rule 1 (ADR-0026; mirror postings.transaction_id, README 'Ids')"
 
@@ -28,8 +27,8 @@ reader = "TransactionId rule 2 (ADR-0026, INV-21)"
 key = "content_hash"
 on = "transaction"
 class = "pass"
-writers = ["v0.2.x backend/app/core/beancount_engine.py:490 (create_transaction)",
-           "v0.2.x backend/app/core/beancount_engine.py:521 (add_ids_to_transaction)"]
+writers = ["v0.2.x backend/app/core/beancount_engine.py:490 (create_transaction, from the import commit)",
+           "v0.2.x backend/resources/seed_data/ledgers (every demo transaction)"]
 note = "Never read: the mirror's transaction_content_hash is computed from the entry (ADR-0055); the matcher ignores it (ADR-0026)."
 
 [[key]]
@@ -37,7 +36,7 @@ key = "source_account"
 on = "transaction"
 class = "read"
 writers = ["v0.2.x backend/app/core/beancount_engine.py:491 (create_transaction; the request's value, \"\" when the frontend sent none: useTransactionImporter.ts:182)",
-           "v0.2.x backend/app/core/beancount_engine.py:523 (add_ids_to_transaction)",
+           "v0.2.x backend/resources/seed_data/ledgers (every demo transaction)",
            "v0.2.x frontend/src/views/ImportView.vue:397, 498, 585, 656 (OFX, CSV/XLS/AI, email, manual import)"]
 reader = "the content fallback id (README 'Ids', ADR-0026) and the mirror's postings.source_account (ADR-0055)"
 
@@ -147,21 +146,21 @@ reader = "the account form (CAP-ACCT-CREATE)"
 key = "name"
 on = "commodity"
 class = "read"
-writers = ["v0.2.x backend/app/core/beancount_engine.py:682 (create_commodity)", "v0.2.x seed ledgers"]
+writers = ["v0.2.x backend/resources/seed_data/ledgers (no released route calls create_commodity)"]
 reader = "the mirror's commodities.name (ADR-0048; design/specs/mirror/surface.toml)"
 
 [[key]]
 key = "asset-class"
 on = "commodity"
 class = "read"
-writers = ["v0.2.1, v0.2.2 backend/app/core/beancount_engine.py:687 (create_commodity)", "v0.2.1, v0.2.2 seed ledgers"]
+writers = ["v0.2.1, v0.2.2 backend/resources/seed_data/ledgers (no released route calls create_commodity)"]
 reader = "the mirror's commodities.asset_class and is_currency (ADR-0025; CAP-INV-ASSET-CLASS)"
 
 [[key]]
 key = "type"
 on = "commodity"
 class = "pass"
-writers = ["v0.2.0 backend/app/core/beancount_engine.py:683 (create_commodity; \"Unknown\" by default)", "v0.2.0 seed ledgers"]
+writers = ["v0.2.0 backend/resources/seed_data/ledgers (create_commodity would write \"Unknown\", but no released route calls it)"]
 note = "v0.2.1 replaced it with asset-class and stopped reading it (its mirror column commodities.type was dropped); v0.4 does not read it either. Not in review:28's inventory, found by reading the v0.2.0 writer."
 
 [[key]]
