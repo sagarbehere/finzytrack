@@ -604,11 +604,11 @@ Each item builds the check that turns one invariant from "pending" into "enforce
 | BL-0016 | Build enforcement for INV-16: acceptance flows and component tests for preview, Cancel focus and backup on destructive actions | WS-UI | M2 | open | `review:20 §2` |
 | BL-0017 | Build enforcement for INV-17: migration framework tests (idempotent, dry-run, backed up, never write newer per workspace) | WS-LIFECYCLE | M3 | open | `review:20 §2` |
 | BL-0018 | Build enforcement for INV-18: jsx-a11y lint, axe in the acceptance tests and the token contrast test, at WCAG 2.2 AA (known pending) | WS-UI | M11 | open | `review:20 §2` |
-| BL-0019 | Build enforcement for INV-19: the generated-artifact diff check and the doc-impact check | WS-DOCS | M0 | open | `review:20 §2` |
+| BL-0019 | Build enforcement for INV-19: the generated-artifact diff check and the doc-impact check. Diff check S0000; the doc-impact check is the verifier's folded-in doc check (`.claude/agents/verifier.md`), recorded in S0019 | WS-DOCS | M0 | done | `review:20 §2` |
 | BL-0020 | Build enforcement for INV-20: the nightly perf suite compared with a stored baseline, plus the user-facing absolutes (known pending) | WS-QA | M11 | open | `review:20 §2` |
 | BL-0021 | Build enforcement for INV-21: old-workspace fixtures plus the fallback-id and metadata-key goldens | WS-KERNEL | M1a (agent) | open | `review:20 §2` |
 | BL-0022 | Build enforcement for INV-22: a fault-injection test per write-contract step | WS-WRITE | M1b (agent) | open | `review:20 §2` |
-| BL-0023 | Build enforcement for INV-23: the T0 privacy scanner, plus owner-reviewed anonymization of fixtures | WS-QA | M0 | open | `review:20 §2` |
+| BL-0023 | Build enforcement for INV-23: the T0 privacy scanner, plus owner-reviewed anonymization of fixtures. Scanner S0000 (+ detect-secrets S0016); the owner-review gate is `scripts/check_staged.py` with `corpora/MANIFEST.tsv` (a real export is refused unless listed with its hash and the owner's review date); no real export exists yet, so there is nothing to review (S0019) | WS-QA | M0 | done | `review:20 §2` |
 | BL-0024 | Build enforcement for INV-24: the acceptance-harness port and data-dir checks and the local-tier path guard | WS-QA | M0 | open | `review:20 §2` |
 | BL-0025 | Build enforcement for INV-25: tests that "forget" leaves the folder byte-identical and that demo replacement refuses a real workspace, a demo manifest at another path and a symlinked demo folder | WS-LIFECYCLE | M3 | open | `review:20 §2`, `review:23 §7.2` |
 | BL-0026 | Build enforcement for INV-26: the adoption corpus byte-identity test and the lock-interleaving test against the packaged v0.2.2 build on all three OSes | WS-LIFECYCLE | M3 | open | `review:20 §2`, `review:23 §7.2` |
