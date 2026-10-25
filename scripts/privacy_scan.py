@@ -14,9 +14,9 @@ Rules (design/process/PROCESS.md, "Privacy gate"):
   email         any address outside the reserved example/test domains
   secret        API keys, tokens, private-key blocks, assigned credentials
   secret-entropy what detect-secrets 1.5.0 finds (vendor key formats, secret keywords, high-entropy strings),
-                run from its pinned environment `scripts/secrets-scan/` with network verification off (BL-0035);
-                a 64-hex value under a `sha256` key is a hash pin, not a secret. If the tool cannot run, the
-                scan fails (exit 2), never passes
+                run from its pinned environment `scripts/secrets-scan/` with network verification off, on every
+                blob whatever its name (BL-0035); a 64-hex value under a `sha256` or `checksum` key, or written
+                `sha256:<hex>`, is a hash pin. If the tool cannot run, the scan fails (exit 2), never passes
   home-path     a real home directory (/Users/<name>, /home/<name>, /Volumes/<name>, ~<name>/, C:\\Users\\<name>)
   live-data-path the name of the owner's live data folder
   denylist      a literal from the owner's denylist (kept OUTSIDE the repo)
@@ -250,7 +250,14 @@ def scan_text(path: str, text: str, denylist: list[str]) -> list[Finding]:
 
 
 SECRETS_ENV = Path(__file__).resolve().parent / "secrets-scan"
-HASH_PIN = re.compile(r"""["']?sha256["']?\s*[:=]\s*["']([0-9a-f]{64})["']""")
+# A pin in a lockfile or pin file: a 64-hex value under a key named exactly `sha256` or `checksum`, or written
+# `sha256:<hex>` (uv.lock). The key must start at a word boundary, so `api_secret_sha256` is not a pin.
+HASH_PIN = re.compile(
+    r"""(?:(?<![\w-])["']?(?:sha256|checksum)["']?\s*[:=]\s*["']|["']sha256:)([0-9a-f]{64})["']"""
+)
+# detect-secrets skips files by name (lock files) and extension (.css, .svg, .map, ...); every blob is scanned.
+DS_DISABLED_FILTERS = ("detect_secrets.filters.heuristic.is_lock_file",
+                       "detect_secrets.filters.heuristic.is_non_text_file")
 CANDIDATE = re.compile(r"""["']([^"']+)["']|([^\s"'=:,]+)""")
 
 
@@ -259,17 +266,18 @@ class ToolError(Exception):
 
 
 def detect_secrets(texts: dict[str, str]) -> dict[str, list[tuple[int, str]]]:
-    """{path: [(line, hashed_secret)]} from detect-secrets over the given texts, written under their own
-    relative paths in a temporary folder (so its file-name heuristics see the real names)."""
+    """{path: [(line, hashed_secret)]} from detect-secrets over the given texts. Each text is written to the
+    temporary folder under a generated name (`blob00000.txt`, ...), never under its own path, so no path can
+    leave the folder or be read as an option (EP-30); the results are mapped back by that name."""
     if not texts:
         return {}
+    names = {f"blob{i:05d}.txt": path for i, path in enumerate(texts)}
     with tempfile.TemporaryDirectory() as tmp:
-        for rel, text in texts.items():
-            dest = Path(tmp) / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(text, encoding="utf-8")
+        for name, path in names.items():
+            (Path(tmp) / name).write_text(texts[path], encoding="utf-8", newline="")
+        filters = [arg for f in DS_DISABLED_FILTERS for arg in ("--disable-filter", f)]
         cmd = ["uv", "run", "--project", str(SECRETS_ENV), "--locked", "--quiet", "detect-secrets", "scan",
-               "--no-verify", *texts]
+               "--no-verify", *filters, "--", *names]
         try:
             proc = subprocess.run(cmd, cwd=tmp, capture_output=True, text=True, timeout=300)
         except (OSError, subprocess.TimeoutExpired) as e:
@@ -280,14 +288,16 @@ def detect_secrets(texts: dict[str, str]) -> dict[str, list[tuple[int, str]]]:
             results = json.loads(proc.stdout)["results"]
         except (ValueError, KeyError) as e:
             raise ToolError(f"detect-secrets output unreadable: {e}") from e
-    return {path: [(r["line_number"], r["hashed_secret"]) for r in found] for path, found in results.items()}
+        if not set(results) <= set(names):
+            raise ToolError(f"detect-secrets reported unknown files: {sorted(set(results) - set(names))[:3]}")
+    return {names[name]: [(r["line_number"], r["hashed_secret"]) for r in found] for name, found in results.items()}
 
 
 def entropy_findings(texts: dict[str, str]) -> list[Finding]:
     out: list[Finding] = []
     for path, hits in detect_secrets(texts).items():
-        lines = texts[path].splitlines()
-        for lineno, hashed in hits:
+        lines = texts[path].split("\n")  # as detect-secrets counts lines: only "\n" ends one
+        for lineno, hashed in sorted(set(hits)):  # one finding per value and line, whichever plugins found it
             line = lines[lineno - 1] if 0 < lineno <= len(lines) else ""
             allowed = {r.strip() for m in ALLOW_MARK.finditer(line) for r in m.group(1).split(",")}
             if "secret-entropy" in allowed:
@@ -295,7 +305,7 @@ def entropy_findings(texts: dict[str, str]) -> list[Finding]:
             tokens = [m.group(1) or m.group(2) for m in CANDIDATE.finditer(line)]
             token = next((t for t in tokens if hashlib.sha1(t.encode()).hexdigest() == hashed), "")  # noqa: S324
             if token and any(m.group(1) == token for m in HASH_PIN.finditer(line)):
-                continue  # a sha256 pin (lockfile-style), not a secret
+                continue  # a hash pin, not a secret
             out.append(Finding(path, lineno, "secret-entropy", redact(token) if token else "(value not located)"))
     return out
 

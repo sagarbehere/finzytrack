@@ -19,3 +19,17 @@
 ## Hand-off (PROCESS.md §3 step 4; ADR-0057)
 - Checks with must-not-pass tests: an AWS key id, a high-entropy base64 string, a 64-hex value under another key, and a 63-hex value under `sha256` are flagged; tool missing, non-zero exit and unreadable output raise; `main` exits 2 on a tool failure; `--no-verify` is in the command.
 - Self-mutation: 6 tried, 6 killed.
+
+## Verifier
+- Round 1, head 0a27345: FAIL (risk raised to High). Attacks: 12 (tool failures; network egress with sockets blocked; wiring; option injection by file name; paths escaping the temp folder; name-based skips; line counting; the pin filter; mutants; direct runs of the test file; the lock's age span; CI order).
+- F1 High: blobs were written under their own paths, so an absolute or `../` path wrote outside the temp folder and could overwrite the scanned file. Fixed (EP-30): every blob is written under a generated name (`blob00000.txt`) and mapped back.
+- F2 High: a file named like an option (`--exclude-files=.*`) switched the rule off. Fixed: generated names and `--` before them.
+- F3 Medium: detect-secrets skipped files by name and extension (lock files, `.css`, `.svg`, `.map`). Fixed: those two filters are disabled; the pin rule also covers `checksum = "<hex>"` and `sha256:<hex>`, and the repo stays clean with lockfiles scanned.
+- F4 Medium: lines were split on form feeds and other separators detect-secrets ignores, so a mark could cover another line. Fixed: split on `\n` only.
+- F5 Low: pin keys were not anchored (`api_secret_sha256`). Fixed: exact keys at a word boundary.
+- F6 Low: normalised path spellings raised a `KeyError`. Fixed by the generated names; unknown result files raise `ToolError`.
+- F7 Medium (tests): no case of a pin and a secret on one line. Added.
+- F8 Low: the new test class sat after the `__main__` guard. Moved.
+- F9 Low: one value reported once per plugin. Deduplicated per line.
+- Docs: roadmap wording; ARCHITECTURE.md §11 lists `scripts/secrets-scan/`.
+- Re-verification required (High fixes): round 2 below.

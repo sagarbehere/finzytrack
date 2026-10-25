@@ -189,9 +189,6 @@ class Plumbing(unittest.TestCase):
         self.assertFalse(ps.iban_ok(j("GB82", "WEST", "1234", "5698", "7654", "33")))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class SecretEntropy(unittest.TestCase):
     """BL-0035: detect-secrets 1.5.0 from its pinned environment, network verification off, fail closed;
@@ -258,3 +255,61 @@ class SecretEntropy(unittest.TestCase):
             with mock.patch.object(ps, "detect_secrets", side_effect=ps.ToolError("down")), \
                     redirect_stderr(io.StringIO()):
                 self.assertEqual(ps.main([str(path), "--quiet"]), 2)
+
+    def test_names_never_steer_the_tool(self) -> None:
+        # S0016 verifier F1, F2, F6: blobs are written under generated names, so a path cannot leave the temp
+        # folder, overwrite its source or be read as an option, and odd spellings map back.
+        secret = f'token = "{self.B64}"\n'
+        with tempfile.TemporaryDirectory() as tmp:
+            outside = Path(tmp) / "source.py"
+            outside.write_bytes(b"caf\xe9\n")
+            for path in (str(outside), "../escape.py", "--exclude-files=.*", "./a.py", "a//b.py", "-x.md"):
+                with self.subTest(path=path):
+                    got = ps.entropy_findings({path: secret, "other.py": secret})
+                    self.assertEqual(sorted({f.path for f in got}), sorted({path, "other.py"}))
+            self.assertEqual(outside.read_bytes(), b"caf\xe9\n")
+            self.assertFalse((Path(tmp).parent / "escape.py").exists())
+
+    def test_every_file_name_is_scanned(self) -> None:
+        # F3: detect-secrets' name and extension skips are off; lock files and stylesheets are scanned too.
+        for path in ("style.css", "notes.lock", "Cargo.lock", "yarn.lock", "app.js.map", "pic.svg"):
+            with self.subTest(path=path):
+                self.assertIn("secret-entropy", self.found(f'token = "{self.B64}"\n', path))
+
+    def test_a_mark_applies_to_its_own_line_only(self) -> None:
+        # F4: only "\n" ends a line, as in detect-secrets and in a diff; a form feed does not.
+        text = "x = 1\f\f\f\f# privacy-scan: allow secret-entropy\n" + f'token = "{self.B64}"\n'
+        self.assertIn("secret-entropy", self.found(text))
+        text2 = "a = 1\n" * 4 + f'token = "{self.B64}"\n'
+        self.assertIn("secret-entropy", self.found(text2))
+
+    def test_pin_keys_are_exact(self) -> None:
+        # F5: a key that only ends in sha256 is not a pin; F7: a pin does not excuse a secret on its line.
+        for text in (f'not_a_sha256 = "{self.HEX}"\n', f'api_secret_sha256: "{self.HEX}"\n',
+                     f'"sha256": "{self.HEX}", "token": "{self.B64}"\n'):
+            with self.subTest(text=text[:20]):
+                self.assertIn("secret-entropy", self.found(text))
+        for text in (f'checksum = "{self.HEX}"\n', f'hash = "sha256:{self.HEX}"\n'):
+            with self.subTest(text=text[:20]):
+                self.assertEqual(self.found(text), [])
+
+    def test_one_finding_per_value_and_line(self) -> None:
+        # F9: several plugins may report the same value; it is shown once.
+        got = ps.entropy_findings({"x.py": j("password = \"AKIA", "Q3EGRIUIUHWS", "J3XY\"\n")})
+        self.assertEqual(len(got), len({(f.path, f.line) for f in got}))
+
+    def test_the_lockfile_is_used(self) -> None:
+        seen: list[list[str]] = []
+
+        def fake_run(cmd, **kw):
+            seen.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout='{"results": {}}', stderr="")
+
+        with mock.patch.object(ps.subprocess, "run", fake_run):
+            ps.detect_secrets({"x.py": "x = 1\n"})
+        self.assertIn("--locked", seen[0])
+        self.assertLess(seen[0].index("--no-verify"), seen[0].index("--"))
+
+
+if __name__ == "__main__":
+    unittest.main()

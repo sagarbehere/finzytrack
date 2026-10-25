@@ -21,7 +21,7 @@ Done in M0:
 - The Cargo 14-day check (BL-0052, S0013); cut and deferred capability rows cite their ADR (BL-0039, S0015); detect-secrets in the privacy scan (BL-0035, S0016); INV-11 enforced by the globals test and state registry (BL-0011, S0017).
 
 Left in M0, in this order:
-1. BL-0042 (parked: round 2 of S0014 awaits verification); the guard gaps found in S0014 (BL-0055) (entropy secrets scan). The checks on the process's own paperwork (BL-0034, BL-0036, BL-0038, BL-0040) are parked until evidence asks for them (ADR-0058).
+1. BL-0042 (parked: round 2 of S0014 awaits verification); the guard gaps found in S0014 (BL-0055). The checks on the process's own paperwork (BL-0034, BL-0036, BL-0038, BL-0040) are parked until evidence asks for them (ADR-0058).
 2. The invariant enforcement due by M0 (CI fails at M0's exit while these invariants are pending): BL-0012 (INV-12, the import contracts, backend half done in S0006, and the frontend boundaries lint); and the rest of BL-0019 (the doc-impact check), BL-0023 (owner-reviewed anonymization of fixtures) and BL-0024 (the acceptance harness's port and data-dir checks, the local-tier path guard).
 3. M1's other specs: the D1 write corpus, the mirror surface and DDL, the INV-21 goldens, the Beancount domain vectors.
 4. The rest of review:27 §1(d) that M0's exit needs: the demo generator skeleton; the acceptance-suite harness (isolated backend, frozen clock, LLM stub, Chromium and WebKit); the P1 integrity tests written as `fixme`; the red-team session on the gates and the first seeded-defect run.

@@ -882,7 +882,8 @@ The versions below are the newest stable releases published on or before **2026-
                                                 model.py (expected changes), adapters.py (one per mutator),
                                                 classify.py (ADR-0014 classes), harness.py,
                                                 legacy_api_tests.py + legacy_shim.py (S12); own pinned env
-                                                (pyproject.toml + uv.lock, Beancount 3.2.0)
+                                                (pyproject.toml + uv.lock, Beancount 3.2.0); secrets-scan/ (the
+                                                privacy scan's detect-secrets environment, S0016)
   .githooks/pre-commit                          T0
   .github/workflows/  ci.yml (T1)  nightly.yml (T2)  packaged.yml (3-OS build + smoke)  release.yml
                                                 deterministic gates only: no AI, no agent runs (owner, 2026-10-24)
