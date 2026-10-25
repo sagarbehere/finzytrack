@@ -1,0 +1,20 @@
+# .github/workflows/run-next-ci.yml on main: runs next's CI by hand (ADR-0060 on next).
+name: run-next-ci
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit or branch of next to test"
+        default: "next"
+permissions:
+  contents: read
+  actions: read
+jobs:
+  t1:
+    uses: sagarbehere/finzytrack/.github/workflows/ci.yml@next
+    with:
+      ref: ${{ inputs.ref }}
+  t2:
+    uses: sagarbehere/finzytrack/.github/workflows/nightly.yml@next
+    with:
+      ref: ${{ inputs.ref }}
