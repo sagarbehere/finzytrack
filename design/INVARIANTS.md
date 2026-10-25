@@ -76,8 +76,8 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 ### INV-11: Services hang off containers
 - **Rule:** Services hang off `UserContainer` or `WorkspaceContainer`; limiters, the job queue and the AI chat store hang off `UserContainer`. There is no module-level mutable state outside the allowlist. *(Amended by review:23 §7.2.)*
 - **Why:** Module globals leak state between users and workspaces (review:18).
-- **Enforced by:** planned: a globals allowlist test; the isolation matrix with a workspace axis.
-- **Status:** pending (BL-0011, by M0)
+- **Enforced by:** `backend/tests/architecture/test_globals.py` (no module-level or class-level mutable state, `global`/`nonlocal` or memoizing decorator outside the registry), `backend/src/app/platform/state_registry.py` (the registry, each entry with owner, bound and eviction). Planned: the isolation matrix with a workspace axis (L11-08, M2).
+- **Status:** enforced
 
 ### INV-12: Layering
 - **Rule:** Routers translate HTTP, use cases orchestrate, the domain is pure. On the frontend, no business rule sits in a template or component render; logic sits in domain modules, hooks or machines.

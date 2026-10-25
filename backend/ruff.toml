@@ -20,3 +20,7 @@ select = ["E", "W", "F", "I", "UP", "B", "BLE", "DTZ", "S", "TRY", "TID", "PT", 
 "time.gmtime".msg = "INV-07, EP-10: time comes from the injected Clock port"
 "time.strftime".msg = "INV-07, EP-10: time comes from the injected Clock port"
 "time.ctime".msg = "INV-07, EP-10: time comes from the injected Clock port"
+
+[lint.isort]
+# `app` is first-party whether ruff runs from backend/ (CI) or from the repo root (hooks)
+known-first-party = ["app"]

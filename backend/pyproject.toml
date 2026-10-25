@@ -33,6 +33,10 @@ module-name = "app"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--strict-markers", "-p", "no:cacheprovider"]
+markers = [
+  "inv(id): the invariant a test enforces (design/INVARIANTS.md; scripts/check_invariants.py)",
+  "cap(id): the capability a test covers (design/capabilities.toml)",
+]
 xfail_strict = true
 
 [tool.deptry]
