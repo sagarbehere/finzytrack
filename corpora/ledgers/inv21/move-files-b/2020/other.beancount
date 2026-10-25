@@ -1,0 +1,12 @@
+; INV-21 goldens: the moved twin is now on line 2, so it sorts first.
+2020-06-01 * "Kiosk" "snack"
+  Expenses:Snacks   1.20 USD
+  Assets:Bank      -1.20 USD
+
+; This twin is on line 10, the same line as the first twin in
+; main.beancount, so their order comes from the order in which
+; Beancount read the files.
+;
+2020-06-01 * "Kiosk" "snack"
+  Expenses:Drinks   1.20 USD
+  Assets:Bank      -1.20 USD

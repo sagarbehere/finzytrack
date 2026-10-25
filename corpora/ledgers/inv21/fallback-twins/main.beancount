@@ -1,0 +1,60 @@
+; INV-21 goldens: content fallback ids and their ordinals (synthetic data).
+option "operating_currency" "USD"
+
+2020-01-01 open Assets:Bank USD
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Expenses:Food USD
+2020-01-01 open Expenses:Snacks USD
+2020-01-01 open Equity:Opening USD
+
+; Three identical coffees on one day: <hash>, <hash>-1, <hash>-2.
+2020-04-01 * "Cafe" "coffee"
+  Expenses:Food   2.50 USD
+  Assets:Bank    -2.50 USD
+
+2020-04-01 * "Cafe" "coffee"
+  Expenses:Food   2.50 USD
+  Assets:Bank    -2.50 USD
+
+2020-04-01 * "Cafe" "coffee"
+  Expenses:Food   2.50 USD
+  Assets:Bank    -2.50 USD
+
+; The same coffee on the next day: a different hash, no ordinal.
+2020-04-02 * "Cafe" "coffee"
+  Expenses:Food   2.50 USD
+  Assets:Bank    -2.50 USD
+
+; Same date, payee, narration, bank amount; different expense account.
+; The hash does not see the expense leg, so these are twins too.
+2020-04-03 * "Kiosk" "snack"
+  Expenses:Food     1.20 USD
+  Assets:Bank      -1.20 USD
+
+2020-04-03 * "Kiosk" "snack"
+  Expenses:Snacks   1.20 USD
+  Assets:Bank      -1.20 USD
+
+; The fields are joined with "|": payee "A|B" + narration "C" and
+; payee "A" + narration "B|C" give the same hash input.
+2020-04-04 * "A|B" "C"
+  Expenses:Food   9.00 USD
+  Assets:Bank    -9.00 USD
+
+2020-04-04 * "A" "B|C"
+  Expenses:Food   9.00 USD
+  Assets:Bank    -9.00 USD
+
+; No payee, an empty narration, and a non-ASCII payee.
+2020-04-05 * "narration only"
+  Expenses:Food   1.00 USD
+  Assets:Bank    -1.00 USD
+
+2020-04-05 * "Café ₹" ""
+  Expenses:Food   1.00 USD
+  Assets:Bank    -1.00 USD
+
+; A pad: Beancount inserts a padding transaction (flag P), which gets
+; a fallback id like any other transaction.
+2020-04-06 pad Assets:Cash Equity:Opening
+2020-04-07 balance Assets:Cash  50.00 USD

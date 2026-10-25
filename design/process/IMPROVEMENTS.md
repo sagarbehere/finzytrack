@@ -228,3 +228,12 @@ Format:
 - Observed effect: pending.
 - Status: kept (loosening, owner-approved).
 - Owner approval: "I think we should do a manual GitHub CI run prior to each release." (2026-10-25, in session)
+
+## IMP-0023: the pre-push hook runs the INV-21 goldens (2026-10-25)
+- Trigger: S0022 (the INV-21 goldens).
+- What changed: `.githooks/pre-push` runs `scripts/oracle/tests/test_inv21_goldens.py` in the oracle environment; PROCESS.md §6 T0 pre-push row.
+- PROCESS.md section: §6.
+- Why: the goldens pin how existing ledgers' entries are identified; with GitHub CI manual (ADR-0060), the pre-push hook is the only per-push place a drift between the spec, the goldens and the key inventory is caught. The test takes under 1 s.
+- Expected effect: a spec or golden edit that breaks agreement fails before it reaches the remote.
+- Observed effect: pending.
+- Status: kept (tightening, agent-approved, PROCESS.md §9).

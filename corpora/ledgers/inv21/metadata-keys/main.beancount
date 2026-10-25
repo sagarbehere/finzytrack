@@ -1,0 +1,78 @@
+; INV-21 goldens: every metadata key a released version (v0.2.0 to v0.2.2)
+; wrote, as that version wrote it, plus the keys INV-21 names and user keys
+; of every value type. Inventory: corpora/ledgers/inv21/keys.toml (synthetic data).
+option "operating_currency" "USD"
+
+2020-01-01 commodity USD
+  name: "US Dollar"
+  asset-class: "cash"
+
+; v0.2.0 wrote `type` on commodities (v0.2.1 replaced it with asset-class).
+2020-01-01 commodity ABC
+  name: "ABC Fund"
+  type: "Unknown"
+  issuer: "Example Funds"
+
+2020-01-01 open Assets:Bank USD
+  description: "Everyday account"
+  account_number: "TEST-ACCT-0001"
+  ifsc_code: "TEST0000001"
+  swift_bic: "TESTXX00"
+  institution: "Example Bank"
+  opened-on: 2019-12-01
+  overdraft: 500.00 USD
+  joint: TRUE
+  rank: 3
+2020-01-01 open Assets:Broker
+2020-01-01 open Expenses:Food USD
+2020-01-01 open Expenses:Old USD
+
+; An import commit (OFX), as v0.2.x wrote it.
+2020-10-01 * "Grocer" "weekly shop"
+  id: "0190a1b2-c3d4-7e5f-8a6b-1c2d3e4f5b01"
+  content_hash: "stale-hash-text-b01"
+  source_account: "Assets:Bank"
+  external_id: "FIT-A001"
+  external_id_type: "OFX"
+  memo: "POS 1234 GROCER"
+  Expenses:Food   25.00 USD
+  Assets:Bank    -25.00 USD
+
+; An email import with a rule, and two attached documents.
+2020-10-02 * "Cafe" "email receipt"
+  id: "0190a1b2-c3d4-7e5f-8a6b-1c2d3e4f5b02"
+  content_hash: "stale-hash-text-b02"
+  source_account: "Assets:Bank"
+  external_id: "message-id-a002@example.com"
+  external_id_type: "EMAIL_MESSAGE_ID"
+  source_rule: "example-bank/debit"
+  document: "../documents/2020/2020-10-02-cafe-0a1b2c3d.pdf"
+  document2: "../documents/2020/2020-10-02-cafe-4e5f6a7b.pdf"
+  Expenses:Food   4.00 USD
+  Assets:Bank    -4.00 USD
+
+; The keys INV-21 names that no released version wrote (pre-v0.1):
+; `transaction_id`, `ofx_id`, transaction-level `ofx_memo`.
+2020-10-03 * "Grocer" "pre-v0.1 import"
+  transaction_id: "old-a003"
+  ofx_id: "FIT-A003"
+  ofx_memo: "POS 5678 GROCER"
+  Expenses:Food   6.00 USD
+  Assets:Bank    -6.00 USD
+
+; User keys of every value type on the transaction and on postings;
+; a posting-level `ofx_memo` (as beancount-import writes it) is the user's
+; data, not the alias; v0.4's `import-key` on the anchor posting.
+2020-10-04 * "Broker" "buy units"
+  trip: "Café ₹"
+  reviewed: TRUE
+  Assets:Broker   2 ABC {10.00 USD}
+    grant_date: 2020-09-30
+    grant_number: 77
+    lot-value: 20.00 USD
+  Assets:Bank
+    ofx_memo: "BUY ABC"
+    import-key: "v1:brk:TRADE0004"
+
+2020-12-31 close Expenses:Old
+  reason: "No longer used"

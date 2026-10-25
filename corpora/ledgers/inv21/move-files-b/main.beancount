@@ -1,0 +1,12 @@
+; INV-21 goldens: move-files-a after one twin moved to 2020/other.beancount (synthetic data).
+option "operating_currency" "USD"
+include "2020/other.beancount"
+2020-01-01 open Assets:Bank USD
+2020-01-01 open Expenses:Food USD
+2020-01-01 open Expenses:Snacks USD
+2020-01-01 open Expenses:Drinks USD
+
+; Line 10, the same line number as the twin in 2020/other.beancount.
+2020-06-01 * "Kiosk" "snack"
+  Expenses:Food     1.20 USD
+  Assets:Bank      -1.20 USD

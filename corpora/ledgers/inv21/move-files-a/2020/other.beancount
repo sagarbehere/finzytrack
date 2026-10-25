@@ -1,0 +1,12 @@
+; INV-21 goldens: an included file (synthetic data).
+; Beancount sorts entries by date, directive type and line number;
+; the file does not count. This twin is on line 10, the same line as
+; the first twin in main.beancount, so their order comes from the order
+; in which Beancount read the files.
+;
+;
+;
+;
+2020-06-01 * "Kiosk" "snack"
+  Expenses:Drinks   1.20 USD
+  Assets:Bank      -1.20 USD

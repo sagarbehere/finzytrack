@@ -1,2 +1,4 @@
 # Exact bytes for the D1 write corpus: CRLF, missing final newlines and tabs must survive every checkout (S0020).
 corpora/ledgers/write/** -text
+# The INV-21 goldens pin line numbers and the exact text Beancount reads (S0022).
+corpora/ledgers/inv21/** -text

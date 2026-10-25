@@ -1,0 +1,62 @@
+; INV-21 goldens: v0.4's `k:` ids from `import-key` (synthetic data).
+; No released version wrote `import-key`; v0.2.2 ignores it, so its ids
+; here differ from v0.4's for the entries listed in cases.toml.
+option "operating_currency" "USD"
+
+2020-01-01 open Assets:Bank USD
+2020-01-01 open Assets:Card USD
+2020-01-01 open Expenses:Food USD
+
+; On the bank posting.
+2020-09-01 * "Grocer" "ofx line"
+  Expenses:Food   5.00 USD
+  Assets:Bank    -5.00 USD
+    import-key: "v1:ofx:FIT0001"
+
+; On the second posting only (the first has none).
+2020-09-02 * "Grocer" "key on second posting"
+  Assets:Bank    -6.00 USD
+  Expenses:Food   6.00 USD
+    import-key: "v1:h:0123456789abcdef"
+
+; On both postings: the first posting's key, in posting order.
+2020-09-03 * "Transfer" "two anchors"
+  Assets:Card     7.00 USD
+    import-key: "v1:upi:REF0003"
+  Assets:Bank    -7.00 USD
+    import-key: "v1:ofx:FIT0003"
+
+; Several elements: the first one.
+2020-09-04 * "Grocer" "settled card line"
+  Expenses:Food   8.00 USD
+  Assets:Card    -8.00 USD
+    import-key: "v1:auth:AUTH0004 v1:ofx:FIT0004"
+
+; On the transaction, not a posting: not an identity (ADR-0026 puts it
+; on postings); the entry gets a content fallback id.
+2020-09-05 * "Grocer" "key on the transaction"
+  import-key: "v1:ofx:FIT0005"
+  Expenses:Food   9.00 USD
+  Assets:Bank    -9.00 USD
+
+; An empty value has no element: not an identity either.
+2020-09-06 * "Grocer" "empty key"
+  Expenses:Food   10.00 USD
+  Assets:Bank    -10.00 USD
+    import-key: ""
+
+; Three entries with the same content; the middle one has an import key,
+; so in v0.4 it takes no ordinal: <hash>, k:..., <hash>-1.
+; (v0.2.2 gives <hash>, <hash>-1, <hash>-2.)
+2020-09-07 * "Cafe" "coffee"
+  Expenses:Food   2.00 USD
+  Assets:Bank    -2.00 USD
+
+2020-09-07 * "Cafe" "coffee"
+  Expenses:Food   2.00 USD
+  Assets:Bank    -2.00 USD
+    import-key: "v1:ofx:FIT0007"
+
+2020-09-07 * "Cafe" "coffee"
+  Expenses:Food   2.00 USD
+  Assets:Bank    -2.00 USD

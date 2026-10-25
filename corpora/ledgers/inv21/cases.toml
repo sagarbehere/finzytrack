@@ -1,0 +1,57 @@
+# INV-21 goldens: one table per case folder (spec: design/specs/mirror/inv21-goldens.md).
+# features:           what the case shows, from scripts/oracle/inv21.py FEATURES; each must be found by its detector.
+# variant_of:         the case is another case with entries moved; the same transactions must get other ids.
+# v04_overrides:      "<file>:<line>" = v0.4's TransactionId where it differs from v0.2.2's (only with `import-key`).
+# directive_metadata: also pin the metadata JSON of every non-transaction directive.
+# user_keys:          keys on the case that are the user's own (not in keys.toml); only for metadata-keys.
+
+[ids-legacy]
+features = ["legacy-id", "legacy-transaction-id", "id-over-transaction-id", "non-text-id", "shared-legacy-id",
+            "id-over-import-key", "identified-twin-takes-no-ordinal", "twins"]
+
+[fallback-twins]
+features = ["twins", "twins-differ-outside-hash", "pipe-collision", "no-payee", "non-ascii", "padding-transaction"]
+
+[twins-reorder-a]
+features = ["twins", "twins-differ-outside-hash"]
+
+[twins-reorder-b]
+features = ["twins", "twins-differ-outside-hash", "reorder-variant"]
+variant_of = "twins-reorder-a"
+
+[move-files-a]
+features = ["twins", "twins-differ-outside-hash", "lineno-tie"]
+
+[move-files-b]
+features = ["twins", "twins-differ-outside-hash", "lineno-tie", "move-variant"]
+variant_of = "move-files-a"
+
+[source-account]
+features = ["source-account-key", "empty-source-account", "padded-source-account", "unmatched-source-account",
+            "falsy-non-text-source-account", "liabilities-source", "no-balance-sheet-posting",
+            "repeated-source-posting", "interpolated-source-amount", "thousands-separator"]
+
+[custom-roots]
+features = ["custom-root-names", "source-account-key", "no-balance-sheet-posting"]
+
+[import-key]
+features = ["import-key-id", "import-key-second-posting", "import-key-several-postings",
+            "import-key-several-elements", "import-key-on-transaction", "import-key-empty",
+            "identified-twin-takes-no-ordinal", "twins"]
+
+[import-key.v04_overrides]
+"main.beancount:11" = "k:v1:ofx:FIT0001"
+"main.beancount:17" = "k:v1:h:0123456789abcdef"
+"main.beancount:23" = "k:v1:upi:REF0003"
+"main.beancount:30" = "k:v1:auth:AUTH0004"
+"main.beancount:55" = "k:v1:ofx:FIT0007"
+"main.beancount:60" = "35c435b3c8d064134082b0d6cd36a32cc8a548ab877435b042d70cae5ba87482-1"
+
+[metadata-keys]
+features = ["every-released-key", "import-key-id"]
+directive_metadata = true
+user_keys = ["issuer", "institution", "opened-on", "overdraft", "joint", "rank", "trip", "reviewed",
+             "grant_date", "grant_number", "lot-value"]
+
+[metadata-keys.v04_overrides]
+"main.beancount:66" = "k:v1:brk:TRADE0004"

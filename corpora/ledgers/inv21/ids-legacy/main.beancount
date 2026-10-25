@@ -1,0 +1,66 @@
+; INV-21 goldens: the legacy id keys (synthetic data).
+option "operating_currency" "USD"
+
+2020-01-01 open Assets:Bank USD
+2020-01-01 open Expenses:Food USD
+2020-01-01 open Expenses:Rent USD
+
+; Both keys: the legacy `id` wins over `transaction_id`.
+2020-03-01 * "Grocer" "both keys"
+  id: "0190a1b2-c3d4-7e5f-8a6b-1c2d3e4f5a01"
+  transaction_id: "old-0001"
+  content_hash: "stale-hash-text"
+  source_account: "Assets:Bank"
+  Expenses:Food   12.50 USD
+  Assets:Bank    -12.50 USD
+
+; Only the old `transaction_id` key.
+2020-03-02 * "Landlord" "old key only"
+  transaction_id: "old-0002"
+  Expenses:Rent   500.00 USD
+  Assets:Bank    -500.00 USD
+
+; A number as the id: read as its text.
+2020-03-03 * "Grocer" "numeric id"
+  id: 42
+  Expenses:Food   3.00 USD
+  Assets:Bank    -3.00 USD
+
+; The key with no value: Beancount gives None.
+2020-03-04 * "Grocer" "empty id"
+  id:
+  Expenses:Food   4.00 USD
+  Assets:Bank    -4.00 USD
+
+; A copied entry that kept its id: both share it.
+2020-03-05 * "Grocer" "copied entry"
+  id: "0190a1b2-c3d4-7e5f-8a6b-1c2d3e4f5a05"
+  Expenses:Food   5.00 USD
+  Assets:Bank    -5.00 USD
+
+2020-03-05 * "Grocer" "copied entry, edited"
+  id: "0190a1b2-c3d4-7e5f-8a6b-1c2d3e4f5a05"
+  Expenses:Food   6.00 USD
+  Assets:Bank    -6.00 USD
+
+; A legacy id beats an import-key on a posting.
+2020-03-06 * "Grocer" "id and import key"
+  id: "0190a1b2-c3d4-7e5f-8a6b-1c2d3e4f5a06"
+  Expenses:Food   7.00 USD
+  Assets:Bank    -7.00 USD
+    import-key: "v1:ofx:FIT0006"
+
+; Three entries with the same content; the middle one has an id,
+; so it takes no ordinal: the others are <hash> and <hash>-1.
+2020-03-07 * "Cafe" "coffee"
+  Expenses:Food   2.00 USD
+  Assets:Bank    -2.00 USD
+
+2020-03-07 * "Cafe" "coffee"
+  id: "0190a1b2-c3d4-7e5f-8a6b-1c2d3e4f5a07"
+  Expenses:Food   2.00 USD
+  Assets:Bank    -2.00 USD
+
+2020-03-07 * "Cafe" "coffee"
+  Expenses:Food   2.00 USD
+  Assets:Bank    -2.00 USD

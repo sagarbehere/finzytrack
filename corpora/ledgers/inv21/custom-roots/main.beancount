@@ -1,0 +1,35 @@
+; INV-21 goldens: custom root names (synthetic data). v0.2.2 looks for the
+; literal text "Assets:" or "Liabilities:", so here it falls back to the
+; first posting, whatever its kind.
+option "name_assets" "Activos"
+option "name_liabilities" "Pasivos"
+option "name_equity" "Patrimonio"
+option "name_income" "Ingresos"
+option "name_expenses" "Gastos"
+option "operating_currency" "EUR"
+
+2020-01-01 open Activos:Banco EUR
+2020-01-01 open Pasivos:Tarjeta EUR
+2020-01-01 open Gastos:Comida EUR
+2020-01-01 open Ingresos:Sueldo EUR
+
+; The expense is first: the hash uses Gastos:Comida, not the bank.
+2020-08-01 * "Mercado" "compra"
+  Gastos:Comida    20.00 EUR
+  Activos:Banco   -20.00 EUR
+
+; The bank is first: the hash uses Activos:Banco (because it is first).
+2020-08-02 * "Empresa" "sueldo"
+  Activos:Banco     900.00 EUR
+  Ingresos:Sueldo  -900.00 EUR
+
+; The card is second: the hash uses the expense (first posting).
+2020-08-03 * "Tienda" "tarjeta"
+  Gastos:Comida     15.00 EUR
+  Pasivos:Tarjeta  -15.00 EUR
+
+; A `source_account` key still wins.
+2020-08-04 * "Tienda" "con clave"
+  source_account: "Pasivos:Tarjeta"
+  Gastos:Comida     16.00 EUR
+  Pasivos:Tarjeta  -16.00 EUR

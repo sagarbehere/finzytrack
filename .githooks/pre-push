@@ -29,6 +29,9 @@ uv_bin="$(command -v uv || echo "$HOME/.local/bin/uv")"
 run "write corpus" python3 scripts/check_write_corpus.py
 run "write corpus in Beancount" "$uv_bin" run --project scripts/oracle --locked python -m unittest discover \
   -s scripts/oracle/tests -p test_write_corpus.py -q
+# The INV-21 goldens (S0022): the spec's derivation agrees with the v0.2.2 values, labels and key inventory hold.
+run "INV-21 goldens" "$uv_bin" run --project scripts/oracle --locked python -m unittest discover \
+  -s scripts/oracle/tests -p test_inv21_goldens.py -q
 # ADR-0060: CI no longer runs per push, so new Cargo.lock entries' publish dates are verified here (network only
 # when the lock gained entries since the remote branch).
 upstream="$(git rev-parse --verify --quiet '@{u}' || echo none)"

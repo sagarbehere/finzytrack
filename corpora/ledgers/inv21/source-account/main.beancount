@@ -1,0 +1,71 @@
+; INV-21 goldens: which account and amount the content hash reads (synthetic data).
+option "operating_currency" "USD"
+
+2020-01-01 open Assets:Bank USD
+2020-01-01 open Assets:Savings USD
+2020-01-01 open Assets:Broker
+2020-01-01 open Liabilities:Card USD
+2020-01-01 open Expenses:Food USD
+2020-01-01 open Income:Salary USD
+
+; The `source_account` key names the second asset leg: it wins over the
+; first Assets posting.
+2020-07-01 * "Transfer" "to savings"
+  source_account: "Assets:Savings"
+  Assets:Bank      -100.00 USD
+  Assets:Savings    100.00 USD
+
+; An empty `source_account` value counts as absent, and then the FIRST
+; posting is used (here the expense), not the first Assets posting.
+2020-07-02 * "Grocer" "empty source account"
+  source_account: ""
+  Expenses:Food    8.00 USD
+  Assets:Bank     -8.00 USD
+
+; Spaces around the value: the amount search compares the untrimmed text
+; (no posting matches, so the amount is 0); the hash uses the trimmed text.
+2020-07-03 * "Grocer" "padded source account"
+  source_account: " Assets:Bank "
+  Expenses:Food    9.00 USD
+  Assets:Bank     -9.00 USD
+
+; The key names an account no posting uses: the amount is 0.
+2020-07-04 * "Grocer" "unknown source account"
+  source_account: "Assets:Elsewhere"
+  Expenses:Food    10.00 USD
+  Assets:Bank     -10.00 USD
+
+; A number that Python treats as false (0) counts as absent too.
+2020-07-05 * "Grocer" "zero source account"
+  source_account: 0
+  Expenses:Food    11.00 USD
+  Assets:Bank     -11.00 USD
+
+; No key: the first posting whose name starts with "Assets:" or
+; "Liabilities:" (here the second posting).
+2020-07-06 * "Card shop" "card purchase"
+  Expenses:Food       12.00 USD
+  Liabilities:Card   -12.00 USD
+
+; No Assets or Liabilities posting: the first posting.
+2020-07-07 * "Employer" "salary to food"
+  Expenses:Food     13.00 USD
+  Income:Salary    -13.00 USD
+
+; The chosen account appears twice: the first such posting's amount.
+2020-07-08 * "Grocer" "split bank legs"
+  Expenses:Food    14.00 USD
+  Assets:Bank      -4.00 USD
+  Assets:Bank     -10.00 USD
+
+; The chosen posting (the bank, the first Assets posting) has no amount;
+; Beancount fills it in (3 x 1.1111 = 3.3333), and the hash reads the
+; filled-in number.
+2020-07-09 * "Broker" "buy with price"
+  Assets:Bank
+  Assets:Broker   3 ABC @ 1.1111 USD
+
+; A thousands separator in the ledger text: the number is read as 1000.00.
+2020-07-10 * "Employer" "salary"
+  Assets:Bank      1,000.00 USD
+  Income:Salary   -1,000.00 USD

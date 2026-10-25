@@ -1,0 +1,15 @@
+; INV-21 goldens: twins in one order; twins-reorder-b swaps them (synthetic data).
+option "operating_currency" "USD"
+
+2020-01-01 open Assets:Bank USD
+2020-01-01 open Expenses:Food USD
+2020-01-01 open Expenses:Snacks USD
+
+; Same hash: the ordinal follows the line order, not the content.
+2020-05-01 * "Kiosk" "snack"
+  Expenses:Food     1.20 USD
+  Assets:Bank      -1.20 USD
+
+2020-05-01 * "Kiosk" "snack"
+  Expenses:Snacks   1.20 USD
+  Assets:Bank      -1.20 USD

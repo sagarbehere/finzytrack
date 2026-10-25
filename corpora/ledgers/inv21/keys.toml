@@ -1,0 +1,172 @@
+# Every metadata key a released Finzytrack (v0.2.0, v0.2.1, v0.2.2) wrote into a ledger, plus the keys INV-21 names,
+# each classified per INV-21 (spec: design/specs/mirror/inv21-goldens.md, "The key inventory").
+#   key, on:  the key and where it sits (transaction, posting, open, commodity, close)
+#   class:    "read" = INV-21 (a), a v0.4 reader needs it, read forever; "pass" = INV-21 (b), passed through untouched
+#   writers:  where a released version wrote it (path:line at the tag), or why no released version did
+#   reader:   for "read": the v0.4 reader, with its ADR/CAP/INV/BL ID
+# Built by behaviour from the v0.2.x writer code (S0022 journal, Hand-off "Population"). Both classes keep the key
+# byte for byte; only the consented cleanup may remove or rename one (INV-21 (c), ADR-0026). Keys a user typed
+# (account form custom fields, the transaction drawer, bulk "set metadata") are the user's own and pass through.
+
+[[key]]
+key = "id"
+on = "transaction"
+class = "read"
+writers = ["v0.2.x backend/app/core/beancount_engine.py:489 (create_transaction: every import commit)",
+           "v0.2.x backend/app/core/beancount_engine.py:520 (add_ids_to_transaction)",
+           "v0.2.x backend/resources/seed_data/ledgers (every demo transaction)"]
+reader = "TransactionId rule 1 (ADR-0026; mirror postings.transaction_id, README 'Ids')"
+
+[[key]]
+key = "transaction_id"
+on = "transaction"
+class = "read"
+writers = ["none in v0.2.x: written only before v0.1 (review:28 §2.1); v0.2.2 still reads it (sqlite_exporter.py:1632)"]
+reader = "TransactionId rule 2 (ADR-0026, INV-21)"
+
+[[key]]
+key = "content_hash"
+on = "transaction"
+class = "pass"
+writers = ["v0.2.x backend/app/core/beancount_engine.py:490 (create_transaction)",
+           "v0.2.x backend/app/core/beancount_engine.py:521 (add_ids_to_transaction)"]
+note = "Never read: the mirror's transaction_content_hash is computed from the entry (ADR-0055); the matcher ignores it (ADR-0026)."
+
+[[key]]
+key = "source_account"
+on = "transaction"
+class = "read"
+writers = ["v0.2.x backend/app/core/beancount_engine.py:491 (create_transaction; the request's value, \"\" when the frontend sent none: useTransactionImporter.ts:182)",
+           "v0.2.x backend/app/core/beancount_engine.py:523 (add_ids_to_transaction)",
+           "v0.2.x frontend/src/views/ImportView.vue:397, 498, 585, 656 (OFX, CSV/XLS/AI, email, manual import)"]
+reader = "the content fallback id (README 'Ids', ADR-0026) and the mirror's postings.source_account (ADR-0055)"
+
+[[key]]
+key = "external_id"
+on = "transaction"
+class = "read"
+writers = ["v0.2.x backend/app/core/beancount_engine.py:494 (create_transaction)",
+           "v0.2.x frontend/src/views/ImportView.vue:403 (OFX FITID), 589 (email reference or Message-ID)"]
+reader = "the import matcher's exact tier (ADR-0026; CAP-IMP-DEDUPE; review:28 §5.1)"
+
+[[key]]
+key = "external_id_type"
+on = "transaction"
+class = "read"
+writers = ["v0.2.x backend/app/core/beancount_engine.py:496 (create_transaction)",
+           "v0.2.x frontend/src/views/ImportView.vue:404 (\"OFX\"), 590 (the email rule's type, else \"EMAIL_MESSAGE_ID\")"]
+reader = "the import matcher's exact tier, as the kind of external_id (ADR-0026; CAP-IMP-DEDUPE)"
+
+[[key]]
+key = "ofx_id"
+on = "transaction"
+class = "read"
+writers = ["none in v0.2.x: written only before v0.1; v0.2.2 reads it as an OFX external_id (importer/transaction.py:310-315)"]
+reader = "the import matcher's exact tier, as an external_id of kind OFX (ADR-0026, INV-21)"
+
+[[key]]
+key = "memo"
+on = "transaction"
+class = "read"
+writers = ["v0.2.x backend/app/api/routers/importer/transaction.py:305 (import commit)",
+           "v0.2.x backend/app/api/routers/ledger_transactions.py:200 (transaction edit)"]
+reader = "the transaction memo (ADR-0026 keeps writing it; CAP-IMP-COMMIT, CAP-TXN-INLINE-EDIT)"
+
+[[key]]
+key = "ofx_memo"
+on = "transaction"
+class = "read"
+writers = ["none in v0.2.x: written only before v0.1; v0.2.2 reads it as memo (sqlite_exporter.py:1270, useTransactionQuery.ts:324)"]
+reader = "an alias of memo, transaction level only (ADR-0026, INV-21)"
+
+[[key]]
+key = "ofx_memo"
+on = "posting"
+class = "pass"
+writers = ["none in Finzytrack: beancount-import writes a posting-level ofx_memo (review:28 §2.1)"]
+note = "The user's data, not the memo alias: INV-21 makes only the transaction-level key an alias."
+
+[[key]]
+key = "source_rule"
+on = "transaction"
+class = "pass"
+writers = ["v0.2.x frontend/src/views/ImportView.vue:586 (email import), written as client metadata by importer/transaction.py:300"]
+note = "Nothing reads it (review:28 §2.1); v0.4 does not write it (ADR-0026)."
+
+[[key]]
+key = "document"
+on = "transaction"
+class = "read"
+writers = ["v0.2.x frontend/src/utils/documentMeta.ts:19-20 (documentKey: document, document2, ...), written by the transaction edit (ledger_transactions.py:191)"]
+reader = "transaction documents (CAP-DOC-TXN): every key starting with `document`"
+
+[[key]]
+key = "document2"
+on = "transaction"
+class = "read"
+writers = ["v0.2.x frontend/src/utils/documentMeta.ts:19-20 (the second and later documents: document2, document3, ...)"]
+reader = "transaction documents (CAP-DOC-TXN)"
+
+[[key]]
+key = "import-key"
+on = "posting"
+class = "read"
+writers = ["none released: v0.4 writes it on every anchor posting (ADR-0026)"]
+reader = "TransactionId rule 3, `k:` (ADR-0026), the import matcher, and the mirror's postings.source_account (ADR-0055)"
+
+[[key]]
+key = "account_number"
+on = "open"
+class = "read"
+writers = ["v0.2.x frontend/src/components/accounts/AccountFormModal.vue:437, written by beancount_engine.py:352 (create_account) and the account update"]
+reader = "the matcher's bank-account key and the account form (ADR-0026; CAP-IMP-OFX-DETECT, CAP-ACCT-CREATE)"
+
+[[key]]
+key = "ifsc_code"
+on = "open"
+class = "read"
+writers = ["v0.2.x frontend/src/components/accounts/AccountFormModal.vue:438"]
+reader = "the account form, released snake_case vocabulary kept (ADR-0026; CAP-ACCT-CREATE)"
+
+[[key]]
+key = "swift_bic"
+on = "open"
+class = "read"
+writers = ["v0.2.x frontend/src/components/accounts/AccountFormModal.vue:439"]
+reader = "the account form, released snake_case vocabulary kept (ADR-0026; CAP-ACCT-CREATE)"
+
+[[key]]
+key = "description"
+on = "open"
+class = "read"
+writers = ["v0.2.x backend/app/core/ledger_manager.py:451-452 (create account)",
+           "v0.2.x frontend/src/views/AccountsView.vue:518 (edit account)"]
+reader = "the account form (CAP-ACCT-CREATE)"
+
+[[key]]
+key = "name"
+on = "commodity"
+class = "read"
+writers = ["v0.2.x backend/app/core/beancount_engine.py:682 (create_commodity)", "v0.2.x seed ledgers"]
+reader = "the mirror's commodities.name (ADR-0048; design/specs/mirror/surface.toml)"
+
+[[key]]
+key = "asset-class"
+on = "commodity"
+class = "read"
+writers = ["v0.2.1, v0.2.2 backend/app/core/beancount_engine.py:687 (create_commodity)", "v0.2.1, v0.2.2 seed ledgers"]
+reader = "the mirror's commodities.asset_class and is_currency (ADR-0025; CAP-INV-ASSET-CLASS)"
+
+[[key]]
+key = "type"
+on = "commodity"
+class = "pass"
+writers = ["v0.2.0 backend/app/core/beancount_engine.py:683 (create_commodity; \"Unknown\" by default)", "v0.2.0 seed ledgers"]
+note = "v0.2.1 replaced it with asset-class and stopped reading it (its mirror column commodities.type was dropped); v0.4 does not read it either. Not in review:28's inventory, found by reading the v0.2.0 writer."
+
+[[key]]
+key = "reason"
+on = "close"
+class = "read"
+writers = ["v0.2.x backend/app/core/beancount_engine.py:421 (close_account)"]
+reader = "the close reason (CAP-ACCT-CLOSE)"
