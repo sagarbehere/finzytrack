@@ -26,7 +26,7 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 - **Status:** pending (BL-0002, by M1a)
 
 ### INV-03: Beancount parity
-- **Rule:** No Beancount feature is narrowed. If Beancount loads a ledger, Finzytrack handles it: custom roots, every booking method, globs, plugins. Where Beancount itself refuses something, say so.
+- **Rule:** No Beancount feature is narrowed. If Beancount loads a ledger, Finzytrack handles it: custom roots, every booking method, globs, plugins. Where Beancount itself refuses something, say so. *(Stated exception, owner 2026-10-25, ADR-0059: in v0.4.0 a ledger with an encrypted file is refused with a plain message, not read.)*
 - **Why:** Finzytrack is a front end over the user's Beancount ledger; ledgers that Beancount accepts must not be second-class (owner, 2026-10-24).
 - **Enforced by:** planned: the parity corpus (Beancount and Fava example ledgers).
 - **Status:** pending (BL-0003, by M1a)

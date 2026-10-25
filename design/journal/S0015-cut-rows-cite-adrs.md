@@ -12,7 +12,7 @@
 
 ## Decisions
 - Each citation was checked against the ADR's text, not only a keyword hit: ADR-0019 ("Never an auto-created ledger"), ADR-0036 (separate phone card views rejected; phone principle), ADR-0035 (auto-created accounts rejected, INV-15), ADR-0027 (`ofx_mappings.yaml` retired), ADR-0030 (XIRR, TWR, windowed returns, tax modelling, CAS replace and undo cut), ADR-0048 (v0.3-only functions need no compatibility), ADR-0029 (the `ledger` step's value and cost measures; goals and GUI builder), ADR-0032 (one-upload sync replaces CAS import), ADR-0015 (manual mirror export endpoints not rebuilt), ADR-0010 (writes to encrypted files refused), ADR-0020, ADR-0018, ADR-0021, ADR-0041, ADR-0025, ADR-0011 for the deferred rows (agent).
-- CAP-DATA-ENCRYPTED: no ADR cuts *reading* encrypted ledgers (ADR-0010 refuses only writes) and INV-03 asks for parity, so the cut is the owner's question: `design/inbox/20261025-encrypted-ledgers.md` (recommendation: read yes, write no). Until answered the row cites ADR-0010 with a PROVISIONAL note naming the inbox file (agent).
+- CAP-DATA-ENCRYPTED: no ADR cut *reading* encrypted ledgers (ADR-0010 refuses only writes) and INV-03 asks for parity, so it went to the owner (recommendation: read yes, write no). Owner: "I think that for v0.4.0 Finzytrack should not even read encrypted ledgers. Supporting encryption can be done as its own small-ish(?) feature later." (2026-10-25, in session). Recorded in ADR-0059: not read in v0.4.0, an INV-03 stated exception; the row is now `deferred` and cites ADR-0059.
 
 ## Hand-off (PROCESS.md §3 step 4; ADR-0057)
 - Checks with must-not-pass tests: a cut or deferred row without an ADR, without the field, or citing a missing ADR.

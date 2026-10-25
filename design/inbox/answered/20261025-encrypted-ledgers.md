@@ -15,3 +15,6 @@ Beancount can load a ledger file encrypted with GnuPG (for example `bank.beancou
 Option 1. It keeps INV-03 whole and costs little: Beancount does the decryption; Finzytrack only has to refuse writes to those files and never copy the decrypted text anywhere (mirror, caches, logs) beyond what reading needs. That last point (the decrypted text in the mirror database) is worth one sentence of your attention: the mirror would hold the decrypted entries, as it does for every other file.
 
 ## Answer (owner, verbatim, with date)
+"I think that for v0.4.0 Finzytrack should not even read encrypted ledgers. Supporting encryption can be done as its own small-ish(?) feature later." (2026-10-25, in session). Recorded in ADR-0059.
+
+Note for the later feature: Beancount decrypts by running `gpg --batch --decrypt` and reading the plaintext from its output; the passphrase comes from gpg-agent (a cached passphrase, or the agent's own pinentry dialog), so a load can block on a dialog or fail when the agent is locked.

@@ -208,3 +208,13 @@ Format:
 - Observed effect: pending.
 - Status: kept.
 - Owner approval: "my answer is Option 1" (2026-10-25, in session; covers `design/inbox/answered/20261025-inv-02-enforced-by.md`)
+
+## IMP-0021: INV-03 gains a stated exception for encrypted ledgers (2026-10-25)
+- Trigger: S0015 verifier F1; `design/inbox/answered/20261025-encrypted-ledgers.md`.
+- What changed: `design/INVARIANTS.md` INV-03 rule gains a stated exception (ADR-0059); CAP-DATA-ENCRYPTED `cut` → `deferred`.
+- PROCESS.md section: none (invariant content).
+- Why: no ADR decided the map's cut; the owner chose not to read encrypted ledgers in v0.4.0 and to build encryption support later.
+- Expected effect: the M1a overlay load refuses encrypted files with a plain message.
+- Observed effect: pending.
+- Status: kept (weakening, owner-approved).
+- Owner approval: "I think that for v0.4.0 Finzytrack should not even read encrypted ledgers. Supporting encryption can be done as its own small-ish(?) feature later." (2026-10-25, in session)

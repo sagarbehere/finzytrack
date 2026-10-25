@@ -4,7 +4,7 @@
 
 Every user-visible capability of Finzytrack, with its status: `planned`, `partial`, `built`, `cut` (absent on purpose) or `deferred` (not in v0.4.0). This page is the index; each row's full description, what changes in v0.4, where it lived in v0.3, its doc page, backlog items, ADRs, code and tests are in `design/capabilities.toml` (search for the ID). Edit the `.toml`, then run `python3 scripts/gen_capabilities.py`. Rules: `design/process/PROCESS.md` ("Project memory").
 
-**Totals:** cut 15, deferred 12, planned 313; 340 rows; release-blocking 308.
+**Totals:** cut 14, deferred 13, planned 313; 340 rows; release-blocking 308.
 
 ## Setup and workspaces
 
@@ -432,7 +432,7 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | CAP-DATA-EXTERNAL-EDIT | A ledger changed outside the app (Fava, an editor, a legacy app) is detected: the write is refused… | new | planned | M4 | yes |
 | CAP-DATA-UNDO | Undo for the app's ledger writes (delete, edits, proposals) | new | planned | M5 | yes |
 | CAP-DATA-PLUGINS | Ledgers using plugins (`implicit_prices`, documents, others) | change | planned | M3 | yes |
-| CAP-DATA-ENCRYPTED | Encrypted (`.gpg`) ledger files, as far as Beancount's loader reads them | cut | cut | M1 | n/a |
+| CAP-DATA-ENCRYPTED | Encrypted (`.gpg`) ledger files, as far as Beancount's loader reads them | deferred | deferred | M1 | n/a |
 
 ## Shell and cross-cutting UI
 
