@@ -81,5 +81,79 @@ class InvariantCheck(unittest.TestCase):
         self.assertTrue(self.run_check(GOOD.replace("pending (BL-0002, by M3)", "pending (BL-TBD, by M3)")))
 
 
+FINDINGS = """
+| ID | Title | Sev | Area | Milestone | Status | Doubles | Ref |
+|---|---|---|---|---|---|---|---|
+| L1-06 | Layering | Medium | WS-X | M0 | {s0} | — | `review:L1` |
+| L3-07 | dsum | Medium | WS-X | M7 | open | — | `review:L3` |
+"""
+ITEMS = """
+| ID | Item | Area | Milestone | Status | Ref |
+|---|---|---|---|---|---|
+| BL-0001 | Corpus | WS-WRITE | {m1} | open | x |
+"""
+
+
+class BacklogAtMilestoneExit(unittest.TestCase):
+    """Open review findings and items fail the exit of their milestone (S0023); closed ones never do."""
+
+    def errors(self, backlog: str, exit_ms: str | None) -> list[str]:
+        return ci.check_backlog(backlog, exit_ms)
+
+    def test_an_open_finding_fails_its_milestone_exit(self) -> None:
+        self.assertTrue(any("L1-06" in e for e in self.errors(FINDINGS.format(s0="open"), "M0")))
+        self.assertTrue(any("L1-06" in e for e in self.errors(FINDINGS.format(s0="in-progress"), "M0")))
+
+    def test_it_also_fails_any_later_exit(self) -> None:
+        self.assertTrue(any("L1-06" in e for e in self.errors(FINDINGS.format(s0="open"), "M2")))
+
+    def test_closed_findings_pass(self) -> None:
+        for status in ("done", "removed", "post-v0.4", "parked"):
+            with self.subTest(status=status):
+                self.assertEqual(self.errors(FINDINGS.format(s0=status), "M0"), [])
+
+    def test_a_later_milestone_does_not_fail_an_earlier_exit(self) -> None:
+        self.assertEqual(self.errors(FINDINGS.format(s0="done"), "M6"), [])
+        self.assertTrue(any("L3-07" in e for e in self.errors(FINDINGS.format(s0="done"), "M7")))
+
+    def test_without_an_exit_only_the_shape_is_checked(self) -> None:
+        self.assertEqual(self.errors(FINDINGS.format(s0="open"), None), [])
+
+    def test_bare_m1_is_due_by_m1a(self) -> None:
+        self.assertTrue(self.errors(ITEMS.format(m1="M1"), "M1a"))
+        self.assertTrue(self.errors(ITEMS.format(m1="M1a (agent)"), "M1a"))
+        self.assertEqual(self.errors(ITEMS.format(m1="M1b (agent)"), "M1a"), [])
+        self.assertTrue(self.errors(ITEMS.format(m1="M1b"), "M1b"))
+        self.assertEqual(self.errors(ITEMS.format(m1="M1"), "M0"), [])
+
+    def test_unknown_status_is_refused(self) -> None:
+        self.assertTrue(any("status" in e for e in self.errors(FINDINGS.format(s0="fixed"), None)))
+
+    def test_open_item_without_a_milestone_is_refused(self) -> None:
+        for cell in ("—", "later", "M99", ""):
+            with self.subTest(cell=cell):
+                self.assertTrue(any("needs a milestone" in e for e in self.errors(ITEMS.format(m1=cell), None)))
+
+    def test_tables_without_an_id_header_are_not_items(self) -> None:
+        other = "| Double | Canonical | Milestone |\n|---|---|---|\n| L1-06 | L1-07 | M0 |\n"
+        status = "| Status | Meaning |\n|---|---|\n| open | Not started. |\n"
+        self.assertEqual(self.errors(other + "\n" + status, "M12"), [])
+
+    def test_a_table_ends_at_a_non_table_line(self) -> None:
+        backlog = "| ID | Milestone | Status |\n|---|---|---|\n\ntext\n| L1-06 | M0 | open |\n"
+        self.assertEqual(self.errors(backlog, "M0"), [])  # a headerless row is not under an ID table
+
+    def test_the_real_backlog_has_a_valid_shape(self) -> None:
+        text = (Path(__file__).resolve().parents[2] / "design/backlog.md").read_text(encoding="utf-8")
+        self.assertEqual(self.errors(text, None), [])
+        self.assertTrue(len(ci.table_rows(text)) > 250)  # 299 rows on 2026-10-25: catches a parser that reads nothing
+
+    def test_main_refuses_an_unknown_exit_name(self) -> None:
+        import os
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"FT_MILESTONE_EXIT": "m0"}):
+            self.assertEqual(ci.main(), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

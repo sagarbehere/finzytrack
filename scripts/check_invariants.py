@@ -8,7 +8,11 @@ Rules:
   - `enforced`: every backticked file path on the Enforced-by line exists and mentions the ID, and at least
     one of them is a test, or a check script that a hook or CI workflow runs;
   - `pending`: the backlog item exists in design/backlog.md and is not marked done; with
-    FT_MILESTONE_EXIT=<Mx> set (a milestone-exit run), a pending invariant due by Mx or earlier fails.
+    FT_MILESTONE_EXIT=<Mx> set (a milestone-exit run), a pending invariant due by Mx or earlier fails;
+  - backlog items (every row of a design/backlog.md table whose header starts with `ID` and has `Milestone` and
+    `Status` columns): the status is one of STATUSES, and an open or in-progress item names a milestone; in a
+    milestone-exit run, an open or in-progress item due by Mx or earlier fails (a bare `M1` counts as due by
+    `M1a` until it is split, ADR-0046). Review findings are closed by slices, not by the passage of time (S0023).
 Exit 0 = ok, 1 = problems.
 """
 
@@ -25,6 +29,8 @@ HEAD = re.compile(r"^### (INV-(\d{2})): (.+)$")
 BULLET = re.compile(r"^- \*\*(Rule|Why|Enforced by|Status):\*\*\s*(.*)$")
 PENDING = re.compile(r"^pending \((BL-\d{4}), by (M\d+[ab]?)\)$")
 PATH_TOKEN = re.compile(r"`([^`\s]+)`")
+STATUSES = {"open", "in-progress", "done", "removed", "post-v0.4", "parked"}
+DUE = re.compile(r"^(M\d+[ab]?)\b")
 RUNNERS = [".githooks/pre-commit", ".githooks/pre-push", ".github/workflows/ci.yml"]
 
 
@@ -61,6 +67,46 @@ def backlog_state(backlog: str, bl_id: str) -> str | None:
         if re.match(rf"^\|\s*{re.escape(bl_id)}\s*\|", line):
             return line
     return None
+
+
+def table_rows(backlog: str) -> list[dict[str, str]]:
+    """Rows of every backlog table whose header starts with `ID` and has `Milestone` and `Status` columns."""
+    rows: list[dict[str, str]] = []
+    header: list[str] | None = None
+    for line in backlog.splitlines():
+        if not line.startswith("|"):
+            header = None
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if header is None:
+            header = cells
+        elif not set(line) <= set("|-: ") and header[0] == "ID" and {"Milestone", "Status"} <= set(header):
+            rows.append(dict(zip(header, cells)))
+    return rows
+
+
+def due_milestone(cell: str) -> str | None:
+    m = DUE.match(cell)
+    if not m:
+        return None
+    return "M1a" if m.group(1) == "M1" else m.group(1)
+
+
+def check_backlog(backlog: str, milestone_exit: str | None) -> list[str]:
+    errors: list[str] = []
+    for row in table_rows(backlog):
+        bid, status, cell = row.get("ID", ""), row.get("Status", ""), row.get("Milestone", "")
+        if status not in STATUSES:
+            errors.append(f"backlog {bid}: status {status!r} is not one of {sorted(STATUSES)}")
+            continue
+        if status not in ("open", "in-progress"):
+            continue
+        due = due_milestone(cell)
+        if due not in MILESTONES:
+            errors.append(f"backlog {bid}: {status} item needs a milestone (one of {', '.join(MILESTONES)}), not {cell!r}")
+        elif milestone_exit in MILESTONES and MILESTONES.index(due) <= MILESTONES.index(milestone_exit):
+            errors.append(f"backlog {bid}: still {status} at the exit of {milestone_exit} (due by {due})")
+    return errors
 
 
 def check(text: str, root: Path, backlog: str | None, milestone_exit: str | None) -> list[str]:
@@ -118,8 +164,12 @@ def check(text: str, root: Path, backlog: str | None, milestone_exit: str | None
 def main() -> int:
     text = (ROOT / "design/INVARIANTS.md").read_text(encoding="utf-8")
     bl = ROOT / "design/backlog.md"
-    errors = check(text, ROOT, bl.read_text(encoding="utf-8") if bl.exists() else None,
-                   os.environ.get("FT_MILESTONE_EXIT"))
+    backlog = bl.read_text(encoding="utf-8") if bl.exists() else None
+    milestone_exit = os.environ.get("FT_MILESTONE_EXIT")
+    if milestone_exit and milestone_exit not in MILESTONES:
+        print(f"check-invariants: FT_MILESTONE_EXIT={milestone_exit!r} is not one of {', '.join(MILESTONES)}", file=sys.stderr)
+        return 1
+    errors = check(text, ROOT, backlog, milestone_exit) + (check_backlog(backlog, milestone_exit) if backlog else [])
     for e in errors:
         print(f"check-invariants: {e}", file=sys.stderr)
     return 1 if errors else 0
