@@ -396,6 +396,28 @@ class Copy(unittest.TestCase):
         code, out = run_main(repo, plan_file(self.root, plan))
         self.assertEqual((repo / "target.txt").read_text(), "orig\n", out)
         self.assertEqual(code, 2, out)
+        self.assertIn("is a symlink", out)  # refused by the mutant-file rule, before any copy (R4-F2)
+
+    def test_copy_never_writes_through_a_link_on_case_collisions(self) -> None:
+        # Verifier S0005 R4-F1: a tracked link `A -> ..` plus an index entry `a/repo/planted.txt` (as a
+        # case-sensitive clone can commit). On a case-insensitive file system, copying a/... first would
+        # write through A, outside the copy. Must not pass: anything written outside the copy.
+        probe = self.root / "CaseProbe"
+        probe.write_text("")
+        if not (self.root / "caseprobe").exists():
+            self.skipTest("case-sensitive file system: the collision cannot happen here")
+        repo = make_repo(self.root, {"check.py": CHECK, "test_check.py": TESTS}, commit=False)
+        (repo / "A").symlink_to("..")
+        git(repo, "add", "-A")
+        blob = subprocess.run(["git", "-C", str(repo), "hash-object", "-w", "--stdin"], input=b"planted\n",
+                              check=True, capture_output=True).stdout.decode().strip()
+        git(repo, "update-index", "--add", "--cacheinfo", f"100644,{blob},a/repo/planted.txt")
+        git(repo, "commit", "-q", "-m", "base", "--no-verify")
+        (repo / "planted.txt").write_text("planted\n")  # what a/repo/planted.txt reads through A here
+        work = self.root / "work"
+        code, out = run_main(repo, plan_file(self.root, LOOSEN), "--work", str(work))
+        self.assertEqual(code, 2, out)
+        self.assertEqual([p for p in work.rglob("*")], [], "something was written outside the copy")
 
     def test_in_tree_symlink_as_mutant_file_is_refused(self) -> None:
         repo = make_repo(self.root, {"check.py": CHECK, "test_check.py": TESTS}, commit=False)

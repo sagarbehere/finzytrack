@@ -87,18 +87,26 @@ def tree_files(repo: Path) -> list[str]:
 def snapshot(repo: Path, files: list[str], dest: Path) -> None:
     """Copy the tree; then refuse it if any symlink in the copy resolves outside the copy.
 
+    Regular files are copied first and symlinks are created last, so no write of the copy ever goes through
+    a link (on a case-insensitive file system a link `A` and a listed `a/x` would otherwise collide; here the
+    link then fails to be created and the run is refused).
     Containment is checked where the links are used, on the real file system: the link text alone cannot
     decide it (`s -> .` makes `s/../x` climb out although its text stays inside), and resolving from the
     checkout is wrong because the copy sits elsewhere (`../../<checkout path>/x`)."""
-    links: list[str] = []
+    links = [n for n in files if (repo / n).is_symlink()]
     for name in files:
-        src, dst = repo / name, dest / name
+        if name not in links:
+            dst = dest / name
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(repo / name, dst)
+    for name in links:
+        dst = dest / name
         dst.parent.mkdir(parents=True, exist_ok=True)
-        if src.is_symlink():
-            os.symlink(os.readlink(src), dst)
-            links.append(name)
-        else:
-            shutil.copy2(src, dst)
+        try:
+            os.symlink(os.readlink(repo / name), dst)
+        except FileExistsError:
+            raise PlanError(f"refused: symlink {name} collides with another path of the tree "
+                            "(names differing only in case?)") from None
     root = dest.resolve()
     for name in links:
         if not Path(os.path.realpath(dest / name)).is_relative_to(root):
@@ -108,7 +116,7 @@ def snapshot(repo: Path, files: list[str], dest: Path) -> None:
 
 def target(copy: Path, m: Mutant) -> Path:
     """The mutant's file inside the copy. Containment holds because validate() accepts only regular files of
-    the working tree (git lists nothing beneath a symlinked folder)."""
+    the working tree, and snapshot() writes no file through a link and refuses links that leave the copy."""
     return copy / m.file
 
 
