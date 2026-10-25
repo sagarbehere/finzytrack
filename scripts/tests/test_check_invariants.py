@@ -592,9 +592,7 @@ class EnforcementFilesDoNotSwitchTestsOff(unittest.TestCase):
     def test_typescript_skip_forms_are_refused(self) -> None:
         for body in ("it.skip('x', () => {})\n", "describe.skip('x', () => {})\n", "it.todo('x')\n",
                      "it.skipIf(true)('x', () => {})\n", "it.runIf(false)('x', () => {})\n", "it['skip']('x', () => {})\n",
-                     "test.skip('x', async () => {})\n", "const { skip: later } = it\n",
-                     "it.only('x', () => {})\n", "describe.only('x', () => {})\n", "test.only('x', async () => {})\n",
-                     "it['only']('x', () => {})\n", "const { only } = it\n", "const { only: solo } = test\n"):
+                     "test.skip('x', async () => {})\n", "const { skip: later } = it\n"):
             with self.subTest(body=body):
                 found = self.errors("frontend/tests/unit/boundaries.test.ts", "// INV-01\nimport { it } from 'vitest'\n" + body)
                 self.assertTrue(any("switches a test off" in e for e in found), found)
@@ -647,12 +645,9 @@ class FixmeScanCoversTheScriptTests(unittest.TestCase):
                 with self.subTest(folder=folder, body=body):
                     self.assertTrue(self.errors(f"{folder}/test_a.py", body))
 
-    def test_only_is_refused_in_every_frontend_test(self) -> None:  # S0031 verifier F1
-        for rel in ("frontend/tests/unit/any.test.ts", "frontend/e2e/flow.spec.ts"):
-            with self.subTest(rel=rel):
-                self.assertTrue(self.errors(rel, "import { it } from 'vitest'\nit.only('x', () => {})\n"))
+    def test_only_is_left_to_the_runners(self) -> None:  # S0031 verifier R2-2, R2-7: --allowOnly=false, forbidOnly
         self.assertEqual(self.errors("frontend/tests/unit/any.test.ts",
-                                     "import { it } from 'vitest'\nit('only, here', () => {})\n"), [])
+                                     "import { it } from 'vitest'\n// Run it once. only then compare.\nit('x', () => {})\n"), [])
 
     def test_outside_the_protected_places_a_platform_skip_stays(self) -> None:
         body = "import unittest\n" + "@" + "unittest.skipUnless(False, 'legacy tags not in this clone')\nclass T(unittest.TestCase):\n    pass\n"

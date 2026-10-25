@@ -84,7 +84,9 @@ if [[ -f frontend/package.json ]]; then
   run "prettier (frontend)" bash -c "cd frontend && node_modules/.bin/prettier --check ."
   run "eslint (frontend)" bash -c "cd frontend && node_modules/.bin/eslint --max-warnings 0 ."
   run "vue-tsc" bash -c "cd frontend && node_modules/.bin/vue-tsc --noEmit"
-  run "frontend unit tests" bash -c "cd frontend && node_modules/.bin/vitest run"
+  # --allowOnly=false: a `.only` in any spelling (`it.only`, `{ only: true }`, aliases) fails the run instead of
+  # skipping the file's other tests (S0031 verifier R2-2).
+  run "frontend unit tests" bash -c "cd frontend && node_modules/.bin/vitest run --allowOnly=false"
   run "unused code and dependencies (knip)" bash -c "cd frontend && node_modules/.bin/knip"
 fi
 # Last (S0031 verifier F3): HEAD and the tree are still what the checks started on; a process that changed the

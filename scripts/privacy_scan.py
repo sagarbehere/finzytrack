@@ -427,33 +427,59 @@ def run(paths: list[str], reader, denylist: list[str]) -> tuple[list[Finding], l
     return findings, binaries
 
 
+# Findings already in v0.4's public history (S0031 verifier R2-4), excused in a range scan only, each by the exact
+# blob or commit and rule: the range from the v0.4 floor (scripts/check_push.py FLOOR) passes on known history and
+# refuses anything new. A known blob added again at the tip still fails the scan of all tracked files. Never add a
+# row for a blob or commit that is not on origin already.
+HISTORY_BASELINE = frozenset({
+    ("design/capabilities.md", "4ba70bdd3a2f19ca0e41a3037ea02e2d1cf7cc9d", "live-data-path"),  # privacy-scan: allow secret-entropy
+    ("design/capabilities.toml", "1dadc5ffb7ee0fbd5d83238ee7a6ce79400b19e9", "live-data-path"),  # privacy-scan: allow secret-entropy
+    ("scripts/tests/test_legacy_api_tests.py", "3f62c80631948379e586d738ef50539a90295c6f", "secret-entropy"),  # privacy-scan: allow secret-entropy
+    ("commit", "b81e81e884e6ac34490ac05d218bf37b812fa930", "home-path"),  # privacy-scan: allow secret-entropy
+})
+# A slice ID opens most subjects (`S0016-detect-secrets: ...`); detect-secrets reads `secrets: <word>` as an
+# assigned secret. The entropy rule sees the subject with the slug removed (`S0016: ...`); the other rules see it
+# whole, and a value after the slug is still scanned (S0031 verifier R2-3).
+SLICE_SUBJECT = re.compile(r"\A(\s*S\d{4})-[a-z0-9-]+:", re.I)
+
+
+def for_entropy(message: str) -> str:
+    return SLICE_SUBJECT.sub(r"\1:", message, count=1)
+
+
 def run_range(spec: str, denylist: list[str]) -> tuple[list[Finding], list[str], int]:
-    """`run` over every (path, blob) the range adds or changes; findings name the path and the blob."""
+    """`run` over every (path, blob) the range adds or changes and every commit message; findings name the path
+    and the blob, or the commit. HISTORY_BASELINE rows are excused."""
     blobs = [b for b in git_range.changed_blobs(spec) if b.mode != "160000"]  # submodules: refused by check_staged
     contents = git_range.read_blobs([b.sha for b in blobs])
     findings: list[Finding] = []
     binaries: list[str] = []
-    texts: dict[tuple[str, str], str] = {}
+    texts: dict = {}
+    origin: dict[str, tuple[str, str]] = {}  # label -> (path or "commit", sha)
     for b in blobs:
         text = decode(contents[b.sha])
+        label = _label((b.path, b.sha))
+        origin[label] = (b.path, b.sha)
         if text is None:
-            binaries.append(_label((b.path, b.sha)))
+            binaries.append(label)
             continue
-        findings += [Finding(_label((b.path, b.sha)), f.line, f.rule, f.sample) for f in scan_text(b.path, text, denylist)]
+        findings += [Finding(label, f.line, f.rule, f.sample) for f in scan_text(b.path, text, denylist)]
         texts[(b.path, b.sha)] = text
     messages = git_range.commit_messages(spec)  # S0031 verifier F4: a message is published like a file
     for sha, message in messages:
         label = f"commit {sha[:12]} message"
+        origin[label] = ("commit", sha)
         findings += scan_text(label, message, denylist)
-        texts[label] = message
+        texts[label] = for_entropy(message)
     findings.extend(entropy_findings(texts))
-    return findings, binaries, len(blobs) + len(messages)
+    kept = [f for f in findings if (*origin.get(f.path, ("", "")), f.rule) not in HISTORY_BASELINE]
+    return kept, binaries, len(blobs) + len(messages)
 
 
 def run_message(label: str, message: str, denylist: list[str]) -> list[Finding]:
     """A commit or tag message, everything above git's scissors line (`git commit -v` puts the diff below it)."""
     message = message.split("# ------------------------ >8 ------------------------", 1)[0]
-    return scan_text(label, message, denylist) + entropy_findings({label: message})
+    return scan_text(label, message, denylist) + entropy_findings({label: for_entropy(message)})
 
 
 def main(argv: list[str] | None = None) -> int:

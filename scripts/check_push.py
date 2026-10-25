@@ -26,9 +26,11 @@ On success it prints one line per pushed ref for `check_staged.py --range` and `
     `next` (read with `git ls-remote` at the URL the push goes to, never from this clone's remote-tracking refs,
     which a commit can move); when the remote has none, FLOOR..LOCAL_SHA, where FLOOR is the commit that started
     v0.4 from an empty tree (so the legacy history below it is not read); the bare LOCAL_SHA (its whole history)
-    only when FLOOR is not below it. A fresh remote receives the whole history, so it is scanned whole: today
-    that fails on three blobs that later commits fixed (they are already public on origin), which is right.
-  and, for a pushed annotated tag, `tag TAG_SHA` (its message is scanned by `privacy_scan.py --tag-message`).
+    only when FLOOR is not below it. The findings already in v0.4's public history (three blobs and one commit
+    message, by exact sha) are excused by `privacy_scan.HISTORY_BASELINE`, so FLOOR..HEAD passes on known history
+    and refuses anything new (S0031 verifier R2-4);
+  and, for a pushed annotated tag, `tag TAG_SHA` for it and for every tag object it points through (a tag of a
+  tag), whose messages `privacy_scan.py --tag-message` scans.
 
 With `--still HEAD_SHA` (the last step of the pre-push hook, S0031 verifier F3) it checks only that HEAD is still
 HEAD_SHA and the tree is still clean: another process (a parallel agent, an editor's autosave) that changed the
@@ -54,12 +56,12 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 # Ignored cache folders matched by name anywhere: a dot name is not an importable package, pytest skips dot
 # folders and the test globs do not match them.
 TRUSTED_DIR_NAMES = {".venv", ".pytest_cache", ".ruff_cache", ".import_linter_cache", ".mypy_cache", ".hypothesis",
-                     ".vite", ".pnpm-store", ".stryker-tmp"}
+                     ".vite", ".pnpm-store", ".stryker-tmp", ".vscode", ".idea"}  # the last two: editor settings
 # Dependency and build folders, matched by their exact place (a `node_modules` elsewhere could be imported by
 # unittest discovery as a package): their content is installed or generated, and no runner collects code there.
 TRUSTED_PATHS = ("frontend/node_modules/", "shell/src-tauri/target/", "shell/src-tauri/gen/", "frontend/dist/",
                  "frontend/test-results/", "frontend/playwright-report/", "build/", "backend/mutants/",
-                 "backend/htmlcov/", "htmlcov/", "mutants/")
+                 "backend/htmlcov/", "htmlcov/", "mutants/", "frontend/reports/", "reports/")  # reports: Stryker
 # Claude Code's own ignored state (agent worktrees, schedules, local settings): no git hook or test runner reads
 # it. Its hooks folder is excluded: the guard meta-tests import from it.
 TRUSTED_CLAUDE = (".claude/",)
@@ -191,9 +193,18 @@ def ranges_for(refs: list[Ref], remote: str) -> list[str]:
             elif tip and commit_of(FLOOR) and _is_ancestor(FLOOR, tip):
                 base = FLOOR
         out.append(f"{base}..{tip}" if base else f"{tip}")
-        if object_type(r.local_sha) == "tag":
-            out.append(f"tag {r.local_sha}")
+        out += [f"tag {t}" for t in tag_chain(r.local_sha)]
     return out
+
+
+def tag_chain(sha: str) -> list[str]:
+    """The tag objects from `sha` down to the first object that is not a tag (S0031 verifier R2-6)."""
+    chain: list[str] = []
+    while SHA.match(sha) and object_type(sha) == "tag" and sha not in chain and len(chain) < 100:
+        chain.append(sha)
+        header = git("cat-file", "tag", sha, check=False).split("\n", 1)[0]
+        sha = header.split()[1] if header.startswith("object ") and len(header.split()) == 2 else ""
+    return chain
 
 
 def _is_ancestor(a: str, b: str) -> bool:

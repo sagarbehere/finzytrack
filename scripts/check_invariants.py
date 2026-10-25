@@ -193,10 +193,10 @@ TS_TEST_FIXME = re.compile(r"\.\s*fixme\(\s*(?:'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n
 TS_IMPORT = re.compile(r"^\s*import\s+\{[^}]*\}\s+from\s+'[^'\n]*'", re.M)
 # Switching a frontend test off: a member or indexed skip/todo/skipIf/runIf, or a runner marker taken by
 # destructuring (`const { fails: later } = it`).
-# `.only` too (S0031 verifier F1): outside CI, vitest runs only the `.only` tests of a file and skips the rest.
-TS_DISABLE = re.compile(r"\.\s*(?:skip|todo|skipIf|runIf|only)\b|\[\s*['\"`](?:skip|todo|skipIf|runIf|only)['\"`]\s*\]"
-                        r"|(?<![\w$.'\"`])(?:fails?|fixme|skip|todo|skipIf|runIf)\s*(?=[:,}])"
-                        r"|\{[^}]*\bonly\b[^}]*\}\s*=\s*(?:it|test|describe)\b")  # `only` taken by destructuring
+# `.only` is not matched here: the runners refuse it at run time, whatever its spelling (S0031 verifier R2-2): the
+# pre-push hook runs vitest with --allowOnly=false, CI runs it with CI set, and Playwright has forbidOnly.
+TS_DISABLE = re.compile(r"\.\s*(?:skip|todo|skipIf|runIf)\b|\[\s*['\"`](?:skip|todo|skipIf|runIf)['\"`]\s*\]"
+                        r"|(?<![\w$.'\"`])(?:fails?|fixme|skip|todo|skipIf|runIf)\s*(?=[:,}])")
 
 
 def _py_markers(rel: str, text: str) -> tuple[list[dict[str, str]], list[str]]:

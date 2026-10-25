@@ -251,6 +251,68 @@ class Messages(Scratch):
                                      "--quiet").returncode, 0)
         self.assertNotIn("tag ", self.check_push().stdout)  # a branch push names no tag
 
+    def test_ordinary_slice_subjects_pass_and_values_after_the_slug_do_not(self) -> None:  # S0031 verifier R2-3
+        import base64
+        import hashlib
+
+        msg = self.clone / "MSG"
+        subjects = ["S0016-detect-secrets: round-6 verifier F1-F2 (a docstring fix)",
+                    "S0040-password-lock: the app asks for the password at start",
+                    "S0041-secret-store: keys in the OS keychain (ADR-0071)",
+                    "S0042: rename the secret: field in settings to keychain_ref",
+                    "S0043-api-key: the LLM key is read from the keychain",
+                    "S0044-token-refresh: refresh tokens rotate daily",
+                    "S0045-import: OFX parser handles <BANKACCTFROM>",
+                    "S0031-gate-hardening: verifier round 1 F1-F10 (more skip forms refused)"]
+        subjects += subprocess.run(["git", "-C", str(REPO), "log", "--format=%s", "--grep=^S0016-"], capture_output=True,
+                                   text=True).stdout.splitlines()
+        for subject in subjects:
+            with self.subTest(subject=subject):
+                msg.write_text(f"{subject}\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n")
+                r = self.script("privacy_scan.py", "--message", str(msg), "--quiet")
+                self.assertEqual(r.returncode, 0, r.stderr)
+        value = base64.b64encode(hashlib.sha256(b"a subject test value").digest()).decode()
+        for subject in (f"S0016-detect-secrets: {self.token()}", f'S0050-x: x = "{value}"',
+                        f'S0016-detect-secrets: "{value}"'):
+            with self.subTest(subject=subject[:24]):
+                msg.write_text(subject + "\n")
+                self.assertEqual(self.script("privacy_scan.py", "--message", str(msg), "--quiet").returncode, 1)
+
+    def test_a_tag_of_a_tag_names_every_tag_object(self) -> None:  # S0031 verifier R2-6
+        self.git("tag", "-a", "-m", f"inner note {self.token()}", "inner")
+        inner = self.git("rev-parse", "inner").strip()
+        self.git("tag", "-a", "-m", "outer clean note", "outer", inner)
+        outer = self.git("rev-parse", "outer").strip()
+        r = self.check_push(f"refs/tags/outer {outer} refs/tags/outer {ZERO}\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([ln for ln in r.stdout.splitlines() if ln.startswith("tag ")], [f"tag {outer}", f"tag {inner}"])
+
+    def test_the_history_baseline_excuses_only_its_exact_blob_path_and_rule(self) -> None:  # S0031 verifier R2-4
+        sys.path.insert(0, str(SCRIPTS))
+        import privacy_scan
+
+        base = self.remote_next()
+        self.write("known.md", f"see {j('~', 'jdoe/')}\n")
+        self.write("other.md", f"see {j('~', 'jdoe/')}\n")
+        tip = self.commit("a known finding")
+        sha = self.git("rev-parse", f"{tip}:known.md").strip()
+        old_cwd, old = os.getcwd(), privacy_scan.HISTORY_BASELINE
+        try:
+            os.chdir(self.clone)
+            with unittest.mock.patch.dict(os.environ, self.env, clear=True):
+                spec = f"{base}..{tip}"
+                privacy_scan.HISTORY_BASELINE = frozenset({("known.md", sha, "home-path")})
+                found = {(f.path.split(" ")[0], f.rule) for f in privacy_scan.run_range(spec, [])[0]}
+                self.assertEqual(found, {("other.md", "home-path")})  # the same blob at another path is not excused
+                privacy_scan.HISTORY_BASELINE = frozenset({("known.md", sha, "email")})
+                found = {(f.path.split(" ")[0], f.rule) for f in privacy_scan.run_range(spec, [])[0]}
+                self.assertIn(("known.md", "home-path"), found)  # another rule is not excused
+                privacy_scan.HISTORY_BASELINE = frozenset({("commit", tip, "home-path")})
+                self.assertEqual(len(privacy_scan.run_range(spec, [])[0]), 2)  # a commit row does not excuse blobs
+        finally:
+            privacy_scan.HISTORY_BASELINE = old
+            os.chdir(old_cwd)
+
     def test_the_commit_message_file_above_the_scissors(self) -> None:
         msg = self.clone / "MSG"
         msg.write_text(f"subject\n\nbody with {self.token()}\n")
@@ -309,6 +371,16 @@ class IgnoredCodeIsRefused(Scratch):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.write(".claude/hooks/local.py", "x = 1\n")
         self.assertEqual(self.check_push().returncode, 1)
+
+    def test_ignored_editor_and_mutation_report_output_passes(self) -> None:  # S0031 verifier R2-5
+        self.write("frontend/src/a.ts", "export const a = 1\n")
+        self.commit("a tracked frontend file")
+        (self.clone / ".git/info/exclude").write_text(".vscode/\n.idea/\nreports/\n")
+        for rel in (".vscode/settings.json", ".idea/misc.xml", "frontend/reports/stryker/mutation.json",
+                    "frontend/reports/stryker/index.js"):
+            self.write(rel, "{}\n")
+        r = self.check_push()
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_ignored_caches_dependencies_and_logs_pass(self) -> None:
         for rel in ("run.log", "data/statement.txt", "a/__pycache__/m.cpython-313.pyc", "backend/.venv/lib/x.py",
@@ -544,6 +616,54 @@ class HookFiles(unittest.TestCase):
         self.assertIn('exec "$(dirname "$0")/pre-commit" "$@"', hook.read_text())
 
 
+BACKEND_PYTEST = REPO / "backend/.venv/bin/pytest"
+VITEST = REPO / "frontend/node_modules/.bin/vitest"
+
+
+class RunnersRefuseWhatAStaticScanMisses(unittest.TestCase):
+    """S0031 verifier R2-1, R2-2: an empty parameter set and `.only` in any spelling fail the run."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    @unittest.skipUnless(BACKEND_PYTEST.is_file(), "needs the backend venv (cd backend && uv sync --locked)")
+    def test_an_empty_parameter_set_fails_collection(self) -> None:
+        for values in ("[]", "[*[]]", "(*(),)", "list()"):
+            with self.subTest(values=values):
+                (self.dir / "test_e.py").write_text(
+                    "import pytest\n\n\n" + "@" + f"pytest.mark.parametrize('x', {values})\ndef test_x(x):\n    pass\n")
+                r = subprocess.run([str(BACKEND_PYTEST), "-q", "-c", str(REPO / "backend/pyproject.toml"), "--rootdir",
+                                    str(self.dir), str(self.dir / "test_e.py")], capture_output=True, text=True)
+                self.assertNotEqual(r.returncode, 0, r.stdout)
+
+    @unittest.skipUnless(VITEST.is_file(), "needs the frontend packages (cd frontend && pnpm install --frozen-lockfile)")
+    def test_only_in_any_spelling_fails_the_vitest_run_of_the_pre_push_hook(self) -> None:
+        for body in ("test('a', { only: true }, () => {})", "test.only('a', () => {})", "describe.only('d', () => { test('a', () => {}) })",
+                     "const t = test\nconst { only: solo } = t\nsolo('a', () => {})"):
+            with self.subTest(body=body):
+                (self.dir / "x.test.js").write_text(body + "\ntest('b', () => {})\n")
+                r = subprocess.run([str(VITEST), "run", "--globals", "--root", str(self.dir), "--allowOnly=false"],
+                                   cwd=REPO / "frontend", capture_output=True, text=True)
+                self.assertNotEqual(r.returncode, 0, r.stdout[-400:])
+        (self.dir / "x.test.js").write_text("test('a', () => {})\n")
+        r = subprocess.run([str(VITEST), "run", "--globals", "--root", str(self.dir), "--allowOnly=false"],
+                           cwd=REPO / "frontend", capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout[-400:])
+
+    def test_the_pre_push_vitest_run_refuses_only(self) -> None:
+        self.assertIn("node_modules/.bin/vitest run --allowOnly=false", (REPO / ".githooks/pre-push").read_text())
+
+    def test_the_backend_pytest_config_fails_an_empty_parameter_set(self) -> None:
+        import tomllib
+
+        cfg = tomllib.loads((REPO / "backend/pyproject.toml").read_text())["tool"]["pytest"]["ini_options"]
+        self.assertEqual(cfg.get("empty_parameter_set_mark"), "fail_at_collect")
+
+
 class Floor(unittest.TestCase):
     """S0031 verifier F6: the floor is the commit that started v0.4 from an empty tree, below HEAD."""
 
@@ -558,6 +678,16 @@ class Floor(unittest.TestCase):
                          "next: start v0.4 from an empty tree; .gitignore first")
         self.assertEqual(git("ls-tree", "--name-only", check_push.FLOOR).stdout.split(), [".gitignore"])
         self.assertEqual(git("merge-base", "--is-ancestor", check_push.FLOOR, "HEAD").returncode, 0)
+
+    def test_known_history_from_the_floor_passes_the_range_scan(self) -> None:  # S0031 verifier R2-4
+        sys.path.insert(0, str(SCRIPTS))
+        import check_push
+
+        # 796353ab: the commit the round-2 verifier read; every older finding is in privacy_scan.HISTORY_BASELINE
+        r = subprocess.run([sys.executable, str(SCRIPTS / "privacy_scan.py"), "--range",
+                            f"{check_push.FLOOR}..796353abefab9870857b4f9bc8c43a951400c953", "--quiet"],
+                           cwd=REPO, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr[-1500:])
 
 
 if __name__ == "__main__":
