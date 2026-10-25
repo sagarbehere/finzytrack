@@ -33,7 +33,8 @@ flowchart LR
   subgraph Desktop["Finzytrack 0.4 (one install)"]
     shell["Tauri 2 shell (Rust)\nwindow, menus, file association,\nsingle instance, updater,\nsidecar supervisor"]
     web["Web UI (React 19 + TS;\nVue 3 if spike S13 fails)\nin the system webview"]
-    side["Backend sidecar (Python 3.13, FastAPI)\nPyInstaller onedir, loopback only"]
+    side["Main sidecar (Python 3.13, FastAPI)\nloopback only; never imports Beancount\n(ADR-0054)"]
+    eng["Ledger engine (Python 3.13)\nBeancount, overlay load, write contract,\nmirror build, BQL (ADR-0054)"]
   end
   subgraph Disk["Local disk"]
     wsf["Workspace folders\nledger set + .finzytrack/\n(portable, INV-27)"]
@@ -54,6 +55,8 @@ flowchart LR
   shell -- "hosts" --> web
   web -- "HTTP + SSE on 127.0.0.1\n/api/boot, /api/app, /api/w/{ws}/..." --> side
   web -- "ShellPort (IPC):\npick folder/file, reveal, recents,\nopen-target, close guard" --> shell
+  side -- "plain-data protocol\n(JSON over a local pipe)" --> eng
+  eng --> wsf & cache
   side --> wsf & appd & cache
   side --> llm & px & imap
   shell --> gh
@@ -65,6 +68,7 @@ flowchart LR
 Boundaries that matter:
 - **The shell holds no business logic** (ADR-0007). It supplies paths, native dialogs and process control. Every path it returns is judged by the backend.
 - **The web UI never touches the file system.** Tauri's `fs` plugin is not enabled. The UI's only route to disk is the backend API.
+- **Two backend processes (ADR-0054):** the ledger engine holds Beancount (GPL-2.0-only) and does every ledger load and write and the mirror build; the main sidecar holds everything else and never imports Beancount. They talk only through the versioned plain-data protocol `contracts/engine-protocol.schema.json`.
 - **The backend is the only writer** of the ledger set, the `.finzytrack/` tool state and the mirror. The mirror is a cache that outside tools may *read* (INV-05, review:00 §1b).
 - **Outside services are reached only through backend ports** (§2.3). Each one is optional, and its absence is a typed "unavailable" error, never a crash (§6).
 
@@ -73,6 +77,20 @@ The same backend can later run in hosted mode under a hosted user root (ADR-0041
 ---
 
 ## 2. Backend
+
+### 2.0 Two processes (ADR-0054, 2026-10-25)
+
+**This amendment overrides the single-process wording elsewhere in §2 and in §5, §10, §11 until those sections are rewritten in the first M1a slice.**
+
+| Process | Holds | Licence of the combined program |
+|---|---|---|
+| **Ledger engine** (`engine/`, its own environment and lockfile) | `beancount`, `beanquery` and their own dependencies; our packages `ledger` (overlay load, `LoadPolicy`, `beancount_port`, grammar and tolerance, the write-safety contract and writer, journal, recovery) and the build half of `mirror` (row builders, DDL, generation publish); BQL execution | GPL-2.0-only (our code is GPL-2.0-or-later) |
+| **Main sidecar** (`backend/`) | FastAPI and every other package of §2.2: workspaces, boot, recipes and SQL over the published mirror, importing readers, categorizer, prices, AI, logging; an `engine_client` port that implements the use cases' ledger interfaces over the protocol | GPLv3 (via "or later"); never imports `beancount` |
+
+- **Protocol:** request/response JSON over a local pipe or loopback socket, schema in `contracts/engine-protocol.schema.json` (versioned, generated from the engine's message models, decoded on the main side like the HTTP API). It carries intents and plans, refusals with error keys, semantic diffs, located errors, query tables, ledger facts (Ledger Profile, account grammar pattern, tolerances) and mirror-generation ids. No Beancount objects, pickles, callbacks or shared memory. Entries never cross per request.
+- **Reads** use the published mirror from the main sidecar (§9.1, unchanged). **Writes, BQL, reconciliation loads and Beancount-derived facts** go to the engine.
+- **Supervision:** the main sidecar spawns the engine, with the parent-death watchdog of spike S1 and restart with backoff. The engine owns the heavy-load semaphore and keeps no resident ledger (INV-10).
+- **Enforcement:** an architecture test per environment (no `beancount` import outside `engine/`; the main environment cannot import it; the engine imports nothing from `backend/`); two licence allowlists (engine: GPL-2.0-compatible plus Beancount's own reviewed dependencies; main: GPL-3.0-compatible); protocol contract tests on both sides.
 
 ### 2.1 Shape: vertical feature slices over a shared kernel, functional core and imperative shell
 
@@ -383,6 +401,8 @@ Hand-written TanStack Query hooks live in `features/*/queries.ts`. They are thin
 ---
 
 ## 5. Tauri shell boundary and sidecar
+
+> **Amended by ADR-0054:** the shell spawns and supervises the **main sidecar** only; the main sidecar spawns and supervises the **ledger engine** (§2.0). Both are signed and covered by the orphan rules. Spike S1 also showed that a onedir tree ships as `bundle.resources`, not `externalBin`, and that the Linux updater handles AppImage, `.deb` and `.rpm`; this section is rewritten with the packaging ADR (Q21).
 
 **Identifier and platforms (owner, 2026-10-24; ADR-0007):** the Tauri identifier is `com.finzytrack.desktop` (permanent; it fixes `app_local_data_dir` and how updates find the app), product name "Finzytrack". Builds: Apple-silicon macOS (ad-hoc signed, not notarized), Windows 10/11 x64 (unsigned; the SmartScreen warning is documented), Linux x64 (Ubuntu 22.04 or newer; the updater updates the AppImage only, verified in spike S1). Intel Macs are not built.
 

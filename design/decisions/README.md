@@ -69,6 +69,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0051](ADR-0051-working-principles-from-the-review.md) | Working principles carried over from the review | Accepted | 2026-10-24 | process, engineering |
 | [ADR-0052](ADR-0052-default-currency-lives-in-the-ledger.md) | The default currency lives in the ledger; the tool setting is only an override | Accepted | 2026-10-24 | workspaces, settings, ledger |
 | [ADR-0053](ADR-0053-frontend-framework-is-vue.md) | The frontend framework is Vue 3 (spike S13 outcome) | Accepted | 2026-10-25 | frontend, stack |
+| [ADR-0054](ADR-0054-beancount-in-its-own-engine-process.md) | Beancount runs in its own ledger-engine process; the main sidecar never imports it | Accepted | 2026-10-25 | architecture, licence, backend |
 
 ## Template
 

@@ -1,5 +1,7 @@
 # Licence allowlist for bundled third-party dependencies (T1 licence check; ADR on licensing).
 # SPDX identifiers. A dependency whose licence is not listed fails CI until it is added here with a reason.
+# ADR-0054 splits the backend into a ledger engine (GPL-2.0-only program) and a main sidecar (GPLv3);
+# this single list becomes two per-process lists with the first engine slice (BL-0041).
 # PROVISIONAL: the owner gets legal advice before v0.4.0 on bundling GPL-2.0-only Beancount next to
 # Apache-2.0 components (review:F §2 item 9). Entries marked "pending legal advice" may change.
 

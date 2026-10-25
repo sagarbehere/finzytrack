@@ -28,6 +28,7 @@ The project is GPL v2, and the README does not say "or later". Beancount, which 
 
 - A new dependency with a licence outside the allowlist needs an explicit allowlist change, reviewed like any rule change.
 - The legal advice may lead to a superseding ADR (for example a change in bundled components).
+- **Amended by ADR-0054 (2026-10-25):** Beancount runs in its own engine process; the main sidecar never imports it and is distributed under GPLv3. The licence check runs per process with two allowlists.
 
 ## References
 

@@ -45,7 +45,7 @@ This file is the tracked home of the private review backlog (`review:99`). The r
 | of which `removed` (investment scope reset) | 4 |
 | Doubles (merged onto a canonical row) | 47 |
 | Invariant-enforcement items (`BL-0001`…`BL-0031`) | 31 |
-| Other new items (`BL-0032`…) | 9 |
+| Other new items (`BL-0032`…) | 10 |
 
 Canonical findings to build, by milestone: M0 4, M1 16, M2 47, M3 15, M4 18, M5 20, M6 40, M7 37, M8 23, M9 12, M10–M12 0 (total 232).
 
@@ -627,3 +627,4 @@ Each item builds the check that turns one invariant from "pending" into "enforce
 | BL-0038 | PROCESS.md no-drift checks (review:20 §10b): generate the gate table from the hook/CI config and the agent roster from `.claude/agents/`; a check that every kept IMPROVEMENTS entry names a PROCESS.md section | WS-QA | M0 | open | `review:G R-9` |
 | BL-0039 | Capability map: link each `cut` and `deferred` row to its ADR (`adrs` field), then make `check_capabilities.py` require it | WS-QA | M0 | open | `review:G F-11` |
 | BL-0040 | Tighten `check_invariants.py`: detect skip/xfail/fixme on the tagged tests, count only T1 runners (not pre-commit), require evidence for `review-only`, and guard the owner-owned rule text with a hash that only an owner-approved change updates | WS-QA | M0 | open | `review:G F-8, F-9` |
+| BL-0041 | Implement the two-process backend of ADR-0054 in M1a: `engine/` environment and lockfile, `contracts/engine-protocol.schema.json`, `engine_client` port, supervision, per-environment architecture tests and licence allowlists; measure the protocol overhead per write and per large BQL result with the S4 harness | WS-BACKEND-CORE | M1a | open | `ADR-0054` |
