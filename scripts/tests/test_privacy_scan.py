@@ -172,6 +172,81 @@ class MustPass(unittest.TestCase):
         self.assertEqual(rules("CHECKING ACCOUNT EXPENSES"), [])
 
 
+def rules_in(path: str, text: str) -> list[str]:
+    return [f.rule for f in ps.scan_text(path, text, [])]
+
+
+class SeededMissesS0033(unittest.TestCase):
+    """Seeded-defect run 1 A05, A06, A11 (S0033): a UPI address alone, 6-10 digits next to an account word, and a
+    statement excerpt in prose. Every value here is invented and assembled at runtime."""
+
+    def test_upi_handles_are_flagged(self) -> None:
+        for text in (j("narration sample: UPI/", "rahul.verma42", "@", "okaxis", "/Swiggy"),  # plant A11
+                     j("paid to ", "asha.k", "@", "ybl"), j("VPA: ", "9876501234", "@", "paytm", "."),
+                     j("| ", "Kiran_77", "@", "OKSBI", " |"), j("upi://pay?pa=", "store.owner", "@", "icici", "&am=1"),
+                     j("(", "m-rao", "@", "axl", ")")):
+            with self.subTest(text=text):
+                self.assertIn("upi-handle", rules(text))
+
+    def test_emails_placeholders_and_unknown_handles_are_not_upi_handles(self) -> None:
+        for text in (j("mail ", "a.b", "@", "icici.com"), j("see ", "name", "@", "okaxis", " for the shape"),
+                     j("user", "@", "ybl"), j("x", "@", "ybl", ".example.com"), "@ybl alone", "react@19.3.0",
+                     j("someone", "@", "mybank"), j("pkg", "@", "upi-tools")):
+            with self.subTest(text=text):
+                self.assertNotIn("upi-handle", rules(text))
+
+    def test_a_marked_upi_line_passes(self) -> None:
+        self.assertEqual(rules(j("asha.k", "@", "ybl", "  privacy-scan: allow upi-handle")), [])
+
+    def test_short_account_numbers_next_to_an_account_word(self) -> None:
+        for text in (j("Seen in the wild: `Acct #: ", "7392", "0481", "` on an export."),  # plant A06
+                     j("A/C No. ", "1234", "567"), j("account number: ", "9988", "7766"), j("acc ", "7654", "321"),
+                     j("ACCOUNT NO-", "4821", "3756"), j("acct#", "583920"), j("Account ", "58392", "01746"),
+                     j("Acct No: ", "7392", " 0481"), j("a/c ", "7392", "-0481"), j("account no ", "739-204", "-81")):
+            with self.subTest(text=text):
+                self.assertIn("account-number", rules(text))
+
+    def test_numbers_that_are_not_next_to_an_account_word(self) -> None:
+        for text in ("account 2026", "accounts: 12345", "account_id 1234567", "Acct 2026-03-01", "account 1234567.89",
+                     "sha ac35103371ab9f", "transaction 1234567", "card 1234567", "account 111111", "accounting 7654321",
+                     "3 accounts, 1234567 rows", "account 2026 03 01", "acct 12 34"):
+            with self.subTest(text=text):
+                self.assertNotIn("account-number", rules(text))
+
+    def test_one_finding_for_a_long_number_next_to_an_account_word(self) -> None:
+        self.assertEqual(rules(j("account no ", "5839", "2017", "46")), ["account-number"])
+
+    EXCERPT = j("Repro excerpt from the bank PDF:\n\n",  # plant A05, synthetic
+                "    01 Mar 2026  SALARY ACME SOFTWARE PVT LTD     1,84,250.00 Cr\n",
+                "    03 Mar 2026  RENT TO R K SHARMA                 42,000.00 Dr\n",
+                "    05 Mar 2026  SCHOOL FEES DPS NOIDA              18,600.00 Dr\n")
+
+    def test_a_statement_excerpt_in_prose_or_a_message(self) -> None:
+        csv = "2026-03-01,Coffee Corner,-4.50,1020.25\n2026-03-02,Book Shop,-12.00,1008.25\n2026-03-04,Salary,900.00,1908.25\n"
+        table = ("| Date | Payee | Amount |\n|---|---|---|\n| 02/03/2026 | Corner Store | 140.00 |\n"
+                 "| 03/03/2026 | Fuel Station | 2,300.50 |\n| 07/03/2026 | Pharmacy | 89.90 |\n")
+        for path, text in (("design/journal/S0030-acceptance-harness.md", self.EXCERPT), ("notes.txt", csv),
+                           ("docs/x.md", table), ("commit 0123456789ab message", self.EXCERPT),
+                           ("tag 0123456789ab message", csv), ("commit message", table), ("README.rst", csv),
+                           ("notes.md", self.EXCERPT.replace("Cr\n", "Cr\n\n\n").replace("42,000.00 Dr\n", "42,000.00 Dr\n\n"))):
+            with self.subTest(path=path):
+                self.assertEqual(rules_in(path, text).count("statement-excerpt"), 1)
+
+    def test_what_is_not_a_statement_excerpt(self) -> None:
+        two = "\n".join(self.EXCERPT.splitlines()[:4]) + "\n"
+        spread = self.EXCERPT.replace("Cr\n", "Cr\n\n\n\n\n\n")
+        beancount = ('2026-03-01 * "Corner Store" "Milk"\n  Assets:Bank  -4.50 USD\n'
+                     "2026-03-01 balance Assets:Bank  1,020.25 USD\n2026-03-02 price ACME  140.00 USD\n"
+                     "2026-03-03 balance Assets:Bank  1,008.25 USD\n")
+        no_text = "2026-03-01  42.00\n2026-03-02  43.00\n2026-03-03  44.00\n"
+        marked = "".join(line + "  privacy-scan: allow statement-excerpt\n" for line in self.EXCERPT.splitlines()[2:])
+        for path, text in (("backend/tests/test_csv.py", self.EXCERPT), ("frontend/src/x.ts", self.EXCERPT),
+                           ("data.json", self.EXCERPT), ("notes.md", two), ("notes.md", spread),
+                           ("docs/ledger.md", beancount), ("notes.md", no_text), ("notes.md", marked)):
+            with self.subTest(path=path, text=text[:40]):
+                self.assertNotIn("statement-excerpt", rules_in(path, text))
+
+
 class Plumbing(unittest.TestCase):
     def test_binary_detection(self) -> None:
         self.assertTrue(ps.is_binary(b"\x89PNG\0\0"))

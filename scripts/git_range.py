@@ -114,3 +114,9 @@ def blob_at(tip: str, path: str) -> bytes | None:
     """The file `path` in commit `tip`, or None when the commit has no such file."""
     proc = subprocess.run(["git", "--no-replace-objects", "cat-file", "blob", f"{tip}:{path}"], capture_output=True)
     return proc.stdout if proc.returncode == 0 else None
+
+
+def tree_names(commit: str, folder: str) -> list[str]:
+    """The names of the files directly in `folder` at `commit` (none when the folder does not exist there)."""
+    out = _git("ls-tree", "--name-only", commit, "--", folder.rstrip("/") + "/")
+    return [line.rsplit("/", 1)[-1] for line in out.decode("utf-8", errors="replace").splitlines() if line]

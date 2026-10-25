@@ -13,7 +13,11 @@ Usage:
 
 Rules (design/process/PROCESS.md, "Privacy gate"):
   card-number   13-19 digits (spaces/dashes allowed) that pass the Luhn check
-  account-number a standalone run of 11-18 digits, or 9-10 digits next to an account word
+  account-number a standalone run of 11-18 digits, or 9-10 digits on a line with an account word, or 6-10 digits
+                right after one (`Acct #: ...`, `A/C No. ...`; S0033)
+  upi-handle    a UPI address `<name>@<handle>` with a known UPI handle (`@okaxis`, `@ybl`, ...), not an email (S0033)
+  statement-excerpt three or more statement lines (date, text, amount in columns) within six lines, in Markdown and
+                text files and commit and tag messages (S0033)
   pan           Indian PAN (five letters, four digits, one letter)
   iban          IBAN with a valid mod-97 checksum
   email         any address outside the reserved example/test domains
@@ -88,6 +92,36 @@ IBAN = re.compile(r"(?i)\b[A-Z]{2}\d{2}(?:[ \-]?[A-Z0-9]{4}){2,7}(?:[ \-]?[A-Z0-
 EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,63})\b")  # TLD letters: not pkg@1.2.3
 HOME = re.compile(r"(?:/Users/|/home/|/Volumes/|[A-Za-z]:\\+Users\\+)([A-Za-z0-9][A-Za-z0-9._-]*)")
 OTHER_USER_HOME = re.compile(r"(?<![\w/])~([a-z][a-z0-9._-]*)/")  # another user's home, e.g. ~<name>/
+# S0033 (seeded-defect run 1 A11): a UPI address (VPA), `<name>@<handle>`, whose handle is a known UPI suffix and is
+# not followed by a dot and a domain (then it is an email, the email rule's). The list holds the common handles; an
+# unknown one passes (stated limit). Placeholder names (`name@okaxis`) pass.
+UPI_HANDLES = ("okaxis", "okhdfcbank", "okicici", "oksbi", "okbizaxis", "ybl", "ibl", "axl", "paytm", "ptyes",
+               "ptaxis", "pthdfc", "ptsbi", "apl", "yapl", "rapl", "upi", "axisbank", "axisb", "icici", "hdfcbank",
+               "sbi", "kotak", "kmbl", "indus", "pnb", "boi", "cnrb", "unionbank", "idfcbank", "idfcfirst",
+               "freecharge", "airtel", "jio", "fbl", "federal", "rbl", "yesbank", "yesg", "aubank", "dbs", "citi",
+               "hsbc", "abfspay", "ikwik", "mahb", "barodampay", "waaxis", "wahdfcbank", "waicici", "wasbi",
+               "naviaxis", "superyes", "jupiteraxis")
+UPI = re.compile(r"(?i)(?<![\w.@-])([a-z0-9][a-z0-9._-]{1,255})@(" + "|".join(UPI_HANDLES) + r")(?![\w@-]|\.[a-z])")
+UPI_PLACEHOLDERS = {"name", "user", "username", "yourname", "example", "test", "someone", "xyz", "abc", "vpa",
+                    "handle", "payee", "merchant"}
+# S0033 (A06): 6-10 digits, plain or in groups split by spaces or dashes (not date-shaped), right after an account
+# word and an optional "No", "Number", "#" or ":" (the line-wide account context above takes 9 or more digits;
+# shorter ones only here, where they cannot be anything else).
+ACCOUNT_NEAR = re.compile(r"(?i)(?<![a-z0-9])(?:a/c|acct|acc|account|ac(?=\s*no\b))\b\.?"
+                          r"(?:\s*(?:no|num(?:ber)?)\b\.?)?\s*(?:[#:\-]\s*)*(\d{2,10}(?:[ \-]\d{2,8}){0,3})(?![\d.,]|[a-z])")
+DATE_SHAPED = re.compile(r"\d{4}[ \-]\d{1,2}[ \-]\d{1,2}|\d{1,2}[ \-]\d{1,2}[ \-]\d{4}")
+# S0033 (A05): a statement excerpt in prose: three or more lines within six that each read date, text, amount, with
+# column gaps (two spaces, a tab, `|`, `,` or `;`) between them, in Markdown and text files and in commit and tag
+# messages. Code and data files are the staged-file guard's (its sniff of data-like files; BL-0023). Beancount
+# directives (`2026-03-01 balance ...`) are not statement lines.
+STATEMENT_SUFFIXES = {".md", ".markdown", ".rst", ".adoc", ".txt"}
+_DATE = (r"(?:\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{4}-\d{2}-\d{2}"
+         r"|\d{1,2}[ -](?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[ ,-]*\d{2,4})")
+_GAP = r"(?:\s*[|,;\t]\s*|\s{2,})"
+_BEANCOUNT = r"(?:\*|!|txn\b|open\b|close\b|balance\b|price\b|pad\b|note\b|document\b|event\b|custom\b|commodity\b|query\b|\")"
+STATEMENT_LINE = re.compile(rf"(?i)^[\s|>]*{_DATE}{_GAP}(?!{_BEANCOUNT})(?=[^\n]*[a-z])[^\n]{{2,}}?{_GAP}"
+                            r"[-+]?(?:\d{1,3}(?:,\d{2,3})+|\d+)\.\d{2}\b")
+STATEMENT_MIN_LINES, STATEMENT_WINDOW = 3, 6
 LIVE_DATA_NAME = re.compile(r"(?i)finzytrack[_-]?data\b")  # the owner's live data folder, by name  privacy-scan: allow live-data-path
 SECRETS: list[tuple[str, re.Pattern[str]]] = [
     ("openai-key", re.compile(r"\bsk-(?:proj-|ant-[a-z0-9]+-)?[A-Za-z0-9_-]{20,}")),
@@ -200,6 +234,7 @@ def scan_text(path: str, text: str, denylist: list[str]) -> list[Finding]:
             if 13 <= len(digits) <= 19 and digits not in ALLOWED_NUMBERS and luhn_ok(digits) and len(set(digits)) > 2:
                 add("card-number", digits)
                 card_spans.append(m.span())
+        account_spans: list[tuple[int, int]] = []
         for m in DIGIT_RUN.finditer(line):
             digits = m.group(0)
             if digits in ALLOWED_NUMBERS or any(a <= m.start() < b for a, b in card_spans):
@@ -212,6 +247,13 @@ def scan_text(path: str, text: str, denylist: list[str]) -> list[Finding]:
                 if len(digits) == 13 and EPOCH_MS[0] <= int(digits) < EPOCH_MS[1]:
                     continue
             if len(digits) >= 11 or account_context:
+                add("account-number", digits)
+                account_spans.append(m.span())
+        for m in ACCOUNT_NEAR.finditer(line):
+            digits = _digits(m.group(1))
+            if 6 <= len(digits) <= 10 and len(set(digits)) > 2 and digits not in ALLOWED_NUMBERS \
+                    and not DATE_SHAPED.fullmatch(m.group(1)) \
+                    and not any(a <= m.start(1) < b for a, b in account_spans + card_spans):
                 add("account-number", digits)
         if account_context:
             for m in GROUPED.finditer(line):
@@ -234,6 +276,9 @@ def scan_text(path: str, text: str, denylist: list[str]) -> list[Finding]:
             if addr.lower() in ALLOWED_EMAILS or ALLOWED_EMAIL_DOMAINS.search(domain) or FILE_TLD.search(domain):
                 continue
             add("email", addr)
+        for m in UPI.finditer(line):
+            if m.group(1).lower() not in UPI_PLACEHOLDERS:
+                add("upi-handle", m.group(0))
         for rule, rx in SECRETS:
             for m in rx.finditer(line):
                 if rule == "assigned-credential":
@@ -256,6 +301,32 @@ def scan_text(path: str, text: str, denylist: list[str]) -> list[Finding]:
         for original, d in lowered_deny:
             if d in low:
                 add("denylist", original)
+    return out + statement_excerpts(path, text)
+
+
+def statement_scope(path: str) -> bool:
+    """Markdown and text files, and commit and tag messages (labelled `... message` by the message scans)."""
+    return path.endswith(" message") or os.path.splitext(path)[1].lower() in STATEMENT_SUFFIXES
+
+
+def statement_excerpts(path: str, text: str) -> list[Finding]:
+    """One finding per run of STATEMENT_MIN_LINES statement lines within STATEMENT_WINDOW lines; a line carrying
+    `privacy-scan: allow statement-excerpt` does not count."""
+    if not statement_scope(path):
+        return []
+    hits = [n for n, line in enumerate(text.splitlines(), start=1) if STATEMENT_LINE.search(line)
+            and "statement-excerpt" not in {r.strip() for m in ALLOW_MARK.finditer(line) for r in m.group(1).split(",")}]
+    out: list[Finding] = []
+    k, need = 0, STATEMENT_MIN_LINES - 1
+    while k + need < len(hits):
+        if hits[k + need] - hits[k] < STATEMENT_WINDOW:
+            out.append(Finding(path, hits[k], "statement-excerpt", f"{STATEMENT_MIN_LINES}+ dated lines with amounts"))
+            last = hits[k + need]
+            while k < len(hits) and hits[k] - last < STATEMENT_WINDOW:  # one finding per excerpt
+                last = hits[k]
+                k += 1
+        else:
+            k += 1
     return out
 
 

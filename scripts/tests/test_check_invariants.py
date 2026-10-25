@@ -613,6 +613,67 @@ class EnforcementFilesDoNotSwitchTestsOff(unittest.TestCase):
                 self.assertTrue(any("switches a test off" in e for e in ci.switched_off(rel, text, real)))
 
 
+class ArchitectureTestsAreNeverSwitchedOff(unittest.TestCase):
+    """S0033 (seeded-defect run 1 E06): every test file under backend/tests/architecture is held to the skip ban."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def put(self, rel: str, text: str) -> None:
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def test_a_skip_in_any_architecture_test_is_refused(self) -> None:
+        at = "\n" + "@"
+        for rel in ("backend/tests/architecture/test_gates.py", "backend/tests/architecture/deeper/test_more.py"):
+            for body in ("import pytest" + at + "pytest.mark.skip(reason='flaky on CI')\ndef test_x():\n    pass\n",
+                         "import pytest\npytestmark = pytest.mark.skipif(True, reason='x')\n",
+                         "import pytest" + at + "pytest.mark.xfail(strict=True)\ndef test_x():\n    pass\n",
+                         "def test_x():\n    pass\ntest_x.__test__ = False\n"):
+                with self.subTest(rel=rel, body=body):
+                    self.put(rel, body)
+                    self.assertTrue(ci.architecture_switched_off(self.root))
+                    (self.root / rel).unlink()
+
+    def test_a_conftest_above_an_architecture_test_is_scanned(self) -> None:
+        self.put("backend/tests/architecture/test_gates.py", "def test_x():\n    pass\n")
+        self.put("backend/tests/conftest.py", "collect_ignore = ['architecture']\n")
+        self.assertTrue(ci.architecture_switched_off(self.root))
+
+    def test_clean_tests_and_non_test_helpers_pass(self) -> None:
+        self.put("backend/tests/architecture/test_gates.py", "def test_x():\n    pass\n")
+        self.put("backend/tests/architecture/helpers.py", "skip = None\n")
+        self.put("backend/tests/other/test_y.py", "import pytest" + "\n" + "@" + "pytest.mark.skip(reason='x')\ndef test_y():\n    pass\n")
+        self.assertEqual(ci.architecture_switched_off(self.root), [])
+
+    def test_main_reports_it(self) -> None:
+        import os
+        from unittest import mock
+        invs = "### INV-01: One\n- **Rule:** r\n- **Why:** w\n- **Enforced by:** planned.\n- **Status:** review-only\n"
+        self.put("design/INVARIANTS.md", invs)
+        self.put("backend/tests/architecture/test_gates.py", "def test_x():\n    pass\n")
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FT_MILESTONE_EXIT", None)
+            self.assertEqual(ci.main(self.root), 0)
+            self.put("backend/tests/architecture/test_gates.py", "import pytest" + "\n" + "@" + "pytest.mark.skip(reason='x')\ndef test_x():\n    pass\n")
+            self.assertEqual(ci.main(self.root), 1)
+
+    def test_the_seeded_plant_e06_and_the_real_tree(self) -> None:
+        real = Path(__file__).resolve().parents[2]
+        self.assertEqual(ci.architecture_switched_off(real), [])
+        rel = "backend/tests/architecture/test_contracts.py"
+        text = (real / rel).read_text(encoding="utf-8").replace(
+            "def test_contracts_hold_on_the_tree() -> None:",
+            "@" + 'pytest.mark.skip(reason="flaky on CI")\ndef test_contracts_hold_on_the_tree() -> None:')
+        self.assertIn("flaky on CI", text)
+        self.assertTrue(any("switches a test off" in e for e in ci.switched_off(rel, text, real)))
+
+
 class FixmeScanCoversTheScriptTests(unittest.TestCase):
     """S0031 (M2): the S0029 fixme and skip scan covers scripts/tests and scripts/oracle/tests, with its rules."""
 

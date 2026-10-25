@@ -44,6 +44,9 @@ while IFS= read -r range; do
   fi
   run "staged-file guard (pushed commits $range)" python3 scripts/check_staged.py --range "$range"
   run "privacy scan (pushed commits and messages $range)" python3 scripts/privacy_scan.py --range "$range" --quiet
+  # S0033 (seeded-defect run 1 E10): an open backlog item moved to a later milestone, parked, deferred, removed or
+  # deleted since the remote's version must cite an ADR or the owner's words on its row in the same push.
+  run "deferred backlog items (pushed commits $range)" python3 scripts/check_deferrals.py --range "$range"
 done <<< "$ranges"
 # A backstop over the whole pushed tree (S0031 verifier F5): the staged-file guard on every tracked file.
 run "staged-file guard (all tracked files)" bash -c "set -o pipefail; git ls-files -z | xargs -0 python3 scripts/check_staged.py --paths"

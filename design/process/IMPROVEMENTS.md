@@ -255,3 +255,12 @@ Format:
 - Expected effect: each of the red team's probes is refused at push (re-run end to end in scratch clones; the journal lists them). Pre-push time on this machine, warm: 57 s before, 67 s after (budget 2 min); the range scan of a one-commit push takes about 2 s.
 - Observed effect: pending.
 - Status: kept (tightening, agent-approved, PROCESS.md §9).
+
+## IMP-0026: the rest of seeded-defect run 1's misses become gates (2026-10-26)
+- Trigger: seeded-defect run 1 (BL-0075), misses E01-E04, A05, A06, A11, E06, E10; journal `design/journal/S0033-seeded-misses-2.md`.
+- What changed: gates and tests. `scripts/tests/test_privacy_cli.py` runs `privacy_scan.py` in a scratch repository and requires exit 1 on a planted finding in every mode (`--staged` with a Markdown file, `--all`, `--range`, paths). `scripts/tests/test_hook_pins.py` pins each git hook's code line by line (messages and comments excepted) and refuses the shapes that switch a check off. `scripts/privacy_scan.py` gains `upi-handle`, 6-10 digits right after an account word, and `statement-excerpt` (Markdown, text files, commit and tag messages). `scripts/check_invariants.py` holds every test under `backend/tests/architecture/` to the enforcement-file skip ban. New `scripts/check_deferrals.py`, run by `.githooks/pre-push` per pushed range: an open backlog item moved to a later milestone, parked, deferred, removed or deleted must cite an existing ADR or an owner quote on its row in the same push. PROCESS.md §6 T0 pre-push row and "Privacy gate".
+- PROCESS.md section: §6.
+- Why: each planted defect passed every gate in run 1: a privacy scan that always exits 0 or skips staged Markdown, a hook that lost its invariants line or chained the privacy scan with `; true`, a UPI address, an 8-digit account number, a statement excerpt in a journal note, a backlog row and its fixme re-dated M6 to M12.
+- Expected effect: each of those plants is refused (re-run in a scratch clone; the journal lists the gate that catches each). Pre-push time: see the journal.
+- Observed effect: pending.
+- Status: kept (tightening, agent-approved, PROCESS.md §9).

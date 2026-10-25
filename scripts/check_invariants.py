@@ -14,6 +14,7 @@ Rules:
     Python (the one exception: a skip that cannot fire on macOS, where the hooks run, written exactly as
     `unittest.skipUnless(sys.platform == "darwin", ...)`), no skip, todo, skipIf or runIf in TypeScript, and no
     collect_ignore, pytest_ignore_collect or skip form in a conftest.py above a Python enforcement test;
+    the same ban holds for every test file under backend/tests/architecture, named or not (S0033);
     stated limits: string indirection (getattr), a conftest hook that filters or marks items, and the pytest
     configuration are out of this static scan;
   - `pending`: the backlog item exists in design/backlog.md and is not marked done; with
@@ -333,6 +334,23 @@ def switched_off(rel: str, text: str, root: Path) -> list[str]:
     return []
 
 
+# Folders whose every test file is held to the enforcement-file skip ban whether or not an invariant names it (S0033,
+# seeded-defect run 1 E06): the architecture tests are the gates' own tests (layering contracts, globals, the fixme
+# marker, the gates), and none of them may be switched off.
+ALWAYS_ENFORCED = ("backend/tests/architecture",)
+
+
+def architecture_switched_off(root: Path) -> list[str]:
+    """The skip ban of an enforcement file (`switched_off`), on every test file under ALWAYS_ENFORCED."""
+    errors: list[str] = []
+    for folder in ALWAYS_ENFORCED:
+        for path in sorted((root / folder).rglob("*")) if (root / folder).is_dir() else []:
+            rel = path.relative_to(root).as_posix()
+            if path.is_file() and is_test(rel):
+                errors += switched_off(rel, path.read_text(encoding="utf-8", errors="replace"), root)
+    return list(dict.fromkeys(errors))
+
+
 def _has_fixme(rel: str, text: str) -> bool:
     """Any fixme marker or fixme-shaped use in a file, well formed or not."""
     if rel.endswith(".py"):
@@ -447,7 +465,7 @@ def main(root: Path = ROOT) -> int:
     if milestone_exit and milestone_exit not in MILESTONES:
         print(f"check-invariants: FT_MILESTONE_EXIT={milestone_exit!r} is not one of {', '.join(MILESTONES)}", file=sys.stderr)
         return 1
-    errors = check(text, root, backlog, milestone_exit)
+    errors = check(text, root, backlog, milestone_exit) + architecture_switched_off(root)
     if backlog:
         errors += check_backlog(backlog, milestone_exit) + check_fixme(root, backlog, milestone_exit)
     for e in errors:
