@@ -20,3 +20,4 @@ Option 1. Cost: a few minutes per check before hand-off. It already paid for its
 The ADR also gives the first rough slice count you asked for at the pilot (ADR-0046): about 180–270 slices for M1–M12, very roughly 550–1,350 agent hours. This is an order of magnitude only; the G1 evidence pack replaces it with the pace measured through M1b.
 
 ## Answer (owner, verbatim, with date)
+"I'll go with your recommendation for the PROCESS.md changes" (owner, 2026-10-25, in session). Option 1: all four changes approved; recorded in IMPROVEMENTS IMP-0010 to IMP-0012 and in ADR-0057's status line.
