@@ -77,7 +77,8 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           installer="$(grep -- '-setup\.exe$' artifacts.txt)"
-          timeout 300 "$installer" /S
+          # MSYS_NO_PATHCONV: Git Bash would turn /S into a drive path, and NSIS would wait in its wizard
+          MSYS_NO_PATHCONV=1 timeout 300 "$installer" /S
           dir="$LOCALAPPDATA/Finzytrack"
           exe="$(find "$dir" -maxdepth 1 -iname '*.exe' ! -iname 'uninstall*.exe')"
           test "$(printf '%s\n' "$exe" | wc -l)" -eq 1
