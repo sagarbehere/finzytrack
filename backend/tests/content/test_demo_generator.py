@@ -160,7 +160,7 @@ def test_an_iso_anchor_is_read_strictly() -> None:
 # --- Sizes and the span (review:27 §1(d); review:backend-survival §6.2 "5k and 54k transactions") ---
 
 
-@pytest.mark.parametrize(("size", "count", "months"), [(Size.DEMO, 2_000, 36), (Size.K5, 5_000, 60)])
+@pytest.mark.parametrize(("size", "count", "months"), [(Size.DEMO, 5_563, 36), (Size.K5, 5_000, 60)])
 def test_each_size_writes_its_transaction_count_inside_the_span(size: Size, count: int, months: int) -> None:
     text = text_of(ANCHOR, size)
     dates = TXN_HEADER.findall(text)
@@ -179,7 +179,7 @@ def test_the_span_ends_on_the_anchor_and_starts_on_a_month_start() -> None:
 
 def test_size_names_are_the_review_ones() -> None:
     assert [s.value for s in Size] == ["demo", "5k", "54k"]
-    assert (Size.DEMO.transactions, Size.K5.transactions, Size.K54.transactions) == (2_000, 5_000, 54_000)
+    assert (Size.DEMO.transactions, Size.K5.transactions, Size.K54.transactions) == (5_563, 5_000, 54_000)
 
 
 # --- Fragments: seeded by name, composition order-free, interface checks (ADR-0022) ---

@@ -176,6 +176,13 @@ class Generated(unittest.TestCase):
                 with self.subTest(size=size.value, fragment=fragment.name):
                     self.assertEqual(fragment.check(view_of(entries), span_for(ANCHOR, size), size), [])
 
+    def test_the_demo_is_at_least_as_large_as_the_legacy_demo(self) -> None:
+        # INV-20's "a write takes at most 1 s at demo size" was set on the legacy demo: 5,441 transactions
+        # (review:28 §1) and 5,581 entries (review:D1 §9). A smaller demo would loosen that owner-only absolute.
+        _, entries, _ = self.loaded[Size.DEMO]
+        self.assertGreaterEqual(sum(isinstance(e, data.Transaction) for e in entries), 5_441)
+        self.assertGreaterEqual(len(entries), 5_581)
+
     def test_only_contract_metadata_is_written(self) -> None:
         for size, (_, entries, _) in self.loaded.items():
             with self.subTest(size=size.value):

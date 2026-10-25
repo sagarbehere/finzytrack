@@ -22,8 +22,11 @@ from app.content.demo.rng import SeededRng
 class Size(StrEnum):
     """How big the generated ledger is: the number of transactions the background household writes.
 
-    `5k` and `54k` are the test and performance corpora (review:22 §1 item 5); the legacy demo had about 5.4k
-    transactions and the 54k corpus of spike S4 about 54.4k (review:spikes/s04-overlay-54k).
+    `demo` matches the legacy demo the owner's write target was set on (INV-20 "at most 1 s at demo size"):
+    5,441 transactions and 5,581 entries (review:28 §1, review:D1 §9). 5,563 household transactions plus the 18
+    commodity and open directives give 5,581 entries, at least as many as the legacy demo on both counts.
+    `5k` and `54k` are the test and performance corpora (review:22 §1 item 5); spike S4's 54k corpus had 54,415
+    transactions (review:spikes/s04-overlay-54k).
     """
 
     DEMO = "demo"
@@ -34,7 +37,7 @@ class Size(StrEnum):
     def transactions(self) -> int:
         match self:
             case Size.DEMO:
-                return 2_000
+                return 5_563
             case Size.K5:
                 return 5_000
             case Size.K54:
