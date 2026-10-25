@@ -54,3 +54,12 @@ Format:
 - Observed effect: pending.
 - Status: kept.
 - Owner approval: "I'm accepting your recommendations/actions on questions 5-11." (2026-10-25, in session; covers Q6)
+
+## IMP-0005: Safety outranks every number (2026-10-25)
+- Trigger: owner question while deciding spike S4's write budget ("arbitrary budget/performance numbers end up hurting more than they help").
+- What changed: `PROCESS.md` §6 states that no performance target, budget or baseline may be met by weakening a safety check; an agent that cannot meet a user-facing absolute escalates with numbers.
+- PROCESS.md section: §6.
+- Why: the cheapest way to hit a write-time target is to weaken the re-check; the invariants forbid it, but the process text did not say so where the numbers are defined.
+- Expected effect: performance work never trades away safety; misses come to the owner as escalations (as S4 did).
+- Observed effect: pending.
+- Status: kept (tightening, agent-approved).

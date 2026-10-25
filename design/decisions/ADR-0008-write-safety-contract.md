@@ -38,6 +38,15 @@ A refusal says "Your ledger is unchanged" only when the disk equals the pre-imag
 - Exotic ledgers may see a higher refused-write rate; the rate is reported at G1 as evidence, and a refusal is preferred to silent damage.
 - Every write costs one full load; preview plus confirm costs two (ADR-0011).
 
+## Amendment (2026-10-25): write cost at 54k (spike S4)
+
+Owner: "I accept your recommendations for 24, 25 and 26. We can skip Q27" (owner, 2026-10-25, in session).
+- **The re-check (R4) runs after the reply.** A write is acknowledged once it is durably written and the journal is closed; its re-check (a fresh full load compared with the prediction) then completes before the **next** write to that workspace is accepted. A failed re-check blocks writes and shows the backup, as the contract's refusal path does. The safety guarantee is unchanged: no write ever lands on an unverified state.
+- **Two speed-ups everywhere:** Python's garbage collector is paused for the duration of a write, and the step-1 parse is reused by the full load.
+- **Very large single-file ledgers:** a bounded cache of the parsed edited file is built in M1b and measured; only if it still misses the target does the owner revisit the number for that case.
+- **The 5 s target at 54k entries includes the mirror update**: it is measured until everything on screen reflects the change.
+- Spike S4 equivalence work carries over: the overlay takes bytes (CRLF inside strings), handles encrypted includes, and the D1 corpus gains the column-0 continuation-line case.
+
 ## References
 
 review:D1 §3, §12.1, §12.2, §12.9, §12.10; review:10 I2, I3, I9, I10, I11; ADR-0009, ADR-0010, ADR-0011, ADR-0012, ADR-0013; INV-01, INV-22; CAP-DATA-WRITE-GATE.
