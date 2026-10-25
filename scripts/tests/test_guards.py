@@ -130,6 +130,37 @@ class GuardTest(unittest.TestCase):
         self.assertIsNone(guards.bash_problem("cat corpora/MANIFEST.tsv", self.repo))
         # Stated limit (PROCESS.md §11, the guards are a safety net): an interpreter writing the file is not parsed.
 
+    def test_bl_0055_gaps(self) -> None:
+        """BL-0055 (found by the S0014 verifier): each must be refused; the ordinary forms beside them must not."""
+        nv = "--no-" + "verify"  # spelled in two parts so this file's text is not itself a command the guard reads
+        net = "/dev/" + "tcp"
+        refused = [
+            f"git commit -m x $(echo {nv})", f"git commit -m x `echo {nv}`", f"F={nv}; git commit -m x $F",
+            "git commit -m x ${F}", "git push origin next $(echo --force)", "git -C . commit -m x $(printf -- '-n')",
+            "git config $(echo core.hooks)Path /dev/null", "git add $FILES",
+            f"cat < {net}/127.0.0.1/8001", "echo hi > /dev/" + "udp/localhost/9",
+            f'exec 3<>"{net}/127.0.0.1/8001"',  # a quoted redirect target still opens the connection
+            "git log > .git/config", "printf x >> .git/hooks/pre-commit", "git show HEAD:x > .git/config",
+        ]
+        for cmd in refused:
+            self.assertTrue(self.blocked(cmd), cmd)
+        allowed = [
+            'git commit -q -m "S0001: msg $(date)"', 'git commit -m "$MSG"', "git push origin next",
+            f"git commit -q -F - <<'EOF'\nmsg with $(echo {nv}) inside the body\nEOF",
+            "git log --oneline $(git merge-base HEAD main)..HEAD", "git log > /tmp/x.txt", "cat .git/config",
+            "printf x > .githooks/pre-push.tmp",
+            # a heredoc body is data, not a command: a doc that shows such a line may be written
+            "cat > /tmp/notes.md <<'EOF'\ngit push origin next $(echo x)\nEOF",
+            f"cat > /tmp/notes.md <<'EOF'\na doc that mentions {net} in its text\nEOF",
+        ]
+        for cmd in allowed:
+            self.assertFalse(self.blocked(cmd), cmd)
+        self.assertTrue(guards.path_problem(str(self.repo / ".git" / "config"), self.repo, writing=True))
+        self.assertTrue(guards.path_problem(str(self.repo / ".git" / "hooks" / "pre-push"), self.repo, writing=True))
+        self.assertIsNone(guards.path_problem(str(self.repo / ".git" / "config"), self.repo, writing=False))
+        self.assertIsNone(guards.path_problem(str(self.repo / ".githooks" / "pre-push"), self.repo, writing=True))
+        # Stated limit (PROCESS.md §11): a command run through `sh -c`, `eval` or an interpreter is not parsed.
+
     def test_hooks_fail_closed(self) -> None:
         """INV-22's spirit for the guards (S0014 round-2 verifier F2): Claude Code runs a command when the hook
         exits with anything but 2, so an internal error must refuse, never allow."""

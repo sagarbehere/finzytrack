@@ -99,6 +99,8 @@ def path_problem(raw: str, cwd: Path, writing: bool) -> str | None:
             return "the owner's live data folder is off-limits to agents (INV-24); use copies under a temp dir"
         if writing and any(_under(p, r) for r in legacy_roots()):
             return "the legacy worktree is read-only; copy code out of it, never write into it"
+        if writing and ".git" in p.parts and (p.name == "config" or "hooks" in p.parts[p.parts.index(".git"):]):
+            return "writing .git/config or .git/hooks could switch off the git gates (BL-0055); refused"
         if writing and p.name == "MANIFEST.tsv" and p.parent.name == "corpora":
             return ("only the owner adds rows to corpora/MANIFEST.tsv (INV-23: owner-reviewed exports); ask the owner "
                     "to review the anonymized file and add its row")
@@ -118,6 +120,10 @@ READONLY_CMDS = {"ls", "cat", "head", "tail", "grep", "rg", "wc", "file", "stat"
 WRITE_LAST_ARG = {"mv", "cp", "rsync", "ln", "install", "scp"}
 WRITE_ANY_ARG = {"rm", "rmdir", "unlink", "truncate", "shred", "chmod", "chown", "chflags", "touch", "tee", "mkdir",
                  "xattr", "setfacl"}
+
+
+def _join_continuations(command: str) -> str:
+    return command.replace("\\\n", " ")
 
 
 def _split(command: str) -> list[list[str]]:
@@ -193,8 +199,40 @@ def _git_problem(toks: list[str], cwd: Path) -> str | None:
     return None
 
 
+GATED_GIT = {"commit", "push", "add", "clean", "stash", "tag", "config", "worktree"}
+SINGLE = re.compile(r"'[^']*'")
+DOUBLE = re.compile(r'"(?:[^"\\]|\\.)*"')
+HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\s*\2\s*$", re.S | re.M)
+
+
+def _unquoted(command: str) -> str:
+    """The command with heredoc bodies and quoted strings blanked: what the shell word-splits."""
+    text = HEREDOC.sub("<<HEREDOC\n", command)
+    return DOUBLE.sub('""', SINGLE.sub("''", text))
+
+
+def _expansion_in_gated_git(command: str) -> bool:
+    """An unquoted $-expansion or backtick in the same simple command as a gated git subcommand (BL-0055): its
+    output is word-split into arguments, so it can carry a flag (`git commit -m x $(echo --no-verify)`)."""
+    for part in re.split(r"\|\||&&|;|\||\n", _unquoted(command)):
+        words = part.split()
+        if "git" not in [os.path.basename(w) for w in words]:
+            continue
+        i = [os.path.basename(w) for w in words].index("git")
+        _, sub, _ = _git_parts(words[i:])
+        if sub in GATED_GIT and re.search(r"\$|`", part):
+            return True
+    return False
+
+
 def bash_problem(command: str, cwd: Path) -> str | None:
     """Why this shell command is refused, or None if it may run."""
+    # Heredoc bodies are data; quoted text is not skipped (bash opens a quoted /dev/tcp redirect target too).
+    if re.search(r"/dev/(tcp|udp)/", HEREDOC.sub("<<HEREDOC\n", command)):
+        return "bash network redirects (/dev/tcp, /dev/udp) are refused (BL-0055); use a real client on your own instance"
+    if _expansion_in_gated_git(_join_continuations(command)):
+        return ("an unquoted $-expansion or backtick next to git commit/push/add/clean/stash/tag/config/worktree is "
+                "refused: its output could carry flags (BL-0055); quote it, or run the commands separately")
     if LIVE_NAME.search(command) or any(str(r).lower() in command.lower() for r in live_data_roots()):
         return "the owner's live data folder is off-limits to agents (INV-24)"
     if OWNER_URL.search(command):
@@ -209,6 +247,17 @@ def bash_problem(command: str, cwd: Path) -> str | None:
         if cmd == "cd":
             here = _resolve(plain[0], here) if plain else Path.home()
             continue
+        # redirections, for every command, git included (BL-0055)
+        for i, t in enumerate(toks):
+            target = None
+            if t in (">", ">>", "1>", "2>", "&>") and i + 1 < len(toks):
+                target = toks[i + 1]
+            elif re.match(r"^\d?>>?[^>&]", t):
+                target = re.sub(r"^\d?>>?", "", t)
+            elif t.startswith("of="):
+                target = t[3:]
+            if target and path_problem(target, here, writing=True):
+                return path_problem(target, here, writing=True)
         if cmd == "git":
             if problem := _git_problem(toks, here):
                 return problem
@@ -229,17 +278,6 @@ def bash_problem(command: str, cwd: Path) -> str | None:
                 return "find over a folder that contains the owner's live data is refused; search inside the repo"
             if any(a in ("-delete", "-exec", "-execdir", "-ok") for a in args) and any(_under(root, r) for r in legacy_roots()):
                 return "find -delete/-exec in the legacy worktree is refused; it is read-only"
-        # redirections
-        for i, t in enumerate(toks):
-            target = None
-            if t in (">", ">>", "1>", "2>", "&>") and i + 1 < len(toks):
-                target = toks[i + 1]
-            elif re.match(r"^\d?>>?[^>&]", t):
-                target = re.sub(r"^\d?>>?", "", t)
-            elif t.startswith("of="):
-                target = t[3:]
-            if target and path_problem(target, here, writing=True):
-                return path_problem(target, here, writing=True)
         writes = False
         if cmd in WRITE_ANY_ARG or cmd in ("sed", "perl") and any(a.startswith("-i") or a == "--in-place" for a in args):
             writes = any(path_problem(a, here, writing=True) for a in plain) or any(
