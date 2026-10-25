@@ -39,3 +39,5 @@
 - F9 Low: surviving mutants and no zsh-specific cases; the new suite's mutants are above; zsh forms (`$[ ]`) are among the refusals.
 - Q1–Q3 (open before this slice, not regressions): word-split flags from a substitution (`git commit -m x $(echo --no-verify)`), `/dev/tcp` redirects and writes to `.git/config`, redirect targets of git commands → BL-0055.
 - Re-verification required (High fixes): round 2 below.
+- Round 2, 406d1d1..483b900: NOT VERIFIED. The verifier stopped partway: a safety filter interrupted its generation of attack strings against the guard. It confirmed the tests pass, the lexer is gone and the diff against 18af3c8 is a pure addition, but did no adversarial testing.
+- **Parked** (agent): a High-risk loosening of the INV-24 guard does not land unverified. The active guard is restored to 18af3c8 (commit after 59a7a4d); round 2 stays in history (483b900) and is re-applied with `git checkout 483b900 -- .claude/hooks/guards.py scripts/tests/test_guards.py` after a fresh verifier round, or the owner's review, passes.

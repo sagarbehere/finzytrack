@@ -4,10 +4,6 @@ These guards are a safety net, not a sandbox: they catch the common and the know
 could touch the live data folder, delete ignored files, write into the read-only legacy worktree, stop or
 call the owner's running app, or switch off the git gates (bypasses found by review:G are meta-tested in
 scripts/tests/test_guards.py). The rules are in design/process/PROCESS.md §8 ("Agents and real data").
-
-The one place text is not checked (BL-0042, S0014): the body of a heredoc whose delimiter is a plain word in
-single quotes, in a few exact whole-command shapes where the shell only hands the body to a file or to a commit
-message (`literal_heredoc_parts`). Everything else, including the rest of such a command, is checked as before.
 """
 
 from __future__ import annotations
@@ -190,62 +186,8 @@ def _git_problem(toks: list[str], cwd: Path) -> str | None:
     return None
 
 
-# BL-0042: a heredoc body is plain data only in these shapes, matched on the whole command from its first
-# character (EP-30: exact shapes, never a general shell parser). The delimiter is a plain word in single quotes,
-# so neither bash nor zsh expands anything in the body; the opening line holds nothing after the delimiter
-# (no pipe, no second redirect, no `&`); the command begins with it, so no compound command, function, loop or
-# substitution surrounds it.
-PLAIN_PATH = r"[A-Za-z0-9._/+~-]+"
-FLAGS = r"(?:[ \t]+-[A-Za-z][A-Za-z-]*)*"
-HEREDOC_SHAPES = [
-    # cat > path <<'EOF'   cat >> path <<'EOF'   cat <<'EOF' > path   tee [-a] path <<'EOF'
-    re.compile(rf"\A(?P<head>cat[ \t]*>>?[ \t]*(?P<path>{PLAIN_PATH})[ \t]+)<<'(?P<word>[A-Za-z_]+)'[ \t]*\n"),
-    re.compile(rf"\A(?P<head>cat[ \t]+)<<'(?P<word>[A-Za-z_]+)'(?P<tail>[ \t]*>>?[ \t]*(?P<path>{PLAIN_PATH}))[ \t]*\n"),
-    re.compile(rf"\A(?P<head>tee(?:[ \t]+-a)?[ \t]+(?P<path>{PLAIN_PATH})[ \t]+)<<'(?P<word>[A-Za-z_]+)'[ \t]*\n"),
-    # git commit [flags] -F - <<'EOF'
-    re.compile(rf"\A(?P<head>git[ \t]+commit{FLAGS}[ \t]+-F[ \t]+-[ \t]+)<<'(?P<word>[A-Za-z_]+)'[ \t]*\n"),
-    # git commit [flags] -m "$(cat <<'EOF'      ... EOF \n )"
-    re.compile(rf"\A(?P<head>git[ \t]+commit{FLAGS}[ \t]+-m[ \t]+)(?P<subst>\"\$\(cat)[ \t]+<<'(?P<word>[A-Za-z_]+)'[ \t]*\n"),
-]
-
-
-def literal_heredoc_parts(command: str) -> tuple[str, str] | None:
-    """(the command with the literal body removed, the rest after it), or None when no exact shape matches.
-    The first part keeps everything the shell acts on (the command, its flags, the redirect target); the rest
-    starts a new top-level command line and is checked on its own."""
-    for shape in HEREDOC_SHAPES:
-        m = shape.match(command)
-        if not m:
-            continue
-        if m.groupdict().get("path", "").startswith("/dev/"):
-            return None  # /dev/tcp, /dev/fd: not a plain file
-        word, body_start = m.group("word"), m.end()
-        lines = command[body_start:].split("\n")
-        if word not in lines:
-            return None  # never closed: the shell reads to the end; leave it to the normal checks
-        end = lines.index(word)
-        rest_lines = lines[end + 1:]
-        kept = m.group("head") + (m.groupdict().get("tail") or "")
-        if "subst" in shape.groupindex:
-            # the substitution must close on the next line with exactly `)"`; what follows on that line is more
-            # arguments of the same git command
-            if not rest_lines or not rest_lines[0].startswith(')"'):
-                return None
-            kept += '"x"' + rest_lines[0][2:]
-            rest_lines = rest_lines[1:]
-        return kept, "\n".join(rest_lines)
-    return None
-
-
 def bash_problem(command: str, cwd: Path) -> str | None:
     """Why this shell command is refused, or None if it may run."""
-    parts = literal_heredoc_parts(command)
-    if parts is not None:
-        return _bash_problem(parts[0], cwd) or (bash_problem(parts[1], cwd) if parts[1].strip() else None)
-    return _bash_problem(command, cwd)
-
-
-def _bash_problem(command: str, cwd: Path) -> str | None:
     if LIVE_NAME.search(command) or any(str(r).lower() in command.lower() for r in live_data_roots()):
         return "the owner's live data folder is off-limits to agents (INV-24)"
     if OWNER_URL.search(command):
