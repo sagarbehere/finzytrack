@@ -1,0 +1,21 @@
+; D1 write corpus (synthetic data, S0020).
+option "title" "Elided amounts and empty-cost reductions"
+option "operating_currency" "USD"
+2020-01-01 open Assets:Bank:Checking USD
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Expenses:Food USD
+2020-01-01 open Expenses:Coffee USD
+2020-01-01 open Income:Salary USD
+2020-01-01 open Equity:Opening USD
+2020-01-01 open Assets:Broker:Fund FUND "FIFO"
+2020-01-01 open Income:Gains USD
+2024-01-05 * "Shop" "elided amount"
+  Expenses:Food  10.50 USD
+  Assets:Cash
+2024-01-06 * "Broker" "buy"
+  Assets:Broker:Fund  3 FUND {5.00 USD}
+  Assets:Bank:Checking  -15.00 USD
+2024-02-06 * "Broker" "sell with an empty cost: Beancount picks the lot"
+  Assets:Broker:Fund  -1 FUND {} @ 6.00 USD
+  Assets:Bank:Checking  6.00 USD
+  Income:Gains

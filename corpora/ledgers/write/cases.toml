@@ -1,0 +1,101 @@
+# D1 write corpus: one table per case folder (spec: design/specs/write-path/write-corpus.md).
+# features: what the case exercises, from scripts/check_write_corpus.py FEATURES; must equal what its detectors find.
+# expect:   "load" (Beancount 3.2.0 loads it with exactly `errors`) or "refuse" (an encrypted file, ADR-0059: never loaded).
+# errors:   Beancount's errors as {type, message fragment}, a multiset; [] when it reports none.
+
+[asc-plain]
+features = ["asc-plain"]
+expect = "load"
+errors = []
+
+[comments]
+features = ["comment-between-postings", "comment-after-postings", "comment-inline-posting"]
+expect = "load"
+errors = []
+
+[crlf]
+features = ["crlf"]
+expect = "load"
+errors = []
+
+[documents]
+features = ["documents-folders"]
+expect = "load"
+errors = []
+note = "One statement is named by a document directive; the other is found only by the folder scan."
+
+[duplicate-include]
+features = ["duplicate-include"]
+expect = "load"
+errors = [{ type = "LoadError", message = "Duplicate filename parsed" }]
+
+[elided-and-reductions]
+features = ["elided-amount", "empty-cost-reduction"]
+expect = "load"
+errors = []
+
+[encrypted-asc]
+features = ["encrypted-asc"]
+expect = "refuse"
+errors = []
+
+[encrypted-gpg]
+features = ["encrypted-gpg"]
+expect = "refuse"
+errors = []
+
+[implicit-prices]
+features = ["implicit-prices"]
+expect = "load"
+errors = []
+
+[includes]
+features = ["glob-include", "nested-include"]
+expect = "load"
+errors = []
+
+[insert-entry]
+features = ["insert-entry"]
+expect = "load"
+errors = []
+
+[no-final-newline]
+features = ["no-final-newline"]
+expect = "load"
+errors = []
+
+[org-headings]
+features = ["org-headings"]
+expect = "load"
+errors = []
+
+[posting-metadata]
+features = ["posting-metadata"]
+expect = "load"
+errors = []
+
+[push-blocks]
+features = ["pushtag", "pushmeta"]
+expect = "load"
+errors = []
+
+[pythonpath-plugin]
+features = ["pythonpath-plugin", "plugin-modifies-entries"]
+expect = "load"
+errors = []
+note = "corpus_tagger adds the tag #seen to every transaction: a plugin that changes user entries (review:D1 §8)."
+
+[tabs]
+features = ["tabs"]
+expect = "load"
+errors = []
+
+[total-price]
+features = ["total-price"]
+expect = "load"
+errors = []
+
+[unicode]
+features = ["unicode-payee"]
+expect = "load"
+errors = []

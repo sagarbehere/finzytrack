@@ -1,0 +1,4 @@
+; nested include, two levels below the root
+2023-04-01 * "Shop" "lunch"
+  Expenses:Food  8.00 USD
+  Assets:Cash  -8.00 USD

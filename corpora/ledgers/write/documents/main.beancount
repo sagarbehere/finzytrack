@@ -1,0 +1,11 @@
+; D1 write corpus (synthetic data, S0020).
+option "title" "option documents with Beancount-convention folders"
+option "operating_currency" "USD"
+option "documents" "docs"
+2020-01-01 open Assets:Bank:Checking USD
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Expenses:Food USD
+2020-01-01 open Expenses:Coffee USD
+2020-01-01 open Income:Salary USD
+2020-01-01 open Equity:Opening USD
+2024-01-05 document Assets:Bank:Checking "docs/Assets/Bank/Checking/2024-01-05.statement.txt"

@@ -1,7 +1,7 @@
 # Write path: the per-mutator intended-change table
 
 ## Orientation
-- **What exists:** the table itself (`intent-table.toml` → generated `intent-table.md`) and the differential-oracle harness (`scripts/oracle/`, S0002), whose three models implement the `intent` column of `txn.edit`, `account.rename` and `import.commit` (`model.INTENT_ROWS`). No mutator is built yet; the write contract arrives in M1b (WS-WRITE stage 1).
+- **What exists:** the table itself (`intent-table.toml` → generated `intent-table.md`); the D1 write corpus beside it (`write-corpus.md`, S0020) and the differential-oracle harness (`scripts/oracle/`, S0002), whose three models implement the `intent` column of `txn.edit`, `account.rename` and `import.commit` (`model.INTENT_ROWS`). No mutator is built yet; the write contract arrives in M1b (WS-WRITE stage 1).
 - **Entry points:** `design/specs/write-path/intent-table.toml` (edit this); `scripts/gen_intent_table.py`; the structural checks in `scripts/tests/test_intent_table.py` (T1).
 - **Decisions it applies:** ADR-0008 (contract steps 2 and 3), ADR-0009 (edit primitives), ADR-0014 (clearance kinds, oracle classes), ADR-0026 (metadata list), ADR-0049 (account moves), and the per-area ADRs named in each row.
 - **Invariants:** INV-01 (the intent is exactly what step 2 checks), INV-14, INV-15, INV-16, INV-21, INV-22.

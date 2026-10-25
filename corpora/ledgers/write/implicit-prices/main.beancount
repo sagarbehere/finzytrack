@@ -1,0 +1,18 @@
+; D1 write corpus (synthetic data, S0020).
+option "title" "implicit_prices plugin"
+option "operating_currency" "USD"
+plugin "beancount.plugins.implicit_prices"
+2020-01-01 open Assets:Bank:Checking USD
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Expenses:Food USD
+2020-01-01 open Expenses:Coffee USD
+2020-01-01 open Income:Salary USD
+2020-01-01 open Equity:Opening USD
+2020-01-01 open Assets:Broker:Fund FUND
+2020-01-01 open Assets:Bank:Euro EUR
+2024-01-05 * "Broker" "buy"
+  Assets:Broker:Fund  2 FUND {5.00 USD}
+  Assets:Bank:Checking  -10.00 USD
+2024-01-06 * "Exchange" "currency"
+  Assets:Bank:Euro  100.00 EUR @ 1.10 USD
+  Assets:Bank:Checking  -110.00 USD

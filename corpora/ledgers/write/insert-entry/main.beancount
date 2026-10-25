@@ -1,0 +1,6 @@
+; D1 write corpus (synthetic data, S0020).
+option "title" "Fava insert-entry options"
+option "operating_currency" "USD"
+include "accounts.beancount"
+include "food.beancount"
+2020-01-01 custom "fava-option" "insert-entry" "Expenses:Food"

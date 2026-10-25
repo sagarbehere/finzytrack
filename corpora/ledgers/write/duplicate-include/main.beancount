@@ -1,0 +1,5 @@
+; D1 write corpus (synthetic data, S0020).
+option "title" "A file included twice (an error Beancount reports)"
+option "operating_currency" "USD"
+include "accounts.beancount"
+include "accounts.beancount"

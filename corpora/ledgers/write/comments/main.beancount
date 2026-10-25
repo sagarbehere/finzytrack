@@ -1,0 +1,17 @@
+; D1 write corpus (synthetic data, S0020).
+option "title" "Comments between and after postings"
+option "operating_currency" "USD"
+2020-01-01 open Assets:Bank:Checking USD
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Expenses:Food USD
+2020-01-01 open Expenses:Coffee USD
+2020-01-01 open Income:Salary USD
+2020-01-01 open Equity:Opening USD
+; a comment between directives
+
+2024-01-05 * "Shop" "lunch" ; a comment after the header
+  ; a comment between the header and the first posting
+  Expenses:Food  10.50 USD ; a comment after a posting
+  ; a comment between postings
+  Assets:Cash  -10.50 USD
+; a comment after the entry

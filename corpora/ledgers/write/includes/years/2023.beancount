@@ -1,0 +1,5 @@
+; included by the glob; it includes a further file (nested)
+include "2023-extra.bean"
+2023-03-01 * "Cafe" "beans"
+  Expenses:Coffee  12.00 USD
+  Assets:Cash  -12.00 USD

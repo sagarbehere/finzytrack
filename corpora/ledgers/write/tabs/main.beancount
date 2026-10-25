@@ -1,0 +1,12 @@
+; D1 write corpus (synthetic data, S0020).
+option "title" "Tabs"
+option "operating_currency" "USD"
+2020-01-01 open Assets:Bank:Checking USD
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Expenses:Food USD
+2020-01-01 open Expenses:Coffee USD
+2020-01-01 open Income:Salary USD
+2020-01-01 open Equity:Opening USD
+2024-01-05 *	"Shop"	"lunch"
+	Expenses:Food	10.50 USD
+	Assets:Cash	-10.50 USD

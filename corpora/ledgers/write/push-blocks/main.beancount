@@ -1,0 +1,22 @@
+; D1 write corpus (synthetic data, S0020).
+option "title" "pushtag and pushmeta blocks"
+option "operating_currency" "USD"
+2020-01-01 open Assets:Bank:Checking USD
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Expenses:Food USD
+2020-01-01 open Expenses:Coffee USD
+2020-01-01 open Income:Salary USD
+2020-01-01 open Equity:Opening USD
+pushtag #trip
+pushmeta location: "Lisbon"
+2024-01-05 * "Cafe" "bica"
+  Expenses:Coffee  1.20 USD
+  Assets:Cash  -1.20 USD
+2024-01-06 * "Shop" "lunch"
+  Expenses:Food  9.00 USD
+  Assets:Cash  -9.00 USD
+popmeta location:
+poptag #trip
+2024-01-07 * "Shop" "after the block"
+  Expenses:Food  3.00 USD
+  Assets:Cash  -3.00 USD

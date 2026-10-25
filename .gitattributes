@@ -1,0 +1,2 @@
+# Exact bytes for the D1 write corpus: CRLF, missing final newlines and tabs must survive every checkout (S0020).
+corpora/ledgers/write/** -text

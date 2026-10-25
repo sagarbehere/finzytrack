@@ -1,0 +1,4 @@
+; Fava inserts new Expenses:Food entries before this marker line
+2024-01-05 * "Shop" "lunch"
+  Expenses:Food  10.50 USD
+  Assets:Cash  -10.50 USD
