@@ -731,7 +731,7 @@ The versions below are the newest stable releases published on or before **2026-
 | Item | Pin | Why |
 |---|---|---|
 | Python | **3.13.16** (2026-09-30); 3.14 + Beancount 3.2.3 **after v0.4.0** | **Beancount 3.2.0 ships no cp314 wheel** (only cp39–cp313; 3.2.3 adds cp314). The overlay load (ADR-0010) pins 3.2.0, and the legacy oracle runs 3.2.0 on 3.13, so oracle comparisons have no version noise. 3.15.0 came out 2026-10-09, too new. Move to 3.14 with Beancount 3.2.3 in the first slice after v0.4.0 (ADR-0004) |
-| Package manager (Python) | **uv 0.13.0** | lock, venvs, Python install, `exclude-newer` |
+| Package manager (Python) | **uv 0.13.0** | lock, venvs, Python install, `exclude-newer`; build backend `uv_build` 0.13.0 (S0006) |
 | Node.js | **24.21.0 LTS "Krypton"** (2026-09-07) | Node 26 is not LTS yet (26.11.1 on 2026-10-07; LTS expected late October) |
 | Package manager (JS) | **pnpm 12.12.0** | strict `node_modules` (no phantom dependencies, which helps the boundary rules); `minimumReleaseAge`. Legacy used npm |
 | Rust | **1.99.0** (2026-10-01), via `rust-toolchain.toml` | Tauri 2.12 |
@@ -845,7 +845,7 @@ The versions below are the newest stable releases published on or before **2026-
     error-codes.json                              generated from the registry (also inside openapi.json)
     mirror-ddl.sql  mirror-views.md               generated snapshot of the DDL + r_* views (with column comments)
   backend/
-    pyproject.toml  uv.lock  .importlinter  pyrightconfig.json  ruff.toml
+    pyproject.toml  uv.lock  .python-version  .importlinter  pyrightconfig.json  ruff.toml
     src/app/…                                   §2.2
     typings/beancount/                          local strict stubs for the Beancount surface we use
     tests/  unit/ (mirrors src) · properties/ · models/ (RuleBasedStateMachine) · contract/ (API,

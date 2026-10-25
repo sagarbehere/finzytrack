@@ -1,5 +1,6 @@
 # T1 (design/process/PROCESS.md §6): deterministic gates only; no AI, no agent runs, no secrets.
 # Jobs for backend/, frontend/ and shell/ are added by the slice that creates each package (BL-0037).
+# backend: S0006.
 name: ci
 on:
   push:
@@ -29,8 +30,41 @@ jobs:
         run: python3 scripts/check_capabilities.py
       - name: Generated artifacts (INV-19)
         run: python3 scripts/check_generated.py --all
+      - name: Install uv
+        run: python3 -m pip install uv==0.13.0
+      - name: Backend environment (the licence check reads its runtime closure)
+        run: uv sync --locked --directory backend
       - name: Licences and THIRD_PARTY_NOTICES
         run: python3 scripts/check_licences.py
+  backend:
+    # The main sidecar (S0006; ARCHITECTURE.md §2, §10; ADR-0054): format, lint, strict types, import
+    # contracts, declared dependencies, tests (incl. the architecture tests: no Beancount in this environment).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install uv
+        run: python3 -m pip install uv==0.13.0
+      - name: Environment from the lockfile (Python from .python-version)
+        run: uv sync --locked
+      - name: ruff format
+        run: .venv/bin/ruff format --check --config ruff.toml .
+      - name: ruff lint
+        run: .venv/bin/ruff check --config ruff.toml .
+      - name: pyright (strict)
+        run: .venv/bin/pyright
+      - name: import contracts
+        run: .venv/bin/lint-imports
+      - name: declared dependencies
+        run: .venv/bin/deptry src
+      - name: tests
+        run: .venv/bin/pytest -q
   oracle-unit:
     # The differential-oracle harness's semantic diff, models and classifiers (S0002). End-to-end runs need the
     # legacy worktree and stay local (PROCESS.md §6, T-local).

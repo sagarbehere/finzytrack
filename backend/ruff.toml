@@ -1,0 +1,14 @@
+# Format and lint for backend/ (ARCHITECTURE.md §10). Run from the repo root with --config backend/ruff.toml.
+target-version = "py313"
+line-length = 120
+
+[lint]
+select = ["E", "W", "F", "I", "UP", "B", "BLE", "DTZ", "S", "TRY", "TID", "PT", "SIM", "RUF"]
+
+[lint.per-file-ignores]
+# pytest asserts; the pattern matches from the repo root (pre-commit) and from backend/ (CI)
+"**/tests/**" = ["S101"]
+
+[lint.flake8-tidy-imports.banned-api]
+"datetime.date.today".msg = "INV-07: there is no UTC or system 'today'; use domain.today(tz, clock)"
+"time.sleep".msg = "EP-28: no sleeps; wait on a condition or use the injected Clock"

@@ -27,7 +27,9 @@ run "generated artifacts" python3 scripts/check_generated.py --all
 
 if [[ -f backend/pyproject.toml ]]; then
   run "pyright" bash -c "cd backend && .venv/bin/pyright"
-  run "backend unit tests" bash -c "cd backend && .venv/bin/pytest -q -x tests/unit"
+  run "import contracts" bash -c "cd backend && .venv/bin/lint-imports"
+  run "declared dependencies" bash -c "cd backend && .venv/bin/deptry src"
+  run "backend tests" bash -c "cd backend && .venv/bin/pytest -q -x"
 fi
 if [[ -f frontend/package.json ]]; then
   run "tsc" bash -c "cd frontend && node_modules/.bin/tsc --noEmit"

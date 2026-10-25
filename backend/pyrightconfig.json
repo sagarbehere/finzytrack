@@ -1,0 +1,9 @@
+{
+  "include": ["src", "tests"],
+  "typeCheckingMode": "strict",
+  "pythonVersion": "3.13",
+  "venvPath": ".",
+  "venv": ".venv",
+  "reportMissingModuleSource": "error",
+  "reportUnnecessaryTypeIgnoreComment": "error"
+}

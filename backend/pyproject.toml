@@ -1,0 +1,39 @@
+# The main sidecar (ADR-0054): GPLv3, never imports Beancount. Package map: design/ARCHITECTURE.md §2.
+# Runtime dependencies arrive with the slice that first uses each one; pins: ARCHITECTURE.md §10 (EP-24).
+[project]
+name = "finzytrack-backend"
+version = "0.4.0.dev0"
+requires-python = "==3.13.*"
+license = "GPL-3.0-or-later"
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "coverage==7.16.2",
+  "deptry==0.25.1",
+  "hypothesis==6.168.4",
+  "import-linter==2.15",
+  "pip-licenses==5.5.5",
+  "pyright==1.1.414",
+  "pytest==9.1.1",
+  "pytest-xdist==3.8.0",
+  "ruff==0.17.0",
+]
+
+[build-system]
+requires = ["uv_build==0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+exclude-newer = "14 days"
+
+[tool.uv.build-backend]
+module-name = "app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-markers", "-p", "no:cacheprovider"]
+xfail_strict = true
+
+[tool.deptry]
+known_first_party = ["app"]
