@@ -16,13 +16,13 @@ Done in M0:
 - The macOS spikes, with S13 deciding Vue and S1 deciding python-build-standalone (S0001; ADR-0053, ADR-0056); the licence inventory that led to the engine split (ADR-0054).
 - The differential-oracle harness for three mutators (S0002); the legacy API tests run out of process, as reference reading (S0003).
 - The per-mutator intended-change table, the first of M1's specs (S0004).
-- The pilot's process ADR and the first slice count (S0005, ADR-0057).
+- The pilot's process ADR and the first slice count (S0005, ADR-0057); the backend skeleton (S0006); this roadmap (S0007); verification scaled to risk (S0008, ADR-0058).
 
 In progress (BL-0037, `in-progress`): the package skeletons with their CI gates: backend done in S0006; frontend (Vue) and the Tauri shell next.
 
 Left in M0, in this order:
 1. The frontend and shell skeletons (BL-0037; the Rust licence check BL-0033 and the GPLv3 text BL-0044 land with the shell).
-2. Process and guard checks: BL-0034 (tests fail on base, verifier SHA, approval quotes, golden justification), BL-0036 (protected files), BL-0038 (PROCESS.md no-drift), BL-0039 (cut and deferred rows cite ADRs), BL-0040 (stricter invariant check), BL-0042 (guard parser), plus BL-0035 (entropy secrets scan).
+2. Guard and map checks: BL-0042 (the guard parser's false positives), BL-0039 (cut and deferred rows cite ADRs), BL-0035 (entropy secrets scan). The checks on the process's own paperwork (BL-0034, BL-0036, BL-0038, BL-0040) are parked until evidence asks for them (ADR-0058).
 3. The invariant enforcement due by M0 (CI fails at M0's exit while these invariants are pending): BL-0011 (INV-11, the globals/state-registry test), BL-0012 (INV-12, the import contracts, backend half done in S0006, and the frontend boundaries lint); and the rest of BL-0019 (the doc-impact check), BL-0023 (owner-reviewed anonymization of fixtures) and BL-0024 (the acceptance harness's port and data-dir checks, the local-tier path guard).
 4. M1's other specs: the D1 write corpus, the mirror surface and DDL, the INV-21 goldens, the Beancount domain vectors.
 5. The rest of review:27 §1(d) that M0's exit needs: the demo generator skeleton; the acceptance-suite harness (isolated backend, frozen clock, LLM stub, Chromium and WebKit); the P1 integrity tests written as `fixme`; the empty Tauri window passing `--smoke-test` on three OSes; the red-team session on the gates and the first seeded-defect run.
@@ -88,7 +88,7 @@ Each entry: what is built, the exit beyond §3.2, and the dogfood rule. Detail p
 
 ### M1a: Read core and workspace-format core (L)
 - **Built:** the **ledger engine** as its own process with its own environment, lockfile and licence list, the engine protocol schema and the main side's `engine_client`, with supervision (ADR-0054, BL-0041); in the engine: `beancount_port`, the overlay load and `LoadPolicy` (ADR-0010), the mirror build and atomic publish (ADR-0015); on the main side: mirror reads and the hardened QueryRunner (ADR-0016), platform ports and adapters, the first domain types, the workspace-format core (layout, manifests, extended fingerprint, persisted `ledger_version`), the API skeleton with the offline OpenAPI export.
-- **Exit:** D2 equivalence exact on the corpus; mirror swap test with zero read errors; QueryRunner attacks refused; one load per operation, no resident ledger (INV-10); `/health` answers under 100 ms during a 54k load; the protocol overhead per write and per large BQL result measured.
+- **Exit:** the process re-measured (ADR-0058: product against process code, building against review-and-fix time per slice); D2 equivalence exact on the corpus; mirror swap test with zero read errors; QueryRunner attacks refused; one load per operation, no resident ledger (INV-10); `/health` answers under 100 ms during a 54k load; the protocol overhead per write and per large BQL result measured.
 - **Dogfood:** no.
 
 ### M1b: Write contract (L)

@@ -27,10 +27,9 @@ Template:
 - Population (if the slice claims to cover a whole set): <inventory used, built by behaviour; counts in / out>
 
 ## Verifier
-- Head SHA verified:
-- Attacks tried: <list; High ≥ 5, Medium ≥ 3>
-- Tests reviewed against the spec: <per test file: the spec lines, recomputed expectations, missing cases (EP-29)>
-- Findings: <ID, severity, resolution or backlog ID>
+(Summarise the report; do not transcribe it. One line per finding. ADR-0058.)
+- Round <n>, head <sha>: <verdict>. Attacks: <count and a few words>.
+- <ID> <severity>: <one line: what, and the fix or backlog ID>
 
 ## Golden changes
 - <file>: <why the old expectation was wrong>; verifier verdict: …; finding ID: …

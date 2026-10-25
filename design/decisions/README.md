@@ -73,6 +73,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0055](ADR-0055-mirror-legacy-postings-columns.md) | The mirror keeps the documented v0.2.2 `postings` columns, computed by the mirror | Accepted | 2026-10-25 | mirror, compatibility |
 | [ADR-0056](ADR-0056-python-build-standalone-and-linux-packages.md) | Sidecar packaging uses python-build-standalone; Linux ships AppImage and .deb | Accepted | 2026-10-25 | packaging, desktop |
 | [ADR-0057](ADR-0057-pilot-result.md) | The pilot's result: hand-off checks, re-verification, and a first slice count | Accepted | 2026-10-25 | process |
+| [ADR-0058](ADR-0058-process-overhead-trim.md) | Verification scaled to risk, process checks built on evidence, shorter journals | Accepted | 2026-10-25 | process |
 
 ## Template
 

@@ -453,6 +453,13 @@ log.event(Ev.IMPORT_DUPLICATE_FOUND, session=session_id, row_count=1)   # payee/
 
 **Enforcement.** Verifier checklist `[EP-29]`: the verifier reviews every new and changed test against the spec (see `.claude/agents/verifier.md`, "Review the tests"); mutation testing (T2) shows tests that pass whatever the code does.
 
+### EP-30 Remove a risk class before defending against it (owner, 2026-10-25)
+**Rule.** When a design choice can make a class of defect impossible (refuse the input, leave the feature out, pick the simpler structure), prefer it to a check that defends against each case. Defend case by case only when the class must be supported, and say so in the brief.
+
+**Why.** S0005 spent four verifier rounds defending a copy against tracked symlinks, one escape route at a time, in a repo that has no symlinks; refusing every symlink would have closed the class in the first round (ADR-0058).
+
+**Enforcement.** Verifier checklist `[EP-30]`.
+
 ## 3. Verifier checklist (generated from this file)
 
 The verifier prompt includes this list. **Every finding cites at least one ID**: an `INV-nn` (must), an `EP-nn` (should), an `ADR-nnnn`, a `CAP-…` row, a `SPEC:<file>#<anchor>`, or `BUG` with a repro. It gives a repro or the rule it breaks (`PROCESS.md` (agents)).
@@ -488,6 +495,7 @@ The verifier prompt includes this list. **Every finding cites at least one ID**:
 | EP-27 | Message missing "what happened / data safe / next step", or hard to read? | partly |
 | EP-28 | Test through internals, a mock inside the core, a sleep, or several behaviours in one test? | partly (lint bans) |
 | EP-29 | Does any test take its expected value from the code instead of the spec, lack the negative case, or change its expectation without a spec reason? | partly (mutation testing) |
+| EP-30 | Does a check defend case by case against a risk class that a simpler design would remove? | no |
 
 ---
 

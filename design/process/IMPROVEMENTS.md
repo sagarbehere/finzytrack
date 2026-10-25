@@ -150,3 +150,13 @@ Format:
 - Expected effect: layering, purity, Beancount-ban, type and lint regressions fail before landing.
 - Observed effect: pending.
 - Status: kept (tightening, agent-approved).
+
+## IMP-0015: verification scaled to risk; paperwork checks parked; shorter journals; EP-30 (2026-10-25)
+- Trigger: owner request ("is the process already eating the development?", 2026-10-25); measurements in ADR-0058.
+- What changed: PROCESS.md §3 steps 3, 5 and 7, §5, §6 (T1 contents, "not built yet"), §8; the journal template's Verifier section; ENGINEERING.md EP-30 and its checklist line; backlog status `parked` for BL-0034, BL-0036, BL-0038, BL-0040; the roadmap's M0 list.
+- PROCESS.md section: §3, §5, §6, §8.
+- Why: second and later verifier rounds on low-risk tooling, and checks on the process's own paperwork built before any escape, cost more than they caught.
+- Expected effect: fewer fix rounds on tooling and docs; M0 ends sooner; no rise in escapes on data-touching code.
+- Observed effect: measured at the end of M1a (ADR-0058 item 5).
+- Status: kept (loosening, owner-approved).
+- Owner approval: "I agree with your recommendations 1-4 on improving the process and re-evaulating as in 5" (2026-10-25, in session)
