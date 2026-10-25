@@ -42,3 +42,5 @@ jobs:
 Then: GitHub → Actions → run-next-ci → Run workflow.
 
 ## Answer (owner, verbatim, with date)
+"I'm going with Option 2. Manual  full runs at each milestone exit. Rationale: I'm getting a bit overwhelmed by how much the process is adding to the development. Maybe it is all needed, or maybe we have overextended the process so it's eating development? I've seen round after round of reviews.. so I'm taking the decision to not add more process just yet. We can revisit how we do GitHub CI runs later." (2026-10-25, in session)
+Recorded in ADR-0046 and ADR-0060. The dispatcher file above is still needed on `main` for any manual run.

@@ -6,7 +6,7 @@ This record moves the per-push and nightly gates off GitHub Actions: the workflo
 - **Date:** 2026-10-25
 - **Deciders:** owner: "I think we should do a manual GitHub CI run prior to each release." (2026-10-25, in session, after "I don't think we need to run any CI jobs on GitHub at this time. What possible advantage would it give over everything that we are already doing?")
 - **Area:** process, CI
-- **Amends:** ADR-0045 ("CI runs deterministic gates" now means: when started by hand), ADR-0007 ("a packaged-build matrix runs nightly"), PROCESS.md §6 (T1 per push and T2 nightly on GitHub). ADR-0046's G1 criterion "14 green nightly runs in a row" is restated by the owner separately (`design/inbox/20261025-g1-without-nightly-ci.md`).
+- **Amends:** ADR-0045 ("CI runs deterministic gates" now means: when started by hand), ADR-0007 ("a packaged-build matrix runs nightly"), PROCESS.md §6 (T1 per push and T2 nightly on GitHub). ADR-0046's G1 criterion "14 green nightly runs in a row" (now: a green manual run at each milestone exit and at G1).
 
 ## Context
 
@@ -16,7 +16,7 @@ On a single-owner repo where only agents push, the T1 jobs on GitHub mostly repe
 
 (owner, 2026-10-25, quoted above)
 - **No GitHub workflow runs on push or on a schedule.** `ci.yml`, `packaged.yml` and `nightly.yml` keep their jobs and are started by hand (`workflow_dispatch`, or `workflow_call` from a dispatcher).
-- **A full manual run is required before each release** and must be green on the release commit: `ci.yml` and `packaged.yml` (the three-OS packaged build with `--smoke-test`). It may also be started at any time, for example at a milestone exit or after a packaging change. (agent: the G1 and milestone uses are proposals in the inbox item above.)
+- **A full manual run** (`ci.yml` and `nightly.yml`, which includes the three-OS packaged build with `--smoke-test`) **must be green at each milestone exit and before each release**; it replaces G1's "14 green nightly runs" (owner, 2026-10-25: "I'm going with Option 2. Manual  full runs at each milestone exit. Rationale: I'm getting a bit overwhelmed by how much the process is adding to the development. Maybe it is all needed, or maybe we have overextended the process so it's eating development? I've seen round after round of reviews.. so I'm taking the decision to not add more process just yet. We can revisit how we do GitHub CI runs later." (2026-10-25, in session)). It may also be started at any time, for example after a packaging change.
 - **The T0 pre-push hook is the per-push gate**, as it already runs on every push. Two checks that only ran in CI move into it where they fit the budget: the Cargo publish dates of entries new since the remote branch are verified against crates.io (network only when the lock gained entries). Playwright stays in the manual run (agent).
 - Because GitHub offers "Run workflow" only for workflow files on the default branch, the manual start goes through a small dispatcher file on `main` that calls `next`'s workflows; only the owner pushes `main` (ADR-0045). Its text is in the inbox item.
 
