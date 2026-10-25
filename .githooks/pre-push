@@ -24,6 +24,7 @@ run "privacy scan (all tracked files)" python3 scripts/privacy_scan.py --all --q
 run "invariants" python3 scripts/check_invariants.py
 run "capability map" python3 scripts/check_capabilities.py
 run "generated artifacts" python3 scripts/check_generated.py --all
+run "cargo 14-day rule (offline)" python3 scripts/check_cargo_age.py
 
 if [[ -f backend/pyproject.toml ]]; then
   run "pyright" bash -c "cd backend && .venv/bin/pyright"

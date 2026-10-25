@@ -16,6 +16,21 @@ on:
 permissions:
   contents: read
 jobs:
+  cargo-age:
+    # EP-24: every publish date in shell/src-tauri/Cargo.lock.dates re-read from crates.io (about 12 minutes at
+    # crates.io's one request per second).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Cargo crates at least 14 days old, all dates verified
+        run: python3 scripts/check_cargo_age.py --verify-all
   packaged:
     uses: ./.github/workflows/packaged.yml
     with:

@@ -398,7 +398,7 @@ def run_user_sql(sql: UserSql, params: Params, limits: QueryLimits) -> Frame: ..
 
 **Why.** Owner rule (review:13 §4; recorded in ADR-0050, item 12). Fresh releases carry the most regressions, and a wrapped Beancount loader replica must move only deliberately.
 
-**Enforcement.** `[tool.uv] exclude-newer = "14 days"`, pnpm `minimumReleaseAge: 20160`; Cargo has no such setting, so `Cargo.lock` is resolved to versions published at least 14 days earlier and a T1 check of its entries' publish dates is BL-0052; a CI check that the lockfiles are unchanged by a fresh resolve, and a Renovate-style dependency report in T2 (report only, never auto-merge).
+**Enforcement.** `[tool.uv] exclude-newer = "14 days"`, pnpm `minimumReleaseAge: 20160`; Cargo has no such setting, so `Cargo.lock` is resolved to versions published at least 14 days earlier and `scripts/check_cargo_age.py` checks every entry against its adoption commit, with the dates kept in `shell/src-tauri/Cargo.lock.dates` (new entries re-read from crates.io in T1, all of them nightly; S0013); a CI check that the lockfiles are unchanged by a fresh resolve, and a Renovate-style dependency report in T2 (report only, never auto-merge).
 
 ### EP-25 The async edge only awaits
 **Rule.** An `async def` handler only awaits. Blocking work (Beancount loads, file writes, SQLite, scikit-learn) runs in worker threads behind the workspace limiter or the heavy-load gate.

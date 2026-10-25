@@ -43,6 +43,8 @@ jobs:
         run: cd shell/src-tauri && rustup show active-toolchain || rustup toolchain install
       - name: Licences and THIRD_PARTY_NOTICES
         run: python3 scripts/check_licences.py
+      - name: Cargo crates at least 14 days old (EP-24); dates of entries new since the last push re-read from crates.io
+        run: python3 scripts/check_cargo_age.py --verify-since "${{ github.event.before }}"
   backend:
     # The main sidecar (S0006; ARCHITECTURE.md §2, §10; ADR-0054): format, lint, strict types, import
     # contracts, declared dependencies, tests (incl. the architecture tests: no Beancount in this environment).
