@@ -90,6 +90,66 @@ class JavaScript(unittest.TestCase):
         self.assertEqual(deps["dual"], ("1.0.0", "MIT OR Apache-2.0"))
 
 
+def metadata(edges: dict[str, list[tuple[str, list[str | None]]]], licences: dict[str, str | None]) -> dict:
+    """A minimal `cargo metadata` document: package ids are "name version", edges carry dependency kinds."""
+    return {
+        "packages": [{"id": i, "name": i.split()[0], "version": i.split()[1], "license": lic}
+                     for i, lic in licences.items()],
+        "resolve": {"root": "shell 0.4.0", "nodes": [
+            {"id": i, "deps": [{"pkg": d, "dep_kinds": [{"kind": k} for k in kinds]} for d, kinds in edges.get(i, [])]}
+            for i in licences]},
+    }
+
+
+class Rust(unittest.TestCase):
+    """ADR-0042: only what ships counts: crates reached from the shell through normal dependencies."""
+
+    LICENCES = {
+        "shell 0.4.0": "GPL-3.0-or-later",
+        "tauri 2.12.3": "Apache-2.0 OR MIT",
+        "serde 1.0.0": "MIT/Apache-2.0",
+        "winapi 0.3.9": "MIT OR Apache-2.0",
+        "cc 1.0.0": "MIT OR Apache-2.0",
+        "proptest 1.0.0": "MIT OR Apache-2.0",
+        "glob 0.3.0": "MIT OR Apache-2.0",
+    }
+    EDGES = {
+        "shell 0.4.0": [("tauri 2.12.3", [None]), ("cc 1.0.0", ["build"]), ("proptest 1.0.0", ["dev"])],
+        "tauri 2.12.3": [("serde 1.0.0", [None]), ("winapi 0.3.9", [None])],
+        "cc 1.0.0": [("glob 0.3.0", [None])],
+    }
+
+    def names(self) -> list[str]:
+        return [n for n, _, _ in cl.rust_from_metadata(metadata(self.EDGES, self.LICENCES))]
+
+    def test_normal_dependencies_of_any_depth_ship(self) -> None:
+        self.assertEqual(sorted(self.names()), ["serde", "tauri", "winapi"])
+
+    def test_build_and_dev_dependencies_and_their_trees_do_not_ship(self) -> None:
+        for name in ("cc", "proptest", "glob"):
+            self.assertNotIn(name, self.names())
+
+    def test_the_shell_itself_is_not_a_dependency(self) -> None:
+        self.assertNotIn("shell", self.names())
+
+    def test_an_edge_that_is_normal_on_some_target_ships(self) -> None:
+        edges = {**self.EDGES, "shell 0.4.0": [("tauri 2.12.3", [None]), ("cc 1.0.0", ["build", None])]}
+        names = [n for n, _, _ in cl.rust_from_metadata(metadata(edges, self.LICENCES))]
+        self.assertIn("cc", names)
+        self.assertIn("glob", names)
+
+    def test_legacy_slash_means_or(self) -> None:
+        deps = {n: lic for n, _, lic in cl.rust_from_metadata(metadata(self.EDGES, self.LICENCES))}
+        self.assertEqual(deps["serde"], "MIT OR Apache-2.0")
+
+    def test_missing_licence_field_is_unknown_and_refused(self) -> None:
+        licences = {**self.LICENCES, "winapi 0.3.9": None}
+        deps = {n: lic for n, _, lic in cl.rust_from_metadata(metadata(self.EDGES, licences))}
+        self.assertEqual(deps["winapi"], "UNKNOWN")
+        problems, _, _ = cl.evaluate({"Rust": [("winapi", "0.3.9", "UNKNOWN")]}, {"MIT"}, set())
+        self.assertEqual(len(problems), 1)
+
+
 class Allowlist(unittest.TestCase):
     ALLOWED = {"MIT", "BSD-3-Clause"}
     PENDING = {"Apache-2.0"}

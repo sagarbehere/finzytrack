@@ -10,7 +10,7 @@ Everything about how v0.4 is designed and built is in [`design/`](design/README.
 
 ## Licence
 
-**Source code.** Every file of Finzytrack's own code is licensed under the **GNU General Public License, version 2 or (at your option) any later version** (GPL-2.0-or-later). See [`LICENSE`](LICENSE) for the text of version 2.
+**Source code.** Every file of Finzytrack's own code is licensed under the **GNU General Public License, version 2 or (at your option) any later version** (GPL-2.0-or-later). See [`LICENSE`](LICENSE) for the text of version 2 and [`LICENSE-GPL-3.0`](LICENSE-GPL-3.0) for version 3.
 
 **The desktop app.** It consists of separate programs that talk to each other over a local connection ([ADR-0054](design/decisions/ADR-0054-beancount-in-its-own-engine-process.md)). Each program combines our code with third-party components, so each is distributed under the GPL version that fits all of its parts:
 - the **ledger engine** includes [Beancount](https://github.com/beancount/beancount), which is GPL-2.0-only, so the engine is distributed under **GPL version 2**;

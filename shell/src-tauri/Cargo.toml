@@ -1,0 +1,20 @@
+[package]
+name = "finzytrack-shell"
+version = "0.4.0-dev.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+publish = false
+rust-version = "1.99"
+
+[build-dependencies]
+tauri-build = { version = "=2.7.2", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.3", features = [] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }

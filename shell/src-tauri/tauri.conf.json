@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Finzytrack",
+  "identifier": "com.finzytrack.desktop",
+  "version": "0.4.0-dev.0",
+  "build": {
+    "frontendDist": "../../frontend/dist",
+    "devUrl": "http://localhost:5173"
+  },
+  "app": {
+    "windows": [{ "title": "Finzytrack", "width": 1200, "height": 800 }],
+    "security": { "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'" }
+  },
+  "bundle": {
+    "active": false,
+    "macOS": { "minimumSystemVersion": "14.0" }
+  }
+}

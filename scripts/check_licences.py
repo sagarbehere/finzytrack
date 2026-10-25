@@ -3,7 +3,8 @@
 THIRD_PARTY_NOTICES lists every one of them.
 
 Sources, once each package exists: the backend venv (pip-licenses 5.5.5), frontend/node_modules
-(license-checker-rseidelsohn 5.0.1) and shell/src-tauri (cargo-about 0.9.2 / cargo-deny 0.20.2). Only what is
+(license-checker-rseidelsohn 5.0.1) and shell/src-tauri (`cargo metadata`: the crates reached from the shell
+through normal dependencies, on every target; cargo-about collects the licence texts at bundling). Only what is
 bundled counts: for the backend, the runtime closure of its lockfile (`uv export --no-dev`), never the dev
 tools installed beside it; a runtime package the venv does not report fails closed. A package that exists but
 whose tool is missing fails closed. Licences listed under [pending_legal_advice] pass with a
@@ -67,6 +68,40 @@ def python_deps() -> list[tuple[str, str, str]] | None:
     out = subprocess.run([str(tool), "--format=json", "--with-system", "--from=mixed"], capture_output=True, text=True, check=True)
     installed = [(d["Name"], d["Version"], d["License"]) for d in json.loads(out.stdout)]
     return bundled(installed, runtime_names(export.stdout))
+
+
+def rust_from_metadata(meta: dict) -> list[tuple[str, str, str]]:
+    """(name, version, licence) of every crate the shell ships: reached from the root through edges that are
+    normal dependencies on at least one target. Build and dev dependencies (and what only they pull in) do not
+    ship. Cargo's deprecated `/` separator means OR. A missing licence field is UNKNOWN (refused)."""
+    packages = {p["id"]: p for p in meta["packages"]}
+    nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
+    root = meta["resolve"]["root"]
+    seen: set[str] = set()
+    stack = [root]
+    while stack:
+        for dep in nodes[stack.pop()]["deps"]:
+            if any(k["kind"] is None for k in dep["dep_kinds"]) and dep["pkg"] not in seen:
+                seen.add(dep["pkg"])
+                stack.append(dep["pkg"])
+    out = []
+    for pid in seen:
+        p = packages[pid]
+        lic = p.get("license") or "UNKNOWN"
+        out.append((p["name"], p["version"], " OR ".join(part.strip() for part in lic.split("/"))))
+    return out
+
+
+def rust_deps() -> list[tuple[str, str, str]] | None:
+    crate = ROOT / "shell/src-tauri"
+    if not (crate / "Cargo.toml").exists():
+        return None
+    cargo = shutil.which("cargo") or str(Path.home() / ".cargo/bin/cargo")
+    if not Path(cargo).exists():
+        raise SystemExit("check-licences: shell exists but cargo is not installed")
+    out = subprocess.run([cargo, "metadata", "--format-version", "1", "--locked"], cwd=crate,
+                         capture_output=True, text=True, check=True)
+    return rust_from_metadata(json.loads(out.stdout))
 
 
 def js_deps() -> list[tuple[str, str, str]] | None:
@@ -181,10 +216,8 @@ def main(argv: list[str]) -> int:
     with (ROOT / "licences.allow.toml").open("rb") as fh:
         cfg = tomllib.load(fh)
     allowed, pending = set(cfg["allowed"]), set(cfg.get("pending_legal_advice", {}))
-    groups = {"Python (backend sidecar)": python_deps(), "JavaScript (frontend)": js_deps()}
-    if (ROOT / "shell/src-tauri/Cargo.toml").exists():
-        print("check-licences: shell/ exists; wire cargo-about/cargo-deny here (backlog BL-0033)", file=sys.stderr)
-        return 1
+    groups = {"Python (backend sidecar)": python_deps(), "JavaScript (frontend)": js_deps(),
+              "Rust (desktop shell)": rust_deps()}
     problems, warnings, text = evaluate(groups, allowed, pending)
     if "--write-notices" in argv:
         NOTICES.write_text(text, encoding="utf-8")

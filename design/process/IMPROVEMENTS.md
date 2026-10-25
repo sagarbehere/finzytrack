@@ -179,3 +179,12 @@ Format:
 - Observed effect: pending.
 - Status: kept (loosening, owner-approved).
 - Owner approval: "I accept your recommendation about the security exception" (2026-10-25, in session)
+
+## IMP-0018: T1 shell job, shell pre-push checks, Rust licences (2026-10-25)
+- Trigger: S0010, the Tauri shell skeleton (BL-0037, BL-0033).
+- What changed: `.github/workflows/ci.yml` gains the `shell` job (rustfmt, pedantic clippy with warnings as errors) and a Rust toolchain in `repo-checks`; `.githooks/pre-push` runs rustfmt and clippy when `shell/` exists; `scripts/check_licences.py` reads the shell's shipped crates with `cargo metadata`; `scripts/tests/test_shell_config.py` pins the shell's identifier, macOS minimum, CSP and permissions.
+- PROCESS.md section: §6.
+- Why: the shell runs with OS access; its config and dependencies are gated from the first commit.
+- Expected effect: a loosened CSP, a new permission or a disallowed crate licence fails CI.
+- Observed effect: pending.
+- Status: kept (tightening, agent-approved).

@@ -861,8 +861,9 @@ The versions below are the newest stable releases published on or before **2026-
     e2e/                                        Playwright acceptance flows + exploratory charters
     scripts/                                    frontend build tooling (.mjs): gen-api-extras, gen-recipe-types
   shell/
-    src-tauri/  Cargo.toml  Cargo.lock  tauri.conf.json  capabilities/  src/main.rs  src/sidecar.rs  icons/
-    sidecar/    finzytrack-backend.spec (PyInstaller) + build.py (ported from desktop/)
+    src-tauri/  Cargo.toml  Cargo.lock  rust-toolchain.toml  tauri.conf.json  capabilities/  src/main.rs  icons/   (S0010;
+                src/sidecar.rs arrives with the sidecar supervisor)
+    sidecar/    the python-build-standalone build of both Python processes (ADR-0056, ADR-0054)
   formal/
     tla/        WriteProtocol.tla  WriteProtocol.cfg  WriteProtocol_small.cfg  MAPPING.md (generated)  tools.lock
   corpora/                                      shared repo assets: nasty ledgers, XSS/SQL/path attack-input corpora,

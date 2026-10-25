@@ -18,10 +18,10 @@ Done in M0:
 - The per-mutator intended-change table, the first of M1's specs (S0004).
 - The pilot's process ADR and the first slice count (S0005, ADR-0057); the backend skeleton (S0006); this roadmap (S0007); verification scaled to risk (S0008, ADR-0058).
 
-In progress (BL-0037, `in-progress`): the package skeletons with their CI gates: backend done in S0006; frontend (Vue) and the Tauri shell next.
+In progress (BL-0037, `in-progress`): the package skeletons with their CI gates: backend (S0006), frontend (S0009) and the Tauri shell (S0010) done; `nightly.yml` and the packaged three-OS build with `--smoke-test` remain.
 
 Left in M0, in this order:
-1. The frontend and shell skeletons (BL-0037; the Rust licence check BL-0033 and the GPLv3 text BL-0044 land with the shell).
+1. The rest of BL-0037 (nightly and packaged workflows), BL-0052 (the Cargo 14-day check).
 2. Guard and map checks: BL-0042 (the guard parser's false positives), BL-0039 (cut and deferred rows cite ADRs), BL-0035 (entropy secrets scan). The checks on the process's own paperwork (BL-0034, BL-0036, BL-0038, BL-0040) are parked until evidence asks for them (ADR-0058).
 3. The invariant enforcement due by M0 (CI fails at M0's exit while these invariants are pending): BL-0011 (INV-11, the globals/state-registry test), BL-0012 (INV-12, the import contracts, backend half done in S0006, and the frontend boundaries lint); and the rest of BL-0019 (the doc-impact check), BL-0023 (owner-reviewed anonymization of fixtures) and BL-0024 (the acceptance harness's port and data-dir checks, the local-tier path guard).
 4. M1's other specs: the D1 write corpus, the mirror surface and DDL, the INV-21 goldens, the Beancount domain vectors.
