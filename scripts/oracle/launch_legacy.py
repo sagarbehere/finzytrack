@@ -35,6 +35,19 @@ from pathlib import Path
 from copies import legacy_root, refuse_dir
 
 OWNER_PORT = 8001
+# Nothing listens on the discard port: proxied requests fail at once instead of reaching the internet.
+DEAD_PROXY = "http://127.0.0.1:9"
+PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")
+
+
+def offline_env(env: dict[str, str]) -> dict[str, str]:
+    """*env* with outbound HTTP sent to a dead proxy (httpx and requests honour these), loopback exempt. A legacy
+    process on a copy must not fetch prices or call an AI endpoint on the owner's behalf."""
+    out = dict(env)
+    for name in PROXY_VARS:
+        out[name] = out[name.lower()] = DEAD_PROXY
+    out["NO_PROXY"] = out["no_proxy"] = "127.0.0.1,localhost"
+    return out
 
 
 def refuse_root(root: Path) -> str | None:
@@ -78,14 +91,14 @@ def wait_health(port: int, proc: subprocess.Popen[bytes], timeout: float = 60.0)
 class LegacyApp:
     """The legacy app running on a copied data root; a context manager that always stops the process."""
 
-    def __init__(self, root: Path, port: int, static_dir: Path | None = None) -> None:
+    def __init__(self, root: Path, port: int, static_dir: Path | None = None, *, offline: bool = True) -> None:
         for problem in (refuse_root(root), refuse_port(port)):
             if problem:
                 raise ValueError(f"launch_legacy: refused: {problem}")
         self.python = legacy_root() / "venv/bin/python"
         if not self.python.exists():
             raise FileNotFoundError(f"launch_legacy: no legacy venv at {self.python}")
-        self.root, self.port, self.static_dir = root, port, static_dir
+        self.root, self.port, self.static_dir, self.offline = root, port, static_dir, offline
         self.proc: subprocess.Popen[bytes] | None = None
         self.health: dict | None = None
 
@@ -94,6 +107,8 @@ class LegacyApp:
         legacy = legacy_root()
         env = {**os.environ, "PYTHONPATH": str(legacy / "backend"), "PYTHONDONTWRITEBYTECODE": "1",
                "FINZYTRACK_MODE": "desktop"}
+        if self.offline:
+            env = offline_env(env)
         cmd = [str(self.python), "-m", "app.main", "--server-port", str(self.port)]
         if self.static_dir:
             cmd += ["--static-dir", str(self.static_dir.resolve())]
