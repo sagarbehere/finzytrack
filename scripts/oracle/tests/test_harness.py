@@ -7,6 +7,7 @@ import io
 import json
 import os
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from helpers import OPENS, LedgerDir
@@ -148,3 +149,35 @@ class ReportingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LauncherOwnerPortTest(unittest.TestCase):
+    """INV-24 (S0031, the M0 gate red team M5): the oracle launcher refuses the owner's port by its number, before
+    anything else, and never probes that port to find out (a probe would touch the owner's running app).
+    @regression-guard: the refusal exists; this pins it (it had no test, so flipping it left every test green)."""
+
+    def setUp(self) -> None:
+        import launch_legacy
+
+        self.ll = launch_legacy
+
+        def no_probe(port: int) -> bool:
+            raise AssertionError(f"port {port} was probed")
+
+        self.patch = unittest.mock.patch.object(launch_legacy, "port_free", no_probe)
+        self.patch.start()
+
+    def tearDown(self) -> None:
+        self.patch.stop()
+
+    def test_the_owner_port_is_refused_by_number(self) -> None:
+        self.assertEqual(self.ll.OWNER_PORT, 8001)
+        problem = self.ll.refuse_port(8001)
+        self.assertIsNotNone(problem)
+        self.assertIn("owner", problem or "")
+
+    def test_the_app_refuses_the_owner_port_before_starting(self) -> None:
+        with unittest.mock.patch.object(self.ll.subprocess, "Popen", side_effect=AssertionError("started")):
+            with self.assertRaises(ValueError) as caught:
+                self.ll.LegacyApp(Path("/nonexistent-oracle-root"), 8001)
+        self.assertIn("port 8001 belongs to the owner", str(caught.exception))

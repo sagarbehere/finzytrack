@@ -10,9 +10,16 @@ on:
         description: "Commit or branch to test (empty: the selected branch)"
         type: string
         default: ""
+      milestone_exit:
+        description: "A milestone-exit run for this milestone (e.g. M0; empty: an ordinary run). Fails while an invariant, backlog item or fixme test due by it is still open (roadmap §3.2)"
+        type: string
+        default: ""
   workflow_call:
     inputs:
       ref:
+        type: string
+        default: ""
+      milestone_exit:
         type: string
         default: ""
 permissions:
@@ -39,7 +46,9 @@ jobs:
         run: python3 scripts/privacy_scan.py --all
       - name: Staged-file guard over every tracked file (INV-23)
         run: git ls-files -z | xargs -0 python3 scripts/check_staged.py --paths
-      - name: Invariants
+      - name: Invariants (a milestone-exit run when the milestone_exit input is set; S0031)
+        env:
+          FT_MILESTONE_EXIT: ${{ inputs.milestone_exit }}
         run: python3 scripts/check_invariants.py
       - name: Capability map
         run: python3 scripts/check_capabilities.py

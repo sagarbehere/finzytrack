@@ -34,6 +34,8 @@ class InvariantCheck(unittest.TestCase):
         self.root = Path(self.tmp.name)
         (self.root / "scripts/tests").mkdir(parents=True)
         (self.root / "scripts/tests/test_one.py").write_text("# covers INV-01\n")
+        (self.root / ".githooks").mkdir()
+        (self.root / ".githooks/pre-push").write_text("run x python3 -m unittest discover -s scripts/tests -q\n")
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -62,6 +64,39 @@ class InvariantCheck(unittest.TestCase):
         (self.root / "notes/docs.md").write_text("INV-01\n")
         text = GOOD.replace("`scripts/tests/test_one.py`", "`notes/docs.md`")
         self.assertTrue(any("no enforcement file is a test" in e for e in self.run_check(text)))
+
+    def test_a_check_only_the_manual_ci_runs_enforces_nothing(self) -> None:  # S0031, M4
+        (self.root / "scripts/check_x.py").write_text("# INV-01\n")
+        (self.root / ".github/workflows").mkdir(parents=True)
+        (self.root / ".github/workflows/ci.yml").write_text("run: python3 scripts/check_x.py\n")
+        text = GOOD.replace("`scripts/tests/test_one.py`", "`scripts/check_x.py`")
+        self.assertTrue(any("no enforcement file" in e for e in self.run_check(text)))
+        (self.root / ".githooks/pre-commit").write_text("run y python3 scripts/check_x.py\n")
+        self.assertEqual(self.run_check(text), [])
+
+    def test_a_test_counts_only_where_the_pre_push_hook_runs_its_folder(self) -> None:  # S0031, M4
+        for rel in ("frontend/e2e/harness.spec.ts", "scripts/acceptance/tests/test_x.py", "tests/test_x.py"):
+            with self.subTest(rel=rel):
+                (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (self.root / rel).write_text("// INV-01\n")
+                text = GOOD.replace("scripts/tests/test_one.py", rel)
+                self.assertTrue(any("no enforcement file" in e for e in self.run_check(text)), rel)
+        (self.root / ".githooks/pre-push").write_text("run x python3 -m unittest discover -s scripts/oracle/tests -q\n")
+        self.assertTrue(any("no enforcement file" in e for e in self.run_check(GOOD)))
+        (self.root / ".githooks/pre-push").unlink()
+        self.assertTrue(any("no enforcement file" in e for e in self.run_check(GOOD)))
+        for folder, marker in ci.PUSHED_TEST_ROOTS.items():
+            with self.subTest(folder=folder):
+                rel = folder + "test_y.py"
+                (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (self.root / rel).write_text("# INV-01\n")
+                (self.root / ".githooks/pre-push").write_text(f"run x {marker}\n")
+                self.assertEqual(self.run_check(GOOD.replace("scripts/tests/test_one.py", rel)), [])
+
+    def test_the_real_pre_push_runs_every_test_root(self) -> None:
+        hook = (Path(__file__).resolve().parents[2] / ".githooks/pre-push").read_text()
+        self.assertEqual([m for m in ci.PUSHED_TEST_ROOTS.values() if m not in hook], [])
+        self.assertEqual(ci.RUNNERS, [".githooks/pre-commit", ".githooks/pre-push"])
 
     def test_pending_without_backlog_item(self) -> None:
         self.assertTrue(self.run_check(GOOD, backlog="| BL-0009 | other | open |\n"))
@@ -435,6 +470,164 @@ class FixmeMarkers(unittest.TestCase):
         closed = {r["ID"] for r in ci.table_rows(backlog) if r.get("Status") == "done"}
         # review:27 §1(d): each P1 finding has its fixme test until a slice closes it (then the test runs for real).
         self.assertEqual(sorted(p1 - ids - closed), [])
+
+
+ENFORCED = """
+### INV-01: First
+- **Rule:** r
+- **Why:** w
+- **Enforced by:** `{path}`
+- **Status:** enforced
+"""
+
+
+class EnforcementFilesDoNotSwitchTestsOff(unittest.TestCase):
+    """S0031 (the M0 gate red team M2): an enforced invariant does not count a test file that skips its tests."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.put(".githooks/pre-push", "discover -s scripts/tests\n.venv/bin/pytest\nnode_modules/.bin/vitest run\n")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def put(self, rel: str, text: str) -> None:
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def errors(self, rel: str, body: str) -> list[str]:
+        self.put(rel, body)
+        try:
+            return ci.check(ENFORCED.format(path=rel), self.root, None, None)
+        finally:
+            (self.root / rel).unlink()
+
+    def test_python_skip_forms_are_refused(self) -> None:
+        at = "\n" + "@"
+        head = "# INV-01\nimport unittest, pytest, sys\n"
+        refused = [
+            "pytestmark = pytest.mark.skip(reason='slow')\n",
+            "pytestmark = [pytest.mark.skipif(True, reason='x')]\n",
+            at + "pytest.mark.xfail(strict=True)\ndef test_x():\n    pass\n",
+            "def test_x():\n    pytest.importorskip('x')\n",
+            "def test_x():\n    pytest.skip('later')\n",
+            "def test_x():\n    pytest.xfail('later')\n",
+            at + "unittest.skip('flaky')\nclass T(unittest.TestCase):\n    pass\n",
+            at + "unittest.skipIf(True, 'x')\nclass T(unittest.TestCase):\n    pass\n",
+            at + "unittest.skipUnless(False, 'x')\nclass T(unittest.TestCase):\n    pass\n",
+            at + "unittest.expectedFailure\ndef test_x():\n    pass\n",
+            "from unittest import expectedFailure" + at + "expectedFailure\ndef test_x():\n    pass\n",
+            "from unittest import skip as later" + at + "later('x')\ndef test_x():\n    pass\n",
+            "from pytest import importorskip as need\n",
+            "class T(unittest.TestCase):\n    def test_x(self):\n        self.skipTest('x')\n",
+            "def test_x():\n    raise unittest.SkipTest('x')\n",
+            "from unittest import SkipTest\ndef test_x():\n    raise SkipTest\n",
+            "def load_tests(loader, tests, pattern):\n    return loader.suiteClass()\n",
+            "load_tests = lambda *a: None\n",
+            # the macOS exception is exact: any other condition, function or shape is refused
+            at + "unittest.skipIf(sys.platform == 'darwin', 'x')\ndef test_x():\n    pass\n",
+            at + "unittest.skipUnless(sys.platform == 'linux', 'x')\ndef test_x():\n    pass\n",
+            at + "unittest.skipUnless(sys.platform != 'darwin', 'x')\ndef test_x():\n    pass\n",
+            at + "unittest.skipUnless(sys.platform == 'darwin' or True, 'x')\ndef test_x():\n    pass\n",
+            at + "unittest.skipUnless(sys.platform == 'darwin', 'x', extra=1)\ndef test_x():\n    pass\n",
+            at + "pytest.mark.skipif(sys.platform == 'darwin', reason='x')\ndef test_x():\n    pass\n",
+            "import sys as s" + at + "unittest.skipUnless(s.platform == 'darwin', 'x')\ndef test_x():\n    pass\n",
+        ]
+        for body in refused:
+            with self.subTest(body=body):
+                found = self.errors("scripts/tests/test_one.py", head + body)
+                self.assertTrue(any("switches a test off" in e for e in found), found)
+        self.assertTrue(self.errors("scripts/tests/test_one.py", head + "def test_x(:\n"))  # unparsable fails closed
+
+    def test_the_macos_exception_and_plain_tests_pass(self) -> None:
+        at = "\n" + "@"
+        head = "# INV-01\nimport unittest, sys\n"
+        ok = [head + "def test_x():\n    assert 'skip' != 'xfail'  # words in strings are not markers\n",
+              head + at + "unittest.skipUnless(sys.platform == \"darwin\", \"macOS firmlink spelling\")\n"
+              "def test_x():\n    pass\n"]
+        for body in ok:
+            with self.subTest(body=body):
+                self.assertEqual(self.errors("scripts/tests/test_one.py", body), [])
+
+    def test_a_non_test_enforcement_file_is_scanned_too(self) -> None:
+        self.put(".githooks/pre-commit", "python3 scripts/check_x.py\n")
+        self.assertTrue(self.errors("scripts/check_x.py", "# INV-01\nimport unittest\nskip = unittest.skip\n"))
+        self.assertEqual(self.errors("scripts/check_x.py", "# INV-01\nprint('ok')\n"), [])
+
+    def test_a_conftest_above_an_enforcement_test_cannot_drop_it(self) -> None:
+        test = "backend/tests/architecture/test_globals.py"
+        body = "# INV-01\ndef test_x():\n    pass\n"
+        for conf in ("backend/tests/conftest.py", "backend/tests/architecture/conftest.py", "backend/conftest.py"):
+            for text in ("collect_ignore = ['architecture/test_globals.py']\n", "collect_ignore_glob = ['*']\n",
+                         "def pytest_ignore_collect(collection_path, config):\n    return True\n",
+                         "import pytest\ndef pytest_runtest_setup(item):\n    pytest.skip('x')\n"):
+                with self.subTest(conf=conf, text=text):
+                    self.put(conf, text)
+                    self.assertTrue(any("switches a test off" in e for e in self.errors(test, body)))
+                    (self.root / conf).unlink()
+        # the fixme hook's strict xfail in backend/tests/conftest.py stays allowed (a strict xfail fails a passing test)
+        self.put("backend/tests/conftest.py", (Path(__file__).resolve().parents[2] / "backend/tests/conftest.py").read_text())
+        self.assertEqual(self.errors(test, body), [])
+
+    def test_typescript_skip_forms_are_refused(self) -> None:
+        for body in ("it.skip('x', () => {})\n", "describe.skip('x', () => {})\n", "it.todo('x')\n",
+                     "it.skipIf(true)('x', () => {})\n", "it.runIf(false)('x', () => {})\n", "it['skip']('x', () => {})\n",
+                     "test.skip('x', async () => {})\n", "const { skip: later } = it\n"):
+            with self.subTest(body=body):
+                found = self.errors("frontend/tests/unit/boundaries.test.ts", "// INV-01\nimport { it } from 'vitest'\n" + body)
+                self.assertTrue(any("switches a test off" in e for e in found), found)
+        self.assertEqual(self.errors("frontend/tests/unit/boundaries.test.ts",
+                                     "// INV-01\nimport { it } from 'vitest'\nit('x', () => {})\n"), [])
+
+    def test_the_red_team_probe_c_is_refused_on_the_real_tree(self) -> None:
+        real = Path(__file__).resolve().parents[2]
+        invariants = (real / "design/INVARIANTS.md").read_text(encoding="utf-8")
+        for rel, extra in (("backend/tests/architecture/test_globals.py", "\n\npytestmark = pytest.mark.skip(reason='slow')\n"),
+                           ("scripts/tests/test_guards.py", "\n\n" + "@" + "unittest.skip('flaky')\nclass Later(unittest.TestCase):\n    pass\n")):
+            with self.subTest(rel=rel):
+                found = [e for e in ci.check(invariants, real, None, None) if rel in e]
+                self.assertEqual(found, [])
+                text = (real / rel).read_text(encoding="utf-8") + extra
+                self.assertTrue(any("switches a test off" in e for e in ci.switched_off(rel, text, real)))
+
+
+class FixmeScanCoversTheScriptTests(unittest.TestCase):
+    """S0031 (M2): the S0029 fixme and skip scan covers scripts/tests and scripts/oracle/tests, with its rules."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def errors(self, rel: str, text: str) -> list[str]:
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        try:
+            return ci.check_fixme(self.root, FIXME_BACKLOG, None)
+        finally:
+            path.unlink()
+
+    def test_scripts_trees_are_scanned(self) -> None:
+        at = "\n" + "@"
+        for folder in ("scripts/tests", "scripts/oracle/tests"):
+            for body in ("import pytest" + at + "pytest.mark.xfail(strict=False)\ndef test_x():\n    pass\n",
+                         "import pytest" + at + "pytest.mark.fixme\ndef test_x():\n    pass\n",
+                         "import unittest\n# L4-01\n" + "@" + "unittest.skip('x')\nclass T(unittest.TestCase):\n    pass\n",
+                         "import unittest\n# L4-01\n" + "@" + "unittest.expectedFailure\ndef test_x():\n    pass\n",
+                         "import unittest\n# L4-01\ndef test_x():\n    raise unittest.SkipTest('x')\n",
+                         "from unittest import expectedFailure\n# L4-01\n" + "@" + "expectedFailure\ndef test_x():\n    pass\n",
+                         "from unittest import SkipTest\n# L4-01\ndef test_x():\n    raise SkipTest\n"):
+                with self.subTest(folder=folder, body=body):
+                    self.assertTrue(self.errors(f"{folder}/test_a.py", body))
+
+    def test_outside_the_protected_places_a_platform_skip_stays(self) -> None:
+        body = "import unittest\n" + "@" + "unittest.skipUnless(False, 'legacy tags not in this clone')\nclass T(unittest.TestCase):\n    pass\n"
+        self.assertEqual(self.errors("scripts/tests/test_a.py", body), [])
 
 
 if __name__ == "__main__":

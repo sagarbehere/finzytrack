@@ -13,9 +13,15 @@ Refused unless listed in `corpora/MANIFEST.tsv` with the same SHA-256 and an own
   synthetic test assets named in SYNTHETIC_ASSETS (BL-0023).
 Refused: a MANIFEST.tsv row that is malformed or whose owner review date is not a real date up to today.
 
+Refused: a submodule (its content is outside this repo's scans).
+
 Usage: python3 scripts/check_staged.py            (checks the index)
        python3 scripts/check_staged.py --paths A B (checks the given repo paths; for tests)
-Exit 0 = ok, 1 = refused.
+       python3 scripts/check_staged.py --range BASE..TIP | TIP
+             (the pre-push hook, S0031: every blob any commit of the range adds or changes, under the path it has
+             there, so a file added and removed again, or one that skipped pre-commit, is still checked; the
+             corpora/MANIFEST.tsv of TIP decides which exports are reviewed)
+Exit 0 = ok, 1 = refused, 2 = the range cannot be read.
 """
 
 from __future__ import annotations
@@ -29,6 +35,8 @@ import subprocess
 import sys
 from datetime import date
 from pathlib import PurePosixPath
+
+import git_range
 
 DATA_PATTERNS = ["*.beancount", "*.bean", "*.beancount.*", "*.ledger", "*.journal", "*.hledger", "*.bc", "*.gpg",
                  "ledger.db", "ledger.db-*", "*.db", "*.db-*", "*.sqlite", "*.sqlite3", "config.yaml", "*.key", "*.pem",
@@ -116,7 +124,8 @@ def is_binary(blob: bytes) -> bool:
     return b"\0" in head
 
 
-def check(paths: list[str], blob_of, symlinks: dict[str, str] | None = None) -> list[str]:
+def check(paths: list[str], blob_of, symlinks: dict[str, str] | None = None,
+          submodules: set[str] | None = None) -> list[str]:
     problems: list[str] = []
     manifest_blob = blob_of(MANIFEST)
     manifest, manifest_problems = (parse_manifest(manifest_blob.decode("utf-8", errors="replace"))
@@ -125,6 +134,9 @@ def check(paths: list[str], blob_of, symlinks: dict[str, str] | None = None) -> 
         problems += manifest_problems
     for path in paths:
         name = PurePosixPath(path).name
+        if submodules and path in submodules:
+            problems.append(f"{path}: a submodule; its content is outside this repo's scans, refused")
+            continue
         if symlinks and path in symlinks:
             target = symlinks[path]
             if target.startswith(("/", "~")) or ".." in PurePosixPath(target).parts:
@@ -154,15 +166,49 @@ def check(paths: list[str], blob_of, symlinks: dict[str, str] | None = None) -> 
     return problems
 
 
+def check_range(spec: str) -> list[str]:
+    """`check` over every (path, blob) the range adds or changes; one blob at a time, so two versions of one path
+    are both checked. MANIFEST.tsv itself is checked in each version the range has."""
+    _, tip = git_range.parse_spec(spec)
+    blobs = git_range.changed_blobs(spec)
+    contents = git_range.read_blobs([b.sha for b in blobs if b.mode != "160000"])
+    tip_manifest = git_range.blob_at(tip, MANIFEST)
+    problems: list[str] = []
+    for b in blobs:
+        data = contents.get(b.sha)
+
+        def blob_of(p: str, b=b, data=data) -> bytes | None:
+            if p == b.path:
+                return data
+            return tip_manifest if p == MANIFEST else None
+
+        symlinks = {b.path: (data or b"").decode("utf-8", errors="replace")} if b.mode == "120000" else None
+        found = check([b.path], blob_of, symlinks, {b.path} if b.mode == "160000" else None)
+        problems += [f"{p} (blob {b.sha[:12]})" for p in found]
+    return list(dict.fromkeys(problems))
+
+
 def git(*args: str) -> bytes:
     return subprocess.run(["git", *args], check=True, capture_output=True).stdout
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--paths", nargs="*", help="repo paths to check against the working tree")
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--paths", nargs="*", help="repo paths to check against the working tree")
+    g.add_argument("--range", help="BASE..TIP or TIP (40-hex commit names): every blob the range adds or changes")
     args = ap.parse_args(argv)
     symlinks: dict[str, str] = {}
+    submodules: set[str] = set()
+    if args.range is not None:
+        try:
+            problems = check_range(args.range)
+        except git_range.RangeError as exc:
+            print(f"check-staged: {exc}", file=sys.stderr)
+            return 2
+        for p in problems:
+            print(f"check-staged: REFUSED {p}", file=sys.stderr)
+        return 1 if problems else 0
     if args.paths is not None:
         paths = args.paths
 
@@ -180,12 +226,14 @@ def main(argv: list[str] | None = None) -> int:
             entry = git("ls-files", "-s", "--", p).decode("utf-8").split()
             if entry and entry[0] == "120000":
                 symlinks[p] = git("show", f":{p}").decode("utf-8", errors="replace")
+            elif entry and entry[0] == "160000":
+                submodules.add(p)
 
         def blob_of(p: str) -> bytes | None:
             r = subprocess.run(["git", "show", f":{p}"], capture_output=True)
             return r.stdout if r.returncode == 0 else None
 
-    problems = check(paths, blob_of, symlinks if args.paths is None else None)
+    problems = check(paths, blob_of, symlinks if args.paths is None else None, submodules)
     for p in problems:
         print(f"check-staged: REFUSED {p}", file=sys.stderr)
     return 1 if problems else 0

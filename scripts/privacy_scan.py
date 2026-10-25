@@ -4,6 +4,8 @@
 Usage:
     python3 scripts/privacy_scan.py --staged        # scan the staged blobs (pre-commit)
     python3 scripts/privacy_scan.py --all           # scan every tracked file (CI, T1)
+    python3 scripts/privacy_scan.py --range BASE..TIP | TIP
+                                    # every blob the range's commits add or change (pre-push, S0031)
     python3 scripts/privacy_scan.py PATH [PATH...]  # scan files on disk
 
 Rules (design/process/PROCESS.md, "Privacy gate"):
@@ -44,6 +46,8 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+import git_range
 
 ALLOWED_EMAIL_DOMAINS = re.compile(
     r"(^|\.)(example\.(com|org|net)|example|test|invalid|localhost)$|^users\.noreply\.github\.com$",
@@ -275,7 +279,16 @@ def suffix(path: str) -> str:
 YAML_SUFFIXES = frozenset({".yaml", ".yml", ".eyaml"})
 
 
-def detect_secrets(texts: dict[str, str]) -> dict[str, list[tuple[int, str, str]]]:
+def _path(key) -> str:
+    """The repo path of a scan key: the path itself, or (path, blob sha) in a range scan."""
+    return key[0] if isinstance(key, tuple) else key
+
+
+def _label(key) -> str:
+    return f"{key[0]} (blob {key[1][:12]})" if isinstance(key, tuple) else key
+
+
+def detect_secrets(texts: dict) -> dict:
     """{path: [(line, hashed_secret, suffix scanned as)]} from detect-secrets over the given texts. Each text is
     written to the temporary folder under generated names, never under its own path, so no path can leave the
     folder or be read as an option (EP-30). detect-secrets' rules depend on the file type, and neither choice
@@ -287,8 +300,8 @@ def detect_secrets(texts: dict[str, str]) -> dict[str, list[tuple[int, str, str]
     names: dict[str, tuple[str, str]] = {}
     for i, path in enumerate(texts):
         names[f"blob{i:05d}.txt"] = (path, ".txt")
-        if suffix(path) != ".txt":
-            names[f"blob{i:05d}-t{suffix(path)}"] = (path, suffix(path))
+        if suffix(_path(path)) != ".txt":
+            names[f"blob{i:05d}-t{suffix(_path(path))}"] = (path, suffix(_path(path)))
     with tempfile.TemporaryDirectory() as tmp:
         for name, (path, _) in names.items():
             (Path(tmp) / name).write_text(texts[path], encoding="utf-8", newline="")
@@ -339,7 +352,7 @@ def excused(line: str, hashed: str) -> bool:
     return "secret-entropy" in allowed or bool(token and any(m.group(1) == token for m in HASH_PIN.finditer(line)))
 
 
-def entropy_findings(texts: dict[str, str]) -> list[Finding]:
+def entropy_findings(texts: dict) -> list[Finding]:
     """One finding per (line, value). A hit is excused only when its line shows the mark or the pin under every
     numbering detect-secrets may have used for it: universal newlines always, and for a YAML scan also PyYAML's
     breaks (it falls back to universal numbering when the file does not parse). Duplicates are dropped only
@@ -356,7 +369,7 @@ def entropy_findings(texts: dict[str, str]) -> list[Finding]:
                 continue
             reported.add((lineno, hashed))
             token = next((t for t in (located(line, hashed) for line in candidates) if t), "")
-            out.append(Finding(path, lineno, "secret-entropy", redact(token) if token else "(value not located)"))
+            out.append(Finding(_label(path), lineno, "secret-entropy", redact(token) if token else "(value not located)"))
     return out
 
 
@@ -411,6 +424,24 @@ def run(paths: list[str], reader, denylist: list[str]) -> tuple[list[Finding], l
     return findings, binaries
 
 
+def run_range(spec: str, denylist: list[str]) -> tuple[list[Finding], list[str], int]:
+    """`run` over every (path, blob) the range adds or changes; findings name the path and the blob."""
+    blobs = [b for b in git_range.changed_blobs(spec) if b.mode != "160000"]  # submodules: refused by check_staged
+    contents = git_range.read_blobs([b.sha for b in blobs])
+    findings: list[Finding] = []
+    binaries: list[str] = []
+    texts: dict[tuple[str, str], str] = {}
+    for b in blobs:
+        text = decode(contents[b.sha])
+        if text is None:
+            binaries.append(_label((b.path, b.sha)))
+            continue
+        findings += [Finding(_label((b.path, b.sha)), f.line, f.rule, f.sample) for f in scan_text(b.path, text, denylist)]
+        texts[(b.path, b.sha)] = text
+    findings.extend(entropy_findings(texts))
+    return findings, binaries, len(blobs)
+
+
 def main(argv: list[str] | None = None) -> int:
     if sys.version_info < (3, 12):  # the scanner and its tests use 3.12 features; refuse rather than crash
         print("privacy-scan: needs Python 3.12 or newer; refusing to pass", file=sys.stderr)
@@ -419,11 +450,25 @@ def main(argv: list[str] | None = None) -> int:
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--staged", action="store_true", help="scan staged blobs (pre-commit)")
     g.add_argument("--all", action="store_true", help="scan all tracked files")
+    g.add_argument("--range", help="BASE..TIP or TIP (40-hex commit names): every blob the range adds or changes")
     ap.add_argument("paths", nargs="*")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args(argv)
 
     denylist = load_denylist()
+    if args.range is not None:
+        if args.paths:
+            ap.error("--range takes no paths")
+        try:
+            findings, binaries, count = run_range(args.range, denylist)
+        except git_range.RangeError as e:
+            print(f"privacy-scan: {e}", file=sys.stderr)
+            return 2
+        except ToolError as e:
+            print(f"privacy-scan: {e} (the secret-entropy rule cannot be skipped; run `uv sync --project "
+                  f"scripts/secrets-scan`)", file=sys.stderr)
+            return 2
+        return report(findings, binaries, count, denylist, args.quiet)
     if args.staged:
         paths = staged_files()
 
@@ -450,12 +495,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"privacy-scan: {e} (the secret-entropy rule cannot be skipped; run `uv sync --project "
               f"scripts/secrets-scan`)", file=sys.stderr)
         return 2
+    return report(findings, binaries, len(paths), denylist, args.quiet)
+
+
+def report(findings: list[Finding], binaries: list[str], count: int, denylist: list[str], quiet: bool) -> int:
     for f in findings:
         print(f, file=sys.stderr)
-    if not args.quiet:
+    if not quiet:
         note = "" if denylist else " (no owner denylist found; amount/name literals not checked)"
         print(
-            f"privacy-scan: {len(paths)} file(s), {len(findings)} finding(s), "
+            f"privacy-scan: {count} file(s), {len(findings)} finding(s), "
             f"{len(binaries)} binary file(s) not scanned{note}",
             file=sys.stderr,
         )

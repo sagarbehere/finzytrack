@@ -2,8 +2,10 @@
 """Stop hook: before an agent session ends, run the fast repo checks so it never stops on a red tree.
 
 Runs the check-script meta-tests, the invariant and capability checks, and the privacy scan over files
-changed in the working tree. Exit 2 sends the failures back to the agent once; when the hook has already
-asked for a fix (stop_hook_active), it lets the session stop and only prints the problems.
+changed in the working tree, and fails when this clone's git hooks are not installed (S0031, the M0 gate red
+team L2: without `core.hooksPath = .githooks` no commit or push is checked). Exit 2 sends the failures back to
+the agent once; when the hook has already asked for a fix (stop_hook_active), it lets the session stop and only
+prints the problems.
 """
 
 from __future__ import annotations
@@ -31,12 +33,28 @@ def changed_files() -> list[str]:
     return [f for f in files if (REPO / f).is_file()]
 
 
+def hooks_path_problem(repo: Path) -> str | None:
+    """None when the clone runs .githooks; otherwise the failure to report."""
+    try:
+        out = subprocess.run(["git", "-C", str(repo), "config", "--get", "core.hooksPath"], capture_output=True,
+                             text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"could not read core.hooksPath ({exc})"
+    if out == ".githooks":
+        return None
+    return (f"core.hooksPath is {out!r}, not '.githooks': no commit or push in this clone is checked. Ask the owner "
+            "to run `git config core.hooksPath .githooks` (agents may not change it)")
+
+
 def main() -> int:
     try:
         event = json.load(sys.stdin)
     except json.JSONDecodeError:
         event = {}
     failures = []
+    problem = hooks_path_problem(REPO)
+    if problem:
+        failures.append(f"git hooks: {problem}")
     for cmd in CHECKS:
         r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, timeout=110)
         if r.returncode:

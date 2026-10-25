@@ -80,8 +80,9 @@ class CopiesTest(unittest.TestCase):
         self.assertIsNotNone(copies.refuse_dir(copies.REPO.parent / "finzytrack-legacy" / "backend"))
         self.assertIsNotNone(copies.refuse_dir(Path.home()))  # contains the live folder
 
-    @unittest.skipUnless(HAS_FIRMLINK, "macOS firmlink spelling")
+    @unittest.skipUnless(sys.platform == "darwin", "macOS firmlink spelling")
     def test_refuses_the_firmlink_spelling_of_a_forbidden_folder(self) -> None:
+        self.assertTrue(HAS_FIRMLINK, f"{FIRMLINK} is missing on this Mac")
         # S0030 verifier F3: the same folder by another path text is matched by its identity (device, inode).
         for bad in (firm(self.live), firm(self.live) / "sub", firm(self.legacy), firm(copies.REPO), firm(self.base)):
             with self.subTest(bad=bad):
@@ -176,8 +177,9 @@ class LocalTierTest(unittest.TestCase):
         (self.tier / "link").symlink_to(self.base / "elsewhere")
         self.assertIsNotNone(copies.refuse_local_tier_source(self.tier / "link"))
 
-    @unittest.skipUnless(HAS_FIRMLINK, "macOS firmlink spelling")
+    @unittest.skipUnless(sys.platform == "darwin", "macOS firmlink spelling")
     def test_firmlink_spellings_of_the_tier_and_the_live_folder(self) -> None:
+        self.assertTrue(HAS_FIRMLINK, f"{FIRMLINK} is missing on this Mac")
         # S0030 verifier F3: a source inside the live folder spelled via the firmlink is refused, a tier that is the
         # firmlink spelling of a folder containing the live folder is refused, and the tier's own firmlink spelling
         # is still the tier.

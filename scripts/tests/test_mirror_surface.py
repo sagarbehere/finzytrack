@@ -123,7 +123,7 @@ def f(con):
     def test_backlog_ids_come_from_id_tables_only(self) -> None:
         text = ("| Status | Meaning |\n|---|---|\n| open | not done |\n\n"
                 "| ID | Title |\n|---|---|\n| N1 | a finding |\n| L1.M5 | a double |\n| BL-0001 | an item |\n\n"
-                "| Double | Canonical |\n|---|---|\n| L2-02 | I7 |\n")
+                "| Double | Canonical |\n|---|---|\n| L2-02 | I3 |\n")
         self.assertEqual(ms.backlog_ids(text), {"N1", "L1.M5", "BL-0001"})
 
 

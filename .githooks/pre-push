@@ -16,9 +16,26 @@ if [[ "$(git config --bool finzytrack.allowPush || echo false)" != "true" ]]; th
   exit 1
 fi
 
+# S0031 (M0 gate red team H1): the checks below read the working tree, so it must BE what is pushed. Every pushed
+# ref must be HEAD and the tree clean (no change, no untracked file, no hidden index entry, no ignored code);
+# otherwise the push is refused before any check runs. Prints one range per pushed ref for the history scans.
+refs="$(cat)"
+if ! ranges="$(printf '%s\n' "$refs" | python3 scripts/check_push.py "$remote_name")"; then
+  echo "pre-push: refused before the checks ran; commit (or remove) what is not pushed, then push HEAD" >&2
+  exit 1
+fi
+
 fail=0
 run() { local label="$1"; shift; if ! "$@"; then echo "pre-push: FAILED: $label" >&2; fail=1; fi; }
 
+# S0031 (H2): commits that skipped pre-commit (cherry-pick, rebase, revert, a hookless clone) and files added and
+# removed again inside the range: the staged-file guard and the privacy scan read every blob the range adds or
+# changes.
+while IFS= read -r range; do
+  [[ -n "$range" ]] || continue
+  run "staged-file guard (pushed commits $range)" python3 scripts/check_staged.py --range "$range"
+  run "privacy scan (pushed commits $range)" python3 scripts/privacy_scan.py --range "$range" --quiet
+done <<< "$ranges"
 run "check-script meta-tests" python3 -m unittest discover -s scripts/tests -q
 run "privacy scan (all tracked files)" python3 scripts/privacy_scan.py --all --quiet
 run "invariants" python3 scripts/check_invariants.py
@@ -27,24 +44,20 @@ run "generated artifacts" python3 scripts/check_generated.py --all
 # The D1 write corpus (S0020): its stdlib check, then every case in Beancount 3.2.0 (the oracle environment).
 uv_bin="$(command -v uv || echo "$HOME/.local/bin/uv")"
 run "write corpus" python3 scripts/check_write_corpus.py
-run "write corpus in Beancount" "$uv_bin" run --project scripts/oracle --locked python -m unittest discover \
-  -s scripts/oracle/tests -p test_write_corpus.py -q
-# The INV-21 goldens (S0022): the spec's derivation agrees with the v0.2.2 values, labels and key inventory hold.
-run "INV-21 goldens" "$uv_bin" run --project scripts/oracle --locked python -m unittest discover \
-  -s scripts/oracle/tests -p test_inv21_goldens.py -q
-# The Beancount domain vectors (S0024): the committed vectors equal a fresh run of Beancount 3.2.0; checks hold.
-run "Beancount domain vectors" "$uv_bin" run --project scripts/oracle --locked python -m unittest discover \
-  -s scripts/oracle/tests -p test_domain_vectors.py -q
-# The demo generator (S0027): every size (demo, 5k, 54k) loads in Beancount 3.2.0 with 0 errors, one assertion
-# per fragment holds, only contract metadata. About 5 s.
-run "demo generator in Beancount" "$uv_bin" run --project scripts/oracle --locked python -m unittest discover \
-  -s scripts/oracle/tests -p test_demo_generator.py -q
+# Every oracle test in the oracle environment (Beancount 3.2.0), about 10 s (S0031, M4; it replaced four
+# per-file runs): the write corpus in Beancount (S0020), the INV-21 goldens (S0022), the Beancount domain vectors
+# (S0024), the demo generator at every size (S0027), and the harness's INV-24 copy and launcher guards.
+run "oracle tests" "$uv_bin" run --project scripts/oracle --locked python -m unittest discover -s scripts/oracle/tests -q
 # ADR-0060: CI no longer runs per push, so new Cargo.lock entries' publish dates are verified here (network only
 # when the lock gained entries since the remote branch).
 upstream="$(git rev-parse --verify --quiet '@{u}' || echo none)"
 run "cargo 14-day rule (new entries verified)" python3 scripts/check_cargo_age.py --verify-since "$upstream"
 
+# S0031 (M3): format and lint over the whole tree at push (pre-commit lints only staged files, and reads the
+# working-tree copy).
 if [[ -f backend/pyproject.toml ]]; then
+  run "ruff format (backend)" bash -c "cd backend && .venv/bin/ruff format --check --config ruff.toml ."
+  run "ruff lint (backend)" bash -c "cd backend && .venv/bin/ruff check --config ruff.toml ."
   run "pyright" bash -c "cd backend && .venv/bin/pyright"
   run "import contracts" bash -c "cd backend && .venv/bin/lint-imports"
   run "declared dependencies" bash -c "cd backend && .venv/bin/deptry src"
@@ -57,6 +70,8 @@ if [[ -f shell/src-tauri/Cargo.toml ]]; then
   run "shell unit tests" bash -c "cd shell/src-tauri && $cargo_bin test --locked --quiet"
 fi
 if [[ -f frontend/package.json ]]; then
+  run "prettier (frontend)" bash -c "cd frontend && node_modules/.bin/prettier --check ."
+  run "eslint (frontend)" bash -c "cd frontend && node_modules/.bin/eslint --max-warnings 0 ."
   run "vue-tsc" bash -c "cd frontend && node_modules/.bin/vue-tsc --noEmit"
   run "frontend unit tests" bash -c "cd frontend && node_modules/.bin/vitest run"
   run "unused code and dependencies (knip)" bash -c "cd frontend && node_modules/.bin/knip"
