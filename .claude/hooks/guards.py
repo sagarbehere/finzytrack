@@ -149,9 +149,12 @@ def _short_flags(args: list[str]) -> set[str]:
 def _git_problem(toks: list[str], cwd: Path) -> str | None:
     opts, sub, args = _git_parts(toks)
     joined = " ".join(toks)
-    if re.search(r"(?i)core\.hooks?path|hookspath", joined):
+    # Reading a setting is fine (git config --get / --list / -l); setting or overriding it is not.
+    read_only_config = sub == "config" and len(args) >= 1 and (
+        args[0] in ("--get", "--get-all", "--list", "-l", "--show-origin") or (len(args) == 1 and not args[0].startswith("-")))
+    if re.search(r"(?i)core\.hooks?path|hookspath", joined) and not read_only_config:
         return "changing or overriding core.hooksPath switches off the gates; refused"
-    if re.search(r"(?i)finzytrack\.allowpush", joined):
+    if re.search(r"(?i)finzytrack\.allowpush", joined) and not read_only_config:
         return "the push gate is the owner's switch (git config finzytrack.allowPush); agents never set it"
     if any(re.match(r"^--no-v", a) for a in args) or (sub == "commit" and "n" in _short_flags(args)):
         return "skipping the git hooks (--no-verify / commit -n) is refused; fix what the gate reports"

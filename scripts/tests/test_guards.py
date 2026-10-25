@@ -126,6 +126,7 @@ class GuardTest(unittest.TestCase):
             f"cd {L} && grep -rn foo backend", "find . -name '*.py'", "lsof -iTCP -sTCP:LISTEN -nP",
             "curl -s http://127.0.0.1:18950/health", "kill 12345", "uv run pytest -q", "pnpm install --frozen-lockfile",
             "git stash", "git clean -n", "git branch -a",
+            "git config --get core.hooksPath", "git config core.hooksPath", "git config --get finzytrack.allowPush",
         ]
         for cmd in allowed:
             self.assertFalse(self.blocked(cmd), cmd)
