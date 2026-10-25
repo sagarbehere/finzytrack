@@ -2,8 +2,8 @@
 
 ## Orientation
 - **What this is:** the order in which v0.4.0 is built on `next`, milestone by milestone, with what the owner can do at the end of each, what must be true to leave it, and how far real ledgers may be used. It decides nothing about the product; it sequences decisions recorded in the ADRs.
-- **Source:** ported on 2026-10-25 (S0007) from the milestone plan review:27, and corrected for decisions made after it was written: Vue, not React (ADR-0053); Beancount in its own engine process (ADR-0054); python-build-standalone, not PyInstaller, and Linux as AppImage + .deb (ADR-0056); the pilot's slice count (ADR-0057). Where this file and review:27 disagree, this file and the ADRs win. review:27 keeps the full per-milestone lists of backlog IDs, acceptance flows and statecharts; cite it as `review:27 §n` for detail.
-- **What lives elsewhere (not repeated here):** which capability belongs to which milestone: `design/capabilities.md` (the `milestone` column); which backlog item: `design/backlog.md`; G1 and the M1 split: ADR-0046; release scope and gate: ADR-0043; clearance numbers: ADR-0014 and PROCESS.md §10; process lanes: ADR-0044.
+- **Source:** ported on 2026-10-25 (S0007) from the milestone plan review:27, and corrected for decisions made after it was written: Vue, not React (ADR-0053); Beancount in its own engine process (ADR-0054); python-build-standalone, not PyInstaller, and Linux as AppImage + .deb (ADR-0056); the pilot's slice count (ADR-0057). This file summarises; it binds nothing by itself. The ADRs decide, and review:27 keeps the binding milestone exits in full detail (ADR-0046), with the per-milestone lists of backlog IDs, acceptance flows and statecharts; cite it as `review:27 §n`. Where this summary differs from an ADR or from review:27, the summary is wrong and is fixed; review:27's statements that a later ADR superseded (listed above) are read as amended by that ADR.
+- **What lives elsewhere (not repeated here):** which capability belongs to which milestone: `design/capabilities.md` (the `milestone` column; its `M1` rows split into M1a and M1b per ADR-0046); which backlog item: `design/backlog.md`; G1 and the M1 split: ADR-0046; release scope and gate: ADR-0043; clearance numbers: ADR-0014 and PROCESS.md §10; process lanes: ADR-0044.
 - **Keeping it current:** a slice that finishes an item in §1 updates §1 in the same commit; a slice that changes the order or a milestone's exit cites an ADR and edits §3–§5. Milestone sizes are relative (S < M < L < XL, an XL about two to three times an L), not dates.
 - **Invariants that shape the order:** INV-01 and INV-22 (no write capability before the write-safety contract, so nothing writes before G1), INV-24 (real ledgers only as copies until promotion), INV-17 (never write a newer format, so no format bump before M3).
 
@@ -12,19 +12,20 @@
 **Milestone M0, Foundations.** Nothing runs as an app yet.
 
 Done in M0:
-- `next` from an empty tree; T0 and T1 gates (privacy scan, staged-file guard, invariant, capability, generated-artifact and licence checks); `design/` seeded; agents, skills and guard hooks (S0000).
-- The macOS spikes, with S13 deciding Vue (S0001; ADR-0053, ADR-0054, ADR-0056).
+- `next` from an empty tree; T0 and T1 gates (privacy scan, staged-file guard, invariant, capability, generated-artifact diff and licence checks); `design/` seeded; agents, skills and guard hooks (S0000). Their remaining parts are listed under "Left" below.
+- The macOS spikes, with S13 deciding Vue and S1 deciding python-build-standalone (S0001; ADR-0053, ADR-0056); the licence inventory that led to the engine split (ADR-0054).
 - The differential-oracle harness for three mutators (S0002); the legacy API tests run out of process, as reference reading (S0003).
 - The per-mutator intended-change table, the first of M1's specs (S0004).
 - The pilot's process ADR and the first slice count (S0005, ADR-0057).
 
-In progress: the package skeletons with their CI gates (BL-0037): backend done in S0006; frontend (Vue) and the Tauri shell next.
+In progress (BL-0037, `in-progress`): the package skeletons with their CI gates: backend done in S0006; frontend (Vue) and the Tauri shell next.
 
 Left in M0, in this order:
 1. The frontend and shell skeletons (BL-0037; the Rust licence check BL-0033 and the GPLv3 text BL-0044 land with the shell).
 2. Process and guard checks: BL-0034 (tests fail on base, verifier SHA, approval quotes, golden justification), BL-0036 (protected files), BL-0038 (PROCESS.md no-drift), BL-0039 (cut and deferred rows cite ADRs), BL-0040 (stricter invariant check), BL-0042 (guard parser), plus BL-0035 (entropy secrets scan).
-3. M1's other specs: the D1 write corpus, the mirror surface and DDL, the INV-21 goldens, the Beancount domain vectors.
-4. The rest of review:27 §1(d) that M0's exit needs: the demo generator skeleton; the acceptance-suite harness (isolated backend, frozen clock, LLM stub, Chromium and WebKit); the P1 integrity tests written as `fixme`; the empty Tauri window passing `--smoke-test` on three OSes; the red-team session on the gates and the first seeded-defect run.
+3. The invariant enforcement due by M0 (CI fails at M0's exit while these invariants are pending): BL-0011 (INV-11, the globals/state-registry test), BL-0012 (INV-12, the import contracts, backend half done in S0006, and the frontend boundaries lint); and the rest of BL-0019 (the doc-impact check), BL-0023 (owner-reviewed anonymization of fixtures) and BL-0024 (the acceptance harness's port and data-dir checks, the local-tier path guard).
+4. M1's other specs: the D1 write corpus, the mirror surface and DDL, the INV-21 goldens, the Beancount domain vectors.
+5. The rest of review:27 §1(d) that M0's exit needs: the demo generator skeleton; the acceptance-suite harness (isolated backend, frozen clock, LLM stub, Chromium and WebKit); the P1 integrity tests written as `fixme`; the empty Tauri window passing `--smoke-test` on three OSes; the red-team session on the gates and the first seeded-defect run.
 
 Next milestone: **M1a** (read core and workspace-format core), then **M1b** (write contract), then **G1**, your go/no-go.
 
@@ -49,7 +50,7 @@ Next milestone: **M1a** (read core and workspace-format core), then **M1b** (wri
 | M11 | Release hardening | L | An auto-updating release candidate on three OSes; the 4-week dogfood window | Yes, as your only finance app |
 | M12 | Release | M | v0.4.0 is out; docs `v0.4` merged | — |
 
-**Rough size (ADR-0057):** about 180–270 slices for M1–M12, very roughly 550–1,350 agent hours. An order of magnitude only; the G1 evidence pack replaces it with the pace measured through M1b.
+**Rough size (ADR-0057):** about 180–270 slices for the rest of M0 through M12 (170–256 for M1–M12 alone; ADR-0057's table labels the total "M1–M12" but includes M0's remaining 12–16), very roughly 550–1,350 agent hours. An order of magnitude only; the G1 evidence pack replaces it with the pace measured through M1b.
 
 **Fixed points the whole plan assumes** (each an owner decision):
 - **Release cut line** (ADR-0043): every capability blocks the release except four, deferred past v0.4.0: the workspace export/import archive, broker formats beyond CAS, the beta update channel, Finzytrack AI mode. Bring-your-own cloud and local AI providers stay in v0.4.0.
@@ -66,15 +67,15 @@ Next milestone: **M1a** (read core and workspace-format core), then **M1b** (wri
 - **R2. Unpromoted writes only on test copies.** A copy-adopted workspace is a normal workspace (real books). An unpromoted mutator runs only on an explicit test copy (CAP-WS-TEST-COPY); the guard checks every file the plan writes, and otherwise refuses with `UNPROMOTED_MUTATOR_ON_REAL_LEDGER`.
 - **R2a. Clearance by kind of edit** (ADR-0014): Add 50 writes / 1 week; Change or delete one entry 100 / 2 weeks; Many entries or files 30 / 2 weeks including crash tests; twice both numbers for a mutator with no old-app comparison. You sign one clearance page per milestone.
 - **R3. Git under the book of record** while dogfooding; you review the diff of every write.
-- **R4. Synchronous reconciliation** while dogfooding (a real Beancount load compared with the overlay load); any mismatch stops that mutator.
+- **R4. Reconciliation before the next write** while dogfooding (a real Beancount load compared with the overlay load). Since ADR-0008's 2026-10-25 amendment it runs right after the reply and completes before the next write to that workspace is accepted; any mismatch blocks writes and stops dogfooding of that mutator.
 - **R5. Never both apps writing one ledger.** v0.3 has no external-edit check and rewrites whole files. Share-mode adoption stays off for the book of record until every mutator you use is promoted.
 - **R6. Agents never touch real data or your running app** (INV-24). Copies of real ledgers live outside the repo and run only in the local tier, which prints counts and case IDs only.
 - **R7. Downgrade note.** If v0.2/v0.3 rewrites a ledger v0.4 edited, comments and splices are lost.
 
 ### 3.2 Exit gates every milestone includes
-Not repeated per milestone (review:27 §0.5): every slice met the definition of done (PROCESS.md §3); the milestone's capability rows are `built` (or `cut` with the absence verified), with tagged tests and a user-doc page; demo fragments for its rows; generated artifacts current; T1 and the full acceptance suite green in Chromium and WebKit, with no flow of this or an earlier milestone still `fixme`; nightly T2 green, including performance and memory against the baseline; an **area review** by a fresh reviewer; the **UX red team** session on every vertical with UI; a **reflection cycle** with `IMPROVEMENTS.md` entries; the milestone's journal entry with owner time and process metrics.
+Not repeated per milestone (review:27 §0.5): every slice met the definition of done (PROCESS.md §3); the milestone's release-blocking capability rows are `built` (or `cut` with the absence verified; the rows for ADR-0043's four deferred capabilities are built if time allows and never hold a milestone exit), with tagged tests and a user-doc page; demo fragments for its rows; generated artifacts current; T1 and the full acceptance suite green in Chromium and WebKit, with no flow of this or an earlier milestone still `fixme`; nightly T2 green, including performance and memory against the baseline; an **area review** by a fresh reviewer; the **UX red team** session on every vertical with UI; a **reflection cycle** with `IMPROVEMENTS.md` entries; the milestone's journal entry with owner time and process metrics.
 
-**Lanes** (ADR-0044): the full process for anything that writes the ledger; finance and security red teams once per area unless a change alters what a number means or adds an input; a light lane for read-only screens and catalogue entries, whose user docs are written at milestone end. Whole-system reviews run at G1, G2, after M8 and at M11.
+**Lanes** (ADR-0044): the full process for anything that writes the ledger; finance and security red teams once per area unless a change alters what a number means or adds an input; a light lane for read-only screens and catalogue entries, whose user docs are written at milestone end. Cross-cutting lens reviews run at G1, G2, after M8 and at M11 only, each with a spot audit by a fresh context and the seeded-defect catch rate (ADR-0044, ADR-0045); one whole-system review runs at M11.
 
 ## 4. The milestones
 
@@ -91,12 +92,12 @@ Each entry: what is built, the exit beyond §3.2, and the dogfood rule. Detail p
 - **Dogfood:** no.
 
 ### M1b: Write contract (L)
-- **Built:** in the engine, splicing and edit producers (ADR-0009), the contract's steps as a fail-closed pipeline (ADR-0008), the writer, the write-intent journal and recovery (ADR-0012), atomic swap replace (ADR-0013), the promotion machinery and the oracle classifiers (ADR-0014); the TLA+ spec and the Hypothesis crash model (ARCHITECTURE.md §8); a test-only edit producer. No user-facing mutator.
+- **Built:** in the engine, splicing and edit producers (ADR-0009), the contract's steps as a fail-closed pipeline (ADR-0008), the writer, the write-intent journal and recovery (ADR-0012), atomic swap replace (ADR-0013), the promotion machinery and the oracle classifiers (ADR-0014); the TLA+ spec and the Hypothesis crash model (ARCHITECTURE.md §8); a test-only edit producer; the write-cost measures of ADR-0008's amendment (the garbage collector paused during a write, the step-1 parse reused by the full load, the re-check after the reply, and a bounded parse cache for very large single-file ledgers, measured). No user-facing mutator.
 - **Exit:** an injected failure in any contract step leaves the disk byte-identical; TLC green (small config in T1, large in T2); the Hypothesis model green; D2 equivalence also on copies of your ledgers (local tier); the oracle comparison with every divergence classed, non-comparable or explained; data-safety, finance and security red teams; a spot audit of one sampled slice by a fresh context.
 - **Dogfood:** copies only, in the local tier. The new code never opens your originals.
 
 ### G1: Go/no-go (ADR-0046)
-**Go criteria:** 14 green nightly runs in a row; at least 200 old-vs-new comparisons, none unexplained; under 5% unjustified refusals on copies of your books; a write takes ≤ 1 s at demo size and ≤ 5 s at 54k entries; at least 80% of planted bugs caught. No fixed time-to-finish ceiling: the evidence pack shows the measured pace and projected time, and you judge it.
+**Go criteria:** 14 green nightly runs in a row; at least 200 old-vs-new comparisons, none unexplained; under 5% unjustified refusals on copies of your books; a write takes ≤ 1 s at demo size and ≤ 5 s at 54k entries, mirror update included (until the screen reflects the change; ADR-0008 amendment); at least 80% of planted bugs caught. No fixed time-to-finish ceiling: the evidence pack shows the measured pace and projected time, and you judge it.
 **You get:** does the contract hold; does it agree with the old app where the old app is right; what it refuses and why; what a write costs; whether the process works; the re-estimated size of M2–M12.
 **Options:** go; go with named changes; no-go (fall back to incremental work on the v0.3.0 code, moving the contract and engine in first; the gates, specs, corpora and harness carry over).
 
@@ -182,6 +183,7 @@ The release gate (ADR-0043): every release-blocking row built; every mutator pro
 
 ## 6. Open technical points (settled in specs, not owner calls unless they hit the rubric)
 - `@@` printing (L3-03): an own posting renderer or `replace_token` on the price span. Before M5.
+- Write cost for very large single-file ledgers (the open part of spike S4): the bounded parse cache is built and measured in M1b; only if it still misses the 5 s target does the owner revisit the number for that case (ADR-0008 amendment).
 - The concrete recipe schema v3. By M3's exit.
 - The mutation-score floor for the ledger and domain code: proposed after M1's first measurement, fixed by M11.
 - Whether M6 and M7 split into sub-milestones, judged by the measured pace.

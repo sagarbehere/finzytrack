@@ -89,7 +89,7 @@ Terms are grouped by area and sorted inside each group. Where a term is decided 
 - **Invariant (INV-nn).** An owner-owned rule that must hold, with at least one enforcing check (`design/INVARIANTS.md`).
 - **Journal (slice journal).** `design/journal/<slice-id>.md`: the brief, decisions, verifier summary and retro of one slice. Not to be confused with the write-intent journal.
 - **Lane.** The weight of process a slice gets: full lane (ledger writes), specialist lane (finance, security), light lane (read-only screens, catalogue entries) (ADR-0044).
-- **Milestone (M0–M12, M1a/M1b).** The build plan's stages from foundations to release (review:27; ADR-0046).
+- **Milestone (M0–M12, M1a/M1b).** The build plan's stages from foundations to release: `specs/roadmap.md` (summary and where we are), review:27 (the binding exits), ADR-0046.
 - **Pending (invariant).** The only exemption a check gets: an invariant whose enforcement does not exist yet, tied to an open backlog item and a milestone.
 - **Principle (EP-nn).** A "should" rule of `design/ENGINEERING.md`; deviations are allowed with a recorded reason.
 - **Red team.** A standing adversarial agent with a fixed mandate (data safety, finance correctness, security, UX) whose findings become permanent tests.
