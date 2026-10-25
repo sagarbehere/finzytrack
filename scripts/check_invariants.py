@@ -69,18 +69,32 @@ def backlog_state(backlog: str, bl_id: str) -> str | None:
     return None
 
 
-def table_rows(backlog: str) -> list[dict[str, str]]:
-    """Rows of every backlog table whose header starts with `ID` and has `Milestone` and `Status` columns."""
+# Tables with a Milestone or Status column that are not backlog items (the status legend, the doubles lookup).
+REFERENCE_TABLES = {("Status", "Meaning"), ("Double", "Canonical", "Milestone")}
+
+
+def table_rows(backlog: str, problems: list[str] | None = None) -> list[dict[str, str]]:
+    """Rows of every backlog table whose header starts with `ID` and has `Milestone` and `Status` columns.
+
+    Fails closed on shape (S0023 verifier F1): any other table that mentions a milestone or a status (a renamed,
+    indented or quoted header) is reported in `problems`, so its rows cannot silently drop out of an exit run.
+    """
     rows: list[dict[str, str]] = []
     header: list[str] | None = None
     for line in backlog.splitlines():
-        if not line.startswith("|"):
+        if not line.lstrip(" >").startswith("|"):
             header = None
             continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        cells = [c.strip() for c in line.strip().lstrip(">").strip().strip("|").split("|")]
         if header is None:
             header = cells
-        elif not set(line) <= set("|-: ") and header[0] == "ID" and {"Milestone", "Status"} <= set(header):
+            item_table = line.startswith("|") and header[0] == "ID" and {"Milestone", "Status"} <= set(header)
+            mentions = any(re.search(r"milestone|status", c, re.I) for c in header)
+            if mentions and not item_table and tuple(header) not in REFERENCE_TABLES and problems is not None:
+                problems.append(f"backlog table {' | '.join(header)!r}: an item table starts at column 0 with the "
+                                "header cells `ID`, `Milestone` and `Status` exactly")
+        elif not set(line) <= set("|-: >") and line.startswith("|") and header[0] == "ID" \
+                and {"Milestone", "Status"} <= set(header):
             rows.append(dict(zip(header, cells)))
     return rows
 
@@ -94,7 +108,7 @@ def due_milestone(cell: str) -> str | None:
 
 def check_backlog(backlog: str, milestone_exit: str | None) -> list[str]:
     errors: list[str] = []
-    for row in table_rows(backlog):
+    for row in table_rows(backlog, errors):
         bid, status, cell = row.get("ID", ""), row.get("Status", ""), row.get("Milestone", "")
         if status not in STATUSES:
             errors.append(f"backlog {bid}: status {status!r} is not one of {sorted(STATUSES)}")
@@ -161,15 +175,15 @@ def check(text: str, root: Path, backlog: str | None, milestone_exit: str | None
     return errors
 
 
-def main() -> int:
-    text = (ROOT / "design/INVARIANTS.md").read_text(encoding="utf-8")
-    bl = ROOT / "design/backlog.md"
+def main(root: Path = ROOT) -> int:
+    text = (root / "design/INVARIANTS.md").read_text(encoding="utf-8")
+    bl = root / "design/backlog.md"
     backlog = bl.read_text(encoding="utf-8") if bl.exists() else None
     milestone_exit = os.environ.get("FT_MILESTONE_EXIT")
     if milestone_exit and milestone_exit not in MILESTONES:
         print(f"check-invariants: FT_MILESTONE_EXIT={milestone_exit!r} is not one of {', '.join(MILESTONES)}", file=sys.stderr)
         return 1
-    errors = check(text, ROOT, backlog, milestone_exit) + (check_backlog(backlog, milestone_exit) if backlog else [])
+    errors = check(text, root, backlog, milestone_exit) + (check_backlog(backlog, milestone_exit) if backlog else [])
     for e in errors:
         print(f"check-invariants: {e}", file=sys.stderr)
     return 1 if errors else 0

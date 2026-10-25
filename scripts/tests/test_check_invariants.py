@@ -148,6 +148,35 @@ class BacklogAtMilestoneExit(unittest.TestCase):
         self.assertEqual(self.errors(text, None), [])
         self.assertTrue(len(ci.table_rows(text)) > 250)  # 299 rows on 2026-10-25: catches a parser that reads nothing
 
+    def test_item_tables_in_another_shape_are_refused(self) -> None:  # S0023 verifier F1: fail closed on shape
+        row = "| L1-06 | x | M0 | open |\n"
+        for header in ("| Id | Title | Milestone | Status |", "| **ID** | Title | Milestone | Status |",
+                       "| Item ID | Title | Milestone | Status |", "| ID | Title | Milestone | State |",
+                       "| ID | Title | Due | Status |"):
+            with self.subTest(header=header):
+                table = f"{header}\n|---|---|---|---|\n{row}"
+                self.assertTrue(any("item table" in e for e in self.errors(table, None)))
+        for prefix in ("  ", "> "):
+            with self.subTest(prefix=prefix):
+                table = "".join(prefix + ln + "\n" for ln in ("| ID | Title | Milestone | Status |", "|---|---|---|---|", row.strip()))
+                self.assertTrue(any("item table" in e for e in self.errors(table, None)))
+
+    def test_main_applies_the_backlog_rule_at_exit(self) -> None:  # S0023 verifier F3
+        import os
+        from unittest import mock
+        invs = "### INV-01: One\n- **Rule:** r\n- **Why:** w\n- **Enforced by:** planned.\n- **Status:** pending (BL-0002, by M3)\n"
+        for status, want in (("open", 1), ("done", 0)):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "design").mkdir()
+                (root / "design/INVARIANTS.md").write_text(invs)
+                (root / "design/backlog.md").write_text(
+                    "| ID | Item | Area | Milestone | Status | Ref |\n|---|---|---|---|---|---|\n"
+                    "| BL-0002 | x | a | M3 | open | r |\n"
+                    f"| L1-06 | y | a | M0 | {status} | r |\n")
+                with mock.patch.dict(os.environ, {"FT_MILESTONE_EXIT": "M0"}):
+                    self.assertEqual(ci.main(root), want)
+
     def test_main_refuses_an_unknown_exit_name(self) -> None:
         import os
         from unittest import mock

@@ -10,6 +10,7 @@ This file is the tracked home of the private review backlog (`review:99`). The r
 - **Adding an item.** Any agent may add an item with the next free `BL-nnnn` ID, a one-line title, an area, a target milestone and a reference. Review findings are triaged per `PROCESS.md` before they are added. Every `TODO` in code cites an ID from this file; a `TODO` without an ID does not meet the definition of done.
 - **Closing an item.** A slice closes an item. The commit message and the slice journal cite the ID. The status changes to `done` in the same commit.
 - **Pending invariants.** An invariant whose check does not exist yet is marked "pending (BL-nnnn)" in `INVARIANTS.md`. CI accepts it only while that item is open, and fails at the exit of the item's milestone if the invariant is still pending. Closing the item without adding the check also fails CI. See "Invariant enforcement" below.
+- **Milestone exit.** Every item is closed by a slice, not by time: an exit run (`FT_MILESTONE_EXIT=Mx python3 scripts/check_invariants.py`, roadmap §3.2) fails while any item of an `ID`-headed table here is `open` or `in-progress` and due by Mx (a bare `M1` counts as `M1a`). Keep item tables in that shape; the check refuses any other table with a milestone or status column (S0023).
 - **Escalations** (questions for the owner) do not go here. They go to `design/inbox/<id>.md`, per `PROCESS.md`.
 - **Decisions** do not go here either. Decisions live in ADRs (`design/decisions/`). The review's decision register is migrated there, not into this file.
 
@@ -531,13 +532,13 @@ Each double is closed with its canonical row, in the same milestone. Ref: the do
 
 | Double | Canonical | Milestone |
 |---|---|---|
-| L1-01 | I4 | M1 |
+| L1-01 | I4 | M1a |
 | L1-08 | I11 | M4 |
-| L1.M1 | I3 | M1 |
-| L1.M2 | I2 | M1 |
-| L1.M3 | I10 | M1 |
-| L1.M4 | I9 | M1 |
-| L1.M5 | I4 | M1 |
+| L1.M1 | I3 | M1b |
+| L1.M2 | I2 | M1b |
+| L1.M3 | I10 | M1b |
+| L1.M4 | I9 | M1b |
+| L1.M5 | I4 | M1a |
 | L2-01 | I1 | M4 |
 | L2-02 | I7 | M7 |
 | L2-13 | L2-05 | M2 |
@@ -553,10 +554,10 @@ Each double is closed with its canonical row, in the same milestone. Ref: the do
 | L3.M-11 | L7-02 | none (M8 verifies absence) |
 | L4.M1 | L4-05 | M6 |
 | L5-16 | I8 (also L3-10) | M7 |
-| L5.M3 | L5-07 | M1 |
+| L5.M3 | L5-07 | M1a |
 | L5.M4 | L5-02 | M7 |
 | L5.M6 | L5-11 | M8 |
-| L6-09 | L1-02 | M1 |
+| L6-09 | L1-02 | M1a |
 | L6-13 | L4-12 | M6 |
 | N3 | L6-01 | M2 |
 | N5 | L6-16 | M6 |
@@ -633,7 +634,7 @@ Each item builds the check that turns one invariant from "pending" into "enforce
 | BL-0039 | Capability map: link each `cut` and `deferred` row to its ADR (`adrs` field), then make `check_capabilities.py` require it. Done in S0015 (27 rows) | WS-QA | M0 | done | `review:G F-11` |
 | BL-0040 | Tighten `check_invariants.py`: detect skip/xfail/fixme on the tagged tests, count only T1 runners (not pre-commit), require evidence for `review-only`, and guard the owner-owned rule text with a hash that only an owner-approved change updates | WS-QA | — | parked | `review:G F-8, F-9`, `ADR-0058` |
 | BL-0041 | Implement the two-process backend of ADR-0054 in M1a: `engine/` environment and lockfile, `contracts/engine-protocol.schema.json`, `engine_client` port, supervision, per-environment architecture tests and licence allowlists; measure the protocol overhead per write and per large BQL result with the S4 harness | WS-BACKEND-CORE | M1a | open | `ADR-0054` |
-| BL-0042 | Guard hook parser: text inside quoted heredocs and backticks within quoted strings is split as if it were commands (false positive: a doc edit that mentions the push-gate command was refused). Parse with a real shell tokenizer (e.g. bashlex) or skip quoted heredoc bodies; add meta-tests. S0014: a lexer failed review (round 1); round 2 (single-quoted heredoc bodies in exact command shapes, commit 483b900) is parked unverified and not active; the quoted-string half is BL-0054 Parked by the owner: "BL-0042 stays parked unless I ask." (2026-10-25) | WS-QA | M0 | parked | `S0001 retro` |
+| BL-0042 | Guard hook parser: text inside quoted heredocs and backticks within quoted strings is split as if it were commands (false positive: a doc edit that mentions the push-gate command was refused). Parse with a real shell tokenizer (e.g. bashlex) or skip quoted heredoc bodies; add meta-tests. S0014: a lexer failed review (round 1); round 2 (single-quoted heredoc bodies in exact command shapes, commit 483b900) is parked unverified and not active; the quoted-string half is BL-0054. Parked by the owner: "BL-0042 stays parked unless I ask." (2026-10-25) | WS-QA | M0 | parked | `S0001 retro` |
 | BL-0043 | Frontend WebKit-baseline lint (Safari 17, ADR-0007 amendment): ban APIs newer than the baseline (global `Temporal`, `ReadableStream.from`, async stream iteration, ...), e.g. with eslint-plugin-compat and a browserslist of `safari >= 17`; set `minimumSystemVersion` 14.0 in the Tauri config when `shell/` lands | WS-UI | M2 | open | `ADR-0007`, `S0001` |
 | BL-0044 | Add the GPL version 3 text to the repo (`LICENSE-GPL-3.0`) and ship both licence texts in every bundle, matched to the process each covers (ADR-0054, README licence section). The text is in the repo since S0010; shipping both texts per bundle is packaging work (M11) | WS-QA | M11 | open | `ADR-0054` |
 | BL-0045 | Oracle harness: add the D1 step-2b outside-span byte check, so divergences the printer cannot see (an untargeted `@@` rewritten as `@`, comments inside entries, formatting) are reported and classified; today they surface only as the file-level comment count | WS-QA | M1b | open | `S0002` |

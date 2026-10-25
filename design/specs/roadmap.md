@@ -25,7 +25,7 @@ Done in M0:
 - M1's INV-21 goldens: TransactionIds, content hashes and metadata JSON for ledgers v0.2.x wrote, taken from v0.2.2's own code and re-derived from the spec, and the inventory of every metadata key a released version wrote (S0022; the M1a code must pass them and the old-workspace fixtures are still to come, BL-0021).
 
 Left in M0, in this order:
-1. BL-0042 (parked: round 2 of S0014 awaits verification); the guard gaps found in S0014 (BL-0055). The checks on the process's own paperwork (BL-0034, BL-0036, BL-0038, BL-0040) are parked until evidence asks for them (ADR-0058).
+1. BL-0042 is parked by the owner ("BL-0042 stays parked unless I ask", 2026-10-25); the guard gaps found in S0014 (BL-0055). The checks on the process's own paperwork (BL-0034, BL-0036, BL-0038, BL-0040) are parked until evidence asks for them (ADR-0058).
 2. The invariant enforcement due by M0 (CI fails at M0's exit while these invariants are pending): BL-0023 (the fixture gate's gaps, S0019), BL-0024 (the acceptance harness's port and data-dir checks, the local-tier path guard).
 3. M1's other specs: the Beancount domain vectors.
 4. The two review findings still open at M0 (`check_invariants.py` fails an M0-exit run while any backlog item due by M0 is open, S0023): L9.M-7 (a lint ban on name-keyed component stubs in tests) and L10-18 (a reproducible demo build per tag, with the demo generator).
@@ -78,6 +78,8 @@ Next milestone: **M1a** (read core and workspace-format core), then **M1b** (wri
 
 ### 3.2 Exit gates every milestone includes
 Not repeated per milestone (review:27 §0.5): every slice met the definition of done (PROCESS.md §3); the milestone's release-blocking capability rows are `built` (or `cut` with the absence verified; the rows for ADR-0043's four deferred capabilities are built if time allows and never hold a milestone exit), with tagged tests and a user-doc page; demo fragments for its rows; generated artifacts current; T1 and the full acceptance suite green in Chromium and WebKit, with no flow of this or an earlier milestone still `fixme`; a green manual full CI run (T1 and T2) at the milestone exit, including performance and memory against the baseline (ADR-0060); an **area review** by a fresh reviewer; the **UX red team** session on every vertical with UI; a **reflection cycle** with `IMPROVEMENTS.md` entries; the milestone's journal entry with owner time and process metrics.
+
+**Run before declaring an exit:** `FT_MILESTONE_EXIT=Mx python3 scripts/check_invariants.py` (with Mx the milestone, e.g. `M0`) must pass: no invariant still pending and no backlog item (review finding or `BL-`) still open or in progress that is due by Mx (S0023). The plain pre-push run checks only the backlog's shape.
 
 **Lanes** (ADR-0044): the full process for anything that writes the ledger; finance and security red teams once per area unless a change alters what a number means or adds an input; a light lane for read-only screens and catalogue entries, whose user docs are written at milestone end. Cross-cutting lens reviews run at G1, G2, after M8 and at M11 only, each with a spot audit by a fresh context and the seeded-defect catch rate (ADR-0044, ADR-0045); one whole-system review runs at M11.
 

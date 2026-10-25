@@ -22,3 +22,16 @@
 - Ways to loosen or bypass, each tested: ignore `in-progress`; `<` instead of `<=`; bare `M1` read as `M1b`; accept any status; let an open row skip its milestone; read any table with a `Milestone` column; let a table run on past a non-table line; accept a misspelt exit name (`m0`) and silently check nothing.
 - Self-mutation: 8 tried, 8 killed.
 - Population: every row of the 14 backlog tables headed `ID` with `Milestone` and `Status` columns (299 rows on 2026-10-25).
+
+## Verifier
+- Round 1, head 28df4a2: PASS WITH FINDINGS. Attacks: 9 (real exit runs cross-checked against grep, fail-closed and fail-open table shapes, a header edit on the real backlog, the exit procedure, mutants, base-commit failure, closures against review sources, the M1 split against ADR-0046 and review:27 §2).
+- F1 Medium: a table with a renamed, indented or quoted header was skipped silently (one header edit dropped BL-0023/24 from the M0 exit). Fixed: any table with a milestone or status column must be an `ID` item table at column 0 or one of the two reference tables, else refused.
+- F2 Medium: nothing told anyone to run the exit check. Fixed: roadmap §3.2 names the command; backlog "How this file works" states the rule.
+- F3 Medium: no test that `main()` applies the rule. Fixed: `main(root)` with a temp backlog, open → 1, done → 0.
+- F4 Low: doubles still on bare `M1`; roadmap's BL-0042 line stale; a missing sentence break. Fixed.
+- Fix-round mutants: 4 tried, 4 killed. Three Medium fixes on tooling with no High: no further round (ADR-0058).
+
+## Retro
+- The verifier's best attack was against the input's shape, not the rule: a parser of a hand-edited file must refuse shapes it does not understand (EP-30), which I knew from S0016 and did not apply.
+- "Who runs this, and when?" belongs in the brief of any check that is not wired into a hook.
+- Process cost: about 40 min building and triage; verifier 5 min; fixes about 20 min.
