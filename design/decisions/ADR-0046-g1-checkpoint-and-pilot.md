@@ -15,7 +15,7 @@ The rebuild needs a kill/continue point after the write core. The first G1 crite
 
 (owner, 2026-10-24)
 - **G1 sits after M1b**, before any write capability ships. Measurable go criteria:
-  - 14 green nightly runs in a row;
+  - 14 green nightly runs in a row; *(nightly CI runs no longer exist, ADR-0060; the owner restates this criterion: `design/inbox/20261025-g1-without-nightly-ci.md`)*
   - at least 200 old-vs-new comparisons, none unexplained;
   - under 5% unjustified refusals on copies of the owner's books;
   - a write takes **≤ 1 s at demo size and ≤ 5 s at 54k entries**; these are also the app's user-facing performance targets (INV-20);

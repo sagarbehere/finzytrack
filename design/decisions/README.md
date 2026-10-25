@@ -75,6 +75,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0057](ADR-0057-pilot-result.md) | The pilot's result: hand-off checks, re-verification, and a first slice count | Accepted | 2026-10-25 | process |
 | [ADR-0058](ADR-0058-process-overhead-trim.md) | Verification scaled to risk, process checks built on evidence, shorter journals | Accepted | 2026-10-25 | process |
 | [ADR-0059](ADR-0059-encrypted-ledgers-not-read-in-v0-4-0.md) | Encrypted ledger files are not read in v0.4.0 | Accepted | 2026-10-25 | ledger loading, scope |
+| [ADR-0060](ADR-0060-github-ci-runs-manually-before-releases.md) | GitHub CI runs manually, before each release; the local hooks are the per-push gates | Accepted | 2026-10-25 | process, CI |
 
 ## Template
 

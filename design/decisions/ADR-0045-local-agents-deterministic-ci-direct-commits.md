@@ -2,7 +2,7 @@
 
 This record decides where agent work runs, what CI does, how work lands, and how owner approvals are recorded.
 
-- **Status:** Accepted. Amended by ADR-0058: the T1 verifier-SHA check is parked (BL-0034); the verifier checks the SHA meanwhile.
+- **Status:** Accepted. Amended by ADR-0058: the T1 verifier-SHA check is parked (BL-0034); the verifier checks the SHA meanwhile. Amended by ADR-0060: GitHub CI runs when started by hand, before each release; the T0 pre-push hook is the per-push gate.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** process, CI, repository

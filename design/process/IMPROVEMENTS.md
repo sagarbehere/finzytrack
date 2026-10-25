@@ -218,3 +218,13 @@ Format:
 - Observed effect: pending.
 - Status: kept (weakening, owner-approved).
 - Owner approval: "I think that for v0.4.0 Finzytrack should not even read encrypted ledgers. Supporting encryption can be done as its own small-ish(?) feature later." (2026-10-25, in session)
+
+## IMP-0022: GitHub CI runs by hand before each release (2026-10-25)
+- Trigger: the owner's question whether GitHub CI adds anything over the local gates.
+- What changed: `ci.yml`, `packaged.yml`, `nightly.yml` have no push or schedule triggers (manual, or called by a dispatcher on `main`); the pre-push hook verifies new Cargo publish dates; PROCESS.md §6 T1/T2 rows; ADR-0060.
+- PROCESS.md section: §6.
+- Why: on a single-owner repo the per-push jobs mostly repeat the local hooks.
+- Expected effect: no CI noise per push; Windows/Linux regressions found at the next manual run.
+- Observed effect: pending.
+- Status: kept (loosening, owner-approved).
+- Owner approval: "I think we should do a manual GitHub CI run prior to each release." (2026-10-25, in session)

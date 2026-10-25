@@ -34,7 +34,7 @@ Several principles are the *engineering means* of an invariant. When that holds,
 | Concept counters, duplication | `scripts/concept_counters.py`, jscpd | T1 |
 | Models | Hypothesis state machine, XState model-based paths, TLC small config | T1; large configs T2 |
 | Mutation | mutmut, Stryker | T2, weekly and before each clearance (`PROCESS.md` (gates)) |
-| Packaged build | `.github/workflows/packaged.yml`: the app packaged on three OSes, installed where the format allows, `--smoke-test` passing and failing with the bundled runtime removed (`shell/package_app.py`, `shell/smoke_packaged.py`) | T2 (nightly) and on pushes that touch packaging |
+| Packaged build | `.github/workflows/packaged.yml`: the app packaged on three OSes, installed where the format allows, `--smoke-test` passing and failing with the bundled runtime removed (`shell/package_app.py`, `shell/smoke_packaged.py`) | T2 (started by hand before each release, ADR-0060) |
 
 ---
 
@@ -398,7 +398,7 @@ def run_user_sql(sql: UserSql, params: Params, limits: QueryLimits) -> Frame: ..
 
 **Why.** Owner rule (review:13 §4; recorded in ADR-0050, item 12). Fresh releases carry the most regressions, and a wrapped Beancount loader replica must move only deliberately.
 
-**Enforcement.** `[tool.uv] exclude-newer = "14 days"`, pnpm `minimumReleaseAge: 20160`; Cargo has no such setting, so `Cargo.lock` is resolved to versions published at least 14 days earlier and `scripts/check_cargo_age.py` checks every entry against its adoption commit, with the dates kept in `shell/src-tauri/Cargo.lock.dates` (entries new since the last green CI run re-read from crates.io in T1, all of them nightly; S0013); a CI check that the lockfiles are unchanged by a fresh resolve, and a Renovate-style dependency report in T2 (report only, never auto-merge).
+**Enforcement.** `[tool.uv] exclude-newer = "14 days"`, pnpm `minimumReleaseAge: 20160`; Cargo has no such setting, so `Cargo.lock` is resolved to versions published at least 14 days earlier and `scripts/check_cargo_age.py` checks every entry against its adoption commit, with the dates kept in `shell/src-tauri/Cargo.lock.dates` (entries new since the remote branch re-read from crates.io in the pre-push hook, all of them in the manual T2 run; S0013, ADR-0060); a CI check that the lockfiles are unchanged by a fresh resolve, and a Renovate-style dependency report in T2 (report only, never auto-merge).
 
 ### EP-25 The async edge only awaits
 **Rule.** An `async def` handler only awaits. Blocking work (Beancount loads, file writes, SQLite, scikit-learn) runs in worker threads behind the workspace limiter or the heavy-load gate.

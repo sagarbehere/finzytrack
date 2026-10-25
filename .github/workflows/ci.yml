@@ -1,10 +1,20 @@
 # T1 (design/process/PROCESS.md §6): deterministic gates only; no AI, no agent runs, no secrets.
+# Started by hand, before each release and on demand (ADR-0060); the per-push gate is the T0 pre-push hook.
 # Jobs for backend/, frontend/ and shell/ are added by the slice that creates each package (BL-0037).
 # backend: S0006; frontend: S0009; shell: S0010.
 name: ci
 on:
-  push:
-    branches: [next]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit or branch to test (empty: the selected branch)"
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ""
 permissions:
   contents: read
 jobs:
@@ -14,6 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref }}
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
@@ -43,27 +54,8 @@ jobs:
         run: cd shell/src-tauri && rustup show active-toolchain || rustup toolchain install
       - name: Licences and THIRD_PARTY_NOTICES
         run: python3 scripts/check_licences.py
-  cargo-age:
-    # EP-24 for Cargo (S0013): every Cargo.lock crate 14 days old at adoption; the publish dates of entries new
-    # since the last commit whose CI run passed are re-read from crates.io (one request per second).
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - name: Cargo crates at least 14 days old; new dates verified against crates.io
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          base="$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?branch=next&status=success&per_page=1" -q '.workflow_runs[0].head_sha' || true)"
-          python3 scripts/check_cargo_age.py --verify-since "${base:-none}"
+      - name: Cargo crates at least 14 days old (offline; the dates are re-read in nightly.yml)
+        run: python3 scripts/check_cargo_age.py
   backend:
     # The main sidecar (S0006; ARCHITECTURE.md §2, §10; ADR-0054): format, lint, strict types, import
     # contracts, declared dependencies, tests (incl. the architecture tests: no Beancount in this environment).
@@ -74,6 +66,8 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -103,6 +97,8 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: "24.21.0"
@@ -134,6 +130,8 @@ jobs:
         working-directory: shell/src-tauri
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - name: System libraries for Tauri on Linux
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev
       - name: Rust toolchain (pinned by rust-toolchain.toml)
@@ -151,6 +149,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"

@@ -1,19 +1,11 @@
 # T2 (design/process/PROCESS.md §6): the packaged build on three OSes with --smoke-test (S0012; ADR-0007, ADR-0056).
-# Deterministic only: no AI, no agent runs, no secrets. Runs nightly (nightly.yml) and on pushes that touch packaging.
+# Deterministic only: no AI, no agent runs, no secrets. Started by hand (directly or through nightly.yml), before each
+# release and after packaging changes (ADR-0060).
 # Each OS builds its own artifacts (shell/package_app.py), installs them as a user would where it can, runs the
 # smoke test (spec: shell/src-tauri/src/smoke.rs), and runs it again with the bundled runtime moved away, which
 # must fail (the must-not-pass case, EP-29).
 name: packaged
 on:
-  push:
-    branches: [next]
-    paths:
-      - "shell/**"
-      - "backend/pyproject.toml"
-      - "backend/uv.lock"
-      - "backend/src/**"
-      - "frontend/**"
-      - ".github/workflows/packaged.yml"
   workflow_call:
     inputs:
       ref:

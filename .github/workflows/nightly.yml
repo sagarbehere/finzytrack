@@ -1,11 +1,8 @@
-# T2 nightly (design/process/PROCESS.md §6): deterministic only; no AI, no agent runs, no secrets.
-# Grows as T2 items arrive (full acceptance suite, 54k performance and memory, D1 corpus, docs link check).
-# GitHub runs `schedule` only from the default branch (main); until the owner's answer to
-# design/inbox/20261025-nightly-schedule-needs-main.md, a caller on main runs this file with `ref: next`.
+# T2 (design/process/PROCESS.md §6): deterministic only; no AI, no agent runs, no secrets. Started by hand, before each
+# release and on demand (ADR-0060); there is no schedule. Grows as T2 items arrive (full acceptance suite, 54k
+# performance and memory, D1 corpus, docs link check). A dispatcher on main calls it with `ref: next`.
 name: nightly
 on:
-  schedule:
-    - cron: "17 3 * * *"
   workflow_call:
     inputs:
       ref:

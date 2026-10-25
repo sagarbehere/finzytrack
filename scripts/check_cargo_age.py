@@ -15,8 +15,8 @@ version, published, exception). This script fills it from crates.io (`--update`)
   (adoption is history). The marker is refused for anything adopted later, so it cannot become a way in;
 - a dependency from anywhere but crates.io (git, another registry) is refused: it has no publish date;
 - `--verify-since REF` re-reads from crates.io the date of every entry absent from the lock at REF, and
-  `--verify-all` every entry (nightly); a mismatch or a failed request fails. CI passes the last commit whose
-  CI run passed, not the previous push, so an entry pushed with a red run is re-read until a run is green.
+  `--verify-all` every entry (the manual nightly.yml run); a mismatch or a failed request fails. The pre-push hook
+  passes the remote branch, so every new entry is re-read before it leaves the machine (ADR-0060).
 A shallow clone fails closed: adoption dates need the lock's whole history.
 
 Usage: python3 scripts/check_cargo_age.py [--update] [--verify-since REF | --verify-all]

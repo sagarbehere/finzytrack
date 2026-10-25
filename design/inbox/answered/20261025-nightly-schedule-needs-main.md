@@ -29,3 +29,4 @@ GitHub Actions starts a scheduled (`on: schedule`) workflow only from the copy o
 Option 1. It costs one commit on `main` by you, keeps the public front page as it is, and the schedule calls whatever `nightly.yml` says on `next`, so later slices change the nightly contents without touching `main` again.
 
 ## Answer (owner, verbatim, with date)
+"I think we should do a manual GitHub CI run prior to each release." (2026-10-25, in session). Superseded by ADR-0060: no schedule; GitHub CI runs by hand before each release. The dispatcher file for `main` is in `design/inbox/20261025-g1-without-nightly-ci.md`.

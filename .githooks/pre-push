@@ -24,7 +24,10 @@ run "privacy scan (all tracked files)" python3 scripts/privacy_scan.py --all --q
 run "invariants" python3 scripts/check_invariants.py
 run "capability map" python3 scripts/check_capabilities.py
 run "generated artifacts" python3 scripts/check_generated.py --all
-run "cargo 14-day rule (offline)" python3 scripts/check_cargo_age.py
+# ADR-0060: CI no longer runs per push, so new Cargo.lock entries' publish dates are verified here (network only
+# when the lock gained entries since the remote branch).
+upstream="$(git rev-parse --verify --quiet '@{u}' || echo none)"
+run "cargo 14-day rule (new entries verified)" python3 scripts/check_cargo_age.py --verify-since "$upstream"
 
 if [[ -f backend/pyproject.toml ]]; then
   run "pyright" bash -c "cd backend && .venv/bin/pyright"
