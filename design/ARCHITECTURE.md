@@ -402,7 +402,7 @@ Hand-written TanStack Query hooks live in `features/*/queries.ts`. They are thin
 
 ## 5. Tauri shell boundary and sidecar
 
-> **Amended by ADR-0054:** the shell spawns and supervises the **main sidecar** only; the main sidecar spawns and supervises the **ledger engine** (§2.0). Both are signed and covered by the orphan rules. Spike S1 also showed that a onedir tree ships as `bundle.resources`, not `externalBin`, and that the Linux updater handles AppImage, `.deb` and `.rpm`; this section is rewritten with the packaging ADR (Q21).
+> **Amended by ADR-0054:** the shell spawns and supervises the **main sidecar** only; the main sidecar spawns and supervises the **ledger engine** (§2.0). Both are signed and covered by the orphan rules. Spike S1 also showed that a onedir tree ships as `bundle.resources`, not `externalBin`, and that the Linux updater handles AppImage, `.deb` and `.rpm`; the packaging is python-build-standalone, not PyInstaller, and Linux ships AppImage and `.deb` (ADR-0056); this section is rewritten in the first shell slice.
 
 **Identifier and platforms (owner, 2026-10-24; ADR-0007):** the Tauri identifier is `com.finzytrack.desktop` (permanent; it fixes `app_local_data_dir` and how updates find the app), product name "Finzytrack". Builds: Apple-silicon macOS (ad-hoc signed, not notarized), Windows 10/11 x64 (unsigned; the SmartScreen warning is documented), Linux x64 (Ubuntu 22.04 or newer; the updater updates the AppImage only, verified in spike S1). Intel Macs are not built. **Minimum macOS 14 (Sonoma); WebKit baseline Safari 17** (ADR-0007 amendment, owner 2026-10-25).
 
