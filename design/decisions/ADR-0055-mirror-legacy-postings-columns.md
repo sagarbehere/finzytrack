@@ -28,6 +28,10 @@ v0.4 stops writing the ledger keys `content_hash` and `source_account` (ADR-0026
 - The mirror row builder (engine, ADR-0054) computes both fields; goldens pin the rule order and the hash's canonical form.
 - The user docs on the `v0.4` branch describe both columns as computed.
 
+## Amendment (2026-10-25, owner-accepted; S0021)
+
+Owner: "I accept the recommendations for all three questions currently in the inbox" (owner, 2026-10-25, in session); `design/inbox/answered/20261025-mirror-source-account-rows.md`. The Decision above did not describe that v0.2.2 computes the column **per posting row**. The rule is now per row, so every entry already in a ledger shows what v0.2.2 showed: the legacy `source_account` key whenever present (every row); else the leg carrying the entry's `import-key` (every row); else, in a two-leg entry, the other leg; else the first other leg whose account starts with `Assets:` or `Liabilities:`; else NULL. Example: in a hand-written `Expenses:Food 50` / `Assets:Bank -50`, the food row shows `Assets:Bank` and the bank row `Expenses:Food`.
+
 ## References
 
 ADR-0015, ADR-0026, ADR-0048, ADR-0054; INV-05, INV-21; review:28 §3 items 1–2, §7; finding I5.

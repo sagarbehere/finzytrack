@@ -26,12 +26,25 @@ def have_tag(tag: str) -> bool:
                           capture_output=True).returncode == 0
 
 
+OPEN = "20991231-fixture-question.md"
+
+
+def wait_for_owner(spec: dict, table: str) -> dict:
+    """Put a table and its columns under the fixture question, as an open owner question would."""
+    t = next(t for t in spec["table"] if t["name"] == table)
+    t["status"] = t["as_of"] = f"owner:{OPEN}"
+    for c in t["column"]:
+        c["status"] = f"owner:{OPEN}"
+    return t
+
+
 class Base(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.real = ms.load(ms.SPEC)
         cls.refs = ms.known_refs(ROOT)
-        cls.inbox = ms.open_inbox(ROOT)
+        # A fixture question, so the owner-status rules are tested whether or not a real question is open.
+        cls.inbox = ms.open_inbox(ROOT) | {OPEN}
 
     def spec(self) -> dict:
         return copy.deepcopy(self.real)
@@ -377,11 +390,11 @@ class Origins(Base):
 class Citations(Base):
     def test_a_change_without_a_citation(self) -> None:
         s = self.spec()
-        self.column(s, "postings", "source_account")["cites"] = []
-        self.refused(s, "postings.source_account: a changed column needs")
+        self.column(s, "commodities", "is_currency")["cites"] = []
+        self.refused(s, "commodities.is_currency: a changed column needs")
         s = self.spec()
-        self.column(s, "postings", "source_account")["why"] = " "
-        self.refused(s, "postings.source_account: a changed column needs")
+        self.column(s, "commodities", "is_currency")["why"] = " "
+        self.refused(s, "commodities.is_currency: a changed column needs")
 
     def test_a_citation_that_does_not_resolve(self) -> None:
         for bad in ("ADR-9999", "CAP-NO-SUCH-ROW", "BL-9999", "INV-99", "owner:20990101-nothing.md", "ADR-55",
@@ -430,26 +443,28 @@ class Status(Base):
     def test_a_decided_row_cannot_point_at_an_open_question(self) -> None:
         s = self.spec()
         col = self.column(s, "prices", "date")
-        col["meaning"] += " (waits for owner:20261025-mirror-as-of-date.md)"
+        col["meaning"] += " (waits for owner:20991231-fixture-question.md)"
         self.refused(s, "prices.date: a decided column cannot point at an open owner question")
         s = self.spec()
-        self.column(s, "prices", "date")["cites"] = ["owner:20261025-mirror-as-of-date.md"]
+        self.column(s, "prices", "date")["cites"] = ["owner:20991231-fixture-question.md"]
         self.refused(s, "prices.date: a decided column cannot point at an open owner question")
         s = self.spec()
-        self.table(s, "prices")["cites"] = ["ADR-0048", "owner:20261025-mirror-as-of-date.md"]
+        self.table(s, "prices")["cites"] = ["ADR-0048", "owner:20991231-fixture-question.md"]
         self.refused(s, "prices: a draft table cannot point at an open owner question")
         s = self.spec()
         self.column(s, "prices", "id")["source"] += " See design/inbox/x.md."
         self.refused(s, "prices.id: a draft column cannot point at an open owner question")
         s = self.spec()
-        self.table(s, "account_balances")["status"] = "decided"
+        wait_for_owner(s, "account_balances")["status"] = "decided"
         self.refused(s, "account_balances: a decided table cannot point at an open owner question")
 
     def test_an_owner_question_is_marked_where_it_applies(self) -> None:
         s = self.spec()
+        wait_for_owner(s, "account_balances")
         self.column(s, "account_balances", "balance")["status"] = "decided"
         self.refused(s, "account_balances.balance: its table waits for the owner")
         s = self.spec()
+        wait_for_owner(s, "lots")
         self.column(s, "lots", "label")["status"] = "draft"
         self.refused(s, "lots.label: its table waits for the owner")
 

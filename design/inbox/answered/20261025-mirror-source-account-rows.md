@@ -32,3 +32,4 @@ A typical user query, "spending by card" (`WHERE account_type = 'Expenses' GROUP
 Option 1: it is the only rule under which existing users' SQL returns the same rows after the upgrade, it costs nothing extra to compute, and it keeps ADR-0055's real point (the mirror computes the column; v0.4 never writes the key).
 
 ## Answer (owner, verbatim, with date)
+Owner: "I accept the recommendations for all three questions currently in the inbox" (2026-10-25, in session). Accepted: Option 1: keep v0.2.2's per-row answer for every entry.

@@ -33,6 +33,12 @@ The review found period balances summed as floats with Equity treated as a flow,
 - One backend function per financial question (the `ledger` step measures, ADR-0029) implements these rules once.
 - The investment measures follow the same rules (ADR-0030).
 
+## Amendment (2026-10-25, owner-accepted; S0021)
+
+Owner: "I accept the recommendations for all three questions currently in the inbox" (owner, 2026-10-25, in session); `design/inbox/answered/20261025-mirror-is-currency.md` and `20261025-mirror-as-of-date.md`.
+- **Cash or holding:** a declared `asset-class` decides first (cash-like → cash, anything else → holding); else a code is cash when it is an ISO 4217 code **or** listed in `operating_currency`; else it is a holding. A non-ISO reporting currency (`RMB`, `NTD`) is never demoted; a foreign ISO currency account is cash (the fix above stands).
+- **The mirror's summary tables follow "current = up to today":** `account_balances` and `lots` count entries dated up to the build date in the user's time zone; the mirror records that date and is rebuilt when it changes. SQL then shows the same numbers as the screens; the end-of-ledger figure stays available by summing `postings`.
+
 ## References
 
 review:11 Q2, Q3, Q5, Q6, Q8, L3-06, L3-13; review:14 L5-01, M-NC, L5-11; ADR-0024, ADR-0029, ADR-0030; INV-02.

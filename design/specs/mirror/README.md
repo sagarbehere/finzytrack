@@ -5,7 +5,7 @@
 - **Entry points:** `design/specs/mirror/surface.toml` (edit this); `scripts/gen_mirror_surface.py`; `scripts/check_mirror_surface.py` (`--legacy` also re-derives the v0.2.2 and v0.3.0 inventories from the legacy tags).
 - **Decisions it applies:** ADR-0015 (rebuildable cache, `r_*` is the public surface), ADR-0016 (SQLite only, one hardened QueryRunner), ADR-0023 (money is TEXT), ADR-0024 (Beancount decides; canonical account kind), ADR-0025 (`is_currency`), ADR-0026 (TransactionId), ADR-0030 (price sidecar), ADR-0031 (label-aware lots), ADR-0048 (v0.2.2 names kept through 0.4.x), ADR-0055 (`transaction_content_hash`, `source_account`).
 - **Invariants:** INV-05 (its view golden, BL-0005, will check the DDL against this spec), INV-06, INV-21 (fallback ids and metadata keys: [`inv21-goldens.md`](inv21-goldens.md); BL-0021).
-- **Traps:** money columns are TEXT, so `amount > 0` compares *text* (`'0.00' > 0` is true); cast first. Metadata keys with `-` need a quoted JSON path. `posting_id` and every `id` are positions, not identities. Do not re-implement a Beancount rule in the mirror (pad pairing, booking, tolerances): read Beancount's result. Rows marked `owner:` (`account_balances`, `lots`, `postings.source_account` and `source_account_type`, `commodities.is_currency`) wait for the owner: do not build them before the answer.
+- **Traps:** money columns are TEXT, so `amount > 0` compares *text* (`'0.00' > 0` is true); cast first. Metadata keys with `-` need a quoted JSON path. `posting_id` and every `id` are positions, not identities. Do not re-implement a Beancount rule in the mirror (pad pairing, booking, tolerances): read Beancount's result. A row marked `owner:` waits for the owner: do not build it before the answer (none open since 2026-10-25). `account_balances` and `lots` stop at today: the build date is part of the mirror's freshness.
 - **Main tests:** `scripts/tests/test_mirror_surface.py` (the real spec passes; a must-not-pass per rule; the legacy inventories pinned and re-derived). `scripts/oracle/tests/test_inv21_goldens.py` (the INV-21 goldens, S0022). Later: the M1a mirror-build tests, the DDL snapshot and per-table checksums (BL-0057), the view golden (BL-0005).
 
 ## Three layers
@@ -30,7 +30,8 @@ Every column of an `r_*` or compatibility view is a plain reference to a base-ta
 - `entry`: one row per directive or posting, carrying its own date; nothing is summed over time.
 - `ledger-end`: a summary over every entry, future-dated ones included.
 - `load`: facts about the load itself (options, errors, the mirror's own metadata).
-- `owner:<file>`: waiting for the owner (`account_balances`, `lots`: today or the end of the ledger).
+- `today`: a summary over the entries dated up to the build date in the user's time zone, future-dated ones excluded; the mirror records that date and is rebuilt when the date changes (ADR-0025 amendment, 2026-10-25).
+- `owner:<file>`: waiting for the owner (none open).
 
 **Ids.**
 - `id` and `posting_id` are positions in the load, counting from 1. They change when entries are added or removed earlier in the ledger.
@@ -56,16 +57,16 @@ Every column of an `r_*` or compatibility view is a plain reference to a base-ta
 - `custom_directives.values_json` is an array of `[value, type-tag]` pairs, the type tag being Beancount's Python type as text (`"<AccountDummy>"`, `"<class 'str'>"`); v0.2.2's budget resolver reads `value` by position, so the shape stays;
 - `ledger_errors.entry_json` is the entry's fields as an array, in Beancount's field order.
 
-**`is_currency`** (cash or holding; ADR-0025; the exact rule waits for the owner, `design/inbox/20261025-mirror-is-currency.md`). Example: an INR ledger with `option "operating_currency" "INR"` and a USD bank account. v0.2.2 marked USD as a holding (0), because only operating currencies counted as cash; v0.4 marks it cash (1), because USD is an ISO 4217 currency code. A declared `asset-class` still decides first: `asset-class: "cash"` makes any code cash, `asset-class: "etf"` makes it a holding.
+**`is_currency`** (cash or holding; ADR-0025 and its 2026-10-25 amendment). Rule: a declared `asset-class` decides first; else a code is cash when it is an ISO 4217 code or listed in `operating_currency`; else it is a holding. Example: an INR ledger with `option "operating_currency" "INR"` and a USD bank account. v0.2.2 marked USD as a holding (0), because only operating currencies counted as cash; v0.4 marks it cash (1), because USD is an ISO 4217 currency code. A non-ISO operating currency such as `RMB` stays cash. A declared `asset-class` still decides first: `asset-class: "cash"` makes any code cash, `asset-class: "etf"` makes it a holding.
 
 **Pad pairing** (`balance_assertions.pad_date`, `pad_source_account`). A `pad` asks Beancount to insert a transaction that makes the next `balance` assertion come out right. Beancount's own rule (`beancount/ops/pad.py`): a pad on an account stays active until the next pad on it; each currency can be padded once per active pad; an assertion that already matches gets no padding. The mirror does not re-implement this. It reads Beancount's result: each padding transaction (flag `P`) carries the pad's metadata on the transaction and the assertion's metadata (`filename`, `lineno`) on its postings, so the assertion at that file and line is paired with that pad. An assertion with no padding transaction has NULL in both columns. Example: `2020-01-04 pad Assets:Bank:Usd Equity:Opening`, then `2020-01-05 balance Assets:Bank:Usd 50 USD` on an account that holds nothing: Beancount inserts a padding transaction of `50 USD` from `Equity:Opening`, dated 2020-01-04, and the assertion row gets `pad_date = 2020-01-04`, `pad_source_account = Equity:Opening`.
 
-**`source_account`** (ADR-0055) is computed per entry, the same for all its postings: the legacy `source_account` meta; else the first leg carrying an `import-key`; else the single Assets or Liabilities leg; else NULL.
+**`source_account`** (ADR-0055 and its 2026-10-25 amendment) is computed per row, and gives every existing entry the value v0.2.2 gave it: the legacy `source_account` meta whenever the key is present (every row); else the first leg carrying an `import-key` (every row; v0.4 imports mark the leg v0.2.2 imports named in the key); else, in a two-leg entry, the other leg; else the first other leg whose account starts with `Assets:` or `Liabilities:`; else NULL. Example: in a hand-written `Expenses:Food 50` / `Assets:Bank -50`, the food row shows `Assets:Bank` and the bank row shows `Expenses:Food`.
 
 ## Compatibility (ADR-0048)
 
 - Every v0.2.2 table name is served (the list, with columns, is in `surface.md`). The v0.2.2 exporter creates 18 tables; ADR-0048 lists 17 because it leaves out `meta`, the exporter's freshness table. Its name is served too; its keys change (ADR-0015).
-- `lots` comes from Beancount's booked inventory, label-aware; v0.2.2's end-of-ledger computation is not rebuilt. Its date waits for the owner (`design/inbox/20261025-mirror-as-of-date.md`).
+- `lots` comes from Beancount's booked inventory, label-aware; v0.2.2's end-of-ledger computation is not rebuilt. It is taken as of today (ADR-0025 amendment, 2026-10-25).
 - `budget_for_range`, the only v0.2.2 compute function, keeps working through 0.4.x over the `ledger` step's budget measures, with a located deprecation notice naming the replacement (CAP-FN-BUDGET-FOR-RANGE, M7).
 - Things only v0.3.0 had (`latest_prices`, `portfolio_series`, `portfolio_returns`, `cash_instruments`) were never released and are not rebuilt; `postings.cost_date` (v0.3.0) is kept.
 

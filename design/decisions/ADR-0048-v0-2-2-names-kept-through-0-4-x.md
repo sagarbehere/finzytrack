@@ -28,6 +28,10 @@ v0.4 changes the mirror and the compute catalog. Users' saved queries and dashbo
 - The `r_*` view golden includes the compatibility views.
 - The "decide `lots` before M1" dependency is removed: the general rule decides it.
 
+## Amendment (2026-10-25, owner-accepted; S0021)
+
+Owner: "I accept the recommendations for all three questions currently in the inbox" (owner, 2026-10-25, in session); `design/inbox/answered/20261025-mirror-as-of-date.md`. The `lots` compatibility view is served as of today (the build date, ADR-0025 amendment of the same date).
+
 ## References
 
 review:F §2 item 10; review:21 §5 item 7; review:25 §14 item 9; ADR-0015, ADR-0029, ADR-0031; INV-05; CAP-FN-BUDGET-FOR-RANGE, CAP-QUERY-SURFACE.

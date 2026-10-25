@@ -21,3 +21,4 @@ ADR-0025's own sentence "Currency is a role the Profile assigns, not a lexical c
 Option 1. It keeps ADR-0025's fix (foreign cash is cash), never demotes the currency a user reports in, and needs no edit to anyone's ledger.
 
 ## Answer (owner, verbatim, with date)
+Owner: "I accept the recommendations for all three questions currently in the inbox" (2026-10-25, in session). Accepted: Option 1: an operating currency is always cash, in addition to ISO codes.

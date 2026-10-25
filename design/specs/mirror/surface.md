@@ -4,7 +4,7 @@
 
 Every table and column of the v0.4 mirror at M1a, the `r_*` views and the v0.2.2 compatibility names. Conventions and rules: [README.md](README.md). Edit `surface.toml`, then run `python3 scripts/gen_mirror_surface.py`.
 
-Surface version 1. 18 tables, 126 columns: 121 from v0.2.2, 1 from v0.3.0, 4 from v0.4; 22 changed, 4 new, 100 same; 103 decided, 6 draft, 17 owner.
+Surface version 1. 18 tables, 126 columns: 121 from v0.2.2, 1 from v0.3.0, 4 from v0.4; 20 changed, 4 new, 102 same; 120 decided, 6 draft.
 
 ## Tables
 
@@ -22,8 +22,8 @@ Surface version 1. 18 tables, 126 columns: 121 from v0.2.2, 1 from v0.3.0, 4 fro
 | `custom_directives` | `m_custom_directives` | `r_custom_directives` | yes | entry | decided |
 | `stored_queries` | `m_stored_queries` | `r_stored_queries` | yes | entry | decided |
 | `ledger_options` | `m_ledger_options` | `r_ledger_options` | yes | load | decided |
-| `account_balances` | `m_account_balances` | `r_account_balances` | yes | owner:20261025-mirror-as-of-date.md | owner:20261025-mirror-as-of-date.md |
-| `lots` | `m_lots` | `r_lots` | yes | owner:20261025-mirror-as-of-date.md | owner:20261025-mirror-as-of-date.md |
+| `account_balances` | `m_account_balances` | `r_account_balances` | yes | today | decided |
+| `lots` | `m_lots` | `r_lots` | yes | today | decided |
 | `commodity_usage` | `m_commodity_usage` | `r_commodity_usage` | yes | ledger-end | decided |
 | `ledger_errors` | `m_ledger_errors` | `r_ledger_errors` | yes | load | decided |
 | `training_data` | `m_training_data` | `r_training_data` | yes | ledger-end | decided |
@@ -56,8 +56,8 @@ Surface version 1. 18 tables, 126 columns: 121 from v0.2.2, 1 from v0.3.0, 4 fro
 | `cost_date` | TEXT / date | Date of the lot the posting adds to or reduces; NULL without cost. | Posting cost date after booking (booking uses the transaction date when the cost spec gives none). | n/a | v0.3.0 | same | yes | decided |
 | `price_amount` | TEXT / decimal | Price per unit written with `@`; a total price written with `@@` appears here divided by the units, as Beancount stores it. NULL without a price. | Posting price number. | Per-unit price, normally positive. | v0.2.2 | changed (ADR-0023, ADR-0038): Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not. | yes | decided |
 | `price_currency` | TEXT / currency | Currency of `price_amount`; NULL without a price. | Posting price currency. | n/a | v0.2.2 | same | yes | decided |
-| `source_account` | TEXT / account | The account the transaction originated from (usually the bank or card), the same for every posting of the entry; NULL when it cannot be told. | Computed per entry, first rule that applies: the legacy `source_account` meta; else the account of the first leg (in posting order) that carries an `import-key`; else the single Assets or Liabilities leg (by account kind); else NULL. | n/a | v0.2.2 | changed (ADR-0055, INV-21): v0.2.2 computed it per posting: in a two-leg entry each posting got the other one, so the bank leg of a grocery purchase showed `Expenses:Food`; v0.4 gives every leg `Assets:Bank`. A transfer between two own accounts with no import key and no legacy key is NULL (v0.2.2: each leg showed the other account). | yes | owner:20261025-mirror-source-account-rows.md |
-| `source_account_type` | TEXT / text | First segment of `source_account`; NULL when `source_account` is NULL. | Text before the first `:` of `source_account`. | n/a | v0.2.2 | changed (ADR-0055): Follows `source_account`. | yes | owner:20261025-mirror-source-account-rows.md |
+| `source_account` | TEXT / account | The account the transaction came from (usually the bank or card); for an entry with neither key, v0.2.2's per-row answer (the other leg of a two-leg entry). NULL when it cannot be told. | Per row, first rule that applies: the legacy `source_account` meta whenever the key is present, its value as written, even empty (every row); else the account of the first leg (in posting order) that carries an `import-key` (every row); else, in a two-leg entry, the other leg's account; else the first Assets or Liabilities leg other than this row (v0.2.2's literal `Assets:`/`Liabilities:` prefixes, as `_compute_source_account` at the v0.2.2 tag); else NULL. | n/a | v0.2.2 | same | yes | decided |
+| `source_account_type` | TEXT / text | First segment of `source_account`; NULL when `source_account` is NULL. | Text before the first `:` of `source_account`. | n/a | v0.2.2 | same | yes | decided |
 | `transaction_metadata_json` | TEXT / json-meta | JSON object of the transaction's metadata, including the keys Beancount adds (`filename`, `lineno`, `__tolerances__`). Read kebab-case keys with a quoted path: `json_extract(transaction_metadata_json, '$."txn-date"')`. | Entry meta, converted by README 'Metadata JSON'. | n/a | v0.2.2 | same | yes | decided |
 | `posting_metadata_json` | TEXT / json-meta | JSON object of the posting's metadata (for example `import-key`, `original`), including Beancount's `filename`, `lineno` and `__automatic__` (an amount Beancount filled in); NULL when the posting has no metadata at all. | Posting meta, converted by README 'Metadata JSON'. | n/a | v0.2.2 | same | yes | decided |
 | `document_count` | INTEGER / count | Number of documents attached to the transaction: its metadata keys that start with `document` (`document`, `document2`, ...). | Count of entry meta keys starting with `document`. | n/a | v0.2.2 | same | yes | decided |
@@ -97,7 +97,7 @@ Surface version 1. 18 tables, 126 columns: 121 from v0.2.2, 1 from v0.3.0, 4 fro
 | `declaration_date` | TEXT / date | Date of the `commodity` directive; NULL when never declared. | Commodity date. | n/a | v0.2.2 | same | yes | decided |
 | `name` | TEXT / text | The commodity's `name` metadata; NULL when absent or never declared. | Commodity meta `name`. | n/a | v0.2.2 | same | yes | decided |
 | `asset_class` | TEXT / text | The commodity's `asset-class` metadata (for example `cash`, `stock`, `etf`, `mutual-fund`); NULL when absent. | Commodity meta `asset-class`. | n/a | v0.2.2 | same | yes | decided |
-| `is_currency` | INTEGER / bool | 1 when the commodity is cash (a unit of account), 0 when it is a holding such as a stock or fund. | First rule that applies: a declared `asset-class` decides (1 for `cash` or `currency`, compared trimmed and case-insensitive; 0 otherwise); else 1 for an ISO 4217 currency code; else 0. `operating_currency` plays no part. | n/a | v0.2.2 | changed (ADR-0025, L3-13): v0.2.2 used `operating_currency` as the list of currencies, so in an INR ledger a USD bank account counted as a holding (0); v0.4 counts USD as cash (1). A code with no `asset-class` that is not an ISO code (for example an undeclared `VTI`) was 1 in v0.2.2 and is 0 now. This is ADR-0025's one-time reclassification. | yes | owner:20261025-mirror-is-currency.md |
+| `is_currency` | INTEGER / bool | 1 when the commodity is cash (a unit of account), 0 when it is a holding such as a stock or fund. | First rule that applies: a declared `asset-class` decides (1 for `cash` or `currency`, compared trimmed and case-insensitive; 0 otherwise); else 1 for an ISO 4217 currency code or a code listed in `operating_currency`; else 0. | n/a | v0.2.2 | changed (ADR-0025, L3-13): v0.2.2 used `operating_currency` as the list of currencies, so in an INR ledger a USD bank account counted as a holding (0); v0.4 counts USD as cash (1). A code with no `asset-class` that is neither an ISO code nor an operating currency (for example an undeclared `VTI`) was 1 in v0.2.2 and is 0 now; a non-ISO operating currency such as `RMB` stays 1 (ADR-0025 amendment, 2026-10-25). This is ADR-0025's one-time reclassification. | yes | decided |
 | `metadata_json` | TEXT / json-meta | JSON object of the `commodity` directive's metadata; NULL when never declared. | Commodity meta, converted by README 'Metadata JSON'. | n/a | v0.2.2 | same | yes | decided |
 
 ## `balance_assertions`
@@ -242,36 +242,36 @@ Surface version 1. 18 tables, 126 columns: 121 from v0.2.2, 1 from v0.3.0, 4 fro
 ## `account_balances`
 
 - **One row is:** One (account, currency) whose balance is not zero, from the account's own postings (sub-accounts are separate rows). Accounts whose balance in a currency nets to zero have no row for it.
-- **As of:** owner:20261025-mirror-as-of-date.md
-- **Origin:** v0.2.2; **status:** owner:20261025-mirror-as-of-date.md; **cites:** ADR-0025, ADR-0048
-- **Note:** v0.2.2 computed it from every entry, future-dated ones included. Whether v0.4 stops at today waits for the owner.
+- **As of:** today
+- **Origin:** v0.2.2; **status:** decided; **cites:** ADR-0025, ADR-0048
+- **Note:** v0.2.2 computed it from every entry, future-dated ones included; v0.4 stops at today, like the app's current balances (ADR-0025 amendment, 2026-10-25).
 
 | Column | Type / format | Meaning | Source | Sign | Origin | Change from legacy | User SQL | Status |
 |---|---|---|---|---|---|---|---|---|
-| `account` | TEXT / account | The account. | Posting account. | n/a | v0.2.2 | same | yes | owner:20261025-mirror-as-of-date.md |
-| `currency` | TEXT / currency | The commodity of the balance. | Posting units currency. | n/a | v0.2.2 | same | yes | owner:20261025-mirror-as-of-date.md |
-| `balance` | TEXT / decimal | The balance: the sum of the account's units in this currency (all lots together), never rounded. | Decimal sum of posting units per (account, currency), computed as README 'Exact numbers' says (rounding fails the build). | As in the ledger: assets positive, liabilities (money owed) negative, income negative, expenses positive. | v0.2.2 | changed (ADR-0023, ADR-0038): Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not. | yes | owner:20261025-mirror-as-of-date.md |
-| `transaction_count` | INTEGER / count | Number of postings to this account in this currency (two postings of one transaction to the same account count twice, as in v0.2.2). | Count of postings with units per (account, currency). | n/a | v0.2.2 | same | yes | owner:20261025-mirror-as-of-date.md |
-| `last_transaction_date` | TEXT / date | Date of the latest posting to this account in this currency. | Max transaction date per (account, currency). | n/a | v0.2.2 | same | yes | owner:20261025-mirror-as-of-date.md |
+| `account` | TEXT / account | The account. | Posting account. | n/a | v0.2.2 | same | yes | decided |
+| `currency` | TEXT / currency | The commodity of the balance. | Posting units currency. | n/a | v0.2.2 | same | yes | decided |
+| `balance` | TEXT / decimal | The balance: the sum of the account's units in this currency (all lots together), never rounded. | Decimal sum of posting units per (account, currency), computed as README 'Exact numbers' says (rounding fails the build). | As in the ledger: assets positive, liabilities (money owed) negative, income negative, expenses positive. | v0.2.2 | changed (ADR-0023, ADR-0038): Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not. | yes | decided |
+| `transaction_count` | INTEGER / count | Number of postings to this account in this currency (two postings of one transaction to the same account count twice, as in v0.2.2). | Count of postings with units per (account, currency). | n/a | v0.2.2 | same | yes | decided |
+| `last_transaction_date` | TEXT / date | Date of the latest posting to this account in this currency. | Max transaction date per (account, currency). | n/a | v0.2.2 | same | yes | decided |
 
 ## `lots`
 
 - **One row is:** One lot held at cost (units of a commodity bought at one cost, date and label) in one account, from Beancount's booked inventory. Lots whose units net to zero have no row.
-- **As of:** owner:20261025-mirror-as-of-date.md
-- **Origin:** v0.2.2; **status:** owner:20261025-mirror-as-of-date.md; **cites:** ADR-0031, ADR-0048, L7-07
-- **Note:** Label-aware: two lots that differ only in their label are two rows (v0.2.2 kept one and lost the other). The end-of-ledger computation is not rebuilt (ADR-0048); which date the lots are taken at waits for the owner.
+- **As of:** today
+- **Origin:** v0.2.2; **status:** decided; **cites:** ADR-0031, ADR-0048, L7-07
+- **Note:** Label-aware: two lots that differ only in their label are two rows (v0.2.2 kept one and lost the other). The end-of-ledger computation is not rebuilt (ADR-0048); lots are taken as of today (ADR-0025 amendment, 2026-10-25).
 
 | Column | Type / format | Meaning | Source | Sign | Origin | Change from legacy | User SQL | Status |
 |---|---|---|---|---|---|---|---|---|
-| `id` | INTEGER / ordinal | Position of the lot in the table, counting from 1 (ordered by account, commodity, date, cost, label); not a stable identity. | Build counter. | n/a | v0.2.2 | same | yes | owner:20261025-mirror-as-of-date.md |
-| `account` | TEXT / account | The account holding the lot. | Inventory account. | n/a | v0.2.2 | same | yes | owner:20261025-mirror-as-of-date.md |
-| `units_number` | TEXT / decimal | Number of units in the lot. | Position units number. | Positive for a lot held; negative for a short position. | v0.2.2 | changed (ADR-0023, ADR-0038): Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not. | yes | owner:20261025-mirror-as-of-date.md |
-| `units_currency` | TEXT / currency | The commodity held (`VTI`). | Position units currency. | n/a | v0.2.2 | same | yes | owner:20261025-mirror-as-of-date.md |
-| `cost_number` | TEXT / decimal | Cost per unit of the lot. | Position cost number. | Per-unit cost, normally positive. | v0.2.2 | changed (ADR-0023, ADR-0038): Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not. | yes | owner:20261025-mirror-as-of-date.md |
-| `cost_currency` | TEXT / currency | Currency of the cost. | Position cost currency. | n/a | v0.2.2 | same | yes | owner:20261025-mirror-as-of-date.md |
-| `acquisition_date` | TEXT / date | The lot's date (when it was bought). | Position cost date (booking fills the purchase date when the cost spec gives none). | n/a | v0.2.2 | same | yes | owner:20261025-mirror-as-of-date.md |
-| `label` | TEXT / text | The lot's label; NULL when it has none. | Position cost label. | n/a | v0.2.2 | same | yes | owner:20261025-mirror-as-of-date.md |
-| `book_value` | TEXT / decimal | What the lot cost in total: `units_number` times `cost_number`, never rounded. | Decimal product, computed as README 'Exact numbers' says (rounding fails the build). | Same sign as `units_number`. | v0.2.2 | changed (ADR-0023, ADR-0038): Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not. | yes | owner:20261025-mirror-as-of-date.md |
+| `id` | INTEGER / ordinal | Position of the lot in the table, counting from 1 (ordered by account, commodity, date, cost, label); not a stable identity. | Build counter. | n/a | v0.2.2 | same | yes | decided |
+| `account` | TEXT / account | The account holding the lot. | Inventory account. | n/a | v0.2.2 | same | yes | decided |
+| `units_number` | TEXT / decimal | Number of units in the lot. | Position units number. | Positive for a lot held; negative for a short position. | v0.2.2 | changed (ADR-0023, ADR-0038): Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not. | yes | decided |
+| `units_currency` | TEXT / currency | The commodity held (`VTI`). | Position units currency. | n/a | v0.2.2 | same | yes | decided |
+| `cost_number` | TEXT / decimal | Cost per unit of the lot. | Position cost number. | Per-unit cost, normally positive. | v0.2.2 | changed (ADR-0023, ADR-0038): Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not. | yes | decided |
+| `cost_currency` | TEXT / currency | Currency of the cost. | Position cost currency. | n/a | v0.2.2 | same | yes | decided |
+| `acquisition_date` | TEXT / date | The lot's date (when it was bought). | Position cost date (booking fills the purchase date when the cost spec gives none). | n/a | v0.2.2 | same | yes | decided |
+| `label` | TEXT / text | The lot's label; NULL when it has none. | Position cost label. | n/a | v0.2.2 | same | yes | decided |
+| `book_value` | TEXT / decimal | What the lot cost in total: `units_number` times `cost_number`, never rounded. | Decimal product, computed as README 'Exact numbers' says (rounding fails the build). | Same sign as `units_number`. | v0.2.2 | changed (ADR-0023, ADR-0038): Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not. | yes | decided |
 
 ## `commodity_usage`
 

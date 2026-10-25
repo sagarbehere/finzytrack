@@ -24,3 +24,4 @@ There is a cost to "today": the mirror is a file built when the ledger changes. 
 Option 1. It matches ADR-0025 and ADR-0048, keeps SQL and screens in agreement, and changes nothing for ledgers without future-dated entries. The rebuild-at-date-change is a cache refresh, not a new risk to your data.
 
 ## Answer (owner, verbatim, with date)
+Owner: "I accept the recommendations for all three questions currently in the inbox" (2026-10-25, in session). Accepted: Option 1: today, for both tables.

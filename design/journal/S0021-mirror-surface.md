@@ -65,3 +65,6 @@
 - Doc: the docs path is now `src/content/docs/reference/querying-data.md`; the `source_account` inbox file's `blocks:` line says the rows are marked `owner:`; the brief lists all three inbox files.
 
 ## Retro
+
+## Owner decisions after landing
+- Owner: "I accept the recommendations for all three questions currently in the inbox" (owner, 2026-10-25, in session): the as-of date (today), `source_account` per row, `is_currency` with operating currencies; recorded as amendments to ADR-0025, ADR-0048, ADR-0055; spec rows decided.

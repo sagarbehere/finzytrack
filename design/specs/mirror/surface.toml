@@ -275,15 +275,15 @@ status = "decided"
 name = "source_account"
 type = "TEXT"
 format = "account"
-meaning = "The account the transaction originated from (usually the bank or card), the same for every posting of the entry; NULL when it cannot be told."
-source = "Computed per entry, first rule that applies: the legacy `source_account` meta; else the account of the first leg (in posting order) that carries an `import-key`; else the single Assets or Liabilities leg (by account kind); else NULL."
+meaning = "The account the transaction came from (usually the bank or card); for an entry with neither key, v0.2.2's per-row answer (the other leg of a two-leg entry). NULL when it cannot be told."
+source = "Per row, first rule that applies: the legacy `source_account` meta whenever the key is present, its value as written, even empty (every row); else the account of the first leg (in posting order) that carries an `import-key` (every row); else, in a two-leg entry, the other leg's account; else the first Assets or Liabilities leg other than this row (v0.2.2's literal `Assets:`/`Liabilities:` prefixes, as `_compute_source_account` at the v0.2.2 tag); else NULL."
 sign = "n/a"
 origin = "v0.2.2"
-change = "changed"
-cites = ["ADR-0055", "INV-21"]
-why = "v0.2.2 computed it per posting: in a two-leg entry each posting got the other one, so the bank leg of a grocery purchase showed `Expenses:Food`; v0.4 gives every leg `Assets:Bank`. A transfer between two own accounts with no import key and no legacy key is NULL (v0.2.2: each leg showed the other account)."
+change = "same"
+cites = ["ADR-0055", "INV-21", "ADR-0026"]
+why = "Every entry already in a ledger shows what v0.2.2 showed: v0.2.2 imports carried the key, v0.4 imports mark the same leg with `import-key`, and entries with neither key keep v0.2.2's per-row rules (ADR-0055 amendment, 2026-10-25)."
 user_sql = true
-status = "owner:20261025-mirror-source-account-rows.md"
+status = "decided"
 
 [[table.column]]
 name = "source_account_type"
@@ -293,11 +293,11 @@ meaning = "First segment of `source_account`; NULL when `source_account` is NULL
 source = "Text before the first `:` of `source_account`."
 sign = "n/a"
 origin = "v0.2.2"
-change = "changed"
-cites = ["ADR-0055"]
-why = "Follows `source_account`."
+change = "same"
+cites = []
+why = ""
 user_sql = true
-status = "owner:20261025-mirror-source-account-rows.md"
+status = "decided"
 
 [[table.column]]
 name = "transaction_metadata_json"
@@ -606,14 +606,14 @@ name = "is_currency"
 type = "INTEGER"
 format = "bool"
 meaning = "1 when the commodity is cash (a unit of account), 0 when it is a holding such as a stock or fund."
-source = "First rule that applies: a declared `asset-class` decides (1 for `cash` or `currency`, compared trimmed and case-insensitive; 0 otherwise); else 1 for an ISO 4217 currency code; else 0. `operating_currency` plays no part."
+source = "First rule that applies: a declared `asset-class` decides (1 for `cash` or `currency`, compared trimmed and case-insensitive; 0 otherwise); else 1 for an ISO 4217 currency code or a code listed in `operating_currency`; else 0."
 sign = "n/a"
 origin = "v0.2.2"
 change = "changed"
 cites = ["ADR-0025", "L3-13"]
-why = "v0.2.2 used `operating_currency` as the list of currencies, so in an INR ledger a USD bank account counted as a holding (0); v0.4 counts USD as cash (1). A code with no `asset-class` that is not an ISO code (for example an undeclared `VTI`) was 1 in v0.2.2 and is 0 now. This is ADR-0025's one-time reclassification."
+why = "v0.2.2 used `operating_currency` as the list of currencies, so in an INR ledger a USD bank account counted as a holding (0); v0.4 counts USD as cash (1). A code with no `asset-class` that is neither an ISO code nor an operating currency (for example an undeclared `VTI`) was 1 in v0.2.2 and is 0 now; a non-ISO operating currency such as `RMB` stays 1 (ADR-0025 amendment, 2026-10-25). This is ADR-0025's one-time reclassification."
 user_sql = true
-status = "owner:20261025-mirror-is-currency.md"
+status = "decided"
 
 [[table.column]]
 name = "metadata_json"
@@ -1489,11 +1489,11 @@ status = "decided"
 name = "account_balances"
 base = "m_account_balances"
 row = "One (account, currency) whose balance is not zero, from the account's own postings (sub-accounts are separate rows). Accounts whose balance in a currency nets to zero have no row for it."
-as_of = "owner:20261025-mirror-as-of-date.md"
+as_of = "today"
 origin = "v0.2.2"
-status = "owner:20261025-mirror-as-of-date.md"
+status = "decided"
 cites = ["ADR-0025", "ADR-0048"]
-note = "v0.2.2 computed it from every entry, future-dated ones included. Whether v0.4 stops at today waits for the owner."
+note = "v0.2.2 computed it from every entry, future-dated ones included; v0.4 stops at today, like the app's current balances (ADR-0025 amendment, 2026-10-25)."
 
 [[table.column]]
 name = "account"
@@ -1507,7 +1507,7 @@ change = "same"
 cites = []
 why = ""
 user_sql = true
-status = "owner:20261025-mirror-as-of-date.md"
+status = "decided"
 
 [[table.column]]
 name = "currency"
@@ -1521,7 +1521,7 @@ change = "same"
 cites = []
 why = ""
 user_sql = true
-status = "owner:20261025-mirror-as-of-date.md"
+status = "decided"
 
 [[table.column]]
 name = "balance"
@@ -1535,7 +1535,7 @@ change = "changed"
 cites = ["ADR-0023", "ADR-0038"]
 why = "Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not."
 user_sql = true
-status = "owner:20261025-mirror-as-of-date.md"
+status = "decided"
 
 [[table.column]]
 name = "transaction_count"
@@ -1549,7 +1549,7 @@ change = "same"
 cites = []
 why = ""
 user_sql = true
-status = "owner:20261025-mirror-as-of-date.md"
+status = "decided"
 
 [[table.column]]
 name = "last_transaction_date"
@@ -1563,18 +1563,18 @@ change = "same"
 cites = []
 why = ""
 user_sql = true
-status = "owner:20261025-mirror-as-of-date.md"
+status = "decided"
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────── lots
 [[table]]
 name = "lots"
 base = "m_lots"
 row = "One lot held at cost (units of a commodity bought at one cost, date and label) in one account, from Beancount's booked inventory. Lots whose units net to zero have no row."
-as_of = "owner:20261025-mirror-as-of-date.md"
+as_of = "today"
 origin = "v0.2.2"
-status = "owner:20261025-mirror-as-of-date.md"
+status = "decided"
 cites = ["ADR-0031", "ADR-0048", "L7-07"]
-note = "Label-aware: two lots that differ only in their label are two rows (v0.2.2 kept one and lost the other). The end-of-ledger computation is not rebuilt (ADR-0048); which date the lots are taken at waits for the owner."
+note = "Label-aware: two lots that differ only in their label are two rows (v0.2.2 kept one and lost the other). The end-of-ledger computation is not rebuilt (ADR-0048); lots are taken as of today (ADR-0025 amendment, 2026-10-25)."
 
 [[table.column]]
 name = "id"
@@ -1588,7 +1588,7 @@ change = "same"
 cites = []
 why = ""
 user_sql = true
-status = "owner:20261025-mirror-as-of-date.md"
+status = "decided"
 
 [[table.column]]
 name = "account"
@@ -1602,7 +1602,7 @@ change = "same"
 cites = []
 why = ""
 user_sql = true
-status = "owner:20261025-mirror-as-of-date.md"
+status = "decided"
 
 [[table.column]]
 name = "units_number"
@@ -1616,7 +1616,7 @@ change = "changed"
 cites = ["ADR-0023", "ADR-0038"]
 why = "Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not."
 user_sql = true
-status = "owner:20261025-mirror-as-of-date.md"
+status = "decided"
 
 [[table.column]]
 name = "units_currency"
@@ -1630,7 +1630,7 @@ change = "same"
 cites = []
 why = ""
 user_sql = true
-status = "owner:20261025-mirror-as-of-date.md"
+status = "decided"
 
 [[table.column]]
 name = "cost_number"
@@ -1644,7 +1644,7 @@ change = "changed"
 cites = ["ADR-0023", "ADR-0038"]
 why = "Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not."
 user_sql = true
-status = "owner:20261025-mirror-as-of-date.md"
+status = "decided"
 
 [[table.column]]
 name = "cost_currency"
@@ -1658,7 +1658,7 @@ change = "same"
 cites = []
 why = ""
 user_sql = true
-status = "owner:20261025-mirror-as-of-date.md"
+status = "decided"
 
 [[table.column]]
 name = "acquisition_date"
@@ -1672,7 +1672,7 @@ change = "same"
 cites = []
 why = ""
 user_sql = true
-status = "owner:20261025-mirror-as-of-date.md"
+status = "decided"
 
 [[table.column]]
 name = "label"
@@ -1686,7 +1686,7 @@ change = "same"
 cites = []
 why = ""
 user_sql = true
-status = "owner:20261025-mirror-as-of-date.md"
+status = "decided"
 
 [[table.column]]
 name = "book_value"
@@ -1700,7 +1700,7 @@ change = "changed"
 cites = ["ADR-0023", "ADR-0038"]
 why = "Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not."
 user_sql = true
-status = "owner:20261025-mirror-as-of-date.md"
+status = "decided"
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────── commodity_usage
 [[table]]

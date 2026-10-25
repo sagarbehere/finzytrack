@@ -47,7 +47,7 @@ FORMATS = {"decimal": "TEXT", "date": "TEXT", "text": "TEXT", "account": "TEXT",
            "flag": "TEXT", "hash": "TEXT", "path": "TEXT", "id": "TEXT", "json-meta": "TEXT", "json-list": "TEXT",
            "json-custom": "TEXT", "json-entry": "TEXT", "json-value": "TEXT", "ordinal": "INTEGER",
            "count": "INTEGER", "bool": "INTEGER", "int": "INTEGER"}
-AS_OF = {"entry", "ledger-end", "load"}
+AS_OF = {"entry", "ledger-end", "load", "today"}
 ORIGINS = ("v0.2.2", "v0.3.0", "v0.4")
 CHANGES = {"same", "changed", "new"}
 OPEN_QUESTION = ("owner:", "design/inbox")
