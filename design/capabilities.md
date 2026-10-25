@@ -39,7 +39,7 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | CAP-WS-COPY-ITEM | "Copy to workspace…" on a dashboard, rule or theme, keeping its origin | new | planned | M7 | yes |
 | CAP-WS-UI-MEMORY | UI memory (tabs, selections, layouts) scoped per workspace in localStorage | new | planned | M2 | yes |
 | CAP-WS-RESUME | Import sessions and AI threads survive a switch and come back with their workspace | new | planned | M9 | yes |
-| CAP-WS-ALLOW-AI | "Allow AI in this workspace" switch, stored in the folder so the policy travels (default on | new | planned | M6 | yes |
+| CAP-WS-ALLOW-AI | "Allow AI in this workspace" switch, stored in the folder so the policy travels (default on; AI… | new | planned | M6 | yes |
 | CAP-WS-SETTINGS | Settings → Workspace: name, folder, ledger root or external reference, documents folder… | new | planned | M3 | yes |
 | CAP-MIRROR-EXTERNAL | Stable read-only mirror path with Copy / Reveal, and a documented `r_*` view surface for outside… | new | planned | M7 | yes |
 | CAP-SHELL-OPEN | File association (alternate handler), single-instance forward, drag-and-drop a ledger, CLI… | new | planned | M2 | yes |
@@ -65,7 +65,7 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | CAP-ACCT-STATEMENT | Account statement (register): transactions with a posting on the exact account, per-currency… | change | planned | M4 | yes |
 | CAP-ACCT-BREAKDOWN | "+N more" balance breakdown with currency search and sort | keep | planned | M4 | yes |
 | CAP-ACCT-DRAWER | Account detail drawer: dates, declared currencies, balance with a range note, current budget per… | change | planned | M4 | yes |
-| CAP-ACCT-DRILL | "View transactions" drill-through (Income/Expenses add `dateFrom` | change | planned | M4 | yes |
+| CAP-ACCT-DRILL | "View transactions" drill-through (Income/Expenses add `dateFrom`; balance sheet is cumulative) and… | change | planned | M4 | yes |
 | CAP-ACCT-DOC-COUNT | Paperclip badge with the document count per account | change | planned | M4 | yes |
 | CAP-ACCT-CUSTOM-ROOTS | Ledgers with custom root names (`option "name_assets"` etc.) work end to end | new | planned | M4 | yes |
 | CAP-ACCT-NEW-FROM-PICKER | "New account…" inside account pickers opens the normal account form blank | new | planned | M4 | yes |
@@ -154,7 +154,7 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | CAP-DASH-ACTION-PRICES | Dashboard action `update-prices`: button with the price date in use and how many holdings need a… | keep | planned | M8 | yes |
 | CAP-DASH-EDITOR | Settings → Dashboards: recipe file list, JSON editor, New, Save (backup on overwrite), Delete… | change | planned | M7 | yes |
 | CAP-DASH-FILES | Edit recipe files directly in `config/recipes/dashboards/` | change | planned | M7 | yes |
-| CAP-DASH-VALIDATION | Recipe validation (dashboard, widget and step rules | change | planned | M7 | yes |
+| CAP-DASH-VALIDATION | Recipe validation (dashboard, widget and step rules; id-conflict detection) on save and for the AI | change | planned | M7 | yes |
 | CAP-DASH-SCHEMA | Recipe format v2 (`schemaVersion: 2`, steps/DAG), one JSON Schema with generated TS, enums and AI… | change | planned | M7 | yes |
 | CAP-DASH-OPTIONS-SAFE | ECharts `options` pass-through (silent allow-list: `calendar`, `visualMap`, `radar`, `graphic`… | change | planned | M7 | yes |
 | CAP-DASH-SEED-FIX | Updated shipped dashboards: pristine copies refreshed | change | planned | M7 | yes |
@@ -227,7 +227,7 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | CAP-CHART-PIE | Chart type `pie` | keep | planned | M7 | yes |
 | CAP-CHART-AREA | Chart type `area` | keep | planned | M7 | yes |
 | CAP-CHART-SCATTER | Chart type `scatter` | keep | planned | M7 | yes |
-| CAP-CHART-TREEMAP | Chart type `treemap` (data injected into the series | keep | planned | M7 | yes |
+| CAP-CHART-TREEMAP | Chart type `treemap` (data injected into the series; ≤ 0 values handled) | keep | planned | M7 | yes |
 | CAP-CHART-FUNNEL | Chart type `funnel` | keep | planned | M7 | yes |
 | CAP-CHART-GAUGE | Chart type `gauge` | keep | planned | M7 | yes |
 | CAP-CHART-CALENDAR | Chart type `calendar` (heat map by date) | change | planned | M7 | yes |
@@ -255,8 +255,8 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | CAP-QUERY-SQL | Query view, SQLite mode: editor, ⌘/Ctrl+Enter, "N rows in T ms", inline DB error, Clear | change | planned | M7 | yes |
 | CAP-QUERY-BQL | Query view, BQL mode (language toggle changes copy, placeholder and docs links) | change | planned | M7 | yes |
 | CAP-QUERY-SURFACE | The queryable mirror: `postings`, `accounts`, `account_balances`, `balance_assertions`… | change | planned | M7 | yes |
-| CAP-QUERY-NL | Quick query builder: describe a query in words, the AI writes SQL or BQL (⌘/Ctrl+Enter | keep | planned | M7 | yes |
-| CAP-QUERY-RESULTS | Results table (raw columns | change | planned | M7 | yes |
+| CAP-QUERY-NL | Quick query builder: describe a query in words, the AI writes SQL or BQL (⌘/Ctrl+Enter; disabled… | keep | planned | M7 | yes |
+| CAP-QUERY-RESULTS | Results table (raw columns; integers grouped, other numbers to 2 dp) | change | planned | M7 | yes |
 | CAP-QUERY-CHART | Chart the results: bar, line, pie, area, scatter, treemap | change | planned | M7 | yes |
 
 ## Budgets
@@ -302,7 +302,7 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | ID | Capability | v0.4 | Status | Milestone | Blocks release |
 |---|---|---|---|---|---|
 | CAP-INV-SETUP-META | Setup & Metadata tab: per holding (`asset-class`, `name`, `fetch-symbol`, I-bond… | change | planned | M8 | yes |
-| CAP-INV-AMFI-FINDER | Find an Indian mutual fund's AMFI scheme code (search by name | keep | planned | M8 | yes |
+| CAP-INV-AMFI-FINDER | Find an Indian mutual fund's AMFI scheme code (search by name; NAV older than 30 days flagged) and… | keep | planned | M8 | yes |
 | CAP-INV-ASSET-CLASS | Cash vs holding decided by operating currencies (`is_currency`) and `asset-class` | change | planned | M8 | yes |
 | CAP-INV-EXPOSURE | `exposure` metadata (equity, debt, hybrid, gold, cash, real-estate), filled from the CAS/SEBI… | new | planned | M8 | yes |
 | CAP-INV-INCOME-TYPE | Income kind from `income-type` on the Income account's `open`, never from account names | keep | planned | M8 | yes |

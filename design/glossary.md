@@ -81,7 +81,7 @@ Terms are grouped by area and sorted inside each group. Where a term is decided 
 ## Process
 
 - **Area review.** A fresh-context review of a whole area as it stands, at milestone ends (`design/process/PROCESS.md`).
-- **Capability map.** `design/capabilities.md`: one row per user-visible capability with status (built, partial, cut, deferred, planned), spec, ADRs, code, tests and user doc. It answers "did we do X?".
+- **Capability map.** `design/capabilities.toml`: one row per user-visible capability with status (built, partial, cut, deferred, planned), milestone, release-blocking flag, spec, ADRs, code, tests and user doc. `design/capabilities.md` is its generated index (ID, label, status, milestone). It answers "did we do X?".
 - **Escape.** A defect found later than it should have been (by a later verifier, an audit, the nightly tier, the owner or a user). Each escape gets an analysis and a new or stronger gate.
 - **Escalation.** A question that goes to the owner, filed in `design/inbox/`, only when no accepted ADR covers it.
 - **G1 / G2.** G1 is the owner's go/no-go checkpoint after the write core (M1b); G2 is a confidence checkpoint after M4 (ADR-0046).

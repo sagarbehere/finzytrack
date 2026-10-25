@@ -9,3 +9,14 @@
 - Expected doc impact: `design/capabilities.md` regenerated (about 18,200 → 8,200 words); backlog §2 header (the retirement rule). No user docs.
 - Open questions: none.
 - Base SHA: ff81bd6.
+
+## Verifier
+- Round 1, head b73eb9a: PASS WITH FINDINGS. Attacks: 5 (gates; all 340 labels scanned; a mid-word-cut mutant; every consumer of the old columns; information loss).
+- F1 Low: labels were cut at a `; ` inside parentheses (7 ended with an unclosed "("). Fixed: the cut happens only outside parentheses and backticks; test.
+- F2 Low (EP-29): the word-cut test let a mid-word cut pass. Fixed: an input whose 100-character mark falls inside a word, and a check that no word is split.
+- F3 Low: the glossary described the old columns. Fixed.
+- F4 question: some labels drop a qualifier; accepted, the full text is one search away in the `.toml`.
+- Docs-only slice: one round (ADR-0058).
+
+## Retro
+- The label rule was tested on hand-picked strings, not on the 340 real rows; a scan of the real data (as the verifier did) is the cheaper test for a text transform. Process cost: about 15 min building, 1.5 min verifier, 10 min fixes.

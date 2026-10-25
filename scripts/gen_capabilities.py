@@ -28,8 +28,17 @@ def cell(text: str) -> str:
 def short(text: str) -> str:
     """The capability's label for the index: up to its first clause (`; ` or `. `), at most SHORT characters,
     cut on a word with an ellipsis."""
-    for sep in ("; ", ". "):
-        text = text.split(sep, 1)[0]
+    depth, code = 0, False
+    for i, ch in enumerate(text):
+        if ch == "`":
+            code = not code
+        elif not code and ch == "(":
+            depth += 1
+        elif not code and ch == ")":
+            depth = max(depth - 1, 0)
+        elif not code and depth == 0 and text[i : i + 2] in ("; ", ". "):
+            text = text[:i]
+            break
     text = text.strip().rstrip(".")
     if len(text) > SHORT:
         text = text[:SHORT].rsplit(" ", 1)[0].rstrip(" ,;:") + "…"

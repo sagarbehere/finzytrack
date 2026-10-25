@@ -18,11 +18,16 @@ class Short(unittest.TestCase):
         self.assertEqual(gc.short("Open a ledger. Then switch."), "Open a ledger")
 
     def test_long_text_is_cut_on_a_word_with_an_ellipsis(self) -> None:
-        text = "word " * 40
+        text = "abcdefg " * 20  # the 100-character mark falls inside a word
         out = gc.short(text)
         self.assertLessEqual(len(out), gc.SHORT + 1)
         self.assertTrue(out.endswith("…"))
         self.assertFalse(out[:-1].endswith(" "))
+        self.assertTrue(set(out[:-1].split()) == {"abcdefg"}, out)  # no word was cut in half
+
+    def test_a_clause_inside_parentheses_or_code_does_not_end_the_label(self) -> None:
+        self.assertEqual(gc.short("Results table (raw columns; sortable); export"), "Results table (raw columns; sortable)")
+        self.assertEqual(gc.short("Chart type `a; b` here; more"), "Chart type `a; b` here")
 
     def test_a_decimal_point_is_not_a_sentence_end(self) -> None:
         self.assertEqual(gc.short("Supports v0.2 installs"), "Supports v0.2 installs")
