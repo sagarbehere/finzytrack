@@ -1,0 +1,2 @@
+# EP-24: a release is adopted only when it is at least 14 days old (minutes).
+minimumReleaseAge: 20160

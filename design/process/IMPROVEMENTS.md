@@ -160,3 +160,12 @@ Format:
 - Observed effect: measured at the end of M1a (ADR-0058 item 5).
 - Status: kept (loosening, owner-approved).
 - Owner approval: "I agree with your recommendations 1-4 on improving the process and re-evaulating as in 5" (2026-10-25, in session)
+
+## IMP-0016: T1 frontend job (2026-10-25)
+- Trigger: S0009, the Vue frontend skeleton (BL-0037).
+- What changed: `.github/workflows/ci.yml` gains the `frontend` job (vue-tsc, eslint, prettier, vitest incl. the pinned tsconfig and lint bans, knip, the Playwright smoke flow in Chromium and WebKit) and a frontend install in `repo-checks` for the licence step; `.githooks/pre-push` uses vue-tsc and runs all frontend unit tests; the licence check leaves the app's own package out.
+- PROCESS.md section: §6.
+- Why: every frontend slice inherits these gates.
+- Expected effect: type, lint and boundary regressions fail before landing; WebKit is exercised from the first commit.
+- Observed effect: pending.
+- Status: kept (tightening, agent-approved).

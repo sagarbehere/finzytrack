@@ -68,6 +68,28 @@ class Wiring(unittest.TestCase):
         self.assertEqual(sorted(n for n, _, _ in deps or []), ["fastapi", "pydantic", "typing_extensions"])
 
 
+class JavaScript(unittest.TestCase):
+    REPORT = {
+        "finzytrack-frontend@0.4.0-dev.0": {"licenses": "UNLICENSED"},
+        "finzytrack-frontend-extra@1.0.0": {"licenses": "MIT"},
+        "@vue/shared@3.5.43": {"licenses": "MIT"},
+        "dual@1.0.0": {"licenses": ["MIT", "Apache-2.0"]},
+    }
+
+    def test_own_package_is_not_a_dependency(self) -> None:
+        names = [n for n, _, _ in cl.js_from_report(self.REPORT, "finzytrack-frontend")]
+        self.assertNotIn("finzytrack-frontend", names)
+
+    def test_a_package_whose_name_only_starts_like_ours_is_kept(self) -> None:
+        names = [n for n, _, _ in cl.js_from_report(self.REPORT, "finzytrack-frontend")]
+        self.assertIn("finzytrack-frontend-extra", names)
+
+    def test_scoped_names_and_licence_lists(self) -> None:
+        deps = dict((n, (v, lic)) for n, v, lic in cl.js_from_report(self.REPORT, "finzytrack-frontend"))
+        self.assertEqual(deps["@vue/shared"], ("3.5.43", "MIT"))
+        self.assertEqual(deps["dual"], ("1.0.0", "MIT OR Apache-2.0"))
+
+
 class Allowlist(unittest.TestCase):
     ALLOWED = {"MIT", "BSD-3-Clause"}
     PENDING = {"Apache-2.0"}

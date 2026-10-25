@@ -1,0 +1,6 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": ["tests/unit/**/*.test.ts", "e2e/**/*.spec.ts"],
+  "project": ["src/**/*.{ts,vue}", "tests/**/*.ts", "e2e/**/*.ts"],
+  "ignoreDependencies": ["license-checker-rseidelsohn"]
+}

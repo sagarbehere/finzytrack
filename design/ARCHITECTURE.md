@@ -854,7 +854,8 @@ The versions below are the newest stable releases published on or before **2026-
     scripts/                                    backend-internal tools (cwd = backend/): export_openapi.py,
                                                 gen_domain_vectors.py, corpus generators wrapper
   frontend/
-    package.json  pnpm-lock.yaml  pnpm-workspace.yaml  tsconfig.json  eslint.config.ts  vite.config.ts
+    package.json  pnpm-lock.yaml  pnpm-workspace.yaml  tsconfig.json  eslint.config.js  vite.config.ts
+    playwright.config.ts  knip.json  .prettierrc.json                (S0009)
     src/…                                       §3.1 (*.tsx; *.vue only if S13 keeps Vue)
     tests/  unit/ · machines/ (model-based) · contract/ (stream fixtures)
     e2e/                                        Playwright acceptance flows + exploratory charters

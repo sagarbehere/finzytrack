@@ -76,9 +76,17 @@ def js_deps() -> list[tuple[str, str, str]] | None:
     if not tool.exists():
         raise SystemExit("check-licences: frontend exists but license-checker-rseidelsohn is missing")
     out = subprocess.run([str(tool), "--production", "--json"], cwd=ROOT / "frontend", capture_output=True, text=True, check=True)
+    own = json.loads((ROOT / "frontend/package.json").read_text())["name"]
+    return js_from_report(json.loads(out.stdout), own)
+
+
+def js_from_report(report: dict[str, dict], own: str) -> list[tuple[str, str, str]]:
+    """(name, version, licence) per package of a license-checker report, without the app's own package."""
     deps = []
-    for key, info in json.loads(out.stdout).items():
+    for key, info in report.items():
         name, _, version = key.rpartition("@")
+        if name == own:
+            continue
         lic = info.get("licenses", "UNKNOWN")
         deps.append((name, version, lic if isinstance(lic, str) else " OR ".join(lic)))
     return deps

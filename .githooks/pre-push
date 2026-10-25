@@ -32,7 +32,7 @@ if [[ -f backend/pyproject.toml ]]; then
   run "backend tests" bash -c "cd backend && .venv/bin/pytest -q -x"
 fi
 if [[ -f frontend/package.json ]]; then
-  run "tsc" bash -c "cd frontend && node_modules/.bin/tsc --noEmit"
-  run "frontend unit tests" bash -c "cd frontend && node_modules/.bin/vitest run --changed origin/next"
+  run "vue-tsc" bash -c "cd frontend && node_modules/.bin/vue-tsc --noEmit"
+  run "frontend unit tests" bash -c "cd frontend && node_modules/.bin/vitest run"
 fi
 exit "$fail"
