@@ -34,6 +34,26 @@ SHOWN_BY = {
         'a {} reduction: indeterminate': [
             'tolerance/reduction-needs-booking',
         ],
+        'a {USD} reduction: indeterminate': [
+            'tolerance/partial-cost-currency-only',
+        ],
+        'a {date} reduction: indeterminate': [
+            'tolerance/partial-cost-date-only',
+        ],
+        'a cost with no currency: indeterminate': [
+            'tolerance/partial-cost-number-only',
+        ],
+        'a cost with only a total: indeterminate': [
+            'tolerance/partial-cost-total-only',
+        ],
+        'a refused entry has no port verdict': [
+            'tolerance/negative-price-refused',
+            'tolerance/negative-total-price-refused',
+        ],
+        'a negative price is served as written': [
+            'tolerance/negative-price-refused',
+            'tolerance/negative-total-price-refused',
+        ],
         'a residual equal to the tolerance balances': [
             'tolerance/boundary-equal-passes',
             'tolerance/multiplier-option',
@@ -70,6 +90,7 @@ SHOWN_BY = {
         ],
         'a @@ total price': [
             'tolerance/total-price-division',
+            'tolerance/negative-total-price-refused',
         ],
         'a {{}} total cost': [
             'tolerance/total-cost-division',
@@ -158,6 +179,9 @@ SHOWN_BY = {
         'more text after a code is invalid even when it parses': [
             'currency/grammar USD ;x',
         ],
+        'invalid although CURRENCY_RE matches': [
+            'currency/grammar CAC_',
+        ],
         'lower case is invalid': [
             'currency/grammar usd',
             'currency/grammar Usd',
@@ -171,6 +195,9 @@ SHOWN_BY = {
             'price/both-directions USD INR 2020-01-02',
             'price/both-directions INR USD 2020-01-02',
             'price/both-directions INR USD 2020-01-01',
+            'price/inverted-wins-anywhere USD INR 2020-01-02',
+            'price/double-inversion USD INR 2020-01-01',
+            'price/double-inversion INR USD 2020-01-01',
             'price/zero-not-inverted XYZ USD 2020-01-01',
             'price/implicit-prices-plugin VTI USD 2020-01-01',
             'price/implicit-prices-plugin USD INR 2020-02-01',
@@ -183,12 +210,19 @@ SHOWN_BY = {
             'price/as-of VTI USD 2020-01-09',
             'price/as-of VTI USD 2025-01-01',
             'price/both-directions INR USD 2020-01-01',
+            'price/double-inversion INR USD 2020-01-01',
         ],
         'the latest price includes future dates': [
             'price/as-of VTI USD latest',
         ],
         'an inverse lookup': [
             'price/as-of USD VTI 2020-01-10',
+        ],
+        'the inverted point wins wherever it is in the file': [
+            'price/inverted-wins-anywhere USD INR 2020-01-02',
+        ],
+        'a point inverted twice': [
+            'price/double-inversion USD INR 2020-01-01',
         ],
         'same-day duplicates': [
             'price/same-day-last-wins VTI USD 2020-01-01',
@@ -274,8 +308,8 @@ class RealVectors(unittest.TestCase):
                       sum(i["polarity"] == "negative" for _, i in vectors.units(doc, f)))
                   for f in vectors.FAMILIES}
         self.assertEqual(counts, {
-            "tolerance": (25, 14, 11), "balance": (10, 6, 4), "account": (4, 15, 16), "currency": (1, 12, 9),
-            "price": (7, 13, 5), "precision": (2, 5, 2), "booking": (13, 9, 4),
+            "tolerance": (30, 18, 12), "balance": (10, 6, 4), "account": (4, 15, 16), "currency": (1, 12, 9),
+            "price": (9, 16, 5), "precision": (2, 5, 2), "booking": (13, 9, 4),
         })
 
     def test_which_vectors_show_each_behaviour(self) -> None:
@@ -524,22 +558,41 @@ class Port(Corpus):
         self.assertReports("tolerance/elided-leg-quantized: needs_booking is not the OR")
 
     def test_a_left_out_part_must_be_flagged(self) -> None:
+        cost = {"per": "1", "total": None, "currency": "USD", "date": None, "label": None, "merge": False}
         cases = {
-            "units": lambda p: p.update(units=None),
-            "units number": lambda p: p["units"].update(number=None),
-            "units currency": lambda p: p["units"].update(currency=None),
-            "cost currency": lambda p: p.update(cost={"per": "1", "total": None, "currency": None, "date": None,
-                                                      "label": None, "merge": False}),
-            "empty cost": lambda p: p.update(cost={"per": None, "total": None, "currency": "USD", "date": None,
-                                                   "label": None, "merge": False}),
-            "price number": lambda p: p.update(price={"number": None, "currency": "USD", "total": False}),
-            "price currency": lambda p: p.update(price={"number": "1", "currency": None, "total": False}),
+            "units": lambda p: p.update(units="MISSING"),
+            "units number": lambda p: p["units"].update(number="MISSING"),
+            "units currency": lambda p: p["units"].update(currency="MISSING"),
+            "cost per": lambda p: p.update(cost={**cost, "per": "MISSING"}),
+            "cost total": lambda p: p.update(cost={**cost, "total": "MISSING"}),
+            "cost currency": lambda p: p.update(cost={**cost, "currency": "MISSING"}),
+            "price number": lambda p: p.update(price={"number": "MISSING", "currency": "USD", "total": False}),
+            "price currency": lambda p: p.update(price={"number": "1", "currency": "MISSING", "total": False}),
         }
         for name, change in cases.items():
             with self.subTest(name):
                 self.doc = json.loads((vectors.CORPUS / "vectors.json").read_text(encoding="utf-8"))
                 change(self.vec("tolerance/integers-exact")["input"]["postings"][0])
-                self.assertReports("tolerance/integers-exact posting 0: left-out parts but needs_booking is false")
+                self.assertReports("tolerance/integers-exact posting 0: needs_booking is False, "
+                                   "the written posting says True")
+
+    def test_a_flag_with_nothing_left_out(self) -> None:
+        # The other direction (F5): a posting flagged although every part is written.
+        self.vec("tolerance/integers-exact")["input"]["postings"][0]["needs_booking"] = True
+        self.vec("tolerance/integers-exact")["output"]["needs_booking"] = True
+        self.vec("tolerance/integers-exact")["output"]["port"] = "indeterminate"
+        self.assertReports("tolerance/integers-exact posting 0: needs_booking is True, the written posting says False")
+
+    def test_a_refused_entry_has_no_port_verdict(self) -> None:
+        self.vec("tolerance/negative-price-refused")["output"]["port"] = "balanced"
+        self.assertReports("tolerance/negative-price-refused: port verdict 'balanced', the rule gives 'not-pinned'")
+
+    def test_not_pinned_only_for_refused_entries(self) -> None:
+        self.vec("tolerance/written-scale-10.50")["output"]["port"] = "not-pinned"
+        self.assertReports("port verdict 'not-pinned', the rule gives 'unbalanced'")
+        self.doc = json.loads((vectors.CORPUS / "vectors.json").read_text(encoding="utf-8"))
+        self.vec("tolerance/two-elided-legs")["output"]["port"] = "not-pinned"
+        self.assertReports("port verdict 'not-pinned', the rule gives 'indeterminate'")
 
     def test_balanced_must_agree_with_beancounts_validation(self) -> None:
         self.vec("tolerance/written-scale-10.50")["output"]["balanced"] = True
@@ -555,6 +608,23 @@ class Port(Corpus):
         self.assertFalse(vectors.written_needs_booking(p))
         p["cost"]["total"] = None
         self.assertFalse(vectors.written_needs_booking(p))
+        p["cost"]["total"] = "MISSING"  # {100 # USD} is not {100 USD}
+        self.assertTrue(vectors.written_needs_booking(p))
+
+
+class Balance(Corpus):
+    def test_a_tolerance_that_does_not_explain_a_pass(self) -> None:
+        self.vec("balance/inferred-boundary")["output"]["tolerance"] = "0.005"
+        self.assertReports("balance balance/inferred-boundary: difference 0.01 and tolerance 0.005 do not explain")
+
+    def test_a_tolerance_that_does_not_explain_a_failure(self) -> None:
+        self.vec("balance/inferred-over")["output"]["tolerance"] = "0.1"
+        self.assertReports("balance balance/inferred-over: difference 0.05 and tolerance 0.1 do not explain")
+
+    def test_another_error_is_not_judged_by_the_numbers(self) -> None:
+        # An assertion refused for another reason (its currency) is not judged by its numbers.
+        self.vec("balance/currency-not-allowed")["output"]["difference"] = "-5"
+        self.assertEqual([p for p in self.problems() if "currency-not-allowed" in p], [])
 
     def test_a_dropped_transaction_with_known_weights(self) -> None:
         o = self.vec("tolerance/two-elided-legs")["output"]
@@ -664,6 +734,18 @@ class Generator(unittest.TestCase):
         text = gen_domain_vectors.with_opens([], '2000-01-01 open Assets:A "FIFO"\n2020-01-01 * "x"\n  Assets:A  1 USD\n'
                                                  '  Expenses:B  -1 USD\n')
         self.assertEqual(len(re.findall(r"open Assets:A", text)), 1)
+
+    def test_a_negative_price_is_served_as_written(self) -> None:
+        doc = json.loads((vectors.CORPUS / "vectors.json").read_text(encoding="utf-8"))
+        v = next(v for v in doc["families"]["tolerance"] if v["id"] == "tolerance/negative-price-refused")
+        self.assertEqual(v["input"]["postings"][0]["price"], {"number": "-100", "currency": "USD", "total": False})
+
+    def test_left_out_parts_are_marked_not_null(self) -> None:
+        doc = json.loads((vectors.CORPUS / "vectors.json").read_text(encoding="utf-8"))
+        v = next(v for v in doc["families"]["tolerance"] if v["id"] == "tolerance/elided-leg-quantized")
+        self.assertEqual(v["input"]["postings"][2]["units"], "MISSING")
+        v = next(v for v in doc["families"]["tolerance"] if v["id"] == "tolerance/partial-cost-total-only")
+        self.assertEqual(v["input"]["postings"][0]["cost"]["per"], "MISSING")
 
     def test_a_total_price_keeps_the_written_total(self) -> None:
         doc = json.loads((vectors.CORPUS / "vectors.json").read_text(encoding="utf-8"))

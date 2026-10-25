@@ -141,7 +141,7 @@ Surface version 1. 18 tables, 126 columns: 121 from v0.2.2, 1 from v0.3.0, 4 fro
 - **One row is:** One `price` directive: those in the ledger (including prices a plugin such as `implicit_prices` makes) and those in the price sidecar file.
 - **As of:** entry
 - **Origin:** v0.2.2; **status:** draft; **cites:** ADR-0030, ADR-0048
-- **Note:** The price sidecar is loaded separately (ADR-0030); v0.2.2 had no sidecar, so for v0.2.2 ledgers the rows are the same. Which of two same-day prices wins is Beancount's price map rule, pinned by the domain vectors (`price/same-day-last-wins`, `price/both-directions`; design/specs/kernel/vectors.md, S0024): the last in Beancount's entry order, so `id` must follow that order; the PriceIndex applies it (ADR-0024, M7/M8).
+- **Note:** The price sidecar is loaded separately (ADR-0030); v0.2.2 had no sidecar, so for v0.2.2 ledgers the rows are the same. Which of two same-day prices wins is Beancount's price-map rule, pinned by the domain vectors (design/specs/kernel/vectors.md, S0024): in one direction the last in Beancount's entry order; when both directions of a pair have a point that day, the inverted point of the direction with fewer points, wherever it is in the file. Row `id` order alone does not decide it; the PriceIndex applies the rule (ADR-0024, M7/M8).
 
 | Column | Type / format | Meaning | Source | Sign | Origin | Change from legacy | User SQL | Status |
 |---|---|---|---|---|---|---|---|---|

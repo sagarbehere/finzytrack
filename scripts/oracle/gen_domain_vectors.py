@@ -26,8 +26,10 @@ from pathlib import Path
 from typing import Any
 
 import beancount
+import re
 from beancount import loader
 from beancount.core import data, getters, interpolate, prices, realization
+from beancount.core.amount import CURRENCY_RE
 from beancount.core.display_context import Precision
 from beancount.core.number import MISSING
 from beancount.core.position import CostSpec
@@ -42,6 +44,7 @@ VECTORS = CORPUS / "vectors.json"
 OPEN_DATE = "2000-01-01"
 TXN_DATE = "2020-06-01"
 NARRATION = "vector"
+BALANCE_ERROR = "Transaction does not balance"
 ABOUT = (
     "Beancount domain vectors (S0024): each vector is an input from corpora/vectors/cases.toml and what Beancount "
     "says about it. Written by scripts/oracle/gen_domain_vectors.py; spec design/specs/kernel/vectors.md. "
@@ -122,10 +125,27 @@ def the_transaction(entries: list[Any]) -> Any | None:
 
 
 def units_of(units: Any) -> dict[str, Any] | None:
-    """An Amount as {number, currency}; an elided amount (MISSING) as None."""
+    """A booked Amount as {number, currency}."""
     if units is None or units is MISSING:
         return None
     return {"number": num(units.number), "currency": cur(units.currency)}
+
+
+LEFT_OUT = "MISSING"  # a part the author left out for Beancount to fill (Beancount's MISSING); null = not written
+
+
+def w_num(value: Any) -> str | None:
+    return LEFT_OUT if value is MISSING else num(value)
+
+
+def w_cur(value: Any) -> str | None:
+    return LEFT_OUT if value is MISSING else cur(value)
+
+
+def written_units(units: Any) -> dict[str, Any] | str:
+    if units is MISSING:
+        return LEFT_OUT
+    return {"number": w_num(units.number), "currency": w_cur(units.currency)}
 
 
 def written_cost(cost: Any) -> dict[str, Any] | None:
@@ -133,9 +153,9 @@ def written_cost(cost: Any) -> dict[str, Any] | None:
         return None
     assert isinstance(cost, CostSpec), cost
     return {
-        "per": num(cost.number_per),
-        "total": num(cost.number_total),
-        "currency": cur(cost.currency),
+        "per": w_num(cost.number_per),
+        "total": w_num(cost.number_total),
+        "currency": w_cur(cost.currency),
         "date": cost.date.isoformat() if cost.date else None,
         "label": cost.label,
         "merge": bool(cost.merge),
@@ -143,18 +163,19 @@ def written_cost(cost: Any) -> dict[str, Any] | None:
 
 
 def written_postings(case: dict[str, Any], parsed: Any) -> list[dict[str, Any]]:
-    """The postings as written: Beancount's parse, except a `@@` total keeps the written total (the parser divides)."""
+    """The postings as written: Beancount's parse, except the price number, which is the written text (the parser
+    divides a `@@` total by the units and turns a negative price into its absolute value, with an error)."""
     out = []
     for given, p in zip(case["postings"], parsed.postings, strict=True):
         price = None
         if p.price is not None:
             text = given["price"].strip()
             total = text.startswith("@@")
-            number = text[2:].split()[0] if total else num(p.price.number)
-            price = {"number": number, "currency": cur(p.price.currency), "total": total}
+            number = LEFT_OUT if p.price.number is MISSING else text[2 if total else 1:].split()[0]
+            price = {"number": number, "currency": w_cur(p.price.currency), "total": total}
         out.append({
             "account": p.account,
-            "units": units_of(p.units),
+            "units": written_units(p.units),
             "cost": written_cost(p.cost),
             "price": price,
             "needs_booking": posting_needs_booking(p),
@@ -227,7 +248,13 @@ def gen_tolerance(case: dict[str, Any]) -> dict[str, Any]:
     if booked is None and not out["needs_booking"]:
         raise VectorError(f"{case['id']}: Beancount dropped a transaction whose weights are known; "
                           "the port verdict would be undefined")
-    out["port"] = "indeterminate" if out["needs_booking"] else "balanced" if out["balanced"] else "unbalanced"
+    refused = [e for e in out["errors"] if not e.startswith(BALANCE_ERROR)]
+    if out["needs_booking"]:
+        out["port"] = "indeterminate"
+    elif refused:
+        out["port"] = "not-pinned"  # Beancount refuses this entry for another reason; the contract refuses the write
+    else:
+        out["port"] = "balanced" if out["balanced"] else "unbalanced"
     return {"input": inp, "output": out}
 
 
@@ -288,11 +315,12 @@ def gen_currency(case: dict[str, Any]) -> dict[str, Any]:
     for item in case["codes"]:
         code = item["code"]
         e1, errs1 = probe_errors(f"{OPEN_DATE} commodity {code}\n")
-        e2, errs2 = probe_errors(f"{OPEN_DATE} price {code} 1.00 USD\n")
+        e2, errs2 = probe_errors(f"{OPEN_DATE} price {code} 1.00 USD\n")  # the price directive's base currency
         ok1 = not errs1 and [e.currency for e in e1 if isinstance(e, data.Commodity)] == [code]
         ok2 = not errs2 and [e.currency for e in e2 if isinstance(e, data.Price)] == [code]
         items.append({"polarity": item["polarity"], "input": {"code": code},
-                      "output": {"valid": ok1 and ok2, "commodity_errors": errs1, "amount_errors": errs2}})
+                      "output": {"valid": ok1 and ok2, "commodity_errors": errs1, "price_base_errors": errs2,
+                                 "currency_re_matches": re.fullmatch(CURRENCY_RE, code) is not None}})
     return {"input": {}, "items": items}
 
 

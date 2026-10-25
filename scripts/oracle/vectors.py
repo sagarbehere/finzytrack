@@ -182,15 +182,19 @@ def units(doc: dict[str, Any], family: str) -> list[Unit]:
     return out
 
 
+LEFT_OUT = "MISSING"  # a part the author left out for Beancount to fill; null means "not written"
+BALANCE_ERROR = "Transaction does not balance"
+
+
 def written_needs_booking(p: dict[str, Any]) -> bool:
-    """What the port can see in the written posting: a left-out units number or currency, a cost with no currency
-    or no number at all, a price with no number or currency. The generator's flag must include these."""
+    """The port's rule, from the written posting alone: some number or currency of the units, cost or price is
+    left out (marked MISSING). The generator's flag must equal it."""
     u, c, pr = p["units"], p["cost"], p["price"]
-    if u is None or u["number"] is None or u["currency"] is None:
+    if u == LEFT_OUT or LEFT_OUT in (u["number"], u["currency"]):
         return True
-    if c is not None and (c["currency"] is None or (c["per"] is None and c["total"] is None)):
+    if c is not None and LEFT_OUT in (c["per"], c["total"], c["currency"]):
         return True
-    return pr is not None and (pr["number"] is None or pr["currency"] is None)
+    return pr is not None and LEFT_OUT in (pr["number"], pr["currency"])
 
 
 def port_problems(case: dict[str, Any]) -> list[str]:
@@ -199,17 +203,31 @@ def port_problems(case: dict[str, Any]) -> list[str]:
     if o["needs_booking"] != any(p["needs_booking"] for p in postings):
         problems.append(f"{where}: needs_booking is not the OR of the postings' flags")
     for n, p in enumerate(postings):
-        if written_needs_booking(p) and not p["needs_booking"]:
-            problems.append(f"{where} posting {n}: left-out parts but needs_booking is false")
-    expected = "indeterminate" if o["needs_booking"] else "balanced" if o["balanced"] else "unbalanced"
+        if written_needs_booking(p) != p["needs_booking"]:
+            problems.append(f"{where} posting {n}: needs_booking is {p['needs_booking']}, "
+                            f"the written posting says {written_needs_booking(p)}")
+    refused = [e for e in o["errors"] if not e.startswith(BALANCE_ERROR)]
+    expected = ("indeterminate" if o["needs_booking"] else "not-pinned" if refused
+                else "balanced" if o["balanced"] else "unbalanced")
     if o["port"] != expected:
         problems.append(f"{where}: port verdict {o['port']!r}, the rule gives {expected!r}")
-    said_unbalanced = any(e.startswith("Transaction does not balance") for e in o["errors"])
+    said_unbalanced = any(e.startswith(BALANCE_ERROR) for e in o["errors"])
     if o["balanced"] is not None and o["balanced"] == said_unbalanced:
         problems.append(f"{where}: balanced={o['balanced']} disagrees with Beancount's own validation errors")
     if o["dropped"] and not o["needs_booking"]:
         problems.append(f"{where}: Beancount dropped a transaction whose weights are known")
     return problems
+
+
+def balance_problems(case: dict[str, Any]) -> list[str]:
+    """The recorded tolerance and difference must explain Beancount's own verdict on the assertion."""
+    o = case["output"]
+    failed = any(e.startswith("Balance failed") for e in o["errors"])
+    over = abs(Decimal(o["difference"])) > Decimal(o["tolerance"])
+    if failed != over and (failed or not o["errors"]):
+        return [f"balance {case['id']}: difference {o['difference']} and tolerance {o['tolerance']} "
+                f"do not explain Beancount's verdict"]
+    return []
 
 
 # ---- coverage: each behaviour the spec names has a vector ----------------------------------------------------
@@ -221,6 +239,11 @@ def _d(x: str | None) -> Decimal | None:
 
 def _wp(case: dict[str, Any]) -> list[dict[str, Any]]:
     return case["input"]["postings"]
+
+
+def _cost_shape(p: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
+    c = p["cost"]
+    return (None, None, None, None) if c is None else (c["per"], c["total"], c["currency"], c["date"])
 
 
 def _at_boundary(o: dict[str, Any]) -> bool:
@@ -244,6 +267,39 @@ def _price_lines(ledger: str) -> list[tuple[str, str, str]]:
 
 def _forward(case: dict[str, Any], base: str, quote: str) -> list[str]:
     return [d for d, b, q in _price_lines(case["input"]["ledger"]) if (b, q) == (base, quote)]
+
+
+def _lines_on(case: dict[str, Any], date: str | None) -> list[tuple[int, str, str, Decimal]]:
+    """(line index, base, quote, number) of the price directives written on `date`."""
+    out = []
+    for n, line in enumerate(case["input"]["ledger"].splitlines()):
+        m = re.fullmatch(r"(\d{4}-\d\d-\d\d) price (\S+) (\S+) (\S+)", line)
+        if m and m.group(1) == date:
+            out.append((n, m.group(2), m.group(4), Decimal(m.group(3))))
+    return out
+
+
+def _inverted_wins_before_forward(case: dict[str, Any], item: dict[str, Any]) -> bool:
+    """The result is 1/x of a reverse-direction line although a forward line comes later in the file that day."""
+    o, b, q = item["output"], item["input"]["base"], item["input"]["quote"]
+    if o["number"] is None:
+        return False
+    lines = _lines_on(case, o["date"])
+    rev = [(n, x) for n, lb, lq, x in lines if (lb, lq) == (q, b) and x != 0 and Decimal(1) / x == Decimal(o["number"])]
+    fwd = [n for n, lb, lq, _ in lines if (lb, lq) == (b, q)]
+    return bool(rev and fwd and max(fwd) > max(n for n, _ in rev))
+
+
+def _inverted_twice(case: dict[str, Any], item: dict[str, Any]) -> bool:
+    """The result equals neither a written line of that day nor its inverse: the point went through 1/(1/x)."""
+    o, b, q = item["output"], item["input"]["base"], item["input"]["quote"]
+    if o["number"] is None:
+        return False
+    got = Decimal(o["number"])
+    lines = _lines_on(case, o["date"])
+    fwd = [x for _, lb, lq, x in lines if (lb, lq) == (b, q)]
+    rev = [x for _, lb, lq, x in lines if (lb, lq) == (q, b)]
+    return bool(fwd) and got not in fwd and all(x == 0 or Decimal(1) / x != got for x in rev)
 
 
 def _has_plugin(case: dict[str, Any]) -> bool:
@@ -275,9 +331,21 @@ Pred = Callable[[dict[str, Any], dict[str, Any]], bool]
 COVERAGE: dict[str, dict[str, Pred]] = {
     "tolerance": {
         "an elided leg: indeterminate, filled by Beancount": lambda c, i: (
-            i["output"]["port"] == "indeterminate" and bool(i["output"]["interpolated"])),
+            i["output"]["port"] == "indeterminate" and bool(i["output"]["interpolated"])
+            and any(p["units"] == LEFT_OUT for p in _wp(c))),
         "a {} reduction: indeterminate": lambda c, i: i["output"]["port"] == "indeterminate" and any(
-            p["cost"] is not None and p["cost"]["per"] is None and p["cost"]["total"] is None for p in _wp(c)),
+            _cost_shape(p) == ("MISSING", None, "MISSING", None) for p in _wp(c)),
+        "a {USD} reduction: indeterminate": lambda c, i: i["output"]["port"] == "indeterminate" and any(
+            _cost_shape(p) == ("MISSING", None, "USD", None) for p in _wp(c)),
+        "a {date} reduction: indeterminate": lambda c, i: i["output"]["port"] == "indeterminate" and any(
+            _cost_shape(p)[:3] == ("MISSING", None, "MISSING") and _cost_shape(p)[3] is not None for p in _wp(c)),
+        "a cost with no currency: indeterminate": lambda c, i: i["output"]["port"] == "indeterminate" and any(
+            _cost_shape(p)[2] == "MISSING" and _cost_shape(p)[0] not in (None, "MISSING") for p in _wp(c)),
+        "a cost with only a total: indeterminate": lambda c, i: i["output"]["port"] == "indeterminate" and any(
+            _cost_shape(p)[0] == "MISSING" and _cost_shape(p)[1] not in (None, "MISSING") for p in _wp(c)),
+        "a refused entry has no port verdict": lambda c, i: i["output"]["port"] == "not-pinned",
+        "a negative price is served as written": lambda c, i: any(
+            p["price"] is not None and p["price"]["number"].startswith("-") for p in _wp(c)),
         "a residual equal to the tolerance balances": lambda c, i: _at_boundary(i["output"]),
         "an unbalanced transaction": lambda c, i: i["output"]["balanced"] is False,
         "integers infer no tolerance": lambda c, i: _zero_tol_fail(i["output"]),
@@ -289,7 +357,9 @@ COVERAGE: dict[str, dict[str, Pred]] = {
             "*" in c["input"]["tolerance_options"]["inferred_tolerance_default"]),
         "infer_tolerance_from_cost": lambda c, i: c["input"]["tolerance_options"]["infer_tolerance_from_cost"],
         "a @@ total price": lambda c, i: any(p["price"] is not None and p["price"]["total"] for p in _wp(c)),
-        "a {{}} total cost": lambda c, i: any(p["cost"] is not None and p["cost"]["total"] for p in _wp(c)),
+        "a {{}} total cost": lambda c, i: any(
+            p["cost"] is not None and p["cost"]["total"] not in (None, "MISSING")
+            and p["cost"]["per"] != "MISSING" for p in _wp(c)),
         "cost and price on one posting": lambda c, i: any(p["cost"] and p["price"] for p in _wp(c)),
         "Beancount drops the transaction": lambda c, i: i["output"]["dropped"] is True,
     },
@@ -333,6 +403,8 @@ COVERAGE: dict[str, dict[str, Pred]] = {
             i["input"]["code"][-1:] in "._-'" and not i["output"]["valid"]),
         "more text after a code is invalid even when it parses": lambda c, i: (
             " " in i["input"]["code"] and not i["output"]["valid"] and i["output"]["commodity_errors"] == []),
+        "invalid although CURRENCY_RE matches": lambda c, i: (
+            not i["output"]["valid"] and i["output"]["currency_re_matches"]),
         "lower case is invalid": lambda c, i: (" " not in i["input"]["code"]
                                                and i["input"]["code"] != i["input"]["code"].upper()
                                                and not i["output"]["valid"]),
@@ -349,6 +421,8 @@ COVERAGE: dict[str, dict[str, Pred]] = {
             i["input"]["date"] == "latest" and i["output"]["date"] is not None and i["output"]["date"] > TXN_DATE),
         "an inverse lookup": lambda c, i: i["output"]["number"] is not None and not _forward(
             c, i["input"]["base"], i["input"]["quote"]) and bool(_forward(c, i["input"]["quote"], i["input"]["base"])),
+        "the inverted point wins wherever it is in the file": lambda c, i: _inverted_wins_before_forward(c, i),
+        "a point inverted twice": lambda c, i: _inverted_twice(c, i),
         "same-day duplicates": lambda c, i: (
             i["output"]["number"] is not None and len(_forward(c, i["input"]["base"], i["input"]["quote"]))
             != len(set(_forward(c, i["input"]["base"], i["input"]["quote"])))),
@@ -409,6 +483,9 @@ def check_vectors(doc: dict[str, Any], cases: dict[str, Any]) -> list[str]:
         if family == "tolerance":
             for case in vecs:
                 problems.extend(port_problems(case))
+        if family == "balance":
+            for case in vecs:
+                problems.extend(balance_problems(case))
         for name, pred in COVERAGE[family].items():
             if not any(pred(case, item) for case, item in units(doc, family)):
                 problems.append(f"{family}: coverage: no vector for {name!r}")

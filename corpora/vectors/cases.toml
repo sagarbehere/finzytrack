@@ -183,7 +183,7 @@ postings = [
 [[tolerance]]
 id = "tolerance/cost-not-price-weighs"
 polarity = "positive"
-spec = ["beancount:beancount.core.convert.get_weight", "ADR-0025"]
+spec = ["beancount:beancount.core.convert.get_weight"]
 about = "A sale at cost with a price weighs at cost; the price is ignored for balancing, so the gain leg balances it."
 setup = """
 2020-01-01 * "buy"
@@ -287,10 +287,87 @@ postings = [
 id = "tolerance/negative-price-refused"
 polarity = "negative"
 spec = ["beancount:beancount.parser.grammar.Builder.posting"]
-about = "A negative price is an error; Beancount uses its absolute value, so the residual itself is zero."
+about = "A negative price is an error (Beancount then weighs its absolute value). The port is served the written -100; Beancount refuses the entry, so the vectors pin no port verdict."
 postings = [
   { account = "Assets:Broker", units = "10 VTI", price = "@ -100 USD" },
   { account = "Assets:Bank", units = "-1000 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/negative-total-price-refused"
+polarity = "negative"
+spec = ["beancount:beancount.parser.grammar.Builder.posting"]
+about = "A negative @@ total is refused like a negative @ price; the port is served the written -1000 and the vectors pin no port verdict."
+postings = [
+  { account = "Assets:Broker", units = "10 VTI", price = "@@ -1000 USD" },
+  { account = "Assets:Bank", units = "-1000 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/partial-cost-currency-only"
+polarity = "positive"
+spec = ["beancount:beancount.parser.booking_full.book_reductions", "review:L3-verif §3.2", "ADR-0024"]
+about = "A reduction {USD} names only the cost currency: Beancount picks the lot, so the port says indeterminate."
+setup = """
+2000-01-01 open Assets:Broker "FIFO"
+2020-01-01 * "lot 1"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+2020-02-01 * "lot 2"
+  Assets:Broker  10 VTI {120 USD}
+  Assets:Bank  -1200 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-5 VTI", cost = "{USD}" },
+  { account = "Assets:Bank", units = "500 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/partial-cost-date-only"
+polarity = "positive"
+spec = ["beancount:beancount.parser.booking_full.book_reductions", "review:L3-verif §3.2", "ADR-0024"]
+about = "A reduction {2020-01-01} names only the lot date: the weight is known after booking, so the port says indeterminate."
+setup = """
+2000-01-01 open Assets:Broker "FIFO"
+2020-01-01 * "lot 1"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+2020-02-01 * "lot 2"
+  Assets:Broker  10 VTI {120 USD}
+  Assets:Bank  -1200 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-5 VTI", cost = "{2020-01-01}" },
+  { account = "Assets:Bank", units = "500 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/partial-cost-number-only"
+polarity = "positive"
+spec = ["beancount:beancount.parser.booking_full.book_reductions", "review:L3-verif §3.2", "ADR-0024"]
+about = "A reduction {100} gives the number but not the currency: Beancount takes the currency from the lot, so the port says indeterminate."
+setup = """
+2000-01-01 open Assets:Broker "FIFO"
+2020-01-01 * "lot 1"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+2020-02-01 * "lot 2"
+  Assets:Broker  10 VTI {120 USD}
+  Assets:Bank  -1200 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-5 VTI", cost = "{100}" },
+  { account = "Assets:Bank", units = "500 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/partial-cost-total-only"
+polarity = "positive"
+spec = ["beancount:beancount.parser.booking_full.interpolate_group", "review:L3-verif §3.2", "ADR-0024"]
+about = "{# 5.00 USD} leaves the per-unit cost out: Beancount interpolates it from the cash leg (100.50 per unit with the total added), so the port says indeterminate."
+postings = [
+  { account = "Assets:Broker", units = "10 VTI", cost = "{# 5.00 USD}" },
+  { account = "Assets:Bank", units = "-1005.00 USD" },
 ]
 
 # ---- balance: balance-assertion tolerance (get_balance_tolerance) --------------------------------------------
@@ -503,8 +580,8 @@ names = [
 
 [[currency]]
 id = "currency/grammar"
-spec = ["beancount:beancount.core.amount.CURRENCY_RE", "beancount:beancount.parser.parser.parse_string", "ADR-0024"]
-about = "Probed as a commodity directive and as an amount's currency; both must parse to exactly the code (a prefix match is not enough: USD ;x parses as a commodity USD with a comment)."
+spec = ["beancount:beancount.parser.parser.parse_string", "beancount:beancount.parser.grammar.Builder.commodity", "beancount:beancount.parser.grammar.Builder.price", "ADR-0024"]
+about = "Probed as a commodity directive and as the base currency of a price directive; both must parse to exactly the code (a prefix match is not enough: USD ;x parses as a commodity USD with a comment). The parser decides; beancount.core.amount.CURRENCY_RE is recorded for contrast only (it accepts CAC_)."
 codes = [
   { code = "USD", polarity = "positive" },
   { code = "V", polarity = "positive" },
@@ -575,6 +652,33 @@ setup = """
 queries = [
   { base = "USD", quote = "INR", date = "2020-01-02", polarity = "positive" },
   { base = "INR", quote = "USD", date = "2020-01-02", polarity = "positive" },
+  { base = "INR", quote = "USD", date = "2020-01-01", polarity = "positive" },
+]
+
+[[price]]
+id = "price/inverted-wins-anywhere"
+spec = ["beancount:beancount.core.prices.build_price_map", "beancount:beancount.utils.misc_utils.sorted_uniquify", "ADR-0024"]
+about = "On a day with prices in both directions, the inverted point wins wherever it is in the file: here USD 76 INR is the later line, yet USD in INR on 2020-01-02 is 1/0.0125 = 80."
+setup = """
+2020-01-01 price USD 75 INR
+2020-01-02 price INR 0.0125 USD
+2020-01-02 price USD 76 INR
+"""
+queries = [
+  { base = "USD", quote = "INR", date = "2020-01-02", polarity = "positive" },
+]
+
+[[price]]
+id = "price/double-inversion"
+spec = ["beancount:beancount.core.prices.build_price_map", "ADR-0024"]
+about = "The direction with fewer points (USD in INR, one point) is inverted into the other; looking it up again inverts it back, so 76 becomes 75.99999999999999999999999998 at 28 digits."
+setup = """
+2020-01-01 price INR 0.0133 USD
+2020-01-02 price INR 0.0132 USD
+2020-01-01 price USD 76 INR
+"""
+queries = [
+  { base = "USD", quote = "INR", date = "2020-01-01", polarity = "positive" },
   { base = "INR", quote = "USD", date = "2020-01-01", polarity = "positive" },
 ]
 
