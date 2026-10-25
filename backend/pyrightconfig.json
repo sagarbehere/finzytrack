@@ -5,5 +5,8 @@
   "venvPath": ".",
   "venv": ".venv",
   "reportMissingModuleSource": "error",
+  "reportMissingTypeStubs": "error",
+  "reportMatchNotExhaustive": "error",
+  "reportImplicitOverride": "error",
   "reportUnnecessaryTypeIgnoreComment": "error"
 }

@@ -84,10 +84,71 @@ def js_deps() -> list[tuple[str, str, str]] | None:
     return deps
 
 
+REFUSED, PENDING, ALLOWED = 0, 1, 2
+
+
+def judge(expression: str, allowed: set[str], pending: set[str]) -> int:
+    """Judge an SPDX licence expression: `OR` takes its best part, `AND` its worst, `A WITH B` is one
+    licence. Parentheses group. Anything that does not parse (or a classifier name such as "BSD License",
+    which is not an SPDX id) is refused: the check fails closed."""
+    tokens = expression.replace("(", " ( ").replace(")", " ) ").split()
+    pos = 0
+
+    def peek() -> str | None:
+        return tokens[pos] if pos < len(tokens) else None
+
+    def take() -> str:
+        nonlocal pos
+        pos += 1
+        return tokens[pos - 1]
+
+    def term() -> str:
+        words = []
+        while peek() not in (None, "AND", "OR", "WITH", "(", ")"):
+            words.append(take())
+        if not words:
+            raise ValueError("licence term expected")
+        return " ".join(words)
+
+    def atom() -> int:
+        if peek() == "(":
+            take()
+            value = disjunction()
+            if peek() != ")":
+                raise ValueError("unbalanced parentheses")
+            take()
+            return value
+        name = term()
+        if peek() == "WITH":
+            take()
+            name = f"{name} WITH {term()}"
+        return ALLOWED if name in allowed else PENDING if name in pending else REFUSED
+
+    def conjunction() -> int:
+        value = atom()
+        while peek() == "AND":
+            take()
+            value = min(value, atom())
+        return value
+
+    def disjunction() -> int:
+        value = conjunction()
+        while peek() == "OR":
+            take()
+            value = max(value, conjunction())
+        return value
+
+    try:
+        value = disjunction()
+    except ValueError:
+        return REFUSED
+    return value if pos == len(tokens) else REFUSED
+
+
 def evaluate(
     groups: dict[str, list[tuple[str, str, str]] | None], allowed: set[str], pending: set[str]
 ) -> tuple[list[str], list[str], str]:
-    """(problems, warnings, notices text). A dependency passes when one of its `OR` options is allowed."""
+    """(problems, warnings, notices text), each dependency judged by `judge`."""
     problems, warnings, lines = [], [], [HEADER]
     for title, deps in groups.items():
         lines.append(f"\n== {title} ==\n")
@@ -97,10 +158,10 @@ def evaluate(
         if not deps:
             lines.append("(no bundled dependencies)\n")
         for name, version, lic in sorted(deps):
-            options = {p.strip() for p in lic.replace("(", "").replace(")", "").split(" OR ")}
-            if options & allowed:
+            verdict = judge(lic, allowed, pending)
+            if verdict == ALLOWED:
                 pass
-            elif options & pending:
+            elif verdict == PENDING:
                 warnings.append(f"{name} {version}: {lic} (pending legal advice)")
             else:
                 problems.append(f"{name} {version}: licence {lic!r} is not on the allowlist")

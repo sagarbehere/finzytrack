@@ -141,3 +141,12 @@ Format:
 - Expected effect: no escalation that an existing ADR answers.
 - Observed effect: pending.
 - Status: kept (tightening).
+
+## IMP-0014: T1 backend job and backend pre-push checks (2026-10-25)
+- Trigger: S0006, the main sidecar's package skeleton (BL-0037).
+- What changed: `.github/workflows/ci.yml` gains the `backend` job (ruff format and lint, pyright strict, lint-imports, deptry, pytest incl. the architecture and gate tests) and uv plus a backend sync in `repo-checks` for the licence step; `.githooks/pre-push` adds lint-imports and deptry and runs all backend tests; `scripts/check_licences.py` counts only the lockfile's runtime closure and judges SPDX expressions (AND, OR, WITH, parentheses), failing closed.
+- PROCESS.md section: §6 (T0 pre-push and T1 contents).
+- Why: every later backend slice inherits these gates from its first commit.
+- Expected effect: layering, purity, Beancount-ban, type and lint regressions fail before landing.
+- Observed effect: pending.
+- Status: kept (tightening, agent-approved).

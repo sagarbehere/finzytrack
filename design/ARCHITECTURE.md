@@ -223,7 +223,7 @@ Each slice has the same internal layout, so an agent finds things by convention:
 
 import-linter (`backend/.importlinter`, T1) holds these contracts from the first commit, with no transitional exemptions (`PROCESS.md` (structural checks)):
 
-1. **Layers (kernel):** `api` > (slices) > `workspaces` | `boot` > `mirror` > `ledger` > `platform` > `domain`. `boot` and `workspaces` are siblings.
+1. **Layers (kernel):** `api` > (slices) > `boot` > `workspaces` > `mirror` > `ledger` > `platform` > `domain`. `boot` may import `workspaces` (its lifecycle executor assesses and migrates workspaces, §2.3); `workspaces` never imports `boot` (S0006 settled the earlier "siblings" wording, which contradicted §2.3).
 2. **Per-slice layers**, for every slice: `http` > `usecases` > `core`, with `schemas` importable only by `http` and `usecases`.
 3. **Purity (forbidden):** no `*.core` module and no `domain` module may import `fastapi`, `pydantic`, `sqlite3`, `httpx`, `portalocker`, `os`, `pathlib`, `subprocess`, `socket`, `time`, `random`, `secrets`, `uuid`, `beancount` or `app.platform.adapters`. Pydantic stays at the edges (EP-06). `ledger.core` may import `app.ledger.beancount_port`'s pure parser facade only.
 4. **Single Beancount gateway and the load rule** (stated once here; ADR-0043 and ADR-0010 point to it): full loads (`load_file`, `load_string`, the `_parse_recursive` replica) are invoked only from `ledger/overlay.py` and the reconciliation job, both under the heavy-load semaphore. Parser-only calls (`parse_file`, `parse_string`) are invoked only via `beancount_port`. Only `beancount_port` imports `beancount`. The AST test checks call sites of the port's wrappers.

@@ -70,16 +70,18 @@ def test_contracts_hold_on_the_tree() -> None:
         ("app.domain.planted", "import app.platform\n", "Kernel layers"),
         ("app.platform.planted", "import app.api\n", "Kernel layers"),
         ("app.mirror.planted", "import app.workspaces\n", "Kernel layers"),
+        ("app.workspaces.planted", "import app.boot\n", "Kernel layers"),
     ],
 )
 def test_planted_violation_breaks_its_contract(tree: Path, module: str, text: str, contract: str) -> None:
-    for extra in ("app.api.routes", "app.workspaces.registry", "app.platform.adapters.fs"):
+    for extra in ("app.api.routes", "app.workspaces.registry", "app.boot.lifecycle", "app.platform.adapters.fs"):
         plant(tree, extra, "")
     plant(tree, module, text)
     r = lint_imports(tree)
     assert r.returncode != 0, f"planted {module}: {text!r} passed"
-    assert f"{contract}" in r.stdout, r.stdout
-    assert "BROKEN" in r.stdout, r.stdout
+    # Every contract's name is printed with KEPT or BROKEN; the planted one must be the one that broke.
+    broken = [line for line in r.stdout.splitlines() if line.rstrip().endswith("BROKEN")]
+    assert any(contract in line for line in broken), r.stdout
 
 
 def test_allowed_direction_passes(tree: Path) -> None:
@@ -87,6 +89,7 @@ def test_allowed_direction_passes(tree: Path) -> None:
     plant(tree, "app.api.routes", "import app.platform\nimport app.domain\n")
     plant(tree, "app.platform.clock", "import time\nimport app.domain\n")
     plant(tree, "app.mirror.reader", "import app.platform\n")
+    plant(tree, "app.boot.lifecycle", "import app.workspaces\n")  # §2.3: boot may import kernel packages
     plant(tree, "app.workspaces.registry", "import app.mirror\nimport app.platform\n")  # §2.3: may import mirror
     r = lint_imports(tree)
     assert r.returncode == 0, r.stdout + r.stderr

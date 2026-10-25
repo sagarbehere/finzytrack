@@ -16,7 +16,8 @@ type = layers
 layers =
     (app.main)
     (app.api)
-    (app.boot) | (app.workspaces)
+    (app.boot)
+    (app.workspaces)
     (app.mirror)
     app.platform
     app.domain
