@@ -1,8 +1,8 @@
 """Meta-tests for the packaged-build smoke harness (`shell/smoke_packaged.py`; spec: `shell/src-tauri/src/smoke.rs`).
 
 A normal run passes only on exit 0 with exactly one `FT_SMOKE_OK` line; the must-not-pass run (`--expect-fail`)
-passes only on a non-zero exit with exactly one `FT_SMOKE_FAIL` line, so a crash or a hang is never mistaken for
-either verdict (EP-29).
+passes only on a non-zero exit with exactly one `FT_SMOKE_FAIL` line giving the expected reason, so a crash, a
+hang or a refusal for another cause is never mistaken for either verdict (EP-29).
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ FAIL = "FT_SMOKE_FAIL cannot start the bundled interpreter"
 
 class Verdict(unittest.TestCase):
     def test_a_passing_run(self) -> None:
-        self.assertTrue(verdict(0, f"log line\n{OK}\n", expect_fail=False)[0])
+        self.assertTrue(verdict(0, f"log line\n{OK}\n", expect_fail=None)[0])
 
     def test_runs_that_must_not_pass(self) -> None:
         cases = {
@@ -35,10 +35,10 @@ class Verdict(unittest.TestCase):
         }
         for name, (code, out) in cases.items():
             with self.subTest(case=name):
-                self.assertFalse(verdict(code, out, expect_fail=False)[0])
+                self.assertFalse(verdict(code, out, expect_fail=None)[0])
 
     def test_an_expected_refusal(self) -> None:
-        self.assertTrue(verdict(1, FAIL, expect_fail=True)[0])
+        self.assertTrue(verdict(1, FAIL, expect_fail="cannot start the bundled interpreter")[0])
 
     def test_expected_refusals_that_must_not_pass(self) -> None:
         cases = {
@@ -47,10 +47,12 @@ class Verdict(unittest.TestCase):
             "timeout": (None, FAIL),
             "FAIL line but exit 0": (0, FAIL),
             "OK line with non-zero exit": (1, OK),
+            "a refusal for another reason (the shell's own timeout)": (1, "FT_SMOKE_FAIL no verdict within 120s"),
+            "a refusal for another reason (no frontend)": (1, "FT_SMOKE_FAIL the frontend bundle is missing"),
         }
         for name, (code, out) in cases.items():
             with self.subTest(case=name):
-                self.assertFalse(verdict(code, out, expect_fail=True)[0])
+                self.assertFalse(verdict(code, out, expect_fail="cannot start the bundled interpreter")[0])
 
 
 if __name__ == "__main__":

@@ -3,8 +3,8 @@
 //! The run prints exactly one line and exits 0 only when both hold:
 //! 1. the `main` window's page load reached *Finished*, and the bundle embeds the frontend's `index.html`;
 //! 2. the interpreter at the package's own resource path `sidecar/python/…` (never one found on `PATH`),
-//!    started with `-I`, reports Python 3.13, a `sys.prefix` inside the package's resource directory, and the
-//!    main sidecar's package `app` imported from inside that directory.
+//!    started with `-I`, reports isolated mode, Python 3.13, a `sys.prefix` inside the package's resource
+//!    directory, and the main sidecar's package `app` imported from inside that directory.
 //!
 //! Success prints `FT_SMOKE_OK {json}`. Anything else, including no verdict within [`TIMEOUT`], prints
 //! `FT_SMOKE_FAIL <reason>` and exits 1. It reads nothing outside the package (INV-24).
@@ -21,7 +21,7 @@ use tauri::{AppHandle, Builder, Manager, Runtime};
 pub const FLAG: &str = "--smoke-test";
 const TIMEOUT: Duration = Duration::from_secs(120);
 const PROBE: &str =
-    "import json, sys\nimport app\nprint(json.dumps({'version': list(sys.version_info[:2]), 'prefix': sys.prefix, 'app': app.__file__}))\n";
+    "import json, sys\nimport app\nprint(json.dumps({'version': list(sys.version_info[:2]), 'isolated': sys.flags.isolated, 'prefix': sys.prefix, 'app': app.__file__}))\n";
 
 /// What the bundled interpreter reported, once it passed every check.
 #[derive(Debug, PartialEq, Eq)]
@@ -69,6 +69,9 @@ pub fn judge(
             "bundled Python is {}, expected [3,13]",
             v["version"]
         ));
+    }
+    if v["isolated"] != serde_json::json!(1) {
+        return Err("the bundled interpreter did not run isolated (-I)".into());
     }
     let root = canon(resources).ok_or("resource directory not found")?;
     let inside = |key: &str| -> Result<PathBuf, String> {
@@ -223,7 +226,7 @@ mod tests {
     }
 
     fn line(version: &str, prefix: &str, app: &str) -> String {
-        format!(r#"{{"version": {version}, "prefix": "{prefix}", "app": "{app}"}}"#)
+        format!(r#"{{"version": {version}, "isolated": 1, "prefix": "{prefix}", "app": "{app}"}}"#)
     }
 
     const PREFIX: &str = "/pkg/Resources/sidecar/python";
@@ -262,6 +265,16 @@ mod tests {
                 "python 3.13.1 as three parts",
                 true,
                 line("[3, 13, 1]", PREFIX, APP),
+            ),
+            (
+                "not isolated (-I dropped)",
+                true,
+                line("[3, 13]", PREFIX, APP).replace(r#""isolated": 1"#, r#""isolated": 0"#),
+            ),
+            (
+                "isolation flag missing",
+                true,
+                line("[3, 13]", PREFIX, APP).replace(r#""isolated": 1, "#, ""),
             ),
             (
                 "version missing",

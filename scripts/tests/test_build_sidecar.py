@@ -126,6 +126,19 @@ class Tree(unittest.TestCase):
         self.assertEqual([p for p in tmp.rglob("*") if p.is_symlink()], [])
         self.assertTrue((tmp / "bin/python3.13").is_file())
 
+    def test_trim_removes_tcl_tk_of_any_version_and_keeps_the_runtime(self) -> None:
+        # The layout of PBS 20261009 (verifier S0012 F1): versioned Tcl/Tk folders and their libraries.
+        python = Path(tempfile.mkdtemp()) / "python"
+        keep = ["lib/libpython3.13.dylib", "lib/python3.13/json/__init__.py", "bin/python3.13"]
+        drop = ["lib/tcl9.0/init.tcl", "lib/tk9.0/tk.tcl", "lib/itcl4.3.8/x", "lib/thread3.0.6/x",
+                "lib/libtcl9.0.dylib", "lib/python3.13/tkinter/__init__.py", "lib/python3.13/test/x.py",
+                "bin/python3.13-config", "bin/pip3"]
+        for rel in keep + drop:
+            (python / rel).parent.mkdir(parents=True, exist_ok=True)
+            (python / rel).write_text("x")
+        bs.trim(python, "unix")
+        self.assertEqual([r for r in keep + drop if (python / r).exists()], keep)
+
     def test_macho_files_are_found_by_content_deepest_first(self) -> None:
         tmp = Path(tempfile.mkdtemp())
         (tmp / "a/b").mkdir(parents=True)

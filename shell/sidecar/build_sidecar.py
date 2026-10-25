@@ -38,8 +38,7 @@ TRIM = {
     "unix": [
         "lib/python3.13/idlelib", "lib/python3.13/ensurepip", "lib/python3.13/tkinter",
         "lib/python3.13/turtledemo", "lib/python3.13/test", "lib/python3.13/site-packages/pip",
-        "include", "share", "lib/pkgconfig", "lib/tcl9", "lib/tk9", "lib/tcl8", "lib/tk8", "lib/tcl8.6",
-        "lib/tk8.6", "lib/itcl4.3.2", "lib/thread3.0.1",
+        "include", "share", "lib/pkgconfig",
     ],
     "windows": [
         "Lib/idlelib", "Lib/ensurepip", "Lib/tkinter", "Lib/turtledemo", "Lib/test", "Lib/site-packages/pip",
@@ -119,6 +118,11 @@ def trim(python: Path, layout: str) -> None:
         p = python / rel
         if p.is_dir() and not p.is_symlink():
             shutil.rmtree(p)
+    # Tcl/Tk and its extensions, whatever versions the release carries (tcl9.0, itcl4.3.8, thread3.0.6, ...).
+    for pattern in ("lib/tcl[0-9]*", "lib/tk[0-9]*", "lib/itcl[0-9]*", "lib/thread[0-9]*"):
+        for p in python.glob(pattern):
+            if p.is_dir() and not p.is_symlink():
+                shutil.rmtree(p)
     for pattern in ("bin/idle3*", "bin/pip*", "bin/pydoc3*", "bin/2to3*", "lib/libtcl*", "lib/libtk*",
                     "DLLs/_tkinter*", "DLLs/tcl*", "DLLs/tk*", "lib/python3.13/lib-dynload/_tkinter*", "bin/python3*-config"):
         for p in python.glob(pattern):
@@ -176,6 +180,12 @@ def adhoc_sign(tree: Path) -> int:
         batch = [str(p) for p in files[i:i + 50]]
         run(["codesign", "-s", "-", "-f", "--timestamp=none", *batch], capture_output=True)
         run(["codesign", "--verify", "--strict", *batch], capture_output=True)
+    for p in files:
+        # ADR-0056: signed by us, inside-out. The linker's own ad-hoc signature ("linker-signed") would also
+        # verify, so its absence is what shows this step ran.
+        info = run(["codesign", "-dv", str(p)], capture_output=True).stderr
+        if "linker-signed" in info:
+            raise BuildError(f"{p.name} still carries only the linker's signature")
     return len(files)
 
 

@@ -1,11 +1,12 @@
 """Run a packaged build's `--smoke-test` and judge the result (spec: `shell/src-tauri/src/smoke.rs`).
 
-    python3 shell/smoke_packaged.py PATH [--expect-fail]
+    python3 shell/smoke_packaged.py PATH [--expect-fail REASON]
 
 PATH is the shell executable, or a macOS `.app` (its `Contents/MacOS/` executable is run). Passes only when
-the process exits 0 and its stdout holds exactly one smoke line, `FT_SMOKE_OK {json}`. With `--expect-fail`
-(the must-not-pass run) it passes only when the process exits non-zero with exactly one `FT_SMOKE_FAIL` line,
-so a crash or a hang never counts as the expected refusal. Linux CI wraps this in `xvfb-run`.
+the process exits 0 and its stdout holds exactly one smoke line, `FT_SMOKE_OK {json}`. With
+`--expect-fail REASON` (the must-not-pass run) it passes only when the process exits non-zero with exactly one
+`FT_SMOKE_FAIL` line whose reason contains REASON, so a crash, a hang or a refusal for another cause never
+counts as the expected one. Linux CI wraps this in `xvfb-run`.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ def executable(path: Path) -> Path:
     return path
 
 
-def verdict(returncode: int | None, stdout: str, expect_fail: bool) -> tuple[bool, str]:
+def verdict(returncode: int | None, stdout: str, expect_fail: str | None) -> tuple[bool, str]:
     """(passed, reason). `returncode` is None after a timeout."""
     smoke = [line for line in stdout.splitlines() if line.startswith(("FT_SMOKE_OK", "FT_SMOKE_FAIL"))]
     if returncode is None:
@@ -36,8 +37,8 @@ def verdict(returncode: int | None, stdout: str, expect_fail: bool) -> tuple[boo
     if len(smoke) != 1:
         return False, f"expected one smoke line, got {len(smoke)} (exit {returncode})"
     line = smoke[0]
-    if expect_fail:
-        if returncode != 0 and line.startswith(FAIL):
+    if expect_fail is not None:
+        if returncode != 0 and line.startswith(FAIL) and expect_fail in line[len(FAIL):]:
             return True, f"refused as expected: {line}"
         return False, f"expected a refusal, got exit {returncode}: {line}"
     if returncode == 0 and line.startswith(OK):
@@ -48,7 +49,7 @@ def verdict(returncode: int | None, stdout: str, expect_fail: bool) -> tuple[boo
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("path", type=Path)
-    parser.add_argument("--expect-fail", action="store_true")
+    parser.add_argument("--expect-fail", metavar="REASON", help="text the expected FT_SMOKE_FAIL reason contains")
     args = parser.parse_args(argv)
     exe = executable(args.path)
     try:

@@ -12,8 +12,7 @@ on:
       - "backend/pyproject.toml"
       - "backend/uv.lock"
       - "backend/src/**"
-      - "frontend/package.json"
-      - "frontend/pnpm-lock.yaml"
+      - "frontend/**"
       - ".github/workflows/packaged.yml"
   workflow_call:
     inputs:
@@ -71,7 +70,7 @@ jobs:
           python shell/smoke_packaged.py "$app"
           ditto "$app" "$RUNNER_TEMP/neg.app"
           mv "$RUNNER_TEMP/neg.app/Contents/Resources/sidecar/python" "$RUNNER_TEMP/python-away"
-          python shell/smoke_packaged.py "$RUNNER_TEMP/neg.app" --expect-fail
+          python shell/smoke_packaged.py "$RUNNER_TEMP/neg.app" --expect-fail "cannot start the bundled interpreter"
       - name: Windows — silent per-user install and smoke test
         if: runner.os == 'Windows'
         run: |
@@ -82,11 +81,9 @@ jobs:
           test "$(printf '%s\n' "$exe" | wc -l)" -eq 1
           python shell/smoke_packaged.py "$exe"
           mv "$dir/sidecar/python" "$RUNNER_TEMP/python-away"
-          python shell/smoke_packaged.py "$exe" --expect-fail
-      - name: Linux — AppImage, then the .deb installed, smoke tests
+          python shell/smoke_packaged.py "$exe" --expect-fail "cannot start the bundled interpreter"
+      - name: Linux — AppImage (FUSE-mounted, read-only, as users run it), then the .deb installed, smoke tests
         if: runner.os == 'Linux'
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
           appimage="$(grep '\.AppImage$' artifacts.txt)"
           chmod +x "$appimage"
@@ -97,7 +94,7 @@ jobs:
           xvfb-run -a python shell/smoke_packaged.py "$exe"
           python_dir="$(dpkg -L finzytrack | grep '/sidecar/python$')"
           sudo mv "$python_dir" "$RUNNER_TEMP/python-away"
-          xvfb-run -a python shell/smoke_packaged.py "$exe" --expect-fail
+          xvfb-run -a python shell/smoke_packaged.py "$exe" --expect-fail "cannot start the bundled interpreter"
       - name: Keep the artifacts for a week
         uses: actions/upload-artifact@v4
         with:

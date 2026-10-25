@@ -28,3 +28,18 @@
 - Checks with must-not-pass tests: archive hash (download and cache) → `Fetch`; unsafe archive members (`..`, absolute, links out, hard link out, device, fifo) → `Extract`; unpinned target → `Lock`; no symlinks left (incl. dangling, directory links) → `Tree`; Mach-O detection by content, inside-out order → `Tree`; smoke harness verdict (7 normal and 5 expected-refusal cases) → `test_smoke_packaged.py`; the probe verdict (13 cases: exit, line count, JSON, version, prefix/app outside, link out, missing path, sibling prefix) and the page-and-probe verdict → `smoke.rs` tests; the packaged override (10 planted variants, RFC 7396 merge, extra config files) → `test_shell_config.py`; end to end on macOS: runtime removed → `FT_SMOKE_FAIL`, sidecar package removed → `FT_SMOKE_FAIL` (CI repeats the first on every OS).
 - Self-mutation: Python 16 tried, 15 killed; the survivor (merge ignoring `null`) got a direct RFC 7396 test and is now killed. Rust 8 tried, 8 killed.
 - Not covered by a unit test: the 120 s timeout path in the shell (exercised only by a hang); the harness's own timeout is tested.
+
+## Verifier
+- Round 1, head 95850b0: PASS WITH FINDINGS. Attacks: 13 (tests at head and on base; clean rebuild, signatures, 0 symlinks; positive and five negative smoke variants incl. a shim to Homebrew Python with a fake `app` on PYTHONPATH; PBS hashes for all three targets re-downloaded; extraction filter; real-archive symlinks and trim; smoke.rs concurrency and exit paths; RFC 7396 merge against Tauri's; workflows read; licences and generated files).
+- F1 Low: `trim()` named Tcl/Tk folders by versions the release does not carry, so about 4 MB of Tcl/Tk shipped. Fixed: removed by pattern, with a test on the real layout; BL-0053 wording corrected.
+- F2 Low: `--expect-fail` accepted any refusal, including a hang. Fixed: it takes the expected reason; CI passes "cannot start the bundled interpreter"; two new negatives.
+- F3 Low: nothing checked that the probe ran isolated. Fixed: the probe reports `sys.flags.isolated` and the verdict requires 1; two new negatives.
+- F4 Low: PBS binaries are already linker-signed, so skipping our signing passed every check. Fixed: the build refuses a Mach-O that still carries only the linker's signature.
+- F5 Low: frontend sources were missing from the push paths. Fixed: `frontend/**`.
+- F6 Low: the AppImage ran extracted, not mounted as users run it. Fixed: run FUSE-mounted (libfuse2 installed).
+- All Low; no further round (ADR-0058).
+
+## Retro
+- What the verifier found that I did not: two checks proved less than their names (a refusal for any reason; a signature anyone could have made). The cheaper gate is the question "what else would produce this same output?" asked of each positive signal, not only of each check.
+- Trim was written from the spike's file list, not from the pinned archive; a test on the real layout costs a minute.
+- Process cost: about 1 h 30 min building (incl. local macOS package and smoke); verifier about 6 min wall; fixes about 20 min. CI on Windows and Linux is the first real run of those jobs; results are recorded below once it finishes.
