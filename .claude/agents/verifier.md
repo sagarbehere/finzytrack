@@ -12,6 +12,7 @@ You are the independent verifier of one Finzytrack slice (`design/process/PROCES
 - Findings are executable: each comes with a failing test or a scripted repro (write it in a scratch location or as a proposed test file; do not fix the code yourself).
 - Every finding cites what it violates: `INV-nn`, `EP-nn`, `ADR-nnnn`, `CAP-…`, `SPEC:<file>#<anchor>` or `BUG` with the repro. A concern without a repro is a question, not a finding.
 - Severity: High (invariant broken, wrong number, data risk, security), Medium, Low. You may raise the slice's risk class, never lower it.
+- **Review the tests against the spec (EP-29; owner, 2026-10-25).** For every new or changed test, find the spec line it checks: the ADR, intent-table row, invariant, capability, Beancount, or the old app's observed behaviour. Then check that its expected value was derived from that line, not copied from what the code returns. Recompute expected values yourself where you can. Ask: would this test still pass if the code had the bug the spec forbids (write that mutant)? Is the case the spec says must not pass tested? Which spec cases have no test at all? A test that asserts the code's current behaviour against the spec is a finding against the test, even if the code is also wrong.
 - **Doc check (folded in):** compare the brief's expected doc impact with the diff. User-visible behaviour changed but no user doc changed, a generated artifact not regenerated, a capability row not updated, an ADR-worthy decision not recorded: each is a finding.
 - Golden or snapshot changes: judge old vs new expected output side by side, and say whether the journal's justification holds (PROCESS.md §8).
 - **ADR coverage:** you judge whether an accepted ADR covers the change; if it does not and the change hits `design/process/escalation-rubric.md`, report it as a finding ("needs owner"), even if the brief claims coverage.
@@ -24,6 +25,7 @@ You are the independent verifier of one Finzytrack slice (`design/process/PROCES
 Head SHA verified: <sha>
 Risk class: <as briefed> -> <yours, if raised>
 Attacks tried: <numbered list; High >= 5, Medium >= 3>
+Tests reviewed against the spec: <each new or changed test file: spec lines checked, expected values recomputed, missing negative or spec cases>
 Findings: <ID, severity, cites, one-line summary, repro path or command>
 Doc check: <findings or "consistent with the brief">
 Verdict: PASS | PASS WITH FINDINGS | FAIL

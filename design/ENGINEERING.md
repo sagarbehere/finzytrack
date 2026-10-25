@@ -442,6 +442,17 @@ log.event(Ev.IMPORT_DUPLICATE_FOUND, session=session_id, row_count=1)   # payee/
 
 **Enforcement.** Lint bans on `time.sleep` / `setTimeout`-based waits in tests and on importing private names in tests; checklist `[EP-28]`.
 
+### EP-29 Tests come from the spec, not from the code (owner, 2026-10-25)
+**Rule.**
+- Every expected value in a test comes from the spec: the ADR, intent-table row, invariant or capability the test cites, Beancount itself, the old app's observed behaviour, or a hand-checked fixture. It never comes from running the code under test and copying its output.
+- Each test names the spec line it checks (its tag or docstring). A test with no spec behind it is either a characterization test (tagged as such) or a gap in the spec.
+- For every check that accepts, tags or refuses (classifiers, guards, validators, table checks), a negative test sits beside each positive one: the case the spec says must **not** pass.
+- When a test's expected value changes in the same slice as the code it tests, the journal says which spec line justifies the new value (PROCESS.md §8 already requires this for goldens).
+
+**Why.** Tests written next to the code drift towards asserting what the code does, and then they protect its bugs. In S0002 and S0004 two such tests passed against wrong code: an asserted price that the legacy rule never produces, and a "dropped lot date is expected" case that the spec forbids. Owner: "The reviewers should also review the tests and carefully check that the tests are testing the spec and not bending themselves to the code as it is written" (owner, 2026-10-25, in session).
+
+**Enforcement.** Verifier checklist `[EP-29]`: the verifier reviews every new and changed test against the spec (see `.claude/agents/verifier.md`, "Review the tests"); mutation testing (T2) shows tests that pass whatever the code does.
+
 ## 3. Verifier checklist (generated from this file)
 
 The verifier prompt includes this list. **Every finding cites at least one ID**: an `INV-nn` (must), an `EP-nn` (should), an `ADR-nnnn`, a `CAP-…` row, a `SPEC:<file>#<anchor>`, or `BUG` with a repro. It gives a repro or the rule it breaks (`PROCESS.md` (agents)).
@@ -476,6 +487,7 @@ The verifier prompt includes this list. **Every finding cites at least one ID**:
 | EP-26 | Financial content or free text reachable in a log line? | yes |
 | EP-27 | Message missing "what happened / data safe / next step", or hard to read? | partly |
 | EP-28 | Test through internals, a mock inside the core, a sleep, or several behaviours in one test? | partly (lint bans) |
+| EP-29 | Does any test take its expected value from the code instead of the spec, lack the negative case, or change its expectation without a spec reason? | partly (mutation testing) |
 
 ---
 

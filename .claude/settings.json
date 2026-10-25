@@ -11,8 +11,7 @@
       "Bash(git clean -fdX:*)",
       "Bash(git clean -xfd:*)",
       "Read(~/FinzytrackData/**)",
-      "Edit(~/FinzytrackData/**)",
-      "Write(~/FinzytrackData/**)"
+      "Edit(~/FinzytrackData/**)"
     ],
     "ask": [
       "Bash(git push:*)"

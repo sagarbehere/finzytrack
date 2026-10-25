@@ -82,3 +82,23 @@ Format:
 - Observed effect: pending.
 - Status: kept.
 - Owner approval: "I accept your recommendations for the four questions in the design/inbox/" (2026-10-25, in session; covers `design/inbox/answered/20261025-inv-24-enforced-by.md`)
+
+## IMP-0008: reviewers check that tests test the spec, not the code (2026-10-25)
+- Trigger: the owner's comment after S0002–S0004, where two tests had been bent to the code (an asserted price the legacy never writes; an over-match the spec forbids, asserted as expected).
+- What changed: EP-29 in `design/ENGINEERING.md` (with its checklist line); the verifier's "Review the tests" rule and a report line in `.claude/agents/verifier.md`; the journal template's Verifier section; `PROCESS.md` §4 rules.
+- PROCESS.md section: §4.
+- Why: a test that copies the code's output protects the code's bugs; only a spec-derived expectation catches them.
+- Expected effect: verifier findings against tests rise at first; escapes of "test agreed with the bug" go to zero.
+- Observed effect: pending.
+- Status: kept (tightening).
+- Owner approval: "The reviewers should also review the tests and carefully check that the tests are testing the spec and not bending themselves to the code as it is written" (owner, 2026-10-25, in session)
+
+## IMP-0009: the unused Write deny rule for the live data folder is removed (2026-10-25)
+- Trigger: Claude Code warned at session start that the `Write(...)` deny rule never matches (an `Edit(...)` rule covers every file-writing tool).
+- What changed: that line is removed from `.claude/settings.json`; the `Read(...)` and `Edit(...)` deny rules and the guard hooks stay.
+- PROCESS.md section: §8 (agents and real data).
+- Why: a rule that matches nothing gives false assurance and a warning on every start.
+- Expected effect: no change in what is blocked; the startup warning goes away.
+- Observed effect: pending.
+- Status: kept.
+- Owner approval: "remove it" (2026-10-25, in session)

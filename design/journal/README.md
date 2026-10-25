@@ -23,6 +23,7 @@ Template:
 ## Verifier
 - Head SHA verified:
 - Attacks tried: <list; High ≥ 5, Medium ≥ 3>
+- Tests reviewed against the spec: <per test file: the spec lines, recomputed expectations, missing cases (EP-29)>
 - Findings: <ID, severity, resolution or backlog ID>
 
 ## Golden changes
