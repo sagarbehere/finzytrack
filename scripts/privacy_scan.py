@@ -323,23 +323,36 @@ def text_lines(text: str, as_suffix: str) -> list[str]:
     return text.split("\n")
 
 
+def located(line: str, hashed: str) -> str:
+    """The token on `line` whose SHA-1 is detect-secrets' `hashed_secret`, or ""."""
+    tokens = [m.group(1) or m.group(2) for m in CANDIDATE.finditer(line)]
+    return next((t for t in tokens if hashlib.sha1(t.encode()).hexdigest() == hashed), "")  # noqa: S324
+
+
+def excused(line: str, hashed: str) -> bool:
+    """The line carries the rule's allow mark, or the value on it is a hash pin."""
+    allowed = {r.strip() for m in ALLOW_MARK.finditer(line) for r in m.group(1).split(",")}
+    token = located(line, hashed)
+    return "secret-entropy" in allowed or bool(token and any(m.group(1) == token for m in HASH_PIN.finditer(line)))
+
+
 def entropy_findings(texts: dict[str, str]) -> list[Finding]:
+    """One finding per (line, value). A hit is excused only when its line shows the mark or the pin under every
+    numbering detect-secrets may have used for it: universal newlines always, and for a YAML scan also PyYAML's
+    breaks (it falls back to universal numbering when the file does not parse). Duplicates are dropped only
+    after that decision, so an excused hit never hides another (S0016 rounds 3 and 4)."""
     out: list[Finding] = []
     for path, hits in detect_secrets(texts).items():
-        seen: set[tuple[int, str]] = set()
+        universal = text_lines(texts[path], ".txt")
+        yaml_lines = text_lines(texts[path], ".yaml")
+        reported: set[tuple[int, str]] = set()
         for lineno, hashed, as_suffix in sorted(set(hits)):
-            if (lineno, hashed) in seen:
-                continue  # one finding per value and line, whichever plugin or scan found it
-            seen.add((lineno, hashed))
-            lines = text_lines(texts[path], as_suffix)
-            line = lines[lineno - 1] if 0 < lineno <= len(lines) else ""
-            allowed = {r.strip() for m in ALLOW_MARK.finditer(line) for r in m.group(1).split(",")}
-            if "secret-entropy" in allowed:
+            mappings = [universal, yaml_lines] if as_suffix in YAML_SUFFIXES else [universal]
+            candidates = [m[lineno - 1] if 0 < lineno <= len(m) else "" for m in mappings]
+            if all(excused(line, hashed) for line in candidates) or (lineno, hashed) in reported:
                 continue
-            tokens = [m.group(1) or m.group(2) for m in CANDIDATE.finditer(line)]
-            token = next((t for t in tokens if hashlib.sha1(t.encode()).hexdigest() == hashed), "")  # noqa: S324
-            if token and any(m.group(1) == token for m in HASH_PIN.finditer(line)):
-                continue  # a hash pin, not a secret
+            reported.add((lineno, hashed))
+            token = next((t for t in (located(line, hashed) for line in candidates) if t), "")
             out.append(Finding(path, lineno, "secret-entropy", redact(token) if token else "(value not located)"))
     return out
 
@@ -396,6 +409,9 @@ def run(paths: list[str], reader, denylist: list[str]) -> tuple[list[Finding], l
 
 
 def main(argv: list[str] | None = None) -> int:
+    if sys.version_info < (3, 12):  # the scanner and its tests use 3.12 features; refuse rather than crash
+        print("privacy-scan: needs Python 3.12 or newer; refusing to pass", file=sys.stderr)
+        return 2
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--staged", action="store_true", help="scan staged blobs (pre-commit)")

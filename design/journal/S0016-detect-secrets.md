@@ -49,3 +49,8 @@
   - Note: on Linux CI the Shift JIS locale is probably absent, so the locale test only bites on macOS (the pre-push hook runs it there).
   - Self-mutation of round-4 fixes: 4 tried, 3 killed; `yaml-breaks-ignored` is equivalent under the union (the `.txt` scan reports the value on its true line); kept for correct line numbers on YAML-only hits.
 - Re-verification required: round 4 below.
+- Round 4, head 646590b: FAIL. Attacks: 10 (prior repros; merging hits numbered differently; pins; unparsable YAML; per-scan detections; naming; mutants; fail-closed under an old Python; full scan; tests on base).
+  - R4-F1 Medium: duplicates were dropped before the mark and pin checks, so an excused hit on one line hid a YAML-only hit numbered the same on another line (no visible mark needed with a pin). R4-F2 Medium (a regression): YAML hits were always mapped with PyYAML's breaks, but detect-secrets numbers unparsable YAML by universal newlines. Fixed together (EP-30): a hit is excused only when its line shows the mark or pin under every numbering that may apply (universal always; PyYAML's too for a YAML scan), and duplicates are dropped only after that decision.
+  - R4-F3 Low (tests): the YAML test used a value both scans find. Replaced by YAML-only values (mark below, a marked line and a pin with the same number elsewhere) and an unparsable file.
+  - R4-F4 Low: under Python 3.9 the scanner crashed (exit 1). It now refuses with exit 2 below Python 3.12; test.
+- Re-verification required: round 5 below.

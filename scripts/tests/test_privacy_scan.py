@@ -323,11 +323,25 @@ class SecretEntropy(unittest.TestCase):
                 self.assertIn("secret-entropy", self.found(text, path))
 
     def test_yaml_line_breaks_do_not_move_a_mark(self) -> None:
-        # F2: PyYAML also ends lines at NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR.
+        # R3-F2, R4-F1, R4-F2: a mark or pin excuses a hit only when every numbering detect-secrets may have used
+        # shows it on that line. The unquoted value after the separator is found by the YAML scan only.
         mark = "# privacy-scan: allow secret-entropy"
         for sep in ("\u2028", "\x85", "\u2029"):
-            with self.subTest(sep=repr(sep)):
-                self.assertIn("secret-entropy", self.found(f'a: 1{sep}b: "{self.B64}"\n{mark}\n', "c.yaml"))
+            with self.subTest(sep=repr(sep), case="mark on the line below"):
+                self.assertIn("secret-entropy", self.found(f"a: 1{sep}k: {self.B64}\n{mark}\n", "c.yaml"))
+            with self.subTest(sep=repr(sep), case="a marked line with the same number elsewhere"):
+                text = f'a: 1{sep}k: {self.B64}\nold: "{self.B64[::-1]}"  {mark}\n'
+                self.assertIn("secret-entropy", self.found(text, "c.yaml"))
+            with self.subTest(sep=repr(sep), case="a pin with the same number elsewhere"):
+                text = f'a: 1{sep}token: {self.HEX}\nsha256: "{self.HEX}"\n'
+                self.assertIn("secret-entropy", self.found(text, "c.yaml"))
+        word = "pass" + "word"
+        with self.subTest(case="unparsable YAML numbered by universal newlines"):
+            self.assertIn("secret-entropy", self.found(f"bad: [\u2028{mark}\n  {word}: hunter2abc\n", "c.yaml"))
+
+    def test_too_old_a_python_refuses(self) -> None:
+        with mock.patch.object(ps.sys, "version_info", (3, 9, 6)), redirect_stderr(io.StringIO()):
+            self.assertEqual(ps.main(["--quiet", "x.md"]), 2)
 
     def test_a_crlf_mark_above_a_secret_does_not_cover_it(self) -> None:
         # F3: CRLF is one line end, not two.
