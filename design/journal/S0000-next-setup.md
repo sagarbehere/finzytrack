@@ -11,7 +11,7 @@
 - Open questions: in the owner's private question list (worktree location, push gate, denylist, licence allowlist, security severities in the public backlog, INV-27 enforcement).
 
 ## Decisions
-- `next` lives in its own worktree, so the legacy checkout's ignored files (real statement files among them) never sit beside the new tree (agent).
+- `next` was first built in a separate worktree, so the legacy checkout's ignored files (real statement files among them) never sat beside the new tree (agent). On 2026-10-25 the owner moved the real files out and cleaned the checkout, the extra worktree was removed, and the main checkout now has `next` checked out (owner).
 - Commit order: `.gitignore` alone first; then the gates with the guard hooks and the capability map; then the `design/` seed; then agents, skills and pointer files. Each commit after the first ran through the new T0 hook (agent).
 - Capability map source is TOML (stdlib-readable), generated to markdown (agent; IMPROVEMENTS IMP-0002).
 - Pushing is off in a clone until the owner turns it on (agent tightening; IMP-0003).
