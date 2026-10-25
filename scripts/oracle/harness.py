@@ -5,7 +5,8 @@ the intended change, and tag every divergence.
 Each case runs in a fresh data root (a copy of --ledger-dir plus a seeded legacy config) with its own legacy
 process, so no state leaks between cases. The source folder is only read (INV-24). Reports carry entry text only
 for repo corpora and generated ledgers; for anything else (a copy of a real ledger, T-local) they carry counts,
-classes and case IDs only.
+classes and case IDs only. A --ledger-dir that is not a repo corpus must be inside the T-local folder named by
+FT_LOCAL_TIER_DIR (PROCESS.md §8; copies.refuse_local_tier_source).
 
 Usage (from the repo root):
     uv run --project scripts/oracle python scripts/oracle/harness.py --demo [--per-mutator 5]
@@ -41,7 +42,7 @@ import adapters
 import classify
 import model
 import semantic_diff as sd
-from copies import legacy_root, mark_generated, may_show_entries, refuse_dir, stage_root
+from copies import legacy_root, mark_generated, may_show_entries, refuse_dir, refuse_local_tier_source, stage_root
 from launch_legacy import LegacyApp
 
 MUTATORS = ("update_transaction", "rename_account", "import_append")
@@ -298,7 +299,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.ledger_dir and not args.root_file:
         return refuse("--root-file is required with --ledger-dir")
     work = (args.work or Path(tempfile.mkdtemp(prefix="ft-oracle-"))).resolve()
-    for problem in (refuse_dir(work), args.ledger_dir and refuse_dir(args.ledger_dir, allow_repo_corpora=True),
+    for problem in (refuse_dir(work), args.ledger_dir and refuse_local_tier_source(args.ledger_dir),
                     refuse_report(args.report, args.ledger_dir)):
         if problem:
             return refuse(problem)

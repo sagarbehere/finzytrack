@@ -5,10 +5,10 @@
 // re-import idempotent), L4-01, L4-02, L4-07. The two statements are written here, so the flow needs no corpus
 // file. Assumed, not decided: the route `/w/{ws}/import`, the panels' names, the demo's accounts `Assets:Checking`
 // and `Liabilities:Card`, and the summary wording.
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test } from '../harness/fixtures'
+import type { Page } from '@playwright/test'
 
 import { fixme } from '../fixme'
-import { WS } from './workspace'
 
 const OFX = {
   name: 'checking-march.ofx',
@@ -43,8 +43,8 @@ async function read(page: Page, file: typeof OFX, account: string): Promise<void
 test.fixme(
   'A7: per-draft accounts, open slots only, re-read reviewed as duplicates and skipped, undo',
   fixme({ id: 'BL-0068', due: 'M6', reason: 'capability not built' }),
-  async ({ page }) => {
-    await page.goto(`/w/${WS}/import`)
+  async ({ page, demo }) => {
+    await page.goto(`/w/${demo.key}/import`)
     await read(page, OFX, 'Assets:Checking')
     await read(page, CSV, 'Liabilities:Card')
 

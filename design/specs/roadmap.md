@@ -29,9 +29,9 @@ Done in M0:
 
 Left in M0, in this order:
 1. BL-0042 is parked by the owner ("BL-0042 stays parked unless I ask", 2026-10-25); the guard gaps found in S0014 (BL-0055) closed by S0028 for the forms named there; deliberate-evasion variants are BL-0062, parked with BL-0042. The checks on the process's own paperwork (BL-0034, BL-0036, BL-0038, BL-0040) are parked until evidence asks for them (ADR-0058).
-2. The invariant enforcement due by M0: BL-0024 (the acceptance harness's port and data-dir checks, the local-tier path guard). BL-0023's gaps closed by S0026 (its anonymization script moved to BL-0060, M6).
+2. The invariant enforcement due by M0: BL-0024 closed by S0030 (the acceptance harness's port and data-dir checks, the local-tier path guard). BL-0023's gaps closed by S0026 (its anonymization script moved to BL-0060, M6).
 3. No review finding due by M0 is open (`check_invariants.py` fails an M0-exit run while one is, S0023): L9.M-7 closed by S0025, L10-18 by S0027.
-4. The rest of review:27 §1(d) that M0's exit needs: the acceptance-suite harness (isolated backend, frozen clock, LLM stub, Chromium and WebKit); the red-team session on the gates and the first seeded-defect run. The P1 integrity tests are written (S0029).
+4. The rest of review:27 §1(d) that M0's exit needs: the red-team session on the gates and the first seeded-defect run. The P1 integrity tests are written (S0029); the acceptance-suite harness is built (S0030: per-worker temp root, fresh demo, the main sidecar on its own port with a frozen clock, the LLM stub, `TZ` west of UTC plus a Kolkata project, Chromium and WebKit, axe and console, request and LLM failures as hard failures; the parts that need M2's API are BL-0071, streaming LLM replies BL-0072).
 
 Next milestone: **M1a** (read core and workspace-format core), then **M1b** (write contract), then **G1**, your go/no-go.
 

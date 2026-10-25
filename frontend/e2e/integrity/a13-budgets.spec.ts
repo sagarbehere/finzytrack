@@ -2,16 +2,15 @@
 // failed drafts, and drafts survive changing "Budget as of" (the legacy view wiped them, review:L8 §1.6 item 6
 // defect 1). Spec: INV-16 and the acceptance tests listed there. Assumed, not decided: the route, the grid and field
 // names, and the budget write request matching `**/budgets**`.
-import { expect, test } from '@playwright/test'
+import { expect, test } from '../harness/fixtures'
 
 import { fixme } from '../fixme'
-import { WS } from './workspace'
 
 test.fixme(
   'A13: a partial save failure keeps failed drafts; drafts survive changing the as-of date',
   fixme({ id: 'BL-0070', due: 'M7', reason: 'capability not built' }),
-  async ({ page }) => {
-    await page.goto(`/w/${WS}/budgets`)
+  async ({ page, demo }) => {
+    await page.goto(`/w/${demo.key}/budgets`)
     const grid = page.getByRole('grid', { name: 'Budgets' })
     const food = grid.getByRole('row', { name: /Expenses:Food/ })
     const rent = grid.getByRole('row', { name: /Expenses:Rent/ })

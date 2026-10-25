@@ -14,7 +14,7 @@ include_external_packages = True
 name = Kernel layers (ARCHITECTURE.md §2.4 rule 1)
 type = layers
 layers =
-    (app.main)
+    app.main
     (app.api)
     (app.boot)
     (app.workspaces)

@@ -2,16 +2,16 @@
 // rows edited during Save stay dirty (L8-02). Spec: review:L8 §1.1 B3, B4, H1, H4; INV-06 (amounts typed as `-`,
 // `1.`, `10.50` stay exact). Assumed, not decided: the route `/w/{ws}/transactions` keeping the v0.3 deep-link
 // parameters, the grid's accessible names, and the transactions save request matching `**/transactions:save`.
-import { expect, test, type Request } from '@playwright/test'
+import { expect, test } from '../harness/fixtures'
+import type { Request } from '@playwright/test'
 
 import { fixme } from '../fixme'
-import { WS } from './workspace'
 
 test.fixme(
   'A1: a deep link loads the rows; Save sends only modified rows; rows edited during Save stay dirty',
   fixme({ id: 'BL-0064', due: 'M5', reason: 'capability not built' }),
-  async ({ page }) => {
-    await page.goto(`/w/${WS}/transactions?accountContains=Expenses:Food&dateFrom=2026-01-01`)
+  async ({ page, demo }) => {
+    await page.goto(`/w/${demo.key}/transactions?accountContains=Expenses:Food&dateFrom=2026-01-01`)
     const grid = page.getByRole('grid', { name: 'Transactions' })
     await expect(grid.getByRole('row')).not.toHaveCount(0)
     for (const account of await grid.getByRole('gridcell', { name: /^Account/ }).allTextContents()) {

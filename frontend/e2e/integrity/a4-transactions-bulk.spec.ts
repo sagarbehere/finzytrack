@@ -2,10 +2,10 @@
 // Spec: review:L8 §1.1 C1-C8, A9-A10; review:L8-verif M-1 (undo is per operation); L4-01 (autocategorize fills only
 // a row's single unknown leg); INV-16 (bulk delete confirms with Cancel focused). Assumed, not decided: the route,
 // the selection checkboxes, the bulk toolbar's button names, the operation log's list name, and the demo rows used.
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test } from '../harness/fixtures'
+import type { Page } from '@playwright/test'
 
 import { fixme } from '../fixme'
-import { WS } from './workspace'
 
 const grid = (page: Page) => page.getByRole('grid', { name: 'Transactions' })
 const rowCheckbox = (page: Page, i: number) => grid(page).getByRole('row').nth(i).getByRole('checkbox')
@@ -13,8 +13,8 @@ const rowCheckbox = (page: Page, i: number) => grid(page).getByRole('row').nth(i
 test.fixme(
   'A4: range select, replace account, tag add then remove leaves nothing staged, undo, bulk delete confirms',
   fixme({ id: 'BL-0066', due: 'M5', reason: 'capability not built' }),
-  async ({ page }) => {
-    await page.goto(`/w/${WS}/transactions?accountContains=Expenses:Food`)
+  async ({ page, demo }) => {
+    await page.goto(`/w/${demo.key}/transactions?accountContains=Expenses:Food`)
     await rowCheckbox(page, 1).click()
     await rowCheckbox(page, 3).click({ modifiers: ['Shift'] })
     await expect(page.getByText('3 selected')).toBeVisible()
@@ -51,15 +51,15 @@ test.fixme(
 test.fixme(
   'A4: autocategorize changes only rows whose single other leg is the unknown account',
   fixme({ id: 'BL-0067', due: 'M6', reason: 'capability not built' }),
-  async ({ page }) => {
+  async ({ page, demo, request }) => {
     // The demo's unknown account comes from the Ledger Profile (L3-14); the demo generator writes rows with one
     // unknown leg, a split row with an unknown leg among three, and a categorized row.
     // The unknown account is whatever the Ledger Profile serves (ADR-0024, L3-14), never a literal name.
-    const profile = (await (await page.request.get(`/api/w/${WS}/profile`)).json()) as {
+    const profile = (await (await request.get(`/api/w/${demo.key}/profile`)).json()) as {
       data: { unknown_account: string }
     }
     const unknown = profile.data.unknown_account
-    await page.goto(`/w/${WS}/transactions?accountContains=Assets:Bank`)
+    await page.goto(`/w/${demo.key}/transactions?accountContains=Assets:Bank`)
     const rows = grid(page).getByRole('row')
     const before = await rows.allTextContents()
     await page.getByRole('checkbox', { name: 'Select all' }).check()

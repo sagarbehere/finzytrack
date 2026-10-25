@@ -15,7 +15,11 @@ CORPORA = REPO / "corpora"
 GENERATED_MARKER = ".oracle-generated"
 
 
+LOCAL_TIER_ENV = "FT_LOCAL_TIER_DIR"
+
+
 def legacy_root() -> Path:
+    """The legacy worktree to run (FT_LEGACY_ROOT, else the sibling worktree)."""
     return Path(os.environ.get("FT_LEGACY_ROOT", REPO.parent / "finzytrack-legacy")).expanduser().resolve()
 
 
@@ -23,20 +27,81 @@ def live_data_root() -> Path:
     return Path(os.environ.get("FT_LIVE_DATA", Path.home() / "FinzytrackData")).expanduser().resolve()
 
 
+def _forbidden_roots() -> list[tuple[Path, str]]:
+    """Every folder refuse_dir refuses. An environment override adds a folder; it never removes a default (S0030)."""
+    roots = [(Path.home() / "FinzytrackData", "the owner's live data folder"),
+             (REPO.parent / "finzytrack-legacy", "the legacy worktree"),
+             (Path.home() / "experiments" / "finzytrack-legacy", "the legacy worktree")]
+    for env, why in (("FT_LIVE_DATA", "the owner's live data folder"), ("FT_LEGACY_ROOT", "the legacy worktree")):
+        if os.environ.get(env):
+            roots.append((Path(os.environ[env]).expanduser(), why))
+    return [*roots, (REPO, "this repo")]
+
+
+def _key(p: Path) -> str:
+    """Resolved (symlinks, `..`), lower-cased path text: macOS disks are case-insensitive (as the guard hooks' `_norm`)."""
+    try:
+        r = p.expanduser().resolve(strict=False)
+    except (OSError, RuntimeError):
+        r = p
+    return r.as_posix().rstrip("/").lower()
+
+
+def within(p: Path, root: Path) -> bool:
+    """Whether *p* is *root* or inside it, compared resolved and case-insensitively."""
+    a, b = _key(p), _key(root)
+    return a == b or a.startswith(b + "/")
+
+
 def refuse_dir(folder: Path, *, allow_repo_corpora: bool = False) -> str | None:
     """Why *folder* must not be used (as a legacy root or a ledger source), or None.
 
     Refused: the owner's live data folder, the legacy worktree and this repo, any folder inside one of them, and
-    any folder that contains one of them. Symlinks are resolved first. With *allow_repo_corpora*, a folder inside
-    `corpora/` may be read (as a copy source only).
+    any folder that contains one of them. Symlinks are resolved first and case is ignored. With
+    *allow_repo_corpora*, a folder inside `corpora/` may be read (as a copy source only).
     """
-    r = folder.resolve()
-    for forbidden, why in ((live_data_root(), "the owner's live data folder"),
-                           (legacy_root(), "the legacy worktree"), (REPO.resolve(), "this repo")):
-        if allow_repo_corpora and forbidden == REPO.resolve() and CORPORA.resolve() in (r, *r.parents):
+    for forbidden, why in _forbidden_roots():
+        if allow_repo_corpora and forbidden == REPO and within(folder, CORPORA):
             continue
-        if r == forbidden or forbidden in r.parents or r in forbidden.parents:
+        if within(folder, forbidden) or within(forbidden, folder):
             return f"{folder} is (or contains, or is inside) {why}; use a copy in a temp dir"
+    return None
+
+
+def local_tier_dir() -> tuple[Path | None, str | None]:
+    """The T-local folder named by FT_LOCAL_TIER_DIR, or why there is none usable (PROCESS.md §8; S0030).
+
+    It must be set, absolute and an existing folder, and refuse_dir must accept it: outside the repo, the live data
+    folder and the legacy worktree, and containing none of them.
+    """
+    raw = os.environ.get(LOCAL_TIER_ENV, "")
+    if not raw:
+        return None, f"{LOCAL_TIER_ENV} is not set; real-ledger copies are read only from that folder (T-local)"
+    tier = Path(raw)
+    if not tier.is_absolute() or not tier.is_dir():
+        return None, f"{LOCAL_TIER_ENV}={raw} is not an absolute path to an existing folder"
+    problem = refuse_dir(tier)
+    if problem:
+        return None, f"{LOCAL_TIER_ENV}: {problem}"
+    return tier, None
+
+
+def refuse_local_tier_source(folder: Path) -> str | None:
+    """Why *folder* must not be read as a ledger source by a run that may see real-ledger copies, or None.
+
+    Allowed: the repo's synthetic `corpora/`, and folders inside the local-tier folder (local_tier_dir). Anything
+    else could be a real ledger in an unexpected place (PROCESS.md §8; INV-24; S0030).
+    """
+    if within(folder, CORPORA):
+        return refuse_dir(folder, allow_repo_corpora=True)
+    tier, why = local_tier_dir()
+    if tier is None:
+        return why
+    problem = refuse_dir(folder)
+    if problem:
+        return problem
+    if not within(folder, tier):
+        return f"{folder} is not inside {LOCAL_TIER_ENV} ({tier}); copy the ledgers there first"
     return None
 
 
@@ -76,6 +141,9 @@ def mark_generated(folder: Path) -> None:
 
 def may_show_entries(ledger_src: Path) -> bool:
     """Entry text may appear in a report only for repo corpora and generated ledgers; anything else could be a copy
-    of a real ledger, whose reports carry counts and case IDs only (PROCESS.md §8)."""
-    r = ledger_src.resolve()
-    return CORPORA.resolve() in (r, *r.parents) or (r / GENERATED_MARKER).is_file()
+    of a real ledger, whose reports carry counts and case IDs only (PROCESS.md §8). Nothing inside the local-tier
+    folder shows entries, marker or not (S0030)."""
+    tier, _ = local_tier_dir()
+    if tier is not None and within(ledger_src, tier):
+        return False
+    return within(ledger_src, CORPORA) or (ledger_src.resolve() / GENERATED_MARKER).is_file()

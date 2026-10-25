@@ -29,14 +29,16 @@ class MainRefusesTest(unittest.TestCase):
     def setUp(self) -> None:
         self.d = LedgerDir({"src/main.beancount": OPENS + TXN, "live/main.beancount": OPENS, "cases.json": "[]"})
         self.base = self.d.path
-        self.old = os.environ.get("FT_LIVE_DATA")
+        self.old = {k: os.environ.get(k) for k in ("FT_LIVE_DATA", "FT_LOCAL_TIER_DIR")}
         os.environ["FT_LIVE_DATA"] = str(self.base / "live")
+        os.environ["FT_LOCAL_TIER_DIR"] = str(self.base / "src")  # the T-local folder (PROCESS.md §8; S0030)
 
     def tearDown(self) -> None:
-        if self.old is None:
-            os.environ.pop("FT_LIVE_DATA", None)
-        else:
-            os.environ["FT_LIVE_DATA"] = self.old
+        for k, v in self.old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
         self.d.close()
 
     def args(self, *extra: str, src: str = "src") -> list[str]:
@@ -47,6 +49,20 @@ class MainRefusesTest(unittest.TestCase):
         code, err = run_main(*self.args(src="live"))
         self.assertEqual(code, 2, err)
         self.assertFalse((self.base / "work").exists())
+
+    def test_a_ledger_dir_outside_the_local_tier_folder(self) -> None:
+        # PROCESS.md §8 (S0030, BL-0024): a ledger source that is not a repo corpus is read only from FT_LOCAL_TIER_DIR.
+        self.d.write({"other/main.beancount": OPENS + TXN})
+        code, err = run_main(*self.args(src="other"))
+        self.assertEqual(code, 2, err)
+        self.assertIn("FT_LOCAL_TIER_DIR", err)
+        self.assertFalse((self.base / "work").exists())
+
+    def test_no_local_tier_folder_set(self) -> None:
+        os.environ.pop("FT_LOCAL_TIER_DIR")
+        code, err = run_main(*self.args())
+        self.assertEqual(code, 2, err)
+        self.assertIn("FT_LOCAL_TIER_DIR", err)
 
     def test_a_report_inside_the_ledger_folder(self) -> None:
         code, err = run_main(*self.args("--report", str(self.base / "src/report.json")))

@@ -3,16 +3,15 @@
 // page) and a workspace switch. Adapted: v0.4 has no ledger path in settings (INV-27), so L8's "dirty section survives
 // a ledger switch" becomes "a workspace switch with a dirty section asks first, and Cancel keeps it" (review:23 §3.3
 // step 1; ADR-0035). Assumed, not decided: routes, section and field names, the rule files in the demo.
-import { expect, test } from '@playwright/test'
+import { expect, test } from '../harness/fixtures'
 
 import { fixme } from '../fixme'
-import { WS } from './workspace'
 
 test.fixme(
   'A10: section saves keep other edits; rules A to B never show stale content; tab and workspace switches guard',
   fixme({ id: 'BL-0069', due: 'M10', reason: 'capability not built' }),
-  async ({ page }) => {
-    await page.goto(`/w/${WS}/settings?tab=general`)
+  async ({ page, demo }) => {
+    await page.goto(`/w/${demo.key}/settings?tab=general`)
     const display = page.getByRole('region', { name: 'Display' })
     const ai = page.getByRole('region', { name: 'AI' })
     await ai.getByRole('textbox', { name: 'Model' }).fill('local-model-b')
@@ -31,7 +30,7 @@ test.fixme(
     await page.getByRole('option').nth(1).click()
     await expect(guard).toBeVisible()
     await guard.getByRole('button', { name: 'Cancel' }).click()
-    await expect(page).toHaveURL(new RegExp(`/w/${WS}/settings`))
+    await expect(page).toHaveURL(new RegExp(`/w/${demo.key}/settings`))
     await expect(ai.getByRole('textbox', { name: 'Model' })).toHaveValue('local-model-b')
 
     await ai.getByRole('button', { name: 'Reset' }).click()

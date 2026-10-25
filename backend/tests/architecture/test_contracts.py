@@ -69,6 +69,7 @@ def test_contracts_hold_on_the_tree() -> None:
         # Rule 1: a lower layer never imports a higher one, including optional layers once they exist.
         ("app.domain.planted", "import app.platform\n", "Kernel layers"),
         ("app.platform.planted", "import app.api\n", "Kernel layers"),
+        ("app.platform.planted", "import app.main\n", "Kernel layers"),  # app.main is a layer since S0030
         ("app.mirror.planted", "import app.workspaces\n", "Kernel layers"),
         ("app.workspaces.planted", "import app.boot\n", "Kernel layers"),
         # §2.3, ADR-0022, EP-10: content (the demo generator) is pure, with no clock, randomness or file system.

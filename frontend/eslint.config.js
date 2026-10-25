@@ -87,6 +87,25 @@ export default tseslint.config(
     },
   },
   {
+    // INV-24 (S0030): a Playwright spec takes `test` and `expect` from the acceptance harness, so every flow runs
+    // against its own sidecar with the request guard, the frozen clock and the hard failures armed.
+    files: ['e2e/**/*.spec.ts', 'e2e/**/*.selftest.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@playwright/test',
+              message: 'INV-24: import test and expect from e2e/harness/fixtures (types may come from here)',
+              allowTypeImports: true,
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // Later config replaces a rule's options, so the INV-07 bans are repeated here with the stub bans.
     files: testFiles,
     rules: { 'no-restricted-syntax': ['error', ...systemTime, ...stubsByName] },

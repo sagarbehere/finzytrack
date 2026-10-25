@@ -56,6 +56,21 @@ class CopiesTest(unittest.TestCase):
         link.symlink_to(self.live)
         self.assertIsNotNone(copies.refuse_dir(link))
 
+    def test_refuses_another_spelling_of_a_forbidden_folder(self) -> None:
+        # S0030 (INV-24): macOS disks are case-insensitive, so another case is the same folder (as the guard hooks'
+        # `_norm`); a `..` detour is resolved first.
+        for bad in (Path(str(self.live).upper()), Path(str(self.live / "x").swapcase()), self.src / ".." / "live",
+                    Path(str(copies.REPO).upper()) / "backend"):
+            with self.subTest(bad=bad):
+                self.assertIsNotNone(copies.refuse_dir(bad))
+
+    def test_the_default_live_folder_stays_refused_when_ft_live_data_names_another(self) -> None:
+        # S0030: FT_LIVE_DATA adds a folder to refuse; it never un-refuses the default one (nor FT_LEGACY_ROOT the
+        # default legacy worktree).
+        self.assertIsNotNone(copies.refuse_dir(Path.home() / ("Finzy" + "track" + "Data") / "ledgers"))
+        self.assertIsNotNone(copies.refuse_dir(copies.REPO.parent / "finzytrack-legacy" / "backend"))
+        self.assertIsNotNone(copies.refuse_dir(Path.home()))  # contains the live folder
+
     def test_stage_copies_the_ledger_and_points_the_config_at_the_copy(self) -> None:
         before = snapshot(self.src)
         root = self.base / "case1"
@@ -86,6 +101,75 @@ class CopiesTest(unittest.TestCase):
         copies.mark_generated(self.src)
         self.assertTrue(copies.may_show_entries(self.src))
         self.assertTrue(copies.may_show_entries(copies.REPO / "corpora/ledgers/oracle"))
+
+
+class LocalTierTest(unittest.TestCase):
+    """PROCESS.md §8: T-local reads real-ledger copies only from the folder named by FT_LOCAL_TIER_DIR, outside the
+    repo, and prints counts and case IDs only (S0030; BL-0024)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name).resolve()
+        self.live, self.legacy, self.tier = base / "live", base / "legacy", base / "tier"
+        for d in (self.live, self.legacy, self.tier / "bank", base / "elsewhere"):
+            d.mkdir(parents=True)
+        self.base = base
+        self.old = {k: os.environ.get(k) for k in ("FT_LIVE_DATA", "FT_LEGACY_ROOT", copies.LOCAL_TIER_ENV)}
+        os.environ.update({"FT_LIVE_DATA": str(self.live), "FT_LEGACY_ROOT": str(self.legacy),
+                           copies.LOCAL_TIER_ENV: str(self.tier)})
+
+    def tearDown(self) -> None:
+        for k, v in self.old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        self.tmp.cleanup()
+
+    def test_a_copy_inside_the_local_tier_folder_is_accepted(self) -> None:
+        self.assertIsNone(copies.refuse_local_tier_source(self.tier / "bank"))
+        self.assertIsNone(copies.refuse_local_tier_source(self.tier))
+        self.assertIsNone(copies.refuse_local_tier_source(copies.CORPORA / "ledgers/oracle"))  # synthetic, in the repo
+
+    def test_a_folder_outside_the_local_tier_folder_is_refused(self) -> None:
+        for bad in (self.base / "elsewhere", self.base, self.tier / ".." / "elsewhere", self.live,
+                    copies.REPO / "backend", Path(str(self.base / "elsewhere").upper())):
+            with self.subTest(bad=bad):
+                self.assertIsNotNone(copies.refuse_local_tier_source(bad))
+
+    def test_a_symlink_from_the_tier_to_elsewhere_is_refused(self) -> None:
+        (self.tier / "link").symlink_to(self.base / "elsewhere")
+        self.assertIsNotNone(copies.refuse_local_tier_source(self.tier / "link"))
+
+    def test_another_spelling_of_the_tier_is_the_tier(self) -> None:
+        self.assertIsNone(copies.refuse_local_tier_source(Path(str(self.tier / "bank").upper())))
+
+    def test_the_tier_folder_itself_must_be_set_absolute_existing_and_safe(self) -> None:
+        (self.live / "sub").mkdir()
+        bad_tiers = ("", "tier", str(self.base / "missing"), str(self.live), str(self.live / "sub"), str(self.base),
+                     str(copies.REPO), str(copies.REPO / "corpora"), str(self.legacy))
+        for bad in bad_tiers:
+            with self.subTest(tier=bad):
+                os.environ[copies.LOCAL_TIER_ENV] = bad
+                self.assertIsNotNone(copies.refuse_local_tier_source(self.tier / "bank"))
+        os.environ.pop(copies.LOCAL_TIER_ENV)
+        self.assertIsNotNone(copies.refuse_local_tier_source(self.tier / "bank"))
+
+    def test_a_relative_tier_is_refused_even_when_it_exists_from_here(self) -> None:
+        cwd = Path.cwd()
+        os.chdir(self.base)
+        try:
+            os.environ[copies.LOCAL_TIER_ENV] = "tier"  # exists relative to the cwd; still not an absolute path
+            self.assertIsNotNone(copies.refuse_local_tier_source(self.tier / "bank"))
+        finally:
+            os.chdir(cwd)
+
+    def test_nothing_in_the_local_tier_may_show_entry_text(self) -> None:
+        # A copy of a real ledger with a planted marker still prints counts and case IDs only.
+        copies.mark_generated(self.tier / "bank")
+        self.assertFalse(copies.may_show_entries(self.tier / "bank"))
+        copies.mark_generated(self.base / "elsewhere")
+        self.assertTrue(copies.may_show_entries(self.base / "elsewhere"))
 
 
 if __name__ == "__main__":

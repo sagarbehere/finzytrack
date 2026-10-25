@@ -2,10 +2,10 @@
 // leave or reload all ask first (L8-01; review:L8 §1.1 H5; ADR-0035 one `useUnsavedGuard`; INV-16 Cancel focused).
 // Assumed, not decided: the route, the filter panel's "Apply" button, the global search box name, the guard's dialog
 // title "Discard unsaved changes?" with "Discard" / "Cancel".
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test } from '../harness/fixtures'
+import type { Page } from '@playwright/test'
 
 import { fixme } from '../fixme'
-import { WS } from './workspace'
 
 async function editOnePayee(page: Page): Promise<void> {
   const grid = page.getByRole('grid', { name: 'Transactions' })
@@ -25,8 +25,8 @@ async function expectGuardThenCancel(page: Page): Promise<void> {
 test.fixme(
   'A2: Apply filter, global search, route leave and reload all guard unsaved edits',
   fixme({ id: 'BL-0065', due: 'M5', reason: 'capability not built' }),
-  async ({ page }) => {
-    await page.goto(`/w/${WS}/transactions`)
+  async ({ page, demo }) => {
+    await page.goto(`/w/${demo.key}/transactions`)
     await editOnePayee(page)
 
     await page.getByRole('textbox', { name: 'Account contains' }).fill('Income')

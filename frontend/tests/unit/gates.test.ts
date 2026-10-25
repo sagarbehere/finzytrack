@@ -107,3 +107,22 @@ describe('[L9.M-7] tests stub components by import, not by name', () => {
     expect(await ruleIds("export const o = { stubs: 1, name: 'x' }\n")).toEqual([])
   })
 })
+
+describe('[INV-24] Playwright specs run through the acceptance harness (S0030)', () => {
+  const inSpec = (code: string) => ruleIds(code, 'smoke.spec.ts', 'e2e')
+
+  it.each([
+    ['test from @playwright/test', "import { test } from '@playwright/test'\ntest('x', () => undefined)\n"],
+    ['expect from @playwright/test', "import { expect } from '@playwright/test'\nexpect(1).toBe(1)\n"],
+    ['a namespace import', "import * as pw from '@playwright/test'\npw.test('x', () => undefined)\n"],
+  ])('refuses %s in a spec', async (_label, code) => {
+    expect(await inSpec(code)).toContain('@typescript-eslint/no-restricted-imports')
+  })
+
+  it('accepts the harness fixtures and type-only imports', async () => {
+    const ok =
+      "import type { Page } from '@playwright/test'\n\nimport { expect, test } from './harness/fixtures'\n\n" +
+      "test('x', async ({ page }: { page: Page }) => {\n  await expect(page).toHaveTitle('x')\n})\n"
+    expect(await inSpec(ok)).not.toContain('@typescript-eslint/no-restricted-imports')
+  })
+})
