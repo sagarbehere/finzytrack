@@ -115,6 +115,34 @@ describe('[INV-12] frontend dependency direction', () => {
     ['@tauri-apps outside platform/shell/tauri.ts', 'src/platform/shell/browser.ts', "import '@tauri-apps/api/core'\n"],
     ['@tauri-apps in a feature', 'src/features/accounts/hooks/useTree.ts', "import '@tauri-apps/api/core'\n"],
     ['a file outside the map', 'src/stray/thing.ts', 'export const x = 1\n'],
+    // S0018 verifier F1, F2, F4: unresolved local specifiers, other script kinds, alias-looking names
+    ['a domain import written with .js for a .ts file', 'src/domain/money.ts', "import '../platform/clock.js'\n"],
+    ['an import of a file that does not exist', 'src/domain/money.ts', "import './nowhere'\n"],
+    ['a stray .js file', 'src/stray/thing.js', 'export const x = 1\n'],
+    ['a stray .mts file', 'src/stray/thing.mts', 'export const x = 1\n'],
+    ['an .mts file in domain importing platform', 'src/domain/evil.mts', "import '../platform/clock'\n"],
+    ['an alias-looking @/ import', 'src/features/accounts/hooks/useTree.ts', "import '@/app/router'\n"],
+    ['an alias-looking src/ import', 'src/features/accounts/hooks/useTree.ts', "import 'src/app/router'\n"],
+    // F3: the other forbidden pairs of the map
+    ['app deep-importing a feature', 'src/app/router.ts', "import '../features/accounts/views/List.vue'\n"],
+    ['app importing api/generated', 'src/app/router.ts', "import '../api/generated/types'\n"],
+    ['catalog importing a feature', 'src/catalog/accounts.ts', "import '../features/accounts'\n"],
+    ['catalog importing components/ui', 'src/catalog/accounts.ts', "import '../components/ui/button'\n"],
+    [
+      'components/app importing platform',
+      'src/components/app/MoneyText.vue',
+      '<script setup lang="ts">\nimport \'../../platform/clock\'\n</script>\n',
+    ],
+    [
+      'components/app importing a feature',
+      'src/components/app/MoneyText.vue',
+      '<script setup lang="ts">\nimport \'../../features/accounts\'\n</script>\n',
+    ],
+    ['components/ui importing catalog', 'src/components/ui/button.ts', "import '../../catalog/accounts'\n"],
+    ['api/generated importing api', 'src/api/generated/types.ts', "import '../client'\n"],
+    ['platform importing a feature', 'src/platform/clock.ts', "import '../features/accounts'\n"],
+    ['platform/shell/tauri.ts importing api', 'src/platform/shell/tauri.ts', "import '../../api/client'\n"],
+    ['domain importing catalog', 'src/domain/money.ts', "import '../catalog/accounts'\n"],
   ])('refuses %s', async (_label, file, code) => {
     await refused(file, code)
   })
@@ -146,6 +174,11 @@ describe('[INV-12] frontend dependency direction', () => {
       "import 'decimal.js'\nimport 'temporal-polyfill'\nimport './dates'\n",
     ],
     ['platform/shell/tauri.ts importing @tauri-apps', 'src/platform/shell/tauri.ts', "import '@tauri-apps/api/core'\n"],
+    [
+      'a feature importing components/app',
+      'src/features/accounts/hooks/useTree.ts',
+      "import '../../../components/app/MoneyText.vue'\n",
+    ],
   ])('accepts %s', async (_label, file, code) => {
     await accepted(file, code)
   })

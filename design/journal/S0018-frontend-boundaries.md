@@ -19,3 +19,13 @@
 ## Hand-off (PROCESS.md §3 step 4; ADR-0057)
 - Checks with must-not-pass tests: every loosening above has a refusal case; allowances guard against a map that refuses everything.
 - Self-mutation (scratch copy with node_modules linked, since the runner cannot link them): 9 tried, 9 killed.
+
+## Verifier
+- Round 1, head 7b8d369: FAIL. Attacks: 14 (every import form; Vue SFCs; specifiers TypeScript resolves but the plugin does not; other script extensions; nested look-alike folders; @tauri-apps; packages in domain; feature boundaries; fixture fidelity against the real config; 21 mutants; the root config; dynamic and glob imports; the 14-day rule, held for all 24 new lock entries; tests on base).
+- F1 High: `'../platform/clock.js'` (the usual TypeScript spelling for clock.ts) was not resolved by the plugin, so the rule skipped it, while typecheck and build passed. Fixed: `checkUnknownLocals: true` (an unplaceable local import is refused); tests for `.js`-for-`.ts` and a missing file.
+- F2 Medium: only `.ts`/`.vue` files were checked; an `.mts` in domain or a stray `.js` passed. Fixed: every script kind under `src/`; tests.
+- F3 Medium (tests): app deep-importing a feature and 11 other forbidden pairs, plus feature → components/app, had no case. Added; the verifier's 21 mutants now leave one survivor, equivalent (`core` origin for decimal.js/temporal-polyfill, which are not core modules).
+- F4 Low: alias-looking specifiers (`@/`, `src/`) counted as packages. Fixed: refused as packages; tests.
+- F5 Low: `mode: 'full'` is deprecated. Kept: `partialMatch: false` did not classify `src/main.ts` the same way when tried (Decisions above); revisit in the plugin's upgrade slice.
+- F6 Low: `frontend/CLAUDE.md` now names the layer map. F7 Low: INV-12's line states that `import(variable)` and `import.meta.glob(...)` are review-only.
+- Re-verification required (High fix): round 2 below.

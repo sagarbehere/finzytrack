@@ -4,7 +4,8 @@
 // feature only through its index.ts, and a feature reaches another only along an edge in FEATURE_EDGES;
 // src/domain imports only domain, decimal.js and temporal-polyfill; only platform/shell/tauri.ts imports
 // @tauri-apps (EP-07). Every file under src/ must belong to an element (no-unknown-files), so a new folder
-// fails until it is placed in this map. Tests: tests/unit/boundaries.test.ts.
+// fails until it is placed in this map. Tests: tests/unit/boundaries.test.ts. Out of reach of a static lint
+// (stated in INV-12): `import(variable)` and `import.meta.glob(...)`.
 import boundaries from 'eslint-plugin-boundaries'
 
 // Cross-feature edges, [from, to] by feature folder name. None exist in M0; each one is a reviewed decision.
@@ -54,11 +55,14 @@ export function policies(edges = FEATURE_EDGES) {
       from: { element: { type: 'feature', captured: { feature: from } } },
       allow: { to: featureIndex(to) },
     })),
-    // External packages (checkAllOrigins): any package, except @tauri-apps outside platform/shell/tauri.ts;
+    // External packages (checkAllOrigins): any package, except @tauri-apps outside platform/shell/tauri.ts
+    // and alias-looking names (`@/`, `~/`, `src/`), which would be our own files under another name;
     // domain may use only decimal.js and temporal-polyfill.
     {
       from: { element: { type: '!domain' } },
-      allow: { to: { module: { origin: ['external', 'core'], source: '!@tauri-apps/**' } } },
+      allow: {
+        to: { module: { origin: ['external', 'core'], source: '!{@tauri-apps/**,@/**,~/**,src,src/**,@,~}' } },
+      },
     },
     {
       from: { element: { type: 'shell-tauri' } },
@@ -74,14 +78,20 @@ export function policies(edges = FEATURE_EDGES) {
 export function boundariesConfig(edges = FEATURE_EDGES) {
   return [
     {
-      files: ['src/**/*.{ts,vue}'],
+      // every script kind under src/ (S0018 verifier F2), not only .ts and .vue
+      files: ['src/**/*.{ts,mts,cts,tsx,js,mjs,cjs,jsx,vue}'],
       plugins: { boundaries },
       settings: {
         'boundaries/elements': elements,
-        'import/resolver': { node: { extensions: ['.ts', '.vue', '.js'] } },
+        'import/resolver': { node: { extensions: ['.ts', '.mts', '.tsx', '.vue', '.js', '.mjs'] } },
       },
       rules: {
-        'boundaries/dependencies': ['error', { default: 'disallow', checkAllOrigins: true, policies: policies(edges) }],
+        // checkUnknownLocals: a local import the resolver cannot place (`./clock.js` for clock.ts) is refused, not
+        // skipped (S0018 verifier F1)
+        'boundaries/dependencies': [
+          'error',
+          { default: 'disallow', checkAllOrigins: true, checkUnknownLocals: true, policies: policies(edges) },
+        ],
         'boundaries/no-unknown-files': 'error',
       },
     },
