@@ -31,6 +31,11 @@ v0.3 kept server state in hand-rolled module singletons. Widgets showed results 
 
 - A switch from workspace A to B changes the keys, so nothing needs invalidating.
 
+## Amendment (2026-10-25): a refresh that changes a row being edited
+
+Owner: "Agreed with your recommendation on Q18." (2026-10-25, in session)
+When a background refetch changes a row the user has unsaved edits on, the edit buffer moves to its `conflict` state (ARCHITECTURE.md §7): the user chooses to keep their edit or reload the new version. The user's edit does not silently win, and the refetch does not silently overwrite it. (Spike S6 modelled exactly this.)
+
 ## References
 
 review:10 D8, D9, D11, I7, I8; review:23 §3.5; review:25 §3.2; ADR-0006, ADR-0018, ADR-0029, ADR-0038, ADR-0039.
