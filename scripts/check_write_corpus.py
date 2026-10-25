@@ -114,8 +114,13 @@ def resolve(base: str, target: str, files: dict[str, bytes]) -> list[str]:
         return [p] if p in files else []
     return sorted(
         p for p in files
-        if len(parts := p.split("/")) == len(want) and all(fnmatch.fnmatchcase(a, b) for a, b in zip(parts, want))
+        if len(parts := p.split("/")) == len(want) and all(segment_matches(a, b) for a, b in zip(parts, want))
     )
+
+
+def segment_matches(name: str, pattern: str) -> bool:
+    """Python's glob: a wildcard never matches a leading dot."""
+    return fnmatch.fnmatchcase(name, pattern) and (pattern.startswith(".") or not name.startswith("."))
 
 
 def encrypted_exact(name: str, data: bytes) -> bool:
@@ -323,7 +328,7 @@ def d_plugin_modifies_entries(tree: Tree) -> bool:
 
 
 def d_duplicate_include(tree: Tree) -> bool:
-    seen = [f for _, _, found in tree.edges for f in found]
+    seen = [ROOT_FILE] + [f for _, _, found in tree.edges for f in found]  # the root counts: a self-include repeats it
     return len(seen) != len(set(seen))
 
 
@@ -397,6 +402,10 @@ def check(cases: dict[str, object], folders: dict[str, dict[str, bytes]]) -> lis
         declared = set(entry["features"])
         for f in sorted(declared - set(FEATURES)):
             problems.append(f"{name}: unknown feature {f!r}")
+        tree = Tree(files)
+        for src, target, _ in tree.edges:
+            if "**" in target:
+                problems.append(f"{name}: {src} includes {target!r}: recursive globs are not modelled by this check")
         found = detect(files)
         for f in sorted(declared & set(FEATURES) - found):
             problems.append(f"{name}: declares {f!r} but the case does not show it")

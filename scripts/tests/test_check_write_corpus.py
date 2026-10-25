@@ -132,6 +132,7 @@ class Detectors(unittest.TestCase):
         self.assertIn("implicit-prices", found(plugin + HEAD + priced))
         self.assertNotIn("implicit-prices", found(plugin + HEAD + TXN))  # nothing priced
         self.assertNotIn("implicit-prices", found('; ' + plugin + HEAD + priced))
+        self.assertNotIn("implicit-prices", found(plugin + HEAD + '2024-01-05 * "B" "a@b"\n  Assets:Fund  1 F {"a@b"}\n  Assets:Cash\n'))
 
     def test_documents_folders(self) -> None:
         main = 'option "documents" "docs"\n' + HEAD.replace("Assets:Cash USD", "Assets:Bank:Checking USD")
@@ -175,10 +176,20 @@ class Detectors(unittest.TestCase):
         self.assertNotIn("duplicate-include", found('include "a.beancount"\ninclude "b.beancount"\n',
                                                     a_DOT_beancount=HEAD, b_DOT_beancount=TXN))
 
+    def test_duplicate_include_of_the_root(self) -> None:  # verifier F3: Beancount reports these too
+        self.assertIn("duplicate-include", found('include "main.beancount"\n' + HEAD))
+        self.assertIn("duplicate-include", found('include "a.beancount"\n', a_DOT_beancount='include "main.beancount"\n'))
+
+    def test_glob_skips_dotfiles_like_python_glob(self) -> None:
+        self.assertNotIn("glob-include", found(HEAD + 'include "y/*.bean"\n', **{"y__.a.bean": TXN}))
+        self.assertIn("glob-include", found(HEAD + 'include "y/.*.bean"\n', **{"y__.a.bean": TXN}))
+
     def test_total_price(self) -> None:
         self.assertIn("total-price", found(HEAD + '2024-01-05 * "B" "b"\n  Assets:Tok  7 TOK @@ 10 USD\n  Assets:Cash\n'))
         self.assertNotIn("total-price", found(HEAD + '2024-01-05 * "B" "b"\n  Assets:Tok  7 TOK @ 10 USD\n  Assets:Cash\n'))
         self.assertNotIn("total-price", found(HEAD + TXN.replace('"lunch"', '"@@ in a narration"')))
+        label = '2024-01-05 * "B" "b"\n  Assets:Fund  1 F {1 USD, "a@@b"}\n  Assets:Cash\n'
+        self.assertNotIn("total-price", found(HEAD + label))  # @@ inside a lot label (verifier F2)
 
     def test_encrypted(self) -> None:
         inc = 'include "s.beancount.gpg"\n'
@@ -264,6 +275,10 @@ class Rules(unittest.TestCase):
                 self.folders["crlf"][name] = data
                 self.assertTrue(any(f"crlf: {name} might be decrypted" in p for p in self.problems()))
                 del self.folders["crlf"][name]
+
+    def test_recursive_glob_is_refused(self) -> None:  # not modelled: refused (verifier F3, S0016 retro)
+        self.folders["crlf"]["main.beancount"] += b'include "y/**/*.bean"\r\n'
+        self.assertTrue(any("recursive globs are not modelled" in p for p in self.problems()))
 
     def test_case_without_root_file(self) -> None:
         self.folders["crlf"] = {"other.beancount": b""}
