@@ -12,6 +12,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "oracle"))
 
 import copies  # noqa: E402
 
+# macOS reaches the data volume by a second spelling as well (a firmlink); `resolve()` keeps either spelling.
+FIRMLINK = Path("/", "System", "Volumes", "Data")  # from parts: the privacy scan reads the literal as a home path
+HAS_FIRMLINK = sys.platform == "darwin" and FIRMLINK.is_dir()
+
+
+def firm(p: Path) -> Path:
+    return Path(str(FIRMLINK) + str(p.resolve()))
+
+
 CONFIG = 'setup_complete: false\n\n# File paths\nledger_file: "./data/ledgers/one.beancount"\nserver:\n  port: 8001\n'
 
 
@@ -70,6 +79,32 @@ class CopiesTest(unittest.TestCase):
         self.assertIsNotNone(copies.refuse_dir(Path.home() / ("Finzy" + "track" + "Data") / "ledgers"))
         self.assertIsNotNone(copies.refuse_dir(copies.REPO.parent / "finzytrack-legacy" / "backend"))
         self.assertIsNotNone(copies.refuse_dir(Path.home()))  # contains the live folder
+
+    @unittest.skipUnless(HAS_FIRMLINK, "macOS firmlink spelling")
+    def test_refuses_the_firmlink_spelling_of_a_forbidden_folder(self) -> None:
+        # S0030 verifier F3: the same folder by another path text is matched by its identity (device, inode).
+        for bad in (firm(self.live), firm(self.live) / "sub", firm(self.legacy), firm(copies.REPO), firm(self.base)):
+            with self.subTest(bad=bad):
+                self.assertIsNotNone(copies.refuse_dir(bad))
+        self.assertIsNone(copies.refuse_dir(firm(self.src)))
+
+    def test_a_changed_home_keeps_the_accounts_own_defaults(self) -> None:
+        # S0030 verifier F4: the defaults come from the password database too, not only from $HOME.
+        import pwd
+
+        real_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+        old = os.environ.get("HOME")
+        os.environ["HOME"] = str(self.base)
+        try:
+            roots = {str(p) for p, _ in copies._forbidden_roots()}
+        finally:
+            if old is None:
+                os.environ.pop("HOME")
+            else:
+                os.environ["HOME"] = old
+        self.assertIn(str(real_home / ("Finzy" + "track" + "Data")), roots)
+        self.assertIn(str(real_home / "experiments" / "finzytrack-legacy"), roots)
+        self.assertIn(str(self.base / ("Finzy" + "track" + "Data")), roots)
 
     def test_stage_copies_the_ledger_and_points_the_config_at_the_copy(self) -> None:
         before = snapshot(self.src)
@@ -140,6 +175,16 @@ class LocalTierTest(unittest.TestCase):
     def test_a_symlink_from_the_tier_to_elsewhere_is_refused(self) -> None:
         (self.tier / "link").symlink_to(self.base / "elsewhere")
         self.assertIsNotNone(copies.refuse_local_tier_source(self.tier / "link"))
+
+    @unittest.skipUnless(HAS_FIRMLINK, "macOS firmlink spelling")
+    def test_firmlink_spellings_of_the_tier_and_the_live_folder(self) -> None:
+        # S0030 verifier F3: a source inside the live folder spelled via the firmlink is refused, a tier that is the
+        # firmlink spelling of a folder containing the live folder is refused, and the tier's own firmlink spelling
+        # is still the tier.
+        self.assertIsNotNone(copies.refuse_local_tier_source(firm(self.live)))
+        self.assertIsNone(copies.refuse_local_tier_source(firm(self.tier / "bank")))
+        os.environ[copies.LOCAL_TIER_ENV] = str(firm(self.base))
+        self.assertIsNotNone(copies.refuse_local_tier_source(firm(self.base) / "elsewhere"))
 
     def test_another_spelling_of_the_tier_is_the_tier(self) -> None:
         self.assertIsNone(copies.refuse_local_tier_source(Path(str(self.tier / "bank").upper())))

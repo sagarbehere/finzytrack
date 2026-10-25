@@ -27,11 +27,24 @@ def live_data_root() -> Path:
     return Path(os.environ.get("FT_LIVE_DATA", Path.home() / "FinzytrackData")).expanduser().resolve()
 
 
+def _homes() -> list[Path]:
+    """$HOME and the account's own home from the password database: a changed HOME never hides the defaults."""
+    homes = [Path.home()]
+    try:
+        import pwd  # POSIX only
+
+        homes.append(Path(pwd.getpwuid(os.getuid()).pw_dir))
+    except (ImportError, KeyError):
+        pass
+    return homes
+
+
 def _forbidden_roots() -> list[tuple[Path, str]]:
     """Every folder refuse_dir refuses. An environment override adds a folder; it never removes a default (S0030)."""
-    roots = [(Path.home() / "FinzytrackData", "the owner's live data folder"),
-             (REPO.parent / "finzytrack-legacy", "the legacy worktree"),
-             (Path.home() / "experiments" / "finzytrack-legacy", "the legacy worktree")]
+    roots = [(REPO.parent / "finzytrack-legacy", "the legacy worktree")]
+    for home in _homes():
+        roots += [(home / "FinzytrackData", "the owner's live data folder"),
+                  (home / "experiments" / "finzytrack-legacy", "the legacy worktree")]
     for env, why in (("FT_LIVE_DATA", "the owner's live data folder"), ("FT_LEGACY_ROOT", "the legacy worktree")):
         if os.environ.get(env):
             roots.append((Path(os.environ[env]).expanduser(), why))
@@ -47,10 +60,32 @@ def _key(p: Path) -> str:
     return r.as_posix().rstrip("/").lower()
 
 
+def _identity(p: Path) -> tuple[int, int] | None:
+    try:
+        st = os.stat(p)
+    except (OSError, ValueError):
+        return None
+    return st.st_dev, st.st_ino
+
+
+def _self_and_ancestors(p: Path) -> list[Path]:
+    """*p* resolved (symlinks followed, so a link's target is what counts) and its parents."""
+    try:
+        resolved = p.expanduser().resolve(strict=False)
+    except (OSError, RuntimeError):
+        resolved = Path(os.path.abspath(p.expanduser()))
+    return [resolved, *resolved.parents]
+
+
 def within(p: Path, root: Path) -> bool:
-    """Whether *p* is *root* or inside it, compared resolved and case-insensitively."""
+    """Whether *p* is *root* or inside it: by resolved, case-insensitive text, or by folder identity, so any other
+    spelling of an existing folder (another case, a macOS firmlink into the data volume) is the same
+    folder (EP-30; S0030 verifier F3)."""
     a, b = _key(p), _key(root)
-    return a == b or a.startswith(b + "/")
+    if a == b or a.startswith(b + "/"):
+        return True
+    target = _identity(root)
+    return target is not None and any(_identity(x) == target for x in _self_and_ancestors(p))
 
 
 def refuse_dir(folder: Path, *, allow_repo_corpora: bool = False) -> str | None:

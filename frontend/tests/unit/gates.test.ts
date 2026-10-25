@@ -119,6 +119,24 @@ describe('[INV-24] Playwright specs run through the acceptance harness (S0030)',
     expect(await inSpec(code)).toContain('@typescript-eslint/no-restricted-imports')
   })
 
+  it('refuses @playwright/test in an e2e helper module too, so no helper re-exports an unguarded test', async () => {
+    const helper = "import { test } from '@playwright/test'\nexport { test }\n"
+    expect(await ruleIds(helper, 'policy.ts', 'e2e/harness')).toContain('@typescript-eslint/no-restricted-imports')
+  })
+
+  it.each([
+    [
+      'browser.newContext',
+      "import { test } from './harness/fixtures'\ntest('x', async ({ browser }) => {\n  await browser.newContext()\n})\n",
+    ],
+    [
+      'browser.newPage',
+      "import { test } from './harness/fixtures'\ntest('x', async ({ browser }) => {\n  await browser.newPage()\n})\n",
+    ],
+  ])('refuses %s in a spec', async (_label, code) => {
+    expect(await inSpec(code)).toContain('no-restricted-properties')
+  })
+
   it('accepts the harness fixtures and type-only imports', async () => {
     const ok =
       "import type { Page } from '@playwright/test'\n\nimport { expect, test } from './harness/fixtures'\n\n" +

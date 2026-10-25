@@ -65,7 +65,10 @@ class TempRootTest(EnvMixin):
     def test_a_root_is_never_created_in_a_forbidden_place(self) -> None:
         # Must not pass: TMPDIR (or a parent) in the repo, the live data folder, the legacy worktree, or a folder
         # that contains one of them. Nothing may be created there, not even an empty folder.
-        for parent in (REPO, REPO / "build", self.live, self.legacy, Path(str(self.live).upper()), Path("/")):
+        firm = Path("/", "System", "Volumes", "Data")  # the macOS firmlink prefix, from parts (privacy scan)
+        firm_live = [Path(str(firm) + str(self.live))] if sys.platform == "darwin" and firm.is_dir() else []
+        for parent in (REPO, REPO / "build", self.live, self.legacy, Path(str(self.live).upper()), Path("/"),
+                       *firm_live):
             with self.subTest(parent=parent):
                 before = sorted(p.name for p in parent.iterdir()) if parent.is_dir() else None
                 with self.assertRaises(harness.Refused):

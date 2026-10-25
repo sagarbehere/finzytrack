@@ -87,9 +87,11 @@ export default tseslint.config(
     },
   },
   {
-    // INV-24 (S0030): a Playwright spec takes `test` and `expect` from the acceptance harness, so every flow runs
-    // against its own sidecar with the request guard, the frozen clock and the hard failures armed.
-    files: ['e2e/**/*.spec.ts', 'e2e/**/*.selftest.ts'],
+    // INV-24 (S0030): every e2e file but the harness's own fixtures module (and the nested self-test's config) takes
+    // `test` and `expect` from the acceptance harness, so every flow runs against its own sidecar with the request
+    // guard, the frozen clock and the hard failures armed, and no helper can hand out an unguarded `test`.
+    files: ['e2e/**/*.ts'],
+    ignores: ['e2e/harness/fixtures.ts', 'e2e/harness/selftest/playwright.config.ts'],
     rules: {
       '@typescript-eslint/no-restricted-imports': [
         'error',
@@ -102,6 +104,21 @@ export default tseslint.config(
             },
           ],
         },
+      ],
+    },
+  },
+  {
+    // INV-24 (S0030): specs do not open their own browser contexts or pages (the guard arms those it sees, but a
+    // spec has no reason to); the harness's self-test opens them on purpose to prove the guard. Later config
+    // replaces a rule's options, so the INV-06 ban is repeated.
+    files: ['e2e/**/*.ts'],
+    ignores: ['e2e/harness.spec.ts', 'e2e/harness/fixtures.ts'],
+    rules: {
+      'no-restricted-properties': [
+        'error',
+        { property: 'toFixed', message: 'INV-06: format money through src/domain' },
+        { object: 'browser', property: 'newContext', message: 'INV-24: use the `context` fixture' },
+        { object: 'browser', property: 'newPage', message: 'INV-24: use the `page` fixture or context.newPage()' },
       ],
     },
   },
