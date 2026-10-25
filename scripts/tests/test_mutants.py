@@ -327,7 +327,7 @@ class Copy(unittest.TestCase):
         git(repo, "commit", "-q", "-m", "base", "--no-verify")
         code, out = run_main(repo, plan_file(self.root, LOOSEN))
         self.assertEqual(code, 2, out)
-        self.assertIn("leaves the tree", out)
+        self.assertIn("is a symlink", out)
         self.assertEqual(outside.read_text(), CHECK)
 
     def test_command_cannot_write_through_a_symlink_out_of_the_tree(self) -> None:
@@ -352,6 +352,7 @@ class Copy(unittest.TestCase):
         git(repo, "commit", "-q", "-m", "base", "--no-verify")
         code, out = run_main(repo, plan_file(self.root, LOOSEN))
         self.assertEqual(code, 2, out)
+        self.assertIn("leaves the tree", out)
 
     def test_symlink_that_climbs_out_and_back_in_is_refused(self) -> None:
         # Verifier S0005 R2-F1: from the checkout this link resolves inside the tree; from the copy, which
@@ -366,6 +367,44 @@ class Copy(unittest.TestCase):
         code, out = run_main(repo, plan_file(self.root, LOOSEN))
         self.assertEqual(code, 2, out)
         self.assertEqual((repo / "target.txt").read_text(), "orig\n")
+
+    def _link_through_link_repo(self, test_body: str) -> Path:
+        # Verifier S0005 R3: d0/.../d39/top -> ../ x40 really is the tree root, so it is accepted; esc.txt goes
+        # through it, climbs 40 levels to "/" and comes down into the checkout. Its text looks inside.
+        repo = make_repo(self.root, {"check.py": CHECK, "target.txt": "orig\n"}, commit=False)
+        (repo / "test_check.py").write_text(test_body + TESTS)
+        deep = repo.joinpath(*[f"d{i}" for i in range(40)])
+        deep.mkdir(parents=True)
+        (deep / "top").symlink_to("../" * 40)
+        top = "/".join(f"d{i}" for i in range(40)) + "/top"
+        (repo / "esc.txt").symlink_to(top + "/" + "../" * 40 + str(repo.resolve()).lstrip("/") + "/target.txt")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "base", "--no-verify")
+        return repo
+
+    def test_link_through_another_link_is_refused(self) -> None:
+        repo = self._link_through_link_repo("import pathlib\npathlib.Path('esc.txt').write_text('written by the test')\n")
+        code, out = run_main(repo, plan_file(self.root, LOOSEN))
+        self.assertEqual((repo / "target.txt").read_text(), "orig\n", out)
+        self.assertEqual(code, 2, out)
+
+    def test_mutant_file_that_is_a_symlink_is_refused(self) -> None:
+        # The runner itself would write the mutation through the link.
+        repo = self._link_through_link_repo("")
+        plan = LOOSEN.replace('file = "check.py"', 'file = "esc.txt"').replace(
+            'find = "return x > 0"', 'find = "orig"').replace('replace = "return True"', 'replace = "MUTATED"')
+        code, out = run_main(repo, plan_file(self.root, plan))
+        self.assertEqual((repo / "target.txt").read_text(), "orig\n", out)
+        self.assertEqual(code, 2, out)
+
+    def test_in_tree_symlink_as_mutant_file_is_refused(self) -> None:
+        repo = make_repo(self.root, {"check.py": CHECK, "test_check.py": TESTS}, commit=False)
+        (repo / "alias.py").symlink_to("check.py")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "base", "--no-verify")
+        code, out = run_main(repo, plan_file(self.root, LOOSEN.replace('file = "check.py"', 'file = "alias.py"')))
+        self.assertEqual(code, 2, out)
+        self.assertIn("is a symlink", out)
 
     def test_relative_symlink_inside_the_tree_stays_a_symlink(self) -> None:
         # Must pass: an in-tree relative link is copied as a link, so writing through it stays in the copy.

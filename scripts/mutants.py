@@ -13,9 +13,9 @@ A plan file (TOML, kept in the session scratchpad, not in the repo) lists the te
 
 Every run (the baseline, then each mutant) happens in a fresh copy of the working tree: tracked files plus
 untracked files that are not ignored, so uncommitted work is tested and ignored files (data, envs, caches)
-are not copied. The checkout itself is never written (INV-24): a symlink is copied as a symlink only when it
-is relative and stays inside the tree; any other symlink is refused, since the test command could write
-through it. A mutant changes only its `find` bytes; the rest of the file, line endings included, is kept.
+are not copied. The checkout itself is never written (INV-24): symlinks are copied as symlinks, and after
+each copy every one of them must really resolve inside that copy (followed through any chain of links), or
+the run is refused before the command starts; a mutant's own file may not be a symlink. A mutant changes only its `find` bytes; the rest of the file, line endings included, is kept.
 
 Outcomes: killed (the command failed), killed (timeout), survived (the command passed). A baseline that
 fails or times out, a malformed plan, a mutant whose `find` text is not exactly once in its file, or a mutant
@@ -84,34 +84,31 @@ def tree_files(repo: Path) -> list[str]:
     return [n for n in names if os.path.lexists(repo / n)]
 
 
-def check_links(repo: Path, files: list[str]) -> None:
-    """Refuse symlinks that are absolute or leave the tree: the command could write through them.
-
-    Containment is decided on the text of the link, not by resolving it from the checkout: the copy sits
-    elsewhere, so a link that climbs out and back in (`../../<checkout path>/x`) would resolve inside the
-    tree here and point at the real checkout from the copy."""
-    for name in files:
-        src = repo / name
-        if src.is_symlink():
-            link = os.readlink(src)
-            lexical = os.path.normpath(os.path.join(os.path.dirname(name), link))
-            if os.path.isabs(link) or lexical == ".." or lexical.startswith("../"):
-                raise PlanError(f"refused: symlink {name} -> {link} leaves the tree (the copy would write through it)")
-
-
 def snapshot(repo: Path, files: list[str], dest: Path) -> None:
+    """Copy the tree; then refuse it if any symlink in the copy resolves outside the copy.
+
+    Containment is checked where the links are used, on the real file system: the link text alone cannot
+    decide it (`s -> .` makes `s/../x` climb out although its text stays inside), and resolving from the
+    checkout is wrong because the copy sits elsewhere (`../../<checkout path>/x`)."""
+    links: list[str] = []
     for name in files:
         src, dst = repo / name, dest / name
         dst.parent.mkdir(parents=True, exist_ok=True)
         if src.is_symlink():
             os.symlink(os.readlink(src), dst)
+            links.append(name)
         else:
             shutil.copy2(src, dst)
+    root = dest.resolve()
+    for name in links:
+        if not Path(os.path.realpath(dest / name)).is_relative_to(root):
+            raise PlanError(f"refused: symlink {name} -> {os.readlink(dest / name)} leaves the tree "
+                            "(the command could write through it)")
 
 
 def target(copy: Path, m: Mutant) -> Path:
-    """The mutant's file inside the copy. Containment holds because validate() accepts only files of the
-    working tree and check_links() refuses symlinks that leave it."""
+    """The mutant's file inside the copy. Containment holds because validate() accepts only regular files of
+    the working tree (git lists nothing beneath a symlinked folder)."""
     return copy / m.file
 
 
@@ -121,6 +118,8 @@ def validate(repo: Path, files: list[str], mutants: list[Mutant]) -> None:
         p = target(repo, m)
         if Path(m.file).as_posix() not in known or not p.is_file():
             raise PlanError(f"{m.id}: {m.file!r} is not a file of the working tree")
+        if p.is_symlink():
+            raise PlanError(f"{m.id}: refused, {m.file!r} is a symlink (the mutation would be written through it)")
         n = p.read_bytes().count(m.find.encode())
         if n != 1:
             raise PlanError(f"{m.id}: `find` occurs {n} times in {m.file} (must be exactly once)")
@@ -160,7 +159,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cmd, timeout, mutants = load(a.plan)
         files = tree_files(repo)
-        check_links(repo, files)
         validate(repo, files, mutants)
         if a.work is not None:
             work = a.work.resolve()
