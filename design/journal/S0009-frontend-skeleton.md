@@ -19,3 +19,15 @@
 ## Hand-off (ADR-0057)
 - Checks with their must-not-pass tests: the date and `toFixed` bans beside "a date from given parts passes"; the tsconfig pin; the licence own-package filter beside "a name that only starts like ours is kept".
 - Self-mutation: 8 tried (each ban removed or widened, strict and strictTemplates off, own package kept, prefix match), 8 killed.
+
+## Verifier
+- Round 1, head bc43ae1: PASS WITH FINDINGS. Attacks: 7 (gates on a clean export; planted `.vue` type, lint and a11y errors; ban bypasses; licence output; mutants; the smoke flow; hooks and CI).
+- F1 Medium (INV-06, INV-07): the bans did not reach Vue templates (`{{ amount.toFixed(2) }}`, `{{ new Date() }}`). Fixed: the same ban list through `vue/no-restricted-syntax`; template tests lint in-memory text against `src/App.vue` (nothing written to disk), beside a plain expression that must pass.
+- F2 Medium (INV-07): `Date()` without `new` passed. Fixed, with a test.
+- F3 Low (INV-07): `new globalThis.Date()` and `window.Date.now()` passed. Fixed, with tests; a qualified `Date` with given parts still passes. Aliasing (`const D = Date`) is noted on BL-0007.
+- Also noted by the verifier: the EP-22 lint rules (`no-explicit-any`, `ban-ts-comment`) have no planted test; the config comments now say the invariants are pending.
+- Self-mutation of the fix: 7 tried, 7 killed. Tooling slice, no High: no further round (ADR-0058).
+
+## Retro
+- The bans were written for `.ts` files only; in Vue the formatting happens in templates. A cheaper gate: write each ban's must-not-pass case in every file kind the framework uses.
+- Process cost: skeleton about 50 min (mostly drafted earlier in the scratchpad); verifier 3.5 min; fixes about 20 min. One round, as ADR-0058 intends.

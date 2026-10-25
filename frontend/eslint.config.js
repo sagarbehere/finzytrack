@@ -4,6 +4,17 @@ import vueA11y from 'eslint-plugin-vuejs-accessibility'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
+const today = 'INV-07: no system "today" or clock; use src/domain dates'
+// Deliberate aliasing (`const D = Date; new D()`) is left to review (BL-0007).
+const systemTime = [
+  { selector: "NewExpression[callee.name='Date'][arguments.length=0]", message: today },
+  { selector: "CallExpression[callee.name='Date']", message: today },
+  { selector: "CallExpression[callee.object.name='Date'][callee.property.name='now']", message: today },
+  { selector: "NewExpression[callee.property.name='Date'][arguments.length=0]", message: today },
+  { selector: "CallExpression[callee.property.name='Date']", message: today },
+  { selector: "CallExpression[callee.object.property.name='Date'][callee.property.name='now']", message: today },
+]
+
 export default tseslint.config(
   { ignores: ['dist/**', 'playwright-report/**', 'test-results/**'] },
   ...tseslint.configs.strictTypeChecked,
@@ -26,22 +37,21 @@ export default tseslint.config(
   },
   {
     rules: {
-      // INV-07: there is no UTC or system "today"; dates come from src/domain (Temporal).
-      'no-restricted-syntax': [
-        'error',
-        {
-          selector: "NewExpression[callee.name='Date'][arguments.length=0]",
-          message: 'INV-07: no system "today"; use src/domain dates',
-        },
-        {
-          selector: "CallExpression[callee.object.name='Date'][callee.property.name='now']",
-          message: 'INV-07: no system "today"; use src/domain dates',
-        },
-      ],
-      // INV-06: money is never a float string.
+      // INV-07 (pending, BL-0007): there is no UTC or system "today"; dates come from src/domain (Temporal).
+      'no-restricted-syntax': ['error', ...systemTime],
+      // INV-06 (pending, BL-0006): money is never a float string.
       'no-restricted-properties': [
         'error',
         { property: 'toFixed', message: 'INV-06: format money through src/domain' },
+      ],
+      // The same bans inside Vue templates, where display formatting happens.
+      'vue/no-restricted-syntax': [
+        'error',
+        ...systemTime,
+        {
+          selector: "CallExpression[callee.property.name='toFixed']",
+          message: 'INV-06: format money through src/domain',
+        },
       ],
     },
   },

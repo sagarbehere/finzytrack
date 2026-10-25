@@ -590,7 +590,7 @@ Each item builds the check that turns one invariant from "pending" into "enforce
 | BL-0004 | Build enforcement for INV-04: the layout test (no state outside its declared place) plus the verifier checklist | WS-BACKEND-CORE | M2 | open | `review:20 §2` |
 | BL-0005 | Build enforcement for INV-05: the atomic-publish swap test and the versioned-view contract golden | WS-MIRROR | M1a (agent) | open | `review:20 §2` |
 | BL-0006 | Build enforcement for INV-06: lint bans on float money, the `Money` type brand, and written-scale goldens | WS-KERNEL | M1a (agent) | open | `review:20 §2` |
-| BL-0007 | Build enforcement for INV-07: lint ban on UTC "today" and naive datetimes, plus tests run under a `TZ` west of UTC | WS-KERNEL | M1a (agent) | open | `review:20 §2` |
+| BL-0007 | Build enforcement for INV-07: lint ban on UTC "today" and naive datetimes, plus tests run under a `TZ` west of UTC (S0009 lint covers `new Date()`, `Date()`, `Date.now()` and their `globalThis.`/`window.` forms in scripts and templates; aliasing such as `const D = Date` is not caught) | WS-KERNEL | M1a (agent) | open | `review:20 §2` |
 | BL-0008 | Build enforcement for INV-08: the strict recipe schema validator and the catalog registry test | WS-RECIPES | M7 | open | `review:20 §2` |
 | BL-0009 | Build enforcement for INV-09: the injection test corpus (markdown, payee and metadata values), the CSP header test and the SQL hardening tests; chart-formatter and BQL tests follow in M7 (N1, L8-20, L11-07) | WS-SECURITY | M2 | open | `review:20 §2` |
 | BL-0010 | Build enforcement for INV-10: the cache registry test (every cache declares its bound and eviction); the 54k memory regression check joins with the baselines of BL-0020 | WS-BACKEND-CORE | M1a (agent) | open | `review:20 §2` |
