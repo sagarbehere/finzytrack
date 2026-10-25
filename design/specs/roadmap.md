@@ -25,12 +25,13 @@ Done in M0:
 - M1's INV-21 goldens: TransactionIds, content hashes and metadata JSON for ledgers v0.2.x wrote, taken from v0.2.2's own code and re-derived from the spec, and the inventory of every metadata key a released version wrote (S0022; the M1a code must pass them and the old-workspace fixtures are still to come, BL-0021).
 - M1's Beancount domain vectors: transaction tolerance and residuals (with the frontend port's verdict), balance assertions, account and currency grammar, the price map, display precision and booking per method, each an input with Beancount 3.2.0's output, kept equal to a fresh run of the committed generator (S0024; the M1a engine code must pass them, BL-0002).
 - The demo generator skeleton: the fragment interface, the background household, sizes demo, 5k and 54k, the build step `backend/scripts/gen_demo.py`, and its gates (0 Beancount errors at every size, the same bytes under any clock or time zone, one assertion per fragment); with it L10-18 closed (S0027; the release-build wiring, seed-dashboard and oracle-total gates and the multi-file variant are BL-0063).
+- The P1 integrity tests, written now and marked `fixme` (review:27 §1(d)): one test per P1 finding (backend pytest, vitest for the frontend findings) and the six integrity flows A1, A2, A4, A7, A10, A13 as Playwright specs (rows BL-0064…BL-0070); each `fixme` names an open backlog row with its milestone, so that milestone's exit run fails while the test is pending (S0029).
 
 Left in M0, in this order:
 1. BL-0042 is parked by the owner ("BL-0042 stays parked unless I ask", 2026-10-25); the guard gaps found in S0014 (BL-0055) closed by S0028 for the forms named there; deliberate-evasion variants are BL-0062, parked with BL-0042. The checks on the process's own paperwork (BL-0034, BL-0036, BL-0038, BL-0040) are parked until evidence asks for them (ADR-0058).
 2. The invariant enforcement due by M0: BL-0024 (the acceptance harness's port and data-dir checks, the local-tier path guard). BL-0023's gaps closed by S0026 (its anonymization script moved to BL-0060, M6).
 3. No review finding due by M0 is open (`check_invariants.py` fails an M0-exit run while one is, S0023): L9.M-7 closed by S0025, L10-18 by S0027.
-4. The rest of review:27 §1(d) that M0's exit needs: the acceptance-suite harness (isolated backend, frozen clock, LLM stub, Chromium and WebKit); the P1 integrity tests written as `fixme`; the red-team session on the gates and the first seeded-defect run.
+4. The rest of review:27 §1(d) that M0's exit needs: the acceptance-suite harness (isolated backend, frozen clock, LLM stub, Chromium and WebKit); the red-team session on the gates and the first seeded-defect run. The P1 integrity tests are written (S0029).
 
 Next milestone: **M1a** (read core and workspace-format core), then **M1b** (write contract), then **G1**, your go/no-go.
 

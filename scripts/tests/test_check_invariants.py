@@ -184,5 +184,194 @@ class BacklogAtMilestoneExit(unittest.TestCase):
             self.assertEqual(ci.main(), 1)
 
 
+FIXME_BACKLOG = """
+| ID | Title | Sev | Area | Milestone | Status | Doubles | Ref |
+|---|---|---|---|---|---|---|---|
+| L4-01 | Open slots | Critical | WS-IMPORT | M6 | open | — | r |
+| I4 | Atomic publish | High | WS-MIRROR | M1 | open | — | r |
+| L8-02 | Save | High | WS-FE | M5 | in-progress | — | r |
+| L1-06 | Layering | Medium | WS-X | M0 | done | — | r |
+| BL-0062 | Guard | Low | WS-QA | — | parked | — | r |
+| L9-18 | Gone | Low | WS-UI | M2 | removed | — | r |
+"""
+DECO = "\n\n\n" + "@"  # joined at runtime: a newline escape before `@` reads as an email to the privacy scan
+PY_OK = 'import pytest' + DECO + 'pytest.mark.fixme(id="L4-01", due="M6", reason="capability not built")\ndef test_x() -> None:\n    pass\n'
+TS_OK = ("import { fixme } from '../fixme'\n\n"
+         "fixme({ id: 'L4-01', due: 'M6', reason: 'capability not built' }, 'fills open slots', async () => {})\n")
+
+
+class FixmeMarkers(unittest.TestCase):
+    """S0029: every fixme names an open backlog row with the same milestone; the row keeps the exit run red."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def put(self, rel: str, text: str) -> None:
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def errors(self, backlog: str = FIXME_BACKLOG, exit_ms: str | None = None) -> list[str]:
+        return ci.check_fixme(self.root, backlog, exit_ms)
+
+    def py(self, marker: str) -> list[str]:
+        self.put("backend/tests/integrity/test_x.py", PY_OK.replace(
+            'pytest.mark.fixme(id="L4-01", due="M6", reason="capability not built")', marker))
+        return self.errors()
+
+    def ts(self, text: str, rel: str = "frontend/tests/unit/integrity/x.test.ts") -> list[str]:
+        self.put(rel, text)
+        return self.errors()
+
+    def test_a_marker_on_an_open_row_with_its_milestone_passes(self) -> None:
+        self.put("backend/tests/integrity/test_x.py", PY_OK)
+        self.put("frontend/tests/unit/integrity/x.test.ts", TS_OK)
+        self.put("frontend/e2e/flows/a7.spec.ts", TS_OK)
+        self.assertEqual(self.errors(), [])
+
+    def test_in_progress_counts_as_open(self) -> None:
+        self.assertEqual(self.py('pytest.mark.fixme(id="L8-02", due="M5", reason="capability not built")'), [])
+
+    def test_bare_m1_row_is_due_m1a(self) -> None:
+        self.assertEqual(self.py('pytest.mark.fixme(id="I4", due="M1a", reason="capability not built")'), [])
+        self.assertTrue(self.py('pytest.mark.fixme(id="I4", due="M1", reason="capability not built")'))
+
+    def test_python_markers_that_must_not_pass(self) -> None:
+        bad = {
+            "no id": 'pytest.mark.fixme(due="M6", reason="capability not built")',
+            "no due": 'pytest.mark.fixme(id="L4-01", reason="capability not built")',
+            "no reason": 'pytest.mark.fixme(id="L4-01", due="M6")',
+            "empty reason": 'pytest.mark.fixme(id="L4-01", due="M6", reason="")',
+            "bare marker": "pytest.mark.fixme",
+            "positional": 'pytest.mark.fixme("L4-01", "M6", "capability not built")',
+            "unknown id": 'pytest.mark.fixme(id="L4-99", due="M6", reason="capability not built")',
+            "id in prose": 'pytest.mark.fixme(id="see L4-01", due="M6", reason="capability not built")',
+            "closed id": 'pytest.mark.fixme(id="L1-06", due="M0", reason="capability not built")',
+            "parked id": 'pytest.mark.fixme(id="BL-0062", due="M0", reason="capability not built")',
+            "removed id": 'pytest.mark.fixme(id="L9-18", due="M2", reason="capability not built")',
+            "other milestone": 'pytest.mark.fixme(id="L4-01", due="M7", reason="capability not built")',
+            "unknown milestone": 'pytest.mark.fixme(id="L4-01", due="M66", reason="capability not built")',
+            "computed id": 'pytest.mark.fixme(id=ID, due="M6", reason="capability not built")',
+            "extra keyword": 'pytest.mark.fixme(id="L4-01", due="M6", reason="r", extra="x")',
+            "positional and keywords": 'pytest.mark.fixme("x", id="L4-01", due="M6", reason="r")',
+        }
+        for name, marker in bad.items():
+            with self.subTest(name):
+                self.assertTrue(self.py(marker), marker)
+
+    def test_an_aliased_or_module_level_alias_is_refused(self) -> None:
+        self.put("backend/tests/test_alias.py", "import pytest\nfm = pytest.mark.fixme" + DECO + "fm(id='L4-01', due='M6', reason='r')\ndef test_x() -> None:\n    pass\n")
+        self.assertTrue(any("fixme" in e for e in self.errors()))
+
+    def test_from_import_of_mark_is_still_checked(self) -> None:
+        self.put("backend/tests/test_mark.py", "from pytest import mark" + DECO + "mark.fixme(id='L4-99', due='M6', reason='r')\ndef test_x() -> None:\n    pass\n")
+        self.assertTrue(any("L4-99" in e for e in self.errors()))
+
+    def test_a_module_level_pytestmark_is_checked(self) -> None:
+        self.put("backend/tests/test_mod.py", "import pytest\npytestmark = pytest.mark.fixme(id='L1-06', due='M0', reason='r')\n")
+        self.assertTrue(any("L1-06" in e for e in self.errors()))
+
+    def test_an_unparseable_test_file_fails_closed(self) -> None:
+        self.put("backend/tests/test_broken.py", "def (:\n")
+        self.assertTrue(any("parse" in e for e in self.errors()))
+
+    def test_typescript_markers_that_must_not_pass(self) -> None:
+        call = "fixme({{ id: '{i}', due: '{d}', reason: '{r}' }}, 'title', async () => {{}})\n"
+        bad = {
+            "unknown id": call.format(i="L4-99", d="M6", r="capability not built"),
+            "closed id": call.format(i="L1-06", d="M0", r="capability not built"),
+            "other milestone": call.format(i="L4-01", d="M5", r="capability not built"),
+            "empty reason": call.format(i="L4-01", d="M6", r=""),
+            "no id": "fixme({ due: 'M6', reason: 'capability not built' }, 'title', async () => {})\n",
+            "computed meta": "fixme(META, 'title', async () => {})\n",
+            "raw playwright fixme": "test.fixme('title', async () => {})\n",
+            "conditional playwright fixme": "test('t', async () => { test.fixme(true, 'later') })\n",
+            "playwright expected failure": "test.fail('title', async () => {})\n",
+            "describe fixme": "test.describe.fixme('group', () => {})\n",
+            "raw vitest fails": "it.fails('title', async () => {})\n",
+            "aliased helper": "import { fixme } from '../fixme'\nconst later = fixme\n",
+            "aliased member": "const f = test.fixme\n",
+            "indexed member": "test['fixme']('title', async () => {})\n",
+            "indexed vitest fails": "it['fails']('title', async () => {})\n",
+        }
+        for name, text in bad.items():
+            with self.subTest(name):
+                self.assertTrue(self.ts(text), text)
+                (self.root / "frontend/tests/unit/integrity/x.test.ts").unlink()
+
+    def test_playwright_fixme_takes_its_details_from_the_helper(self) -> None:
+        good = ("test.fixme(\n  'A7: title',\n  fixme({ id: 'L4-01', due: 'M6', reason: 'capability not built' }),\n"
+                "  async ({ page }) => {},\n)\n")
+        self.assertEqual(self.ts(good, rel="frontend/e2e/integrity/a7.spec.ts"), [])
+        bad = {
+            "details not from the helper": "test.fixme('t', META, async () => {})\n",
+            "helper with an unknown id": "test.fixme('t', fixme({ id: 'L4-99', due: 'M6', reason: 'r' }), async () => {})\n",
+            "helper with a closed id": "test.fixme('t', fixme({ id: 'L1-06', due: 'M0', reason: 'r' }), async () => {})\n",
+            "computed title": "test.fixme(title, fixme({ id: 'L4-01', due: 'M6', reason: 'r' }), async () => {})\n",
+            "another object": "other.fixme('t', fixme({ id: 'L4-01', due: 'M6', reason: 'r' }), async () => {})\n",
+        }
+        for name, text in bad.items():
+            with self.subTest(name):
+                self.assertTrue(self.ts(text, rel="frontend/e2e/integrity/a7.spec.ts"), text)
+
+    def test_e2e_specs_are_scanned_at_any_depth(self) -> None:
+        self.assertTrue(self.ts("test.fixme('title', async () => {})\n", rel="frontend/e2e/a/b/flow.spec.ts"))
+
+    def test_the_helper_modules_alone_may_call_the_runner_markers(self) -> None:
+        helper = "export function fixme(meta: Meta, title: string, body: Body): void {\n  test.fixme(title, body)\n}\n"
+        self.put("frontend/e2e/fixme.ts", helper)
+        self.put("frontend/tests/fixme.ts", helper.replace("test.fixme", "it.fails"))
+        self.assertEqual(self.errors(), [])
+        self.put("frontend/e2e/other.ts", helper)
+        self.assertTrue(self.errors())
+        (self.root / "frontend/e2e/other.ts").unlink()
+        self.put("frontend/e2e/integrity/fixme.ts", helper)  # only the two named helpers, not any file of that name
+        self.assertTrue(self.errors())
+
+    def test_a_multiline_call_as_prettier_writes_it_passes(self) -> None:
+        text = ("fixme(\n  { id: 'L4-01', due: 'M6', reason: 'capability not built' },\n"
+                "  'a long title that prettier wraps',\n  async () => {},\n)\n")
+        self.assertEqual(self.ts(text), [])
+
+    def test_an_exit_run_fails_on_a_fixme_due_by_it(self) -> None:
+        self.put("backend/tests/integrity/test_x.py", PY_OK)
+        self.assertEqual(self.errors(exit_ms="M5"), [])
+        self.assertTrue(any("exit of M6" in e for e in self.errors(exit_ms="M6")))
+        self.assertTrue(any("exit of M7" in e for e in self.errors(exit_ms="M7")))
+
+    def test_files_outside_the_test_trees_are_not_scanned(self) -> None:
+        self.put("docs/notes.py", "import pytest\nfm = pytest.mark.fixme\n")
+        self.assertEqual(self.errors(), [])
+
+    def test_main_reports_a_bad_fixme(self) -> None:
+        import os
+        from unittest import mock
+        invs = "### INV-01: One\n- **Rule:** r\n- **Why:** w\n- **Enforced by:** planned.\n- **Status:** review-only\n"
+        self.put("design/INVARIANTS.md", invs)
+        self.put("design/backlog.md", FIXME_BACKLOG)
+        self.put("backend/tests/test_x.py", PY_OK)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FT_MILESTONE_EXIT", None)
+            self.assertEqual(ci.main(self.root), 0)
+            self.put("backend/tests/test_x.py", PY_OK.replace("L4-01", "L1-06"))
+            self.assertEqual(ci.main(self.root), 1)
+
+    def test_the_real_tree_passes_and_has_the_p1_markers(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        backlog = (root / "design/backlog.md").read_text(encoding="utf-8")
+        self.assertEqual(ci.check_fixme(root, backlog, None), [])
+        ids = {m["id"] for m in ci.fixme_markers(root)[0]}
+        p1 = {"I4", "I5", "I6", "L1-04", "L4-01", "L4-02", "L4-03", "L4-06", "L3-01", "L3-11", "L3-14", "L10-02",
+              "L10.M-1", "L10.M-2", "L10-06", "L11.M-2", "L6-12", "I7", "I8", "L9-01", "L9.M-1", "L9.M-3", "L8-01",
+              "L8-02", "L8.M-1"}
+        closed = {r["ID"] for r in ci.table_rows(backlog) if r.get("Status") == "done"}
+        # review:27 §1(d): each P1 finding has its fixme test until a slice closes it (then the test runs for real).
+        self.assertEqual(sorted(p1 - ids - closed), [])
+
+
 if __name__ == "__main__":
     unittest.main()
