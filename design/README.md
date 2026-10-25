@@ -10,9 +10,10 @@ Everything that explains Finzytrack v0.4 (why it is built this way, what exists,
 4. [`ENGINEERING.md`](ENGINEERING.md): engineering principles EP-nn and the verifier checklist.
 5. [`capabilities.md`](capabilities.md): "did we do X?" for every capability (generated from `capabilities.toml`).
 6. [`decisions/`](decisions/README.md): ADRs, "why did we do Y?", including the alternatives that were rejected.
-7. [`backlog.md`](backlog.md): the work list and the review's finding index.
-8. [`glossary.md`](glossary.md): the vocabulary.
-9. `specs/` (per area, each with an Orientation block) and `journal/` (one record per slice) as needed.
+7. [`specs/roadmap.md`](specs/roadmap.md): the milestone order, what each milestone delivers, and where we are now.
+8. [`backlog.md`](backlog.md): the work list and the review's finding index.
+9. [`glossary.md`](glossary.md): the vocabulary.
+10. `specs/` (per area, each with an Orientation block) and `journal/` (one record per slice) as needed.
 
 For a concrete change, use the `orient` skill first: it pulls the relevant rows, ADRs, specs and backlog items for you.
 
