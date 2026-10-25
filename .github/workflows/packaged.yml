@@ -60,8 +60,9 @@ jobs:
       - name: Rust toolchain (pinned by rust-toolchain.toml)
         run: cd shell/src-tauri && (rustup show active-toolchain || rustup toolchain install)
       - name: Build the package
-        run: python shell/package_app.py | tee artifacts.txt
+        run: python shell/package_app.py --list artifacts.txt
       - name: macOS — signature and smoke test
+        timeout-minutes: 12
         if: runner.os == 'macOS'
         run: |
           app="$(grep '\.app$' artifacts.txt)"
@@ -72,10 +73,11 @@ jobs:
           mv "$RUNNER_TEMP/neg.app/Contents/Resources/sidecar/python" "$RUNNER_TEMP/python-away"
           python shell/smoke_packaged.py "$RUNNER_TEMP/neg.app" --expect-fail "cannot start the bundled interpreter"
       - name: Windows — silent per-user install and smoke test
+        timeout-minutes: 12
         if: runner.os == 'Windows'
         run: |
           installer="$(grep -- '-setup\.exe$' artifacts.txt)"
-          "$installer" /S
+          timeout 300 "$installer" /S
           dir="$LOCALAPPDATA/Finzytrack"
           exe="$(find "$dir" -maxdepth 1 -iname '*.exe' ! -iname 'uninstall*.exe')"
           test "$(printf '%s\n' "$exe" | wc -l)" -eq 1
@@ -83,6 +85,7 @@ jobs:
           mv "$dir/sidecar/python" "$RUNNER_TEMP/python-away"
           python shell/smoke_packaged.py "$exe" --expect-fail "cannot start the bundled interpreter"
       - name: Linux — AppImage (FUSE-mounted, read-only, as users run it), then the .deb installed, smoke tests
+        timeout-minutes: 12
         if: runner.os == 'Linux'
         run: |
           appimage="$(grep '\.AppImage$' artifacts.txt)"

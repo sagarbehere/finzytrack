@@ -1,7 +1,8 @@
 """Build the packaged app for this machine's platform (ADR-0007, ADR-0056): the sidecar tree, the frontend
-bundle, then `tauri build` with `tauri.packaged.conf.json`. Prints the artifact paths, one per line.
+bundle, then `tauri build` with `tauri.packaged.conf.json`. Writes the artifact paths, one per line, to
+`--list FILE` (the build tools' own output goes to the console and is never parsed).
 
-    python3 shell/package_app.py
+    python3 shell/package_app.py [--list FILE]
 
 macOS: `Finzytrack.app`, ad-hoc signed (sidecar Mach-Os inside-out by build_sidecar.py, the shell and the
 outer bundle by the Tauri bundler). Windows: the NSIS installer, unsigned. Linux: AppImage and `.deb`.
@@ -10,6 +11,7 @@ Release packaging (dmg, updater artifacts, signing keys) is M11's `release.yml`.
 
 from __future__ import annotations
 
+import argparse
 import os
 import shutil
 import subprocess
@@ -29,7 +31,10 @@ BUNDLES = {
 }
 
 
-def main() -> int:
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--list", type=Path, help="file to write the artifact paths to")
+    args = parser.parse_args(argv)
     target = build_sidecar.host_target()
     bundles, patterns = BUNDLES[target]
     build_sidecar.build(target)
@@ -48,10 +53,11 @@ def main() -> int:
     if len(artifacts) != len(patterns):
         print(f"package_app: expected {len(patterns)} artifacts, found {artifacts}", file=sys.stderr)
         return 1
-    for p in artifacts:
-        print(p)
+    if args.list:
+        args.list.write_text("".join(f"{p}\n" for p in artifacts), encoding="utf-8")
+    print("artifacts:", *artifacts, sep="\n  ")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

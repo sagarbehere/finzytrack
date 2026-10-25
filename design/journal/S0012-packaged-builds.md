@@ -43,3 +43,9 @@
 - What the verifier found that I did not: two checks proved less than their names (a refusal for any reason; a signature anyone could have made). The cheaper gate is the question "what else would produce this same output?" asked of each positive signal, not only of each check.
 - Trim was written from the spike's file list, not from the pinned archive; a test on the real layout costs a minute.
 - Process cost: about 1 h 30 min building (incl. local macOS package and smoke); verifier about 6 min wall; fixes about 20 min. CI on Windows and Linux is the first real run of those jobs; results are recorded below once it finishes.
+
+## First CI run (c640611) and fixes
+- Linux: green (AppImage mounted and `.deb` installed; the run with the runtime moved away refused as expected).
+- macOS: failed before smoke: `grep '\.app$'` also matched the bundler's "Signing …Finzytrack.app" log line, because the artifact list was parsed from console output. Fixed: `package_app.py --list FILE` writes the artifact paths to a file.
+- Windows: the smoke step hung for 12 minutes, past the harness's 180 s limit, so it was cancelled. Diagnosis: `subprocess.run` with pipes waits for end-of-file, and WebView2's helper processes inherit the app's handles and outlive it. Fixed: output goes to temporary files, the harness waits on the app process only, a timeout stops the whole process tree (`taskkill /T`); the installer runs under `timeout 300`; each smoke step has a 12-minute limit.
+- ci.yml: knip flagged `@tauri-apps/cli` as an unused devDependency (it is run by path from `package_app.py`); now in `ignoreDependencies`. Escape: the pre-push hook did not run knip, so this reached CI; it does now (PROCESS.md §9).

@@ -41,5 +41,6 @@ fi
 if [[ -f frontend/package.json ]]; then
   run "vue-tsc" bash -c "cd frontend && node_modules/.bin/vue-tsc --noEmit"
   run "frontend unit tests" bash -c "cd frontend && node_modules/.bin/vitest run"
+  run "unused code and dependencies (knip)" bash -c "cd frontend && node_modules/.bin/knip"
 fi
 exit "$fail"

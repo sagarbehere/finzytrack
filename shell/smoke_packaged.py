@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 TIMEOUT_S = 180  # above the shell's own 120 s limit, so the shell's verdict normally wins
@@ -46,18 +47,32 @@ def verdict(returncode: int | None, stdout: str, expect_fail: str | None) -> tup
     return False, f"exit {returncode}: {line}"
 
 
+def run(exe: Path) -> tuple[int | None, str, str]:
+    """(exit code or None on timeout, stdout, stderr). Output goes to files, not pipes: on Windows the webview's
+    helper processes inherit the app's handles and outlive it, so a pipe would never reach end-of-file (S0012).
+    The wait is on the app process alone; on timeout its whole process tree is stopped."""
+    with tempfile.TemporaryFile() as fout, tempfile.TemporaryFile() as ferr:
+        proc = subprocess.Popen([str(exe), "--smoke-test"], stdout=fout, stderr=ferr)
+        try:
+            code: int | None = proc.wait(timeout=TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            code = None
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, check=False)
+            proc.kill()
+            proc.wait()
+        fout.seek(0)
+        ferr.seek(0)
+        return code, fout.read().decode(errors="replace"), ferr.read().decode(errors="replace")
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("path", type=Path)
     parser.add_argument("--expect-fail", metavar="REASON", help="text the expected FT_SMOKE_FAIL reason contains")
     args = parser.parse_args(argv)
     exe = executable(args.path)
-    try:
-        proc = subprocess.run([str(exe), "--smoke-test"], capture_output=True, text=True, timeout=TIMEOUT_S)
-        code, out, err = proc.returncode, proc.stdout, proc.stderr
-    except subprocess.TimeoutExpired as e:
-        code, out, err = None, e.stdout or "", e.stderr or ""
-        out, err = (s.decode(errors="replace") if isinstance(s, bytes) else s for s in (out, err))
+    code, out, err = run(exe)
     passed, reason = verdict(code, out, args.expect_fail)
     print(f"smoke {'PASS' if passed else 'FAIL'}: {exe}: {reason}")
     if not passed and err.strip():
