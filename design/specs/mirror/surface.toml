@@ -181,9 +181,9 @@ meaning = "The posting's number of units, with the scale the ledger wrote it in 
 source = "Posting units number after booking and interpolation; NULL only if Beancount leaves the posting without units."
 sign = "As in the ledger: positive is a debit (money into an asset, an expense), negative a credit (money out of an asset, income, a new liability)."
 origin = "v0.2.2"
-change = "same"
-cites = []
-why = ""
+change = "changed"
+cites = ["ADR-0023", "ADR-0038"]
+why = "Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not."
 user_sql = true
 status = "decided"
 
@@ -209,9 +209,9 @@ meaning = "Cost per unit of the lot the posting adds to or reduces; NULL for a p
 source = "Posting cost number after booking (a reduction such as `-5 VTI {}` gets the matched lot's cost)."
 sign = "Per-unit cost, normally positive."
 origin = "v0.2.2"
-change = "same"
-cites = []
-why = ""
+change = "changed"
+cites = ["ADR-0023", "ADR-0038"]
+why = "Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not."
 user_sql = true
 status = "decided"
 
@@ -251,9 +251,9 @@ meaning = "Price per unit written with `@`; a total price written with `@@` appe
 source = "Posting price number."
 sign = "Per-unit price, normally positive."
 origin = "v0.2.2"
-change = "same"
-cites = []
-why = ""
+change = "changed"
+cites = ["ADR-0023", "ADR-0038"]
+why = "Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not."
 user_sql = true
 status = "decided"
 
@@ -613,7 +613,7 @@ change = "changed"
 cites = ["ADR-0025", "L3-13"]
 why = "v0.2.2 used `operating_currency` as the list of currencies, so in an INR ledger a USD bank account counted as a holding (0); v0.4 counts USD as cash (1). A code with no `asset-class` that is not an ISO code (for example an undeclared `VTI`) was 1 in v0.2.2 and is 0 now. This is ADR-0025's one-time reclassification."
 user_sql = true
-status = "draft"
+status = "owner:20261025-mirror-is-currency.md"
 
 [[table.column]]
 name = "metadata_json"
@@ -690,9 +690,9 @@ meaning = "The balance the directive expects."
 source = "Balance amount number as written."
 sign = "As in the ledger: an asset's balance is positive, a liability's (money owed) negative."
 origin = "v0.2.2"
-change = "same"
-cites = []
-why = ""
+change = "changed"
+cites = ["ADR-0023", "ADR-0038"]
+why = "Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not."
 user_sql = true
 status = "decided"
 
@@ -718,9 +718,9 @@ meaning = "The tolerance written on the directive (`~ 0.01`); NULL when none was
 source = "Balance tolerance."
 sign = "Never negative."
 origin = "v0.2.2"
-change = "same"
-cites = []
-why = ""
+change = "changed"
+cites = ["ADR-0023", "ADR-0038"]
+why = "Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not."
 user_sql = true
 status = "decided"
 
@@ -746,9 +746,9 @@ meaning = "How far the actual balance is from the asserted one; NULL when the ch
 source = "Beancount's difference: actual balance minus `amount_number`."
 sign = "Positive: the account holds more than asserted; negative: less."
 origin = "v0.2.2"
-change = "same"
-cites = []
-why = ""
+change = "changed"
+cites = ["ADR-0023", "ADR-0038"]
+why = "Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not."
 user_sql = true
 status = "decided"
 
@@ -950,9 +950,9 @@ meaning = "Price of one unit of `base_currency`, in `quote_currency`."
 source = "Price amount number as written."
 sign = "Positive."
 origin = "v0.2.2"
-change = "same"
-cites = []
-why = ""
+change = "changed"
+cites = ["ADR-0023", "ADR-0038"]
+why = "Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not."
 user_sql = true
 status = "decided"
 
@@ -1527,13 +1527,13 @@ status = "owner:20261025-mirror-as-of-date.md"
 name = "balance"
 type = "TEXT"
 format = "decimal"
-meaning = "The balance: the exact sum of the account's units in this currency (all lots together)."
-source = "Exact Decimal sum of posting units per (account, currency)."
+meaning = "The balance: the sum of the account's units in this currency (all lots together), never rounded."
+source = "Decimal sum of posting units per (account, currency), computed as README 'Exact numbers' says (rounding fails the build)."
 sign = "As in the ledger: assets positive, liabilities (money owed) negative, income negative, expenses positive."
 origin = "v0.2.2"
-change = "same"
-cites = []
-why = ""
+change = "changed"
+cites = ["ADR-0023", "ADR-0038"]
+why = "Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not."
 user_sql = true
 status = "owner:20261025-mirror-as-of-date.md"
 
@@ -1612,9 +1612,9 @@ meaning = "Number of units in the lot."
 source = "Position units number."
 sign = "Positive for a lot held; negative for a short position."
 origin = "v0.2.2"
-change = "same"
-cites = []
-why = ""
+change = "changed"
+cites = ["ADR-0023", "ADR-0038"]
+why = "Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not."
 user_sql = true
 status = "owner:20261025-mirror-as-of-date.md"
 
@@ -1640,9 +1640,9 @@ meaning = "Cost per unit of the lot."
 source = "Position cost number."
 sign = "Per-unit cost, normally positive."
 origin = "v0.2.2"
-change = "same"
-cites = []
-why = ""
+change = "changed"
+cites = ["ADR-0023", "ADR-0038"]
+why = "Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not."
 user_sql = true
 status = "owner:20261025-mirror-as-of-date.md"
 
@@ -1692,13 +1692,13 @@ status = "owner:20261025-mirror-as-of-date.md"
 name = "book_value"
 type = "TEXT"
 format = "decimal"
-meaning = "What the lot cost in total: `units_number` times `cost_number`, exact and not rounded."
-source = "Exact Decimal product."
+meaning = "What the lot cost in total: `units_number` times `cost_number`, never rounded."
+source = "Decimal product, computed as README 'Exact numbers' says (rounding fails the build)."
 sign = "Same sign as `units_number`."
 origin = "v0.2.2"
-change = "same"
-cites = []
-why = ""
+change = "changed"
+cites = ["ADR-0023", "ADR-0038"]
+why = "Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not."
 user_sql = true
 status = "owner:20261025-mirror-as-of-date.md"
 
@@ -1746,12 +1746,12 @@ name = "total_volume"
 type = "TEXT"
 format = "decimal"
 meaning = "Sum of the absolute units of those postings (money in and out both add up)."
-source = "Exact Decimal sum of |units|."
+source = "Decimal sum of |units|, computed as README 'Exact numbers' says (rounding fails the build)."
 sign = "Never negative."
 origin = "v0.2.2"
-change = "same"
-cites = []
-why = ""
+change = "changed"
+cites = ["ADR-0023", "ADR-0038"]
+why = "Same number, written in plain notation: v0.2.2 wrote `str(Decimal)`, which gives an exponent for some computed values (`1E-8`, `0E-8`, `1E+2`); v0.4 writes `0.00000001`, `0.00000000`, `100`. A query that casts the column gets the same value; one that compares the raw text may not."
 user_sql = true
 status = "decided"
 
@@ -2006,53 +2006,53 @@ reason = "v0.3.0 only; value over time comes from the `ledger` step's value meas
 cites = ["ADR-0048", "ADR-0029", "ADR-0030"]
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────── legacy inventories
-# Built by running each exporter's CREATE TABLE statements in SQLite (`check_mirror_surface.derive_tables`) and
-# reading the compute registry's registrations (`derive_functions`); the test re-derives them when the tags exist.
+# Each column is [name, declared type]. Built by running each exporter's CREATE TABLE statements in SQLite
+# (`check_mirror_surface.derive_tables`, types from PRAGMA table_info) and reading the compute registry's registrations (`derive_functions`); the test re-derives them when the tags exist.
 [legacy."v0.2.2"]
 tag = "v0.2.2"
 functions = ["budget_for_range"]
 
 [legacy."v0.2.2".tables]
-account_balances = ["account", "currency", "balance", "transaction_count", "last_transaction_date"]
-accounts = ["name", "open_date", "close_date", "currencies_json", "booking", "metadata_json"]
-balance_assertions = ["id", "date", "account", "amount_number", "amount_currency", "tolerance", "passed", "diff_number", "diff_currency", "metadata_json", "pad_date", "pad_source_account"]
-commodities = ["code", "declaration_date", "name", "asset_class", "is_currency", "metadata_json"]
-commodity_usage = ["code", "transaction_count", "total_volume", "first_seen", "last_seen"]
-custom_directives = ["id", "date", "type", "values_json", "metadata_json"]
-documents = ["id", "date", "account", "filename", "tags_json", "links_json", "metadata_json"]
-events = ["id", "date", "type", "description", "metadata_json"]
-ledger_errors = ["id", "source_file", "line_number", "message", "entry_json"]
-ledger_options = ["key", "value_json"]
-lots = ["id", "account", "units_number", "units_currency", "cost_number", "cost_currency", "acquisition_date", "label", "book_value"]
-meta = ["key", "value"]
-notes = ["id", "date", "account", "comment", "tags_json", "links_json", "metadata_json"]
-pad_directives = ["id", "date", "account", "source_account", "metadata_json"]
-postings = ["posting_id", "transaction_id", "transaction_content_hash", "transaction_date", "transaction_flag", "transaction_payee", "transaction_narration", "transaction_tags", "transaction_links", "account", "account_type", "amount", "currency", "cost_amount", "cost_currency", "price_amount", "price_currency", "source_account", "source_account_type", "transaction_metadata_json", "posting_metadata_json", "document_count", "year", "month", "quarter", "year_month"]
-prices = ["id", "date", "base_currency", "quote_number", "quote_currency", "metadata_json"]
-stored_queries = ["id", "date", "name", "query_string", "metadata_json"]
-training_data = ["id", "description", "category"]
+account_balances = [["account", "TEXT"], ["currency", "TEXT"], ["balance", "TEXT"], ["transaction_count", "INTEGER"], ["last_transaction_date", "TEXT"]]
+accounts = [["name", "TEXT"], ["open_date", "TEXT"], ["close_date", "TEXT"], ["currencies_json", "TEXT"], ["booking", "TEXT"], ["metadata_json", "TEXT"]]
+balance_assertions = [["id", "INTEGER"], ["date", "TEXT"], ["account", "TEXT"], ["amount_number", "TEXT"], ["amount_currency", "TEXT"], ["tolerance", "TEXT"], ["passed", "INTEGER"], ["diff_number", "TEXT"], ["diff_currency", "TEXT"], ["metadata_json", "TEXT"], ["pad_date", "TEXT"], ["pad_source_account", "TEXT"]]
+commodities = [["code", "TEXT"], ["declaration_date", "TEXT"], ["name", "TEXT"], ["asset_class", "TEXT"], ["is_currency", "INTEGER"], ["metadata_json", "TEXT"]]
+commodity_usage = [["code", "TEXT"], ["transaction_count", "INTEGER"], ["total_volume", "TEXT"], ["first_seen", "TEXT"], ["last_seen", "TEXT"]]
+custom_directives = [["id", "INTEGER"], ["date", "TEXT"], ["type", "TEXT"], ["values_json", "TEXT"], ["metadata_json", "TEXT"]]
+documents = [["id", "INTEGER"], ["date", "TEXT"], ["account", "TEXT"], ["filename", "TEXT"], ["tags_json", "TEXT"], ["links_json", "TEXT"], ["metadata_json", "TEXT"]]
+events = [["id", "INTEGER"], ["date", "TEXT"], ["type", "TEXT"], ["description", "TEXT"], ["metadata_json", "TEXT"]]
+ledger_errors = [["id", "INTEGER"], ["source_file", "TEXT"], ["line_number", "INTEGER"], ["message", "TEXT"], ["entry_json", "TEXT"]]
+ledger_options = [["key", "TEXT"], ["value_json", "TEXT"]]
+lots = [["id", "INTEGER"], ["account", "TEXT"], ["units_number", "TEXT"], ["units_currency", "TEXT"], ["cost_number", "TEXT"], ["cost_currency", "TEXT"], ["acquisition_date", "TEXT"], ["label", "TEXT"], ["book_value", "TEXT"]]
+meta = [["key", "TEXT"], ["value", "TEXT"]]
+notes = [["id", "INTEGER"], ["date", "TEXT"], ["account", "TEXT"], ["comment", "TEXT"], ["tags_json", "TEXT"], ["links_json", "TEXT"], ["metadata_json", "TEXT"]]
+pad_directives = [["id", "INTEGER"], ["date", "TEXT"], ["account", "TEXT"], ["source_account", "TEXT"], ["metadata_json", "TEXT"]]
+postings = [["posting_id", "INTEGER"], ["transaction_id", "TEXT"], ["transaction_content_hash", "TEXT"], ["transaction_date", "TEXT"], ["transaction_flag", "TEXT"], ["transaction_payee", "TEXT"], ["transaction_narration", "TEXT"], ["transaction_tags", "TEXT"], ["transaction_links", "TEXT"], ["account", "TEXT"], ["account_type", "TEXT"], ["amount", "TEXT"], ["currency", "TEXT"], ["cost_amount", "TEXT"], ["cost_currency", "TEXT"], ["price_amount", "TEXT"], ["price_currency", "TEXT"], ["source_account", "TEXT"], ["source_account_type", "TEXT"], ["transaction_metadata_json", "TEXT"], ["posting_metadata_json", "TEXT"], ["document_count", "INTEGER"], ["year", "INTEGER"], ["month", "INTEGER"], ["quarter", "INTEGER"], ["year_month", "TEXT"]]
+prices = [["id", "INTEGER"], ["date", "TEXT"], ["base_currency", "TEXT"], ["quote_number", "TEXT"], ["quote_currency", "TEXT"], ["metadata_json", "TEXT"]]
+stored_queries = [["id", "INTEGER"], ["date", "TEXT"], ["name", "TEXT"], ["query_string", "TEXT"], ["metadata_json", "TEXT"]]
+training_data = [["id", "INTEGER"], ["description", "TEXT"], ["category", "TEXT"]]
 
 [legacy."v0.3.0"]
 tag = "legacy-final"
 functions = ["budget_for_range", "portfolio_series", "portfolio_returns", "cash_instruments"]
 
 [legacy."v0.3.0".tables]
-account_balances = ["account", "currency", "balance", "transaction_count", "last_transaction_date"]
-accounts = ["name", "open_date", "close_date", "currencies_json", "booking", "metadata_json"]
-balance_assertions = ["id", "date", "account", "amount_number", "amount_currency", "tolerance", "passed", "diff_number", "diff_currency", "metadata_json", "pad_date", "pad_source_account"]
-commodities = ["code", "declaration_date", "name", "asset_class", "is_currency", "metadata_json"]
-commodity_usage = ["code", "transaction_count", "total_volume", "first_seen", "last_seen"]
-custom_directives = ["id", "date", "type", "values_json", "metadata_json"]
-documents = ["id", "date", "account", "filename", "tags_json", "links_json", "metadata_json"]
-events = ["id", "date", "type", "description", "metadata_json"]
-latest_prices = ["date", "base_currency", "quote_number", "quote_currency"]
-ledger_errors = ["id", "source_file", "line_number", "message", "entry_json"]
-ledger_options = ["key", "value_json"]
-lots = ["id", "account", "units_number", "units_currency", "cost_number", "cost_currency", "acquisition_date", "label", "book_value"]
-meta = ["key", "value"]
-notes = ["id", "date", "account", "comment", "tags_json", "links_json", "metadata_json"]
-pad_directives = ["id", "date", "account", "source_account", "metadata_json"]
-postings = ["posting_id", "transaction_id", "transaction_content_hash", "transaction_date", "transaction_flag", "transaction_payee", "transaction_narration", "transaction_tags", "transaction_links", "account", "account_type", "amount", "currency", "cost_amount", "cost_currency", "cost_date", "price_amount", "price_currency", "source_account", "source_account_type", "transaction_metadata_json", "posting_metadata_json", "document_count", "year", "month", "quarter", "year_month"]
-prices = ["id", "date", "base_currency", "quote_number", "quote_currency", "metadata_json"]
-stored_queries = ["id", "date", "name", "query_string", "metadata_json"]
-training_data = ["id", "description", "category"]
+account_balances = [["account", "TEXT"], ["currency", "TEXT"], ["balance", "TEXT"], ["transaction_count", "INTEGER"], ["last_transaction_date", "TEXT"]]
+accounts = [["name", "TEXT"], ["open_date", "TEXT"], ["close_date", "TEXT"], ["currencies_json", "TEXT"], ["booking", "TEXT"], ["metadata_json", "TEXT"]]
+balance_assertions = [["id", "INTEGER"], ["date", "TEXT"], ["account", "TEXT"], ["amount_number", "TEXT"], ["amount_currency", "TEXT"], ["tolerance", "TEXT"], ["passed", "INTEGER"], ["diff_number", "TEXT"], ["diff_currency", "TEXT"], ["metadata_json", "TEXT"], ["pad_date", "TEXT"], ["pad_source_account", "TEXT"]]
+commodities = [["code", "TEXT"], ["declaration_date", "TEXT"], ["name", "TEXT"], ["asset_class", "TEXT"], ["is_currency", "INTEGER"], ["metadata_json", "TEXT"]]
+commodity_usage = [["code", "TEXT"], ["transaction_count", "INTEGER"], ["total_volume", "TEXT"], ["first_seen", "TEXT"], ["last_seen", "TEXT"]]
+custom_directives = [["id", "INTEGER"], ["date", "TEXT"], ["type", "TEXT"], ["values_json", "TEXT"], ["metadata_json", "TEXT"]]
+documents = [["id", "INTEGER"], ["date", "TEXT"], ["account", "TEXT"], ["filename", "TEXT"], ["tags_json", "TEXT"], ["links_json", "TEXT"], ["metadata_json", "TEXT"]]
+events = [["id", "INTEGER"], ["date", "TEXT"], ["type", "TEXT"], ["description", "TEXT"], ["metadata_json", "TEXT"]]
+latest_prices = [["date", "TEXT"], ["base_currency", "TEXT"], ["quote_number", "TEXT"], ["quote_currency", "TEXT"]]
+ledger_errors = [["id", "INTEGER"], ["source_file", "TEXT"], ["line_number", "INTEGER"], ["message", "TEXT"], ["entry_json", "TEXT"]]
+ledger_options = [["key", "TEXT"], ["value_json", "TEXT"]]
+lots = [["id", "INTEGER"], ["account", "TEXT"], ["units_number", "TEXT"], ["units_currency", "TEXT"], ["cost_number", "TEXT"], ["cost_currency", "TEXT"], ["acquisition_date", "TEXT"], ["label", "TEXT"], ["book_value", "TEXT"]]
+meta = [["key", "TEXT"], ["value", "TEXT"]]
+notes = [["id", "INTEGER"], ["date", "TEXT"], ["account", "TEXT"], ["comment", "TEXT"], ["tags_json", "TEXT"], ["links_json", "TEXT"], ["metadata_json", "TEXT"]]
+pad_directives = [["id", "INTEGER"], ["date", "TEXT"], ["account", "TEXT"], ["source_account", "TEXT"], ["metadata_json", "TEXT"]]
+postings = [["posting_id", "INTEGER"], ["transaction_id", "TEXT"], ["transaction_content_hash", "TEXT"], ["transaction_date", "TEXT"], ["transaction_flag", "TEXT"], ["transaction_payee", "TEXT"], ["transaction_narration", "TEXT"], ["transaction_tags", "TEXT"], ["transaction_links", "TEXT"], ["account", "TEXT"], ["account_type", "TEXT"], ["amount", "TEXT"], ["currency", "TEXT"], ["cost_amount", "TEXT"], ["cost_currency", "TEXT"], ["cost_date", "TEXT"], ["price_amount", "TEXT"], ["price_currency", "TEXT"], ["source_account", "TEXT"], ["source_account_type", "TEXT"], ["transaction_metadata_json", "TEXT"], ["posting_metadata_json", "TEXT"], ["document_count", "INTEGER"], ["year", "INTEGER"], ["month", "INTEGER"], ["quarter", "INTEGER"], ["year_month", "TEXT"]]
+prices = [["id", "INTEGER"], ["date", "TEXT"], ["base_currency", "TEXT"], ["quote_number", "TEXT"], ["quote_currency", "TEXT"], ["metadata_json", "TEXT"]]
+stored_queries = [["id", "INTEGER"], ["date", "TEXT"], ["name", "TEXT"], ["query_string", "TEXT"], ["metadata_json", "TEXT"]]
+training_data = [["id", "INTEGER"], ["description", "TEXT"], ["category", "TEXT"]]

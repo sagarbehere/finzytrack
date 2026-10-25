@@ -14,7 +14,7 @@
   5. The pinned legacy inventories equal what the exporters' `CREATE TABLE` statements produce when the tags are present (derived by running the DDL in SQLite, not by reading names).
 - Acceptance tests: `scripts/tests/test_mirror_surface.py` (the real spec passes; one must-not-pass per rule and per loosening listed in the Hand-off).
 - Expected doc impact: new `design/specs/mirror/` (README, `surface.toml`, generated `surface.md`); `scripts/check_generated.py` registers the generator; `design/specs/README.md`; roadmap §1; backlog (WS-MIRROR stale facts corrected, new rows for the DDL snapshot and checksums and for the user-doc corrections); user docs unchanged now (light lane: at M7, BL row).
-- Open questions: one batched inbox file, `design/inbox/20261025-mirror-as-of-date.md` (the date `account_balances` and `lots` are computed at). Those rows are marked `owner:` and the rest proceeds.
+- Open questions: `design/inbox/20261025-mirror-as-of-date.md` (the date `account_balances` and `lots` are computed at); added during verification by the coordinator: `design/inbox/20261025-mirror-source-account-rows.md` (keep v0.2.2's per-row `source_account`, amending ADR-0055?) and `design/inbox/20261025-mirror-is-currency.md` (the exact `is_currency` rule). Those rows are marked `owner:` and the rest proceeds.
 - Base SHA: 48899c4.
 
 ## Decisions
@@ -47,9 +47,21 @@
   - v0.2.2: in 18 tables, 121 columns, 1 compute function → out: 18 tables kept (17 with a public view, `meta` internal), 121 columns kept (111 same, 10 changed with citations), 0 dropped; `budget_for_range` with a compatibility entry.
   - v0.3.0 (`legacy-final`): in 19 tables, 126 columns, 4 functions → out: 18 tables kept, `latest_prices` (4 columns) dropped with citations, `postings.cost_date` kept; 3 functions dropped with citations.
   - v0.4 adds 4 columns (`postings.account_kind`, `postings.cost_label`, `accounts.account_kind`, `ledger_errors.error_type`). Spec total: 18 tables, 126 columns; 104 decided, 8 draft, 14 waiting for the owner (`account_balances`, `lots`).
-  - User docs: `reference/querying-data.md` on the docs `main` (released) and `v0.4` branches, checked column by column against the v0.2.2 DDL; 9 differences recorded in the spec README (BL-0058).
+  - User docs: `src/content/docs/reference/querying-data.md` on the docs `main` (released) and `v0.4` branches, checked column by column against the v0.2.2 DDL; 9 differences recorded in the spec README (BL-0058).
 - Claims measured on Beancount 3.2.0 (oracle venv, synthetic ledgers in the scratchpad): the metadata JSON keys Beancount adds, the `values_json` pair shape, option values, error `entry_json`, padding transactions carrying the assertion's location, one `pad` serving two currencies, the balance difference's sign, narration `""` and payee `None` when absent, `options["commodities"]` empty. SQLite 3.53.4: `'0.00' > 0` is true on a TEXT column.
 
+- Fix round (verifier round 1): 8 new loosening mutants over the added guards (list scan of citations, legacy-type rule for v0.2.2 and v0.3.0, the public-view rule, backlog ID tables, pinned types); 9 tried / 8 killed first; the survivor (a separator-row guard in `backlog_ids`) was redundant with the ID-shape regex and was removed. Final: 8 / 8 killed; the original 59-mutant plan re-run: 59 / 59 killed.
+
 ## Verifier
+- Round 1, head d02f3ec: PASS WITH FINDINGS (the coordinator's d02f3ec added the `source_account` inbox file and marked those rows `owner:`).
+- F1 Medium: README 'Ids' described the content-hash account by account kind; v0.2.2 matches the literal `Assets:`/`Liabilities:` prefixes, strips the account and treats an empty `source_account` value as absent. Fixed: the literal rule stated exactly, with why it outranks ADR-0024 here; BL-0021's goldens now require a custom-root ledger and an empty value.
+- F2: owner question, see inbox (`design/inbox/20261025-mirror-is-currency.md`); `commodities.is_currency` marked `owner:` that file.
+- F3 Medium: the legacy inventories pinned names only. Fixed: each column is [name, declared type] from PRAGMA; a `same` column whose type differs is refused (`test_a_same_column_whose_type_changed`).
+- F4 Low: list fields (cites) were not scanned for open owner questions. Fixed, with tests on a column and a table.
+- F5 Low: decimal TEXT moved from `str(Decimal)` to plain notation under a `same` label. Fixed: the 12 v0.2.2 decimal columns are `changed` (ADR-0023, ADR-0038) with the reason, and the README says so.
+- F6 Low: "exact sum" was not true under Python's 28-digit default context. Fixed: the build's own sums and products use a 64-digit context with the `Inexact` trap set (rounding fails the build); the wording says "never rounded" consistently.
+- F7 Low: view columns must be plain column references so TEXT affinity survives. Fixed: README rule; BL-0057's golden checks it.
+- F8 Low: a v0.2.2 table could lose its `r_*` view silently; table-header words were accepted as citations. Fixed: refused unless the table is the internal `meta`; citations come only from backlog tables whose header is `ID`. Disagreement recorded: `N1`, `N2`, `N4` are real finding rows (WS-SECURITY, e.g. N1 "Dashboard options are data"), not header words, so they stay valid; the verifier's repro still lists them.
+- Doc: the docs path is now `src/content/docs/reference/querying-data.md`; the `source_account` inbox file's `blocks:` line says the rows are marked `owner:`; the brief lists all three inbox files.
 
 ## Retro

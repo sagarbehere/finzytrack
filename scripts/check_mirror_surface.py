@@ -13,8 +13,10 @@ Refuses:
   - an origin the legacy inventories do not confirm; `same`/`changed` on a new column, `new` on an old one;
   - a change without a reason and a citation; a citation that does not resolve (ADR file, capability row,
     invariant, backlog ID, or `owner:<file>` open in design/inbox/);
-  - an `owner:` status or as-of without an open inbox file; a decided or draft item whose text points at an
-    owner question; a column marked decided or draft in a table that waits for the owner.
+  - an `owner:` status or as-of without an open inbox file; a decided or draft item whose text or citations
+    point at an owner question; a column marked decided or draft in a table that waits for the owner;
+  - a `same` column whose type differs from its legacy type; a v0.2.2 table (other than the internal `meta`)
+    with no public column, which would lose its r_* view.
 With --legacy it also compares the pinned legacy inventories with the exporters' DDL at the legacy tags.
 
 Usage: python3 scripts/check_mirror_surface.py [--legacy]
@@ -49,6 +51,8 @@ AS_OF = {"entry", "ledger-end", "load"}
 ORIGINS = ("v0.2.2", "v0.3.0", "v0.4")
 CHANGES = {"same", "changed", "new"}
 OPEN_QUESTION = ("owner:", "design/inbox")
+# v0.2.2 tables that were never documented for user SQL, served from their base table only.
+INTERNAL_V022 = {"meta"}
 EXPORTER = "backend/app/services/sqlite_exporter.py"
 COMPUTE_ROUTER = "backend/app/api/routers/compute.py"
 COMPUTE_FUNCTIONS = "backend/app/compute/functions"
@@ -64,8 +68,24 @@ def known_refs(root: Path) -> set[str]:
     caps = load(root / "design/capabilities.toml")
     refs |= {c["id"] for v in caps.values() if isinstance(v, list) for c in v if isinstance(c, dict) and "id" in c}
     refs |= set(re.findall(r"(?m)^### (INV-\d{2}):", (root / "design/INVARIANTS.md").read_text(encoding="utf-8")))
-    refs |= set(re.findall(r"(?m)^\| ([A-Z][A-Za-z0-9.-]*) \|", (root / "design/backlog.md").read_text(encoding="utf-8")))
+    refs |= backlog_ids((root / "design/backlog.md").read_text(encoding="utf-8"))
     return refs
+
+
+def backlog_ids(text: str) -> set[str]:
+    """First cells of the rows of backlog tables whose header's first cell is `ID` (finding and BL tables);
+    header rows and other tables (status legends, the doubles map) give nothing."""
+    ids: set[str] = set()
+    in_id_table = False
+    for line in text.splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")] if line.startswith("|") else None
+        if cells is None:
+            in_id_table = False
+        elif cells[0] == "ID":
+            in_id_table = True
+        elif in_id_table and re.fullmatch(r"[A-Z][A-Za-z0-9.-]*", cells[0]):
+            ids.add(cells[0])
+    return ids
 
 
 def open_inbox(root: Path) -> set[str]:
@@ -98,7 +118,9 @@ def _cites_problems(where: str, cites: object, refs: set[str], inbox: set[str]) 
 
 
 def _scalars(item: dict) -> str:
-    return " ".join(str(v) for k, v in item.items() if k != "column" and not isinstance(v, (list, dict)))
+    """The item's own text, lists (cites) included; a table's columns are checked on their own."""
+    return " ".join(" ".join(map(str, v)) if isinstance(v, list) else str(v)
+                    for k, v in item.items() if k != "column" and not isinstance(v, dict))
 
 
 def _field_problems(where: str, item: object, fields: set[str]) -> list[str]:
@@ -184,15 +206,23 @@ def _table_problems(t: dict, refs: set[str], inbox: set[str]) -> list[str]:
     return out
 
 
-def _inventory(spec: dict, version: str) -> tuple[dict[str, list[str]], list[str]]:
+def _inventory(spec: dict, version: str) -> tuple[dict[str, list[str]], list[str], dict[tuple[str, str], str]]:
+    """Column names per table, compute functions, and the declared type of each (table, column)."""
     inv = spec.get("legacy", {}).get(version, {})
-    return inv.get("tables", {}), inv.get("functions", [])
+    tables = inv.get("tables", {})
+    if not isinstance(tables, dict):
+        tables = {}
+    pairs = {t: [c for c in cols if isinstance(c, list) and len(c) == 2] for t, cols in tables.items()
+             if isinstance(cols, list)}
+    names = {t: [c[0] for c in cols] for t, cols in pairs.items()}
+    types = {(t, c[0]): c[1] for t, cols in pairs.items() for c in cols}
+    return names, inv.get("functions", []), types
 
 
 def _accounting_problems(spec: dict, refs: set[str], inbox: set[str]) -> list[str]:
     out: list[str] = []
-    t022, f022 = _inventory(spec, "v0.2.2")
-    t030, f030 = _inventory(spec, "v0.3.0")
+    t022, f022, ty022 = _inventory(spec, "v0.2.2")
+    t030, f030, ty030 = _inventory(spec, "v0.3.0")
     if not t022 or not t030 or not f022:
         return ["legacy: the v0.2.2 and v0.3.0 inventories are required"]
     tables = {t["name"]: t for t in spec.get("table", []) if isinstance(t, dict) and "name" in t}
@@ -222,12 +252,18 @@ def _accounting_problems(spec: dict, refs: set[str], inbox: set[str]) -> list[st
         if c.get("origin") in ORIGINS and c["origin"] != origin_of("column", (n, cn)):
             out.append(f"{n}.{cn}: origin {c['origin']} is not what the legacy inventories say "
                        f"({origin_of('column', (n, cn))})")
+        legacy_type = {"v0.2.2": ty022, "v0.3.0": ty030}.get(str(c.get("origin")), {}).get((n, cn))
+        if legacy_type is not None and c.get("change") == "same" and c.get("type") != legacy_type:
+            out.append(f"{n}.{cn}: type {c.get('type')} differs from {c['origin']}'s {legacy_type}, "
+                       "so the column cannot be `same`")
     # v0.2.2: everything served under its name, nothing dropped (ADR-0048).
     for n, cols in t022.items():
         if n not in tables:
             out.append(f"{n}: a v0.2.2 table must keep its name (ADR-0048)")
             continue
         public = any(c.get("user_sql") is True for c in tables[n].get("column", []) if isinstance(c, dict))
+        if not public and n not in INTERNAL_V022:
+            out.append(f"{n}: a v0.2.2 table keeps its public view r_{n}; mark its documented columns user_sql")
         for cn in cols:
             if (n, cn) not in kept_cols:
                 out.append(f"{n}.{cn}: a v0.2.2 column must stay in its table (ADR-0048)")
@@ -307,7 +343,8 @@ def problems(spec: dict, refs: set[str], inbox: set[str]) -> list[str]:
 
 def derive_tables(source: str) -> dict[str, list[str]]:
     """Run every string literal of `source` that is a CREATE TABLE statement in an in-memory SQLite database and
-    return each table's columns in order. Comments and non-statement strings create nothing."""
+    return each table's columns in order as [name, declared type]. Comments and non-statement strings create
+    nothing."""
     con = sqlite3.connect(":memory:")
     try:
         for node in ast.walk(ast.parse(source)):
@@ -316,7 +353,7 @@ def derive_tables(source: str) -> dict[str, list[str]]:
                 con.execute(node.value)
         names = [r[0] for r in con.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
-        return {n: [r[1] for r in con.execute(f'PRAGMA table_info("{n}")')] for n in names}
+        return {n: [[r[1], r[2]] for r in con.execute(f'PRAGMA table_info("{n}")')] for n in names}
     finally:
         con.close()
 
@@ -340,10 +377,11 @@ def derive_functions(router_source: str, function_sources: list[str]) -> list[st
     return [names[c] for c in registered if c in names]
 
 
-def inventory_problems(version: str, pinned: dict, tables: dict[str, list[str]], functions: list[str]) -> list[str]:
+def inventory_problems(version: str, pinned: dict, tables: dict[str, list[list[str]]], functions: list[str]) -> list[str]:
     out = []
     if pinned.get("tables") != tables:
-        out.append(f"legacy {version}: pinned tables differ from the exporter's DDL at {pinned.get('tag')}")
+        out.append(f"legacy {version}: pinned tables (names, types, order) differ from the exporter's DDL at "
+                   f"{pinned.get('tag')}")
     if sorted(pinned.get("functions", [])) != sorted(functions):
         out.append(f"legacy {version}: pinned compute functions differ from the registry at {pinned.get('tag')}")
     return out

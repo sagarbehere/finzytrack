@@ -87,7 +87,8 @@ def f(con):
     con.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
     con.execute("CREATE INDEX i ON a(b)")
 '''
-        self.assertEqual(ms.derive_tables(src), {"a": ["id", "b", "c"], "meta": ["key", "value"]})
+        self.assertEqual(ms.derive_tables(src), {"a": [["id", "INTEGER"], ["b", "TEXT"], ["c", "TEXT"]],
+                                                "meta": [["key", "TEXT"], ["value", "TEXT"]]})
 
     def test_functions_come_from_registrations(self) -> None:
         router = "registry.register(BudgetFn(reader))\n# registry.register(CommentedFn(reader))\n"
@@ -97,12 +98,20 @@ def f(con):
         self.assertEqual(ms.derive_functions(router, sources), ["budget_for_range"])
 
     def test_inventory_mismatch_is_reported(self) -> None:
-        pinned = {"tag": "t", "tables": {"a": ["x", "y"]}, "functions": ["f"]}
-        self.assertEqual(ms.inventory_problems("v", pinned, {"a": ["x", "y"]}, ["f"]), [])
-        self.assertTrue(ms.inventory_problems("v", pinned, {"a": ["x", "y", "z"]}, ["f"]))  # column hidden from the pin
-        self.assertTrue(ms.inventory_problems("v", pinned, {"a": ["x", "y"], "b": ["q"]}, ["f"]))  # table hidden
-        self.assertTrue(ms.inventory_problems("v", pinned, {"a": ["y", "x"]}, ["f"]))  # order is the view's order
-        self.assertTrue(ms.inventory_problems("v", pinned, {"a": ["x", "y"]}, ["f", "g"]))  # function hidden
+        pinned = {"tag": "t", "tables": {"a": [["x", "TEXT"], ["y", "INTEGER"]]}, "functions": ["f"]}
+        same = {"a": [["x", "TEXT"], ["y", "INTEGER"]]}
+        self.assertEqual(ms.inventory_problems("v", pinned, same, ["f"]), [])
+        self.assertTrue(ms.inventory_problems("v", pinned, {"a": same["a"] + [["z", "TEXT"]]}, ["f"]))  # column hidden
+        self.assertTrue(ms.inventory_problems("v", pinned, {**same, "b": [["q", "TEXT"]]}, ["f"]))  # table hidden
+        self.assertTrue(ms.inventory_problems("v", pinned, {"a": same["a"][::-1]}, ["f"]))  # order is the view's order
+        self.assertTrue(ms.inventory_problems("v", pinned, {"a": [["x", "TEXT"], ["y", "TEXT"]]}, ["f"]))  # type
+        self.assertTrue(ms.inventory_problems("v", pinned, same, ["f", "g"]))  # function hidden
+
+    def test_backlog_ids_come_from_id_tables_only(self) -> None:
+        text = ("| Status | Meaning |\n|---|---|\n| open | not done |\n\n"
+                "| ID | Title |\n|---|---|\n| N1 | a finding |\n| L1.M5 | a double |\n| BL-0001 | an item |\n\n"
+                "| Double | Canonical |\n|---|---|\n| L2-02 | I7 |\n")
+        self.assertEqual(ms.backlog_ids(text), {"N1", "L1.M5", "BL-0001"})
 
 
 class Fields(Base):
@@ -215,6 +224,24 @@ class Shape(Base):
 
 class V022Accounting(Base):
     """ADR-0048: every v0.2.2 table and column keeps its name; none is dropped."""
+
+    def test_a_same_column_whose_type_changed(self) -> None:
+        s = self.spec()
+        self.column(s, "ledger_errors", "line_number").update(type="TEXT", format="text")
+        self.refused(s, "ledger_errors.line_number: type TEXT differs from v0.2.2's INTEGER")
+        s = self.spec()
+        self.column(s, "postings", "cost_date").update(type="INTEGER", format="int")
+        self.refused(s, "postings.cost_date: type INTEGER differs from v0.3.0's TEXT")
+        s = self.spec()  # a declared change may change the type
+        self.column(s, "ledger_errors", "line_number").update(type="TEXT", format="text", change="changed",
+                                                               cites=["ADR-0048"], why="x")
+        self.assertEqual(self.problems(s), [])
+
+    def test_a_v022_table_losing_its_public_view(self) -> None:
+        s = self.spec()
+        for c in self.table(s, "postings")["column"]:
+            c["user_sql"] = False
+        self.refused(s, "postings: a v0.2.2 table keeps its public view r_postings")
 
     def test_a_v022_table_left_out(self) -> None:
         s = self.spec()
@@ -358,7 +385,7 @@ class Citations(Base):
 
     def test_a_citation_that_does_not_resolve(self) -> None:
         for bad in ("ADR-9999", "CAP-NO-SUCH-ROW", "BL-9999", "INV-99", "owner:20990101-nothing.md", "ADR-55",
-                    "see above", "ADR-0048 "):
+                    "see above", "ADR-0048 ", "Status", "Double", "ID"):
             with self.subTest(cite=bad):
                 s = self.spec()
                 self.column(s, "postings", "source_account")["cites"] = [bad]
@@ -405,6 +432,12 @@ class Status(Base):
         col = self.column(s, "prices", "date")
         col["meaning"] += " (waits for owner:20261025-mirror-as-of-date.md)"
         self.refused(s, "prices.date: a decided column cannot point at an open owner question")
+        s = self.spec()
+        self.column(s, "prices", "date")["cites"] = ["owner:20261025-mirror-as-of-date.md"]
+        self.refused(s, "prices.date: a decided column cannot point at an open owner question")
+        s = self.spec()
+        self.table(s, "prices")["cites"] = ["ADR-0048", "owner:20261025-mirror-as-of-date.md"]
+        self.refused(s, "prices: a draft table cannot point at an open owner question")
         s = self.spec()
         self.column(s, "prices", "id")["source"] += " See design/inbox/x.md."
         self.refused(s, "prices.id: a draft column cannot point at an open owner question")

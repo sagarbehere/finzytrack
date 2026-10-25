@@ -1,6 +1,6 @@
 # The SQL column `postings.source_account`: keep v0.2.2's per-row answer?
 - Asked: 2026-10-25 by orchestrator/S0021-mirror-surface (found while reviewing the slice)
-- blocks: nothing now (the `source_account` and `source_account_type` rows in `design/specs/mirror/surface.toml` stay `draft`); the M1a mirror-build slice needs the answer before it fills these two columns
+- blocks: nothing now (the `source_account` and `source_account_type` rows in `design/specs/mirror/surface.toml` are marked `owner:` this file); the M1a mirror-build slice needs the answer before it fills these two columns
 - Rubric item: 4 (amending ADR-0055) and 2 (what a column a user's SQL reads means)
 - ADRs checked: ADR-0055 (decides the column's rule: legacy key, else the leg carrying the `import-key`, else the single Assets/Liabilities leg, else NULL; its Context quotes the user docs' "the originating Assets or Liabilities account for this transaction" but does not describe what v0.2.2 actually computes per row); ADR-0048 (v0.2.2 mirror names keep working through 0.4.x); ADR-0026 (v0.4 stops writing the `source_account` key); INV-21 (the legacy key is read forever).
 
