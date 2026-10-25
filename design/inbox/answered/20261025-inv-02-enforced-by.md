@@ -15,3 +15,4 @@ INV-02 ("Beancount is the oracle; Finzytrack never reimplements it") lists, as i
 Option 1: the invariant file should say where it is enforced today; the rule text is unchanged.
 
 ## Answer (owner, verbatim, with date)
+"my answer is Option 1" (owner, 2026-10-25, in session). Applied to INVARIANTS.md INV-02; IMP-0020.

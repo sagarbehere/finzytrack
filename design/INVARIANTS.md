@@ -22,7 +22,7 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 ### INV-02: Beancount is the oracle
 - **Rule:** Beancount is the oracle for booking, tolerance, validation, account grammar and price semantics. Finzytrack never reimplements them.
 - **Why:** A second implementation drifts from Beancount and gives wrong numbers silently (review:11).
-- **Enforced by:** planned: domain vectors generated from Beancount; an architecture test that only `ledger.beancount_port` imports Beancount.
+- **Enforced by:** planned: domain vectors generated from Beancount; in the engine, an architecture test that only `ledger.beancount_port` imports Beancount (BL-0041); in the main sidecar, `backend/.importlinter` and `backend/tests/architecture/test_contracts.py` (no Beancount import at all, ADR-0054). *(Enforcement list updated with the owner's approval, 2026-10-25.)*
 - **Status:** pending (BL-0002, by M1a)
 
 ### INV-03: Beancount parity

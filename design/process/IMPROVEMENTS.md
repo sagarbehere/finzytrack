@@ -188,3 +188,23 @@ Format:
 - Expected effect: a loosened CSP, a new permission or a disallowed crate licence fails CI.
 - Observed effect: pending.
 - Status: kept (tightening, agent-approved).
+
+## IMP-0019: agents push `next` without a prompt (2026-10-25)
+- Trigger: owner request in session.
+- What changed: `.claude/settings.json` moves `git push` from "ask" to "allow"; CLAUDE.md, PROCESS.md §10, `.claude/agents/implementer.md` and the slice skill say agents push `next` after each landed slice.
+- PROCESS.md section: §10.
+- Why: every push already passes the guard hook (no force, delete, tag, mirror or `main` pushes) and the pre-push hook (owner push gate, meta-tests, privacy scan, invariants, capability map, generated files, types and tests per package); the prompt added no check.
+- Expected effect: no prompt per landed slice; the same checks on every push.
+- Observed effect: pending.
+- Status: kept (loosening, owner-approved).
+- Owner approval: "Pushes should go through without asking, but retain the sensible and reasonable checks done before a push" (2026-10-25, in session)
+
+## IMP-0020: INV-02's enforcement list names the main sidecar's Beancount ban (2026-10-25)
+- Trigger: S0006 verifier doc check; `design/inbox/answered/20261025-inv-02-enforced-by.md`.
+- What changed: `design/INVARIANTS.md` INV-02 "Enforced by" (the rule text is unchanged; status stays pending until the engine side exists, BL-0041).
+- PROCESS.md section: none (invariant content).
+- Why: after ADR-0054 the enforcement description named only the single-process design.
+- Expected effect: none on behaviour.
+- Observed effect: pending.
+- Status: kept.
+- Owner approval: "my answer is Option 1" (2026-10-25, in session; covers `design/inbox/answered/20261025-inv-02-enforced-by.md`)
