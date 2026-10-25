@@ -4,7 +4,7 @@
 
 What each ledger-writing mutator may change. Column meanings and rules: [README.md](README.md). Edit `intent-table.toml`, then run `python3 scripts/gen_intent_table.py`.
 
-50 mutators: 26 decided, 22 draft, 2 owner; kinds 13 add, 16 change-one, 21 many; 15 with no old-app counterpart.
+50 mutators: 26 decided, 21 draft, 3 owner; kinds 12 add, 15 change-one, 23 many; 15 with no old-app counterpart.
 
 ## Summary
 
@@ -22,7 +22,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 | `account.reopen` | change-one | POST /api/accounts/{name}/reopen | delete | decided | M4 |
 | `balance.add` | many | POST /api/accounts/{name}/balance-directives | insert | decided | M4 |
 | `balance.edit` | many | PUT /api/accounts/{name}/balance-directives | replace; insert; delete | decided | M4 |
-| `balance.delete` | change-one | DELETE /api/accounts/{name}/balance-directives | delete | decided | M4 |
+| `balance.delete` | many | DELETE /api/accounts/{name}/balance-directives | delete | decided | M4 |
 | `doc.account-attach` | add | POST /api/documents/account | insert | decided | M4 |
 | `doc.account-detach` | change-one | DELETE /api/documents/account | delete | decided | M4 |
 | `doc.documents-option` | add | internal (ensure_documents_option, before the first document write) | option_line | decided | M3 |
@@ -53,12 +53,12 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 | `inv.reinvest` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
 | `inv.dividend` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
 | `inv.sell` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
-| `inv.conversion` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
-| `inv.cd-maturity` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
+| `inv.conversion` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | owner:20261025-conversion-cost-rounding.md | M8 |
+| `inv.cd-maturity` | many | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
 | `inv.interest` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
-| `settings.booking-default` | change-one | n/a | option_line | decided | M10 |
+| `settings.booking-default` | change-one | n/a | option_line | decided | M8 |
 | `ws.test-copy` | many | n/a | new_file | draft | M3 |
-| `ws.adopt-legacy` | many | n/a | new_file | draft | M3 |
+| `ws.adopt-legacy` | many | n/a | new_file; option_line | draft | M3 |
 | `ws.refresh-demo` | many | n/a | replace_file | draft | M3 |
 
 ## Rows
@@ -138,7 +138,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Metadata written:** —
 - **May ask to acknowledge:** —
 - **Refused when:** B already exists (use account.merge); B breaks the account grammar; an encrypted file references A (not editable, ADR-0009)
-- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); non-comparable: accounts with subaccounts, or named in metadata (the legacy renames both; see the inbox question)
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); non-comparable: accounts with subaccounts, or named in metadata or in a `custom` string value (the legacy renames all of these; see the inbox question)
 - **Status:** owner:20261025-rename-subaccounts-and-metadata.md
 - **Milestone:** M4
 - **ADRs:** ADR-0049; ADR-0009
@@ -258,7 +258,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 ### `balance.delete`
 
 - **Capabilities:** CAP-ACCT-ASSERTIONS
-- **Kind of edit:** change-one
+- **Kind of edit:** many
 - **Old endpoint:** DELETE /api/accounts/{name}/balance-directives
 - **Edits:** delete
 - **Files:** the file holding the assertion (and its paired `pad`)
@@ -522,7 +522,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Metadata written:** —
 - **May ask to acknowledge:** —
 - **Refused when:** either account is not open on the date; the Equity account was not picked by the user (INV-15)
-- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28; FIX-L3-02 (legacy rounds a `@@` total to its own unit price); FIX-L3-05 (legacy rewrites the written scale)
 - **Status:** draft
 - **Milestone:** M8
 - **ADRs:** ADR-0030; ADR-0009
@@ -566,7 +566,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Old endpoint:** n/a
 - **Edits:** replace
 - **Files:** the file holding the account's `open`
-- **Intended change:** the booking method on the account's `open` set or changed; nothing else
+- **Intended change:** the booking method on the account's `open` set or changed; nothing else. The same write as account.edit's booking-method field, listed apart because its preview (re-booked past sales) is the investments one
 - **Metadata written:** —
 - **May ask to acknowledge:** —
 - **Refused when:** the re-booking preview (N past sales, realized gain change) not confirmed; any booking error after re-booking (never acknowledgeable); AVERAGE (refused by Beancount 3.2)
@@ -678,10 +678,10 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Old endpoint:** n/a
 - **Edits:** insert; replace; delete
 - **Files:** the files the undone write touched
-- **Intended change:** the inverse of one journaled write: each entry the write produced (found by its canonical text) replaced by, or removed for, the entry text it replaced (review:28 §4.1 identity condition 4); nothing else. The kind of edit is the undone write's
+- **Intended change:** the inverse of one journaled write: each entry the write produced (found by its canonical text) removed, and each entry it removed or replaced restored at the file and position the undo journal recorded (the journal stores canonical text plus location; review:28 §4.1 identity condition 4); nothing else. Writes of option lines, meta lines and whole files (doc.documents-option, settings.*, import.link-element, ws.*) are not undoable this way and say so
 - **Metadata written:** —
 - **May ask to acknowledge:** as the undone write's row
-- **Refused when:** an entry the write produced is gone or changed since (located by canonical hash; never guessed); a later write touched the same entries (undo the later one first)
+- **Refused when:** an entry the write produced is gone or changed since (located by canonical hash; never guessed); a later write touched the same entries (undo the later one first); the recorded position no longer exists (the file changed around it): the restore is offered as a routed insert with a preview instead
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** draft
 - **Milestone:** M5
@@ -698,7 +698,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Metadata written:** —
 - **May ask to acknowledge:** —
 - **Refused when:** an account not open on the date
-- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28; FIX-L3-02 (legacy rounds a `@@` total to its own unit price); FIX-L3-05 (legacy rewrites the written scale)
 - **Status:** draft
 - **Milestone:** M8
 - **ADRs:** ADR-0030; ADR-0031; ADR-0009
@@ -714,7 +714,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Metadata written:** —
 - **May ask to acknowledge:** —
 - **Refused when:** an account not open on the date
-- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28; FIX-L3-02 (legacy rounds a `@@` total to its own unit price); FIX-L3-05 (legacy rewrites the written scale)
 - **Status:** draft
 - **Milestone:** M8
 - **ADRs:** ADR-0030; ADR-0031; ADR-0009
@@ -730,7 +730,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Metadata written:** —
 - **May ask to acknowledge:** —
 - **Refused when:** an account not open on the date; an income account the user did not pick (INV-15: suggested from metadata, never created)
-- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28; FIX-L3-02 (legacy rounds a `@@` total to its own unit price); FIX-L3-05 (legacy rewrites the written scale)
 - **Status:** draft
 - **Milestone:** M8
 - **ADRs:** ADR-0030; ADR-0031; ADR-0009
@@ -742,11 +742,11 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Old endpoint:** POST /api/investments/assemble, then POST /api/import/commit
 - **Edits:** insert
 - **Files:** the routed insert file
-- **Intended change:** one transaction: the reduction written per ADR-0031 (`{}` where the account's method decides, or one posting per lot the user picked on STRICT accounts), the cash leg, the gains leg on the account the user picked, and the fee leg if given
+- **Intended change:** one transaction: the reduction written per ADR-0031 (`{}` where the account's method decides, or one posting per lot the user picked on STRICT accounts), the cash leg, the fee leg if given, and the gains leg on the account the user picked with its amount left for Beancount to interpolate (the app does no lot math, ADR-0031, INV-02)
 - **Metadata written:** —
 - **May ask to acknowledge:** —
 - **Refused when:** any booking error (never acknowledgeable); a STRICT account without the lots chosen; AVERAGE booking (refused by Beancount 3.2)
-- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28; FIX-L3-02 (legacy rounds a `@@` total to its own unit price); FIX-L3-05 (legacy rewrites the written scale)
 - **Status:** draft
 - **Milestone:** M8
 - **ADRs:** ADR-0030; ADR-0031; ADR-0009
@@ -758,19 +758,19 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Old endpoint:** POST /api/investments/assemble, then POST /api/import/commit
 - **Edits:** insert
 - **Files:** the routed insert file
-- **Intended change:** one transaction: every lot of the old security reduced and the same lots (date and cost kept) added in the new security, no gain
+- **Intended change:** one transaction: every lot of the old security reduced and new lots in the new security with the same dates and the same total cost, no gain; how a ratio whose per-unit cost does not divide exactly is recorded: see the inbox question
 - **Metadata written:** —
 - **May ask to acknowledge:** —
 - **Refused when:** any booking error (never acknowledgeable); a lot whose cost cannot be carried over exactly
-- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28
-- **Status:** draft
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28; FIX-L3-02 (legacy rounds a `@@` total to its own unit price); FIX-L3-05 (legacy rewrites the written scale)
+- **Status:** owner:20261025-conversion-cost-rounding.md
 - **Milestone:** M8
 - **ADRs:** ADR-0030; ADR-0031; ADR-0009
 
 ### `inv.cd-maturity`
 
 - **Capabilities:** CAP-INV-QA-CD-MATURITY; CAP-INV-STAGING
-- **Kind of edit:** add
+- **Kind of edit:** many
 - **Old endpoint:** POST /api/investments/assemble, then POST /api/import/commit
 - **Edits:** insert
 - **Files:** the routed insert file
@@ -778,7 +778,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Metadata written:** —
 - **May ask to acknowledge:** —
 - **Refused when:** an account not open on the date; a non-zero remaining balance when closing
-- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28; FIX-L3-02 (legacy rounds a `@@` total to its own unit price); FIX-L3-05 (legacy rewrites the written scale)
 - **Status:** draft
 - **Milestone:** M8
 - **ADRs:** ADR-0030; ADR-0031; ADR-0009
@@ -794,7 +794,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Metadata written:** —
 - **May ask to acknowledge:** —
 - **Refused when:** an account not open on the date
-- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28; FIX-L3-02 (legacy rounds a `@@` total to its own unit price); FIX-L3-05 (legacy rewrites the written scale)
 - **Status:** draft
 - **Milestone:** M8
 - **ADRs:** ADR-0030; ADR-0031; ADR-0009
@@ -812,7 +812,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Refused when:** the re-booking preview (N past sales, realized gain change) not confirmed (ADR-0031); any booking error after re-booking (never acknowledgeable); AVERAGE (refused by Beancount 3.2); the option is declared in an included file (the user edits that file)
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** decided
-- **Milestone:** M10
+- **Milestone:** M8
 - **ADRs:** ADR-0031; ADR-0009
 
 ### `ws.test-copy`
@@ -822,10 +822,10 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Old endpoint:** n/a
 - **Edits:** new_file
 - **Files:** a new workspace folder only (copies of the ledger set's files; never an external reference)
-- **Intended change:** every file of the source ledger set copied byte for byte into the new folder, marked `test_copy: true`; the source set is only read
+- **Intended change:** every file of the source ledger set copied into the new folder, marked `test_copy: true`, with every include resolving inside the copy; the copy loads to the same entries and errors as the source (checked before the workspace is recorded); the source set is only read
 - **Metadata written:** —
 - **May ask to acknowledge:** —
-- **Refused when:** the destination exists or lies inside a non-copy workspace's file set; a source file outside the ledger set's folder (it would stay shared)
+- **Refused when:** the destination exists or lies inside a non-copy workspace's file set; an include that resolves outside the source folder, or an absolute include (it would keep a real-ledger file in the copy's set); the copy does not load the same as the source
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** draft
 - **Milestone:** M3
@@ -836,12 +836,12 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Capabilities:** CAP-LEGACY-ADOPT
 - **Kind of edit:** many
 - **Old endpoint:** n/a
-- **Edits:** new_file
+- **Edits:** new_file; option_line
 - **Files:** the new workspace folder only (INV-26: nothing under the legacy root is written)
-- **Intended change:** the legacy ledger set copied byte for byte into the new workspace (Copy, the default, ADR-0020); the legacy files are only read
+- **Intended change:** the legacy ledger set copied into the new workspace and its documents into `<folder>/documents/` (Copy, the default, ADR-0020); an `option "documents"` naming a legacy path is the one line rewritten, to the copied folder; sources read while holding every legacy lock; the copy loads the same as the source; the legacy files are only read
 - **Metadata written:** —
 - **May ask to acknowledge:** —
-- **Refused when:** any write under the legacy root (INV-26); the destination exists
+- **Refused when:** any write under the legacy root (INV-26); the destination exists; an include that resolves outside the legacy root's folder; a legacy lock cannot be taken; the copy does not load the same as the source
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** draft
 - **Milestone:** M3
@@ -854,7 +854,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Old endpoint:** n/a
 - **Edits:** replace_file
 - **Files:** the demo workspace folder only (INV-25: `kind: demo` and the realpath of the app's demo path, no symlinks)
-- **Intended change:** the demo's files replaced as a whole by the generator's output for the new build anchor (the one replacement in the system, INV-25, ADR-0022)
+- **Intended change:** the demo's files replaced as a whole by the generator's output for the new build anchor (the one replacement in the system, INV-25, ADR-0022); if the demo was edited, one previous copy is kept in a hidden folder inside the app data dir first
 - **Metadata written:** —
 - **May ask to acknowledge:** —
 - **Refused when:** the folder is not the app's demo path, is not `kind: demo`, or is reached through a symlink (INV-25)

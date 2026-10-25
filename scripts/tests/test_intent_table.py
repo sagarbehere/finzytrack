@@ -61,9 +61,9 @@ class IntentTableTest(unittest.TestCase):
         cls.adrs = {"-".join(p.name.split("-")[:2]) for p in (ROOT / "design/decisions").glob("ADR-*.md")}
         cls.backlog = (ROOT / "design/backlog.md").read_text(encoding="utf-8")
 
-    def refers_to_a_row(self, text: str) -> bool:
+    def refers_to_a_row(self, text: str, row: str = "") -> bool:
         m = re.match(r"^as ([a-z][a-z.-]*[a-z])\b", text)
-        return bool(m and m.group(1) in self.ids) or text == "as the undone write's row"
+        return bool(m and m.group(1) in self.ids) or (text == "as the undone write's row" and row == "data.undo")
 
     def test_every_row_has_every_column(self) -> None:
         for r in self.rows:
@@ -91,7 +91,7 @@ class IntentTableTest(unittest.TestCase):
             for ack in r["ack"]:
                 with self.subTest(row=r["id"], ack=ack):
                     if ack.startswith("as "):
-                        self.assertTrue(self.refers_to_a_row(ack), ack)
+                        self.assertTrue(self.refers_to_a_row(ack, r["id"]), ack)
                         continue
                     first = ack.split()[0]
                     self.assertIn(first, BEANCOUNT_ERRORS - NEVER_ACK, ack)
@@ -102,6 +102,8 @@ class IntentTableTest(unittest.TestCase):
             for key in r["meta"]:
                 with self.subTest(row=r["id"], key=key):
                     self.assertNotIn(key, NOT_WRITTEN)
+                    if key == "user keys typed in the drawer":  # client-chosen keys only where the user edits an entry
+                        self.assertTrue(r["id"].startswith("txn."), r["id"])
                     m = re.match(r"^the vocabulary keys of ([a-z][a-z.-]*[a-z])$", key)
                     self.assertTrue(key in APP_KEYS | VOCABULARY or self.refers_to_a_row(key)
                                     or bool(m and m.group(1) in self.ids), key)
@@ -130,8 +132,9 @@ class IntentTableTest(unittest.TestCase):
                     self.assertTrue((ROOT / "design/inbox" / name).is_file() or (ROOT / "design/inbox/answered" / name).is_file(), name)
                     continue
                 self.assertIn(status, ("decided", "draft"))
-                text = " ".join(str(v) for v in r.values())
-                self.assertNotIn("inbox", text, "a row that still points at an open question cannot be decided or draft")
+                text = " ".join(str(v) for v in r.values()).lower()
+                for word in ("inbox", "owner"):
+                    self.assertNotIn(word, text, "a row that still points at an open question cannot be decided or draft")
 
     def test_every_legacy_mutator_maps_to_a_row_or_a_cut(self) -> None:
         # The list is the `@_serialized_write` set of the legacy LedgerManager at legacy-final (26, checked against
