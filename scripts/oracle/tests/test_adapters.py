@@ -16,7 +16,7 @@ class AdapterTest(unittest.TestCase):
     def test_update_fills_elided_amounts_from_the_booked_entry(self) -> None:
         d = LedgerDir({"main.beancount": OPENS + SRC})
         try:
-            booked = sd.booked_by_legacy_id(d.path, "main.beancount")
+            booked = sd.load_facts(d.path, "main.beancount").booked_by_id
         finally:
             d.close()
         req = adapters.update_transaction({"txn_id": "t-1", "entry": SRC.replace("lunch", "dinner")}, booked)

@@ -31,12 +31,16 @@ class Case:
     def __init__(self, before: dict[str, str], after: dict[str, str], expect, root: str = "main.beancount") -> None:
         self.d = LedgerDir(before)
         self.before = sd.parse_set(self.d.path, root)
-        self.generated = sd.generated_keys(self.d.path, root)
+        self.before_facts = sd.load_facts(self.d.path, root)
         self.expected = expect(self.before)
         self.d.write(after)
         self.after = sd.parse_set(self.d.path, root)
-        self.report = classify.compare(self.before, self.after, self.expected, self.generated)
+        self.after_facts = sd.load_facts(self.d.path, root)
+        self.report = classify.compare(self.before, self.after, self.expected, self.before_facts, self.after_facts)
         self.d.close()
+
+    def refused(self, mutator: str, code: str):
+        return classify.refused(self.before, self.after, self.expected, self.before_facts, self.after_facts, mutator, code)
 
     def classes(self) -> list[str]:
         return sorted(d.cls for d in self.report.divergences)
@@ -68,6 +72,13 @@ class ClassifyTest(unittest.TestCase):
         before = {"main.beancount": 'include "y/*.beancount"\n' + OPENS + T1, "y/2020.beancount": ELIDED}
         after = {"main.beancount": 'include "y/*.beancount"\n' + OPENS + T1_EDITED + ELIDED_BAKED, "y/2020.beancount": ELIDED}
         self.assertEqual(Case(before, after, update_t1).classes(), ["I10+I2"])
+
+    def test_i2_a_changed_directive_duplicated_from_a_glob_file(self) -> None:
+        budget = '2020-01-01 custom "budget" Expenses:Rent "monthly" 900 USD\n'
+        before = {"main.beancount": 'include "y/*.beancount"\n' + OPENS + T1, "y/2020.beancount": budget}
+        after = {"main.beancount": 'include "y/*.beancount"\n' + OPENS + T1_EDITED + budget.replace("900", "901"),
+                 "y/2020.beancount": budget}
+        self.assertEqual(Case(before, after, update_t1).classes(), ["UNEXPLAINED"])
 
     def test_i2_an_edit_inside_a_glob_file_lands_in_the_root_and_the_file_is_not_rewritten(self) -> None:
         before = {"main.beancount": 'include "y/*.beancount"\n' + OPENS, "y/2020.beancount": T1}
@@ -158,22 +169,103 @@ class ClassifyTest(unittest.TestCase):
         opens = OPENS + "2020-01-01 open Assets:Broker\n"
         src = '2020-01-06 * "Buy"\n  id: "t-9"\n  Assets:Broker  7 TOK @@ 10.00 USD\n  Assets:Cash  -10.00 USD\n'
         c = Case({"main.beancount": opens + src}, {}, lambda b: model.update_transaction(b, "t-9", src.replace('"Buy"', '"Buy" "x"')))
-        r = classify.refused(c.before, c.after, c.expected, c.generated, "update_transaction", "TRANSACTION_INVALID")
+        r = c.refused("update_transaction", "TRANSACTION_INVALID")
         self.assertEqual([d.cls for d in r.divergences], ["FIX-L3-02"])
 
     def test_any_other_refusal_is_not_applied(self) -> None:
         c = Case({"main.beancount": OPENS + T1}, {}, update_t1)
-        r = classify.refused(c.before, c.after, c.expected, c.generated, "update_transaction", "TRANSACTION_INVALID")
+        r = c.refused("update_transaction", "TRANSACTION_INVALID")
         self.assertEqual([d.cls for d in r.divergences], ["NOT_APPLIED"])
 
     def test_a_refusal_that_still_changed_the_ledger_is_unexplained(self) -> None:
         c = Case({"main.beancount": OPENS + T1}, {"main.beancount": OPENS}, update_t1)
-        r = classify.refused(c.before, c.after, c.expected, c.generated, "update_transaction", "X")
+        r = c.refused("update_transaction", "X")
         self.assertEqual(sorted(d.cls for d in r.divergences), ["NOT_APPLIED", "UNEXPLAINED"])
 
     def test_an_unexplained_header_change_is_reported(self) -> None:
         c = Case({"main.beancount": OPENS + T1}, {"main.beancount": 'option "title" "x"\n' + OPENS + T1_EDITED}, update_t1)
         self.assertEqual(c.classes(), ["UNEXPLAINED"])
+
+
+T2 = '\n2020-01-04 * "Bank" "deposit"\n  id: "t-2"\n  Assets:Cash  100.00 USD\n    statement-amount: 100.00 USD\n    import-key: "v1:h:dep"\n  Expenses:Rent  -100.00 USD\n'
+BROKER = OPENS + "2020-01-01 open Assets:Broker\n"
+
+
+class OverMatchTest(unittest.TestCase):
+    """The verifier's attacks on S0002 (findings F2-F6): a real divergence must never be tagged as expected."""
+
+    def test_m28_does_not_mask_a_changed_legacy_id_on_an_untargeted_entry(self) -> None:
+        c = Case({"main.beancount": OPENS + T1 + T2}, {"main.beancount": OPENS + T1_EDITED + T2.replace('"t-2"', '"t-99"')}, update_t1)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c.classes())
+
+    def test_m28_does_not_mask_a_changed_statement_amount(self) -> None:
+        c = Case({"main.beancount": OPENS + T1 + T2},
+                 {"main.beancount": OPENS + T1_EDITED + T2.replace("statement-amount: 100.00", "statement-amount: 999.00")}, update_t1)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c.classes())
+
+    def test_m28_does_not_mask_a_dropped_import_key(self) -> None:
+        c = Case({"main.beancount": OPENS + T1 + T2},
+                 {"main.beancount": OPENS + T1_EDITED + T2.replace('    import-key: "v1:h:dep"\n', "")}, update_t1)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c.classes())
+
+    def test_m28_does_not_mask_a_changed_import_key_on_a_created_entry(self) -> None:
+        intended = '2020-03-01 * "Cafe" "coffee"\n  Expenses:Food  3.00 USD\n  Assets:Cash  -3.00 USD\n    import-key: "v1:h:abc"\n'
+        legacy = intended.replace("v1:h:abc", "v1:h:zzz")
+        c = Case({"main.beancount": OPENS + T1}, {"main.beancount": OPENS + T1 + legacy}, lambda b: model.import_append(b, [intended]))
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c.classes())
+
+    def test_i10_does_not_mask_a_wrong_baked_amount(self) -> None:
+        wrong = ELIDED.replace("  Assets:Cash\n", "  Assets:Cash  -99.00 USD\n")
+        c = Case({"main.beancount": OPENS + T1 + ELIDED}, {"main.beancount": OPENS + T1_EDITED + wrong}, update_t1)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c.classes())
+
+    def test_i10_does_not_mask_a_wrong_baked_lot(self) -> None:
+        lots = BROKER + '2020-01-02 * "a"\n  Assets:Broker  1 TOK {5 USD}\n  Assets:Cash  -5 USD\n' \
+            + '2020-01-03 * "b"\n  Assets:Broker  1 TOK {7 USD}\n  Assets:Cash  -7 USD\n'
+        sell = '2020-01-05 * "sell"\n  Assets:Broker  -1 TOK {7 USD}\n  Assets:Cash  7 USD\n'
+        baked_wrong = sell.replace("{7 USD}", "{5 USD, 2020-01-02}").replace("  7 USD", "  5 USD")
+        c = Case({"main.beancount": lots + T1 + sell}, {"main.beancount": lots + T1_EDITED + baked_wrong}, update_t1)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c.classes())
+
+    def test_i10_accepts_the_lot_beancount_books(self) -> None:
+        lots = BROKER + '2020-01-02 * "a"\n  Assets:Broker  1 TOK {5 USD}\n  Assets:Cash  -5 USD\n'
+        sell = '2020-01-05 * "sell"\n  Assets:Broker  -1 TOK {}\n  Assets:Cash  5 USD\n'
+        baked = sell.replace("{}", "{5 USD, 2020-01-02}")
+        c = Case({"main.beancount": lots + T1 + sell}, {"main.beancount": lots + T1_EDITED + baked}, update_t1)
+        self.assertEqual(c.classes(), ["I10"])
+
+    def test_l3_02_does_not_mask_a_changed_unit_price(self) -> None:
+        src = '2020-01-06 * "Buy"\n  Assets:Broker  0.001 BTC @ 30000 USD\n  Assets:Cash  -30.00 USD\n'
+        c = Case({"main.beancount": BROKER + T1 + src}, {"main.beancount": BROKER + T1_EDITED + src.replace("30000", "30004")}, update_t1)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c.classes())
+
+    def test_l3_02_does_not_mask_a_dropped_dated_cost(self) -> None:
+        src = '2020-01-06 * "Buy"\n  Assets:Broker  2 TOK {5.00 USD, 2020-01-01}\n  Assets:Cash  -10.00 USD\n'
+        c = Case({"main.beancount": BROKER + T1 + src},
+                 {"main.beancount": BROKER + T1_EDITED + src.replace(" {5.00 USD, 2020-01-01}", "")}, update_t1)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c.classes())
+
+    def test_l3_02_does_not_mask_a_dropped_cost_number(self) -> None:
+        src = '2020-01-06 * "Buy"\n  Assets:Broker  2 TOK {5.00 USD, 2020-01-01}\n  Assets:Cash  -10.00 USD\n'
+        c = Case({"main.beancount": BROKER + T1 + src},
+                 {"main.beancount": BROKER + T1_EDITED + src.replace("{5.00 USD, 2020-01-01}", "{2020-01-01}")}, update_t1)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c.classes())
+
+    def test_a_new_parse_error_is_not_a_match(self) -> None:
+        c = Case({"main.beancount": OPENS + T1}, {"main.beancount": OPENS + T1_EDITED + '\n2020-01-09 * "x"\n  Assets:Cash  1 USD {{{\n'}, update_t1)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c.classes())
+
+    def test_a_new_load_error_is_not_a_match(self) -> None:
+        c = Case({"main.beancount": OPENS + T1}, {"main.beancount": OPENS + T1_EDITED + "2020-01-09 balance Assets:Cash 5 USD\n"},
+                 update_t1)
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c.classes())
+
+    def test_refusal_of_an_unbalanced_priced_intent_is_not_expected(self) -> None:
+        src = '2020-01-06 * "Buy"\n  id: "t-9"\n  Assets:Broker  7 TOK @@ 10.00 USD\n  Assets:Cash  -10.00 USD\n'
+        bad = src.replace("-10.00 USD", "-55.00 USD")
+        c = Case({"main.beancount": BROKER + src}, {}, lambda b: model.update_transaction(b, "t-9", bad))
+        r = c.refused("update_transaction", "TRANSACTION_INVALID")
+        self.assertEqual(r.verdict, "UNEXPLAINED", [d.cls for d in r.divergences])
 
 
 if __name__ == "__main__":

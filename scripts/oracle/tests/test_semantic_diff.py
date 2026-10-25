@@ -42,6 +42,14 @@ class ParseSetTest(unittest.TestCase):
         self.assertEqual(s.glob_files, frozenset({"years/2020.beancount", "years/2021.beancount"}))
         self.assertEqual(sum(s.files["accounts.beancount"].keys.values()), 3)
 
+    def test_includes_outside_the_folder_are_listed_and_not_followed(self) -> None:
+        self.d = LedgerDir({"set/main.beancount": 'include "../elsewhere.beancount"\ninclude "/abs/x/*.beancount"\n' + OPENS,
+                            "elsewhere.beancount": TXN})
+        s = sd.parse_set(self.d.path / "set", "main.beancount")
+        self.assertEqual(set(s.files), {"main.beancount"})
+        self.assertEqual(len(s.outside), 2)
+        self.assertTrue(any(o.endswith("elsewhere.beancount") for o in s.outside))
+
     def test_parser_only_no_plugins_no_booking(self) -> None:
         self.d = LedgerDir({"main.beancount": 'plugin "beancount.plugins.implicit_prices"\n' + OPENS + """
 2020-01-03 * "fx"
@@ -121,7 +129,7 @@ class GeneratedKeysTest(unittest.TestCase):
   Assets:Cash
 """})
         try:
-            gen = sd.generated_keys(d.path, "main.beancount")
+            gen = sd.load_facts(d.path, "main.beancount").generated
         finally:
             d.close()
         self.assertTrue(any(" price EUR " in k for k in gen))

@@ -14,7 +14,8 @@ Usage (from the repo root):
 
 A case is {"id", "mutator": "update_transaction" | "rename_account" | "import_append", "params": {...}}:
 update_transaction {"txn_id", "entry"}, rename_account {"old", "new"}, import_append {"entries": [...]}.
-Exit status: 0 when no case is UNEXPLAINED, 1 otherwise, 2 on a refused input.
+Exit status: 0 when no case is UNEXPLAINED, 1 otherwise, 2 on a refused input, 3 when a run had to stop
+because the copy was not contained (the source changed, or an include escaped the copy).
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ import argparse
 import json
 import os
 import random
+import re
 import statistics
 import subprocess
 import sys
@@ -77,17 +79,43 @@ class Run:
     src: Path
     root_file: str
     before: sd.LedgerSet
-    generated: frozenset[str]
-    booked: dict[str, Any]
+    facts: sd.LoadFacts
+    src_bytes: dict[str, bytes]
     template: Path
     work: Path
     port: int
 
 
+class Unsafe(Exception):
+    """The run cannot be kept on the copy (INV-24); it stops at once."""
+
+
+CASE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+
+def check_cases(cases: list[dict[str, Any]]) -> None:
+    ids = [c.get("id") for c in cases]
+    bad = [i for i in ids if not isinstance(i, str) or not CASE_ID.fullmatch(i)]
+    if bad or len(set(ids)) != len(ids):
+        raise ValueError(f"case ids must be unique names of letters, digits, '.', '_' and '-': {bad or 'duplicates'}")
+    unknown = [c["id"] for c in cases if c.get("mutator") not in MUTATORS]
+    if unknown:
+        raise ValueError(f"unknown mutator in cases {unknown}")
+
+
+def check_contained(ledgers: Path, root_file: str) -> sd.LedgerSet:
+    """The ledger set at *ledgers*, refusing any include that resolves outside it (a copy must not reach the
+    original or anything else)."""
+    s = sd.parse_set(ledgers, root_file)
+    if s.outside:
+        raise Unsafe(f"{len(s.outside)} include(s) of the ledger set resolve outside {ledgers}; refusing to run")
+    return s
+
+
 def stray_files(run: Run, ledgers: Path, after: sd.LedgerSet) -> list[classify.Divergence]:
     """Files the legacy app created or changed that the semantic diff cannot see: outside the ledger set, or new and
     holding no entries (I2: a file literally named after a glob pattern)."""
-    old, new = ledger_files_bytes(run.src), ledger_files_bytes(ledgers)
+    old, new = run.src_bytes, ledger_files_bytes(ledgers)
     out = []
     for f in sorted(set(old) | set(new)):
         if old.get(f) == new.get(f) or f in run.before.files or (f in after.files and after.files[f].keys):
@@ -106,22 +134,26 @@ def run_case(case: dict[str, Any], run: Run) -> dict[str, Any]:
         expected = expected_change(run.before, case)
     except model.NonComparable as err:
         return {**out, "verdict": "NON_COMPARABLE", "note": str(err)}
-    req = adapters.ADAPTERS[case["mutator"]](case["params"], run.booked)
+    req = adapters.ADAPTERS[case["mutator"]](case["params"], run.facts.booked_by_id)
     root = run.work / "cases" / case["id"]
     stage_root(run.src, run.root_file, run.template, root)
     ledgers = root / "data/ledgers"
+    check_contained(ledgers, run.root_file)
     t_staged = time.monotonic()
     with LegacyApp(root, run.port):
         t_up = time.monotonic()
         status, body = adapters.send(run.port, req)
     t_done = time.monotonic()
+    if ledger_files_bytes(run.src) != run.src_bytes:
+        raise Unsafe(f"case {case['id']}: the source ledger folder changed during the run; stopping")
     after = sd.parse_set(ledgers, run.root_file)
+    after_facts = sd.load_facts(ledgers, run.root_file)
     error = body.get("error") or {}
     error = error if isinstance(error, dict) else {}
     if status >= 400:
-        report = classify.refused(run.before, after, expected, run.generated, case["mutator"], error.get("code"))
+        report = classify.refused(run.before, after, expected, run.facts, after_facts, case["mutator"], error.get("code"))
     else:
-        report = classify.compare(run.before, after, expected, run.generated)
+        report = classify.compare(run.before, after, expected, run.facts, after_facts)
     divergences = report.divergences + stray_files(run, ledgers, after)
     verdict = classify.Report(divergences).verdict
     out |= {"verdict": verdict, "legacy_http": status, "legacy_code": error.get("code"),
@@ -229,6 +261,17 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     return {"cases": len(results), "verdicts": verdicts, "classes": classes, "seconds_per_case": timing}
 
 
+def refuse_report(report: Path | None, src: Path | None) -> str | None:
+    """Why the report may not be written at *report* (INV-24: never into the source folder or a forbidden one)."""
+    if report is None:
+        return None
+    parent = report.resolve().parent
+    if src is not None and (parent == src.resolve() or src.resolve() in parent.parents):
+        return f"--report {report} is inside the ledger folder; write it elsewhere"
+    problem = refuse_dir(parent)
+    return f"--report {problem}" if problem else None
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     src_group = ap.add_mutually_exclusive_group(required=True)
@@ -243,32 +286,42 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--report", type=Path, help="write the JSON report here")
     args = ap.parse_args(argv)
 
-    work = (args.work or Path(tempfile.mkdtemp(prefix="ft-oracle-"))).resolve()
-    for folder in [work] + ([args.ledger_dir] if args.ledger_dir else []):
-        problem = refuse_dir(folder, allow_repo_corpora=folder is args.ledger_dir)
-        if problem:
-            print(f"harness: refused: {problem}", file=sys.stderr)
-            return 2
-    work.mkdir(parents=True, exist_ok=True)
-    if args.demo:
-        src, root_file = generate_demo(work)
-    elif not args.root_file:
-        print("harness: --root-file is required with --ledger-dir", file=sys.stderr)
+    def refuse(why: str) -> int:
+        print(f"harness: refused: {why}", file=sys.stderr)
         return 2
-    else:
-        src, root_file = args.ledger_dir.resolve(), args.root_file
-    show = may_show_entries(src)
 
-    before = sd.parse_set(src, root_file)
-    generated = sd.generated_keys(src, root_file)
-    cases = json.loads(args.cases.read_text(encoding="utf-8")) if args.cases else \
-        generate_cases(before, args.per_mutator, args.seed)
-    run = Run(src, root_file, before, generated, sd.booked_by_legacy_id(src, root_file), seed_template(work, args.port), work, args.port)
+    if args.ledger_dir and not args.root_file:
+        return refuse("--root-file is required with --ledger-dir")
+    work = (args.work or Path(tempfile.mkdtemp(prefix="ft-oracle-"))).resolve()
+    for problem in (refuse_dir(work), args.ledger_dir and refuse_dir(args.ledger_dir, allow_repo_corpora=True),
+                    refuse_report(args.report, args.ledger_dir)):
+        if problem:
+            return refuse(problem)
+    if args.ledger_dir and (work == args.ledger_dir.resolve() or args.ledger_dir.resolve() in work.parents):
+        return refuse("--work is inside the ledger folder")
+    cases = json.loads(args.cases.read_text(encoding="utf-8")) if args.cases else None
+    try:
+        if cases is not None:
+            check_cases(cases)
+        work.mkdir(parents=True, exist_ok=True)
+        src, root_file = generate_demo(work) if args.demo else (args.ledger_dir.resolve(), args.root_file)
+        before = check_contained(src, root_file)
+    except (ValueError, Unsafe) as err:
+        return refuse(str(err))
+    show = may_show_entries(src)
+    if cases is None:
+        cases = generate_cases(before, args.per_mutator, args.seed)
+    run = Run(src, root_file, before, sd.load_facts(src, root_file), ledger_files_bytes(src),
+              seed_template(work, args.port), work, args.port)
     results = []
-    for case in cases:
-        r = run_case(case, run)
-        results.append(r if show else redact(r))
-        print(f"{r['id']}: {r['verdict']} {r.get('classes', '')} {r.get('seconds', {}).get('total', '')}s", flush=True)
+    try:
+        for case in cases:
+            r = run_case(case, run)
+            results.append(r if show else redact(r))
+            print(f"{r['id']}: {r['verdict']} {r.get('classes', '')} {r.get('seconds', {}).get('total', '')}s", flush=True)
+    except Unsafe as err:
+        print(f"harness: STOPPED: {err}", file=sys.stderr)
+        return 3
     report = {"summary": summarize(results), "entries_shown": show, "results": results}
     if args.report:
         args.report.write_text(json.dumps(report, indent=1, default=str), encoding="utf-8")

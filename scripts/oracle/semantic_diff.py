@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import glob
 import os
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -59,6 +60,7 @@ class ParsedFile:
     header: frozenset[tuple[str, str, Any]]
     comment_lines: int
     errors: tuple[str, ...]
+    totals: dict[str, frozenset[int]]  # key → indexes of postings written with a total price (`@@`)
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,7 @@ class LedgerSet:
     root: str
     files: dict[str, ParsedFile]
     glob_files: frozenset[str]
+    outside: tuple[str, ...]  # include targets that resolve outside *base* (a copy must not reach them)
 
     def entry(self, key: str) -> Any:
         for f in self.files.values():
@@ -88,25 +91,47 @@ def _comment_lines(path: Path) -> int:
     return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.lstrip().startswith(";"))
 
 
+def total_price_postings(entry: Any, lines: list[str]) -> frozenset[int]:
+    """Indexes of the entry's postings whose source line writes a total price (`@@`); the parser keeps only the
+    per-unit quotient, so this is read from the text."""
+    out = set()
+    for i, p in enumerate(getattr(entry, "postings", ())):
+        n = (p.meta or {}).get("lineno")
+        if n and 0 < n <= len(lines) and "@@" in lines[n - 1].split(";", 1)[0]:
+            out.add(i)
+    return frozenset(out)
+
+
+def parse_entries_with_totals(text: str, filename: str) -> tuple[list[Any], list[Any], dict[str, Any], dict[str, frozenset[int]]]:
+    entries, errors, opts = parser.parse_string(text, filename)
+    lines = text.splitlines()
+    return entries, errors, opts, {canonical_key(e): total_price_postings(e, lines) for e in entries}
+
+
 def parse_file(path: Path) -> tuple[ParsedFile, list[str]]:
     """One file, parsed alone; returns it and its raw include strings."""
-    entries, errors, opts = parser.parse_file(str(path))
+    entries, errors, opts, totals = parse_entries_with_totals(path.read_text(encoding="utf-8"), str(path))
     keys: Counter[str] = Counter()
     by_key: dict[str, Any] = {}
     for e in entries:
         k = canonical_key(e)
         keys[k] += 1
         by_key.setdefault(k, e)
-    pf = ParsedFile(keys, by_key, _header(opts), _comment_lines(path), tuple(e.message for e in errors))
+    pf = ParsedFile(keys, by_key, _header(opts), _comment_lines(path), tuple(e.message for e in errors), totals)
     return pf, list(opts.get("include") or ())
+
+
+def _inside(path: Path, base: Path) -> bool:
+    return path == base or base in path.parents
 
 
 def parse_set(base: Path, root_file: str) -> LedgerSet:
     """The root file and every file it includes (globs expanded as Beancount's loader does), keyed by path
-    relative to *base*."""
+    relative to *base*. Include targets that resolve outside *base* are listed in `outside` and not followed."""
     base = base.resolve()
     files: dict[str, ParsedFile] = {}
     via_glob: set[str] = set()
+    outside: set[str] = set()
     todo = [(base / root_file).resolve()]
     while todo:
         path = todo.pop()
@@ -117,33 +142,56 @@ def parse_set(base: Path, root_file: str) -> LedgerSet:
         files[rel] = pf
         for inc in includes:
             pattern = os.path.join(path.parent, inc)
-            matches = sorted(glob.glob(pattern, recursive=True))
+            if not _inside(Path(os.path.realpath(pattern)), base):
+                outside.add(os.path.realpath(pattern))
+            matches = [Path(m).resolve() for m in sorted(glob.glob(pattern, recursive=True))]
+            outside.update(str(m) for m in matches if not _inside(m, base))
+            matches = [m for m in matches if _inside(m, base)]
             if GLOB_CHARS & set(inc):
                 via_glob.update(Path(os.path.relpath(m, base)).as_posix() for m in matches)
-            todo.extend(Path(m).resolve() for m in matches)
-    return LedgerSet(base, Path(root_file).as_posix(), files, frozenset(via_glob))
+            todo.extend(matches)
+    return LedgerSet(base, Path(root_file).as_posix(), files, frozenset(via_glob), tuple(sorted(outside)))
 
 
-def generated_keys(base: Path, root_file: str) -> frozenset[str]:
-    """Keys of entries a full load adds that no file contains: plugin output (e.g. implicit prices) and pad
-    transactions. A loaded entry is generated when no parsed entry of its type sits at its file and line."""
+@dataclass(frozen=True)
+class LoadFacts:
+    """What one official full load (plugins, booking, validation) says about a ledger set."""
+    generated: frozenset[str]  # keys of entries a load adds that no file contains (plugins, pads)
+    booked_at: dict[tuple[str, int], Any]  # (resolved file, line) → the booked entry parsed there
+    booked_by_id: dict[str, Any]  # legacy `id` → booked transaction (ids carried twice left out)
+    errors: Counter[str]  # error keys (review:D1 §12.1)
+
+
+def error_key(err: Any, base: Path) -> str:
+    """Error type + canonical entry + message with the base path and file:line locations stripped (D1 §12.1)."""
+    entry = getattr(err, "entry", None)
+    msg = re.sub(r"\S*\.(beancount|bean)(:\d+)?", "<file>", str(err.message).replace(str(base), "<base>"))
+    return f"{type(err).__name__}|{canonical_key(entry) if entry is not None and hasattr(entry, 'meta') else ''}|{msg}"
+
+
+def load_facts(base: Path, root_file: str) -> LoadFacts:
     base = base.resolve()
     parsed_at: set[tuple[type, str, int]] = set()
     for rel in parse_set(base, root_file).files:
         entries, _, _ = parser.parse_file(str(base / rel))
         parsed_at |= {(type(e), str(Path(e.meta["filename"]).resolve()), e.meta["lineno"]) for e in entries}
     loader.initialize(use_cache=False)
-    loaded, _, _ = loader.load_file(str(base / root_file))
-    return frozenset(canonical_key(e) for e in loaded
-                     if (type(e), str(Path(e.meta.get("filename", "")).resolve()), e.meta.get("lineno")) not in parsed_at)
+    loaded, errors, _ = loader.load_file(str(base / root_file))
 
+    def at(e: Any) -> tuple[str, int]:
+        return str(Path(e.meta.get("filename", "")).resolve()), e.meta.get("lineno")
 
-def booked_by_legacy_id(base: Path, root_file: str) -> dict[str, Any]:
-    """Loaded (booked) transactions by legacy `id`, as the v0.3 frontend saw them; ids carried twice are left out."""
-    loader.initialize(use_cache=False)
-    loaded, _, _ = loader.load_file(str(base.resolve() / root_file))
+    generated = frozenset(canonical_key(e) for e in loaded if (type(e), *at(e)) not in parsed_at)
+    booked_at = {at(e): e for e in loaded if (type(e), *at(e)) in parsed_at}
     ids = Counter(e.meta.get("id") for e in loaded if hasattr(e, "postings") and "id" in e.meta)
-    return {e.meta["id"]: e for e in loaded if hasattr(e, "postings") and ids.get(e.meta.get("id")) == 1}
+    by_id = {e.meta["id"]: e for e in loaded if hasattr(e, "postings") and ids.get(e.meta.get("id")) == 1}
+    return LoadFacts(generated, booked_at, by_id, Counter(error_key(e, base) for e in errors))
+
+
+def booked_of(facts: LoadFacts, entry: Any) -> Any | None:
+    """The booked form of a parsed entry, found by its file and line."""
+    meta = entry.meta or {}
+    return facts.booked_at.get((str(Path(meta.get("filename", "")).resolve()), meta.get("lineno")))
 
 
 @dataclass
@@ -165,7 +213,7 @@ class SetDiff:
         return not self.files and not self.header_changed and not self.comments_lost
 
 
-_EMPTY = ParsedFile(Counter(), {}, frozenset(), 0, ())
+_EMPTY = ParsedFile(Counter(), {}, frozenset(), 0, (), {})
 
 
 def diff(before: LedgerSet, after: LedgerSet) -> SetDiff:

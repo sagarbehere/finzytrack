@@ -12,9 +12,8 @@ from typing import Any
 
 from beancount.core import account as bc_account
 from beancount.core import data
-from beancount.parser import parser
 
-from semantic_diff import FileDiff, LedgerSet, canonical_key
+from semantic_diff import FileDiff, LedgerSet, canonical_key, parse_entries_with_totals
 
 
 class NonComparable(Exception):
@@ -25,21 +24,31 @@ class NonComparable(Exception):
 class Expected:
     files: dict[str, FileDiff] = field(default_factory=dict)
     entries: dict[str, Any] = field(default_factory=dict)  # key → entry, for the intended new entries
+    created: set[str] = field(default_factory=set)  # keys of entries the mutator creates (not replacements)
+    totals: dict[str, frozenset[int]] = field(default_factory=dict)  # key → postings written with `@@`
 
-    def add(self, rel: str, entry: Any) -> None:
+    def add(self, rel: str, entry: Any, *, created: bool = False, totals: frozenset[int] = frozenset()) -> None:
         k = canonical_key(entry)
         self.files.setdefault(rel, FileDiff()).added[k] += 1
         self.entries.setdefault(k, entry)
+        self.totals.setdefault(k, totals)
+        if created:
+            self.created.add(k)
 
     def remove(self, rel: str, key: str, n: int = 1) -> None:
         self.files.setdefault(rel, FileDiff()).removed[key] += n
 
 
-def parse_entries(text: str) -> list[Any]:
-    entries, errors, _ = parser.parse_string(text)
+def parse_intent(text: str) -> tuple[list[Any], dict[str, frozenset[int]]]:
+    """The intent's entries and, per entry key, the postings it writes with a total price."""
+    entries, errors, _, totals = parse_entries_with_totals(text, "<intent>")
     if errors or not entries:
         raise ValueError(f"intent text does not parse: {[e.message for e in errors] or 'no entries'}")
-    return entries
+    return entries, totals
+
+
+def parse_entries(text: str) -> list[Any]:
+    return parse_intent(text)[0]
 
 
 def find_by_legacy_id(before: LedgerSet, txn_id: str) -> tuple[str, str, Any]:
@@ -55,10 +64,10 @@ def find_by_legacy_id(before: LedgerSet, txn_id: str) -> tuple[str, str, Any]:
 def update_transaction(before: LedgerSet, txn_id: str, new_text: str) -> Expected:
     """Replace the transaction with legacy id *txn_id* by *new_text*, in the file it lives in."""
     rel, key, _ = find_by_legacy_id(before, txn_id)
-    (new,) = parse_entries(new_text)
+    (new,), totals = parse_intent(new_text)
     exp = Expected()
     exp.remove(rel, key)
-    exp.add(rel, new)
+    exp.add(rel, new, totals=totals[canonical_key(new)])
     return exp
 
 
@@ -105,7 +114,7 @@ def rename_account(before: LedgerSet, old: str, new: str) -> Expected:
             if canonical_key(r) != k:
                 exp.remove(rel, k, f.keys[k])
                 for _ in range(f.keys[k]):
-                    exp.add(rel, r)
+                    exp.add(rel, r, totals=f.totals.get(k, frozenset()))
     return exp
 
 
@@ -117,8 +126,9 @@ def import_append(before: LedgerSet, texts: list[str]) -> Expected:
                for e in f.by_key.values()):
             raise NonComparable("the ledger routes new entries with insert-entry; the intended file is not modelled yet")
     for text in texts:
-        for e in parse_entries(text):
-            exp.add(before.root, e)
+        entries, totals = parse_intent(text)
+        for e in entries:
+            exp.add(before.root, e, created=True, totals=totals[canonical_key(e)])
     return exp
 
 
