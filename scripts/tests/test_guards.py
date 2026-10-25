@@ -173,6 +173,27 @@ class GuardTest(unittest.TestCase):
         self.assertIsNone(guards.path_problem(str(self.repo / ".githooks" / "pre-push"), self.repo, writing=True))
         # Stated limit (PROCESS.md §11): a command run through `sh -c`, `eval` or an interpreter is not parsed.
 
+    def test_bl_0055_round_2(self) -> None:
+        """S0028 verifier F1, F7, F8: quoting in one pass, heredoc opener lines, every gated subcommand."""
+        nv = "--no-" + "verify"
+        refused = [
+            f"git commit -m \"it's\" $(echo {nv}) -m 'x'",  # an apostrophe inside double quotes is not a quote
+            f"cat <<EOF && git commit -m x $(echo {nv})\nbody\nEOF",  # the opener's line still runs
+            f"git commit -m x \\\n $(echo {nv})",  # a line continuation joins the command
+        ]
+        refused += [f"git {sub} $X" for sub in ("commit", "push", "add", "clean", "stash", "tag", "config", "worktree")]
+        for cmd in refused:
+            self.assertTrue(self.blocked(cmd), cmd)
+        allowed = [
+            "git commit -m \"user's fix\" -m 'costs $5'",  # ordinary messages are not mis-blanked
+            "git status $X",  # a non-gated subcommand
+        ]
+        for cmd in allowed:
+            self.assertFalse(self.blocked(cmd), cmd)
+        # Stated limits (PROCESS.md §11; BL-0062, parked with BL-0042): escaped or quoted `git` words, a gated git
+        # nested inside another command or after a single `&`, brace and zsh glob expansions, a network path spelled
+        # in parts, and redirect operators the parser does not know (the clobber form, `&>>`, `<>`).
+
     def test_hooks_fail_closed(self) -> None:
         """INV-22's spirit for the guards (S0014 round-2 verifier F2): Claude Code runs a command when the hook
         exits with anything but 2, so an internal error must refuse, never allow."""

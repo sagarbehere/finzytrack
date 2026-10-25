@@ -201,15 +201,17 @@ def _git_problem(toks: list[str], cwd: Path) -> str | None:
 
 
 GATED_GIT = {"commit", "push", "add", "clean", "stash", "tag", "config", "worktree"}
-SINGLE = re.compile(r"'[^']*'")
-DOUBLE = re.compile(r'"(?:[^"\\]|\\.)*"')
-HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^\s*\2\s*$", re.S | re.M)
+# One left-to-right pass: whichever quote opens first wins, so an apostrophe inside "..." is not a quote.
+QUOTED = re.compile(r"'[^']*'" + r'|"(?:[^"\\]|\\.)*"')
+# A heredoc's body (the lines after its opener, up to the delimiter); the rest of the opener's line is kept,
+# because the shell runs it.
+HEREDOC = re.compile(r"(<<-?\s*(['\"]?)(\w+)\2[^\n]*\n).*?^\s*\3\s*$", re.S | re.M)
 
 
 def _unquoted(command: str) -> str:
     """The command with heredoc bodies and quoted strings blanked: what the shell word-splits."""
-    text = HEREDOC.sub("<<HEREDOC\n", command)
-    return DOUBLE.sub('""', SINGLE.sub("''", text))
+    text = HEREDOC.sub(lambda m: m.group(1), command)
+    return QUOTED.sub(lambda m: m.group(0)[0] * 2, text)
 
 
 def _expansion_in_gated_git(command: str) -> bool:
@@ -229,7 +231,7 @@ def _expansion_in_gated_git(command: str) -> bool:
 def bash_problem(command: str, cwd: Path) -> str | None:
     """Why this shell command is refused, or None if it may run."""
     # Heredoc bodies are data; quoted text is not skipped (bash opens a quoted /dev/tcp redirect target too).
-    if re.search(r"/dev/(tcp|udp)/", HEREDOC.sub("<<HEREDOC\n", command)):
+    if re.search(r"/dev/(tcp|udp)/", HEREDOC.sub(lambda m: m.group(1), command)):
         return "bash network redirects (/dev/tcp, /dev/udp) are refused (BL-0055); use a real client on your own instance"
     if _expansion_in_gated_git(_join_continuations(command)):
         return ("an unquoted $-expansion or backtick next to git commit/push/add/clean/stash/tag/config/worktree is "
