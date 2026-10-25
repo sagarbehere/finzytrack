@@ -12,3 +12,13 @@
 ## Hand-off (PROCESS.md §3 step 4; ADR-0057)
 - Ways around it, each tested: a quoted `'stubs'` key; `config.global.stubs`; `config.global['stubs']`; `findAllComponents`; scoping the block to no files; losing INV-07 in tests by the later block replacing the rule's options.
 - Self-mutation (by hand: the mutants runner cannot link `node_modules`, S0018): 5 tried (each selector removed; the find pattern broken; the block's files emptied), 5 killed.
+
+## Verifier
+- Round 1, head 21f7218: PASS WITH FINDINGS. Attacks: 7 (every VTU 2.5.1 finder, stub key forms, other VTU paths, INV-06/07 still in tests, app code untouched, selector mutants by inspection, glob coverage).
+- F1 Medium: `getComponent({ name })` passed. Fixed: the finder pattern covers `find|get` and `All`.
+- F2 Low: a quoted `'name'` key passed. Fixed. F3 Low: template-literal `stubs` keys passed. Fixed; deliberate indirection is stated as left to review. F4 Low: `testFiles` no longer exported. D1: roadmap wording fixed.
+- Low slice, no High: no further round (ADR-0058).
+
+## Retro
+- I wrote the brief's key-form list and then forgot to apply it to the second selector; listing each selector against each form (a small matrix) is the cheaper check.
+- Process cost: about 20 min building; verifier 2 min; fixes 10 min.

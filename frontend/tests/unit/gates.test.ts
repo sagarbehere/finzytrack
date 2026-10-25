@@ -86,6 +86,10 @@ describe('[L9.M-7] tests stub components by import, not by name', () => {
     ['stubs set by a computed key', "config.global['stubs'] = {}\n"],
     ['findComponent by name', "wrapper.findComponent({ name: 'Child' })\n"],
     ['findAllComponents by name', "wrapper.findAllComponents({ name: 'Child' })\n"],
+    ['getComponent by name', "wrapper.getComponent({ name: 'Child' })\n"],
+    ['findComponent by a quoted name key', "wrapper.findComponent({ 'name': 'Child' })\n"],
+    ['stubs by a template-literal member', 'config.global[`stubs`] = {}\n'],
+    ['stubs by a template-literal key', 'mount(App, { global: { [`stubs`]: {} } })\n'],
   ])('refuses %s', async (_label, code) => {
     expect(await inTest(code)).toContain('no-restricted-syntax')
   })

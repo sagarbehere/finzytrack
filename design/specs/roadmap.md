@@ -28,7 +28,7 @@ Done in M0:
 Left in M0, in this order:
 1. BL-0042 is parked by the owner ("BL-0042 stays parked unless I ask", 2026-10-25); the guard gaps found in S0014 (BL-0055). The checks on the process's own paperwork (BL-0034, BL-0036, BL-0038, BL-0040) are parked until evidence asks for them (ADR-0058).
 2. The invariant enforcement due by M0 (CI fails at M0's exit while these invariants are pending): BL-0023 (the fixture gate's gaps, S0019), BL-0024 (the acceptance harness's port and data-dir checks, the local-tier path guard).
-3. The two review findings still open at M0 (`check_invariants.py` fails an M0-exit run while any backlog item due by M0 is open, S0023): L10-18 (a reproducible demo build per tag, with the demo generator). L9.M-7 closed by S0025 (tests stub components by import).
+3. The review finding still open at M0 (`check_invariants.py` fails an M0-exit run while any backlog item due by M0 is open, S0023): L10-18 (a reproducible demo build per tag, with the demo generator). L9.M-7 closed by S0025 (tests stub components by import).
 4. The rest of review:27 §1(d) that M0's exit needs: the demo generator skeleton; the acceptance-suite harness (isolated backend, frozen clock, LLM stub, Chromium and WebKit); the P1 integrity tests written as `fixme`; the red-team session on the gates and the first seeded-defect run.
 
 Next milestone: **M1a** (read core and workspace-format core), then **M1b** (write contract), then **G1**, your go/no-go.

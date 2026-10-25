@@ -20,18 +20,29 @@ const systemTime = [
 // L9.M-7: tests stub components by import (vi.mock of the module, findComponent(ImportedComponent)), never by
 // name: a name-keyed stub or lookup keeps passing after the component is renamed and silently tests nothing.
 const byName = 'L9.M-7: stub by import (vi.mock the module; findComponent(Imported)), never by component name'
+// Deliberate indirection (a variable key, Reflect.set, Object.defineProperty, a selector held in a variable) is left
+// to review, like the INV-07 aliasing above.
+const finders = '/^(find|get)(All)?Components?$/'
 const stubsByName = [
   { selector: "Property[key.name='stubs']", message: byName },
+  { selector: "Property[key.type='TemplateLiteral'][key.quasis.0.value.raw='stubs']", message: byName },
+  {
+    selector: "MemberExpression[property.type='TemplateLiteral'][property.quasis.0.value.raw='stubs']",
+    message: byName,
+  },
   { selector: "Property[key.value='stubs']", message: byName },
   { selector: "MemberExpression[property.name='stubs']", message: byName },
   { selector: "MemberExpression[property.value='stubs']", message: byName },
   {
-    selector:
-      "CallExpression[callee.property.name=/^find(All)?Components?$/] > ObjectExpression > Property[key.name='name']",
+    selector: `CallExpression[callee.property.name=${finders}] > ObjectExpression > Property[key.name='name']`,
+    message: byName,
+  },
+  {
+    selector: `CallExpression[callee.property.name=${finders}] > ObjectExpression > Property[key.value='name']`,
     message: byName,
   },
 ]
-export const testFiles = ['tests/**/*.ts', 'src/**/*.test.ts', 'src/**/*.spec.ts']
+const testFiles = ['tests/**/*.ts', 'src/**/*.test.ts', 'src/**/*.spec.ts']
 
 export default tseslint.config(
   { ignores: ['dist/**', 'playwright-report/**', 'test-results/**'] },
