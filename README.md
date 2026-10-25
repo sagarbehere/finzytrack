@@ -14,6 +14,6 @@ Everything about how v0.4 is designed and built is in [`design/`](design/README.
 
 **The desktop app.** It consists of separate programs that talk to each other over a local connection ([ADR-0054](design/decisions/ADR-0054-beancount-in-its-own-engine-process.md)). Each program combines our code with third-party components, so each is distributed under the GPL version that fits all of its parts:
 - the **ledger engine** includes [Beancount](https://github.com/beancount/beancount), which is GPL-2.0-only, so the engine is distributed under **GPL version 2**;
-- the **main backend and the user interface** include components whose licences fit only GPL version 3, so they are distributed under **GPL version 3**.
+- the **main backend and the user interface** include components under the Apache License 2.0 and under GPL-3.0-only, which fit GPL version 3 but not version 2, so they are distributed under **GPL version 3**.
 
-The "or later" choice for our own code is what makes both combinations possible. Third-party components keep their own licences; see [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES).
+The "or later" choice for our own code is what makes both combinations possible. Third-party components keep their own licences. [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES) lists every one, with its version and licence; it is generated from the lockfiles and checked on every change.
