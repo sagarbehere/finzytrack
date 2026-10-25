@@ -7,6 +7,7 @@ Rules:
   - Status is `enforced`, `pending (BL-nnnn, by Mx)` or `review-only`;
   - `enforced`: every backticked file path on the Enforced-by line exists and mentions the ID, and at least
     one of them is a test, or a check script that a hook or CI workflow runs;
+    an enforcement file that still holds a fixme test does not count (S0029 verifier F4);
   - `pending`: the backlog item exists in design/backlog.md and is not marked done; with
     FT_MILESTONE_EXIT=<Mx> set (a milestone-exit run), a pending invariant due by Mx or earlier fails;
   - backlog items (every row of a design/backlog.md table whose header starts with `ID` and has `Milestone` and
@@ -133,10 +134,19 @@ def check_backlog(backlog: str, milestone_exit: str | None) -> list[str]:
 #                so the report names the spec file, not the helper)
 # (the helpers are FIXME_HELPERS; nothing else may call it.fails, test.fail or test.fixme). The ID names a backlog row that
 # is open or in progress with the same milestone; that row keeps the exit run red until the test stops being fixme.
+# A test may not be switched off any other way where it matters (S0029 verifier F3): in the frontend trees no
+# skip, todo, skipIf or runIf at all (none is used); in Python, in an `integrity/` folder, in a file with a fixme
+# marker or in a file naming a P1 finding, no skip, skipif, importorskip, imperative xfail or xfail marker (a fixme is
+# the only way to say "not yet"), and nowhere a soft `xfail(strict=False)`. Other Python skips stay BL-0040 (parked).
 # Out of reach, like the INV-07 aliasing: getattr(pytest.mark, "fixme") and other string indirection.
 FIXME_ROOTS = ["backend/tests", "frontend/tests", "frontend/e2e"]
-# The two helpers, and the test that pins what they do (it names the runner markers in order to check them).
-FIXME_HELPERS = {"frontend/tests/fixme.ts", "frontend/e2e/fixme.ts", "frontend/tests/unit/fixmeHelpers.test.ts"}
+FIXME_HELPERS = {"frontend/tests/fixme.ts", "frontend/e2e/fixme.ts"}
+# review:27 §1(d): the P1 integrity findings.
+P1_FINDINGS = ("I4", "I5", "I6", "L1-04", "L4-01", "L4-02", "L4-03", "L4-06", "L3-01", "L3-11", "L3-14", "L10-02",
+               "L10.M-1", "L10.M-2", "L10-06", "L11.M-2", "L6-12", "I7", "I8", "L9-01", "L9.M-1", "L9.M-3", "L8-01",
+               "L8-02", "L8.M-1")
+P1_MENTION = re.compile(r"(?<![\w.-])(?:" + "|".join(re.escape(i) for i in P1_FINDINGS) + r")(?![\w-])")
+PY_DISABLE = {"skip", "skipif", "xfail", "importorskip"}
 FIXME_KEYS = ("id", "due", "reason")
 TS_SOURCES = (".ts", ".mts", ".cts", ".tsx", ".js", ".mjs", ".vue")
 # Every use of a runner's known-failure marker, or of the helper's name, in a TypeScript test file.
@@ -147,6 +157,10 @@ TS_HELPER_CALL = re.compile(r"(?<![\w$.])fixme\s*\(\s*\{\s*id:\s*'([^'\n]*)',\s*
 # validated on its own.
 TS_TEST_FIXME = re.compile(r"\.\s*fixme\(\s*(?:'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"|`[^`]*`)\s*,\s*(?=fixme\s*\()")
 TS_IMPORT = re.compile(r"^\s*import\s+\{[^}]*\}\s+from\s+'[^'\n]*'", re.M)
+# Switching a frontend test off: a member or indexed skip/todo/skipIf/runIf, or a runner marker taken by
+# destructuring (`const { fails: later } = it`).
+TS_DISABLE = re.compile(r"\.\s*(?:skip|todo|skipIf|runIf)\b|\[\s*['\"`](?:skip|todo|skipIf|runIf)['\"`]\s*\]"
+                        r"|(?<![\w$.'\"`])(?:fails?|fixme|skip|todo|skipIf|runIf)\s*(?=[:,}])")
 
 
 def _py_markers(rel: str, text: str) -> tuple[list[dict[str, str]], list[str]]:
@@ -157,6 +171,18 @@ def _py_markers(rel: str, text: str) -> tuple[list[dict[str, str]], list[str]]:
     calls = {id(n.func): n for n in ast.walk(tree) if isinstance(n, ast.Call)}
     markers: list[dict[str, str]] = []
     errors: list[str] = []
+    protected = "/integrity/" in f"/{rel}" or bool(P1_MENTION.search(text)) or any(
+        isinstance(n, ast.Attribute) and n.attr == "fixme" for n in ast.walk(tree))
+    for node in ast.walk(tree):
+        name = node.attr if isinstance(node, ast.Attribute) else node.id if isinstance(node, ast.Name) else ""
+        if name not in PY_DISABLE or isinstance(node, ast.Name) and id(node) not in calls:
+            continue
+        call = calls.get(id(node))
+        soft = name == "xfail" and call is not None and any(
+            k.arg == "strict" and not (isinstance(k.value, ast.Constant) and k.value.value is True) for k in call.keywords)
+        if protected or soft:
+            errors.append(f"{rel}:{node.lineno}: a test is not switched off here by `{ast.unparse(node)}`"
+                          + (" (a soft xfail)" if soft else "; mark it fixme with its backlog row instead"))
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Attribute) and node.attr == "fixme"):
             continue
@@ -176,6 +202,11 @@ def _ts_markers(rel: str, text: str) -> tuple[list[dict[str, str]], list[str]]:
     imports = [(m.start(), m.end()) for m in TS_IMPORT.finditer(text)]
     markers: list[dict[str, str]] = []
     errors: list[str] = []
+    for off in TS_DISABLE.finditer(text):
+        if not any(a <= off.start() < b for a, b in imports):
+            line = text.count(chr(10), 0, off.start()) + 1
+            errors.append(f"{rel}:{line}: a frontend test is not switched off ({off.group(0).strip()!r}); "
+                          "mark it fixme with its backlog row instead")
     for use in TS_MARKER_USE.finditer(text):
         where = f"{rel}:{text.count(chr(10), 0, use.start()) + 1}"
         if any(a <= use.start() < b for a, b in imports):
@@ -191,6 +222,16 @@ def _ts_markers(rel: str, text: str) -> tuple[list[dict[str, str]], list[str]]:
             continue
         markers.append({"where": where, "id": call.group(1), "due": call.group(2), "reason": call.group(3)})
     return markers, errors
+
+
+def _has_fixme(rel: str, text: str) -> bool:
+    """Any fixme marker or fixme-shaped use in a file, well formed or not."""
+    if rel.endswith(".py"):
+        markers, errors = _py_markers(rel, text)
+        return bool(markers) or any("fixme" in e for e in errors)
+    if rel.endswith(TS_SOURCES):
+        return bool(TS_MARKER_USE.search(text))
+    return False
 
 
 def fixme_markers(root: Path) -> tuple[list[dict[str, str]], list[str]]:
@@ -257,8 +298,11 @@ def check(text: str, root: Path, backlog: str | None, milestone_exit: str | None
                 if not fp.is_file():
                     errors.append(f"{iid}: enforcement file {p} does not exist")
                     continue
-                if iid not in fp.read_text(encoding="utf-8", errors="replace"):
+                content = fp.read_text(encoding="utf-8", errors="replace")
+                if iid not in content:
                     errors.append(f"{iid}: enforcement file {p} does not mention {iid}")
+                if _has_fixme(p, content):  # S0029 verifier F4: a pending test enforces nothing
+                    errors.append(f"{iid}: enforcement file {p} holds fixme tests; it enforces once none is left")
                 if is_test(p) or runs_somewhere(p, root):
                     ok_runner = True
             if paths and not ok_runner:

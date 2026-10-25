@@ -54,6 +54,11 @@ test.fixme(
   async ({ page }) => {
     // The demo's unknown account comes from the Ledger Profile (L3-14); the demo generator writes rows with one
     // unknown leg, a split row with an unknown leg among three, and a categorized row.
+    // The unknown account is whatever the Ledger Profile serves (ADR-0024, L3-14), never a literal name.
+    const profile = (await (await page.request.get(`/api/w/${WS}/profile`)).json()) as {
+      data: { unknown_account: string }
+    }
+    const unknown = profile.data.unknown_account
     await page.goto(`/w/${WS}/transactions?accountContains=Assets:Bank`)
     const rows = grid(page).getByRole('row')
     const before = await rows.allTextContents()
@@ -65,7 +70,7 @@ test.fixme(
     const changed = after.filter((text, i) => text !== before[i])
     expect(changed.length).toBeGreaterThan(0)
     for (const [i, text] of before.entries()) {
-      const unknownLegs = (text.match(/Expenses:Unknown/g) ?? []).length
+      const unknownLegs = text.split(unknown).length - 1
       if (unknownLegs !== 1) expect(after[i]).toBe(text) // categorized and multi-unknown rows are untouched
     }
   },

@@ -52,16 +52,20 @@ def test_document_cleanup_never_offers_ledger_include_or_sidecar_files(tmp_path:
     orphan_scan = planned("app.documents.usecases", "orphan_scan")
     delete_orphans = planned("app.documents.usecases", "delete_orphans")
     (tmp_path / "main.beancount").write_text(
-        'option "documents" "."\ninclude "accounts.beancount"\ninclude "prices.beancount"\n'
+        'option "documents" "."\ninclude "accounts.beancount"\ninclude "prices.beancount"\ninclude "budgets.bean"\n'
         '2026-01-02 document Assets:Bank "statements/jan.pdf"\n'
     )
     (tmp_path / "accounts.beancount").write_text("2026-01-01 open Assets:Bank\n")
     (tmp_path / "prices.beancount").write_text("2026-01-02 price AAPL 190.00 USD\n")
+    (tmp_path / "budgets.bean").write_text('2026-01-01 custom "budget" Expenses:Food "monthly" 9000 INR\n')
+    (tmp_path / ".finzytrack").mkdir()  # the workspace's own tool state (ADR-0017)
+    (tmp_path / ".finzytrack" / "settings.yaml").write_text("{}\n")
     (tmp_path / "statements").mkdir()
     (tmp_path / "statements" / "jan.pdf").write_bytes(b"%PDF-1.4 referenced\n")
     (tmp_path / "receipt.pdf").write_bytes(b"%PDF-1.4 orphan\n")
 
     assert sorted(orphan_scan(tmp_path)) == ["receipt.pdf"]
-    result = delete_orphans(tmp_path, ["main.beancount", "accounts.beancount", "prices.beancount"])
-    assert sorted(result.refused) == ["accounts.beancount", "main.beancount", "prices.beancount"]
-    assert all((tmp_path / n).exists() for n in ("main.beancount", "accounts.beancount", "prices.beancount"))
+    owned = [".finzytrack/settings.yaml", "accounts.beancount", "budgets.bean", "main.beancount", "prices.beancount"]
+    result = delete_orphans(tmp_path, owned)
+    assert sorted(result.refused) == owned  # an include of any extension and the tool state are never deleted
+    assert all((tmp_path / n).exists() for n in owned)

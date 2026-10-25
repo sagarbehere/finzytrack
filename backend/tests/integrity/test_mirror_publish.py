@@ -6,16 +6,18 @@ including an injected failed build.
 
 Interface: `mirror.build_generation(load_result) -> Generation` and `mirror.publish(gen)` (ARCHITECTURE.md §2.3);
 `ledger.overlay.load(root, overlay, policy)` (§2.2). Assumed, not decided: `publish` takes the workspace's mirror
-directory, and a build is made to fail by handing it a load result it cannot project. Under ADR-0054 the build half
-of `mirror` and `ledger` live in the engine environment; when BL-0041 creates it, this file moves to the engine's
-tests (a move plus import fixes).
+directory, and a load result exposes its directives as `.entries`, so a proxy can fail the build part-way
+through. Under ADR-0054 the build half of `mirror` and `ledger` live in the engine environment; when BL-0041
+creates it, this file moves to the engine's tests (a move plus import fixes).
 """
 
 from __future__ import annotations
 
 import sqlite3
 import threading
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -45,6 +47,23 @@ POSTINGS = {"A": 4, "B": 6}
 def _postings(current: Path) -> int:
     with sqlite3.connect(f"file:{current}?mode=ro", uri=True) as db:
         return int(db.execute("SELECT count(*) FROM postings").fetchone()[0])
+
+
+class _MidBuildFault:
+    """A load result whose directives fail after the first three: the build has written rows when it fails."""
+
+    def __init__(self, real: Any) -> None:
+        self._real = real
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real, name)
+
+    @property
+    def entries(self) -> Iterator[Any]:
+        for i, entry in enumerate(self._real.entries):
+            if i == 3:
+                raise OSError(28, "mid-build")  # ENOSPC
+            yield entry
 
 
 @pytest.mark.fixme(id="I4", due="M1a", reason="capability not built")
@@ -79,8 +98,8 @@ def test_readers_never_see_an_empty_or_partial_mirror(tmp_path: Path) -> None:
     try:
         for i in range(200):
             publish(build_generation(load(roots["B" if i % 2 else "A"], {}, policy)), mirror_dir)
-        with pytest.raises(Exception):  # noqa: B017, PT011 -- any failure; the point is what readers see after it
-            publish(build_generation(object()), mirror_dir)
+        with pytest.raises(OSError, match="mid-build"):  # a fault after some rows were written (verifier F8)
+            publish(build_generation(_MidBuildFault(load(roots["A"], {}, policy))), mirror_dir)
     finally:
         stop.set()
         thread.join()

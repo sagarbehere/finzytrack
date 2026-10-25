@@ -17,6 +17,8 @@ ParseReport (`.lines`, `.rejected`) with `TabularRule`; a ledger index built by 
 
 from __future__ import annotations
 
+import ast
+import hashlib
 import re
 from datetime import date
 from decimal import Decimal
@@ -133,14 +135,17 @@ def test_commit_rematches_skips_and_reports_duplicates_with_an_explicit_override
 def test_duplicate_detection_never_uses_the_legacy_content_hash() -> None:
     """Legacy `content_hash` values are tolerated (read, passed through), never matched and never written.
 
-    The behavioural half shows a legacy entry carrying a `content_hash` but nothing else in common is not a match;
-    the source half shows the importing package does not even name the key, so no tier can compare it."""
+    The legacy entry carries the real v0.2.2 content hash of the draft (design/specs/mirror/README.md, "content
+    hash": SHA-256 of `date|payee|narration|amount|account`, here `2026-03-04|Payee||-12.00 USD|Liabilities:Card`),
+    but another date and amount, so no tier other than a revived hash tier could match it. The source half: neither
+    `importing/` nor any `app` module it imports names the key (`mirror.reader` alone may, to serve the column)."""
     match = planned("app.importing.core.match", "match")
     index_from_text = planned("app.importing.core.match", "index_from_text")
     plan_commit = planned("app.importing.core.commit", "plan_commit")
-    legacy = """2026-01-01 open Liabilities:Card USD
+    legacy_hash = hashlib.sha256(b"2026-03-04|Payee||-12.00 USD|Liabilities:Card").hexdigest()
+    legacy = f"""2026-01-01 open Liabilities:Card USD
 2025-06-01 * "Other shop" ""
-  content_hash: "sha256-of-legacy-input"
+  content_hash: "{legacy_hash}"
   Liabilities:Card  -99.00 USD
   Expenses:Misc
 """
@@ -148,10 +153,31 @@ def test_duplicate_detection_never_uses_the_legacy_content_hash() -> None:
 
     found = match([line], index_from_text(legacy))["s1"]
     assert found.kind == "new"
-    assert not any("content" in r for r in found.reasons)
     assert "content_hash" not in plan_commit([line], {"s1": "create"}, index_from_text(legacy)).inserts[0]
-    importing = planned("app.importing", "__file__")
-    assert [p for p in Path(importing).parent.rglob("*.py") if "content_hash" in p.read_text()] == []
+    importing = Path(planned("app.importing", "__file__")).parent
+    assert [m for m in _imported_app_modules(importing) if "content_hash" in m.read_text()] == []
+
+
+def _imported_app_modules(package: Path) -> list[Path]:
+    """The package's own modules and every `app` module they import, transitively (but `app.mirror.reader`)."""
+    src = package.parents[1]
+    seen: dict[Path, None] = {}
+    todo = list(package.rglob("*.py"))
+    while todo:
+        path = todo.pop()
+        if path in seen:
+            continue
+        seen[path] = None
+        for node in ast.walk(ast.parse(path.read_text())):
+            names = [a.name for a in node.names] if isinstance(node, ast.Import) else []
+            if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                names = [node.module] + [f"{node.module}.{a.name}" for a in node.names]
+            for name in names:
+                if not name.startswith("app.") or name.startswith("app.mirror.reader"):
+                    continue
+                base = src / Path(*name.split("."))
+                todo += [c for c in (base.with_suffix(".py"), base / "__init__.py") if c.is_file()]
+    return list(seen)
 
 
 @pytest.mark.fixme(id="L4-03", due="M6", reason="capability not built")

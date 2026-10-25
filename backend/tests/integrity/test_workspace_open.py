@@ -81,18 +81,45 @@ def test_a_missing_ledger_is_unavailable_and_never_created(tmp_path: Path) -> No
     assert sorted(p.name for p in folder.iterdir()) == [".finzytrack"]
 
 
-WRITE_METHODS = {"write_text", "write_bytes"}  # pathlib
-WRITE_FUNCS = {("os", "replace"), ("os", "rename"), ("os", "renames"), ("os", "link"), ("os", "symlink")} | {
-    ("shutil", f) for f in ("copy", "copy2", "copyfile", "copytree", "move")
+# Calls that write or remove a file, by name wherever they appear (S0029 verifier F1: the adapters' own write
+# functions count too, a Path method's mode is its first argument, and `Path.replace` takes one argument).
+WRITE_NAMES = {
+    "write_text",
+    "write_bytes",
+    "atomic_replace",
+    "touch",
+    "unlink",
+    "rmdir",
+    "symlink_to",
+    "hardlink_to",
+    "mkstemp",
+    "NamedTemporaryFile",
+    "rename",
+    "renames",
 }
+WRITE_FUNCS = {("os", f) for f in ("replace", "link", "symlink", "remove", "truncate", "open")} | {
+    ("shutil", f) for f in ("copy", "copy2", "copyfile", "copytree", "move", "rmtree")
+}
+# Modules outside platform/adapters/ that may call an adapter's write function: the app-level stores, once built,
+# each added here as a reviewed change. A ledger file is never among their targets: the engine writes ledgers
+# through the write contract (ADR-0054, ADR-0008). Empty until the first such store lands.
+ALLOWED_WRITERS: set[str] = set()
 
 
-def _writes_outside_adapters() -> list[str]:
-    """Calls that write files, in any `app` module outside `platform/adapters/` (ARCHITECTURE.md §2.2)."""
+def _mode(node: ast.Call, index: int) -> object:
+    if len(node.args) > index:
+        arg = node.args[index]
+        return arg.value if isinstance(arg, ast.Constant) else None
+    kw = next((k.value for k in node.keywords if k.arg == "mode"), None)
+    return kw.value if isinstance(kw, ast.Constant) else None
+
+
+def _file_writes() -> list[str]:
+    """Calls that write files in any `app` module outside `platform/adapters/` (ARCHITECTURE.md §2.2)."""
     hits: list[str] = []
     for path in sorted(APP.rglob("*.py")):
         rel = path.relative_to(APP).as_posix()
-        if rel.startswith("platform/adapters/"):
+        if rel.startswith("platform/adapters/") or rel in ALLOWED_WRITERS:
             continue
         for node in ast.walk(ast.parse(path.read_text())):
             if not isinstance(node, ast.Call):
@@ -100,24 +127,46 @@ def _writes_outside_adapters() -> list[str]:
             func = node.func
             owner = func.value.id if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) else ""
             name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else ""
-            mode = (
-                node.args[1] if len(node.args) > 1 else next((k.value for k in node.keywords if k.arg == "mode"), None)
+            # builtin open(path, mode) has the mode second; Path.open(mode) first
+            mode = _mode(node, 1) if isinstance(func, ast.Name) else _mode(node, 0) if name == "open" else None
+            writes = (
+                name in WRITE_NAMES
+                or (owner, name) in WRITE_FUNCS
+                or (name == "open" and isinstance(mode, str) and any(c in mode for c in "wax+"))
+                or (name == "replace" and isinstance(func, ast.Attribute) and owner != "os" and len(node.args) == 1)
             )
-            writes_open = (
-                name == "open" and isinstance(mode, ast.Constant) and any(c in str(mode.value) for c in "wax+")
-            )
-            if name in WRITE_METHODS or (owner, name) in WRITE_FUNCS or writes_open:
+            if writes:
                 hits.append(f"{rel}:{node.lineno} {owner}.{name}")
     return hits
 
 
 @pytest.mark.fixme(id="L1-04", due="M2", reason="capability not built")
-def test_no_mirror_export_endpoints_and_no_ledger_write_outside_the_contract() -> None:
-    """Seeding and seed refresh cannot bypass the write lock: in the main sidecar nothing outside the I/O adapters
-    writes a file at all (ledger writes go to the engine's contract, ADR-0054), and the unlocked v0.3 mirror export
-    endpoints do not exist (ADR-0015). Assumed: `create_app` accepts a container factory that does no I/O."""
+def test_seeding_goes_through_the_write_contract_and_no_mirror_export_endpoint_exists(tmp_path: Path) -> None:
+    """Seeding and seed refresh cannot bypass the write lock (review:L1 L1-04): the main sidecar writes no file outside
+    its I/O adapters, nothing outside them calls an adapter's write function (ledger writes are the engine's, through
+    the contract that takes the locks, ADR-0054 and ADR-0008), demo seeding hands its file to the writer as a plan
+    instead of writing it, and the unlocked v0.3 mirror export endpoints do not exist (ADR-0015).
+
+    Interface: `seed_demo` (review:27 M3 (d): "writes the generated demo into the demo workspace … through the
+    contract's file-creation path"). Assumed, not decided: `app.boot.demo.seed_demo(demo_root, writer=...)` calling
+    `writer.commit(plan)` once, with `plan.creates` naming the files; `create_app` taking a no-I/O container factory.
+    """
+    assert _file_writes() == []
+
     create_app = planned("app.api", "create_app")
     paths = {route.path for route in create_app(lambda: None).routes}
-
     assert not {p for p in paths if p.endswith(("/ledger/export", "/export/status")) or "/mirror/export" in p}
-    assert _writes_outside_adapters() == []
+
+    seed_demo = planned("app.boot.demo", "seed_demo")
+    plans: list[Any] = []
+
+    class RecordingWriter:  # stands in for the engine client's commit, which takes the locks (ADR-0008)
+        def commit(self, plan: Any) -> Any:
+            plans.append(plan)
+            return plan
+
+    demo_root = tmp_path / "demo"
+    seed_demo(demo_root, writer=RecordingWriter())
+    assert len(plans) == 1
+    assert "main.beancount" in {Path(p).name for p in plans[0].creates}
+    assert not (demo_root / "main.beancount").exists()  # seeding did not write the ledger itself

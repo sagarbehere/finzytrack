@@ -141,6 +141,11 @@ describe('safe confirm and unsaved guards (P1)', () => {
         ),
       ])
 
+      const area = document.querySelector<HTMLTextAreaElement>('textarea')
+      if (!area) throw new Error('no editor')
+      area.value = 'rule: groceries and rent' // the unsaved edit
+      area.dispatchEvent(new Event('input'))
+      await flushPromises()
       button('General').click()
       await flushPromises()
       expect(focusedText()).toBe('Cancel')
@@ -148,7 +153,8 @@ describe('safe confirm and unsaved guards (P1)', () => {
       await flushPromises()
 
       expect(active.value).toBe('rules')
-      expect(document.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('rule: groceries')
+      // the typed edit survives: a tab that was unmounted and remounted would show its initial text again
+      expect(document.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('rule: groceries and rent')
       wrapper.unmount()
     },
   )

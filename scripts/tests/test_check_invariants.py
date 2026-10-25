@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 import tempfile
 import unittest
@@ -79,6 +80,20 @@ class InvariantCheck(unittest.TestCase):
 
     def test_bad_status(self) -> None:
         self.assertTrue(self.run_check(GOOD.replace("pending (BL-0002, by M3)", "pending (BL-TBD, by M3)")))
+
+    def test_an_enforcement_file_with_fixme_tests_enforces_nothing(self) -> None:  # S0029 verifier F4
+        at = "\n" + "@"
+        for rel, body in (
+                ("scripts/tests/test_one.py", "# covers INV-01\nimport pytest" + at
+                 + 'pytest.mark.fixme(id="BL-0002", due="M3", reason="r")\ndef test_x() -> None:\n    pass\n'),
+                ("scripts/tests/test_one.py", "# covers INV-01\nimport pytest" + at + "pytest.mark.fixme\ndef test_x() -> None:\n    pass\n"),
+                ("scripts/tests/one.test.ts", "// INV-01\nfixme({ id: 'BL-0002', due: 'M3', reason: 'r' }, 't', async () => {})\n")):
+            with self.subTest(rel=rel, body=body[:40]):
+                (self.root / rel).write_text(body)
+                text = GOOD.replace("scripts/tests/test_one.py", rel)
+                self.assertTrue(any("holds fixme tests" in e for e in self.run_check(text)))
+        (self.root / "scripts/tests/test_one.py").write_text("# covers INV-01\ndef test_x() -> None:\n    pass\n")
+        self.assertEqual(self.run_check(GOOD), [])
 
 
 FINDINGS = """
@@ -318,6 +333,53 @@ class FixmeMarkers(unittest.TestCase):
             with self.subTest(name):
                 self.assertTrue(self.ts(text, rel="frontend/e2e/integrity/a7.spec.ts"), text)
 
+    def test_switching_a_test_off_is_refused_where_it_matters(self) -> None:  # S0029 verifier F3
+        at = "\n" + "@"
+        refused = {
+            "backend/tests/integrity/test_a.py": "import pytest" + at + "pytest.mark.skip(reason='later')\ndef test_x():\n    assert False\n",
+            "backend/tests/integrity/test_b.py": "import pytest" + at + "pytest.mark.xfail\ndef test_x():\n    assert False\n",
+            "backend/tests/integrity/test_c.py": "import pytest\ndef test_x():\n    pytest.importorskip('app.importing')\n",
+            "backend/tests/integrity/test_d.py": "import pytest\ndef test_x():\n    pytest.skip('later')\n",
+            "backend/tests/integrity/test_e.py": "from pytest import skip\ndef test_x():\n    skip('later')\n",
+            "backend/tests/integrity/test_f.py": "import pytest" + at + "pytest.mark.skipif(True, reason='x')\ndef test_x():\n    pass\n",
+            "backend/tests/other/test_g.py": "import pytest\n# L4-01\ndef test_x():\n    pytest.xfail('later')\n",
+            "backend/tests/other/test_h.py": "import pytest" + at + "pytest.mark.xfail(strict=False)\ndef test_x():\n    assert False\n",
+            "frontend/tests/unit/a.test.ts": "import { it } from 'vitest'\nit.skip('x', () => { throw new Error() })\n",
+            "frontend/tests/unit/b.test.ts": "import { it } from 'vitest'\nit.todo('x')\n",
+            "frontend/tests/unit/c.test.ts": "import { describe, it } from 'vitest'\ndescribe.skip('x', () => { it('y', () => {}) })\n",
+            "frontend/tests/unit/d.test.ts": "import { it } from 'vitest'\nit.skipIf(true)('x', () => {})\n",
+            "frontend/tests/unit/e.test.ts": "import { it } from 'vitest'\nconst { fails: pending } = it\npending('x', () => {})\n",
+            "frontend/tests/unit/f.test.ts": "import { it } from 'vitest'\nit['skip']('x', () => {})\n",
+            "frontend/e2e/integrity/z.spec.ts": "import { test } from '@playwright/test'\ntest.skip('x', async () => {})\n",
+        }
+        for rel, body in refused.items():
+            with self.subTest(rel):
+                self.put(rel, body)
+                self.assertTrue(self.errors(), rel)
+                (self.root / rel).unlink()
+        allowed = {  # outside the protected places Python keeps its platform skips and strict xfails (BL-0040)
+            "backend/tests/content/test_case.py": "import pytest\ndef test_x():\n    pytest.skip('case-sensitive file system')\n",
+            "backend/tests/content/test_known.py": "import pytest" + at + "pytest.mark.xfail(strict=True)\ndef test_x():\n    assert False\n",
+            "frontend/tests/unit/g.test.ts": "import { it } from 'vitest'\nit('skips nothing', () => { const r = { skipped: 1 } })\n",
+        }
+        for rel, body in allowed.items():
+            with self.subTest(rel):
+                self.put(rel, body)
+                self.assertEqual(self.errors(), [], rel)
+
+    def test_the_helpers_call_only_their_runner_marker(self) -> None:  # S0029 verifier F9: pinned here, not in a test tree
+        root = Path(__file__).resolve().parents[2]
+        def code(rel: str) -> str:  # without comment lines, which describe the markers in prose
+            text = (root / rel).read_text(encoding="utf-8")
+            return "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("//"))
+
+        vitest = code("frontend/tests/fixme.ts")
+        self.assertEqual(re.findall(r"\b(?:it|test|describe)\.\w+\(", vitest), ["it.fails("])
+        e2e = code("frontend/e2e/fixme.ts")
+        self.assertIn("ANNOTATION_TYPE = 'fixme'", e2e)
+        self.assertEqual(re.findall(r"\b(?:it|test|describe)\.\w+\(", e2e), [])
+        self.assertEqual(ci.FIXME_HELPERS, {"frontend/tests/fixme.ts", "frontend/e2e/fixme.ts"})
+
     def test_e2e_specs_are_scanned_at_any_depth(self) -> None:
         self.assertTrue(self.ts("test.fixme('title', async () => {})\n", rel="frontend/e2e/a/b/flow.spec.ts"))
 
@@ -368,6 +430,8 @@ class FixmeMarkers(unittest.TestCase):
         p1 = {"I4", "I5", "I6", "L1-04", "L4-01", "L4-02", "L4-03", "L4-06", "L3-01", "L3-11", "L3-14", "L10-02",
               "L10.M-1", "L10.M-2", "L10-06", "L11.M-2", "L6-12", "I7", "I8", "L9-01", "L9.M-1", "L9.M-3", "L8-01",
               "L8-02", "L8.M-1"}
+        self.assertEqual(p1, set(ci.P1_FINDINGS))
+        p1 |= {f"BL-00{n}" for n in range(64, 71)}  # the integrity flows A1, A2, A4 (two parts), A7, A10, A13
         closed = {r["ID"] for r in ci.table_rows(backlog) if r.get("Status") == "done"}
         # review:27 §1(d): each P1 finding has its fixme test until a slice closes it (then the test runs for real).
         self.assertEqual(sorted(p1 - ids - closed), [])

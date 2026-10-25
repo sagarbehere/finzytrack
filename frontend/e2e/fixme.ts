@@ -11,6 +11,8 @@ export interface FixmeMeta {
   reason: string
 }
 
+export const ANNOTATION_TYPE = 'fixme'
+
 export function fixme(meta: FixmeMeta): TestDetails {
-  return { annotation: { type: 'fixme', description: `${meta.id} due ${meta.due}: ${meta.reason}` } }
+  return { annotation: { type: ANNOTATION_TYPE, description: `${meta.id} due ${meta.due}: ${meta.reason}` } }
 }
