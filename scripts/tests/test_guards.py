@@ -132,5 +132,86 @@ class GuardTest(unittest.TestCase):
             self.assertFalse(self.blocked(cmd), cmd)
 
 
+class ShellReading(GuardTest):
+    """BL-0042 (S0014): the guard reads commands as the shell does. Text the shell only passes to a sink is not
+    refused for its words; text the shell may execute is checked, now also inside substitutions, `-c` strings,
+    `eval` and heredocs fed to a shell. Expected outcomes come from bash's quoting and expansion rules."""
+
+    def test_text_the_shell_does_not_execute_is_allowed(self) -> None:
+        allowed = [
+            # S0005 and S0012: commit messages and heredocs that mention the guarded words
+            "git commit -m 'Guard: refuse kill near python and the owner app on 8001'",
+            'git commit -m "$(cat <<\'EOF\'\nS0005: the runner reports killed (timeout) for a python mutant.\n'
+            'Never call localhost:8001; the FinzytrackData folder stays untouched.\nEOF\n)"',
+            "git commit -F - <<'EOF'\nkill python; see ~/FinzytrackData notes\nEOF",
+            "cat > notes.md <<'EOF'\nUse `git config finzytrack.allowPush true` only as the owner. kill python.\nEOF",
+            "cat <<'EOF' > notes.md\nThe guard refuses `git push --force`.\nEOF",
+            "tee notes.md <<'EOF'\nkill the python backend? never.\nEOF",
+            "gh issue create --title 'kill python on 8001' --body 'about ~/FinzytrackData'",
+            "git commit -m '--no-verify is refused, says the doc'",
+            # a single-quoted string given to sed is data, not a command
+            "sed -i '' 's/old/`git config finzytrack.allowPush true`/' design/README.md",
+            "grep -n 'git push --force' design/process/PROCESS.md",
+            "git commit -qm 'push gate: git config finzytrack.allowPush true is the owner switch'",
+        ]
+        for cmd in allowed:
+            self.assertFalse(self.blocked(cmd), cmd)
+
+    def test_text_the_shell_may_execute_is_still_refused(self) -> None:
+        refused = [
+            # 1-2: a sink piped into a shell; bodies fed to a shell or an interpreter
+            "cat <<'EOF' | bash\nrm -rf ~/FinzytrackData\nEOF",
+            "cat <<'EOF' | sh\npkill -f backend\nEOF",
+            "bash <<'EOF'\ngit config finzytrack.allowPush true\nEOF",
+            "sh -s <<'EOF'\ngit push --force origin next\nEOF",
+            "python3 - <<'EOF'\nimport os; os.listdir(os.path.expanduser('~/FinzytrackData'))\nEOF",
+            # 3: an unquoted delimiter: the shell expands substitutions in the body
+            "cat <<EOF\n$(git config finzytrack.allowPush true)\nEOF",
+            # 4-5: a sink's output becomes code
+            "bash -c \"$(cat <<'EOF'\npkill -f backend\nEOF\n)\"",
+            "eval \"$(cat <<'EOF'\ngit push --force\nEOF\n)\"",
+            "sh -c 'git config finzytrack.allowPush true'",
+            "bash -lc 'git push origin +next'",
+            "eval 'git clean -fdx'",
+            # 6: a substitution inside a message is executed
+            "git commit -m \"$(git config finzytrack.allowPush true)\"",
+            "git commit -m \"note `git push --force origin next`\"",
+            'echo "$(git config finzytrack.allowPush true)"',
+            # 7: a message flag on a command that is not a sink
+            "echo -m 'ls ~/FinzytrackData'",
+            # 8: the message exemption never skips the git checks
+            "git -c core.hooksPath=/dev/null commit -m 'docs'",
+            "git commit --no-verify -m 'docs'",
+            "git commit -qnm 'docs'",
+            "git commit -nmdocs",  # -n hides in a cluster whose m carries its value
+            # only commit messages are data; other git subcommands' -m values are still checked
+            "git stash push -m 'copy of ~/FinzytrackData'",
+            # an unquoted heredoc fed to an interpreter: the shell expands its substitutions first
+            "python3 - <<EOF\nprint('$(git config finzytrack.allowPush true)')\nEOF",
+            # 9: an assignment from a heredoc is expanded later; not a sink
+            "x=$(cat <<'EOF'\npkill -f backend\nEOF\n)",
+            # 10: process substitution
+            "tee >(bash) <<'EOF'\npkill -f backend\nEOF",
+            # 11: an escaped quote does not end the string
+            'echo "a \\" $(git push --force) \\" b"',
+            # 13: what the lexer cannot read is refused
+            "echo 'unterminated",
+            "cat <<'EOF'\nno end",
+            "echo $(git status",
+            # 14: a ')' inside a heredoc body does not end the substitution early
+            "git commit -m \"$(cat <<'EOF'\n)\nEOF\n)\"; git push --force",
+            # 15: the redirect target of a sink is still checked
+            "cat > ~/FinzytrackData/x <<'EOF'\nhi\nEOF",
+            f"cat > {self.legacy}/x.txt <<'EOF'\nhi\nEOF",
+        ]
+        for cmd in refused:
+            self.assertTrue(self.blocked(cmd), cmd)
+
+    def test_heredoc_delimiters_follow_bash(self) -> None:
+        # 12: `<<-` strips leading tabs from the delimiter line; trailing spaces make it a body line.
+        self.assertFalse(self.blocked("cat <<-'EOF' > n.md\n\tkill python\n\tEOF"))
+        self.assertTrue(self.blocked("cat <<'EOF' > n.md\nkill python\nEOF \necho"))  # never closed
+
+
 if __name__ == "__main__":
     unittest.main()

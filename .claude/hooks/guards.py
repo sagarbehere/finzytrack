@@ -4,6 +4,10 @@ These guards are a safety net, not a sandbox: they catch the common and the know
 could touch the live data folder, delete ignored files, write into the read-only legacy worktree, stop or
 call the owner's running app, or switch off the git gates (bypasses found by review:G are meta-tested in
 scripts/tests/test_guards.py). The rules are in design/process/PROCESS.md §8 ("Agents and real data").
+Commands are read as the shell reads them (`shell_lex`, BL-0042): text the shell only hands to a sink on an
+allowlist is not refused for its words; everything it may execute is checked, including substitutions,
+`-c` strings, `eval` and heredocs fed to a shell. Code inside a heredoc or `-c` string for another interpreter
+(Python, node) gets the text checks only, as a script written with the Write tool and run would.
 """
 
 from __future__ import annotations
@@ -11,8 +15,9 @@ from __future__ import annotations
 import glob
 import os
 import re
-import shlex
 from pathlib import Path
+
+import shell_lex
 
 REPO = Path(__file__).resolve().parents[2]
 OWNER_PORT = "8001"
@@ -113,20 +118,72 @@ WRITE_ANY_ARG = {"rm", "rmdir", "unlink", "truncate", "shred", "chmod", "chown",
                  "xattr", "setfacl"}
 
 
-def _split(command: str) -> list[list[str]]:
-    segs: list[list[str]] = []
-    for part in re.split(r"\|\||&&|;|\||\n|\$\(|`|\)", command):
-        try:
-            toks = shlex.split(part, comments=True)
-        except ValueError:
-            toks = part.split()
-        while toks and re.match(r"^\w+=", toks[0]):  # VAR=value prefixes
-            toks = toks[1:]
-        while toks and toks[0] in {"sudo", "env", "command", "builtin", "exec", "nohup", "time", "xargs", "nice"}:
-            toks = toks[1:]
-        if toks:
-            segs.append(toks)
-    return segs
+WRAPPERS = {"sudo", "env", "command", "builtin", "exec", "nohup", "time", "xargs", "nice"}
+SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish"}
+MAX_DEPTH = 8
+
+
+def _command(words: list[str]) -> list[str]:
+    """The words of a simple command without `VAR=value` prefixes and wrappers such as sudo or xargs."""
+    toks = list(words)
+    while toks and re.match(r"^\w+=", toks[0]):
+        toks = toks[1:]
+    while toks and toks[0] in WRAPPERS:
+        toks = toks[1:]
+    return toks
+
+
+def _message_values(toks: list[str]) -> set[int]:
+    """Indexes of message values the shell passes along as plain data: `git commit -m/--message` and
+    `gh … --title/--body/-t/-b`. Everything else, flags included, is still checked."""
+    out: set[int] = set()
+    if not toks:
+        return out
+    name = os.path.basename(toks[0])
+    if name == "git":
+        _, sub, args = _git_parts(toks)
+        if sub != "commit":
+            return out
+        first = len(toks) - len(args)
+        long_flags, short = ("--message",), "m"
+    elif name == "gh":
+        first, long_flags, short = 1, ("--title", "--body"), "tb"
+    else:
+        return out
+    i = first
+    while i < len(toks):
+        t = toks[i]
+        if t in long_flags:
+            out.add(i + 1)
+            i += 2
+            continue
+        if any(t.startswith(f + "=") for f in long_flags):
+            out.add(i)
+        elif re.match(r"^-[A-Za-z]+$", t) or (name == "git" and re.match(r"^-[A-Za-z]*m", t)):
+            cluster = t[1:]
+            hit = next((k for k, ch in enumerate(cluster) if ch in short), None)
+            if hit is not None and name == "git" and hit + 1 < len(cluster):
+                pass  # -mVALUE: the value is inside this word; keep the word (its flags must stay visible)
+            elif hit is not None and hit == len(cluster) - 1:
+                out.add(i + 1)
+                i += 2
+                continue
+        i += 1
+    return {k for k in out if k < len(toks)}
+
+
+def _heredoc_is_data(toks: list[str], seg: shell_lex.Segment, output_is_data: bool) -> bool:
+    """A quoted heredoc body is plain data only when it goes to a sink on this list and nowhere else."""
+    if not toks or seg.procsub:
+        return False
+    name = os.path.basename(toks[0])
+    if name in ("cat", "tee"):
+        return output_is_data and not seg.piped
+    if name == "git":
+        _, sub, args = _git_parts(toks)
+        return sub == "commit" and ("--file=-" in args or any(
+            a in ("-F", "--file") and args[k + 1:k + 2] == ["-"] for k, a in enumerate(args)))
+    return False
 
 
 def _git_parts(toks: list[str]) -> tuple[list[str], str | None, list[str]]:
@@ -186,16 +243,69 @@ def _git_problem(toks: list[str], cwd: Path) -> str | None:
     return None
 
 
-def bash_problem(command: str, cwd: Path) -> str | None:
-    """Why this shell command is refused, or None if it may run."""
-    if LIVE_NAME.search(command) or any(str(r).lower() in command.lower() for r in live_data_roots()):
+def _text_problem(text: str) -> str | None:
+    """Checks on the raw text the shell may execute: the live data folder by any spelling, the owner's port,
+    and process-stopping words next to the owner's processes."""
+    if LIVE_NAME.search(text) or any(str(r).lower() in text.lower() for r in live_data_roots()):
         return "the owner's live data folder is off-limits to agents (INV-24)"
-    if OWNER_URL.search(command):
+    if OWNER_URL.search(text):
         return f"port {OWNER_PORT} is the owner's running app; never call it (INV-24). Use your own instance"
-    if re.search(r"\b(kill|pkill|killall|fuser)\b", command) and OWNER_PROC.search(command):
+    if re.search(r"\b(kill|pkill|killall|fuser)\b", text) and OWNER_PROC.search(text):
         return "this could stop the owner's running app; kill only processes you started, by PID"
+    return None
+
+
+def bash_problem(command: str, cwd: Path, output_is_data: bool = True, depth: int = 0) -> str | None:
+    """Why this shell command is refused, or None if it may run.
+
+    The command is lexed as a shell reads it (`shell_lex`). The text checks see everything the shell may
+    execute; they skip only text it passes along as data to a sink: a quoted heredoc fed to `cat`/`tee`
+    (not piped on) or to `git commit -F -`, and the message values of `git commit -m` and `gh --title/--body`.
+    Command substitutions, `bash -c`/`sh -c`/`eval` strings and heredocs fed to a shell are checked as commands.
+    `output_is_data` says whether this command's output is itself plain data (true at the top level and inside
+    a substitution that is a message value; false where the output becomes code, as in `bash -c "$(…)"`)."""
+    if depth > MAX_DEPTH:
+        return "the command nests too deeply for the guard to read; refused to be safe"
+    try:
+        segments = shell_lex.lex(command)
+    except shell_lex.LexError as e:
+        return f"the guard cannot read this command ({e}); refused to be safe"
+    texts: list[str] = []
+    nested: list[tuple[str, bool]] = []  # (command, output_is_data)
+    for seg in segments:
+        toks = _command(seg.words)
+        skip = _message_values(toks)
+        texts.append(" ".join(w for k, w in enumerate(toks) if k not in skip))
+        texts += [w for w in seg.words[:len(seg.words) - len(toks)]]  # VAR=value prefixes and wrappers
+        name = os.path.basename(toks[0]) if toks else ""
+        for doc in seg.heredocs:
+            if doc.quoted and _heredoc_is_data(toks, seg, output_is_data):
+                continue
+            if name in SHELLS or name in ("source", ".", "cat", "tee"):
+                # fed to a shell, or passed on by cat/tee to somewhere it may run: read it as a command too
+                nested.append((doc.body, False))
+            texts.append(doc.body)
+        message_sink = bool(skip) or (name == "git" and _git_parts(toks)[1] == "commit")
+        nested += [(sub, message_sink and not seg.piped) for sub in seg.subs]
+        if name in SHELLS:
+            # -c, also inside a flag cluster such as -lc or -ec: the next word is a command string
+            k = next((k for k, t in enumerate(toks[1:], 1) if re.match(r"^-[A-Za-z]*c[A-Za-z]*$", t)), None)
+            if k is not None and k + 1 < len(toks):
+                nested.append((toks[k + 1], False))
+        if name == "eval":
+            nested.append((" ".join(toks[1:]), False))
+    if problem := _text_problem("\n".join(texts)):
+        return problem
+    for sub, data in nested:
+        if problem := bash_problem(sub, cwd, data, depth + 1):
+            return problem
     here = cwd
-    for toks in _split(command):
+    for seg in segments:
+        toks = _command(seg.words)
+        if not toks:
+            continue
+        skip = _message_values(toks)
+        toks = [w for k, w in enumerate(toks) if k not in skip]
         cmd = os.path.basename(toks[0])
         args = toks[1:]
         plain = [a for a in args if not a.startswith("-")]
