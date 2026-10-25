@@ -6,4 +6,4 @@ Specs are written just in time (review:F §3.12): M0 writes only M1's specs (the
 
 Planned areas, in vertical order: `write-path/`, `mirror/`, `workspaces/`, `shell/`, `accounts/`, `transactions/`, `importing/`, `dashboards/`, `investments/`, `assistant/`, `settings/`, `statecharts.md` (the target machine catalogue, ARCHITECTURE.md §7).
 
-Written so far: [`roadmap.md`](roadmap.md) (the milestone order and where we are, S0007); [`write-path/`](write-path/README.md) (the per-mutator intended-change table, S0004).
+Written so far: [`roadmap.md`](roadmap.md) (the milestone order and where we are, S0007); [`write-path/`](write-path/README.md) (the per-mutator intended-change table, S0004; the D1 write corpus, S0020); [`mirror/`](mirror/README.md) (the mirror surface: tables, columns, `r_*` views and the v0.2.2 compatibility names, S0021).

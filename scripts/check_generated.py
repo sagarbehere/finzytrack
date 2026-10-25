@@ -27,6 +27,10 @@ GENERATORS: dict[str, tuple[list[str], list[str]]] = {
         [sys.executable, "scripts/gen_intent_table.py", "--stdout"],
         ["design/specs/write-path/intent-table.toml", "scripts/gen_intent_table.py"],
     ),
+    "design/specs/mirror/surface.md": (
+        [sys.executable, "scripts/gen_mirror_surface.py", "--stdout"],
+        ["design/specs/mirror/surface.toml", "scripts/gen_mirror_surface.py"],
+    ),
 }
 MARK = "GENERATED"
 

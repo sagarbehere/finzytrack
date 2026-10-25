@@ -1,0 +1,2058 @@
+# The mirror surface: every table and column the v0.4 mirror has at M1a (S0021).
+# Edit this file, then run `python3 scripts/gen_mirror_surface.py`; the check is scripts/check_mirror_surface.py.
+# Field meanings, conventions (money, dates, JSON, ids, as-of) and rules: README.md beside this file.
+#
+# Per table: name (public name: the r_<name> view, and for v0.2.2 tables the compatibility view), base (the
+# internal table, always m_<name>), row (what one row is), as_of, origin, status, cites, note, column.
+# Per column: name, type, format, meaning, source, sign, origin, change, cites, why, user_sql, status.
+
+surface_version = 1
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── postings
+[[table]]
+name = "postings"
+base = "m_postings"
+row = "One posting of a transaction in the loaded ledger, after plugins and booking (so padding transactions and plugin-made transactions are included), in entry order."
+as_of = "entry"
+origin = "v0.2.2"
+status = "decided"
+cites = ["ADR-0015", "ADR-0048"]
+note = "The planning columns the write contract needs (the entry's source location and entry_hash, review:D1 §10, review:28 §4.1) are added by M1b's slice through this spec."
+
+[[table.column]]
+name = "posting_id"
+type = "INTEGER"
+format = "ordinal"
+meaning = "Position of the posting in the load, counting from 1. Not a stable identity: it changes when entries are added or removed earlier in the ledger."
+source = "Build counter over transactions in Beancount's entry order (date, directive type, source line), postings in written order."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "transaction_id"
+type = "TEXT"
+format = "id"
+meaning = "The transaction's TransactionId, the same for every posting of the entry."
+source = "README 'Ids': the legacy `id` meta, else the legacy `transaction_id` meta, else `k:` plus the entry's first `import-key` element, else the content fallback hash with an ordinal for repeats."
+sign = "n/a"
+origin = "v0.2.2"
+change = "changed"
+cites = ["ADR-0026", "INV-21"]
+why = "Entries v0.4 writes carry no `id`, so their id is `k:` plus their import key. On a ledger v0.2.2 wrote (no `import-key`), every id is the same as in v0.2.2."
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "transaction_content_hash"
+type = "TEXT"
+format = "hash"
+meaning = "A SHA-256 hash of the transaction's content (date, payee, narration, originating amount and account), computed from the entry."
+source = "README 'Ids': the v0.2.2 content-hash formula applied to the loaded entry, without the repeat ordinal. Never read from the ledger's `content_hash` key."
+sign = "n/a"
+origin = "v0.2.2"
+change = "changed"
+cites = ["ADR-0055"]
+why = "v0.2.2 copied the stored `content_hash` key, which was stale after edits and NULL when absent; v0.4 computes it for every transaction. Nothing in the app reads it; it may be dropped after 0.4.x."
+user_sql = true
+status = "draft"
+
+[[table.column]]
+name = "transaction_date"
+type = "TEXT"
+format = "date"
+meaning = "The transaction's date."
+source = "Entry date."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "transaction_flag"
+type = "TEXT"
+format = "flag"
+meaning = "The transaction's flag: `*` (complete), `!` (needs attention), `P` (a padding transaction Beancount inserted for a `pad`), or another flag letter the ledger uses."
+source = "Entry flag."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "transaction_payee"
+type = "TEXT"
+format = "text"
+meaning = "The payee, or NULL when the entry has none (an entry with one string has only a narration)."
+source = "Entry payee."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "transaction_narration"
+type = "TEXT"
+format = "text"
+meaning = "The narration; an empty string when the entry has none."
+source = "Entry narration."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "transaction_tags"
+type = "TEXT"
+format = "json-list"
+meaning = "JSON array of the entry's tags (without `#`), sorted; `[]` when there are none. v0.2.2's element order was arbitrary."
+source = "Entry tags, including those added by `pushtag`."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "transaction_links"
+type = "TEXT"
+format = "json-list"
+meaning = "JSON array of the entry's links (without `^`), sorted; `[]` when there are none."
+source = "Entry links."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "account"
+type = "TEXT"
+format = "account"
+meaning = "The posting's full account name."
+source = "Posting account."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "account_type"
+type = "TEXT"
+format = "text"
+meaning = "The account's first segment as written (its root). With custom root names (`option \"name_assets\"`) this is the custom name; use `account_kind` for the canonical kind."
+source = "Text before the first `:` of the account."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "amount"
+type = "TEXT"
+format = "decimal"
+meaning = "The posting's number of units, with the scale the ledger wrote it in (an amount Beancount filled in has the scale its interpolation produced)."
+source = "Posting units number after booking and interpolation; NULL only if Beancount leaves the posting without units."
+sign = "As in the ledger: positive is a debit (money into an asset, an expense), negative a credit (money out of an asset, income, a new liability)."
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "currency"
+type = "TEXT"
+format = "currency"
+meaning = "The commodity of `amount`: a currency (`INR`) or a holding (`VTI`); `commodities.is_currency` tells which."
+source = "Posting units currency."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "cost_amount"
+type = "TEXT"
+format = "decimal"
+meaning = "Cost per unit of the lot the posting adds to or reduces; NULL for a posting without cost."
+source = "Posting cost number after booking (a reduction such as `-5 VTI {}` gets the matched lot's cost)."
+sign = "Per-unit cost, normally positive."
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "cost_currency"
+type = "TEXT"
+format = "currency"
+meaning = "Currency of `cost_amount`; NULL without cost."
+source = "Posting cost currency after booking."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "cost_date"
+type = "TEXT"
+format = "date"
+meaning = "Date of the lot the posting adds to or reduces; NULL without cost."
+source = "Posting cost date after booking (booking uses the transaction date when the cost spec gives none)."
+sign = "n/a"
+origin = "v0.3.0"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "price_amount"
+type = "TEXT"
+format = "decimal"
+meaning = "Price per unit written with `@`; a total price written with `@@` appears here divided by the units, as Beancount stores it. NULL without a price."
+source = "Posting price number."
+sign = "Per-unit price, normally positive."
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "price_currency"
+type = "TEXT"
+format = "currency"
+meaning = "Currency of `price_amount`; NULL without a price."
+source = "Posting price currency."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "source_account"
+type = "TEXT"
+format = "account"
+meaning = "The account the transaction originated from (usually the bank or card), the same for every posting of the entry; NULL when it cannot be told."
+source = "Computed per entry, first rule that applies: the legacy `source_account` meta; else the account of the first leg (in posting order) that carries an `import-key`; else the single Assets or Liabilities leg (by account kind); else NULL."
+sign = "n/a"
+origin = "v0.2.2"
+change = "changed"
+cites = ["ADR-0055", "INV-21"]
+why = "v0.2.2 computed it per posting: in a two-leg entry each posting got the other one, so the bank leg of a grocery purchase showed `Expenses:Food`; v0.4 gives every leg `Assets:Bank`. A transfer between two own accounts with no import key and no legacy key is NULL (v0.2.2: each leg showed the other account)."
+user_sql = true
+status = "draft"
+
+[[table.column]]
+name = "source_account_type"
+type = "TEXT"
+format = "text"
+meaning = "First segment of `source_account`; NULL when `source_account` is NULL."
+source = "Text before the first `:` of `source_account`."
+sign = "n/a"
+origin = "v0.2.2"
+change = "changed"
+cites = ["ADR-0055"]
+why = "Follows `source_account`."
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "transaction_metadata_json"
+type = "TEXT"
+format = "json-meta"
+meaning = "JSON object of the transaction's metadata, including the keys Beancount adds (`filename`, `lineno`, `__tolerances__`). Read kebab-case keys with a quoted path: `json_extract(transaction_metadata_json, '$.\"txn-date\"')`."
+source = "Entry meta, converted by README 'Metadata JSON'."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "posting_metadata_json"
+type = "TEXT"
+format = "json-meta"
+meaning = "JSON object of the posting's metadata (for example `import-key`, `original`), including Beancount's `filename`, `lineno` and `__automatic__` (an amount Beancount filled in); NULL when the posting has no metadata at all."
+source = "Posting meta, converted by README 'Metadata JSON'."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "document_count"
+type = "INTEGER"
+format = "count"
+meaning = "Number of documents attached to the transaction: its metadata keys that start with `document` (`document`, `document2`, ...)."
+source = "Count of entry meta keys starting with `document`."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "year"
+type = "INTEGER"
+format = "int"
+meaning = "Year of `transaction_date`."
+source = "From the entry date."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "month"
+type = "INTEGER"
+format = "int"
+meaning = "Month of `transaction_date`, 1 to 12."
+source = "From the entry date."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "quarter"
+type = "INTEGER"
+format = "int"
+meaning = "Calendar quarter of `transaction_date`, 1 to 4."
+source = "(month - 1) / 3 + 1."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "year_month"
+type = "TEXT"
+format = "text"
+meaning = "`YYYY-MM` of `transaction_date`."
+source = "From the entry date."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "account_kind"
+type = "TEXT"
+format = "text"
+meaning = "The account's canonical kind: `Assets`, `Liabilities`, `Equity`, `Income` or `Expenses`, also when the ledger renames its roots."
+source = "The account's root mapped through the ledger's `name_*` options (Ledger Profile)."
+sign = "n/a"
+origin = "v0.4"
+change = "new"
+cites = ["ADR-0024"]
+why = "The mirror computes a canonical account kind so custom root names work end to end."
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "cost_label"
+type = "TEXT"
+format = "text"
+meaning = "Label of the lot the posting adds to or reduces; NULL without cost or label."
+source = "Posting cost label after booking."
+sign = "n/a"
+origin = "v0.4"
+change = "new"
+cites = ["ADR-0031"]
+why = "Lots are label-aware; with `cost_date` it lets SQL rebuild a lot's history."
+user_sql = true
+status = "decided"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── accounts
+[[table]]
+name = "accounts"
+base = "m_accounts"
+row = "One account that has an `open` directive. When an account is opened twice, the earliest `open` is kept (Beancount reports the duplicate in `ledger_errors`)."
+as_of = "entry"
+origin = "v0.2.2"
+status = "decided"
+cites = ["ADR-0048"]
+note = ""
+
+[[table.column]]
+name = "name"
+type = "TEXT"
+format = "account"
+meaning = "Full account name."
+source = "Open account."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "open_date"
+type = "TEXT"
+format = "date"
+meaning = "Date of the `open`."
+source = "Open date."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "close_date"
+type = "TEXT"
+format = "date"
+meaning = "Date of the account's `close`, the latest if there are several; NULL while open."
+source = "Close date."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "currencies_json"
+type = "TEXT"
+format = "json-list"
+meaning = "JSON array of the currencies the `open` allows, in written order; `[]` when it allows any."
+source = "Open currencies."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "booking"
+type = "TEXT"
+format = "text"
+meaning = "Booking method the `open` names (`STRICT`, `STRICT_WITH_SIZE`, `FIFO`, `LIFO`, `HIFO`, `AVERAGE`, `NONE`); NULL when it names none (the `booking_method` option then applies)."
+source = "Open booking, as its text value."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "metadata_json"
+type = "TEXT"
+format = "json-meta"
+meaning = "JSON object of the `open` directive's metadata (for example `account_number`, `account-type`)."
+source = "Open meta, converted by README 'Metadata JSON'."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "account_kind"
+type = "TEXT"
+format = "text"
+meaning = "The account's canonical kind (`Assets`, `Liabilities`, `Equity`, `Income`, `Expenses`)."
+source = "As `postings.account_kind`."
+sign = "n/a"
+origin = "v0.4"
+change = "new"
+cites = ["ADR-0024"]
+why = "Custom root names work end to end."
+user_sql = true
+status = "decided"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── commodities
+[[table]]
+name = "commodities"
+base = "m_commodities"
+row = "One commodity: every one declared with a `commodity` directive, and every one a posting uses as units, cost or price currency or a `price` directive names on either side."
+as_of = "entry"
+origin = "v0.2.2"
+status = "draft"
+cites = ["ADR-0025", "ADR-0048"]
+note = "v0.2.2 added only commodities used as posting units; v0.4 also adds those seen only as a cost, price or price-directive currency, so a join on any currency column finds its row. Beancount 3.2.0's `options[\"commodities\"]` is empty, so it cannot serve as the list."
+
+[[table.column]]
+name = "code"
+type = "TEXT"
+format = "currency"
+meaning = "Commodity code."
+source = "Commodity currency, or the code where it is used."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "declaration_date"
+type = "TEXT"
+format = "date"
+meaning = "Date of the `commodity` directive; NULL when never declared."
+source = "Commodity date."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "name"
+type = "TEXT"
+format = "text"
+meaning = "The commodity's `name` metadata; NULL when absent or never declared."
+source = "Commodity meta `name`."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "asset_class"
+type = "TEXT"
+format = "text"
+meaning = "The commodity's `asset-class` metadata (for example `cash`, `stock`, `etf`, `mutual-fund`); NULL when absent."
+source = "Commodity meta `asset-class`."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "is_currency"
+type = "INTEGER"
+format = "bool"
+meaning = "1 when the commodity is cash (a unit of account), 0 when it is a holding such as a stock or fund."
+source = "First rule that applies: a declared `asset-class` decides (1 for `cash` or `currency`, compared trimmed and case-insensitive; 0 otherwise); else 1 for an ISO 4217 currency code; else 0. `operating_currency` plays no part."
+sign = "n/a"
+origin = "v0.2.2"
+change = "changed"
+cites = ["ADR-0025", "L3-13"]
+why = "v0.2.2 used `operating_currency` as the list of currencies, so in an INR ledger a USD bank account counted as a holding (0); v0.4 counts USD as cash (1). A code with no `asset-class` that is not an ISO code (for example an undeclared `VTI`) was 1 in v0.2.2 and is 0 now. This is ADR-0025's one-time reclassification."
+user_sql = true
+status = "draft"
+
+[[table.column]]
+name = "metadata_json"
+type = "TEXT"
+format = "json-meta"
+meaning = "JSON object of the `commodity` directive's metadata; NULL when never declared."
+source = "Commodity meta, converted by README 'Metadata JSON'."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── balance_assertions
+[[table]]
+name = "balance_assertions"
+base = "m_balance_assertions"
+row = "One `balance` directive, with Beancount's verdict on it."
+as_of = "entry"
+origin = "v0.2.2"
+status = "decided"
+cites = ["ADR-0048"]
+note = ""
+
+[[table.column]]
+name = "id"
+type = "INTEGER"
+format = "ordinal"
+meaning = "Position among the load's `balance` directives, counting from 1; not a stable identity."
+source = "Build counter in entry order."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "date"
+type = "TEXT"
+format = "date"
+meaning = "Date of the assertion; it checks the balance at the start of that day."
+source = "Balance date."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "account"
+type = "TEXT"
+format = "account"
+meaning = "The account asserted (its sub-accounts count towards the balance)."
+source = "Balance account."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "amount_number"
+type = "TEXT"
+format = "decimal"
+meaning = "The balance the directive expects."
+source = "Balance amount number as written."
+sign = "As in the ledger: an asset's balance is positive, a liability's (money owed) negative."
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "amount_currency"
+type = "TEXT"
+format = "currency"
+meaning = "Currency of the assertion; one assertion checks one currency."
+source = "Balance amount currency."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "tolerance"
+type = "TEXT"
+format = "decimal"
+meaning = "The tolerance written on the directive (`~ 0.01`); NULL when none was written (Beancount then infers one)."
+source = "Balance tolerance."
+sign = "Never negative."
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "passed"
+type = "INTEGER"
+format = "bool"
+meaning = "1 when Beancount's balance check passed (padding included), 0 when it failed."
+source = "Beancount's balance check: 0 when it sets a difference on the entry."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "diff_number"
+type = "TEXT"
+format = "decimal"
+meaning = "How far the actual balance is from the asserted one; NULL when the check passed."
+source = "Beancount's difference: actual balance minus `amount_number`."
+sign = "Positive: the account holds more than asserted; negative: less."
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "diff_currency"
+type = "TEXT"
+format = "currency"
+meaning = "Currency of `diff_number`; NULL when the check passed."
+source = "Beancount's difference currency."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "metadata_json"
+type = "TEXT"
+format = "json-meta"
+meaning = "JSON object of the directive's metadata."
+source = "Balance meta, converted by README 'Metadata JSON'."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "pad_date"
+type = "TEXT"
+format = "date"
+meaning = "Date of the `pad` whose padding transaction Beancount inserted to satisfy this assertion; NULL when no padding was inserted for it."
+source = "README 'Pad pairing': the padding transaction Beancount made for this assertion."
+sign = "n/a"
+origin = "v0.2.2"
+change = "changed"
+cites = ["ADR-0024", "INV-02"]
+why = "v0.2.2 re-implemented the pairing and got it wrong in two cases: a `pad` serves the first assertion of each currency (v0.2.2: only the first assertion of any currency), and an assertion that already matched gets no padding (v0.2.2 still paired it). v0.4 reads Beancount's own result."
+user_sql = true
+status = "draft"
+
+[[table.column]]
+name = "pad_source_account"
+type = "TEXT"
+format = "account"
+meaning = "The account that `pad` draws from (usually Equity); NULL when no padding was inserted for this assertion."
+source = "README 'Pad pairing'."
+sign = "n/a"
+origin = "v0.2.2"
+change = "changed"
+cites = ["ADR-0024", "INV-02"]
+why = "Follows `pad_date`."
+user_sql = true
+status = "draft"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── pad_directives
+[[table]]
+name = "pad_directives"
+base = "m_pad_directives"
+row = "One `pad` directive."
+as_of = "entry"
+origin = "v0.2.2"
+status = "decided"
+cites = ["ADR-0048"]
+note = "The padding transactions themselves are in `postings` with flag `P`."
+
+[[table.column]]
+name = "id"
+type = "INTEGER"
+format = "ordinal"
+meaning = "Position among the load's `pad` directives, counting from 1; not a stable identity."
+source = "Build counter in entry order."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "date"
+type = "TEXT"
+format = "date"
+meaning = "Date of the `pad`."
+source = "Pad date."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "account"
+type = "TEXT"
+format = "account"
+meaning = "The account being padded."
+source = "Pad account."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "source_account"
+type = "TEXT"
+format = "account"
+meaning = "The account the padding is drawn from (usually Equity)."
+source = "Pad source account."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "metadata_json"
+type = "TEXT"
+format = "json-meta"
+meaning = "JSON object of the directive's metadata."
+source = "Pad meta, converted by README 'Metadata JSON'."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── prices
+[[table]]
+name = "prices"
+base = "m_prices"
+row = "One `price` directive: those in the ledger (including prices a plugin such as `implicit_prices` makes) and those in the price sidecar file."
+as_of = "entry"
+origin = "v0.2.2"
+status = "draft"
+cites = ["ADR-0030", "ADR-0048"]
+note = "The price sidecar is loaded separately (ADR-0030); v0.2.2 had no sidecar, so for v0.2.2 ledgers the rows are the same. Which of two same-day prices wins (their `id` order) is fixed with the PriceIndex (ADR-0024, M7/M8)."
+
+[[table.column]]
+name = "id"
+type = "INTEGER"
+format = "ordinal"
+meaning = "Position among the loaded prices, counting from 1; not a stable identity."
+source = "Build counter: ledger prices in entry order, then sidecar prices in entry order."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "draft"
+
+[[table.column]]
+name = "date"
+type = "TEXT"
+format = "date"
+meaning = "Date of the price."
+source = "Price date."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "base_currency"
+type = "TEXT"
+format = "currency"
+meaning = "The commodity being priced (`VTI` in `price VTI 101 USD`)."
+source = "Price currency."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "quote_number"
+type = "TEXT"
+format = "decimal"
+meaning = "Price of one unit of `base_currency`, in `quote_currency`."
+source = "Price amount number as written."
+sign = "Positive."
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "quote_currency"
+type = "TEXT"
+format = "currency"
+meaning = "The currency the price is in (`USD` in `price VTI 101 USD`)."
+source = "Price amount currency."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "metadata_json"
+type = "TEXT"
+format = "json-meta"
+meaning = "JSON object of the directive's metadata."
+source = "Price meta, converted by README 'Metadata JSON'."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── notes
+[[table]]
+name = "notes"
+base = "m_notes"
+row = "One `note` directive."
+as_of = "entry"
+origin = "v0.2.2"
+status = "decided"
+cites = ["ADR-0048"]
+note = ""
+
+[[table.column]]
+name = "id"
+type = "INTEGER"
+format = "ordinal"
+meaning = "Position among the load's `note` directives, counting from 1; not a stable identity."
+source = "Build counter in entry order."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "date"
+type = "TEXT"
+format = "date"
+meaning = "Date of the note."
+source = "Note date."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "account"
+type = "TEXT"
+format = "account"
+meaning = "The account the note is about."
+source = "Note account."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "comment"
+type = "TEXT"
+format = "text"
+meaning = "The note's text."
+source = "Note comment."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "tags_json"
+type = "TEXT"
+format = "json-list"
+meaning = "JSON array of the note's tags, sorted; NULL (not `[]`) when there are none, as in v0.2.2."
+source = "Note tags."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "links_json"
+type = "TEXT"
+format = "json-list"
+meaning = "JSON array of the note's links, sorted; NULL when there are none."
+source = "Note links."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "metadata_json"
+type = "TEXT"
+format = "json-meta"
+meaning = "JSON object of the directive's metadata."
+source = "Note meta, converted by README 'Metadata JSON'."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── events
+[[table]]
+name = "events"
+base = "m_events"
+row = "One `event` directive (a named value that changes over time, such as a location)."
+as_of = "entry"
+origin = "v0.2.2"
+status = "decided"
+cites = ["ADR-0048"]
+note = ""
+
+[[table.column]]
+name = "id"
+type = "INTEGER"
+format = "ordinal"
+meaning = "Position among the load's `event` directives, counting from 1; not a stable identity."
+source = "Build counter in entry order."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "date"
+type = "TEXT"
+format = "date"
+meaning = "Date the value took effect."
+source = "Event date."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "type"
+type = "TEXT"
+format = "text"
+meaning = "The event's name (`location` in `event \"location\" \"Pune\"`)."
+source = "Event type."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "description"
+type = "TEXT"
+format = "text"
+meaning = "The event's value (`Pune`)."
+source = "Event description."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "metadata_json"
+type = "TEXT"
+format = "json-meta"
+meaning = "JSON object of the directive's metadata."
+source = "Event meta, converted by README 'Metadata JSON'."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── documents
+[[table]]
+name = "documents"
+base = "m_documents"
+row = "One `document` directive: those written in the ledger and those Beancount makes for files found under the `documents` folders."
+as_of = "entry"
+origin = "v0.2.2"
+status = "decided"
+cites = ["ADR-0048"]
+note = "Documents attached to a transaction through `document*` metadata are counted in `postings.document_count`, not listed here."
+
+[[table.column]]
+name = "id"
+type = "INTEGER"
+format = "ordinal"
+meaning = "Position among the load's `document` directives, counting from 1; not a stable identity."
+source = "Build counter in entry order."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "date"
+type = "TEXT"
+format = "date"
+meaning = "Date of the document."
+source = "Document date."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "account"
+type = "TEXT"
+format = "account"
+meaning = "The account the document belongs to."
+source = "Document account."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "filename"
+type = "TEXT"
+format = "path"
+meaning = "The document's path, made absolute by Beancount."
+source = "Document filename."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "tags_json"
+type = "TEXT"
+format = "json-list"
+meaning = "JSON array of the document's tags, sorted; NULL when there are none."
+source = "Document tags."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "links_json"
+type = "TEXT"
+format = "json-list"
+meaning = "JSON array of the document's links, sorted; NULL when there are none."
+source = "Document links."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "metadata_json"
+type = "TEXT"
+format = "json-meta"
+meaning = "JSON object of the directive's metadata."
+source = "Document meta, converted by README 'Metadata JSON'."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── custom_directives
+[[table]]
+name = "custom_directives"
+base = "m_custom_directives"
+row = "One `custom` directive (for example a `custom \"budget\"` line)."
+as_of = "entry"
+origin = "v0.2.2"
+status = "decided"
+cites = ["ADR-0048"]
+note = ""
+
+[[table.column]]
+name = "id"
+type = "INTEGER"
+format = "ordinal"
+meaning = "Position among the load's `custom` directives, counting from 1; not a stable identity."
+source = "Build counter in entry order."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "date"
+type = "TEXT"
+format = "date"
+meaning = "Date of the directive."
+source = "Custom date."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "type"
+type = "TEXT"
+format = "text"
+meaning = "The directive's type string (`budget` in `custom \"budget\" ...`)."
+source = "Custom type."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "values_json"
+type = "TEXT"
+format = "json-custom"
+meaning = "JSON array of the directive's values in written order, each a `[value, type-tag]` pair (README 'Metadata JSON'): `custom \"budget\" Expenses:Food \"monthly\" 500.00 INR` gives `[[\"Expenses:Food\", \"<AccountDummy>\"], [\"monthly\", \"<class 'str'>\"], [[\"500.00\", \"INR\"], \"<class 'beancount.core.amount.Amount'>\"]]`. Read a value with `json_extract(values_json, '$[0][0]')`."
+source = "Custom values, each converted by README 'Metadata JSON'."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "metadata_json"
+type = "TEXT"
+format = "json-meta"
+meaning = "JSON object of the directive's metadata."
+source = "Custom meta, converted by README 'Metadata JSON'."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── stored_queries
+[[table]]
+name = "stored_queries"
+base = "m_stored_queries"
+row = "One `query` directive (a named BQL query kept in the ledger)."
+as_of = "entry"
+origin = "v0.2.2"
+status = "decided"
+cites = ["ADR-0048"]
+note = ""
+
+[[table.column]]
+name = "id"
+type = "INTEGER"
+format = "ordinal"
+meaning = "Position among the load's `query` directives, counting from 1; not a stable identity."
+source = "Build counter in entry order."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "date"
+type = "TEXT"
+format = "date"
+meaning = "Date of the directive."
+source = "Query date."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "name"
+type = "TEXT"
+format = "text"
+meaning = "The query's name."
+source = "Query name."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "query_string"
+type = "TEXT"
+format = "text"
+meaning = "The BQL text."
+source = "Query string."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "metadata_json"
+type = "TEXT"
+format = "json-meta"
+meaning = "JSON object of the directive's metadata."
+source = "Query meta, converted by README 'Metadata JSON'."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── ledger_options
+[[table]]
+name = "ledger_options"
+base = "m_ledger_options"
+row = "One Beancount option of the load, set or defaulted (for example `operating_currency`, `name_assets`, `booking_method`)."
+as_of = "load"
+origin = "v0.2.2"
+status = "decided"
+cites = ["ADR-0048"]
+note = "Includes options Beancount fills itself (`filename`, `include`, `input_hash`, `dcontext`)."
+
+[[table.column]]
+name = "key"
+type = "TEXT"
+format = "text"
+meaning = "The option's name."
+source = "Options map key."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "value_json"
+type = "TEXT"
+format = "json-value"
+meaning = "The option's value as JSON (a list for list options such as `operating_currency`); an enum such as `booking_method` appears as its Python text, `\"Booking.STRICT\"`."
+source = "Options map value, converted by README 'Metadata JSON'."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── account_balances
+[[table]]
+name = "account_balances"
+base = "m_account_balances"
+row = "One (account, currency) whose balance is not zero, from the account's own postings (sub-accounts are separate rows). Accounts whose balance in a currency nets to zero have no row for it."
+as_of = "owner:20261025-mirror-as-of-date.md"
+origin = "v0.2.2"
+status = "owner:20261025-mirror-as-of-date.md"
+cites = ["ADR-0025", "ADR-0048"]
+note = "v0.2.2 computed it from every entry, future-dated ones included. Whether v0.4 stops at today waits for the owner."
+
+[[table.column]]
+name = "account"
+type = "TEXT"
+format = "account"
+meaning = "The account."
+source = "Posting account."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "owner:20261025-mirror-as-of-date.md"
+
+[[table.column]]
+name = "currency"
+type = "TEXT"
+format = "currency"
+meaning = "The commodity of the balance."
+source = "Posting units currency."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "owner:20261025-mirror-as-of-date.md"
+
+[[table.column]]
+name = "balance"
+type = "TEXT"
+format = "decimal"
+meaning = "The balance: the exact sum of the account's units in this currency (all lots together)."
+source = "Exact Decimal sum of posting units per (account, currency)."
+sign = "As in the ledger: assets positive, liabilities (money owed) negative, income negative, expenses positive."
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "owner:20261025-mirror-as-of-date.md"
+
+[[table.column]]
+name = "transaction_count"
+type = "INTEGER"
+format = "count"
+meaning = "Number of postings to this account in this currency (two postings of one transaction to the same account count twice, as in v0.2.2)."
+source = "Count of postings with units per (account, currency)."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "owner:20261025-mirror-as-of-date.md"
+
+[[table.column]]
+name = "last_transaction_date"
+type = "TEXT"
+format = "date"
+meaning = "Date of the latest posting to this account in this currency."
+source = "Max transaction date per (account, currency)."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "owner:20261025-mirror-as-of-date.md"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── lots
+[[table]]
+name = "lots"
+base = "m_lots"
+row = "One lot held at cost (units of a commodity bought at one cost, date and label) in one account, from Beancount's booked inventory. Lots whose units net to zero have no row."
+as_of = "owner:20261025-mirror-as-of-date.md"
+origin = "v0.2.2"
+status = "owner:20261025-mirror-as-of-date.md"
+cites = ["ADR-0031", "ADR-0048", "L7-07"]
+note = "Label-aware: two lots that differ only in their label are two rows (v0.2.2 kept one and lost the other). The end-of-ledger computation is not rebuilt (ADR-0048); which date the lots are taken at waits for the owner."
+
+[[table.column]]
+name = "id"
+type = "INTEGER"
+format = "ordinal"
+meaning = "Position of the lot in the table, counting from 1 (ordered by account, commodity, date, cost, label); not a stable identity."
+source = "Build counter."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "owner:20261025-mirror-as-of-date.md"
+
+[[table.column]]
+name = "account"
+type = "TEXT"
+format = "account"
+meaning = "The account holding the lot."
+source = "Inventory account."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "owner:20261025-mirror-as-of-date.md"
+
+[[table.column]]
+name = "units_number"
+type = "TEXT"
+format = "decimal"
+meaning = "Number of units in the lot."
+source = "Position units number."
+sign = "Positive for a lot held; negative for a short position."
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "owner:20261025-mirror-as-of-date.md"
+
+[[table.column]]
+name = "units_currency"
+type = "TEXT"
+format = "currency"
+meaning = "The commodity held (`VTI`)."
+source = "Position units currency."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "owner:20261025-mirror-as-of-date.md"
+
+[[table.column]]
+name = "cost_number"
+type = "TEXT"
+format = "decimal"
+meaning = "Cost per unit of the lot."
+source = "Position cost number."
+sign = "Per-unit cost, normally positive."
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "owner:20261025-mirror-as-of-date.md"
+
+[[table.column]]
+name = "cost_currency"
+type = "TEXT"
+format = "currency"
+meaning = "Currency of the cost."
+source = "Position cost currency."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "owner:20261025-mirror-as-of-date.md"
+
+[[table.column]]
+name = "acquisition_date"
+type = "TEXT"
+format = "date"
+meaning = "The lot's date (when it was bought)."
+source = "Position cost date (booking fills the purchase date when the cost spec gives none)."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "owner:20261025-mirror-as-of-date.md"
+
+[[table.column]]
+name = "label"
+type = "TEXT"
+format = "text"
+meaning = "The lot's label; NULL when it has none."
+source = "Position cost label."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "owner:20261025-mirror-as-of-date.md"
+
+[[table.column]]
+name = "book_value"
+type = "TEXT"
+format = "decimal"
+meaning = "What the lot cost in total: `units_number` times `cost_number`, exact and not rounded."
+source = "Exact Decimal product."
+sign = "Same sign as `units_number`."
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "owner:20261025-mirror-as-of-date.md"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── commodity_usage
+[[table]]
+name = "commodity_usage"
+base = "m_commodity_usage"
+row = "One commodity used as posting units at least once, with usage counts over every transaction."
+as_of = "ledger-end"
+origin = "v0.2.2"
+status = "decided"
+cites = ["ADR-0048"]
+note = ""
+
+[[table.column]]
+name = "code"
+type = "TEXT"
+format = "currency"
+meaning = "Commodity code."
+source = "Posting units currency."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "transaction_count"
+type = "INTEGER"
+format = "count"
+meaning = "Number of postings in this commodity (not transactions)."
+source = "Count of postings with units in the commodity."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "total_volume"
+type = "TEXT"
+format = "decimal"
+meaning = "Sum of the absolute units of those postings (money in and out both add up)."
+source = "Exact Decimal sum of |units|."
+sign = "Never negative."
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "first_seen"
+type = "TEXT"
+format = "date"
+meaning = "Date of the earliest such posting."
+source = "Min transaction date."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "last_seen"
+type = "TEXT"
+format = "date"
+meaning = "Date of the latest such posting (future-dated entries included)."
+source = "Max transaction date."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── ledger_errors
+[[table]]
+name = "ledger_errors"
+base = "m_ledger_errors"
+row = "One error of the load: parser, booking, validation and plugin errors alike (not only parsing errors)."
+as_of = "load"
+origin = "v0.2.2"
+status = "decided"
+cites = ["ADR-0048", "ADR-0008"]
+note = "The write contract's baseline error set (review:D1 §10, §12.1) is read from this table."
+
+[[table.column]]
+name = "id"
+type = "INTEGER"
+format = "ordinal"
+meaning = "Position among the load's errors, counting from 1."
+source = "Build counter in Beancount's error order."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "source_file"
+type = "TEXT"
+format = "path"
+meaning = "File the error points at; NULL when Beancount gives none."
+source = "Error source `filename`."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "line_number"
+type = "INTEGER"
+format = "int"
+meaning = "Line the error points at (0 when Beancount gives a file but no line); NULL when it gives none."
+source = "Error source `lineno`."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "message"
+type = "TEXT"
+format = "text"
+meaning = "Beancount's error message."
+source = "Error message."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "entry_json"
+type = "TEXT"
+format = "json-entry"
+meaning = "The entry the error is about, as a JSON array of its fields in Beancount's order (meta first, then date, ...); NULL when the error has no entry."
+source = "Error entry, converted by README 'Metadata JSON'."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "error_type"
+type = "TEXT"
+format = "text"
+meaning = "The error's Beancount class name (`BalanceError`, `ValidationError`, ...)."
+source = "Error class name."
+sign = "n/a"
+origin = "v0.4"
+change = "new"
+cites = ["ADR-0008"]
+why = "An error key is the error class plus the entry it is attached to (review:D1 §12.1); the class was not stored before."
+user_sql = true
+status = "decided"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── training_data
+[[table]]
+name = "training_data"
+base = "m_training_data"
+row = "One transaction that has a payee and an Income or Expenses posting: its description and that posting's account."
+as_of = "ledger-end"
+origin = "v0.2.2"
+status = "decided"
+cites = ["ADR-0048"]
+note = "Kept for compatibility; v0.4's categorization learns from the ledger in its own way (ADR-0027)."
+
+[[table.column]]
+name = "id"
+type = "INTEGER"
+format = "ordinal"
+meaning = "Position in the table, counting from 1."
+source = "Build counter in entry order."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "description"
+type = "TEXT"
+format = "text"
+meaning = "Payee, then `memo` metadata (or the legacy `ofx_memo`) when present, then narration, joined by spaces."
+source = "Entry payee, meta and narration."
+sign = "n/a"
+origin = "v0.2.2"
+change = "same"
+cites = []
+why = ""
+user_sql = true
+status = "decided"
+
+[[table.column]]
+name = "category"
+type = "TEXT"
+format = "account"
+meaning = "The account of the transaction's first Income or Expenses posting."
+source = "First posting (in posting order) whose account kind is Income or Expenses."
+sign = "n/a"
+origin = "v0.2.2"
+change = "changed"
+cites = ["ADR-0024"]
+why = "v0.2.2 matched the literal prefixes `Income:` and `Expenses:`; v0.4 uses the account kind, so ledgers with custom root names get rows too. Default-root ledgers are unchanged."
+user_sql = true
+status = "decided"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── meta
+[[table]]
+name = "meta"
+base = "m_meta"
+row = "One fact about this mirror file (key and value), for the app and its freshness check."
+as_of = "load"
+origin = "v0.2.2"
+status = "draft"
+cites = ["ADR-0015"]
+note = "Internal in v0.2.2 too (not in its user docs, not on ADR-0048's list); its name is still served. v0.4 keys: `surface_version`, `ledger_version`, `fingerprint`, `export_version` (a hash of this DDL), `built_at`, `build_complete` (always `1`: only complete generations are published). v0.2.2's `ledger_files` key is replaced by `fingerprint`."
+
+[[table.column]]
+name = "key"
+type = "TEXT"
+format = "text"
+meaning = "The fact's name."
+source = "Written by the mirror build."
+sign = "n/a"
+origin = "v0.2.2"
+change = "changed"
+cites = ["ADR-0015"]
+why = "The set of keys differs (see the table note)."
+user_sql = false
+status = "draft"
+
+[[table.column]]
+name = "value"
+type = "TEXT"
+format = "text"
+meaning = "The fact's value, as text (JSON for structured values)."
+source = "Written by the mirror build."
+sign = "n/a"
+origin = "v0.2.2"
+change = "changed"
+cites = ["ADR-0015"]
+why = "Values follow the v0.4 keys."
+user_sql = false
+status = "draft"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── compatibility functions
+[[compat_function]]
+name = "budget_for_range"
+served_by = "The `ledger` step's budget measures (`budget_status`): nesting-aware totals and income sign-normalized (CAP-FN-BUDGET-FOR-RANGE)."
+message = "`budget_for_range` is deprecated and is removed after 0.4.x. Use the `ledger` step's budget measure instead."
+located = "The notice names the dashboard, widget and step that called it."
+milestone = "M7"
+cites = ["ADR-0048", "CAP-FN-BUDGET-FOR-RANGE"]
+status = "draft"
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── dropped
+[[dropped]]
+item = "table:latest_prices"
+origin = "v0.3.0"
+reason = "v0.3.0 only, never released, so it needs no compatibility; it also included future-dated prices. `price_asof(base, quote, date)` replaces it (M7)."
+cites = ["ADR-0048", "ADR-0016", "CAP-QUERY-SURFACE", "L3-12"]
+
+[[dropped]]
+item = "function:cash_instruments"
+origin = "v0.3.0"
+reason = "v0.3.0 only; deposits and their interest become `ledger` step measures."
+cites = ["ADR-0048", "ADR-0030"]
+
+[[dropped]]
+item = "function:portfolio_returns"
+origin = "v0.3.0"
+reason = "v0.3.0 only; XIRR and TWR returns are cut."
+cites = ["ADR-0048", "ADR-0030", "CAP-INV-XIRR", "CAP-INV-TWR"]
+
+[[dropped]]
+item = "function:portfolio_series"
+origin = "v0.3.0"
+reason = "v0.3.0 only; value over time comes from the `ledger` step's value measure."
+cites = ["ADR-0048", "ADR-0029", "ADR-0030"]
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────── legacy inventories
+# Built by running each exporter's CREATE TABLE statements in SQLite (`check_mirror_surface.derive_tables`) and
+# reading the compute registry's registrations (`derive_functions`); the test re-derives them when the tags exist.
+[legacy."v0.2.2"]
+tag = "v0.2.2"
+functions = ["budget_for_range"]
+
+[legacy."v0.2.2".tables]
+account_balances = ["account", "currency", "balance", "transaction_count", "last_transaction_date"]
+accounts = ["name", "open_date", "close_date", "currencies_json", "booking", "metadata_json"]
+balance_assertions = ["id", "date", "account", "amount_number", "amount_currency", "tolerance", "passed", "diff_number", "diff_currency", "metadata_json", "pad_date", "pad_source_account"]
+commodities = ["code", "declaration_date", "name", "asset_class", "is_currency", "metadata_json"]
+commodity_usage = ["code", "transaction_count", "total_volume", "first_seen", "last_seen"]
+custom_directives = ["id", "date", "type", "values_json", "metadata_json"]
+documents = ["id", "date", "account", "filename", "tags_json", "links_json", "metadata_json"]
+events = ["id", "date", "type", "description", "metadata_json"]
+ledger_errors = ["id", "source_file", "line_number", "message", "entry_json"]
+ledger_options = ["key", "value_json"]
+lots = ["id", "account", "units_number", "units_currency", "cost_number", "cost_currency", "acquisition_date", "label", "book_value"]
+meta = ["key", "value"]
+notes = ["id", "date", "account", "comment", "tags_json", "links_json", "metadata_json"]
+pad_directives = ["id", "date", "account", "source_account", "metadata_json"]
+postings = ["posting_id", "transaction_id", "transaction_content_hash", "transaction_date", "transaction_flag", "transaction_payee", "transaction_narration", "transaction_tags", "transaction_links", "account", "account_type", "amount", "currency", "cost_amount", "cost_currency", "price_amount", "price_currency", "source_account", "source_account_type", "transaction_metadata_json", "posting_metadata_json", "document_count", "year", "month", "quarter", "year_month"]
+prices = ["id", "date", "base_currency", "quote_number", "quote_currency", "metadata_json"]
+stored_queries = ["id", "date", "name", "query_string", "metadata_json"]
+training_data = ["id", "description", "category"]
+
+[legacy."v0.3.0"]
+tag = "legacy-final"
+functions = ["budget_for_range", "portfolio_series", "portfolio_returns", "cash_instruments"]
+
+[legacy."v0.3.0".tables]
+account_balances = ["account", "currency", "balance", "transaction_count", "last_transaction_date"]
+accounts = ["name", "open_date", "close_date", "currencies_json", "booking", "metadata_json"]
+balance_assertions = ["id", "date", "account", "amount_number", "amount_currency", "tolerance", "passed", "diff_number", "diff_currency", "metadata_json", "pad_date", "pad_source_account"]
+commodities = ["code", "declaration_date", "name", "asset_class", "is_currency", "metadata_json"]
+commodity_usage = ["code", "transaction_count", "total_volume", "first_seen", "last_seen"]
+custom_directives = ["id", "date", "type", "values_json", "metadata_json"]
+documents = ["id", "date", "account", "filename", "tags_json", "links_json", "metadata_json"]
+events = ["id", "date", "type", "description", "metadata_json"]
+latest_prices = ["date", "base_currency", "quote_number", "quote_currency"]
+ledger_errors = ["id", "source_file", "line_number", "message", "entry_json"]
+ledger_options = ["key", "value_json"]
+lots = ["id", "account", "units_number", "units_currency", "cost_number", "cost_currency", "acquisition_date", "label", "book_value"]
+meta = ["key", "value"]
+notes = ["id", "date", "account", "comment", "tags_json", "links_json", "metadata_json"]
+pad_directives = ["id", "date", "account", "source_account", "metadata_json"]
+postings = ["posting_id", "transaction_id", "transaction_content_hash", "transaction_date", "transaction_flag", "transaction_payee", "transaction_narration", "transaction_tags", "transaction_links", "account", "account_type", "amount", "currency", "cost_amount", "cost_currency", "cost_date", "price_amount", "price_currency", "source_account", "source_account_type", "transaction_metadata_json", "posting_metadata_json", "document_count", "year", "month", "quarter", "year_month"]
+prices = ["id", "date", "base_currency", "quote_number", "quote_currency", "metadata_json"]
+stored_queries = ["id", "date", "name", "query_string", "metadata_json"]
+training_data = ["id", "description", "category"]
