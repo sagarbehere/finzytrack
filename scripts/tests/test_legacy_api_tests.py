@@ -100,7 +100,8 @@ class CopyTest(unittest.TestCase):
 
 class OfflineTest(unittest.TestCase):
     def test_the_legacy_process_gets_an_allowlisted_offline_environment(self) -> None:
-        base = {"PATH": "/bin", "HOME": "/h", "IMAP_PASSWORD": "s3cret", "OPENAI_API_KEY": "k", "OTHER_SETTING": "/x"}
+        base = {"PATH": "/bin", "HOME": "/h", "IMAP_PASSWORD": "s3cret",  # privacy-scan: allow secret-entropy
+                "OPENAI_API_KEY": "k", "OTHER_SETTING": "/x"}
         env = launch_legacy.legacy_env(base)
         for secret in ("IMAP_PASSWORD", "OPENAI_API_KEY", "OTHER_SETTING"):
             self.assertNotIn(secret, env)

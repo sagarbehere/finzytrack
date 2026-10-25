@@ -18,6 +18,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - name: Install uv (the privacy scan runs detect-secrets from scripts/secrets-scan)
+        run: python3 -m pip install uv==0.13.0
       - name: Check-script meta-tests
         run: python3 -m unittest discover -s scripts/tests -v
       - name: Privacy scan of every tracked file (INV-23)
@@ -30,8 +32,6 @@ jobs:
         run: python3 scripts/check_capabilities.py
       - name: Generated artifacts (INV-19)
         run: python3 scripts/check_generated.py --all
-      - name: Install uv
-        run: python3 -m pip install uv==0.13.0
       - name: Backend environment (the licence check reads its runtime closure)
         run: uv sync --locked --directory backend
       - uses: actions/setup-node@v4

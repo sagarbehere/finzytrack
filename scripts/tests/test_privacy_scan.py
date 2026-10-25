@@ -6,9 +6,16 @@ Run: python3 -m unittest discover -s scripts/tests
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import io
+import subprocess
 import sys
+import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -184,3 +191,70 @@ class Plumbing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SecretEntropy(unittest.TestCase):
+    """BL-0035: detect-secrets 1.5.0 from its pinned environment, network verification off, fail closed;
+    a 64-hex value under a `sha256` key is a hash pin. Planted values are assembled at runtime."""
+
+    HEX = hashlib.sha256(b"finzytrack test value").hexdigest()
+    B64 = base64.b64encode(hashlib.sha256(b"another test value").digest()).decode()
+
+    def found(self, text: str, path: str = "x.py") -> list[str]:
+        return [f.rule for f in ps.entropy_findings({path: text})]
+
+    def test_must_flag(self) -> None:
+        cases = {
+            "aws key id": j("aws_key = \"AKIA", "Q3EGRIUIUHWS", "J3XY\"\n"),
+            "high-entropy base64": f'token = "{self.B64}"\n',
+            "a 64-hex value under another key": f'"token": "{self.HEX}"\n',
+            "a hash-looking value one character short": f'"sha256": "{self.HEX[:63]}"\n',
+        }
+        for name, text in cases.items():
+            with self.subTest(case=name):
+                self.assertIn("secret-entropy", self.found(text))
+
+    def test_must_pass(self) -> None:
+        cases = {
+            "a sha256 pin": f'"sha256": "{self.HEX}",\n',
+            "a marked line": f'token = "{self.B64}"  # privacy-scan: allow secret-entropy\n',
+            "plain prose": "The scanner reads every staged file.\n",
+        }
+        for name, text in cases.items():
+            with self.subTest(case=name):
+                self.assertEqual(self.found(text), [])
+
+    def test_the_scan_of_staged_or_tracked_files_runs_the_rule(self) -> None:
+        text = f'token = "{self.B64}"\n'
+        findings, _ = ps.run(["a.py"], lambda p: text.encode(), [])
+        self.assertIn("secret-entropy", [f.rule for f in findings])
+
+    def test_network_verification_is_off(self) -> None:
+        seen: list[list[str]] = []
+
+        def fake_run(cmd, **kw):
+            seen.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout='{"results": {}}', stderr="")
+
+        with mock.patch.object(ps.subprocess, "run", fake_run):
+            ps.detect_secrets({"x.py": "x = 1\n"})
+        self.assertIn("--no-verify", seen[0])
+
+    def test_the_tool_failing_is_an_error_never_a_pass(self) -> None:
+        failures = {
+            "missing environment": lambda cmd, **kw: (_ for _ in ()).throw(OSError("uv not found")),
+            "non-zero exit": lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, stdout="", stderr="boom"),
+            "unreadable output": lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout="not json", stderr=""),
+        }
+        for name, fake in failures.items():
+            with self.subTest(case=name), mock.patch.object(ps.subprocess, "run", fake):
+                with self.assertRaises(ps.ToolError):
+                    ps.detect_secrets({"x.py": "x = 1\n"})
+
+    def test_main_exits_2_when_the_tool_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "a.md"
+            path.write_text("hello\n")
+            with mock.patch.object(ps, "detect_secrets", side_effect=ps.ToolError("down")), \
+                    redirect_stderr(io.StringIO()):
+                self.assertEqual(ps.main([str(path), "--quiet"]), 2)

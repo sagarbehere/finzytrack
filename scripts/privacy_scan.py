@@ -13,6 +13,10 @@ Rules (design/process/PROCESS.md, "Privacy gate"):
   iban          IBAN with a valid mod-97 checksum
   email         any address outside the reserved example/test domains
   secret        API keys, tokens, private-key blocks, assigned credentials
+  secret-entropy what detect-secrets 1.5.0 finds (vendor key formats, secret keywords, high-entropy strings),
+                run from its pinned environment `scripts/secrets-scan/` with network verification off (BL-0035);
+                a 64-hex value under a `sha256` key is a hash pin, not a secret. If the tool cannot run, the
+                scan fails (exit 2), never passes
   home-path     a real home directory (/Users/<name>, /home/<name>, /Volumes/<name>, ~<name>/, C:\\Users\\<name>)
   live-data-path the name of the owner's live data folder
   denylist      a literal from the owner's denylist (kept OUTSIDE the repo)
@@ -28,7 +32,10 @@ Matches are printed redacted. Exit status: 0 clean, 1 findings, 2 usage or inter
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
+import tempfile
 import re
 import subprocess
 import sys
@@ -242,6 +249,57 @@ def scan_text(path: str, text: str, denylist: list[str]) -> list[Finding]:
     return out
 
 
+SECRETS_ENV = Path(__file__).resolve().parent / "secrets-scan"
+HASH_PIN = re.compile(r"""["']?sha256["']?\s*[:=]\s*["']([0-9a-f]{64})["']""")
+CANDIDATE = re.compile(r"""["']([^"']+)["']|([^\s"'=:,]+)""")
+
+
+class ToolError(Exception):
+    pass
+
+
+def detect_secrets(texts: dict[str, str]) -> dict[str, list[tuple[int, str]]]:
+    """{path: [(line, hashed_secret)]} from detect-secrets over the given texts, written under their own
+    relative paths in a temporary folder (so its file-name heuristics see the real names)."""
+    if not texts:
+        return {}
+    with tempfile.TemporaryDirectory() as tmp:
+        for rel, text in texts.items():
+            dest = Path(tmp) / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(text, encoding="utf-8")
+        cmd = ["uv", "run", "--project", str(SECRETS_ENV), "--locked", "--quiet", "detect-secrets", "scan",
+               "--no-verify", *texts]
+        try:
+            proc = subprocess.run(cmd, cwd=tmp, capture_output=True, text=True, timeout=300)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise ToolError(f"detect-secrets could not run: {e}") from e
+        if proc.returncode != 0:
+            raise ToolError(f"detect-secrets failed: {proc.stderr.strip()[-500:]}")
+        try:
+            results = json.loads(proc.stdout)["results"]
+        except (ValueError, KeyError) as e:
+            raise ToolError(f"detect-secrets output unreadable: {e}") from e
+    return {path: [(r["line_number"], r["hashed_secret"]) for r in found] for path, found in results.items()}
+
+
+def entropy_findings(texts: dict[str, str]) -> list[Finding]:
+    out: list[Finding] = []
+    for path, hits in detect_secrets(texts).items():
+        lines = texts[path].splitlines()
+        for lineno, hashed in hits:
+            line = lines[lineno - 1] if 0 < lineno <= len(lines) else ""
+            allowed = {r.strip() for m in ALLOW_MARK.finditer(line) for r in m.group(1).split(",")}
+            if "secret-entropy" in allowed:
+                continue
+            tokens = [m.group(1) or m.group(2) for m in CANDIDATE.finditer(line)]
+            token = next((t for t in tokens if hashlib.sha1(t.encode()).hexdigest() == hashed), "")  # noqa: S324
+            if token and any(m.group(1) == token for m in HASH_PIN.finditer(line)):
+                continue  # a sha256 pin (lockfile-style), not a secret
+            out.append(Finding(path, lineno, "secret-entropy", redact(token) if token else "(value not located)"))
+    return out
+
+
 def decode(data: bytes) -> str | None:
     """Text content of a blob, including UTF-16/32 text; None for real binaries."""
     for bom, enc in ((b"\xff\xfe\x00\x00", "utf-32"), (b"\x00\x00\xfe\xff", "utf-32"), (b"\xff\xfe", "utf-16"), (b"\xfe\xff", "utf-16")):
@@ -278,6 +336,7 @@ def tracked_files() -> list[str]:
 def run(paths: list[str], reader, denylist: list[str]) -> tuple[list[Finding], list[str]]:
     findings: list[Finding] = []
     binaries: list[str] = []
+    texts: dict[str, str] = {}
     for p in paths:
         data = reader(p)
         if data is None:
@@ -287,6 +346,8 @@ def run(paths: list[str], reader, denylist: list[str]) -> tuple[list[Finding], l
             binaries.append(p)  # refused by scripts/check_staged.py unless an allowed media type
             continue
         findings.extend(scan_text(p, text, denylist))
+        texts[p] = text
+    findings.extend(entropy_findings(texts))
     return findings, binaries
 
 
@@ -320,7 +381,12 @@ def main(argv: list[str] | None = None) -> int:
             fp = Path(p)
             return fp.read_bytes() if fp.is_file() else None
 
-    findings, binaries = run(paths, reader, denylist)
+    try:
+        findings, binaries = run(paths, reader, denylist)
+    except ToolError as e:
+        print(f"privacy-scan: {e} (the secret-entropy rule cannot be skipped; run `uv sync --project "
+              f"scripts/secrets-scan`)", file=sys.stderr)
+        return 2
     for f in findings:
         print(f, file=sys.stderr)
     if not args.quiet:

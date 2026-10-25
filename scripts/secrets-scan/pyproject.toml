@@ -1,0 +1,11 @@
+# The pinned environment of the privacy scanner's secret and entropy rule (BL-0035; scripts/privacy_scan.py).
+# A dev tool: nothing here ships. Pin: design/ARCHITECTURE.md §10 (EP-24).
+[project]
+name = "finzytrack-secrets-scan"
+version = "0"
+requires-python = "==3.13.*"
+dependencies = ["detect-secrets==1.5.0"]
+
+[tool.uv]
+exclude-newer = "14 days"
+package = false

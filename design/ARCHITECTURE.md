@@ -783,7 +783,7 @@ The versions below are the newest stable releases published on or before **2026-
 | syrupy | 6.1.1 | golden snapshots (subject to the golden change rule in `PROCESS.md`) |
 | mutmut | 3.8.0 | T2 mutation testing |
 | deptry | 0.25.1 | unused or undeclared dependencies |
-| detect-secrets | 1.5.0 | part of the T0 privacy scanner |
+| detect-secrets | 1.5.0 | part of the T0 privacy scanner (rule `secret-entropy`), in its own pinned environment `scripts/secrets-scan/` (S0016) |
 | oasdiff (Go binary) | pinned by checksum | API breaking-change check |
 
 **Frontend libraries — React (ADR-0006, pending S13)** — newest stable published on or before 2026-10-10, checked on registry.npmjs.org on 2026-10-24.
