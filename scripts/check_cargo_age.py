@@ -14,8 +14,9 @@ version, published, exception). This script fills it from crates.io (`--update`)
   journal has a line naming the crate and the word "escape": the record of a violation found too late to undo
   (adoption is history). The marker is refused for anything adopted later, so it cannot become a way in;
 - a dependency from anywhere but crates.io (git, another registry) is refused: it has no publish date;
-- `--verify-since REF` re-reads from crates.io the date of every entry absent from the lock at REF (CI passes
-  the previous push), and `--verify-all` every entry (nightly); a mismatch or a failed request fails.
+- `--verify-since REF` re-reads from crates.io the date of every entry absent from the lock at REF, and
+  `--verify-all` every entry (nightly); a mismatch or a failed request fails. CI passes the last commit whose
+  CI run passed, not the previous push, so an entry pushed with a red run is re-read until a run is green.
 A shallow clone fails closed: adoption dates need the lock's whole history.
 
 Usage: python3 scripts/check_cargo_age.py [--update] [--verify-since REF | --verify-all]
@@ -75,15 +76,18 @@ def adoption_dates(working_text: str, now: datetime) -> dict[Key, datetime]:
     if git("rev-parse", "--is-shallow-repository").strip() != "false":
         raise CheckError("shallow clone: adoption dates need the lockfile's whole history (fetch-depth: 0)")
     first: dict[Key, datetime] = {}
-    log = git("log", "--reverse", "--format=%H %cI", "--", LOCK).split("\n")
+    # --full-history: a version first added on a side branch keeps that branch's date after a merge
+    log = git("log", "--all", "--full-history", "--format=%H %cI", "--", LOCK).split("\n")
     for line in filter(None, log):
         sha, date = line.split(" ", 1)
         try:
             text = git("show", f"{sha}:{LOCK}")
         except subprocess.CalledProcessError:
             continue  # the commit deleted the file
+        when = datetime.fromisoformat(date).astimezone(UTC)
         for key in lock_entries(text)[0]:
-            first.setdefault(key, datetime.fromisoformat(date).astimezone(UTC))
+            if key not in first or when < first[key]:
+                first[key] = when
     for key in lock_entries(working_text)[0]:
         first.setdefault(key, now)
     return first
@@ -110,9 +114,10 @@ def read_dates(text: str) -> tuple[dict[Key, tuple[datetime, str]], list[str]]:
     return rows, problems
 
 
-def exception_ok(name: str, ref: str, journal_dir: Path, adopted: datetime) -> bool:
-    """The security exception cites a journal file with one line naming the crate and an advisory; an
-    `escape:` marker (adopted before CHECK_SINCE only) cites one with a line naming the crate and "escape"."""
+def exception_ok(name: str, version: str, ref: str, journal_dir: Path, adopted: datetime) -> bool:
+    """The security exception cites a journal file with one line naming the crate, this version and an
+    advisory ("only that package moves early", EP-24); an `escape:` marker (adopted before CHECK_SINCE only)
+    cites one with a line naming the crate, this version and "escape"."""
     escape = ref.startswith("escape:")
     if escape:
         ref = ref.removeprefix("escape:")
@@ -122,8 +127,10 @@ def exception_ok(name: str, ref: str, journal_dir: Path, adopted: datetime) -> b
     if not ref or path.parent != journal_dir.resolve() or not path.is_file():
         return False
     crate = re.compile(rf"(?<![\w-]){re.escape(name)}(?![\w-])")
+    exact = re.compile(rf"(?<![\w.-]){re.escape(version)}(?![\w-]|\.\d)")
     marker = re.compile(r"(?i)\bescape\b") if escape else ADVISORY
-    return any(crate.search(line) and marker.search(line) for line in path.read_text(encoding="utf-8").splitlines())
+    return any(crate.search(line) and exact.search(line) and marker.search(line)
+               for line in path.read_text(encoding="utf-8").splitlines())
 
 
 def evaluate(entries: set[Key], rows: dict[Key, tuple[datetime, str]], adopted: dict[Key, datetime],
@@ -140,7 +147,7 @@ def evaluate(entries: set[Key], rows: dict[Key, tuple[datetime, str]], adopted: 
             if exception:
                 problems.append(f"{key[0]} {key[1]}: old enough, so the exception {exception!r} must go")
             continue
-        if exception and exception_ok(key[0], exception, journal_dir, adopted[key]):
+        if exception and exception_ok(key[0], key[1], exception, journal_dir, adopted[key]):
             continue
         problems.append(f"{key[0]} {key[1]}: published {published:%Y-%m-%d %H:%M} UTC, adopted "
                         f"{adopted[key]:%Y-%m-%d %H:%M} UTC, {age.total_seconds() / 86400:.1f} days old "
@@ -162,6 +169,29 @@ def fetch_all(keys: list[Key]) -> dict[Key, datetime]:
         if i:
             time.sleep(1)  # crates.io crawler policy: at most one request per second
         out[(name, version)] = published_on_crates_io(name, version)
+    return out
+
+
+def to_verify(entries: set[Key], rows: dict[Key, tuple[datetime, str]], since_text: str | None,
+              verify_all: bool) -> list[Key]:
+    """The rows to re-read: all of them, or those whose entry is absent from the lock at the base (`since_text`
+    is that lock, None when the base has none: then everything)."""
+    if verify_all or since_text is None:
+        return sorted(entries & rows.keys())
+    return sorted((entries - lock_entries(since_text)[0]) & rows.keys())
+
+
+def mismatches(rows: dict[Key, tuple[datetime, str]], keys: list[Key], fetch=None) -> list[str]:
+    """Rows whose date differs from crates.io by more than a second. A failed request raises (fail closed)."""
+    out = []
+    fetched = (fetch or fetch_all)(keys)
+    for key in keys:
+        actual = fetched.get(key)
+        if actual is None:
+            out.append(f"{key[0]} {key[1]}: no date from crates.io")
+        elif abs(actual - rows[key][0]) > timedelta(seconds=1):
+            out.append(f"{key[0]} {key[1]}: {DATES.name} says {rows[key][0]:%Y-%m-%dT%H:%M:%SZ}, "
+                       f"crates.io says {actual:%Y-%m-%dT%H:%M:%SZ}")
     return out
 
 
@@ -195,19 +225,14 @@ def main(argv: list[str]) -> int:
             rows.update({k: (d, "") for k, d in fetch_all(missing).items()})
             write_dates(rows)
             print(f"check-cargo-age: {len(missing)} rows added, {DATES.name} has {len(rows)} rows")
-        to_verify: list[Key] = []
-        if args.verify_all:
-            to_verify = sorted(entries & rows.keys())
-        elif args.verify_since:
-            try:
-                before = lock_entries(git("show", f"{args.verify_since}:{LOCK}"))[0]
-            except subprocess.CalledProcessError:
-                before = set()  # the lock did not exist there: verify everything
-            to_verify = sorted((entries - before) & rows.keys())
-        for key, actual in fetch_all(to_verify).items():
-            if abs(actual - rows[key][0]) > timedelta(seconds=1):
-                problems.append(f"{key[0]} {key[1]}: {DATES.name} says {rows[key][0]:%Y-%m-%dT%H:%M:%SZ}, "
-                                f"crates.io says {actual:%Y-%m-%dT%H:%M:%SZ}")
+        if args.verify_all or args.verify_since:
+            since_text: str | None = None
+            if args.verify_since:
+                try:
+                    since_text = git("show", f"{args.verify_since}:{LOCK}")
+                except subprocess.CalledProcessError:
+                    since_text = None  # unknown base, or no lock there: verify everything
+            problems += mismatches(rows, to_verify(entries, rows, since_text, args.verify_all))
         adopted = adoption_dates(working, datetime.now(UTC))
     except (CheckError, OSError, subprocess.CalledProcessError, KeyError, ValueError) as e:
         print(f"check-cargo-age: {e}", file=sys.stderr)

@@ -724,7 +724,8 @@ Saves of rules, dashboards, themes and settings carry an expected content hash (
 
 **Rule (EP-24):** exact pins in lockfiles; a release must be **at least 14 days old** when adopted; upgrades are their own slices. The tools enforce the age rule themselves:
 - `uv` with `[tool.uv] exclude-newer = "14 days"` (uv accepts friendly durations, per its settings reference, checked 2026-10-24);
-- pnpm with `minimumReleaseAge: 20160` (minutes) in `pnpm-workspace.yaml`.
+- pnpm with `minimumReleaseAge: 20160` (minutes) in `pnpm-workspace.yaml`;
+- Cargo has no such setting: `scripts/check_cargo_age.py` checks every `Cargo.lock` entry against the commit that adopted it, with the publish dates in `shell/src-tauri/Cargo.lock.dates` (S0013).
 
 The versions below are the newest stable releases published on or before **2026-10-10**, checked against PyPI, npm, crates.io, python.org, nodejs.org and endoflife.date on 2026-10-24. The lockfiles decide transitive versions.
 

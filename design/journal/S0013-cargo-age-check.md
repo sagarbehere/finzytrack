@@ -20,3 +20,19 @@
 - Checks with must-not-pass tests: age (14 days passes, one minute short fails); exception (7 refusals: none, missing journal, no advisory, split lines, name inside or at the start of another name, file outside the journal, path escaping it); escape marker (refused after CHECK_SINCE, without a journal line, with a security journal); stale exception; missing and stale rows; other sources (git, other registry, sparse URL); adoption (earliest commit, removal and return, working tree = now); shallow clone; bad rows.
 - Self-mutation: 10 tried, 10 killed (the trailing name boundary survived first and got the prefix-name test).
 - Population: every crates.io entry of `Cargo.lock`, 406 of 407 packages (the other is the shell itself).
+
+## Verifier
+- Round 1, head 18af3c8: PASS WITH FINDINGS. Attacks: 12 (tests at head and base; offline check; a full `--verify-all` against crates.io, all 406 dates match; the escape recomputed; exception reuse; two-push evasion; a merged side branch; mutants of the verification path; path escapes; network errors; missing bases; the 14 × 24 h boundary and time zones).
+- F1 Medium: an exception was not tied to a version, so one journal line admitted every later young release of the crate. Fixed: the line must name the crate, the exact version and the advisory (or "escape"); two new negatives.
+- F2 Medium: `--verify-since` used the previous push, so a second push skipped re-reading a row added by a red first push. Fixed: CI passes the last commit whose CI run passed (GitHub API), falling back to verifying everything.
+- F3 Low: history simplification could hide a version's first adoption on a merged side branch. Fixed: `--all --full-history`, earliest date wins; test added.
+- F4 Medium: the crates.io path (selection, comparison, failure) had no test. Fixed: `to_verify` and `mismatches` are functions with tests for selection, a forged date, a missing answer and a failed request; GHSA and CVE exceptions now have passing cases.
+- F5 Low: a full re-read could not fit the 10-minute repo-checks job. Fixed: its own job, 25 minutes.
+- Doc: ARCHITECTURE.md §10 now names the Cargo check.
+- Self-mutation of the fixes: 5 tried, 5 killed. Three Medium on tooling with no ledger or user data: no further round (ADR-0058).
+- Housekeeping: the verifier left a scratch git worktree in the session scratchpad (`wt`, detached at 18af3c8); the guard refuses worktree removal for agents, so it stays for the owner to remove (harmless, outside the repo).
+
+## Retro
+- The check found a real escape on its first run (S0010's three crates), which is the argument for checking agent-made pins rather than trusting a by-hand procedure.
+- The brief's loosening list had the right items (2 and 8) but no tests for them; "each has a test or a stated limit" needs the hand-off to tick them one by one.
+- Process cost: about 45 min building (12 of them the first crates.io fill); verifier about 14 min wall; fixes about 25 min.

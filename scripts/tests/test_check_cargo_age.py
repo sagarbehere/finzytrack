@@ -70,6 +70,8 @@ class Evaluate(unittest.TestCase):
         (self.journal / "S0097-split.md").write_text("- ring 0.17.99 adopted early.\n- RUSTSEC-2026-0042.\n")
         (self.journal / "S0096-substring.md").write_text("- string-ring fixes RUSTSEC-2026-0042.\n")
         (self.journal / "S0095-prefix.md").write_text("- ring-compat fixes RUSTSEC-2026-0042.\n")
+        (self.journal / "S0094-other-version.md").write_text("- ring 0.17.98 fixes RUSTSEC-2026-0042.\n")
+        (self.journal / "S0093-longer.md").write_text("- ring 0.17.990 fixes RUSTSEC-2026-0042.\n")
         outside = Path(tempfile.mkdtemp()) / "x.md"
         outside.write_text("- ring fixes RUSTSEC-2026-0042.\n")
         cases = {
@@ -81,10 +83,19 @@ class Evaluate(unittest.TestCase):
             "crate name only as the start of another name": "S0095-prefix.md",
             "file outside the journal": str(outside),
             "path escaping the journal": f"../{outside.parent.name}/x.md",
+            "a line written for another version of the crate": "S0094-other-version.md",
+            "a line naming a longer version (0.17.990)": "S0093-longer.md",
         }
         for name, exception in cases.items():
             with self.subTest(case=name):
                 self.assertNotEqual(self.run_case(timedelta(days=2), exception), [])
+
+    def test_ghsa_and_cve_advisories_count(self) -> None:
+        (self.journal / "S0092-ghsa.md").write_text("- ring 0.17.99 fixes GHSA-2c2h-xq9m-r3v7 early.\n")
+        (self.journal / "S0091-cve.md").write_text("- ring 0.17.99 fixes CVE-2026-12345 early.\n")
+        for ref in ("S0092-ghsa.md", "S0091-cve.md"):
+            with self.subTest(ref=ref):
+                self.assertEqual(self.run_case(timedelta(days=2), ref), [])
 
     def test_an_escape_marker_covers_only_history(self) -> None:
         # A violation found after the fact is recorded, not undone; the marker is refused for anything adopted
@@ -112,6 +123,42 @@ class Evaluate(unittest.TestCase):
         self.assertNotEqual(cca.evaluate({self.key, other}, {self.key: (T0, "")}, {self.key: T0 + timedelta(days=20),
                                          other: T0 + timedelta(days=20)}, self.journal), [])
         self.assertNotEqual(cca.evaluate(set(), {self.key: (T0, "")}, {}, self.journal), [])
+
+
+class Verification(unittest.TestCase):
+    """Dates are re-read from crates.io for the entries new since the base (CI: the last green commit), or all;
+    a mismatch, a missing answer or a failed request fails (brief items 2 and 8)."""
+
+    def setUp(self) -> None:
+        self.old, self.new = ("serde", "1.0.0"), ("evil", "9.9.9")
+        self.rows = {self.old: (T0, ""), self.new: (T0, "")}
+
+    def test_only_entries_absent_at_the_base_are_selected(self) -> None:
+        got = cca.to_verify({self.old, self.new}, self.rows, lock(self.old), verify_all=False)
+        self.assertEqual(got, [self.new])
+
+    def test_everything_is_selected_without_a_base_or_with_verify_all(self) -> None:
+        both = sorted([self.old, self.new])
+        self.assertEqual(cca.to_verify({self.old, self.new}, self.rows, None, verify_all=False), both)
+        self.assertEqual(cca.to_verify({self.old, self.new}, self.rows, lock(self.old, self.new), True), both)
+
+    def test_matching_dates_pass(self) -> None:
+        self.assertEqual(cca.mismatches(self.rows, [self.new], lambda keys: {k: T0 for k in keys}), [])
+
+    def test_answers_that_must_not_pass(self) -> None:
+        cases = {
+            "a different date (a forged row)": lambda keys: {k: T0 - timedelta(days=30) for k in keys},
+            "no answer for a key": lambda keys: {},
+        }
+        for name, fetch in cases.items():
+            with self.subTest(case=name):
+                self.assertNotEqual(cca.mismatches(self.rows, [self.new], fetch), [])
+
+    def test_a_failed_request_raises(self) -> None:
+        def down(keys):
+            raise OSError("crates.io unreachable")
+        with self.assertRaises(OSError):  # main() turns it into exit 1
+            cca.mismatches(self.rows, [self.new], down)
 
 
 class Rows(unittest.TestCase):
@@ -162,6 +209,17 @@ class Adoption(unittest.TestCase):
         self.assertEqual(got[("a", "1.0.0")], datetime(2026, 10, 1, 12, tzinfo=UTC))
         self.assertEqual(got[("b", "1.0.0")], datetime(2026, 10, 5, 12, tzinfo=UTC))
         self.assertEqual(got[("c", "1.0.0")], now)
+
+    def test_a_version_first_added_on_a_merged_side_branch_keeps_that_date(self) -> None:
+        self.commit(lock(("a", "1.0.0")), "2026-10-01T12:00:00+00:00")
+        self.git("checkout", "-q", "-b", "side")
+        self.commit(lock(("a", "1.0.0"), ("b", "1.0.0")), "2026-11-02T12:00:00+00:00")
+        self.git("checkout", "-q", "-")
+        self.commit(lock(("a", "1.0.0"), ("b", "1.0.0")), "2026-11-12T12:00:00+00:00")
+        self.git("merge", "-q", "--no-edit", "-X", "ours", "side", date="2026-11-13T12:00:00+00:00")
+        self.git("branch", "-q", "-D", "side")
+        got = cca.adoption_dates(lock(("a", "1.0.0"), ("b", "1.0.0")), datetime(2026, 12, 1, tzinfo=UTC))
+        self.assertEqual(got[("b", "1.0.0")], datetime(2026, 11, 2, 12, tzinfo=UTC))
 
     def test_a_shallow_clone_fails_closed(self) -> None:
         self.commit(lock(("a", "1.0.0")), "2026-10-01T12:00:00+00:00")

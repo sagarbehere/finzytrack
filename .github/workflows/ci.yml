@@ -43,8 +43,27 @@ jobs:
         run: cd shell/src-tauri && rustup show active-toolchain || rustup toolchain install
       - name: Licences and THIRD_PARTY_NOTICES
         run: python3 scripts/check_licences.py
-      - name: Cargo crates at least 14 days old (EP-24); dates of entries new since the last push re-read from crates.io
-        run: python3 scripts/check_cargo_age.py --verify-since "${{ github.event.before }}"
+  cargo-age:
+    # EP-24 for Cargo (S0013): every Cargo.lock crate 14 days old at adoption; the publish dates of entries new
+    # since the last commit whose CI run passed are re-read from crates.io (one request per second).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Cargo crates at least 14 days old; new dates verified against crates.io
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base="$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?branch=next&status=success&per_page=1" -q '.workflow_runs[0].head_sha' || true)"
+          python3 scripts/check_cargo_age.py --verify-since "${base:-none}"
   backend:
     # The main sidecar (S0006; ARCHITECTURE.md §2, §10; ADR-0054): format, lint, strict types, import
     # contracts, declared dependencies, tests (incl. the architecture tests: no Beancount in this environment).
