@@ -38,6 +38,12 @@ Ledger text, payees, metadata, import files, emails, recipes and model output ar
 - Hostile-input corpora (markup in payees and metadata, chart formatters, markdown, SQL/BQL escapes, path traversal) are repo assets that run in T1.
 - Release notes say that known security issues of earlier versions are fixed and encourage upgrading.
 
+## Amendment (2026-10-25): desktop CSP details from spike S2
+
+Owner: "I am accepting Q16 recommendation." (2026-10-25, in session)
+- `connect-src` includes `ipc: http://ipc.localhost` (Tauri's IPC); without it every IPC call raises a CSP violation and falls back to postMessage.
+- Tauri's automatic CSP rewriting for scripts is turned off (`dangerousDisableAssetCspModification: ["script-src"]`), so the configured hash of the pre-paint script is the only inline script allowed; a modified inline script is blocked and reported. A test checks that the shipped pre-paint script matches the configured hash.
+
 ## References
 
 review:13 §1, §4; review:14 §0 (N1 constraint); review:18 §1–§2; review:23 §5.1; review:F §2 item 2; ADR-0007, ADR-0010, ADR-0016, ADR-0021, ADR-0033, ADR-0044; INV-09, INV-23.

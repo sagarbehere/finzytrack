@@ -413,7 +413,7 @@ Hand-written TanStack Query hooks live in `features/*/queries.ts`. They are thin
   - Crash: restart with backoff; after three crashes the shell shows a "backend stopped" screen with diagnostics. This is the sidecar statechart in §7.
 - **Plugins:** `dialog` (pick folder/file), `opener` (reveal), `single-instance` (forwards the path of a second launch), `updater`, `process` (relaunch), `log`. **No `fs` plugin, and no `shell:allow-execute` for the webview.** The Tauri capability file grants the webview only the dialog, opener, updater and process permissions it needs.
 - File associations for `.beancount` and `.bean` at alternate rank (ADR-0007). OS recents come from the registry. Close requests are forwarded to the web UI's unsaved guard.
-- **CSP** in `tauri.conf.json`: `default-src 'self'; script-src 'self' 'sha256-<pre-paint>'; connect-src 'self' http://127.0.0.1:*; img-src 'self' data:; object-src 'none'`. The same CSP is set as an HTTP header for browser and headless use (INV-09, ADR-0040).
+- **CSP** in `tauri.conf.json`: `default-src 'self'; script-src 'self' 'sha256-<pre-paint>'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*; img-src 'self' data:; object-src 'none'`, with Tauri's script-src rewriting off (`dangerousDisableAssetCspModification: ["script-src"]`; ADR-0040 amendment, spike S2). The same CSP is set as an HTTP header for browser and headless use (INV-09, ADR-0040).
 
 **TypeScript side.** One `ShellPort` with a Tauri implementation and a browser implementation (ADR-0007): `pickFolder`, `pickFile`, `reveal`, `setRecents`, `onOpenTarget`, `onCloseRequested`, plus `checkForUpdate` / `installUpdate`. The `ShellPort` is the only module that imports `@tauri-apps/*`, which ESLint enforces.
 
