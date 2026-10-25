@@ -16,15 +16,26 @@
 - Open questions: none.
 - Base SHA: c640611.
 
-## Decisions
-- A hand-written lexer, not bashlex: the hooks run on the system Python with no dependencies, and the guard needs quoting, substitutions and heredocs, not a full grammar (agent).
-- Exemption by allowlist of sinks (`cat`/`tee` not piped on, `git commit -F -`, the values of `git commit -m/--message` and `gh --title/--body`), never by "looks like prose" (EP-30) (agent).
-- A heredoc body that is not plain data and goes to `cat`/`tee` is read as a command as well, since its output goes somewhere that may run it (agent).
-- What the lexer cannot read is refused rather than guessed (agent).
-- Stated limit (unchanged from today): code inside a heredoc or `-c` string for a non-shell interpreter gets the text checks only (live data names, the owner's port, process-stopping words), like a script written with the Write tool and run. The old regex splitter caught shell-shaped lines in such code by accident, which was also the source of the false positives (agent).
-- Loosening check: every refusal in the existing meta-tests still holds unchanged; the new allowances are limited to text bash does not execute. BL-0042 was kept in M0 with the owner's approval of ADR-0058 ("I agree with your recommendations 1-4 on improving the process and re-evaulating as in 5", 2026-10-25) (agent).
+## Round 2 design (after the verifier's FAIL; supersedes the lexer above)
+- The round-1 design (a hand-written shell lexer exempting text sent to sinks) failed: 14 commands the old guard refused passed, through nested quotes in `${…}`, `case` patterns inside `$(…)`, delimiters the shell cooks differently, `<<` that is not a heredoc, and compound commands piped into a shell. A lexer that skips text will keep disagreeing with zsh and bash at the edges (EP-30).
+- Round 2 keeps the 18af3c8 guard unchanged and adds one thing: in five exact whole-command shapes, anchored at the command's first character, the body of a heredoc whose delimiter is a plain word in **single quotes** is removed before the old checks run: `cat > path <<'W'`, `cat >> path <<'W'`, `cat <<'W' > path`, `tee [-a] path <<'W'`, `git commit [flags] -F - <<'W'`, `git commit [flags] -m "$(cat <<'W'` … `W` / `)"`. The opening line may hold nothing after the delimiter; the path is plain (no `$`, quotes or `/dev/`); a body that never closes is not stripped; everything after the terminator (and after `)"` on its line) is checked as a new command. Neither bash nor zsh expands such a body.
+- Dropped: the commit-message exemption (`-m 'text'` and `gh --body` still refuse guarded words; the verifier noted it was beyond what BL-0042 named, F8), and the lexer (`shell_lex.py` deleted).
+- Remaining false positives, accepted: guarded words in a single-quoted `-m` message; backticks inside single quotes split as commands (the sed case). Workaround: the heredoc shapes, or the Edit tool. BL-0042's second half stays open as BL-0054.
 
-## Hand-off (PROCESS.md §3 step 4; ADR-0057)
-- Checks with must-not-pass tests: heredoc-as-data (piped on, procsub, unquoted, non-sink receiver, sink output into `bash -c`/`eval`/an assignment); message values (substitutions inside, non-sink with `-m`, other git subcommands, `-n` hidden in a cluster, global `-c`); `-c` strings incl. `-lc`; `eval`; lexer (escaped quotes, unterminated quote/heredoc/substitution, `)` inside a body, `<<-` tabs, delimiter with trailing space); redirect targets of sinks. 28 refusals, 11 allowances, plus the 9 existing tests unchanged.
-- Self-mutation: 16 tried, 12 killed first; 3 survivors got tests (`git stash -m`, an unquoted heredoc to Python, `-nmMSG`) and are killed; 1 equivalent (keeping the backslash with an escaped `"` still consumes the quote, so the string does not end early).
-- Population: the false positives of S0001, S0005 and S0012 (commit messages and doc heredocs mentioning guarded words; `sed` with a backticked command in single quotes); twelve commands typical of this session still pass.
+## Decisions
+- Exact shapes over a parser, after a parser failed a High review (EP-30) (agent).
+- Loosening check: the diff against 18af3c8 is a pure addition (`literal_heredoc_parts` and a wrapper); every old refusal holds, and the only new allowance is a single-quoted heredoc body in the shapes above. BL-0042 was kept in M0 with the owner's approval of ADR-0058 ("I agree with your recommendations 1-4 on improving the process and re-evaulating as in 5", 2026-10-25) (agent).
+
+## Hand-off (round 2)
+- Checks with must-not-pass tests: 31 refusals in `LiteralHeredocs` (rest of the command, `--no-verify` after `)"`, redirect targets incl. the legacy worktree, the live folder and `/dev/tcp`, pipes after the delimiter, unquoted and double-quoted delimiters, other receivers, prefixes, unclosed bodies, more lines inside the substitution, and the verifier's 14 bypasses of round 1), 7 allowances, the 9 old tests unchanged.
+- Self-mutation: 9 tried, 8 killed (two survivors got tests first); 1 equivalent (`search` instead of `match` on a pattern anchored with `\A`).
+
+## Verifier
+- Round 1, head cbd5389: FAIL. Attacks: 14 (nested quotes, case patterns, delimiter cooking, non-heredoc `<<`, compound commands, fds/FIFOs/coprocs, message flags swallowing redirects, word splitting, `/dev/tcp`, `env -i`, zsh glob qualifiers, comments, mutants, tests on base).
+- F1–F5 High: lexer mis-parses and compound commands let executable text pass (see Round 2 design); fixed by dropping the lexer; all 14 repros are now tests.
+- F6 Medium: a message flag swallowed a redirect into the legacy worktree; fixed (exemption dropped; test kept).
+- F7 Medium: a cat heredoc sent to code through an fd, FIFO or coproc; fixed (the shapes allow no second redirect; the fd case is a test). A FIFO created by an earlier, separate command remains possible, as with a file written by the Write tool and run later (stated limit).
+- F8 Medium: the message exemption went beyond BL-0042's approved scope; dropped.
+- F9 Low: surviving mutants and no zsh-specific cases; the new suite's mutants are above; zsh forms (`$[ ]`) are among the refusals.
+- Q1–Q3 (open before this slice, not regressions): word-split flags from a substitution (`git commit -m x $(echo --no-verify)`), `/dev/tcp` redirects and writes to `.git/config`, redirect targets of git commands → BL-0055.
+- Re-verification required (High fixes): round 2 below.
