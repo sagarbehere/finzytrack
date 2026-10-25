@@ -41,3 +41,14 @@
   - F8 Low (EP-29): `python_deps` untested. Fixed: a wiring test checks `--no-dev`, `--frozen` and the filtering.
   - Doc: IMP-0014 added for the T1 job. INV-02's stale "Enforced by" text sent to the owner (`design/inbox/20261025-inv-02-enforced-by.md`).
 - Self-mutation of the fixes: 15 tried, 14 killed. Survivor `assert-any-contract` weakens the test's own assertion; it is equivalent while every contract is configured correctly (it would matter only together with a config that attributes a violation to the wrong contract).
+- Round 2, head 7739349: **PASS WITH FINDINGS**. Attacks tried (11): gates from both roots; the new licence tests against the base (6 fail there); 22 crafted SPDX expressions (all judged or refused); `judge` mutants (killed, two equivalent); the JS joining path; four layer mutants (killed); the BROKEN-line assertion; pyright loosening mutants; a per-file `# pyright: basic`; ruff-ban bypasses; ruff-ban mutants.
+  - R2-F1 Medium (EP-22): the test pinned five pyright keys, so other loosenings (a rule set to none, a narrowed `include`, an `ignore`) and a file-level `# pyright: basic` passed. Fixed: the whole pyright config is pinned; a check refuses file-level strictness comments (with a planted case beside an allowed `pyright: ignore[...]`); ruff's per-file ignores are pinned too (a survivor of the verifier's plan: a `TID251` ignore for a whole layer). The verifier's plan now: 8 tried, 8 killed.
+  - R2-F2 Low (INV-07, EP-10): `datetime.fromtimestamp(time.time(), UTC).date()`, `time.localtime()` and `time.strftime` passed outside `domain/`. Fixed: `time.time`, `time_ns`, `localtime`, `gmtime`, `strftime` and `ctime` are banned; tests plant them in `app/api`. The Clock adapter will be the one listed exemption.
+  - R2-F3 Low (EP-22 "a reason on every ignore"): no stable ruff rule checks the reason; a known gap, left to the verifier checklist.
+  - One Medium after round 2: no further round required.
+
+## Retro
+- What the verifier found: round 1, 4 Medium and 4 Low; round 2, 1 Medium and 2 Low. Real and worth having: the licence check failed open on `(A OR B) AND C`; ARCHITECTURE contradicted itself on boot and workspaces, which the first boot slice would have hit. Round 2's pyright and ruff findings pinned the gates against silent loosening, which EP-22 asks for.
+- What a cheaper gate could have found: "pin the whole config" is the general answer to "settings cannot be loosened silently"; I pinned named keys first. Writing the must-not-pass case for the config itself (a loosened config must fail a test) would have led there directly.
+- Where time went: skeleton about 1 h (most on the licence filter and pins); fixes about 1 h over two rounds; verifier about 6 + 4 min wall.
+- Process cost: the review loop cost about as much as building, on a Medium slice. Raised with the owner in the session (process overhead question, 2026-10-25).
