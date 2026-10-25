@@ -2,7 +2,7 @@
 name = "finzytrack-shell"
 version = "0.4.0-dev.0"
 edition = "2021"
-license = "GPL-3.0-or-later"
+license = "GPL-2.0-or-later"
 publish = false
 rust-version = "1.99"
 

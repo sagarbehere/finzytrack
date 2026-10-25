@@ -25,8 +25,8 @@ Several principles are the *engineering means* of an invariant. When that holds,
 
 | Check | Tool / file | Tier |
 |---|---|---|
-| Type gates | pyright strict (`backend/pyrightconfig.json`); `tsc --noEmit` with the strict `tsconfig.json` (`vue-tsc` if spike S13 keeps Vue) | T0 pre-push (`PROCESS.md` (gates)) |
-| Lint / bans | ruff (`backend/ruff.toml`), ESLint (`frontend/eslint.config.ts`, with eslint-plugin-react-hooks strict rules incl. the React Compiler rules, as errors) | T0 |
+| Type gates | pyright strict (`backend/pyrightconfig.json`); `vue-tsc --noEmit` with the strict `tsconfig.json` (ADR-0053); both configs pinned by tests | T0 pre-push (`PROCESS.md` (gates)), T1 |
+| Lint / bans | ruff (`backend/ruff.toml`), ESLint (`frontend/eslint.config.js`: typescript-eslint strict, eslint-plugin-vue, vuejs-accessibility, the INV-06/INV-07 bans in scripts and templates), rustfmt and pedantic clippy with warnings as errors (`shell/src-tauri`) | T0 (pre-commit for ruff and ESLint; pre-push for rustfmt and clippy), T1 |
 | Licences | licence check of the Python, JS and Rust dependency trees against an allowlist; `THIRD_PARTY_NOTICES` regenerated (owner, 2026-10-24; ADR-0042) | T1 |
 | Layering | import-linter (`backend/.importlinter`); eslint-plugin-boundaries | T1 (T0 for changed files) |
 | Architecture tests | `backend/tests/architecture/` (AST bans, globals/state registry, route scope, TLA mapping, error codes, events) | T1 |

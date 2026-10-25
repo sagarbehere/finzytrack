@@ -150,6 +150,15 @@ class Rust(unittest.TestCase):
         self.assertEqual(len(problems), 1)
 
 
+class RustTooling(unittest.TestCase):
+    def test_shell_without_cargo_fails_closed(self) -> None:
+        # A shell that exists but cannot be inspected must not pass as "no Rust dependencies".
+        with mock.patch.object(cl.Path, "exists", lambda p: str(p).endswith("Cargo.toml")), \
+                mock.patch.object(cl.shutil, "which", lambda _n: None):
+            with self.assertRaises(SystemExit):
+                cl.rust_deps()
+
+
 class Allowlist(unittest.TestCase):
     ALLOWED = {"MIT", "BSD-3-Clause"}
     PENDING = {"Apache-2.0"}

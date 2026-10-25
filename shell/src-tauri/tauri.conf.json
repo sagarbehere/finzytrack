@@ -8,11 +8,24 @@
     "devUrl": "http://localhost:5173"
   },
   "app": {
-    "windows": [{ "title": "Finzytrack", "width": 1200, "height": 800 }],
-    "security": { "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'" }
+    "windows": [
+      {
+        "title": "Finzytrack",
+        "width": 1200,
+        "height": 800
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'",
+      "dangerousDisableAssetCspModification": [
+        "script-src"
+      ]
+    }
   },
   "bundle": {
     "active": false,
-    "macOS": { "minimumSystemVersion": "14.0" }
+    "macOS": {
+      "minimumSystemVersion": "14.0"
+    }
   }
 }

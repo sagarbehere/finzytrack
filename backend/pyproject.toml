@@ -1,10 +1,10 @@
-# The main sidecar (ADR-0054): GPLv3, never imports Beancount. Package map: design/ARCHITECTURE.md §2.
+# The main sidecar (ADR-0054): our source is GPL-2.0-or-later; the distributed sidecar is GPLv3. Never imports Beancount. Package map: design/ARCHITECTURE.md §2.
 # Runtime dependencies arrive with the slice that first uses each one; pins: ARCHITECTURE.md §10 (EP-24).
 [project]
 name = "finzytrack-backend"
 version = "0.4.0.dev0"
 requires-python = "==3.13.*"
-license = "GPL-3.0-or-later"
+license = "GPL-2.0-or-later"
 dependencies = []
 
 [dependency-groups]
