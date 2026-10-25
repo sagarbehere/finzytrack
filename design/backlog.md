@@ -45,7 +45,7 @@ This file is the tracked home of the private review backlog (`review:99`). The r
 | of which `removed` (investment scope reset) | 4 |
 | Doubles (merged onto a canonical row) | 47 |
 | Invariant-enforcement items (`BL-0001`…`BL-0031`) | 31 |
-| Other new items (`BL-0032`…) | 11 |
+| Other new items (`BL-0032`…) | 12 |
 
 Canonical findings to build, by milestone: M0 4, M1 16, M2 47, M3 15, M4 18, M5 20, M6 40, M7 37, M8 23, M9 12, M10–M12 0 (total 232).
 
@@ -629,3 +629,4 @@ Each item builds the check that turns one invariant from "pending" into "enforce
 | BL-0040 | Tighten `check_invariants.py`: detect skip/xfail/fixme on the tagged tests, count only T1 runners (not pre-commit), require evidence for `review-only`, and guard the owner-owned rule text with a hash that only an owner-approved change updates | WS-QA | M0 | open | `review:G F-8, F-9` |
 | BL-0041 | Implement the two-process backend of ADR-0054 in M1a: `engine/` environment and lockfile, `contracts/engine-protocol.schema.json`, `engine_client` port, supervision, per-environment architecture tests and licence allowlists; measure the protocol overhead per write and per large BQL result with the S4 harness | WS-BACKEND-CORE | M1a | open | `ADR-0054` |
 | BL-0042 | Guard hook parser: text inside quoted heredocs and backticks within quoted strings is split as if it were commands (false positive: a doc edit that mentions the push-gate command was refused). Parse with a real shell tokenizer (e.g. bashlex) or skip quoted heredoc bodies; add meta-tests | WS-QA | M0 | open | `S0001 retro` |
+| BL-0043 | Frontend WebKit-baseline lint (Safari 17, ADR-0007 amendment): ban APIs newer than the baseline (global `Temporal`, `ReadableStream.from`, async stream iteration, ...), e.g. with eslint-plugin-compat and a browserslist of `safari >= 17`; set `minimumSystemVersion` 14.0 in the Tauri config when `shell/` lands | WS-UI | M2 | open | `ADR-0007`, `S0001` |

@@ -37,6 +37,13 @@ v0.2/v0.3 ship as PyInstaller + pywebview. There is no auto-updater, installers 
 - The packaged macOS UI cannot be driven by `tauri-driver`; macOS relies on `--smoke-test`, sidecar and API checks, Playwright WebKit against the sidecar-served bundle, and dogfooding.
 - Users see a Gatekeeper first-run warning on macOS; the install docs explain it.
 
+## Amendment (2026-10-25): minimum macOS 14
+
+Owner: "I accept your recommendation of Macos 14 or later" (2026-10-25, in session).
+- **macOS 14 (Sonoma) or newer on Apple silicon** is the minimum supported version (`bundle.macOS.minimumSystemVersion = "14.0"`).
+- **The WebKit baseline is Safari 17**, the system WebKit of macOS 14. The frontend lint bans browser APIs newer than that baseline, including the global `Temporal` (dates use temporal-polyfill), `ReadableStream.from` and async iteration of streams (spike S2). Playwright's WebKit is newer than the shipped one, so a Playwright pass alone does not prove an API is available.
+- Windows and Linux minimums are unchanged (Windows 10/11 x64, Ubuntu 22.04 or newer).
+
 ## References
 
 review:22 §2; review:25 §5, §9.8; review:F §2 item 8, steering 2; ADR-0012, ADR-0040, ADR-0043.
