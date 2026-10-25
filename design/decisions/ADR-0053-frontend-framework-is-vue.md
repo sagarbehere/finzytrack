@@ -2,7 +2,7 @@
 
 This record applies the owner's S13 decision rule (ADR-0006) to the measured result: the frontend stays on Vue.
 
-- **Status:** Accepted (by the owner's pre-set rule; the owner may ask for the confirmation rerun below)
+- **Status:** Accepted, confirmed by the owner: "I accept your recommendation on Q28" (2026-10-25, in session): Vue, with the memory rule applied to every memory measure, and no confirmation rerun.
 - **Date:** 2026-10-25
 - **Deciders:** owner (decision rule, ADR-0006); spike S13 (the measurement)
 - **Area:** frontend, stack
