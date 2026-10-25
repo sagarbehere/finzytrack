@@ -27,7 +27,7 @@ Template:
 - Population (if the slice claims to cover a whole set): <inventory used, built by behaviour; counts in / out>
 
 ## Verifier
-(Summarise the report; do not transcribe it. One line per finding. ADR-0058.)
+(Summarise the report; do not transcribe it. One line per finding. A process change is described once, in `IMPROVEMENTS.md`, and the journal points to its IMP entry. ADR-0058.)
 - Round <n>, head <sha>: <verdict>. Attacks: <count and a few words>.
 - <ID> <severity>: <one line: what, and the fix or backlog ID>
 

@@ -6,10 +6,11 @@ This record trims the process after the owner asked whether it was eating the de
 - **Date:** 2026-10-25
 - **Deciders:** owner: "I agree with your recommendations 1-4 on improving the process and re-evaulating as in 5" (2026-10-25, in session)
 - **Area:** process
+- **Amends:** ADR-0057 adjustment 4 (re-verification now follows risk) and ADR-0045 (the verifier-SHA check is done by the verifier until BL-0034 is un-parked)
 
 ## Context
 
-Measured after S0007 (journals S0002–S0007):
+Measured after S0007 (journals S0000–S0007):
 - `design/` holds about 150,000 words. About 90,000 of them are the one-time migration of the review (capability map, finding index, ADRs). The recurring part is the journals, about 11,000 words over 8 slices: findings were written up three times (verifier report, journal, sometimes `IMPROVEMENTS.md`).
 - Product code: none yet (M0). Process code (checks, hooks, meta-tests, the mutation runner) is about 3,600 lines; product-safety tooling (the oracle harness) about 2,600.
 - Verifier precision stays at 100%, and the findings that matter were on code that can produce a wrong number or touch data: S0002's classifiers, S0004's missing writers, S0006's licence check failing open and its architecture contradiction.

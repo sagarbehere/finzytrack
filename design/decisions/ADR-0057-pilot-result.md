@@ -2,7 +2,7 @@
 
 This record closes the process pilot that ADR-0046 set up: what three slices measured, how the rubric and the gates change because of it, and a rough slice count for M1–M12.
 
-- **Status:** Accepted. The PROCESS.md edits are approved by the owner: "I'll go with your recommendation for the PROCESS.md changes" (2026-10-25, in session; `design/inbox/answered/20261025-pilot-process-changes.md`)
+- **Status:** Accepted. The PROCESS.md edits are approved by the owner: "I'll go with your recommendation for the PROCESS.md changes" (2026-10-25, in session; `design/inbox/answered/20261025-pilot-process-changes.md`). Adjustment 4 amended by ADR-0058.
 - **Date:** 2026-10-25
 - **Deciders:** agent (the tightenings, the estimate); owner (approval of the PROCESS.md edits, 2026-10-25)
 - **Area:** process

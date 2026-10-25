@@ -2,7 +2,7 @@
 
 This record decides where agent work runs, what CI does, how work lands, and how owner approvals are recorded.
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended by ADR-0058: the T1 verifier-SHA check is parked (BL-0034); the verifier checks the SHA meanwhile.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** process, CI, repository
