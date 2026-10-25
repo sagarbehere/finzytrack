@@ -17,3 +17,4 @@ In S0010 I used Cargo's own `cargo metadata` instead: it lists every package wit
 Option 1: one allowlist and one set of rules for all three languages, with no extra tool to pin and update; the result is the same set of packages.
 
 ## Answer (owner, verbatim, with date)
+"Amend ADR-0042: the Rust licence list comes from `cargo metadata`, judged by the one allowlist; cargo-about collects the licence texts at bundling; cargo-deny is not used for licences (it may be added later for security advisories)." (owner, 2026-10-25, in session). Option 1; recorded as the ADR-0042 amendment.

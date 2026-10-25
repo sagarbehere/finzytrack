@@ -30,6 +30,13 @@ The project is GPL v2, and the README does not say "or later". Beancount, which 
 - The legal advice may lead to a superseding ADR (for example a change in bundled components).
 - **Amended by ADR-0054 (2026-10-25):** Beancount runs in its own engine process; the main sidecar never imports it and is distributed under GPLv3. The licence check runs per process with two allowlists.
 
+## Amendment (2026-10-25): Rust licence tooling
+
+Owner: "Amend ADR-0042: the Rust licence list comes from `cargo metadata`, judged by the one allowlist; cargo-about collects the licence texts at bundling; cargo-deny is not used for licences (it may be added later for security advisories)." (2026-10-25, in session; `design/inbox/answered/20261025-rust-licence-tooling.md`).
+- The Rust licence list comes from `cargo metadata`: the crates reached from the shell through normal dependencies on every target, judged by the one allowlist (`licences.allow.toml`) and the same SPDX rules as Python and JavaScript (`scripts/check_licences.py`, S0010).
+- cargo-about 0.9.2 collects the licence texts when the installers are built (M11).
+- cargo-deny is not used for licences; it may be added later for security advisories.
+
 ## References
 
 review:F §2 item 9, §1 (F63 note); review:22 §2 (licence); review:25 §10 (licence checks); ADR-0007.
