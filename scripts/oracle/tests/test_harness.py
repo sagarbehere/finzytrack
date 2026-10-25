@@ -147,10 +147,6 @@ class ReportingTest(unittest.TestCase):
         self.assertIn("UNEXPLAINED", classify.BLOCKING)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class LauncherOwnerPortTest(unittest.TestCase):
     """INV-24 (S0031, the M0 gate red team M5): the oracle launcher refuses the owner's port by its number, before
     anything else, and never probes that port to find out (a probe would touch the owner's running app).
@@ -181,3 +177,8 @@ class LauncherOwnerPortTest(unittest.TestCase):
             with self.assertRaises(ValueError) as caught:
                 self.ll.LegacyApp(Path("/nonexistent-oracle-root"), 8001)
         self.assertIn("port 8001 belongs to the owner", str(caught.exception))
+
+
+if __name__ == "__main__":
+    unittest.main()
+

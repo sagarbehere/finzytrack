@@ -534,6 +534,18 @@ class EnforcementFilesDoNotSwitchTestsOff(unittest.TestCase):
             at + "unittest.skipUnless(sys.platform == 'darwin', 'x', extra=1)\ndef test_x():\n    pass\n",
             at + "pytest.mark.skipif(sys.platform == 'darwin', reason='x')\ndef test_x():\n    pass\n",
             "import sys as s" + at + "unittest.skipUnless(s.platform == 'darwin', 'x')\ndef test_x():\n    pass\n",
+            # S0031 verifier F1: what pytest and unittest read to skip, without a skip name
+            at + "pytest.mark.parametrize('x', [])\ndef test_x(x):\n    pass\n",
+            at + "pytest.mark.parametrize('x', ())\ndef test_x(x):\n    pass\n",
+            at + "pytest.mark.parametrize(argnames='x', argvalues=[])\ndef test_x(x):\n    pass\n",
+            "CASES = []" + at + "pytest.mark.parametrize('x', CASES)\ndef test_x(x):\n    pass\n",
+            "from pytest import mark" + at + "mark.parametrize('x', [])\ndef test_x(x):\n    pass\n",
+            "class T(unittest.TestCase):\n    __unittest_skip__ = True\n",
+            "class T(unittest.TestCase):\n    __unittest_skip__ = True\n    __unittest_skip_why__ = 'x'\n",
+            "def test_x():\n    pass\ntest_x.__unittest_expecting_failure__ = True\n",
+            "def test_x():\n    pass\ntest_x.__test__ = False\n",
+            "class TestX:\n    __test__ = False\n",
+            "__test__ = False\n",
         ]
         for body in refused:
             with self.subTest(body=body):
@@ -551,10 +563,15 @@ class EnforcementFilesDoNotSwitchTestsOff(unittest.TestCase):
             with self.subTest(body=body):
                 self.assertEqual(self.errors("scripts/tests/test_one.py", body), [])
 
-    def test_a_non_test_enforcement_file_is_scanned_too(self) -> None:
+    def test_a_non_test_enforcement_source_may_use_the_names(self) -> None:  # S0031 verifier F8
         self.put(".githooks/pre-commit", "python3 scripts/check_x.py\n")
-        self.assertTrue(self.errors("scripts/check_x.py", "# INV-01\nimport unittest\nskip = unittest.skip\n"))
-        self.assertEqual(self.errors("scripts/check_x.py", "# INV-01\nprint('ok')\n"), [])
+        self.assertEqual(self.errors("scripts/check_x.py", "# INV-01\nskip = None\n__test__ = 1\n"), [])
+        self.put(".githooks/pre-commit", "python3 scripts/check_x.py frontend/eslint.boundaries.js\n")
+        self.assertEqual(self.errors("frontend/eslint.boundaries.js", "// INV-01\nconst a = { only: 1 }.only\n"), [])
+
+    def test_a_non_empty_literal_parametrize_passes(self) -> None:
+        body = "# INV-01\nimport pytest\n" + "@" + "pytest.mark.parametrize('x', [1, 2])\ndef test_x(x):\n    pass\n"
+        self.assertEqual(self.errors("scripts/tests/test_one.py", body), [])
 
     def test_a_conftest_above_an_enforcement_test_cannot_drop_it(self) -> None:
         test = "backend/tests/architecture/test_globals.py"
@@ -562,7 +579,8 @@ class EnforcementFilesDoNotSwitchTestsOff(unittest.TestCase):
         for conf in ("backend/tests/conftest.py", "backend/tests/architecture/conftest.py", "backend/conftest.py"):
             for text in ("collect_ignore = ['architecture/test_globals.py']\n", "collect_ignore_glob = ['*']\n",
                          "def pytest_ignore_collect(collection_path, config):\n    return True\n",
-                         "import pytest\ndef pytest_runtest_setup(item):\n    pytest.skip('x')\n"):
+                         "import pytest\ndef pytest_runtest_setup(item):\n    pytest.skip('x')\n",
+                         "def pytest_collection_modifyitems(items):\n    for i in items:\n        i.obj.__test__ = False\n"):
                 with self.subTest(conf=conf, text=text):
                     self.put(conf, text)
                     self.assertTrue(any("switches a test off" in e for e in self.errors(test, body)))
@@ -574,12 +592,16 @@ class EnforcementFilesDoNotSwitchTestsOff(unittest.TestCase):
     def test_typescript_skip_forms_are_refused(self) -> None:
         for body in ("it.skip('x', () => {})\n", "describe.skip('x', () => {})\n", "it.todo('x')\n",
                      "it.skipIf(true)('x', () => {})\n", "it.runIf(false)('x', () => {})\n", "it['skip']('x', () => {})\n",
-                     "test.skip('x', async () => {})\n", "const { skip: later } = it\n"):
+                     "test.skip('x', async () => {})\n", "const { skip: later } = it\n",
+                     "it.only('x', () => {})\n", "describe.only('x', () => {})\n", "test.only('x', async () => {})\n",
+                     "it['only']('x', () => {})\n", "const { only } = it\n", "const { only: solo } = test\n"):
             with self.subTest(body=body):
                 found = self.errors("frontend/tests/unit/boundaries.test.ts", "// INV-01\nimport { it } from 'vitest'\n" + body)
                 self.assertTrue(any("switches a test off" in e for e in found), found)
         self.assertEqual(self.errors("frontend/tests/unit/boundaries.test.ts",
                                      "// INV-01\nimport { it } from 'vitest'\nit('x', () => {})\n"), [])
+        self.assertEqual(self.errors("frontend/tests/unit/boundaries.test.ts",  # the word in prose is not the marker
+                                     "// INV-01\nimport { it } from 'vitest'\nit('open slots only, then more', () => {})\n"), [])
 
     def test_the_red_team_probe_c_is_refused_on_the_real_tree(self) -> None:
         real = Path(__file__).resolve().parents[2]
@@ -624,6 +646,13 @@ class FixmeScanCoversTheScriptTests(unittest.TestCase):
                          "from unittest import SkipTest\n# L4-01\ndef test_x():\n    raise SkipTest\n"):
                 with self.subTest(folder=folder, body=body):
                     self.assertTrue(self.errors(f"{folder}/test_a.py", body))
+
+    def test_only_is_refused_in_every_frontend_test(self) -> None:  # S0031 verifier F1
+        for rel in ("frontend/tests/unit/any.test.ts", "frontend/e2e/flow.spec.ts"):
+            with self.subTest(rel=rel):
+                self.assertTrue(self.errors(rel, "import { it } from 'vitest'\nit.only('x', () => {})\n"))
+        self.assertEqual(self.errors("frontend/tests/unit/any.test.ts",
+                                     "import { it } from 'vitest'\nit('only, here', () => {})\n"), [])
 
     def test_outside_the_protected_places_a_platform_skip_stays(self) -> None:
         body = "import unittest\n" + "@" + "unittest.skipUnless(False, 'legacy tags not in this clone')\nclass T(unittest.TestCase):\n    pass\n"

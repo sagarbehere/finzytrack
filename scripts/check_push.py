@@ -14,16 +14,30 @@ so this script refuses the push unless:
     only bytecode (`.pyc`) is accepted, which Python never imports without its source.
     Stated limit: a forged `.pyc` carrying a tracked source's timestamp and size would run instead of that source;
     building one is a deliberate act, out of reach like the guard's deliberately built commands (BL-0062).
+  - no replacement object or graft changes what git shows (S0031 verifier F2): with a `refs/replace/*` ref or
+    `info/grafts`, every local read (checkout, status, rev-list, cat-file) can see other objects than the ones
+    `git push` sends, so either one refuses the push; every git read here also runs with replacements off
+    (the hooks export GIT_NO_REPLACE_OBJECTS=1 too).
 A ref deletion pushes no commit and is let through here (the guard hook refuses deletions by agents).
 
-On success it prints one range per pushed ref for `check_staged.py --range` and `privacy_scan.py --range`:
+On success it prints one line per pushed ref for `check_staged.py --range` and `privacy_scan.py --range`:
   - an existing remote branch: REMOTE_SHA..LOCAL_SHA (git reports REMOTE_SHA from the remote itself);
   - a new remote branch, or a remote sha this clone does not have: MERGE_BASE..LOCAL_SHA with the remote's own
-    `next` (read with `git ls-remote`, never from this clone's remote-tracking refs, which a commit can move),
-    or the bare LOCAL_SHA (its whole history) when there is none.
+    `next` (read with `git ls-remote` at the URL the push goes to, never from this clone's remote-tracking refs,
+    which a commit can move); when the remote has none, FLOOR..LOCAL_SHA, where FLOOR is the commit that started
+    v0.4 from an empty tree (so the legacy history below it is not read); the bare LOCAL_SHA (its whole history)
+    only when FLOOR is not below it. A fresh remote receives the whole history, so it is scanned whole: today
+    that fails on three blobs that later commits fixed (they are already public on origin), which is right.
+  and, for a pushed annotated tag, `tag TAG_SHA` (its message is scanned by `privacy_scan.py --tag-message`).
 
-Usage (from .githooks/pre-push):  python3 scripts/check_push.py <remote> < <pre-push stdin>
-Exit 0 = ranges printed (maybe none), 1 = refused.
+With `--still HEAD_SHA` (the last step of the pre-push hook, S0031 verifier F3) it checks only that HEAD is still
+HEAD_SHA and the tree is still clean: another process (a parallel agent, an editor's autosave) that changed the
+tree during the ~90 s of checks changed what they tested. Stated limit: a change made and undone between the two
+checks is not seen.
+
+Usage (from .githooks/pre-push):  python3 scripts/check_push.py <remote> [<push url>] < <pre-push stdin>
+                                  python3 scripts/check_push.py --still <HEAD sha>
+Exit 0 = lines printed (maybe none), 1 = refused.
 """
 
 from __future__ import annotations
@@ -44,11 +58,21 @@ TRUSTED_DIR_NAMES = {".venv", ".pytest_cache", ".ruff_cache", ".import_linter_ca
 # Dependency and build folders, matched by their exact place (a `node_modules` elsewhere could be imported by
 # unittest discovery as a package): their content is installed or generated, and no runner collects code there.
 TRUSTED_PATHS = ("frontend/node_modules/", "shell/src-tauri/target/", "shell/src-tauri/gen/", "frontend/dist/",
-                 "frontend/test-results/", "frontend/playwright-report/", "build/")
+                 "frontend/test-results/", "frontend/playwright-report/", "build/", "backend/mutants/",
+                 "backend/htmlcov/", "htmlcov/", "mutants/")
+# Claude Code's own ignored state (agent worktrees, schedules, local settings): no git hook or test runner reads
+# it. Its hooks folder is excluded: the guard meta-tests import from it.
+TRUSTED_CLAUDE = (".claude/",)
+UNTRUSTED_CLAUDE = (".claude/hooks/",)
+# The commit that started v0.4 from an empty tree on next ("next: start v0.4 from an empty tree; .gitignore first").
+FLOOR = "2777d57fb52ab00252a022545aeb4e1161cfae41"  # a commit name  privacy-scan: allow secret-entropy
 CODE_SUFFIXES = {".py", ".pyc", ".pyo", ".pth", ".pyi", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs",
-                 ".cjs", ".vue", ".toml", ".cfg", ".ini", ".rs", ".sh", ".bash", ".zsh"}
-CODE_NAMES = {"conftest.py", "pytest.ini", "tox.ini", "setup.cfg", "package.json", "tsconfig.json", ".eslintrc",
-              ".importlinter", "Makefile", "Cargo.toml", "Cargo.lock"}
+                 ".cjs", ".vue", ".toml", ".cfg", ".ini", ".rs", ".sh", ".bash", ".zsh", ".json", ".jsonc", ".json5",
+                 ".yaml", ".yml"}
+CODE_NAMES = {"conftest.py", "pytest.ini", "tox.ini", "setup.cfg", "Makefile", ".importlinter", ".npmrc",
+              ".python-version", ".editorconfig", ".browserslistrc"}
+# Tool configuration and ignore files by name pattern: `.prettierignore`, `.eslintrc*`, `.prettierrc*`, ...
+CODE_NAME = re.compile(r"^\.(?:[a-z0-9-]+ignore|[a-z0-9-]+rc(?:\..*)?)$", re.I)
 
 
 @dataclass(frozen=True)
@@ -74,8 +98,8 @@ def parse_refs(text: str) -> tuple[list[Ref], list[str]]:
 
 
 def git(*args: str, check: bool = True) -> str:
-    proc = subprocess.run(["git", "-c", "core.fsmonitor=false", *args], capture_output=True, text=True,
-                          errors="surrogateescape")
+    proc = subprocess.run(["git", "--no-replace-objects", "-c", "core.fsmonitor=false", *args], capture_output=True,
+                          text=True, errors="surrogateescape", env={**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"})
     if check and proc.returncode != 0:
         raise RuntimeError(f"git {' '.join(args[:3])}: {proc.stderr.strip()[-300:]}")
     return proc.stdout if proc.returncode == 0 else ""
@@ -95,9 +119,11 @@ def untrusted_ignored(entries: list[str], walk=os.walk) -> list[str]:
         p = PurePosixPath(rel)
         if p.parent.name == "__pycache__" and p.suffix == ".pyc":
             return False  # bytecode beside its source's folder; never imported without the source
-        return p.name in CODE_NAMES or p.suffix.lower() in CODE_SUFFIXES
+        return p.name in CODE_NAMES or p.suffix.lower() in CODE_SUFFIXES or bool(CODE_NAME.match(p.name))
 
     def trusted(rel: str) -> bool:
+        if rel.startswith(TRUSTED_CLAUDE) and not rel.startswith(UNTRUSTED_CLAUDE) and rel != ".claude/":
+            return True
         return rel.startswith(TRUSTED_PATHS) or any(part in TRUSTED_DIR_NAMES for part in PurePosixPath(rel).parts)
 
     for entry in entries:
@@ -116,6 +142,11 @@ def untrusted_ignored(entries: list[str], walk=os.walk) -> list[str]:
 
 def tree_problems() -> list[str]:
     problems: list[str] = []
+    replaced = git("for-each-ref", "--format=%(refname)", "refs/replace/").split()
+    grafts = git("rev-parse", "--git-path", "info/grafts").strip()
+    if replaced or (grafts and os.path.exists(grafts)):
+        problems.append(f"replacement objects or grafts change what git shows ({(replaced or [grafts])[0]}); the "
+                        "checks would not read what is pushed. Remove them (git replace -d, or the grafts file) first")
     status = git("status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none")
     dirty = [e for e in status.split("\0") if e]
     if dirty:
@@ -132,6 +163,10 @@ def tree_problems() -> list[str]:
         problems.append(f"ignored source or config file(s) the checks could load, e.g. {bad[0]!r} ({len(bad)} in "
                         "all); move or remove them first")
     return problems
+
+
+def object_type(sha: str) -> str:
+    return git("cat-file", "-t", sha, check=False).strip()
 
 
 def remote_next(remote: str) -> str | None:
@@ -153,13 +188,24 @@ def ranges_for(refs: list[Ref], remote: str) -> list[str]:
             if nxt and commit_of(nxt):
                 mb = git("merge-base", r.local_sha, nxt, check=False).strip()
                 base = mb if SHA.match(mb) else None
+            elif tip and commit_of(FLOOR) and _is_ancestor(FLOOR, tip):
+                base = FLOOR
         out.append(f"{base}..{tip}" if base else f"{tip}")
+        if object_type(r.local_sha) == "tag":
+            out.append(f"tag {r.local_sha}")
     return out
+
+
+def _is_ancestor(a: str, b: str) -> bool:
+    return subprocess.run(["git", "--no-replace-objects", "merge-base", "--is-ancestor", a, b],
+                          capture_output=True).returncode == 0
 
 
 def main(argv: list[str] | None = None, stdin: str | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    remote = argv[0] if argv else ""
+    if argv[:1] == ["--still"]:
+        return still(argv[1] if len(argv) > 1 else "")
+    remote = (argv[1] if len(argv) > 1 and argv[1] else argv[0]) if argv else ""  # the push URL when git gives it
     refs, problems = parse_refs(sys.stdin.read() if stdin is None else stdin)
     head = commit_of("HEAD")
     for r in refs:
@@ -180,6 +226,18 @@ def main(argv: list[str] | None = None, stdin: str | None = None) -> int:
     for rng in ranges_for(refs, remote):
         print(rng)
     return 0
+
+
+def still(head_at_start: str) -> int:
+    """The end of the pre-push hook: HEAD and the tree are what the checks started on (S0031 verifier F3)."""
+    problems = []
+    head = commit_of("HEAD")
+    if not SHA.match(head_at_start) or head != head_at_start:
+        problems.append(f"HEAD moved during the checks ({head_at_start[:12] or '?'} -> {(head or '?')[:12]})")
+    problems += tree_problems()
+    for p in problems:
+        print(f"pre-push: refused: the tree changed while the checks ran: {p}", file=sys.stderr)
+    return 1 if problems else 0
 
 
 if __name__ == "__main__":

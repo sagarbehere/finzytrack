@@ -2,6 +2,8 @@
 # T0 pre-push (design/process/PROCESS.md, "Gates"): repo checks, types and changed-area tests, <= 2 min.
 # Install once per clone:  git config core.hooksPath .githooks
 set -euo pipefail
+# S0031 verifier F2: replacement objects would let every local read see other objects than the ones pushed.
+export GIT_NO_REPLACE_OBJECTS=1
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 remote_name="${1:-}"
@@ -18,12 +20,14 @@ fi
 
 # S0031 (M0 gate red team H1): the checks below read the working tree, so it must BE what is pushed. Every pushed
 # ref must be HEAD and the tree clean (no change, no untracked file, no hidden index entry, no ignored code);
-# otherwise the push is refused before any check runs. Prints one range per pushed ref for the history scans.
+# otherwise the push is refused before any check runs. Prints one range per pushed ref for the history scans (the
+# remote's own next is read at the URL the push goes to), and one `tag SHA` line per pushed annotated tag.
 refs="$(cat)"
-if ! ranges="$(printf '%s\n' "$refs" | python3 scripts/check_push.py "$remote_name")"; then
+if ! ranges="$(printf '%s\n' "$refs" | python3 scripts/check_push.py "$remote_name" "$remote_url")"; then
   echo "pre-push: refused before the checks ran; commit (or remove) what is not pushed, then push HEAD" >&2
   exit 1
 fi
+head_at_start="$(git rev-parse HEAD)"
 
 fail=0
 run() { local label="$1"; shift; if ! "$@"; then echo "pre-push: FAILED: $label" >&2; fail=1; fi; }
@@ -31,11 +35,18 @@ run() { local label="$1"; shift; if ! "$@"; then echo "pre-push: FAILED: $label"
 # S0031 (H2): commits that skipped pre-commit (cherry-pick, rebase, revert, a hookless clone) and files added and
 # removed again inside the range: the staged-file guard and the privacy scan read every blob the range adds or
 # changes.
+# The privacy scan also reads every pushed commit message and annotated tag message (S0031 verifier F4).
 while IFS= read -r range; do
   [[ -n "$range" ]] || continue
+  if [[ "$range" == tag\ * ]]; then
+    run "privacy scan (pushed tag message ${range#tag })" python3 scripts/privacy_scan.py --tag-message "${range#tag }" --quiet
+    continue
+  fi
   run "staged-file guard (pushed commits $range)" python3 scripts/check_staged.py --range "$range"
-  run "privacy scan (pushed commits $range)" python3 scripts/privacy_scan.py --range "$range" --quiet
+  run "privacy scan (pushed commits and messages $range)" python3 scripts/privacy_scan.py --range "$range" --quiet
 done <<< "$ranges"
+# A backstop over the whole pushed tree (S0031 verifier F5): the staged-file guard on every tracked file.
+run "staged-file guard (all tracked files)" bash -c "set -o pipefail; git ls-files -z | xargs -0 python3 scripts/check_staged.py --paths"
 run "check-script meta-tests" python3 -m unittest discover -s scripts/tests -q
 run "privacy scan (all tracked files)" python3 scripts/privacy_scan.py --all --quiet
 run "invariants" python3 scripts/check_invariants.py
@@ -76,4 +87,7 @@ if [[ -f frontend/package.json ]]; then
   run "frontend unit tests" bash -c "cd frontend && node_modules/.bin/vitest run"
   run "unused code and dependencies (knip)" bash -c "cd frontend && node_modules/.bin/knip"
 fi
+# Last (S0031 verifier F3): HEAD and the tree are still what the checks started on; a process that changed the
+# tree during the checks changed what they tested.
+run "tree unchanged during the checks" python3 scripts/check_push.py --still "$head_at_start"
 exit "$fail"

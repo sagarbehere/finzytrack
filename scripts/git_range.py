@@ -6,6 +6,9 @@ against the empty tree), renames are reported as additions, and each (path, mode
 blob added in one commit and deleted in the next is still returned, and a file renamed onto a refused name is
 returned under its new name. Deleted paths are not returned.
 
+Every read runs with replacement objects off (`--no-replace-objects`, S0031 verifier F2): the objects read are the
+ones `git push` sends.
+
 Used by `scripts/check_staged.py --range` and `scripts/privacy_scan.py --range`.
 """
 
@@ -31,7 +34,7 @@ class RangeError(Exception):
 
 
 def _git(*args: str, data: bytes | None = None) -> bytes:
-    proc = subprocess.run(["git", *args], input=data, capture_output=True)
+    proc = subprocess.run(["git", "--no-replace-objects", *args], input=data, capture_output=True)
     if proc.returncode != 0:
         raise RangeError(f"git {' '.join(args[:3])} failed: {proc.stderr.decode(errors='replace').strip()[-300:]}")
     return proc.stdout
@@ -88,7 +91,26 @@ def read_blobs(shas: list[str]) -> dict[str, bytes]:
     return blobs
 
 
+def commit_messages(spec: str) -> list[tuple[str, str]]:
+    """(commit sha, full message) for every commit of the range (S0031 verifier F4)."""
+    base, tip = parse_spec(spec)
+    out = _git("log", "--format=%H%x00%B%x00", f"{base}..{tip}" if base else tip).decode("utf-8", errors="replace")
+    parts = out.split("\0")
+    return [(parts[i].strip(), parts[i + 1]) for i in range(0, len(parts) - 1, 2) if SHA.match(parts[i].strip())]
+
+
+SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def tag_message(sha: str) -> str:
+    """The message of an annotated tag object, without its header (tagger name and address are not scanned)."""
+    if not SHA.match(sha):
+        raise RangeError(f"a tag is named by its 40-hex object name, not {sha!r}")
+    raw = _git("cat-file", "tag", sha).decode("utf-8", errors="replace")
+    return raw.split("\n\n", 1)[1] if "\n\n" in raw else ""
+
+
 def blob_at(tip: str, path: str) -> bytes | None:
     """The file `path` in commit `tip`, or None when the commit has no such file."""
-    proc = subprocess.run(["git", "cat-file", "blob", f"{tip}:{path}"], capture_output=True)
+    proc = subprocess.run(["git", "--no-replace-objects", "cat-file", "blob", f"{tip}:{path}"], capture_output=True)
     return proc.stdout if proc.returncode == 0 else None

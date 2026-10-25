@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -35,7 +36,8 @@ class Scratch(unittest.TestCase):
         self.env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": str(base / "gitconfig"),
                     "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "t",
                     "GIT_COMMITTER_EMAIL": "t@example.com"}
-        for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        # the pre-push hook exports GIT_NO_REPLACE_OBJECTS; the scratch repos start from git's defaults
+        for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS"):
             self.env.pop(k, None)
         self.origin = base / "origin.git"
         self.clone = base / "clone"
@@ -84,8 +86,8 @@ class Scratch(unittest.TestCase):
         remote_sha = self.remote_next() if remote_sha is None else remote_sha
         return f"{ref} {local_sha} {ref} {remote_sha}\n"
 
-    def check_push(self, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
-        return self.script("check_push.py", "origin", stdin=self.push_line() if stdin is None else stdin)
+    def check_push(self, stdin: str | None = None, *extra: str) -> subprocess.CompletedProcess[str]:
+        return self.script("check_push.py", "origin", *extra, stdin=self.push_line() if stdin is None else stdin)
 
 
 class PushedCommitsAreTheTree(Scratch):
@@ -167,11 +169,95 @@ class PushedCommitsAreTheTree(Scratch):
         self.assertNotEqual(tag, self.head())
         r = self.check_push(f"refs/tags/v9 {tag} refs/tags/v9 {ZERO}\n")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.split(), [f"{self.head()}..{self.head()}"])
+        self.assertEqual(r.stdout.splitlines(), [f"{self.head()}..{self.head()}", f"tag {tag}"])
 
     def test_a_deletion_pushes_nothing_to_check(self) -> None:
         r = self.check_push(f"(delete) {ZERO} refs/heads/old {self.remote_next()}\n")
         self.assertEqual((r.returncode, r.stdout), (0, ""), r.stderr)
+
+
+class ReplacementsAndMovingTrees(Scratch):
+    """S0031 verifier F2, F3: what git shows must be what is pushed, from the first check to the last."""
+
+    def bad_and_decoy(self) -> tuple[str, str, str]:
+        base = self.head()
+        self.write("main.beancount", "2020-01-01 open Assets:Cash\n")
+        bad = self.commit("bad")
+        self.git("reset", "-q", "--hard", base)
+        self.write("README.md", "decoy\n")
+        good = self.commit("decoy")
+        self.git("reset", "-q", "--hard", base)
+        return base, bad, good
+
+    def test_a_replacement_object_is_refused_and_does_not_hide_the_pushed_blobs(self) -> None:
+        base, bad, good = self.bad_and_decoy()
+        self.git("update-ref", "refs/heads/next", bad)
+        self.git("replace", bad, good)
+        self.git("reset", "-q", "--hard", "next")
+        self.assertFalse((self.clone / "main.beancount").exists())  # the checkout shows the decoy
+        r = self.check_push(self.push_line(local_sha=bad, remote_sha=base))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("replacement objects", r.stderr)
+        self.assertEqual(self.script("check_staged.py", "--range", f"{base}..{bad}").returncode, 1)  # reads the real blob
+
+    def test_a_grafts_file_is_refused(self) -> None:
+        (self.clone / ".git/info").mkdir(exist_ok=True)
+        (self.clone / ".git/info/grafts").write_text(self.head() + "\n")
+        r = self.check_push()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("grafts", r.stderr)
+
+    def test_still_refuses_a_moved_head_or_a_changed_tree(self) -> None:
+        head = self.head()
+        self.assertEqual(self.script("check_push.py", "--still", head).returncode, 0)
+        self.write("README.md", "changed during the checks\n")
+        r = self.script("check_push.py", "--still", head)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("changed while the checks ran", r.stderr)
+        self.git("checkout", "--", "README.md")
+        self.write("a.txt", "a\n")
+        self.commit("moved")
+        self.assertIn("HEAD moved", self.script("check_push.py", "--still", head).stderr)
+        self.assertEqual(self.script("check_push.py", "--still", "").returncode, 1)
+
+
+class Messages(Scratch):
+    """S0031 verifier F4: commit and tag messages are published, so the privacy scan reads them."""
+
+    def token(self) -> str:
+        return j("gh", "p_", "a1B2c3D4e5F6g7H8i9", "J0k1L2m3N4o5P6q7R8")
+
+    def test_a_commit_message_in_the_range(self) -> None:
+        base = self.remote_next()
+        self.write("a.txt", "a\n")
+        self.git("add", "a.txt")
+        self.git("commit", "-q", "-m", f"deploy token {self.token()}")
+        self.write("b.txt", "b\n")
+        self.commit("a later honest commit")
+        p = self.script("privacy_scan.py", "--range", f"{base}..{self.head()}", "--quiet")
+        self.assertEqual(p.returncode, 1, p.stderr)
+        self.assertIn("message", p.stderr)
+        self.assertNotIn(self.token(), p.stderr)
+
+    def test_a_pushed_annotated_tag_and_its_message(self) -> None:
+        self.git("tag", "-a", "-m", f"release note: {self.token()}", "v9")
+        tag = self.git("rev-parse", "v9").strip()
+        r = self.check_push(f"refs/tags/v9 {tag} refs/tags/v9 {ZERO}\n")
+        self.assertIn(f"tag {tag}", r.stdout.splitlines())
+        p = self.script("privacy_scan.py", "--tag-message", tag, "--quiet")
+        self.assertEqual(p.returncode, 1, p.stderr)
+        self.git("tag", "-a", "-m", "a clean note", "v10")
+        self.assertEqual(self.script("privacy_scan.py", "--tag-message", self.git("rev-parse", "v10").strip(),
+                                     "--quiet").returncode, 0)
+        self.assertNotIn("tag ", self.check_push().stdout)  # a branch push names no tag
+
+    def test_the_commit_message_file_above_the_scissors(self) -> None:
+        msg = self.clone / "MSG"
+        msg.write_text(f"subject\n\nbody with {self.token()}\n")
+        self.assertEqual(self.script("privacy_scan.py", "--message", str(msg), "--quiet").returncode, 1)
+        msg.write_text("subject\n# ------------------------ >8 ------------------------\n"
+                       f"diff below the scissors {self.token()}\n")
+        self.assertEqual(self.script("privacy_scan.py", "--message", str(msg), "--quiet").returncode, 0)
 
 
 class IgnoredCodeIsRefused(Scratch):
@@ -199,6 +285,31 @@ class IgnoredCodeIsRefused(Scratch):
                 self.assertIn("ignored source or config", r.stderr)
                 (self.clone / rel).unlink()
 
+    def test_ignored_tool_configuration_is_refused(self) -> None:  # S0031 verifier probe I
+        self.write("backend/tests/test_a.py", "def test_a():\n    pass\n")
+        self.write("frontend/src/a.ts", "export const a = 1\n")
+        self.commit("tracked files, so their folders are listed")
+        (self.clone / ".git/info/exclude").write_text(".prettierignore\npyrightconfig.json\n.eslintrc.cjs\n")
+        for rel in ("frontend/.prettierignore", "backend/pyrightconfig.json", "frontend/.eslintrc.cjs"):
+            with self.subTest(rel=rel):
+                self.write(rel, "*\n")
+                self.assertEqual(self.check_push().returncode, 1, rel)
+                (self.clone / rel).unlink()
+
+    def test_claude_state_passes_but_not_its_hooks_folder(self) -> None:  # S0031 verifier F7
+        (self.clone / ".git/info/exclude").write_text(".claude/worktrees/\n.claude/hooks/local.py\nmutants/\nhtmlcov/\n")
+        self.write(".claude/settings.json", "{}\n")
+        self.write(".claude/hooks/guard.py", "x = 1\n")
+        self.write("backend/tests/test_a.py", "def test_a():\n    pass\n")
+        self.commit("tracked claude files")
+        for rel in (".claude/worktrees/agent-1/backend/tests/conftest.py", "backend/mutants/src/app/clock.py",
+                    "backend/htmlcov/coverage_html.js", "htmlcov/x.js"):
+            self.write(rel, "x = 1\n")
+        r = self.check_push()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.write(".claude/hooks/local.py", "x = 1\n")
+        self.assertEqual(self.check_push().returncode, 1)
+
     def test_ignored_caches_dependencies_and_logs_pass(self) -> None:
         for rel in ("run.log", "data/statement.txt", "a/__pycache__/m.cpython-313.pyc", "backend/.venv/lib/x.py",
                     "frontend/node_modules/pkg/index.js", "build/out/app.js", "data/.venv/lib/y.py"):
@@ -221,6 +332,39 @@ class Ranges(Scratch):
     def test_no_remote_next_means_the_whole_history(self) -> None:
         self.git_in(self.origin, "update-ref", "-d", "refs/heads/next")
         self.assertEqual(self.check_push(self.push_line(remote_sha=ZERO)).stdout.split(), [self.head()])
+
+    def test_the_remote_next_is_read_at_the_push_url(self) -> None:  # S0031 verifier F5
+        base = self.remote_next()
+        self.write("a.txt", "a\n")
+        tip = self.commit("second")
+        other = Path(self.tmp.name) / "fetchside.git"
+        self.git_in(Path(self.tmp.name), "clone", "-q", "--bare", str(self.clone), str(other))
+        self.git_in(other, "update-ref", "refs/heads/next", tip)  # the fetch side already "has" the tip
+        self.git("remote", "set-url", "origin", str(other))
+        line = self.push_line(remote_sha=ZERO, ref="refs/heads/feature")
+        self.assertEqual(self.check_push(line).stdout.split(), [tip + ".." + tip])  # fetch URL: nothing to scan
+        self.assertEqual(self.check_push(line, str(self.origin)).stdout.split(), [f"{base}..{tip}"])
+
+    def test_without_a_remote_next_the_floor_is_the_base(self) -> None:  # S0031 verifier F6
+        sys.path.insert(0, str(SCRIPTS))
+        import check_push
+
+        floor = self.head()
+        self.write("a.txt", "a\n")
+        tip = self.commit("second")
+        self.git_in(self.origin, "update-ref", "-d", "refs/heads/next")
+        old_cwd, old_floor = os.getcwd(), check_push.FLOOR
+        try:
+            os.chdir(self.clone)
+            with unittest.mock.patch.dict(os.environ, self.env, clear=True):
+                check_push.FLOOR = floor
+                refs, _ = check_push.parse_refs(self.push_line(remote_sha=ZERO))
+                self.assertEqual(check_push.ranges_for(refs, "origin"), [f"{floor}..{tip}"])
+                check_push.FLOOR = "3" * 40  # not in this history: the whole history
+                self.assertEqual(check_push.ranges_for(refs, "origin"), [tip])
+        finally:
+            check_push.FLOOR = old_floor
+            os.chdir(old_cwd)
 
     def test_a_remote_sha_this_clone_lacks_falls_back_to_the_remote_next_merge_base(self) -> None:
         base = self.remote_next()
@@ -330,6 +474,16 @@ class RangeScans(Scratch):
                 self.assertEqual(self.staged(bad).returncode, 2)
                 self.assertEqual(self.script("privacy_scan.py", "--range", bad, "--quiet").returncode, 2)
 
+    def test_a_file_turned_into_a_symlink_out(self) -> None:  # S0031 verifier F9: diff status T
+        base = self.head()
+        (self.clone / "README.md").unlink()
+        os.symlink("/etc/hosts", self.clone / "README.md")
+        self.commit("typechange")
+        self.assertIn("T", self.git("diff-tree", "-r", "--no-renames", base, self.head()).split())
+        r = self.staged(f"{base}..{self.head()}")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("symlink", r.stderr)
+
     def test_the_whole_history_spec(self) -> None:
         self.write("main.beancount", "x\n")
         self.commit("ledger")
@@ -349,11 +503,18 @@ class HookFiles(unittest.TestCase):
         gate = text.index("scripts/check_push.py")
         self.assertLess(gate, text.index("\nrun "))
         self.assertLess(text.index('refs="$(cat)"'), gate)
-        self.assertIn('python3 scripts/check_push.py "$remote_name")"; then', text)
+        self.assertIn('python3 scripts/check_push.py "$remote_name" "$remote_url")"; then', text)
         self.assertIn("  exit 1\nfi", text[gate:gate + 400])
         self.assertIn('python3 scripts/check_staged.py --range "$range"', text)
         self.assertIn('python3 scripts/privacy_scan.py --range "$range" --quiet', text)
         self.assertIn('done <<< "$ranges"', text)
+        self.assertIn('python3 scripts/check_push.py "$remote_name" "$remote_url"', text)
+        self.assertIn('python3 scripts/privacy_scan.py --tag-message "${range#tag }" --quiet', text)
+        self.assertIn("git ls-files -z | xargs -0 python3 scripts/check_staged.py --paths", text)
+        self.assertLess(text.index("export GIT_NO_REPLACE_OBJECTS=1"), gate)
+        still = text.index('python3 scripts/check_push.py --still "$head_at_start"')
+        self.assertEqual(text[still:].count("\nrun "), 0)  # the last check
+        self.assertLess(text.index('head_at_start="$(git rev-parse HEAD)"'), text.index("\nrun "))
 
     def test_pre_push_lints_the_whole_tree_and_runs_every_oracle_test(self) -> None:
         for line in ('.venv/bin/ruff format --check --config ruff.toml .', '.venv/bin/ruff check --config ruff.toml .',
@@ -370,10 +531,33 @@ class HookFiles(unittest.TestCase):
         self.assertIn("FT_MILESTONE_EXIT: ${{ inputs.milestone_exit }}", step)
         self.assertIn("run: python3 scripts/check_invariants.py", step)
 
+    def test_commit_msg_scans_the_message_and_hooks_ignore_replacements(self) -> None:
+        hook = REPO / ".githooks/commit-msg"
+        self.assertTrue(os.access(hook, os.X_OK))
+        self.assertIn('python3 scripts/privacy_scan.py --message "$1" --quiet', hook.read_text())
+        for name in ("commit-msg", "pre-commit", "pre-push"):
+            self.assertIn("export GIT_NO_REPLACE_OBJECTS=1", (REPO / ".githooks" / name).read_text(), name)
+
     def test_pre_merge_commit_runs_pre_commit(self) -> None:
         hook = REPO / ".githooks/pre-merge-commit"
         self.assertTrue(os.access(hook, os.X_OK))
         self.assertIn('exec "$(dirname "$0")/pre-commit" "$@"', hook.read_text())
+
+
+class Floor(unittest.TestCase):
+    """S0031 verifier F6: the floor is the commit that started v0.4 from an empty tree, below HEAD."""
+
+    def test_the_floor_is_the_empty_tree_start_of_next(self) -> None:
+        sys.path.insert(0, str(SCRIPTS))
+        import check_push
+
+        def git(*args: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True)
+
+        self.assertEqual(git("log", "-1", "--format=%s", check_push.FLOOR).stdout.strip(),
+                         "next: start v0.4 from an empty tree; .gitignore first")
+        self.assertEqual(git("ls-tree", "--name-only", check_push.FLOOR).stdout.split(), [".gitignore"])
+        self.assertEqual(git("merge-base", "--is-ancestor", check_push.FLOOR, "HEAD").returncode, 0)
 
 
 if __name__ == "__main__":

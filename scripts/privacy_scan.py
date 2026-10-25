@@ -5,7 +5,10 @@ Usage:
     python3 scripts/privacy_scan.py --staged        # scan the staged blobs (pre-commit)
     python3 scripts/privacy_scan.py --all           # scan every tracked file (CI, T1)
     python3 scripts/privacy_scan.py --range BASE..TIP | TIP
-                                    # every blob the range's commits add or change (pre-push, S0031)
+                                    # every blob the range's commits add or change, and their messages
+                                    # (pre-push, S0031)
+    python3 scripts/privacy_scan.py --tag-message TAG_SHA   # a pushed annotated tag's message (pre-push)
+    python3 scripts/privacy_scan.py --message FILE          # a commit message (commit-msg hook)
     python3 scripts/privacy_scan.py PATH [PATH...]  # scan files on disk
 
 Rules (design/process/PROCESS.md, "Privacy gate"):
@@ -438,8 +441,19 @@ def run_range(spec: str, denylist: list[str]) -> tuple[list[Finding], list[str],
             continue
         findings += [Finding(_label((b.path, b.sha)), f.line, f.rule, f.sample) for f in scan_text(b.path, text, denylist)]
         texts[(b.path, b.sha)] = text
+    messages = git_range.commit_messages(spec)  # S0031 verifier F4: a message is published like a file
+    for sha, message in messages:
+        label = f"commit {sha[:12]} message"
+        findings += scan_text(label, message, denylist)
+        texts[label] = message
     findings.extend(entropy_findings(texts))
-    return findings, binaries, len(blobs)
+    return findings, binaries, len(blobs) + len(messages)
+
+
+def run_message(label: str, message: str, denylist: list[str]) -> list[Finding]:
+    """A commit or tag message, everything above git's scissors line (`git commit -v` puts the diff below it)."""
+    message = message.split("# ------------------------ >8 ------------------------", 1)[0]
+    return scan_text(label, message, denylist) + entropy_findings({label: message})
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -450,12 +464,31 @@ def main(argv: list[str] | None = None) -> int:
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--staged", action="store_true", help="scan staged blobs (pre-commit)")
     g.add_argument("--all", action="store_true", help="scan all tracked files")
-    g.add_argument("--range", help="BASE..TIP or TIP (40-hex commit names): every blob the range adds or changes")
+    g.add_argument("--range", help="BASE..TIP or TIP (40-hex commit names): every blob the range adds or changes, "
+                   "and every commit message of the range")
+    g.add_argument("--tag-message", metavar="TAG_SHA", help="the message of an annotated tag object (pre-push)")
+    g.add_argument("--message", metavar="FILE", help="a commit message file (the commit-msg hook)")
     ap.add_argument("paths", nargs="*")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args(argv)
 
     denylist = load_denylist()
+    if args.tag_message is not None or args.message is not None:
+        if args.paths:
+            ap.error("--tag-message and --message take no paths")
+        try:
+            if args.tag_message is not None:
+                label, text = f"tag {args.tag_message[:12]} message", git_range.tag_message(args.tag_message)
+            else:
+                label, text = "commit message", Path(args.message).read_text(encoding="utf-8", errors="replace")
+            findings = run_message(label, text, denylist)
+        except (git_range.RangeError, OSError) as e:
+            print(f"privacy-scan: {e}", file=sys.stderr)
+            return 2
+        except ToolError as e:
+            print(f"privacy-scan: {e} (the secret-entropy rule cannot be skipped)", file=sys.stderr)
+            return 2
+        return report(findings, [], 1, denylist, args.quiet)
     if args.range is not None:
         if args.paths:
             ap.error("--range takes no paths")

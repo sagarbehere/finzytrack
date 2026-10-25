@@ -3,6 +3,7 @@
 # Enforces INV-23 (privacy scan, staged-file guard) and INV-19 (generated headers).
 # Install once per clone:  git config core.hooksPath .githooks
 set -euo pipefail
+export GIT_NO_REPLACE_OBJECTS=1  # S0031 verifier F2: read the objects git stores, not replacements
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 start=$(date +%s)

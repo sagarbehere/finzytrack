@@ -173,10 +173,14 @@ P1_MENTION = re.compile(r"(?<![\w.-])(?:" + "|".join(re.escape(i) for i in P1_FI
 PY_DISABLE = {"skip", "skipif", "xfail", "importorskip", "skipIf", "skipUnless", "expectedFailure", "SkipTest",
               "skipTest"}
 # In an enforcement file (S0031): every way to switch a test off, also unittest's module hook that picks tests.
-PY_DISABLE_STRICT = PY_DISABLE | {"load_tests"}
+# S0031 verifier F1: also the attributes unittest and pytest read to skip (`__unittest_skip__`,
+# `__unittest_expecting_failure__`, `__test__ = False`); an empty parametrize list is refused separately.
+PY_UNITTEST_ATTRS = {"__unittest_skip__", "__unittest_skip_why__", "__unittest_expecting_failure__", "__test__"}
+PY_DISABLE_STRICT = PY_DISABLE | {"load_tests"} | PY_UNITTEST_ATTRS
 # In a conftest.py above an enforcement test: what removes tests from collection or skips them (xfail is left to
 # the fixme hook of backend/tests/conftest.py; a strict xfail fails a passing test).
-CONFTEST_DISABLE = (PY_DISABLE - {"xfail"}) | {"collect_ignore", "collect_ignore_glob", "pytest_ignore_collect"}
+CONFTEST_DISABLE = (PY_DISABLE - {"xfail"}) | {"collect_ignore", "collect_ignore_glob", "pytest_ignore_collect"} \
+    | PY_UNITTEST_ATTRS
 FIXME_KEYS = ("id", "due", "reason")
 TS_SOURCES = (".ts", ".mts", ".cts", ".tsx", ".js", ".mjs", ".vue")
 # Every use of a runner's known-failure marker, or of the helper's name, in a TypeScript test file.
@@ -189,8 +193,10 @@ TS_TEST_FIXME = re.compile(r"\.\s*fixme\(\s*(?:'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n
 TS_IMPORT = re.compile(r"^\s*import\s+\{[^}]*\}\s+from\s+'[^'\n]*'", re.M)
 # Switching a frontend test off: a member or indexed skip/todo/skipIf/runIf, or a runner marker taken by
 # destructuring (`const { fails: later } = it`).
-TS_DISABLE = re.compile(r"\.\s*(?:skip|todo|skipIf|runIf)\b|\[\s*['\"`](?:skip|todo|skipIf|runIf)['\"`]\s*\]"
-                        r"|(?<![\w$.'\"`])(?:fails?|fixme|skip|todo|skipIf|runIf)\s*(?=[:,}])")
+# `.only` too (S0031 verifier F1): outside CI, vitest runs only the `.only` tests of a file and skips the rest.
+TS_DISABLE = re.compile(r"\.\s*(?:skip|todo|skipIf|runIf|only)\b|\[\s*['\"`](?:skip|todo|skipIf|runIf|only)['\"`]\s*\]"
+                        r"|(?<![\w$.'\"`])(?:fails?|fixme|skip|todo|skipIf|runIf)\s*(?=[:,}])"
+                        r"|\{[^}]*\bonly\b[^}]*\}\s*=\s*(?:it|test|describe)\b")  # `only` taken by destructuring
 
 
 def _py_markers(rel: str, text: str) -> tuple[list[dict[str, str]], list[str]]:
@@ -296,20 +302,29 @@ def _py_disabling(rel: str, text: str, names: set[str], allow_darwin: bool) -> l
             if allow_darwin and isinstance(node, ast.Attribute) and _darwin_only(calls.get(id(node))):
                 continue
             out.append(f"{rel}:{getattr(node, 'lineno', '?')}: `{name}` switches a test off in an enforcement file")
+    for call in calls.values():  # S0031 verifier F1: an empty parameter list makes pytest skip the test
+        func = call.func
+        if (func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")) != "parametrize":
+            continue
+        values = call.args[1] if len(call.args) > 1 else next((k.value for k in call.keywords if k.arg == "argvalues"), None)
+        if not (isinstance(values, (ast.List, ast.Tuple)) and values.elts):
+            out.append(f"{rel}:{call.lineno}: a parametrize without a non-empty literal list switches a test off in an "
+                       "enforcement file (an empty list skips the test, and a name can be empty)")
     return out
 
 
 def switched_off(rel: str, text: str, root: Path) -> list[str]:
     """S0031 (M2): the ways a test is switched off, in an enforcement file and the conftest.py files above it."""
+    if not is_test(rel):  # S0031 verifier F8: the name rules are for test files; `skip = None` in a check is fine
+        return []
     if rel.endswith(".py"):
         errors = _py_disabling(rel, text, PY_DISABLE_STRICT, allow_darwin=True)
-        if is_test(rel):
-            parent = PurePosixPath(rel).parent
-            for folder in [parent, *parent.parents]:
-                conf = root / folder / "conftest.py"
-                if conf.is_file():
-                    errors += _py_disabling(conf.relative_to(root).as_posix(),
-                                            conf.read_text(encoding="utf-8", errors="replace"), CONFTEST_DISABLE, False)
+        parent = PurePosixPath(rel).parent
+        for folder in [parent, *parent.parents]:
+            conf = root / folder / "conftest.py"
+            if conf.is_file():
+                errors += _py_disabling(conf.relative_to(root).as_posix(),
+                                        conf.read_text(encoding="utf-8", errors="replace"), CONFTEST_DISABLE, False)
         return errors
     if rel.endswith(TS_SOURCES):
         imports = [(m.start(), m.end()) for m in TS_IMPORT.finditer(text)]
