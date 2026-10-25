@@ -102,5 +102,49 @@ class Allows(unittest.TestCase):
         self.assertEqual(cs.check(["backend/src/app/main.py", "design/README.md"], blobs({})), [])
 
 
+STATEMENT = b"".join(b"2024-01-%02d,ACME STORE,-12.%02d\n" % (d, d) for d in range(1, 8))
+
+
+class Bl0023(unittest.TestCase):
+    """BL-0023 (S0019 verifier F1, F2): the statement sniff covers corpora/ and fixtures/; MANIFEST rows are validated."""
+
+    def test_statement_like_text_in_corpora_or_fixtures_is_refused(self) -> None:
+        for path in ("corpora/imports/statement.txt", "backend/tests/fixtures/rows.dat", "corpora/x/export"):
+            with self.subTest(path=path):
+                self.assertTrue(cs.check([path], blobs({path: STATEMENT})))
+
+    def test_the_named_synthetic_assets_pass(self) -> None:
+        for path in cs.SYNTHETIC_ASSETS:
+            with self.subTest(path=path):
+                self.assertEqual(cs.check([path], blobs({path: STATEMENT})), [])
+        for other in ("corpora/ledgers/inv21/goldens2.json", "corpora/ledgers/inv21/goldens.json.txt"):
+            with self.subTest(near=other):  # a near or longer name is not exempt
+                self.assertTrue(cs.check([other], blobs({other: STATEMENT})))
+
+    def test_a_reviewed_statement_in_corpora_passes(self) -> None:
+        path = "corpora/imports/statement.txt"
+        row = f"{path}\t{hashlib.sha256(STATEMENT).hexdigest()}\t2026-10-24\treviewed\n".encode()
+        self.assertEqual(cs.check([path], blobs({path: STATEMENT, cs.MANIFEST: row})), [])
+
+    def test_plain_text_in_corpora_passes(self) -> None:
+        path = "corpora/ledgers/write/documents/docs/a.txt"
+        self.assertEqual(cs.check([path], blobs({path: b"synthetic statement placeholder\n"})), [])
+
+    def test_malformed_manifest_rows_are_refused_when_the_manifest_is_staged(self) -> None:
+        good = "a\t" + "0" * 64 + "\t2026-10-24\tok\n"
+        for bad in ("a\t" + "0" * 63 + "\t2026-10-24\tx", "a\t" + "g" * 64 + "\t2026-10-24\tx",
+                    "a\t" + "0" * 64 + "\t2026-02-30\tx", "a\t" + "0" * 64 + "\t24-10-2026\tx",
+                    "a\t" + "0" * 64 + "\t2999-01-01\tx", "a\t" + "0" * 64, "\t" + "0" * 64 + "\t2026-10-24\tx"):
+            with self.subTest(row=bad):
+                manifest = (cs.MANIFEST, (good + bad + "\n").encode())
+                self.assertTrue(cs.check([cs.MANIFEST], blobs(dict([manifest]))))
+        self.assertEqual(cs.check([cs.MANIFEST], blobs({cs.MANIFEST: ("# header\n" + good).encode()})), [])
+
+    def test_a_future_or_bad_row_does_not_vouch_for_a_file(self) -> None:
+        path = "corpora/a.csv"
+        row = f"{path}\t{hashlib.sha256(b'x,y').hexdigest()}\t2999-01-01\treviewed\n".encode()
+        self.assertTrue(cs.check([path], blobs({path: b"x,y", cs.MANIFEST: row})))
+
+
 if __name__ == "__main__":
     unittest.main()

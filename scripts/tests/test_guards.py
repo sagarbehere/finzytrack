@@ -119,6 +119,17 @@ class GuardTest(unittest.TestCase):
         for cmd in refused:
             self.assertTrue(self.blocked(cmd), cmd)
 
+    def test_only_the_owner_writes_the_export_manifest(self) -> None:  # BL-0023 (INV-23)
+        manifest = self.repo / "corpora" / "MANIFEST.tsv"
+        self.assertTrue(guards.path_problem(str(manifest), self.repo, writing=True))
+        self.assertIsNone(guards.path_problem(str(manifest), self.repo, writing=False))
+        self.assertIsNone(guards.path_problem(str(self.repo / "other" / "MANIFEST.tsv"), self.repo, writing=True))
+        for cmd in ("printf 'x' >> corpora/MANIFEST.tsv", "cp x corpora/MANIFEST.tsv", "tee -a corpora/MANIFEST.tsv"):
+            with self.subTest(cmd=cmd):
+                self.assertTrue(guards.bash_problem(cmd, self.repo))
+        self.assertIsNone(guards.bash_problem("cat corpora/MANIFEST.tsv", self.repo))
+        # Stated limit (PROCESS.md §11, the guards are a safety net): an interpreter writing the file is not parsed.
+
     def test_hooks_fail_closed(self) -> None:
         """INV-22's spirit for the guards (S0014 round-2 verifier F2): Claude Code runs a command when the hook
         exits with anything but 2, so an internal error must refuse, never allow."""

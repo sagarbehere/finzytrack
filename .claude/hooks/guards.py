@@ -99,6 +99,9 @@ def path_problem(raw: str, cwd: Path, writing: bool) -> str | None:
             return "the owner's live data folder is off-limits to agents (INV-24); use copies under a temp dir"
         if writing and any(_under(p, r) for r in legacy_roots()):
             return "the legacy worktree is read-only; copy code out of it, never write into it"
+        if writing and p.name == "MANIFEST.tsv" and p.parent.name == "corpora":
+            return ("only the owner adds rows to corpora/MANIFEST.tsv (INV-23: owner-reviewed exports); ask the owner "
+                    "to review the anonymized file and add its row")
         if writing and p.is_file() and _generated(p):
             return "this file is generated (GENERATED header); edit its source and rerun the generator (INV-19)"
     return None

@@ -9,7 +9,9 @@ Refused unless listed in `corpora/MANIFEST.tsv` with the same SHA-256 and an own
   anonymization rule, design/process/PROCESS.md "Privacy gate"): bank and broker exports (spreadsheets,
   OFX/QFX/QIF, PDF, mail, archives); binary files other than images and fonts (the privacy scanner cannot
   read them); data-like text files (.txt, .json, .xml, no extension, ...) whose content looks like a
-  statement (OFX markers, or five or more dated lines with amounts).
+  statement (OFX markers, or five or more dated lines with amounts), in corpora/ and fixtures/ too, except the
+  synthetic test assets named in SYNTHETIC_ASSETS (BL-0023).
+Refused: a MANIFEST.tsv row that is malformed or whose owner review date is not a real date up to today.
 
 Usage: python3 scripts/check_staged.py            (checks the index)
        python3 scripts/check_staged.py --paths A B (checks the given repo paths; for tests)
@@ -24,6 +26,7 @@ import fnmatch
 import hashlib
 import subprocess
 import sys
+from datetime import date
 from pathlib import PurePosixPath
 
 DATA_PATTERNS = ["*.beancount", "*.bean", "*.beancount.*", "*.ledger", "*.journal", "*.hledger", "*.bc", "*.gpg",
@@ -46,6 +49,9 @@ ENV_EXAMPLE = ".env.example"
 EXPORT_PATTERNS = ["*.csv", "*.tsv", "*.xls", "*.xlsx", "*.xlsm", "*.xlsb", "*.ods", "*.numbers", "*.ofx", "*.qfx",
                    "*.qif", "*.qbo", "*.pdf", "*.eml", "*.mbox", "*.msg", "*.zip", "*.gz", "*.tgz", "*.7z", "*.rar", "*.tar"]
 MANIFEST = "corpora/MANIFEST.tsv"
+# Synthetic test assets our own tools write, whose dated lines with amounts are not statements (BL-0023). A new
+# statement-like file in corpora/ or fixtures/ needs an owner-reviewed MANIFEST row or an entry here (code review).
+SYNTHETIC_ASSETS = ("corpora/ledgers/inv21/goldens.json", "corpora/ledgers/oracle/nasty-cases.json")
 
 
 def matches(name: str, patterns: list[str]) -> bool:
@@ -57,16 +63,26 @@ def in_allowed_place(path: str) -> bool:
     return path.startswith(DATA_ALLOWED_UNDER) or any(seg in DATA_ALLOWED_SEGMENTS for seg in parts[:-1])
 
 
-def parse_manifest(text: str) -> dict[str, str]:
-    """MANIFEST.tsv rows: <path>\t<sha256>\t<owner review date YYYY-MM-DD>\t<note>."""
+def parse_manifest(text: str, today: date | None = None) -> tuple[dict[str, str], list[str]]:
+    """MANIFEST.tsv rows: <path>\t<sha256>\t<owner review date YYYY-MM-DD>\t<note>. Returns (entries, problems)."""
     entries: dict[str, str] = {}
-    for raw in text.splitlines():
+    problems: list[str] = []
+    today = today or date.today()
+    for n, raw in enumerate(text.splitlines(), 1):
         if not raw.strip() or raw.startswith("#"):
             continue
         cols = raw.split("\t")
-        if len(cols) >= 3 and len(cols[1]) == 64 and len(cols[2]) == 10:
-            entries[cols[0]] = cols[1].lower()
-    return entries
+        ok = len(cols) >= 3 and re.fullmatch(r"[0-9a-fA-F]{64}", cols[1]) is not None and cols[0].strip() == cols[0] != ""
+        try:
+            reviewed = date.fromisoformat(cols[2]) if ok and re.fullmatch(r"\d{4}-\d{2}-\d{2}", cols[2]) else None
+        except ValueError:
+            reviewed = None
+        if not ok or reviewed is None or reviewed > today:
+            problems.append(f"{MANIFEST} line {n}: needs <path> TAB <sha256> TAB <owner review date YYYY-MM-DD, not in "
+                            "the future> TAB <note>; only the owner adds rows")
+            continue
+        entries[cols[0]] = cols[1].lower()
+    return entries, problems
 
 
 def looks_like_statement(blob: bytes) -> bool:
@@ -85,7 +101,10 @@ def is_binary(blob: bytes) -> bool:
 def check(paths: list[str], blob_of, symlinks: dict[str, str] | None = None) -> list[str]:
     problems: list[str] = []
     manifest_blob = blob_of(MANIFEST)
-    manifest = parse_manifest(manifest_blob.decode("utf-8")) if manifest_blob is not None else {}
+    manifest, manifest_problems = (parse_manifest(manifest_blob.decode("utf-8", errors="replace"))
+                                   if manifest_blob is not None else ({}, []))
+    if MANIFEST in paths:
+        problems += manifest_problems
     for path in paths:
         name = PurePosixPath(path).name
         if symlinks and path in symlinks:
@@ -108,7 +127,7 @@ def check(paths: list[str], blob_of, symlinks: dict[str, str] | None = None) -> 
         elif blob is not None and is_binary(blob) and PurePosixPath(name).suffix.lower() not in MEDIA_EXTS and not reviewed:
             problems.append(f"{path}: binary file the privacy scan cannot read; only images and fonts, or files "
                             f"listed in {MANIFEST}, may be committed")
-        elif blob is not None and PurePosixPath(name).suffix.lower() in SNIFF_EXTS and not in_allowed_place(path) \
+        elif blob is not None and PurePosixPath(name).suffix.lower() in SNIFF_EXTS and path not in SYNTHETIC_ASSETS \
                 and not reviewed and looks_like_statement(blob):
             problems.append(f"{path}: content looks like a bank/broker statement (dated lines with amounts or OFX "
                             f"markers); move an anonymized, owner-reviewed copy to corpora/ with a {MANIFEST} entry")
