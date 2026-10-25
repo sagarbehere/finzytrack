@@ -36,6 +36,13 @@ In v0.3 a mirror rebuild dropped and re-created tables in place, so readers outs
 - A measured 38,800 reads during 5 s of continuous swaps gave 0 errors; this is an M1 acceptance test.
 - The OS may purge the cache; the cost is one rebuild.
 
+## Amendment (2026-10-25): a grace period for outside readers (spike S5, Q31)
+
+Owner: "I accept your recommendation on Q31" (2026-10-25, in session).
+- Garbage collection of mirror generations cannot see pins held by outside tools (a SQLite viewer, a user script). So a superseded generation is kept for a **grace period of 10 minutes** after it is replaced, and the **previous generation is always kept**; only then is it deleted (if it is still pinned inside the app, later).
+- A deletion that fails because a file is open (Windows) is expected and retried at the next collection, never reported as an error.
+- The grace period is a configuration value (INV-10 style bound), not a development target.
+
 ## References
 
 review:D1 §11; review:10 I4, D4, D5; review:23 §1.2, §3.4; review:00 §1b; ADR-0011, ADR-0016, ADR-0017; INV-05; CAP-DATA-MIRROR, CAP-MIRROR-EXTERNAL.
