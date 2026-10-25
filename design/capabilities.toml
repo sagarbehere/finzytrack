@@ -1256,7 +1256,7 @@ doc = "—"
 legacy_entry = "`useAccountDetector.ts:113-175`"
 demo = "no"
 backlog = ["L9.M-4", "L4-10"]
-adrs = ["ADR-0035"]
+adrs = ["ADR-0027", "ADR-0035"]
 code = []
 tests = []
 
@@ -3619,7 +3619,7 @@ doc = "guides/import-cas.md (v); views/investments.md#import-statement (v)"
 legacy_entry = "`components/investments/StatementImportPanel.vue`, `StatementFundRow.vue`, `StatementFundDetail.vue`; `services/statement_import/`; `POST /api/investments/statement/parse`, `/preview`, `/commit`"
 demo = "no"
 backlog = ["L7-03", "L7-04", "L7-05", "L7-10", "L7-11", "L7-15"]
-adrs = ["ADR-0032"]
+adrs = ["ADR-0030", "ADR-0032"]
 code = []
 tests = []
 
@@ -5311,7 +5311,7 @@ id = "CAP-DATA-ENCRYPTED"
 area = "Data and lifecycle"
 capability = "Encrypted (`.gpg`) ledger files, as far as Beancount's loader reads them"
 v04 = "cut"
-v04_note = "the overlay loader refuses encrypted files (review:10 D2; review:D1 §9)"
+v04_note = "the overlay loader refuses encrypted files (review:10 D2; review:D1 §9); PROVISIONAL: ADR-0010 refuses only writes to encrypted files; whether reading them is cut is the owner's question (design/inbox/20261025-encrypted-ledgers.md)"
 status = "cut"
 milestone = "M1"
 release_blocking = "n/a"

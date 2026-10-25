@@ -17,7 +17,7 @@ ADRS = {"ADR-0030"}
 
 
 def row(status: str, adrs: list[str], **extra: str) -> dict:
-    base = {"id": "CAP-INV-XIRR", "area": "Investments", "capability": "XIRR", "v04": "cut", "status": status,
+    base = {"id": "CAP-X-Y", "area": "Test", "capability": "a fictional row (a real ID here would count as its tagged test)", "v04": "cut", "status": status,
             "release_blocking": "no", "adrs": adrs}
     return {**base, **extra}
 
