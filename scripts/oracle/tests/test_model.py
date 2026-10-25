@@ -63,6 +63,13 @@ class ModelTest(unittest.TestCase):
         self.assertFalse(any("Expenses:Rent" in k for k in added))
         self.assertEqual(total(e.files["txns.beancount"].added), 1)
 
+    def test_rename_with_a_custom_string_naming_the_account_is_non_comparable(self) -> None:
+        self.d.write({"main.beancount": (self.d.path / "main.beancount").read_text()
+                      + '2020-01-01 custom "fava-sidebar-link" "Rent" "Expenses:Rent"\n'})
+        before = sd.parse_set(self.d.path, "main.beancount")
+        with self.assertRaises(model.NonComparable):  # waiting for the owner (intent table, account.rename)
+            model.rename_account(before, "Expenses:Rent", "Expenses:Housing")
+
     def test_rename_of_an_account_with_subaccounts_is_non_comparable(self) -> None:
         with self.assertRaises(model.NonComparable):  # the intended change is not decided yet (pilot)
             model.rename_account(self.before, "Expenses:Food", "Expenses:Meals")

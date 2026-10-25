@@ -1,21 +1,26 @@
-# After "Merge A into B", what happens to A's own balance checks and other directives?
-- Asked: 2026-10-25 by S0004 (the intent table, row `account.merge`)
+# After "Merge A into B", does the empty account A stay open, and what happens to its budgets?
+- Asked: 2026-10-25 by S0004 (the intent table, row `account.merge`; narrowed after the verifier's review)
 - blocks: the `account.merge` row (built in M4). Nothing in M0 or M1.
-- Rubric item: 1 (what is written to the ledger); ADR-0049 is not explicit.
+- Rubric item: 1 (what is written to the ledger); ADR-0049 settles the rest of the merge, not this part.
 
 ## Context (plain language, a concrete example first)
-Say you have two credit-card accounts for the same card, `Liabilities:Card:Old` (A) and `Liabilities:Card` (B), and you merge A into B. Every transaction of A moves to B. ADR-0049 settles that part.
+Say you have two accounts for the same credit card, `Liabilities:Card:Old` (A) and `Liabilities:Card` (B), and you merge A into B. ADR-0049 already settles most of what happens:
+- every transaction of A moves to B, along with A's notes and documents;
+- A's own balance checks and pads are **dropped, not moved**, because they describe A's balance, which now lives in B;
+- the preview lists any balance check of B that newly fails.
 
-A still has its own lines in the ledger: its `open`, perhaps a `close`, and **balance checks** such as "on 2024-06-30, A held −1,200.00 USD". After the merge, A holds nothing, so each of those balance checks now fails (A has 0, the check says −1,200). Beancount would report each one as an error.
+Two things are left that ADR-0049 does not say:
+1. A's `open` line (and its `close`, if it has one). After the merge, A has no transactions. It can stay as an empty, still-open account, or it can disappear.
+2. A's budget lines (`custom "budget" Liabilities:Card:Old ...`). They can be dropped, moved to B, or kept on the empty A.
 
-ADR-0049 says two things here. The merge preview lists **B's** balance checks that newly fail. "Delete with reassign" is "merge, then remove A's open, close, balance checks and pads". It does not say what a plain merge does with A's own checks.
+"Delete with reassign" (also ADR-0049) is "merge into B, then remove A's `open`, `close`, balance checks and pads, and drop A's budgets".
 
 ## Options
-1. **Merge moves the transactions, notes and documents, and also removes A's balance checks and pads**, since they describe a balance that now lives in B. A's `open` (and `close`) stay, so A still exists and is empty; you can close or delete it afterwards. The preview lists the removed checks.
-2. Merge leaves all of A's directives alone. A's balance checks then fail, and the preview lists them for you to acknowledge.
-3. Merge is the same as "delete with reassign": A disappears completely.
+1. **Merge keeps A's `open` (and `close`) and drops A's budgets.** A stays as an empty account that you can close or delete later. A budget on an empty account is meaningless, so it goes, and the preview lists it.
+2. Merge keeps A's `open` and keeps A's budgets on the empty A.
+3. Merge removes A completely. It is then the same as "delete with reassign", and there is only one action.
 
 ## Recommendation
-Option 1. A merge should not leave errors behind. Keeping A's `open` keeps merge distinct from delete, as ADR-0049 intends: delete removes A entirely, merge leaves an empty A. Moving A's balance checks onto B is not an option, because the amounts would be wrong for B.
+Option 1. It keeps merge distinct from delete, as ADR-0049 intends: merge leaves an empty A, delete removes it. A budget on an account that can no longer have spending would only confuse the budget view. Moving the budget to B is not offered, because B usually has its own budget.
 
 ## Answer (owner, verbatim, with date)

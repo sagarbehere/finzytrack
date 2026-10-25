@@ -67,7 +67,7 @@ Sixteen workstreams. Each one specifies a module or package of the new tree by i
   7. Seed dashboards dry-run against the backend validator.
   8. API contract snapshot, per-endpoint (status, `code`) error matrix, SSE event protocols.
   9. Mirror surface spec with per-table checksums and a DDL snapshot.
-  10. Per-mutator intent table with acknowledgeable error keys (needed before WS-WRITE stage 1). Written in S0004: `design/specs/write-path/` (37 rows; draft rows are confirmed in their vertical's first slice).
+  10. Per-mutator intent table with acknowledgeable error keys (needed before WS-WRITE stage 1). Written in S0004: `design/specs/write-path/` (50 rows; 2 wait for the owner; draft rows are confirmed in their vertical's first slice).
   11. Rule-reader, `.eml` and price-provider goldens.
   12. Recipe-run goldens (seed dashboards × parameter sets on the demo, frozen clock).
   13. Config and lifecycle current-state prose plus old-workspace fixtures → expected manifest and boot phase.
@@ -75,7 +75,7 @@ Sixteen workstreams. Each one specifies a module or package of the new tree by i
   15. Local real-ledger tier: copies of the owner's ledgers outside the repo; never in public CI (INV-23, INV-24).
   16. Differential-oracle harness: v0.3.0 from the legacy worktree as a separate process on ledger copies, compared through the D1 semantic diff with the expected divergence classes (I2, I3, I10, M28, FIX-<id>). Built for three mutators (update transaction, rename account, import append) in S0002 (spike S9); each further adapter is built in the first slice of its vertical (review:C DEP-11); BL-0045, BL-0046.
   17. All agent runs are local; the agent commits directly to `next`; owner approvals are quoted in the journal (owner, 2026-10-24).
-  18. Legacy API tests as characterization reference: spike S12 measured 107 of 165 passing API-level tests running out of process through a thin shim (65%, below the 80% criterion), so they are reference reading for each vertical's characterization slice; `scripts/oracle/legacy_api_tests.py` runs them on demand (S0003).
+  18. Legacy API tests as characterization reference: spike S12 measured 107 of 269 passing API-level tests running out of process through a thin shim (40%, below the 80% criterion), so they are reference reading for each vertical's characterization slice; `scripts/oracle/legacy_api_tests.py` runs them on demand and lists the 105 usable ones (S0003).
 - **Acceptance.** A deliberately reintroduced I2, I5, L4-03 or L9-01 fails CI. CI is red on any test, type, lint or licence error. Every acceptance flow runs headless against an isolated backend with a frozen clock and an LLM stub.
 - **Ref.** `review:99 §2 WS-QA`; `review:17 §2`; `review:D1 §6, §12.5`; `review:19 §3`.
 - **Closes.** L9-18, L9.M-7. (2 canonical.)

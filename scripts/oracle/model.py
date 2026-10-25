@@ -93,8 +93,9 @@ def renamed(entry: Any, old: str, new: str) -> Any:
         return entry._replace(account=r(entry.account), source_account=r(entry.source_account))
     if isinstance(entry, data.Transaction):
         return entry._replace(postings=[p._replace(account=r(p.account)) for p in entry.postings])
-    if isinstance(entry, data.Custom):
-        return entry._replace(values=[v._replace(value=r(v.value)) if v.dtype in (bc_account.TYPE, str) else v
+    if isinstance(entry, data.Custom):  # account-typed values; a string only as a budget's quoted root (intent table)
+        return entry._replace(values=[v._replace(value=r(v.value))
+                                      if v.dtype is bc_account.TYPE or (v.dtype is str and entry.type == "budget") else v
                                       for v in entry.values])
     return entry
 
@@ -115,6 +116,9 @@ def rename_account(before: LedgerSet, old: str, new: str) -> Expected:
             metas = [e.meta or {}] + [p.meta or {} for p in getattr(e, "postings", ())]
             if any(_names(v, old) for m in metas for key, v in m.items() if key != "filename"):
                 raise NonComparable(f"metadata names {old}: the intended change is not decided yet (intent table)")
+            if isinstance(e, data.Custom) and e.type != "budget" and any(
+                    v.dtype is str and _names(v.value, old) for v in e.values):
+                raise NonComparable(f"a custom string value names {old}: not decided yet (intent table)")
             r = renamed(e, old, new)
             if canonical_key(r) != k:
                 exp.remove(rel, k, f.keys[k])

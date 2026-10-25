@@ -27,7 +27,7 @@ mutators = [
 ]
 
 [legacy.map]
-append_entries = ["import.commit", "inv.add-holding"]
+append_entries = ["import.commit", "inv.add-holding", "inv.buy", "inv.reinvest", "inv.dividend", "inv.sell", "inv.conversion", "inv.cd-maturity", "inv.interest"]
 write_price_directives = ["price.write"]
 edit_price_directives = ["price.edit"]
 open_deposit = ["inv.open-deposit"]
@@ -38,7 +38,7 @@ update_account_directive = ["account.edit", "account.rename"]
 close_account_directive = ["account.close"]
 reopen_account_directive = ["account.reopen"]
 delete_account_directive = ["account.delete-with-transactions"]
-delete_account = ["account.delete-with-transactions", "account.delete-reassign"]
+delete_account = ["account.delete-with-transactions", "not built: ADR-0049 (delete_transactions=false removed the account but left its postings, a broken ledger; v0.4 offers reassign instead)"]
 create_budget_directive = ["budget.create"]
 update_budget_directive = ["budget.edit"]
 delete_budget_directive = ["budget.delete"]
@@ -54,16 +54,12 @@ add_balance_directive = ["balance.add"]
 update_balance_directive = ["balance.edit"]
 delete_balance_directive = ["balance.delete"]
 
-# Every full-rewrite legacy write carries these on the ledgers that have the feature (S0002, review:10 I2/I3/I10).
-[defaults]
-oracle_rewrite = ["I10", "I2 (glob includes)", "I3 (plugins)"]
-
 # ---------------------------------------------------------------- workspace and setup (M2–M3)
 
 [[mutator]]
 id = "ws.create-ledger"
 caps = ["CAP-SETUP-FRESH", "CAP-SETUP-CURRENCY"]
-kind = "add"
+kind = "many"
 old = "POST /api/setup/complete"
 edits = ["new_file"]
 files = "a new root file (and starter includes) in the new workspace folder; never an existing file"
@@ -71,7 +67,7 @@ intent = "the new files equal the starter template with `option \"operating_curr
 meta = []
 ack = []
 refuses = ["a ledger file already exists at the path (INV-29: never created implicitly, never overwritten)"]
-oracle = ["M28 (the legacy starter carries machinery keys, if any)", "FIX-ADR-0052 (legacy keeps the currency in config)"]
+oracle = ["M28 (if the legacy starter template carries machinery keys); the v0.3 wizard also writes `option \"operating_currency\"` (ADR-0052), so the currency is not a divergence"]
 status = "draft"
 milestone = "M3"
 adrs = ["ADR-0008", "ADR-0052", "ADR-0019"]
@@ -79,7 +75,7 @@ adrs = ["ADR-0008", "ADR-0052", "ADR-0019"]
 [[mutator]]
 id = "ws.seed-demo"
 caps = ["CAP-DATA-DEMO-GEN"]
-kind = "add"
+kind = "many"
 old = "n/a"
 edits = ["new_file"]
 files = "the demo workspace folder only (INV-25: `kind: demo` and the realpath of the app's demo path)"
@@ -133,11 +129,11 @@ kind = "many"
 old = "PUT /api/accounts/{name} with new_name"
 edits = ["replace_token"]
 files = "every file of the set with a reference to the account"
-intent = "every account token naming A becomes B: postings, `open`, `close`, `balance`, `pad` (both accounts), `note`, `document`, `custom \"budget\"`; nothing else changes. B must not exist (that is a merge)"
+intent = "every account token naming A becomes B: postings, `open`, `close`, `balance`, `pad` (both accounts), `note`, `document`, every account-typed `custom` value equal to A, and the quoted root of a `custom \"budget\"` equal to A; nothing else changes. B must not exist (that is a merge). Subaccounts, metadata values and other `custom` string values (e.g. a Fava sidebar link): see the inbox question"
 meta = []
 ack = []
 refuses = ["B already exists (use account.merge)", "B breaks the account grammar", "an encrypted file references A (not editable, ADR-0009)"]
-oracle = ["I10", "I2 (glob includes)", "I3 (plugins)", "legacy also renames subaccounts and metadata values: see the inbox question"]
+oracle = ["I10", "I2 (glob includes)", "I3 (plugins)", "non-comparable: accounts with subaccounts, or named in metadata (the legacy renames both; see the inbox question)"]
 status = "owner:20261025-rename-subaccounts-and-metadata.md"
 milestone = "M4"
 adrs = ["ADR-0049", "ADR-0009"]
@@ -147,11 +143,11 @@ id = "account.merge"
 caps = ["CAP-ACCT-MERGE"]
 kind = "many"
 old = "n/a"
-edits = ["replace_token"]
-files = "every file of the set with a posting, `note` or `document` of A"
-intent = "move_postings(A → B): every posting of A, and A's `note` and `document` directives, re-pointed to B; a transaction with legs on both keeps two B postings"
+edits = ["replace_token", "delete"]
+files = "every file of the set with a posting, `note`, `document`, `pad` or `balance` naming A"
+intent = "move_postings(A → B): every posting of A, A's `note` and `document` directives, and every `pad` whose source is A re-pointed to B; a transaction with legs on both keeps two B postings; A's own `balance` and `pad` directives are dropped, not moved (ADR-0049 preview rules). Whether A's `open`/`close` and budgets stay: see the inbox question"
 meta = []
-ack = ["BalanceError on a `balance` assertion of B that newly fails (listed in the preview)", "BalanceError on a `balance` assertion of A that newly fails: see the inbox question"]
+ack = ["BalanceError on a `balance` assertion of B that newly fails (listed in the preview)"]
 refuses = ["B is not open over the whole date span of A's postings", "B's currency constraints reject a moved posting", "holdings at cost and A and B book differently (warning plus refusal until confirmed)", "A has subaccounts (ADR-0049)"]
 oracle = ["none: no old endpoint"]
 status = "owner:20261025-merge-leftover-directives.md"
@@ -165,7 +161,7 @@ kind = "many"
 old = "n/a (the legacy delete cannot reassign)"
 edits = ["replace_token", "delete"]
 files = "every file of the set with an entry of A"
-intent = "account.merge into B, then A's `open`, `close`, `balance` and `pad` removed and A's `custom \"budget\"` directives dropped"
+intent = "account.merge into B (postings, notes, documents and `pad` sources re-pointed to B), then A's `open`, `close`, `balance` and `pad` removed and A's `custom \"budget\"` directives dropped"
 meta = []
 ack = ["BalanceError on a `balance` assertion of B that newly fails (listed in the preview)"]
 refuses = ["the account.merge refusals", "A has subaccounts (ADR-0049)"]
@@ -181,9 +177,9 @@ kind = "many"
 old = "DELETE /api/accounts/{name} (delete_transactions=true, the default)"
 edits = ["delete"]
 files = "every file of the set with an entry touching A"
-intent = "every transaction with a leg on A removed (every leg), and all of A's directives removed: `open`, `close`, `balance`, `pad`, `note`, `document`, `custom \"budget\"`. An account with no transactions is the same intent with no transactions"
+intent = "every transaction with a leg on A removed (every leg), every `pad` whose source is A removed, and all of A's directives removed: `open`, `close`, `balance`, `pad`, `note`, `document`, `custom \"budget\"`. An account with no transactions is the same intent with no transactions"
 meta = []
-ack = ["BalanceError on a `balance` assertion of another account whose balance changes (each listed in the all-time preview)"]
+ack = ["BalanceError on a `balance` assertion of another account whose balance changes, including accounts padded from A (each listed in the all-time preview)"]
 refuses = ["A has subaccounts (ADR-0049)", "the user has not chosen between Move and Delete (the question has no default)"]
 oracle = ["I10", "I2 (glob includes)", "I3 (plugins)", "FIX-I1 (legacy keeps A's balance, pad, note and budget directives)", "FIX-I11 (legacy lets the new errors through)"]
 status = "decided"
@@ -225,7 +221,7 @@ adrs = ["ADR-0009"]
 [[mutator]]
 id = "balance.add"
 caps = ["CAP-ACCT-ASSERTIONS"]
-kind = "add"
+kind = "many"
 old = "POST /api/accounts/{name}/balance-directives"
 edits = ["insert"]
 files = "the routed insert file"
@@ -241,7 +237,7 @@ adrs = ["ADR-0009", "ADR-0008"]
 [[mutator]]
 id = "balance.edit"
 caps = ["CAP-ACCT-ASSERTIONS"]
-kind = "change-one"
+kind = "many"
 old = "PUT /api/accounts/{name}/balance-directives"
 edits = ["replace", "insert", "delete"]
 files = "the file holding the assertion (and its paired `pad`)"
@@ -309,7 +305,7 @@ kind = "add"
 old = "internal (ensure_documents_option, before the first document write)"
 edits = ["option_line"]
 files = "the root file"
-intent = "one `option \"documents\"` line added to the root (the only header change any mutator makes besides settings.operating-currencies); written on first use only, never on open (INV-30)"
+intent = "one `option \"documents\"` line added to the root; written on first use only, never on open (INV-30)"
 meta = []
 ack = []
 refuses = ["the ledger already declares a documents option"]
@@ -330,7 +326,7 @@ files = "the file holding the targeted entry"
 intent = "the entry addressed by (TransactionId, entry_hash) replaced by the request merged against the parsed source entry: `@@`, lot dates and labels, elided amounts and metadata types kept where the user did not change them; nothing else changes"
 meta = ["memo", "document*", "note", "user keys typed in the drawer"]
 ack = ["BalanceError on a `balance` assertion of an account whose postings changed (amount, date or account)"]
-refuses = ["entry_hash mismatch (the entry changed since it was read)", "the entry is plugin-generated or in an encrypted file", "the edit does not balance or leaves an inactive account (ValidationError)", "a booking error on a reduction (BookingError, ReductionError, AmbiguousMatchError): never acknowledgeable"]
+refuses = ["entry_hash mismatch (the entry changed since it was read)", "the entry is plugin-generated or in an encrypted file", "the edit does not balance or leaves an inactive account (ValidationError)", "a booking error on a reduction (BookingError, ReductionError, AmbiguousMatchError): never acknowledgeable", "the edit removes or changes a read-forever identity key (`id`, `transaction_id`, `import-key`, `external_id`, `external_id_type`, `ofx_id`, `source_account`): only the consented cleanup may (INV-21 c, INV-14)"]
 oracle = ["I10", "I2 (glob includes)", "I3 (plugins)", "FIX-L3-02 (legacy refuses priced and cost edits; drops lot dates and labels)", "FIX-L3-05 (legacy rewrites the written scale)", "FIX-L3-15 (legacy stringifies typed metadata)", "M28", "non-comparable: entries without a legacy `id`"]
 status = "decided"
 milestone = "M5"
@@ -343,10 +339,10 @@ kind = "many"
 old = "PUT /api/ledger/transactions (several transactions)"
 edits = ["replace", "replace_token"]
 files = "every file holding a selected entry"
-intent = "each selected entry replaced as in txn.edit with the one bulk change applied (account, tag, link, flag, payee or narration); unselected entries identical"
+intent = "each selected entry replaced as in txn.edit with the one bulk change applied (account, tag, link, flag, payee, narration, or metadata set/remove/rename); unselected entries identical"
 meta = ["as txn.edit"]
 ack = ["as txn.edit, for every affected account"]
-refuses = ["as txn.edit, for any selected entry (the whole write is refused)"]
+refuses = ["as txn.edit, for any selected entry (the whole write is refused), including a metadata rename or removal that touches a read-forever identity key"]
 oracle = ["as txn.edit"]
 status = "decided"
 milestone = "M5"
@@ -358,8 +354,8 @@ caps = ["CAP-TXN-DELETE"]
 kind = "change-one"
 old = "DELETE /api/ledger/transactions"
 edits = ["delete"]
-files = "the file(s) holding the targeted entries"
-intent = "exactly the entries addressed by (TransactionId, entry_hash) removed; a selection of several is the `many` kind"
+files = "the file holding the targeted entry"
+intent = "exactly the entries addressed by (TransactionId, entry_hash) removed (one entry; several are txn.delete-many)"
 meta = []
 ack = ["BalanceError on a `balance` assertion of an account whose balance changes"]
 refuses = ["entry_hash mismatch", "a plugin-generated target"]
@@ -389,7 +385,7 @@ adrs = ["ADR-0009", "ADR-0026"]
 [[mutator]]
 id = "import.commit"
 caps = ["CAP-IMP-COMMIT", "CAP-IMP-BLANK"]
-kind = "add"
+kind = "many"
 old = "POST /api/import/commit"
 edits = ["insert"]
 files = "the routed insert file(s)"
@@ -397,7 +393,7 @@ intent = "one transaction per committed draft, built by the domain builders: the
 meta = ["import-key", "txn-date", "original", "statement-amount", "memo"]
 ack = ["BalanceError on a `balance` assertion of the anchor account (\"Register anyway\")"]
 refuses = ["a draft whose import-key element is already in the ledger, unless the user forced it (`~dup<n>`) (INV-14)", "an anchor account not open over the drafts' dates", "an open slot left empty (the draft is not complete)"]
-oracle = ["I10", "I2 (glob includes)", "I3 (plugins)", "M28 (legacy writes id, content_hash, source_account)"]
+oracle = ["I10", "I2 (glob includes)", "I3 (plugins)", "M28 (legacy writes id, content_hash, source_account)", "FIX-L3-02 (legacy rounds a `@@` total to its own unit price)", "FIX-L3-05 (legacy rewrites the written scale)"]
 status = "decided"
 milestone = "M6"
 adrs = ["ADR-0027", "ADR-0026", "ADR-0009"]
@@ -407,9 +403,9 @@ id = "import.settle-pending"
 caps = ["CAP-IMP-COMMIT"]
 kind = "change-one"
 old = "n/a"
-edits = ["replace_token", "insert_meta"]
+edits = ["replace"]
 files = "the file holding the pending entry"
-intent = "on a pending entry (flag `!`, every import-key element of kind `auth`): the statement element appended to the anchor's `import-key` and the flag set to `*`; amounts unchanged (a difference goes to reconciliation)"
+intent = "the pending entry (flag `!`, every import-key element of kind `auth`) replaced by itself with the statement element appended to the anchor's `import-key` and the flag set to `*`; amounts unchanged (a difference goes to reconciliation)"
 meta = ["import-key"]
 ack = []
 refuses = ["the entry is not pending by the derived rule (a user's own `!` is never settled)"]
@@ -423,9 +419,9 @@ id = "import.link-element"
 caps = ["CAP-IMP-DEDUPE", "CAP-RECON-STATEMENT"]
 kind = "change-one"
 old = "n/a"
-edits = ["insert_meta", "replace_token"]
+edits = ["delete_meta", "insert_meta"]
 files = "the file holding the matched entry"
-intent = "one element appended to the anchor posting's `import-key` (a transfer counterpart, a confirmed scored duplicate, or a reconciliation match); elements never reordered or recomputed"
+intent = "the anchor posting's `import-key` line replaced (delete + insert of that one meta line) by the same elements plus one appended (a transfer counterpart, a confirmed scored duplicate, or a reconciliation match); elements never reordered or recomputed"
 meta = ["import-key"]
 ack = []
 refuses = ["the element is already present"]
@@ -439,7 +435,7 @@ id = "recon.proceed"
 caps = ["CAP-RECON-STATEMENT"]
 kind = "many"
 old = "n/a"
-edits = ["insert", "replace", "insert_meta"]
+edits = ["insert", "replace", "delete_meta", "insert_meta"]
 files = "the routed insert file and the files of the matched entries"
 intent = "the additions and amount fixes the user chose (as import.commit and txn.edit), the chosen match elements (as import.link-element), then one `balance` on the anchor account dated closing + 1"
 meta = ["import-key", "txn-date", "original", "statement-amount", "memo"]
@@ -537,7 +533,7 @@ adrs = ["ADR-0030", "ADR-0009"]
 [[mutator]]
 id = "inv.open-deposit"
 caps = ["CAP-INV-OPEN-DEPOSIT"]
-kind = "add"
+kind = "many"
 old = "POST /api/investments/open-deposit"
 edits = ["insert"]
 files = "the routed insert file"
@@ -601,14 +597,14 @@ adrs = ["ADR-0032", "ADR-0031", "ADR-0030"]
 [[mutator]]
 id = "price.write"
 caps = ["CAP-PRICE-UPDATE", "CAP-PRICE-ADD", "CAP-PRICE-SIDECAR"]
-kind = "add"
+kind = "many"
 old = "POST /api/prices/update (fetch); PUT /api/prices (add)"
 edits = ["insert", "replace"]
 files = "the price sidecar `<stem>.prices.beancount` only (a contract member file)"
 intent = "one `price` per (date, commodity, quote) fetched or added; on a taken date the user chose Replace and the old price is replaced; ledger-file prices are never touched"
 meta = []
 ack = []
-refuses = ["a price for a date the ledger file already prices (read-only)", "a number written with an exponent (never; `format(d, \"f\")`)"]
+refuses = ["a price for a date the ledger file already prices (read-only)", "a fetch that would replace a manual price (CAP-PRICE-UPDATE: manual prices are never overwritten)", "a number written with an exponent (never; `format(d, \"f\")`)"]
 oracle = ["I10 (legacy rewrites the whole sidecar and drops its comments)"]
 status = "decided"
 milestone = "M8"
@@ -663,3 +659,213 @@ oracle = ["none: no old endpoint"]
 status = "decided"
 milestone = "M10"
 adrs = ["ADR-0026"]
+
+# ---------------------------------------------------------------- added in S0004 round 1 (verifier F1)
+
+[[mutator]]
+id = "txn.delete-many"
+caps = ["CAP-TXN-DELETE"]
+kind = "many"
+old = "DELETE /api/ledger/transactions (several)"
+edits = ["delete"]
+files = "every file holding a selected entry"
+intent = "exactly the selected entries, each addressed by (TransactionId, entry_hash), removed"
+meta = []
+ack = ["BalanceError on a `balance` assertion of an account whose balance changes"]
+refuses = ["as txn.delete, for any selected entry (the whole write is refused)"]
+oracle = ["I10", "I2 (glob includes)", "I3 (plugins)", "non-comparable: entries without a legacy `id`"]
+status = "decided"
+milestone = "M5"
+adrs = ["ADR-0009", "ADR-0026"]
+
+[[mutator]]
+id = "data.undo"
+caps = ["CAP-DATA-UNDO", "CAP-TXN-OPLOG"]
+kind = "many"
+old = "n/a"
+edits = ["insert", "replace", "delete"]
+files = "the files the undone write touched"
+intent = "the inverse of one journaled write: each entry the write produced (found by its canonical text) replaced by, or removed for, the entry text it replaced (review:28 §4.1 identity condition 4); nothing else. The kind of edit is the undone write's"
+meta = []
+ack = ["as the undone write's row"]
+refuses = ["an entry the write produced is gone or changed since (located by canonical hash; never guessed)", "a later write touched the same entries (undo the later one first)"]
+oracle = ["none: no old endpoint"]
+status = "draft"
+milestone = "M5"
+adrs = ["ADR-0026", "ADR-0008"]
+
+[[mutator]]
+id = "inv.buy"
+caps = ["CAP-INV-QA-BUY", "CAP-INV-STAGING"]
+kind = "add"
+old = "POST /api/investments/assemble, then POST /api/import/commit"
+edits = ["insert"]
+files = "the routed insert file"
+intent = "one transaction: units of the security at the unit price into the holding account (an augmentation, `{cost}` as given), the cash leg, and the fee leg if given"
+meta = []
+ack = []
+refuses = ["an account not open on the date"]
+oracle = ["I10", "I2 (glob includes)", "I3 (plugins)", "M28"]
+status = "draft"
+milestone = "M8"
+adrs = ["ADR-0030", "ADR-0031", "ADR-0009"]
+
+[[mutator]]
+id = "inv.reinvest"
+caps = ["CAP-INV-QA-DRIP", "CAP-INV-STAGING"]
+kind = "add"
+old = "POST /api/investments/assemble, then POST /api/import/commit"
+edits = ["insert"]
+files = "the routed insert file"
+intent = "one transaction: the dividend income leg and the units bought with it at the given price into the holding account"
+meta = []
+ack = []
+refuses = ["an account not open on the date"]
+oracle = ["I10", "I2 (glob includes)", "I3 (plugins)", "M28"]
+status = "draft"
+milestone = "M8"
+adrs = ["ADR-0030", "ADR-0031", "ADR-0009"]
+
+[[mutator]]
+id = "inv.dividend"
+caps = ["CAP-INV-QA-DIVIDEND", "CAP-INV-STAGING"]
+kind = "add"
+old = "POST /api/investments/assemble, then POST /api/import/commit"
+edits = ["insert"]
+files = "the routed insert file"
+intent = "one transaction: the dividend from the income account the user picked to the cash account"
+meta = []
+ack = []
+refuses = ["an account not open on the date", "an income account the user did not pick (INV-15: suggested from metadata, never created)"]
+oracle = ["I10", "I2 (glob includes)", "I3 (plugins)", "M28"]
+status = "draft"
+milestone = "M8"
+adrs = ["ADR-0030", "ADR-0031", "ADR-0009"]
+
+[[mutator]]
+id = "inv.sell"
+caps = ["CAP-INV-QA-SELL", "CAP-INV-STAGING"]
+kind = "add"
+old = "POST /api/investments/assemble, then POST /api/import/commit"
+edits = ["insert"]
+files = "the routed insert file"
+intent = "one transaction: the reduction written per ADR-0031 (`{}` where the account's method decides, or one posting per lot the user picked on STRICT accounts), the cash leg, the gains leg on the account the user picked, and the fee leg if given"
+meta = []
+ack = []
+refuses = ["any booking error (never acknowledgeable)", "a STRICT account without the lots chosen", "AVERAGE booking (refused by Beancount 3.2)"]
+oracle = ["I10", "I2 (glob includes)", "I3 (plugins)", "M28"]
+status = "draft"
+milestone = "M8"
+adrs = ["ADR-0030", "ADR-0031", "ADR-0009"]
+
+[[mutator]]
+id = "inv.conversion"
+caps = ["CAP-INV-QA-MERGER", "CAP-INV-STAGING"]
+kind = "add"
+old = "POST /api/investments/assemble, then POST /api/import/commit"
+edits = ["insert"]
+files = "the routed insert file"
+intent = "one transaction: every lot of the old security reduced and the same lots (date and cost kept) added in the new security, no gain"
+meta = []
+ack = []
+refuses = ["any booking error (never acknowledgeable)", "a lot whose cost cannot be carried over exactly"]
+oracle = ["I10", "I2 (glob includes)", "I3 (plugins)", "M28"]
+status = "draft"
+milestone = "M8"
+adrs = ["ADR-0030", "ADR-0031", "ADR-0009"]
+
+[[mutator]]
+id = "inv.cd-maturity"
+caps = ["CAP-INV-QA-CD-MATURITY", "CAP-INV-STAGING"]
+kind = "add"
+old = "POST /api/investments/assemble, then POST /api/import/commit"
+edits = ["insert"]
+files = "the routed insert file"
+intent = "one transaction moving principal and any final interest to the chosen account; the deposit's `close` only if the user ticks it (then the row is account.close as well)"
+meta = []
+ack = []
+refuses = ["an account not open on the date", "a non-zero remaining balance when closing"]
+oracle = ["I10", "I2 (glob includes)", "I3 (plugins)", "M28"]
+status = "draft"
+milestone = "M8"
+adrs = ["ADR-0030", "ADR-0031", "ADR-0009"]
+
+[[mutator]]
+id = "inv.interest"
+caps = ["CAP-INV-QA-INTEREST", "CAP-INV-STAGING"]
+kind = "add"
+old = "POST /api/investments/assemble, then POST /api/import/commit"
+edits = ["insert"]
+files = "the routed insert file"
+intent = "one transaction: interest from the instrument's interest income account, credited to the instrument (compounding) or to the chosen account"
+meta = []
+ack = []
+refuses = ["an account not open on the date"]
+oracle = ["I10", "I2 (glob includes)", "I3 (plugins)", "M28"]
+status = "draft"
+milestone = "M8"
+adrs = ["ADR-0030", "ADR-0031", "ADR-0009"]
+
+[[mutator]]
+id = "settings.booking-default"
+caps = ["CAP-SET-BOOKING-DEFAULT"]
+kind = "change-one"
+old = "n/a"
+edits = ["option_line"]
+files = "the root file"
+intent = "the root's `option \"booking_method\"` line set to the chosen method (inserted if absent); nothing else"
+meta = []
+ack = []
+refuses = ["the re-booking preview (N past sales, realized gain change) not confirmed (ADR-0031)", "any booking error after re-booking (never acknowledgeable)", "AVERAGE (refused by Beancount 3.2)", "the option is declared in an included file (the user edits that file)"]
+oracle = ["none: no old endpoint"]
+status = "decided"
+milestone = "M10"
+adrs = ["ADR-0031", "ADR-0009"]
+
+[[mutator]]
+id = "ws.test-copy"
+caps = ["CAP-WS-TEST-COPY"]
+kind = "many"
+old = "n/a"
+edits = ["new_file"]
+files = "a new workspace folder only (copies of the ledger set's files; never an external reference)"
+intent = "every file of the source ledger set copied byte for byte into the new folder, marked `test_copy: true`; the source set is only read"
+meta = []
+ack = []
+refuses = ["the destination exists or lies inside a non-copy workspace's file set", "a source file outside the ledger set's folder (it would stay shared)"]
+oracle = ["none: no old endpoint"]
+status = "draft"
+milestone = "M3"
+adrs = ["ADR-0014", "ADR-0017"]
+
+[[mutator]]
+id = "ws.adopt-legacy"
+caps = ["CAP-LEGACY-ADOPT"]
+kind = "many"
+old = "n/a"
+edits = ["new_file"]
+files = "the new workspace folder only (INV-26: nothing under the legacy root is written)"
+intent = "the legacy ledger set copied byte for byte into the new workspace (Copy, the default, ADR-0020); the legacy files are only read"
+meta = []
+ack = []
+refuses = ["any write under the legacy root (INV-26)", "the destination exists"]
+oracle = ["none: no old endpoint"]
+status = "draft"
+milestone = "M3"
+adrs = ["ADR-0020", "ADR-0017"]
+
+[[mutator]]
+id = "ws.refresh-demo"
+caps = ["CAP-DATA-SEED-REFRESH"]
+kind = "many"
+old = "n/a"
+edits = ["replace_file"]
+files = "the demo workspace folder only (INV-25: `kind: demo` and the realpath of the app's demo path, no symlinks)"
+intent = "the demo's files replaced as a whole by the generator's output for the new build anchor (the one replacement in the system, INV-25, ADR-0022)"
+meta = []
+ack = []
+refuses = ["the folder is not the app's demo path, is not `kind: demo`, or is reached through a symlink (INV-25)"]
+oracle = ["none: no old endpoint"]
+status = "draft"
+milestone = "M3"
+adrs = ["ADR-0022", "ADR-0008"]

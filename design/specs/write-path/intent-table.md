@@ -4,24 +4,24 @@
 
 What each ledger-writing mutator may change. Column meanings and rules: [README.md](README.md). Edit `intent-table.toml`, then run `python3 scripts/gen_intent_table.py`.
 
-37 mutators: 24 decided, 11 draft, 2 owner; kinds 12 add, 16 change-one, 9 many; 10 with no old-app counterpart.
+50 mutators: 26 decided, 22 draft, 2 owner; kinds 13 add, 16 change-one, 21 many; 15 with no old-app counterpart.
 
 ## Summary
 
 | Mutator | Kind | Old endpoint | Edits | Status | Milestone |
 |---|---|---|---|---|---|
-| `ws.create-ledger` | add | POST /api/setup/complete | new_file | draft | M3 |
-| `ws.seed-demo` | add | n/a | new_file | decided | M3 |
+| `ws.create-ledger` | many | POST /api/setup/complete | new_file | draft | M3 |
+| `ws.seed-demo` | many | n/a | new_file | decided | M3 |
 | `account.create` | add | POST /api/accounts | insert | decided | M4 |
 | `account.edit` | change-one | PUT /api/accounts/{name} (without new_name) | replace; insert_meta; delete_meta | decided | M4 |
 | `account.rename` | many | PUT /api/accounts/{name} with new_name | replace_token | owner:20261025-rename-subaccounts-and-metadata.md | M4 |
-| `account.merge` | many | n/a | replace_token | owner:20261025-merge-leftover-directives.md | M4 |
+| `account.merge` | many | n/a | replace_token; delete | owner:20261025-merge-leftover-directives.md | M4 |
 | `account.delete-reassign` | many | n/a (the legacy delete cannot reassign) | replace_token; delete | decided | M4 |
 | `account.delete-with-transactions` | many | DELETE /api/accounts/{name} (delete_transactions=true, the default) | delete | decided | M4 |
 | `account.close` | add | POST /api/accounts/{name}/close | insert | decided | M4 |
 | `account.reopen` | change-one | POST /api/accounts/{name}/reopen | delete | decided | M4 |
-| `balance.add` | add | POST /api/accounts/{name}/balance-directives | insert | decided | M4 |
-| `balance.edit` | change-one | PUT /api/accounts/{name}/balance-directives | replace; insert; delete | decided | M4 |
+| `balance.add` | many | POST /api/accounts/{name}/balance-directives | insert | decided | M4 |
+| `balance.edit` | many | PUT /api/accounts/{name}/balance-directives | replace; insert; delete | decided | M4 |
 | `balance.delete` | change-one | DELETE /api/accounts/{name}/balance-directives | delete | decided | M4 |
 | `doc.account-attach` | add | POST /api/documents/account | insert | decided | M4 |
 | `doc.account-detach` | change-one | DELETE /api/documents/account | delete | decided | M4 |
@@ -30,30 +30,43 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 | `txn.bulk-edit` | many | PUT /api/ledger/transactions (several transactions) | replace; replace_token | decided | M5 |
 | `txn.delete` | change-one | DELETE /api/ledger/transactions | delete | decided | M5 |
 | `doc.txn-attach` | change-one | POST /api/documents/upload, then PUT /api/ledger/transactions with the `document` key | insert_meta | draft | M5 |
-| `import.commit` | add | POST /api/import/commit | insert | decided | M6 |
-| `import.settle-pending` | change-one | n/a | replace_token; insert_meta | decided | M6 |
-| `import.link-element` | change-one | n/a | insert_meta; replace_token | decided | M6 |
-| `recon.proceed` | many | n/a | insert; replace; insert_meta | draft | M6 |
+| `import.commit` | many | POST /api/import/commit | insert | decided | M6 |
+| `import.settle-pending` | change-one | n/a | replace | decided | M6 |
+| `import.link-element` | change-one | n/a | delete_meta; insert_meta | decided | M6 |
+| `recon.proceed` | many | n/a | insert; replace; delete_meta; insert_meta | draft | M6 |
 | `import.bank-id-migration` | many | n/a | insert_meta | draft | M6 |
 | `budget.create` | add | POST /api/budgets | insert | draft | M7 |
 | `budget.edit` | change-one | PUT /api/budgets/{budget_id} | replace | draft | M7 |
 | `budget.delete` | change-one | DELETE /api/budgets/{budget_id} | delete | draft | M7 |
 | `inv.add-holding` | add | POST /api/import/commit (staged quick action) | insert | draft | M8 |
-| `inv.open-deposit` | add | POST /api/investments/open-deposit | insert | draft | M8 |
+| `inv.open-deposit` | many | POST /api/investments/open-deposit | insert | draft | M8 |
 | `inv.commodity-metadata` | change-one | PUT /api/commodities/metadata | replace; insert; insert_meta; delete_meta | draft | M8 |
 | `inv.booking-method` | change-one | n/a | replace | decided | M8 |
 | `inv.one-upload-sync` | many | n/a (import_statement is cut) | insert | draft | M8 |
-| `price.write` | add | POST /api/prices/update (fetch); PUT /api/prices (add) | insert; replace | decided | M8 |
+| `price.write` | many | POST /api/prices/update (fetch); PUT /api/prices (add) | insert; replace | decided | M8 |
 | `price.edit` | change-one | PUT /api/prices (change, remove) | replace; delete | decided | M8 |
 | `settings.operating-currencies` | change-one | PUT /api/commodities/operating-currencies | option_line | decided | M10 |
 | `meta.cleanup` | many | n/a | insert_meta; delete_meta; replace_token | decided | M10 |
+| `txn.delete-many` | many | DELETE /api/ledger/transactions (several) | delete | decided | M5 |
+| `data.undo` | many | n/a | insert; replace; delete | draft | M5 |
+| `inv.buy` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
+| `inv.reinvest` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
+| `inv.dividend` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
+| `inv.sell` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
+| `inv.conversion` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
+| `inv.cd-maturity` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
+| `inv.interest` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
+| `settings.booking-default` | change-one | n/a | option_line | decided | M10 |
+| `ws.test-copy` | many | n/a | new_file | draft | M3 |
+| `ws.adopt-legacy` | many | n/a | new_file | draft | M3 |
+| `ws.refresh-demo` | many | n/a | replace_file | draft | M3 |
 
 ## Rows
 
 ### `ws.create-ledger`
 
 - **Capabilities:** CAP-SETUP-FRESH; CAP-SETUP-CURRENCY
-- **Kind of edit:** add
+- **Kind of edit:** many
 - **Old endpoint:** POST /api/setup/complete
 - **Edits:** new_file
 - **Files:** a new root file (and starter includes) in the new workspace folder; never an existing file
@@ -61,7 +74,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Metadata written:** —
 - **May ask to acknowledge:** —
 - **Refused when:** a ledger file already exists at the path (INV-29: never created implicitly, never overwritten)
-- **v0.3 oracle expectation:** M28 (the legacy starter carries machinery keys, if any); FIX-ADR-0052 (legacy keeps the currency in config)
+- **v0.3 oracle expectation:** M28 (if the legacy starter template carries machinery keys); the v0.3 wizard also writes `option "operating_currency"` (ADR-0052), so the currency is not a divergence
 - **Status:** draft
 - **Milestone:** M3
 - **ADRs:** ADR-0008; ADR-0052; ADR-0019
@@ -69,7 +82,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 ### `ws.seed-demo`
 
 - **Capabilities:** CAP-DATA-DEMO-GEN
-- **Kind of edit:** add
+- **Kind of edit:** many
 - **Old endpoint:** n/a
 - **Edits:** new_file
 - **Files:** the demo workspace folder only (INV-25: `kind: demo` and the realpath of the app's demo path)
@@ -121,11 +134,11 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Old endpoint:** PUT /api/accounts/{name} with new_name
 - **Edits:** replace_token
 - **Files:** every file of the set with a reference to the account
-- **Intended change:** every account token naming A becomes B: postings, `open`, `close`, `balance`, `pad` (both accounts), `note`, `document`, `custom "budget"`; nothing else changes. B must not exist (that is a merge)
+- **Intended change:** every account token naming A becomes B: postings, `open`, `close`, `balance`, `pad` (both accounts), `note`, `document`, every account-typed `custom` value equal to A, and the quoted root of a `custom "budget"` equal to A; nothing else changes. B must not exist (that is a merge). Subaccounts, metadata values and other `custom` string values (e.g. a Fava sidebar link): see the inbox question
 - **Metadata written:** —
 - **May ask to acknowledge:** —
 - **Refused when:** B already exists (use account.merge); B breaks the account grammar; an encrypted file references A (not editable, ADR-0009)
-- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); legacy also renames subaccounts and metadata values: see the inbox question
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); non-comparable: accounts with subaccounts, or named in metadata (the legacy renames both; see the inbox question)
 - **Status:** owner:20261025-rename-subaccounts-and-metadata.md
 - **Milestone:** M4
 - **ADRs:** ADR-0049; ADR-0009
@@ -135,11 +148,11 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Capabilities:** CAP-ACCT-MERGE
 - **Kind of edit:** many
 - **Old endpoint:** n/a
-- **Edits:** replace_token
-- **Files:** every file of the set with a posting, `note` or `document` of A
-- **Intended change:** move_postings(A → B): every posting of A, and A's `note` and `document` directives, re-pointed to B; a transaction with legs on both keeps two B postings
+- **Edits:** replace_token; delete
+- **Files:** every file of the set with a posting, `note`, `document`, `pad` or `balance` naming A
+- **Intended change:** move_postings(A → B): every posting of A, A's `note` and `document` directives, and every `pad` whose source is A re-pointed to B; a transaction with legs on both keeps two B postings; A's own `balance` and `pad` directives are dropped, not moved (ADR-0049 preview rules). Whether A's `open`/`close` and budgets stay: see the inbox question
 - **Metadata written:** —
-- **May ask to acknowledge:** BalanceError on a `balance` assertion of B that newly fails (listed in the preview); BalanceError on a `balance` assertion of A that newly fails: see the inbox question
+- **May ask to acknowledge:** BalanceError on a `balance` assertion of B that newly fails (listed in the preview)
 - **Refused when:** B is not open over the whole date span of A's postings; B's currency constraints reject a moved posting; holdings at cost and A and B book differently (warning plus refusal until confirmed); A has subaccounts (ADR-0049)
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** owner:20261025-merge-leftover-directives.md
@@ -153,7 +166,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Old endpoint:** n/a (the legacy delete cannot reassign)
 - **Edits:** replace_token; delete
 - **Files:** every file of the set with an entry of A
-- **Intended change:** account.merge into B, then A's `open`, `close`, `balance` and `pad` removed and A's `custom "budget"` directives dropped
+- **Intended change:** account.merge into B (postings, notes, documents and `pad` sources re-pointed to B), then A's `open`, `close`, `balance` and `pad` removed and A's `custom "budget"` directives dropped
 - **Metadata written:** —
 - **May ask to acknowledge:** BalanceError on a `balance` assertion of B that newly fails (listed in the preview)
 - **Refused when:** the account.merge refusals; A has subaccounts (ADR-0049)
@@ -169,9 +182,9 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Old endpoint:** DELETE /api/accounts/{name} (delete_transactions=true, the default)
 - **Edits:** delete
 - **Files:** every file of the set with an entry touching A
-- **Intended change:** every transaction with a leg on A removed (every leg), and all of A's directives removed: `open`, `close`, `balance`, `pad`, `note`, `document`, `custom "budget"`. An account with no transactions is the same intent with no transactions
+- **Intended change:** every transaction with a leg on A removed (every leg), every `pad` whose source is A removed, and all of A's directives removed: `open`, `close`, `balance`, `pad`, `note`, `document`, `custom "budget"`. An account with no transactions is the same intent with no transactions
 - **Metadata written:** —
-- **May ask to acknowledge:** BalanceError on a `balance` assertion of another account whose balance changes (each listed in the all-time preview)
+- **May ask to acknowledge:** BalanceError on a `balance` assertion of another account whose balance changes, including accounts padded from A (each listed in the all-time preview)
 - **Refused when:** A has subaccounts (ADR-0049); the user has not chosen between Move and Delete (the question has no default)
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); FIX-I1 (legacy keeps A's balance, pad, note and budget directives); FIX-I11 (legacy lets the new errors through)
 - **Status:** decided
@@ -213,7 +226,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 ### `balance.add`
 
 - **Capabilities:** CAP-ACCT-ASSERTIONS
-- **Kind of edit:** add
+- **Kind of edit:** many
 - **Old endpoint:** POST /api/accounts/{name}/balance-directives
 - **Edits:** insert
 - **Files:** the routed insert file
@@ -229,7 +242,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 ### `balance.edit`
 
 - **Capabilities:** CAP-ACCT-ASSERTIONS
-- **Kind of edit:** change-one
+- **Kind of edit:** many
 - **Old endpoint:** PUT /api/accounts/{name}/balance-directives
 - **Edits:** replace; insert; delete
 - **Files:** the file holding the assertion (and its paired `pad`)
@@ -297,7 +310,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Old endpoint:** internal (ensure_documents_option, before the first document write)
 - **Edits:** option_line
 - **Files:** the root file
-- **Intended change:** one `option "documents"` line added to the root (the only header change any mutator makes besides settings.operating-currencies); written on first use only, never on open (INV-30)
+- **Intended change:** one `option "documents"` line added to the root; written on first use only, never on open (INV-30)
 - **Metadata written:** —
 - **May ask to acknowledge:** —
 - **Refused when:** the ledger already declares a documents option
@@ -316,7 +329,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the entry addressed by (TransactionId, entry_hash) replaced by the request merged against the parsed source entry: `@@`, lot dates and labels, elided amounts and metadata types kept where the user did not change them; nothing else changes
 - **Metadata written:** memo; document*; note; user keys typed in the drawer
 - **May ask to acknowledge:** BalanceError on a `balance` assertion of an account whose postings changed (amount, date or account)
-- **Refused when:** entry_hash mismatch (the entry changed since it was read); the entry is plugin-generated or in an encrypted file; the edit does not balance or leaves an inactive account (ValidationError); a booking error on a reduction (BookingError, ReductionError, AmbiguousMatchError): never acknowledgeable
+- **Refused when:** entry_hash mismatch (the entry changed since it was read); the entry is plugin-generated or in an encrypted file; the edit does not balance or leaves an inactive account (ValidationError); a booking error on a reduction (BookingError, ReductionError, AmbiguousMatchError): never acknowledgeable; the edit removes or changes a read-forever identity key (`id`, `transaction_id`, `import-key`, `external_id`, `external_id_type`, `ofx_id`, `source_account`): only the consented cleanup may (INV-21 c, INV-14)
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); FIX-L3-02 (legacy refuses priced and cost edits; drops lot dates and labels); FIX-L3-05 (legacy rewrites the written scale); FIX-L3-15 (legacy stringifies typed metadata); M28; non-comparable: entries without a legacy `id`
 - **Status:** decided
 - **Milestone:** M5
@@ -329,10 +342,10 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Old endpoint:** PUT /api/ledger/transactions (several transactions)
 - **Edits:** replace; replace_token
 - **Files:** every file holding a selected entry
-- **Intended change:** each selected entry replaced as in txn.edit with the one bulk change applied (account, tag, link, flag, payee or narration); unselected entries identical
+- **Intended change:** each selected entry replaced as in txn.edit with the one bulk change applied (account, tag, link, flag, payee, narration, or metadata set/remove/rename); unselected entries identical
 - **Metadata written:** as txn.edit
 - **May ask to acknowledge:** as txn.edit, for every affected account
-- **Refused when:** as txn.edit, for any selected entry (the whole write is refused)
+- **Refused when:** as txn.edit, for any selected entry (the whole write is refused), including a metadata rename or removal that touches a read-forever identity key
 - **v0.3 oracle expectation:** as txn.edit
 - **Status:** decided
 - **Milestone:** M5
@@ -344,8 +357,8 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Kind of edit:** change-one
 - **Old endpoint:** DELETE /api/ledger/transactions
 - **Edits:** delete
-- **Files:** the file(s) holding the targeted entries
-- **Intended change:** exactly the entries addressed by (TransactionId, entry_hash) removed; a selection of several is the `many` kind
+- **Files:** the file holding the targeted entry
+- **Intended change:** exactly the entries addressed by (TransactionId, entry_hash) removed (one entry; several are txn.delete-many)
 - **Metadata written:** —
 - **May ask to acknowledge:** BalanceError on a `balance` assertion of an account whose balance changes
 - **Refused when:** entry_hash mismatch; a plugin-generated target
@@ -373,7 +386,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 ### `import.commit`
 
 - **Capabilities:** CAP-IMP-COMMIT; CAP-IMP-BLANK
-- **Kind of edit:** add
+- **Kind of edit:** many
 - **Old endpoint:** POST /api/import/commit
 - **Edits:** insert
 - **Files:** the routed insert file(s)
@@ -381,7 +394,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Metadata written:** import-key; txn-date; original; statement-amount; memo
 - **May ask to acknowledge:** BalanceError on a `balance` assertion of the anchor account ("Register anyway")
 - **Refused when:** a draft whose import-key element is already in the ledger, unless the user forced it (`~dup<n>`) (INV-14); an anchor account not open over the drafts' dates; an open slot left empty (the draft is not complete)
-- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28 (legacy writes id, content_hash, source_account)
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28 (legacy writes id, content_hash, source_account); FIX-L3-02 (legacy rounds a `@@` total to its own unit price); FIX-L3-05 (legacy rewrites the written scale)
 - **Status:** decided
 - **Milestone:** M6
 - **ADRs:** ADR-0027; ADR-0026; ADR-0009
@@ -391,9 +404,9 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Capabilities:** CAP-IMP-COMMIT
 - **Kind of edit:** change-one
 - **Old endpoint:** n/a
-- **Edits:** replace_token; insert_meta
+- **Edits:** replace
 - **Files:** the file holding the pending entry
-- **Intended change:** on a pending entry (flag `!`, every import-key element of kind `auth`): the statement element appended to the anchor's `import-key` and the flag set to `*`; amounts unchanged (a difference goes to reconciliation)
+- **Intended change:** the pending entry (flag `!`, every import-key element of kind `auth`) replaced by itself with the statement element appended to the anchor's `import-key` and the flag set to `*`; amounts unchanged (a difference goes to reconciliation)
 - **Metadata written:** import-key
 - **May ask to acknowledge:** —
 - **Refused when:** the entry is not pending by the derived rule (a user's own `!` is never settled)
@@ -407,9 +420,9 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Capabilities:** CAP-IMP-DEDUPE; CAP-RECON-STATEMENT
 - **Kind of edit:** change-one
 - **Old endpoint:** n/a
-- **Edits:** insert_meta; replace_token
+- **Edits:** delete_meta; insert_meta
 - **Files:** the file holding the matched entry
-- **Intended change:** one element appended to the anchor posting's `import-key` (a transfer counterpart, a confirmed scored duplicate, or a reconciliation match); elements never reordered or recomputed
+- **Intended change:** the anchor posting's `import-key` line replaced (delete + insert of that one meta line) by the same elements plus one appended (a transfer counterpart, a confirmed scored duplicate, or a reconciliation match); elements never reordered or recomputed
 - **Metadata written:** import-key
 - **May ask to acknowledge:** —
 - **Refused when:** the element is already present
@@ -423,7 +436,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Capabilities:** CAP-RECON-STATEMENT
 - **Kind of edit:** many
 - **Old endpoint:** n/a
-- **Edits:** insert; replace; insert_meta
+- **Edits:** insert; replace; delete_meta; insert_meta
 - **Files:** the routed insert file and the files of the matched entries
 - **Intended change:** the additions and amount fixes the user chose (as import.commit and txn.edit), the chosen match elements (as import.link-element), then one `balance` on the anchor account dated closing + 1
 - **Metadata written:** import-key; txn-date; original; statement-amount; memo
@@ -517,7 +530,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 ### `inv.open-deposit`
 
 - **Capabilities:** CAP-INV-OPEN-DEPOSIT
-- **Kind of edit:** add
+- **Kind of edit:** many
 - **Old endpoint:** POST /api/investments/open-deposit
 - **Edits:** insert
 - **Files:** the routed insert file
@@ -581,14 +594,14 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 ### `price.write`
 
 - **Capabilities:** CAP-PRICE-UPDATE; CAP-PRICE-ADD; CAP-PRICE-SIDECAR
-- **Kind of edit:** add
+- **Kind of edit:** many
 - **Old endpoint:** POST /api/prices/update (fetch); PUT /api/prices (add)
 - **Edits:** insert; replace
 - **Files:** the price sidecar `<stem>.prices.beancount` only (a contract member file)
 - **Intended change:** one `price` per (date, commodity, quote) fetched or added; on a taken date the user chose Replace and the old price is replaced; ledger-file prices are never touched
 - **Metadata written:** —
 - **May ask to acknowledge:** —
-- **Refused when:** a price for a date the ledger file already prices (read-only); a number written with an exponent (never; `format(d, "f")`)
+- **Refused when:** a price for a date the ledger file already prices (read-only); a fetch that would replace a manual price (CAP-PRICE-UPDATE: manual prices are never overwritten); a number written with an exponent (never; `format(d, "f")`)
 - **v0.3 oracle expectation:** I10 (legacy rewrites the whole sidecar and drops its comments)
 - **Status:** decided
 - **Milestone:** M8
@@ -642,11 +655,219 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Milestone:** M10
 - **ADRs:** ADR-0026
 
+### `txn.delete-many`
+
+- **Capabilities:** CAP-TXN-DELETE
+- **Kind of edit:** many
+- **Old endpoint:** DELETE /api/ledger/transactions (several)
+- **Edits:** delete
+- **Files:** every file holding a selected entry
+- **Intended change:** exactly the selected entries, each addressed by (TransactionId, entry_hash), removed
+- **Metadata written:** —
+- **May ask to acknowledge:** BalanceError on a `balance` assertion of an account whose balance changes
+- **Refused when:** as txn.delete, for any selected entry (the whole write is refused)
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); non-comparable: entries without a legacy `id`
+- **Status:** decided
+- **Milestone:** M5
+- **ADRs:** ADR-0009; ADR-0026
+
+### `data.undo`
+
+- **Capabilities:** CAP-DATA-UNDO; CAP-TXN-OPLOG
+- **Kind of edit:** many
+- **Old endpoint:** n/a
+- **Edits:** insert; replace; delete
+- **Files:** the files the undone write touched
+- **Intended change:** the inverse of one journaled write: each entry the write produced (found by its canonical text) replaced by, or removed for, the entry text it replaced (review:28 §4.1 identity condition 4); nothing else. The kind of edit is the undone write's
+- **Metadata written:** —
+- **May ask to acknowledge:** as the undone write's row
+- **Refused when:** an entry the write produced is gone or changed since (located by canonical hash; never guessed); a later write touched the same entries (undo the later one first)
+- **v0.3 oracle expectation:** none: no old endpoint
+- **Status:** draft
+- **Milestone:** M5
+- **ADRs:** ADR-0026; ADR-0008
+
+### `inv.buy`
+
+- **Capabilities:** CAP-INV-QA-BUY; CAP-INV-STAGING
+- **Kind of edit:** add
+- **Old endpoint:** POST /api/investments/assemble, then POST /api/import/commit
+- **Edits:** insert
+- **Files:** the routed insert file
+- **Intended change:** one transaction: units of the security at the unit price into the holding account (an augmentation, `{cost}` as given), the cash leg, and the fee leg if given
+- **Metadata written:** —
+- **May ask to acknowledge:** —
+- **Refused when:** an account not open on the date
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28
+- **Status:** draft
+- **Milestone:** M8
+- **ADRs:** ADR-0030; ADR-0031; ADR-0009
+
+### `inv.reinvest`
+
+- **Capabilities:** CAP-INV-QA-DRIP; CAP-INV-STAGING
+- **Kind of edit:** add
+- **Old endpoint:** POST /api/investments/assemble, then POST /api/import/commit
+- **Edits:** insert
+- **Files:** the routed insert file
+- **Intended change:** one transaction: the dividend income leg and the units bought with it at the given price into the holding account
+- **Metadata written:** —
+- **May ask to acknowledge:** —
+- **Refused when:** an account not open on the date
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28
+- **Status:** draft
+- **Milestone:** M8
+- **ADRs:** ADR-0030; ADR-0031; ADR-0009
+
+### `inv.dividend`
+
+- **Capabilities:** CAP-INV-QA-DIVIDEND; CAP-INV-STAGING
+- **Kind of edit:** add
+- **Old endpoint:** POST /api/investments/assemble, then POST /api/import/commit
+- **Edits:** insert
+- **Files:** the routed insert file
+- **Intended change:** one transaction: the dividend from the income account the user picked to the cash account
+- **Metadata written:** —
+- **May ask to acknowledge:** —
+- **Refused when:** an account not open on the date; an income account the user did not pick (INV-15: suggested from metadata, never created)
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28
+- **Status:** draft
+- **Milestone:** M8
+- **ADRs:** ADR-0030; ADR-0031; ADR-0009
+
+### `inv.sell`
+
+- **Capabilities:** CAP-INV-QA-SELL; CAP-INV-STAGING
+- **Kind of edit:** add
+- **Old endpoint:** POST /api/investments/assemble, then POST /api/import/commit
+- **Edits:** insert
+- **Files:** the routed insert file
+- **Intended change:** one transaction: the reduction written per ADR-0031 (`{}` where the account's method decides, or one posting per lot the user picked on STRICT accounts), the cash leg, the gains leg on the account the user picked, and the fee leg if given
+- **Metadata written:** —
+- **May ask to acknowledge:** —
+- **Refused when:** any booking error (never acknowledgeable); a STRICT account without the lots chosen; AVERAGE booking (refused by Beancount 3.2)
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28
+- **Status:** draft
+- **Milestone:** M8
+- **ADRs:** ADR-0030; ADR-0031; ADR-0009
+
+### `inv.conversion`
+
+- **Capabilities:** CAP-INV-QA-MERGER; CAP-INV-STAGING
+- **Kind of edit:** add
+- **Old endpoint:** POST /api/investments/assemble, then POST /api/import/commit
+- **Edits:** insert
+- **Files:** the routed insert file
+- **Intended change:** one transaction: every lot of the old security reduced and the same lots (date and cost kept) added in the new security, no gain
+- **Metadata written:** —
+- **May ask to acknowledge:** —
+- **Refused when:** any booking error (never acknowledgeable); a lot whose cost cannot be carried over exactly
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28
+- **Status:** draft
+- **Milestone:** M8
+- **ADRs:** ADR-0030; ADR-0031; ADR-0009
+
+### `inv.cd-maturity`
+
+- **Capabilities:** CAP-INV-QA-CD-MATURITY; CAP-INV-STAGING
+- **Kind of edit:** add
+- **Old endpoint:** POST /api/investments/assemble, then POST /api/import/commit
+- **Edits:** insert
+- **Files:** the routed insert file
+- **Intended change:** one transaction moving principal and any final interest to the chosen account; the deposit's `close` only if the user ticks it (then the row is account.close as well)
+- **Metadata written:** —
+- **May ask to acknowledge:** —
+- **Refused when:** an account not open on the date; a non-zero remaining balance when closing
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28
+- **Status:** draft
+- **Milestone:** M8
+- **ADRs:** ADR-0030; ADR-0031; ADR-0009
+
+### `inv.interest`
+
+- **Capabilities:** CAP-INV-QA-INTEREST; CAP-INV-STAGING
+- **Kind of edit:** add
+- **Old endpoint:** POST /api/investments/assemble, then POST /api/import/commit
+- **Edits:** insert
+- **Files:** the routed insert file
+- **Intended change:** one transaction: interest from the instrument's interest income account, credited to the instrument (compounding) or to the chosen account
+- **Metadata written:** —
+- **May ask to acknowledge:** —
+- **Refused when:** an account not open on the date
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28
+- **Status:** draft
+- **Milestone:** M8
+- **ADRs:** ADR-0030; ADR-0031; ADR-0009
+
+### `settings.booking-default`
+
+- **Capabilities:** CAP-SET-BOOKING-DEFAULT
+- **Kind of edit:** change-one
+- **Old endpoint:** n/a
+- **Edits:** option_line
+- **Files:** the root file
+- **Intended change:** the root's `option "booking_method"` line set to the chosen method (inserted if absent); nothing else
+- **Metadata written:** —
+- **May ask to acknowledge:** —
+- **Refused when:** the re-booking preview (N past sales, realized gain change) not confirmed (ADR-0031); any booking error after re-booking (never acknowledgeable); AVERAGE (refused by Beancount 3.2); the option is declared in an included file (the user edits that file)
+- **v0.3 oracle expectation:** none: no old endpoint
+- **Status:** decided
+- **Milestone:** M10
+- **ADRs:** ADR-0031; ADR-0009
+
+### `ws.test-copy`
+
+- **Capabilities:** CAP-WS-TEST-COPY
+- **Kind of edit:** many
+- **Old endpoint:** n/a
+- **Edits:** new_file
+- **Files:** a new workspace folder only (copies of the ledger set's files; never an external reference)
+- **Intended change:** every file of the source ledger set copied byte for byte into the new folder, marked `test_copy: true`; the source set is only read
+- **Metadata written:** —
+- **May ask to acknowledge:** —
+- **Refused when:** the destination exists or lies inside a non-copy workspace's file set; a source file outside the ledger set's folder (it would stay shared)
+- **v0.3 oracle expectation:** none: no old endpoint
+- **Status:** draft
+- **Milestone:** M3
+- **ADRs:** ADR-0014; ADR-0017
+
+### `ws.adopt-legacy`
+
+- **Capabilities:** CAP-LEGACY-ADOPT
+- **Kind of edit:** many
+- **Old endpoint:** n/a
+- **Edits:** new_file
+- **Files:** the new workspace folder only (INV-26: nothing under the legacy root is written)
+- **Intended change:** the legacy ledger set copied byte for byte into the new workspace (Copy, the default, ADR-0020); the legacy files are only read
+- **Metadata written:** —
+- **May ask to acknowledge:** —
+- **Refused when:** any write under the legacy root (INV-26); the destination exists
+- **v0.3 oracle expectation:** none: no old endpoint
+- **Status:** draft
+- **Milestone:** M3
+- **ADRs:** ADR-0020; ADR-0017
+
+### `ws.refresh-demo`
+
+- **Capabilities:** CAP-DATA-SEED-REFRESH
+- **Kind of edit:** many
+- **Old endpoint:** n/a
+- **Edits:** replace_file
+- **Files:** the demo workspace folder only (INV-25: `kind: demo` and the realpath of the app's demo path, no symlinks)
+- **Intended change:** the demo's files replaced as a whole by the generator's output for the new build anchor (the one replacement in the system, INV-25, ADR-0022)
+- **Metadata written:** —
+- **May ask to acknowledge:** —
+- **Refused when:** the folder is not the app's demo path, is not `kind: demo`, or is reached through a symlink (INV-25)
+- **v0.3 oracle expectation:** none: no old endpoint
+- **Status:** draft
+- **Milestone:** M3
+- **ADRs:** ADR-0022; ADR-0008
+
 ## Legacy mutators
 
 | v0.3 `LedgerManager` method | v0.4 row(s) |
 |---|---|
-| `append_entries` | import.commit; inv.add-holding |
+| `append_entries` | import.commit; inv.add-holding; inv.buy; inv.reinvest; inv.dividend; inv.sell; inv.conversion; inv.cd-maturity; inv.interest |
 | `write_price_directives` | price.write |
 | `edit_price_directives` | price.edit |
 | `open_deposit` | inv.open-deposit |
@@ -657,7 +878,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 | `close_account_directive` | account.close |
 | `reopen_account_directive` | account.reopen |
 | `delete_account_directive` | account.delete-with-transactions |
-| `delete_account` | account.delete-with-transactions; account.delete-reassign |
+| `delete_account` | account.delete-with-transactions; not built: ADR-0049 (delete_transactions=false removed the account but left its postings, a broken ledger; v0.4 offers reassign instead) |
 | `create_budget_directive` | budget.create |
 | `update_budget_directive` | budget.edit |
 | `delete_budget_directive` | budget.delete |
