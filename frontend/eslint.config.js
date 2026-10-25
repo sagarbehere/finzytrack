@@ -4,6 +4,8 @@ import vueA11y from 'eslint-plugin-vuejs-accessibility'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
+import boundaries from './eslint.boundaries.js'
+
 const today = 'INV-07: no system "today" or clock; use src/domain dates'
 // Deliberate aliasing (`const D = Date; new D()`) is left to review (BL-0007).
 const systemTime = [
@@ -35,6 +37,8 @@ export default tseslint.config(
     files: ['**/*.js'],
     ...tseslint.configs.disableTypeChecked,
   },
+  // INV-12: the layer map (eslint.boundaries.js).
+  ...boundaries,
   {
     rules: {
       // INV-07 (pending, BL-0007): there is no UTC or system "today"; dates come from src/domain (Temporal).

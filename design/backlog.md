@@ -597,7 +597,7 @@ Each item builds the check that turns one invariant from "pending" into "enforce
 | BL-0009 | Build enforcement for INV-09: the injection test corpus (markdown, payee and metadata values), the CSP header test and the SQL hardening tests; chart-formatter and BQL tests follow in M7 (N1, L8-20, L11-07) | WS-SECURITY | M2 | open | `review:20 §2` |
 | BL-0010 | Build enforcement for INV-10: the cache registry test (every cache declares its bound and eviction); the 54k memory regression check joins with the baselines of BL-0020 | WS-BACKEND-CORE | M1a (agent) | open | `review:20 §2` |
 | BL-0011 | Build enforcement for INV-11: the globals/state-registry allowlist test; the isolation matrix with its workspace axis follows in M2 (L11-08). Done in S0017 | WS-ISOLATION | M0 | done | `review:20 §2` |
-| BL-0012 | Build enforcement for INV-12: import-linter contracts and the frontend boundaries lint | WS-BACKEND-CORE | M0 | open | `review:20 §2` |
+| BL-0012 | Build enforcement for INV-12: import-linter contracts and the frontend boundaries lint. Backend S0006, frontend S0018 | WS-BACKEND-CORE | M0 | done | `review:20 §2` |
 | BL-0013 | Build enforcement for INV-13: proposal binding tests (tamper, replay, stale preview) | WS-AI | M9 | open | `review:20 §2` |
 | BL-0014 | Build enforcement for INV-14: the import corpus with bucket counts and the double-commit test | WS-IMPORT | M6 | open | `review:20 §2` |
 | BL-0015 | Build enforcement for INV-15: a lint/grep test that no code generates account names, plus the "New account…" acceptance flow | WS-UI | M4 | open | `review:20 §2` |

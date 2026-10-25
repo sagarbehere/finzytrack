@@ -82,8 +82,8 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 ### INV-12: Layering
 - **Rule:** Routers translate HTTP, use cases orchestrate, the domain is pure. On the frontend, no business rule sits in a template or component render; logic sits in domain modules, hooks or machines.
 - **Why:** Logic in the wrong layer was the main source of duplicated, drifting rules (review:10, review:19).
-- **Enforced by:** planned: import-linter contracts; ESLint boundaries rules.
-- **Status:** pending (BL-0012, by M0)
+- **Enforced by:** `backend/.importlinter`, `backend/tests/architecture/test_contracts.py` (the backend's layers and purity contracts, S0006); `frontend/eslint.boundaries.js`, `frontend/tests/unit/boundaries.test.ts` (the frontend's layer map, S0018). The rule's second sentence (no business rule in a template or component render) stays with the verifier's review (checklist EP-01, EP-12): import rules cannot see where logic sits inside a file.
+- **Status:** enforced
 
 ### INV-13: AI changes are proposals
 - **Rule:** AI changes are proposals: server-bound, previewed and confirmed. A ledger, rule or dashboard change is never auto-applied.

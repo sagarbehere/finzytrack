@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": ["tests/unit/**/*.test.ts", "e2e/**/*.spec.ts"],
+  "entry": ["tests/unit/**/*.test.ts", "e2e/**/*.spec.ts", "eslint.boundaries.js"],
   "project": ["src/**/*.{ts,vue}", "tests/**/*.ts", "e2e/**/*.ts"],
   "ignoreDependencies": ["license-checker-rseidelsohn", "@tauri-apps/cli"]
 }
