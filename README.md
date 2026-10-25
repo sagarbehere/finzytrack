@@ -10,10 +10,10 @@ Everything about how v0.4 is designed and built is in [`design/`](design/README.
 
 ## Licence
 
-Finzytrack's own code is licensed under the **GNU General Public License, version 2 or (at your option) any later version** (GPL-2.0-or-later); see [`LICENSE`](LICENSE) for the text of version 2.
+**Source code.** Every file of Finzytrack's own code is licensed under the **GNU General Public License, version 2 or (at your option) any later version** (GPL-2.0-or-later). See [`LICENSE`](LICENSE) for the text of version 2.
 
-The desktop app consists of separate programs that talk to each other over a local connection ([ADR-0054](design/decisions/ADR-0054-beancount-in-its-own-engine-process.md)):
-- the **ledger engine**, which includes [Beancount](https://github.com/beancount/beancount) (GPL-2.0-only), is distributed under **GPL version 2**;
-- the **main backend and the user interface** are distributed under **GPL version 3**, as the "or later" option allows.
+**The desktop app.** It consists of separate programs that talk to each other over a local connection ([ADR-0054](design/decisions/ADR-0054-beancount-in-its-own-engine-process.md)). Each program combines our code with third-party components, so each is distributed under the GPL version that fits all of its parts:
+- the **ledger engine** includes [Beancount](https://github.com/beancount/beancount), which is GPL-2.0-only, so the engine is distributed under **GPL version 2**;
+- the **main backend and the user interface** include components whose licences fit only GPL version 3, so they are distributed under **GPL version 3**.
 
-Third-party components keep their own licences; see [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES).
+The "or later" choice for our own code is what makes both combinations possible. Third-party components keep their own licences; see [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES).
