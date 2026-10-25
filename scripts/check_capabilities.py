@@ -3,7 +3,8 @@
 
 Checks design/capabilities.toml:
   - every row has the required fields with allowed values; IDs are unique and look like CAP-<AREA>-<NAME>;
-  - planned/partial/built rows name a milestone M0-M12; cut and deferred rows block nothing;
+  - planned/partial/built rows name a milestone M0-M12; cut and deferred rows block nothing and cite the ADR
+    that decided them (BL-0039);
   - every `built` row has at least one test tagged with its ID somewhere under backend/, frontend/ or shell/;
   - every ADR it cites exists in design/decisions/; every backlog ID it cites exists in design/backlog.md
     (reported, not failed, until the backlog is seeded);
@@ -63,6 +64,8 @@ def check(caps: list[dict], adr_ids: set[str], backlog_text: str | None) -> tupl
             errors.append(f"{where}: a {status} row needs a milestone M0-M12")
         if status in {"cut", "deferred"} and c.get("release_blocking") == "yes":
             errors.append(f"{where}: a {status} row cannot block the release")
+        if status in {"cut", "deferred"} and not c.get("adrs"):
+            errors.append(f"{where}: a {status} row must cite the ADR that decided it (adrs)")
         if status == "built" and not tagged_test_exists(cid):
             errors.append(f"{cid}: status built but no test is tagged with {cid}")
         for adr in c.get("adrs", []):

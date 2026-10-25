@@ -134,7 +134,7 @@ doc = "—"
 legacy_entry = "`core/ledger_manager.py:110-120`"
 demo = "no"
 backlog = ["L8-15", "L10.M-1", "L10-13"]
-adrs = []
+adrs = ["ADR-0019"]
 code = []
 tests = []
 
@@ -678,7 +678,7 @@ doc = "—"
 legacy_entry = "`components/accounts/AccountsCardList.vue`"
 demo = "no"
 backlog = []
-adrs = []
+adrs = ["ADR-0036"]
 code = []
 tests = []
 
@@ -1205,7 +1205,7 @@ doc = "—"
 legacy_entry = "`components/common/TransactionCardList.vue`"
 demo = "no"
 backlog = []
-adrs = []
+adrs = ["ADR-0036"]
 code = []
 tests = []
 
@@ -1256,7 +1256,7 @@ doc = "—"
 legacy_entry = "`useAccountDetector.ts:113-175`"
 demo = "no"
 backlog = ["L9.M-4", "L4-10"]
-adrs = []
+adrs = ["ADR-0035"]
 code = []
 tests = []
 
@@ -1273,7 +1273,7 @@ doc = "views/import.md#ofx"
 legacy_entry = "`components/settings/RulesTab.vue` (OFX); `GET /api/import/ofx-mappings/raw`, `PUT /api/import/ofx-mappings`"
 demo = "no"
 backlog = ["L4-12"]
-adrs = []
+adrs = ["ADR-0027"]
 code = []
 tests = []
 
@@ -2361,7 +2361,7 @@ doc = "reference/investments.md#returns (v)"
 legacy_entry = "`compute/functions/portfolio_returns.py`"
 demo = "no"
 backlog = ["L7-01", "L7-02", "L7.M1", "L7-17", "L3.M-11"]
-adrs = []
+adrs = ["ADR-0030", "ADR-0048"]
 code = []
 tests = []
 
@@ -2378,7 +2378,7 @@ doc = "reference/investments.md (v)"
 legacy_entry = "`compute/functions/portfolio_series.py`"
 demo = "no"
 backlog = ["L7-14"]
-adrs = []
+adrs = ["ADR-0029", "ADR-0048"]
 code = []
 tests = []
 
@@ -3619,7 +3619,7 @@ doc = "guides/import-cas.md (v); views/investments.md#import-statement (v)"
 legacy_entry = "`components/investments/StatementImportPanel.vue`, `StatementFundRow.vue`, `StatementFundDetail.vue`; `services/statement_import/`; `POST /api/investments/statement/parse`, `/preview`, `/commit`"
 demo = "no"
 backlog = ["L7-03", "L7-04", "L7-05", "L7-10", "L7-11", "L7-15"]
-adrs = []
+adrs = ["ADR-0032"]
 code = []
 tests = []
 
@@ -3636,7 +3636,7 @@ doc = "guides/import-cas.md (v)"
 legacy_entry = "`services/statement_import/plan.py`"
 demo = "no"
 backlog = ["L7-03"]
-adrs = []
+adrs = ["ADR-0030"]
 code = []
 tests = []
 
@@ -3653,7 +3653,7 @@ doc = "guides/import-cas.md#7-later-import-again-or-undo (v)"
 legacy_entry = "`GET /api/investments/statement/imports`, `DELETE …/imports/{id}`"
 demo = "no"
 backlog = ["L7.M6"]
-adrs = []
+adrs = ["ADR-0030"]
 code = []
 tests = []
 
@@ -3670,7 +3670,7 @@ doc = "guides/import-cas.md (v)"
 legacy_entry = "`StatementImportPanel.vue` mapping"
 demo = "no"
 backlog = ["L7-06"]
-adrs = []
+adrs = ["ADR-0030"]
 code = []
 tests = []
 
@@ -3857,7 +3857,7 @@ doc = "reference/investments.md#returns (v)"
 legacy_entry = "`portfolio_returns.py`"
 demo = "no"
 backlog = ["L7-01", "L7-02", "L7.M1", "L7-17"]
-adrs = []
+adrs = ["ADR-0030"]
 code = []
 tests = []
 
@@ -3874,7 +3874,7 @@ doc = "—"
 legacy_entry = "`returns-income.json` (\"by year, short vs long term\")"
 demo = "no"
 backlog = []
-adrs = []
+adrs = ["ADR-0030"]
 code = []
 tests = []
 
@@ -5200,7 +5200,7 @@ doc = "—"
 legacy_entry = "`POST /api/ledger/export`, `GET /api/ledger/export/status`"
 demo = "no"
 backlog = ["L1-04", "L1-12"]
-adrs = []
+adrs = ["ADR-0015"]
 code = []
 tests = []
 
@@ -5319,7 +5319,7 @@ doc = "—"
 legacy_entry = "Beancount loader"
 demo = "no"
 backlog = []
-adrs = []
+adrs = ["ADR-0010"]
 code = []
 tests = []
 
@@ -5590,7 +5590,7 @@ doc = "—"
 legacy_entry = "—"
 demo = "no"
 backlog = []
-adrs = []
+adrs = ["ADR-0020"]
 code = []
 tests = []
 
@@ -5606,7 +5606,7 @@ doc = "—"
 legacy_entry = "—"
 demo = "no"
 backlog = []
-adrs = []
+adrs = ["ADR-0018"]
 code = []
 tests = []
 
@@ -5622,7 +5622,7 @@ doc = "—"
 legacy_entry = "—"
 demo = "no"
 backlog = []
-adrs = []
+adrs = ["ADR-0021"]
 code = []
 tests = []
 
@@ -5638,7 +5638,7 @@ doc = "—"
 legacy_entry = "—"
 demo = "no"
 backlog = []
-adrs = []
+adrs = ["ADR-0041"]
 code = []
 tests = []
 
@@ -5654,7 +5654,7 @@ doc = "—"
 legacy_entry = "—"
 demo = "no"
 backlog = []
-adrs = []
+adrs = ["ADR-0025"]
 code = []
 tests = []
 
@@ -5670,7 +5670,7 @@ doc = "—"
 legacy_entry = "—"
 demo = "no"
 backlog = []
-adrs = []
+adrs = ["ADR-0029"]
 code = []
 tests = []
 
@@ -5686,7 +5686,7 @@ doc = "—"
 legacy_entry = "—"
 demo = "no"
 backlog = []
-adrs = []
+adrs = ["ADR-0029"]
 code = []
 tests = []
 
@@ -5702,7 +5702,7 @@ doc = "—"
 legacy_entry = "—"
 demo = "no"
 backlog = []
-adrs = []
+adrs = ["ADR-0036"]
 code = []
 tests = []
 
@@ -5718,7 +5718,7 @@ doc = "—"
 legacy_entry = "—"
 demo = "no"
 backlog = []
-adrs = []
+adrs = ["ADR-0030"]
 code = []
 tests = []
 
@@ -5734,7 +5734,7 @@ doc = "—"
 legacy_entry = "—"
 demo = "no"
 backlog = []
-adrs = []
+adrs = ["ADR-0030"]
 code = []
 tests = []
 
@@ -5750,7 +5750,7 @@ doc = "—"
 legacy_entry = "—"
 demo = "no"
 backlog = []
-adrs = []
+adrs = ["ADR-0021"]
 code = []
 tests = []
 
@@ -5766,6 +5766,6 @@ doc = "—"
 legacy_entry = "—"
 demo = "no"
 backlog = []
-adrs = []
+adrs = ["ADR-0011"]
 code = []
 tests = []
