@@ -4,7 +4,7 @@
 
 Every user-visible capability of Finzytrack, with its status: `planned`, `partial`, `built`, `cut` (absent on purpose) or `deferred` (not in v0.4.0). This page is the index; each row's full description, what changes in v0.4, where it lived in v0.3, its doc page, backlog items, ADRs, code and tests are in `design/capabilities.toml` (search for the ID). Edit the `.toml`, then run `python3 scripts/gen_capabilities.py`. Rules: `design/process/PROCESS.md` ("Project memory").
 
-**Totals:** cut 14, deferred 13, planned 313; 340 rows; release-blocking 308.
+**Totals:** cut 14, deferred 13, partial 1, planned 312; 340 rows; release-blocking 308.
 
 ## Setup and workspaces
 
@@ -417,7 +417,7 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 |---|---|---|---|---|---|
 | CAP-DATA-SEED | First-run seeding of rules, dashboards and themes from the shipped template | change | planned | M3 | yes |
 | CAP-DATA-SEED-REFRESH | Demo refresh: demo ledger replaced with consent and a backup | change | planned | M3 | yes |
-| CAP-DATA-DEMO-GEN | Demo ledger: one hand-written generator on a fixed calendar, date-shifted at build time (interest… | change | planned | M3 | yes |
+| CAP-DATA-DEMO-GEN | Demo ledger: one hand-written generator on a fixed calendar, date-shifted at build time (interest… | change | partial | M3 | yes |
 | CAP-DATA-RECIPE-MIGRATION | Dashboard v1 → v2 (steps) migration with backups, as a startup task | change | planned | M7 | yes |
 | CAP-DATA-CURRENCY-UPGRADE | Currencies vs holdings upgrade (Layer 1/2) | change | planned | M8 | yes |
 | CAP-DATA-NEWER-REFUSE | A workspace written by a newer app is refused, with "restore backup of run X" | new | planned | M3 | yes |

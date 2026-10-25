@@ -50,3 +50,29 @@ forbidden_modules =
     random
     secrets
     uuid
+
+[importlinter:contract:content-pure]
+name = content is pure (ARCHITECTURE.md §2.3, ADR-0022, EP-10)
+type = forbidden
+source_modules =
+    app.content
+forbidden_modules =
+    app.platform
+    app.mirror
+    app.workspaces
+    app.boot
+    app.api
+    app.main
+    fastapi
+    pydantic
+    sqlite3
+    httpx
+    portalocker
+    os
+    pathlib
+    subprocess
+    socket
+    time
+    random
+    secrets
+    uuid

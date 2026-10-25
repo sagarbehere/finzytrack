@@ -42,15 +42,15 @@ This file is the tracked home of the private review backlog (`review:99`). The r
 |---|---|
 | Finding index rows | 287 |
 | Unique (canonical) findings | 240 |
-| of which to build in v0.4.0 (`open`) | 229 |
-| of which `done` | 3 |
+| of which to build in v0.4.0 (`open`) | 228 |
+| of which `done` | 4 |
 | of which `post-v0.4` (hosted-only) | 4 |
 | of which `removed` (investment scope reset) | 4 |
 | Doubles (merged onto a canonical row) | 47 |
 | Invariant-enforcement items (`BL-0001`…`BL-0031`) | 31 |
-| Other new items (`BL-0032`…`BL-0062`) | 31 |
+| Other new items (`BL-0032`…`BL-0063`) | 32 |
 
-Canonical findings to build, by milestone: M0 1, M1a 10, M1b 6, M2 47, M3 15, M4 18, M5 20, M6 40, M7 37, M8 23, M9 12, M10–M12 0 (total 229; S0023 closed L1-06 and L9-18 and split M1; S0025 closed L9.M-7).
+Canonical findings to build, by milestone: M0 0, M1a 10, M1b 6, M2 47, M3 15, M4 18, M5 20, M6 40, M7 37, M8 23, M9 12, M10–M12 0 (total 228; S0023 closed L1-06 and L9-18 and split M1; S0025 closed L9.M-7; S0027 closed L10-18).
 
 ---
 
@@ -499,7 +499,7 @@ Evidence: `review:L10`, `review:L10-verif`, `review:15`; index `review:99 §4.11
 | L10-14 | The demo notice says when the demo is the active ledger | Low | WS-LIFECYCLE | M3 | open | — | `review:L10` |
 | L10-15 | Versioned config; dead flags removed; one port default | Low | WS-LIFECYCLE | M3 | open | — | `review:L10` |
 | L10-16 | Per-run lifecycle backups, bounded | Low | WS-LIFECYCLE | M3 | open | — | `review:L10` |
-| L10-18 | Builds of one tag are reproducible | Low | WS-LIFECYCLE | M0 | open | — | `review:L10` |
+| L10-18 | Builds of one tag are reproducible | Low | WS-LIFECYCLE | M0 | done | — | `review:L10`; closed by S0027 (the demo generator takes its anchor from `--anchor` or `SOURCE_DATE_EPOCH`, never the clock, and writes into an output folder outside the source tree with `generated-for.json`; tests: same bytes under other clocks and time zones; calling it from the release build is BL-0063) |
 | L10.M-1 | A missing ledger is "ledger unavailable", never created | Med-High | WS-LIFECYCLE | M2 | open | — | `review:L10-verif` |
 | L10.M-2 | No backup, no write | Medium | WS-LIFECYCLE | M3 | open | — | `review:L10-verif` |
 | L10.M-4 | The setup probe rejects unparseable or non-UTF-8 files | Low | WS-LIFECYCLE | M3 | open | — | `review:L10-verif` |
@@ -655,3 +655,4 @@ Each item builds the check that turns one invariant from "pending" into "enforce
 | BL-0060 | The anonymization script for real bank and broker exports (S0019 verifier F4, split from BL-0023 by S0026): an agent anonymizes a real export by script, the owner reviews the result and adds its MANIFEST row; built with the first importer that needs a real export as a fixture | WS-QA | M6 | open | `S0019`, `S0026` |
 | BL-0061 | The staged-file guard's statement sniff has heuristic gaps (S0026 verifier F3, older than S0026): only some extensions are sniffed (a statement saved as .jsonl, .tab, .psv, .bak, .yaml or .md passes), media extensions skip the binary check (no magic-byte check: a zip, xlsx or PDF renamed .png/.jpg passes), only the first 200 KB is read, and split files, decimal-comma or whole-unit amounts evade the pattern. Tighten (sniff every text file; check magic bytes of media files) before the first real export arrives | WS-QA | M6 | open | `S0026` |
 | BL-0062 | Guard parser variants left by S0028 (verifier F2, F3, F5, F6): an escaped or quoted `git` word, a gated git nested in another command or after a single `&`, brace and zsh glob expansions producing flags, a network device path spelled in parts, and redirect operators the parser does not know (the clobber and append-both forms, `>!`, `&>>`, `>&`, `<>`; `mv` over `.git`). Each needs a deliberately built command; the regex parser cannot model the shell. Same root and direction as BL-0042 (a real lexer); parked with it until the owner asks | WS-QA | — | parked | `S0028` |
+| BL-0063 | Demo generator, the parts after the S0027 skeleton (review:22 §1, review:27 §1(d), ADR-0022): call `backend/scripts/gen_demo.py` from the release build with `SOURCE_DATE_EPOCH` = the tag's commit time and ship its output as the demo pack, with `generated-for` in the pack record (M3 content packs; M11 packaging); the `demo:` field check (every built, demo-relevant capability has a fragment); every seed dashboard non-empty on the demo (M7, recipe-run goldens); the finance red team's oracle totals; the multi-file variant (includes, prices file); acceptance fixtures and perf baselines generated from it (BL-0020, acceptance harness); fragment assertions as SQL on the mirror once it exists; reuse `ledger.core`'s text builders when they land (TODO in `content/demo/ledger_text.py`); update `development/building.md` §4 on the docs `v0.4` branch at milestone end | WS-LIFECYCLE | M3 | open | `S0027` |

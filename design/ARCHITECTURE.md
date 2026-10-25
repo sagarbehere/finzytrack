@@ -197,7 +197,7 @@ Each slice has the same internal layout, so an agent finds things by convention:
 | `mirror` | Build, publish and read the SQLite projection; hardened user SQL | `build_generation(load_result) -> Generation`, `publish(gen)`, `Reader` (typed reads), `QueryRunner.run_user_sql(UserSql, params)`, `ledger_version()` | `domain`, `platform`, `ledger` (LoadResult type only); stdlib `sqlite3` |
 | `workspaces` | Workspace format, registry, open/switch, containers, legacy coexistence | `format.assess_workspace`, `format.assess_portability`, `format.resolve_open_target`, `Registry`, `open_workspace(key) -> Opened \| NotReady(phase)`, `WorkspaceContainer`, `UserContainer` | `domain`, `platform`, `ledger`, `mirror`; `format/` imports only `domain` + pydantic (extractable, ADR-0017) |
 | `boot` | App-level assessment and lifecycle runs; migrations; content packs; demo | `assess_app(probe) -> AppPhase`, `LifecyclePlan`, `execute(plan, consent)`, `Migration` registry, `ContentPack` | kernel packages; `content` |
-| `content` | Shipped read-only content and the demo/corpus generator | `packs.load(id, version)`, `demo.generate(anchor_date, size, fragments)` | `domain`, `ledger.core` (printer-free text builders) |
+| `content` | Shipped read-only content and the demo/corpus generator | `packs.load(id, version)`, `demo.generate(anchor_date, size, fragments)` (built S0027: `Fragment`, `Size` demo/5k/54k, `default_fragments()`) | `domain`, `ledger.core` (printer-free text builders) |
 | feature slices | One capability each (§2.2) | `<slice>.usecases` functions, `<slice>.capabilities`, `<slice>.registry` | kernel packages; other slices only through the declared edges (§2.4) |
 | `ai` | One assistant over the capabilities | `chat_stream(ws, conversation, message)`, `confirm(plan_id, preview_hash)` (shared with the UI) | kernel; every slice's `capabilities` module (read-only declarations) |
 | `api` | HTTP edge | `create_app(container_factory) -> FastAPI`, `export_openapi() -> dict` | everything above; nothing imports `api` |
@@ -233,6 +233,7 @@ import-linter (`backend/.importlinter`, T1) holds these contracts from the first
    - `recipes → budgets.core`, `recipes → investments.core` (measures of the `ledger` step);
    - `importing → accounts.usecases` (anchor-account resolution; the Profile).
 6. **Nothing imports `api` or `main`.**
+7. **`content` is pure** (S0027): no `app.platform`, kernel or edge package above it, and none of rule 3's I/O, clock or randomness modules. The demo generator writes ledger text only; its Beancount checks run in the oracle environment (ADR-0054).
 
 A generated package diagram (from the contract file plus the actual import graph) goes to `design/generated/backend-packages.md` on every T1 run (EP-20).
 
@@ -855,7 +856,9 @@ The versions below are the newest stable releases published on or before **2026-
             error codes, streams) · corpus/ (D1, D2 equivalence) · goldens/ · architecture/ (AST bans,
             globals, route scope, tla mapping)
     scripts/                                    backend-internal tools (cwd = backend/): export_openapi.py,
-                                                corpus generators wrapper
+                                                gen_demo.py (writes the demo ledger or a 5k/54k corpus into an
+                                                output folder with generated-for.json; anchor from --anchor or
+                                                SOURCE_DATE_EPOCH, never the clock; S0027)
   frontend/
     package.json  pnpm-lock.yaml  pnpm-workspace.yaml  tsconfig.json  eslint.config.js  vite.config.ts
     playwright.config.ts  knip.json  .prettierrc.json                (S0009)

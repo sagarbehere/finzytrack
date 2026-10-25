@@ -71,6 +71,13 @@ def test_contracts_hold_on_the_tree() -> None:
         ("app.platform.planted", "import app.api\n", "Kernel layers"),
         ("app.mirror.planted", "import app.workspaces\n", "Kernel layers"),
         ("app.workspaces.planted", "import app.boot\n", "Kernel layers"),
+        # §2.3, ADR-0022, EP-10: content (the demo generator) is pure, with no clock, randomness or file system.
+        ("app.content.demo.planted", "import random\n", "content is pure"),
+        ("app.content.demo.planted", "import time\n", "content is pure"),
+        ("app.content.planted", "from pathlib import Path\n", "content is pure"),
+        ("app.content.planted", "import os\n", "content is pure"),
+        ("app.content.demo.planted", "import app.platform\n", "content is pure"),
+        ("app.content.demo.planted", "import app.boot.lifecycle\n", "content is pure"),
     ],
 )
 def test_planted_violation_breaks_its_contract(tree: Path, module: str, text: str, contract: str) -> None:
@@ -91,6 +98,7 @@ def test_allowed_direction_passes(tree: Path) -> None:
     plant(tree, "app.mirror.reader", "import app.platform\n")
     plant(tree, "app.boot.lifecycle", "import app.workspaces\n")  # §2.3: boot may import kernel packages
     plant(tree, "app.workspaces.registry", "import app.mirror\nimport app.platform\n")  # §2.3: may import mirror
+    plant(tree, "app.content.demo.planted", "import app.domain\nimport hashlib\n")  # §2.3: content may use domain
     r = lint_imports(tree)
     assert r.returncode == 0, r.stdout + r.stderr
 
