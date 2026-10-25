@@ -3597,6 +3597,33 @@
     ]
    },
    {
+    "id": "price/equal-counts-entry-order-not-file-order",
+    "spec": [
+     "beancount:beancount.core.prices.build_price_map",
+     "beancount:beancount.core.data.entry_sortkey",
+     "ADR-0024"
+    ],
+    "about": "Equal counts: the first directive in entry order (date first) decides, not the first line in the file. USD in INR is written first but dated later, so it is the one inverted: 75.00000000000000000000000002 (file order would give 80).",
+    "input": {
+     "options": [],
+     "ledger": "2020-01-05 price USD 75 INR\n2020-01-05 price INR 0.0125 USD\n2020-01-01 price INR 0.0130 USD\n2020-01-01 price USD 76 INR\n"
+    },
+    "items": [
+     {
+      "polarity": "positive",
+      "input": {
+       "base": "USD",
+       "quote": "INR",
+       "date": "2020-01-05"
+      },
+      "output": {
+       "date": "2020-01-05",
+       "number": "75.00000000000000000000000002"
+      }
+     }
+    ]
+   },
+   {
     "id": "price/zero-not-inverted",
     "spec": [
      "beancount:beancount.core.prices.build_price_map"

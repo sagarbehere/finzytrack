@@ -205,6 +205,7 @@ SHOWN_BY = {
             'price/equal-counts-forward-first USD INR 2020-01-01',
             'price/equal-counts-inverse-first USD INR 2020-01-01',
             'price/equal-counts-inverse-first INR USD 2020-01-01',
+            'price/equal-counts-entry-order-not-file-order USD INR 2020-01-05',
             'price/zero-not-inverted XYZ USD 2020-01-01',
             'price/implicit-prices-plugin VTI USD 2020-01-01',
             'price/implicit-prices-plugin USD INR 2020-02-01',
@@ -231,6 +232,7 @@ SHOWN_BY = {
         'a point inverted twice': [
             'price/double-inversion USD INR 2020-01-01',
             'price/equal-counts-inverse-first USD INR 2020-01-01',
+            'price/equal-counts-entry-order-not-file-order USD INR 2020-01-05',
         ],
         'the direction with fewer directives is inverted, duplicates counted': [
             'price/fewer-counts-directives USD INR 2020-01-01',
@@ -239,6 +241,7 @@ SHOWN_BY = {
             'price/equal-counts-forward-first USD INR 2020-01-01',
             'price/equal-counts-inverse-first USD INR 2020-01-01',
             'price/equal-counts-inverse-first INR USD 2020-01-01',
+            'price/equal-counts-entry-order-not-file-order USD INR 2020-01-05',
         ],
         'same-day duplicates': [
             'price/same-day-last-wins VTI USD 2020-01-01',
@@ -326,7 +329,7 @@ class RealVectors(unittest.TestCase):
                   for f in vectors.FAMILIES}
         self.assertEqual(counts, {
             "tolerance": (32, 19, 13), "balance": (10, 6, 4), "account": (4, 15, 16), "currency": (1, 12, 9),
-            "price": (12, 20, 5), "precision": (2, 5, 2), "booking": (13, 9, 4),
+            "price": (13, 21, 5), "precision": (2, 5, 2), "booking": (13, 9, 4),
         })
 
     def test_which_vectors_show_each_behaviour(self) -> None:

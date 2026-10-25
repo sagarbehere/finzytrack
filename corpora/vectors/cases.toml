@@ -743,6 +743,20 @@ queries = [
 ]
 
 [[price]]
+id = "price/equal-counts-entry-order-not-file-order"
+spec = ["beancount:beancount.core.prices.build_price_map", "beancount:beancount.core.data.entry_sortkey", "ADR-0024"]
+about = "Equal counts: the first directive in entry order (date first) decides, not the first line in the file. USD in INR is written first but dated later, so it is the one inverted: 75.00000000000000000000000002 (file order would give 80)."
+setup = """
+2020-01-05 price USD 75 INR
+2020-01-05 price INR 0.0125 USD
+2020-01-01 price INR 0.0130 USD
+2020-01-01 price USD 76 INR
+"""
+queries = [
+  { base = "USD", quote = "INR", date = "2020-01-05", polarity = "positive" },
+]
+
+[[price]]
 id = "price/zero-not-inverted"
 spec = ["beancount:beancount.core.prices.build_price_map"]
 about = "A zero price is kept forward but has no inverse."
