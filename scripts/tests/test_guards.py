@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -116,6 +118,31 @@ class GuardTest(unittest.TestCase):
         ]
         for cmd in refused:
             self.assertTrue(self.blocked(cmd), cmd)
+
+    def test_hooks_fail_closed(self) -> None:
+        """INV-22's spirit for the guards (S0014 round-2 verifier F2): Claude Code runs a command when the hook
+        exits with anything but 2, so an internal error must refuse, never allow."""
+        hooks = Path(__file__).resolve().parents[2] / ".claude/hooks"
+        cases = {
+            "guard_bash.py": {"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": str(self.repo)},
+            "guard_paths.py": {"tool_name": "Read", "tool_input": {"file_path": "x"}, "cwd": str(self.repo)},
+        }
+        for hook, event in cases.items():
+            with self.subTest(hook=hook):
+                # a guards module that raises stands in for any bug in the checks
+                shim = Path(self.tmp.name) / "shim"
+                shim.mkdir(exist_ok=True)
+                (shim / "guards.py").write_text(
+                    "def bash_problem(*a, **k):\n    raise ValueError('bug')\n"
+                    "def path_problem(*a, **k):\n    raise ValueError('bug')\n")
+                (shim / hook).write_text((hooks / hook).read_text())
+                r = subprocess.run([sys.executable, str(shim / hook)], input=json.dumps(event), text=True,
+                                   capture_output=True, check=False)
+                self.assertEqual(r.returncode, 2, r.stderr)
+
+    def test_an_unknown_home_does_not_crash_the_guard(self) -> None:
+        self.assertFalse(self.blocked("ls ~nosuchuserzz9"))
+        self.assertTrue(self.blocked(f"ls ~nosuchuserzz9; rm -rf {self.legacy}/backend"))
 
     def test_ordinary_commands(self) -> None:
         L = self.legacy

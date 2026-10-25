@@ -30,7 +30,11 @@ def main() -> int:
     if isinstance(tin.get("pattern"), str) and tool == "Glob":
         candidates.append(tin["pattern"])
     for raw in candidates:
-        problem = path_problem(raw, cwd, writing=tool in WRITE_TOOLS)
+        try:
+            problem = path_problem(raw, cwd, writing=tool in WRITE_TOOLS)
+        except Exception as e:  # noqa: BLE001 (fail closed: Claude Code treats any exit but 2 as "allow")
+            print(f"guard_paths: the guard failed ({type(e).__name__}: {e}); refusing to be safe", file=sys.stderr)
+            return 2
         if problem:
             print(f"guard_paths: blocked {tool} {raw}: {problem}", file=sys.stderr)
             return 2

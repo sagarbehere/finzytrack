@@ -51,7 +51,11 @@ def _norm(p: Path) -> str:
 
 
 def _resolve(p: str, cwd: Path) -> Path:
-    path = Path(os.path.expandvars(p)).expanduser()
+    path = Path(os.path.expandvars(p))
+    try:
+        path = path.expanduser()
+    except RuntimeError:
+        pass  # `~unknownuser`: the shell leaves it as written, so the guard reads it literally too
     if not path.is_absolute():
         path = cwd / path
     return path

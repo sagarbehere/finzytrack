@@ -19,7 +19,11 @@ def main() -> int:
         return 2
     command = (event.get("tool_input") or {}).get("command", "")
     cwd = Path(event.get("cwd") or ".")
-    problem = bash_problem(command, cwd)
+    try:
+        problem = bash_problem(command, cwd)
+    except Exception as e:  # noqa: BLE001 (fail closed: Claude Code treats any exit but 2 as "allow")
+        print(f"guard_bash: the guard failed ({type(e).__name__}: {e}); refusing to be safe", file=sys.stderr)
+        return 2
     if problem:
         print(f"guard_bash: blocked: {problem}", file=sys.stderr)
         return 2
