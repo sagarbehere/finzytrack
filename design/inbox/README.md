@@ -9,6 +9,7 @@ Template:
 - Asked: YYYY-MM-DD by <agent/slice>
 - blocks: <slice IDs, or "nothing">
 - Rubric item: <1-8>
+- ADRs checked: <IDs searched, and why none settles the question>
 
 ## Context (plain language, a concrete example first)
 ## Options

@@ -867,7 +867,7 @@ The versions below are the newest stable releases published on or before **2026-
   corpora/                                      shared repo assets: nasty ledgers, XSS/SQL/path attack-input corpora,
                                                 anonymized exports (owner-reviewed, privacy gate), old-workspace fixtures
   scripts/                                      repo-wide tools (run from root): check_invariants.py, check_capabilities.py,
-                                                privacy_scan.py, concept_counters.py, gen_diagrams.py, oracle/ (the
+                                                privacy_scan.py, mutants.py (self-mutation before hand-off, ADR-0057), concept_counters.py, gen_diagrams.py, oracle/ (the
                                                 differential-oracle harness launching the legacy worktree on
                                                 ledger COPIES only; it refuses the owner's live
                                                 v0.3 data folder; owner, 2026-10-24): launch_legacy.py,

@@ -20,6 +20,11 @@ Template:
 ## Decisions
 - <decision> (agent | owner: "<verbatim quote>", date)
 
+## Hand-off (PROCESS.md §3 step 4; ADR-0057)
+- Checks that accept, tag or refuse, each with its must-not-pass test: <check → test>
+- Self-mutation (High, Medium): <plan summary; n tried / n killed; survivors → test added, or why equivalent>
+- Population (if the slice claims to cover a whole set): <inventory used, built by behaviour; counts in / out>
+
 ## Verifier
 - Head SHA verified:
 - Attacks tried: <list; High ≥ 5, Medium ≥ 3>

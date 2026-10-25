@@ -102,3 +102,42 @@ Format:
 - Observed effect: pending.
 - Status: kept.
 - Owner approval: "remove it" (2026-10-25, in session)
+
+## IMP-0010: must-not-pass list and self-mutation before hand-off (2026-10-25)
+- Trigger: pilot measurements (ADR-0057): all five High findings in S0002–S0004 were checks that accepted too much, and the verifiers found most of them with mutants.
+- What changed: PROCESS.md §3 step 4 ("Before hand-off"); `.claude/agents/implementer.md`; `.claude/skills/slice/SKILL.md` step 6; the journal template's Hand-off section; new `scripts/mutants.py` with `scripts/tests/test_mutants.py`.
+- PROCESS.md section: §3.
+- Why: a loosening mutant the implementer's own tests miss is the cheapest sign of a missing must-not-pass test; finding it before hand-off saves a verifier round.
+- Expected effect: fewer High findings of the "accepts too much" class reach the verifier; fewer verifier rounds per slice.
+- Observed effect: in S0005 itself, 3 of the first 8 self-mutants of `scripts/mutants.py` survived; two showed missing tests (a tracked symlink out of the copy; copies left in `--work`), one was dead code and was removed.
+- Status: kept (tightening).
+- Owner approval: pending, `design/inbox/20261025-pilot-process-changes.md`.
+
+## IMP-0011: population sweep by behaviour (2026-10-25)
+- Trigger: S0003 F2 (API tests chosen by fixture name, about 100 missed) and S0004 F1 (13 ledger writers missed; the capability map was not swept).
+- What changed: PROCESS.md §3 step 4 (third bullet); the journal template's Hand-off section; BL-0049 for the mechanical check.
+- PROCESS.md section: §3.
+- Why: a list built by name silently drops members whose names differ.
+- Expected effect: no population-completeness finding from the verifier.
+- Observed effect: pending.
+- Status: kept (tightening).
+- Owner approval: pending, `design/inbox/20261025-pilot-process-changes.md`.
+
+## IMP-0012: re-verification after High or several Medium fixes (2026-10-25)
+- Trigger: pilot measurements: round 2 found 6 more findings in S0002 and 8 in S0004.
+- What changed: PROCESS.md §3 step 5; `.claude/agents/implementer.md`; `.claude/skills/slice/SKILL.md` step 7.
+- PROCESS.md section: §3.
+- Why: fixes are new code that no verifier has seen.
+- Expected effect: no defect introduced by a fix lands unverified.
+- Observed effect: pending.
+- Status: kept (tightening).
+- Owner approval: pending, `design/inbox/20261025-pilot-process-changes.md`.
+
+## IMP-0013: "ADRs checked" line in every escalation (2026-10-25)
+- Trigger: S0004 F7 (a merge question partly answered by ADR-0049 nearly reached the owner).
+- What changed: `design/inbox/README.md` template.
+- PROCESS.md section: §5.
+- Why: the owner's time goes only to questions no ADR settles.
+- Expected effect: no escalation that an existing ADR answers.
+- Observed effect: pending.
+- Status: kept (tightening).

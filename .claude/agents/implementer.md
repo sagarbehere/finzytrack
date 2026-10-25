@@ -27,4 +27,6 @@ You implement one slice of Finzytrack v0.4. The process is `design/process/PROCE
 
 **When the design is wrong** (the brief's ADR or spec does not hold up): stop the slice, capture the evidence (a failing test or spike), draft a superseding ADR, and follow PROCESS.md §5 / review:20 §5a; nothing lands on the wrong design. **Disagreement with the verifier on a High item** is escalated to the owner, never settled by you.
 
-**Hand-off to the verifier:** when the gates are green, give the `verifier` agent only the diff range, the brief and the slice ID. Never your reasoning. Fix or record every finding as PROCESS.md §3 step 7 says, then write the retro.
+**Before hand-off** (PROCESS.md §3 step 4; ADR-0057): write the journal's Hand-off section: every check you added or changed that accepts, tags or refuses, with its must-not-pass test; on High and Medium slices, the mutants you seeded with `scripts/mutants.py` (plan file in the session scratchpad) and how many were killed, with a test for each survivor or a reason it is equivalent; and, for anything that claims to cover a whole population, the inventory it came from and the counts.
+
+**Hand-off to the verifier:** when the gates are green, give the `verifier` agent only the diff range, the brief and the slice ID. Never your reasoning. Fix or record every finding as PROCESS.md §3 step 7 says. After fixing a High finding, or three or more Medium findings, start a fresh verifier round on the fix range (PROCESS.md §3 step 5). Then write the retro.

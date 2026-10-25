@@ -1,6 +1,6 @@
 # How Finzytrack is developed
 
-The single current reference for the development process. **Owner:** the project owner. Agents propose changes; tightenings may be applied by agents and are approved afterwards; loosenings need the owner first (§9). Founding proposal: review:20 (frozen); adopted by ADR-0001. Last change: 2026-10-24, seeded at `next` setup (journal `design/journal/S0000-next-setup.md`). Latest improvement entries: `IMPROVEMENTS.md`.
+The single current reference for the development process. **Owner:** the project owner. Agents propose changes; tightenings may be applied by agents and are approved afterwards; loosenings need the owner first (§9). Founding proposal: review:20 (frozen); adopted by ADR-0001. Last change: 2026-10-25, the pilot's adjustments (ADR-0057, journal `design/journal/S0005-pilot-adr.md`). Latest improvement entries: `IMPROVEMENTS.md`.
 
 Agent prompts link to sections of this file instead of restating them.
 
@@ -39,8 +39,11 @@ A **slice** is the smallest change that delivers one verifiable behaviour (hours
 1. **Orient.** Run the `orient` skill on the request: relevant capability rows, ADRs (with rejected alternatives), specs, code entry points, tests, open backlog items.
 2. **Brief**: the first section of `design/journal/<slice-id>.md` (template in `design/journal/README.md`): goal; ADRs and specs it implements; invariants touched; acceptance tests; expected doc impact; risk class and lane; open questions. A question that hits the rubric (§5) goes to the inbox **before** coding.
 3. **Tests first.** Write the acceptance and golden tests and see them fail. For behaviour v0.3.0 already has, write characterization tests against the legacy app first (`scripts/oracle/launch_legacy.py`, copies only). The T1 check `tests-fail-on-base` enforces this: new or changed tests must fail on the slice's base commit; tests tagged `@characterization` or `@regression-guard` are exempt. For UI whose shape is unknown: **spike, then pin** its behaviour in tests before the slice is done.
-4. **Implement** under the gates (§6).
-5. **Verify** with the independent verifier (§4).
+4. **Implement** under the gates (§6). **Before hand-off** (ADR-0057), in the journal's Hand-off section:
+   - list every check the slice adds or changes that accepts, tags or refuses, each with its must-not-pass test (EP-29);
+   - on High and Medium slices, seed at least one loosening mutant per such check with `scripts/mutants.py` and record "tried / killed"; a survivor gets a test, or a one-line reason when it is equivalent;
+   - a spec or check that claims to cover a whole population names the inventory it was built from, builds it by behaviour (the capability map row by row, the code that does the thing), never by name, and records the counts in and out.
+5. **Verify** with the independent verifier (§4). After fixing a High finding, or three or more Medium findings, a fresh verifier round runs on the fix range before the slice lands.
 6. **Docs** in the same change: generated docs regenerated, user docs updated on the docs repo's `v0.4` branch (light lane: at milestone end), ADRs for decisions made, the capability row updated.
 7. **Land**: commit directly on `next` (no pull requests) when every gate is green and the verifier reports no unresolved High finding. Medium findings are fixed or get a backlog ID; Low findings may be dropped with a one-line reason. The commit message carries the slice ID. The journal records the verifier's head SHA; a T1 check confirms it is the commit or its parent.
 
