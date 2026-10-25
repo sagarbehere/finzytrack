@@ -56,6 +56,8 @@ Canonical findings to build, by milestone: M0 4, M1 16, M2 47, M3 15, M4 18, M5 
 
 Sixteen workstreams. Each one specifies a module or package of the new tree by its goal, its main work items and its acceptance. "Closes" lists canonical IDs; doubles follow in parentheses. Design references point at the private archive until the content is migrated into `design/` (ADRs, `ARCHITECTURE.md`, `design/specs/`).
 
+**Retiring this section.** The roadmap, the capability map and the finding index now carry most of what these workstreams say. When an area's spec is written (in the first slice of its vertical), that workstream's goal and acceptance move into the spec and its section here is deleted in the same commit, leaving a one-line pointer (S0011).
+
 ### WS-QA: test infrastructure and enforcement
 - **Goal.** Make every later change provable: characterization before risky changes, CI that runs the checks, corpora for the ledger and import seams, and the acceptance suite the frontend is built against.
 - **Work items.**
