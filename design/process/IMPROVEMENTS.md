@@ -169,3 +169,13 @@ Format:
 - Expected effect: type, lint and boundary regressions fail before landing; WebKit is exercised from the first commit.
 - Observed effect: pending.
 - Status: kept (tightening, agent-approved).
+
+## IMP-0017: security exception to the 14-day dependency rule (2026-10-25)
+- Trigger: the owner asked why the shell's crates were being moved to older versions (S0010).
+- What changed: ENGINEERING.md EP-24 (exception and Cargo enforcement); ADR-0050 amendment; BL-0052.
+- PROCESS.md section: none (engineering principle).
+- Why: the 14-day delay protects against fresh regressions and compromised releases, but must not hold back a fix for a published advisory.
+- Expected effect: security fixes land without waiting; everything else stays 14 days behind.
+- Observed effect: pending.
+- Status: kept (loosening, owner-approved).
+- Owner approval: "I accept your recommendation about the security exception" (2026-10-25, in session)

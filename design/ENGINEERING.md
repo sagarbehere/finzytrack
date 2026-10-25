@@ -391,12 +391,13 @@ def run_user_sql(sql: UserSql, params: Params, limits: QueryLimits) -> Frame: ..
 ### EP-24 Dependencies: exact pins, at least 14 days old, upgrades as slices
 **Rule.**
 - Every dependency is pinned exactly in a lockfile (`uv.lock`, `pnpm-lock.yaml`, `Cargo.lock`, `formal/tla/tools.lock`). A version is adopted only once it is at least 14 days old. Each upgrade is its own slice, with the full T1 suite.
+- **Security exception** (owner, 2026-10-25): a release that fixes a published security advisory affecting us may be adopted before it is 14 days old, with a one-line reason in the journal naming the advisory. Only that package (and what it strictly requires) moves early.
 - Beancount upgrades also re-run the D2 equivalence suite (ADR-0010, guardrail 2).
 - portalocker stays on the legacy apps' lock semantics (ADR-0005, ADR-0020).
 
 **Why.** Owner rule (review:13 §4; recorded in ADR-0050, item 12). Fresh releases carry the most regressions, and a wrapped Beancount loader replica must move only deliberately.
 
-**Enforcement.** `[tool.uv] exclude-newer = "14 days"`, pnpm `minimumReleaseAge: 20160`, a CI check that the lockfiles are unchanged by a fresh resolve, and a Renovate-style dependency report in T2 (report only, never auto-merge).
+**Enforcement.** `[tool.uv] exclude-newer = "14 days"`, pnpm `minimumReleaseAge: 20160`; Cargo has no such setting, so `Cargo.lock` is resolved to versions published at least 14 days earlier and a T1 check of its entries' publish dates is BL-0052; a CI check that the lockfiles are unchanged by a fresh resolve, and a Renovate-style dependency report in T2 (report only, never auto-merge).
 
 ### EP-25 The async edge only awaits
 **Rule.** An `async def` handler only awaits. Blocking work (Beancount loads, file writes, SQLite, scikit-learn) runs in worker threads behind the workspace limiter or the heavy-load gate.

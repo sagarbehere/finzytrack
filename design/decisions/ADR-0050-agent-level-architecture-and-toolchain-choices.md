@@ -41,6 +41,12 @@ The decided designs leave some structure, library and tooling choices open. None
 
 - The exact pins are listed in `design/ARCHITECTURE.md` §10 and enforced by the lockfiles.
 
+## Amendment (2026-10-25): security exception to the 14-day rule (item 12)
+
+Owner: "I accept your recommendation about the security exception" (2026-10-25, in session).
+- A release that fixes a published security advisory affecting Finzytrack may be adopted before it is 14 days old, with a one-line reason in the slice journal naming the advisory. Only that package, and what it strictly requires, moves early.
+- Cargo has no release-age setting: `Cargo.lock` is resolved to versions published at least 14 days earlier, and a T1 check of the publish dates is BL-0052.
+
 ## References
 
 review:25 §2.1, §7, §8, §10, §13; review:26 EP-17–EP-19, EP-24; ADR-0006, ADR-0026, ADR-0038, ADR-0039.
