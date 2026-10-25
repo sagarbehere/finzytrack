@@ -1,8 +1,8 @@
 """Expected-change models: what each S9 mutator is meant to change, as per-file entry multisets.
 
-Provisional and deliberately minimal (design/journal/S0002-oracle-harness.md). The per-mutator intent table
-(the pilot slice) is the authority; where it is not settled yet, the model refuses the case as non-comparable
-instead of guessing.
+Each model implements the `intent` column of its row in the per-mutator intent table
+(design/specs/write-path/intent-table.toml), which is the authority. Where the table is not settled (a row waiting
+for the owner), the model refuses the case as non-comparable instead of guessing.
 """
 
 from __future__ import annotations
@@ -14,6 +14,10 @@ from beancount.core import account as bc_account
 from beancount.core import data
 
 from semantic_diff import FileDiff, LedgerSet, canonical_key, parse_entries_with_totals
+
+
+# Harness mutator → its row in the intent table (scripts/tests/test_intent_table.py checks both sides).
+INTENT_ROWS = {"update_transaction": "txn.edit", "rename_account": "account.rename", "import_append": "import.commit"}
 
 
 class NonComparable(Exception):

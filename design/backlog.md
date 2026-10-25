@@ -67,7 +67,7 @@ Sixteen workstreams. Each one specifies a module or package of the new tree by i
   7. Seed dashboards dry-run against the backend validator.
   8. API contract snapshot, per-endpoint (status, `code`) error matrix, SSE event protocols.
   9. Mirror surface spec with per-table checksums and a DDL snapshot.
-  10. Per-mutator intent table with acknowledgeable error keys (needed before WS-WRITE stage 1).
+  10. Per-mutator intent table with acknowledgeable error keys (needed before WS-WRITE stage 1). Written in S0004: `design/specs/write-path/` (37 rows; draft rows are confirmed in their vertical's first slice).
   11. Rule-reader, `.eml` and price-provider goldens.
   12. Recipe-run goldens (seed dashboards × parameter sets on the demo, frozen clock).
   13. Config and lifecycle current-state prose plus old-workspace fixtures → expected manifest and boot phase.

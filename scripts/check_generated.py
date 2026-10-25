@@ -23,6 +23,10 @@ GENERATORS: dict[str, tuple[list[str], list[str]]] = {
         [sys.executable, "scripts/gen_capabilities.py", "--stdout"],
         ["design/capabilities.toml", "scripts/gen_capabilities.py"],
     ),
+    "design/specs/write-path/intent-table.md": (
+        [sys.executable, "scripts/gen_intent_table.py", "--stdout"],
+        ["design/specs/write-path/intent-table.toml", "scripts/gen_intent_table.py"],
+    ),
 }
 MARK = "GENERATED"
 
