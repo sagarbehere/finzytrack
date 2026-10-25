@@ -76,7 +76,7 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 ### INV-11: Services hang off containers
 - **Rule:** Services hang off `UserContainer` or `WorkspaceContainer`; limiters, the job queue and the AI chat store hang off `UserContainer`. There is no module-level mutable state outside the allowlist. *(Amended by review:23 §7.2.)*
 - **Why:** Module globals leak state between users and workspaces (review:18).
-- **Enforced by:** `backend/tests/architecture/test_globals.py` (no module-level or class-level mutable state, `global`/`nonlocal` or memoizing decorator outside the registry), `backend/src/app/platform/state_registry.py` (the registry, each entry with owner, bound and eviction). Planned: the isolation matrix with a workspace axis (L11-08, M2).
+- **Enforced by:** `backend/tests/architecture/test_globals.py` (no module-level or class-level value outside a short immutable allowlist, no module-level expression, `global`/`nonlocal` or memoizing decorator, unless registered; stated limit: an alias of stdlib state such as `os.environ` passes), `backend/src/app/platform/state_registry.py` (the registry: process-wide names, at most one, and container-owned parts, each with owner, bound and eviction). Planned: the isolation matrix with a workspace axis for the containers' rule (L11-08, M2).
 - **Status:** enforced
 
 ### INV-12: Layering

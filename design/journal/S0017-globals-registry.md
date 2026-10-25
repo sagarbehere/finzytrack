@@ -14,3 +14,18 @@
 ## Hand-off (PROCESS.md §3 step 4; ADR-0057)
 - Checks with must-not-pass tests: every item of the loosening list above has a planted case.
 - Self-mutation: 8 tried, 8 killed.
+
+## Verifier
+- Round 1, head c232423: PASS WITH FINDINGS. Attacks: 11 (class attributes from unknown calls; loops, match, `except*`; walrus and expression statements; memoizer aliases; `tuple([[]])`; a container-owned registry entry; mutants; marker coverage; gates).
+- F1 Medium: class bodies used a denylist. Fixed: the same immutable allowlist as module level, plus `field(...)`.
+- F2 Medium: `for`/`while`/`match`/`except*` blocks and module-level expressions were not visited. Fixed: every nested block; any non-constant expression statement and loop variable counts.
+- F3 Low: memoizers matched by spelling. Fixed: resolved through import aliases; any `lru_cache`/`cache`/`cached`/`memoize` name or `cachetools` decorator.
+- F4 Low: `tuple(...)` passed whatever it held. Fixed: elements must be immutable.
+- F5 Medium: container-owned parts (§2.5) could never be registered. Fixed: `process` entries are module-level names validated by the scan (at most one, ADR-0041); container entries name the class or factory and are validated as defined names. The docstring and INV-11's line say so.
+- F6 Low: markers sat on a helper. Fixed; every test carries INV-11. F7 Low: `with` and `except` branches had no planted case. Added.
+- Also: duplicate entries and unknown owners are refused; the bad-entry test asserts the specific problem.
+- Three Medium on an architecture gate with no ledger or user data: no further round (ADR-0058).
+
+## Retro
+- The brief's loosening list was right in spirit and too narrow in reach (it named literals; the verifier used calls and other blocks). Writing the list per AST node kind, not per example, is the cheaper way to make it complete.
+- Process cost: about 40 min building; verifier 2.5 min; fixes about 25 min.

@@ -20,30 +20,14 @@ from app.platform.state_registry import REGISTRY, StateEntry
 
 SRC = Path(__file__).resolve().parents[2] / "src"
 # Calls whose result cannot change. Adding one is a reviewed change to this list (EP-04).
-IMMUTABLE_CALLS = frozenset(
-    {"frozenset", "tuple", "re.compile", "NewType", "TypeVar", "ParamSpec", "TypeVarTuple", "MappingProxyType"}
-)
-MUTABLE_CALLS = frozenset(
-    {
-        "list",
-        "dict",
-        "set",
-        "bytearray",
-        "defaultdict",
-        "OrderedDict",
-        "Counter",
-        "deque",
-        "ChainMap",
-        "WeakValueDictionary",
-        "WeakKeyDictionary",
-        "WeakSet",
-        "collections.defaultdict",
-        "collections.OrderedDict",
-        "collections.Counter",
-        "collections.deque",
-    }
-)
-MEMOIZERS = frozenset({"lru_cache", "cache", "functools.lru_cache", "functools.cache"})
+IMMUTABLE_CALLS = frozenset({"re.compile", "NewType", "TypeVar", "ParamSpec", "TypeVarTuple"})
+# Immutable only when every element is: `tuple([[]])` holds a list.
+CONTAINER_CALLS = frozenset({"frozenset", "tuple"})
+# In a class body, a per-instance default is not class state.
+CLASS_CALLS = frozenset({"field", "dataclasses.field"})
+# Memoizing decorators by their last name part, wherever imported from (functools, cachetools, ...).
+MEMOIZER_NAMES = frozenset({"lru_cache", "cache", "cached", "memoize", "memoized"})
+MEMOIZER_MODULES = frozenset({"cachetools"})
 
 
 @dataclass(frozen=True)
@@ -67,12 +51,25 @@ def immutable(value: ast.expr) -> bool:
     if isinstance(value, ast.Tuple):
         return all(immutable(e) for e in value.elts)
     if isinstance(value, ast.Call):
-        return dotted(value.func) in IMMUTABLE_CALLS  # their results are immutable whatever the arguments
+        name = dotted(value.func)
+        if name in IMMUTABLE_CALLS:
+            return True
+        if name in CONTAINER_CALLS:
+            return all(elements_immutable(a) for a in value.args) and not value.keywords
+        return False
     if isinstance(value, ast.BinOp | ast.UnaryOp):
         return all(immutable(v) for v in ast.iter_child_nodes(value) if isinstance(v, ast.expr))
-    # A name, attribute or subscript is an alias or a type expression (`Literal[...]`); the definition it points
-    # to is scanned where it lives. Stated limit: an alias of the stdlib's own mutable state (os.environ) passes.
-    return isinstance(value, ast.Name | ast.Attribute | ast.Subscript)
+    if isinstance(value, ast.Subscript):
+        return isinstance(value.value, ast.Name | ast.Attribute)  # a type expression such as `Literal[...]`
+    # A name or attribute is an alias; the definition it points to is scanned where it lives. Stated limit:
+    # an alias of the stdlib's own mutable state (`os.environ`) passes.
+    return isinstance(value, ast.Name | ast.Attribute)
+
+
+def elements_immutable(arg: ast.expr) -> bool:
+    if isinstance(arg, ast.List | ast.Set | ast.Tuple):
+        return all(immutable(e) for e in arg.elts)
+    return immutable(arg)
 
 
 def targets(node: ast.Assign | ast.AnnAssign | ast.AugAssign) -> list[str]:
@@ -80,29 +77,47 @@ def targets(node: ast.Assign | ast.AnnAssign | ast.AugAssign) -> list[str]:
     return [n.id for t in nodes for n in ast.walk(t) if isinstance(n, ast.Name)]
 
 
+def import_aliases(tree: ast.Module) -> dict[str, str]:
+    """Local name -> the dotted name it was imported as (`memo` -> `functools.lru_cache`, `ft` -> `functools`)."""
+    out: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            for a in node.names:
+                out[a.asname or a.name] = f"{node.module}.{a.name}"
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                out[a.asname or a.name.split(".")[0]] = a.name if a.asname else a.name.split(".")[0]
+    return out
+
+
 def scan(source: str, module: str) -> list[Found]:
     found: list[Found] = []
+    tree = ast.parse(source)
+    aliases = import_aliases(tree)
+
+    def resolved(node: ast.expr) -> str:
+        name = dotted(node)
+        head, _, rest = name.partition(".")
+        base = aliases.get(head, head)
+        return f"{base}.{rest}" if rest else base
 
     def body(stmts: list[ast.stmt], in_class: bool) -> None:
         for s in stmts:
             if isinstance(s, ast.Assign | ast.AnnAssign | ast.AugAssign):
-                value = s.value
                 names = targets(s)
-                if names == ["__all__"] and not in_class:
-                    continue
-                if value is None:
+                if (names == ["__all__"] and not in_class) or s.value is None:
                     continue
                 if isinstance(s, ast.AugAssign):
-                    found.extend(Found(module, n, "augmented assignment at module level") for n in names)
-                    continue
-                if in_class:
-                    mutable = isinstance(
-                        value, ast.List | ast.Dict | ast.Set | ast.ListComp | ast.DictComp | ast.SetComp
-                    ) or (isinstance(value, ast.Call) and dotted(value.func) in MUTABLE_CALLS)
-                    if mutable:
-                        found.extend(Found(module, n, "mutable class attribute") for n in names)
-                elif not immutable(value):
-                    found.extend(Found(module, n, "mutable or unknown module-level value") for n in names)
+                    found.extend(Found(module, n, "augmented assignment at module or class level") for n in names)
+                elif not (
+                    immutable(s.value)
+                    or (in_class and isinstance(s.value, ast.Call) and dotted(s.value.func) in CLASS_CALLS)
+                ):
+                    where = "class attribute" if in_class else "module-level value"
+                    found.extend(Found(module, n, f"mutable or unknown {where}") for n in names)
+            elif isinstance(s, ast.Expr):
+                if not isinstance(s.value, ast.Constant):  # a docstring or `...` is fine; anything else acts
+                    found.append(Found(module, "<expression>", f"module-level expression at line {s.lineno}"))
             elif isinstance(s, ast.ClassDef):
                 body(s.body, in_class=True)
                 for item in s.body:
@@ -110,19 +125,28 @@ def scan(source: str, module: str) -> list[Found]:
                         decorated(item)
             elif isinstance(s, ast.FunctionDef | ast.AsyncFunctionDef):
                 decorated(s)
-            elif isinstance(s, ast.If | ast.Try | ast.With):
+            elif isinstance(s, ast.Match):
+                for case in s.cases:
+                    body(case.body, in_class)
+            else:
+                # if, for, while, try, try/except*, with (sync and async): every nested block of statements
                 for part in ("body", "orelse", "finalbody"):
                     body(getattr(s, part, []), in_class)
                 for handler in getattr(s, "handlers", []):
                     body(handler.body, in_class)
+                if isinstance(s, ast.For | ast.AsyncFor):
+                    found.extend(
+                        Found(module, n, "module-level loop variable")
+                        for n in [x.id for x in ast.walk(s.target) if isinstance(x, ast.Name)]
+                    )
 
     def decorated(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         for d in fn.decorator_list:
-            name = dotted(d.func if isinstance(d, ast.Call) else d)
-            if name in MEMOIZERS:
+            name = resolved(d.func if isinstance(d, ast.Call) else d)
+            parts = name.split(".")
+            if parts[-1] in MEMOIZER_NAMES or parts[0] in MEMOIZER_MODULES:
                 found.append(Found(module, fn.name, f"memoizing decorator {name}"))
 
-    tree = ast.parse(source)
     body(tree.body, in_class=False)
     for node in ast.walk(tree):
         if isinstance(node, ast.Global | ast.Nonlocal):
@@ -140,7 +164,8 @@ def modules() -> dict[str, str]:
 
 
 def unregistered(found: list[Found], registry: tuple[StateEntry, ...]) -> list[Found]:
-    allowed = {(e.module, e.name) for e in registry}
+    # Only process-wide entries are module-level names; container-owned parts live on container attributes.
+    allowed = {(e.module, e.name) for e in registry if e.owner == "process"}
     return [f for f in found if (f.module, f.name) not in allowed]
 
 
@@ -150,34 +175,79 @@ def test_no_unregistered_module_state_in_the_tree() -> None:
     assert unregistered(found, REGISTRY) == []
 
 
-@pytest.mark.inv("INV-11")
+def defined_names(source: str) -> set[str]:
+    return {n.name for n in ast.parse(source).body if isinstance(n, ast.ClassDef | ast.FunctionDef)} | {
+        t for n in ast.parse(source).body if isinstance(n, ast.Assign | ast.AnnAssign) for t in targets(n)
+    }
+
+
 def registry_problems(registry: tuple[StateEntry, ...], sources: dict[str, str]) -> list[str]:
-    """Entries without a bound or eviction, or naming a module or stateful name that does not exist."""
+    """ARCHITECTURE.md §2.5 and ADR-0041: every entry has an owner, a bound and an eviction; a process-wide entry
+    names a stateful module-level name (the scan finds it), and there is at most one (the heavy-load gate); a
+    container-owned entry names the class or factory that holds it; no entry is listed twice."""
     out: list[str] = []
+    seen: set[tuple[str, str]] = set()
     for e in registry:
+        key = f"{e.module}.{e.name}"
+        if (e.module, e.name) in seen:
+            out.append(f"{key}: listed twice")
+        seen.add((e.module, e.name))
+        if e.owner not in ("process", "UserContainer", "WorkspaceContainer"):
+            out.append(f"{key}: unknown owner {e.owner!r}")
         if not e.bound.strip() or not e.eviction.strip():
-            out.append(f"{e.module}.{e.name}: bound and eviction are required")
-        if e.module not in sources or not any(f.name == e.name for f in scan(sources[e.module], e.module)):
-            out.append(f"{e.module}.{e.name}: stale entry (no such stateful name)")
+            out.append(f"{key}: bound and eviction are required")
+        source = sources.get(e.module)
+        if source is None:
+            out.append(f"{key}: stale entry (no such module)")
+        elif e.owner == "process" and not any(f.name == e.name for f in scan(source, e.module)):
+            out.append(f"{key}: stale entry (no such stateful name)")
+        elif e.owner != "process" and e.name not in defined_names(source):
+            out.append(f"{key}: stale entry (no such class or name)")
+    if sum(e.owner == "process" for e in registry) > 1:
+        out.append("more than one process-wide entry (ADR-0041: the heavy-load gate is the only one)")
     return out
 
 
+@pytest.mark.inv("INV-11")
 def test_every_registry_entry_exists_and_declares_its_bounds() -> None:
     assert registry_problems(REGISTRY, modules()) == []
 
 
+GATES = {"app.platform.gates": "_sem = make_semaphore()\n", "app.platform.plans": "class PlanStore:\n    pass\n"}
+
+
+@pytest.mark.inv("INV-11")
+def test_good_registry_entries_pass() -> None:
+    entries = (
+        StateEntry("app.platform.gates", "_sem", "process", "2 slots", "none (fixed size)"),
+        StateEntry("app.platform.plans", "PlanStore", "UserContainer", "200 plans", "TTL 1 h, then LRU"),
+    )
+    assert registry_problems(entries, GATES) == []
+
+
+@pytest.mark.inv("INV-11")
 @pytest.mark.parametrize(
-    "entry",
+    ("entries", "problem"),
     [
-        StateEntry("app.platform.gates", "_sem", "process", "", "none"),
-        StateEntry("app.platform.gates", "_sem", "process", "2 slots", " "),
-        StateEntry("app.platform.gone", "_sem", "process", "2 slots", "none"),
-        StateEntry("app.platform.gates", "_renamed", "process", "2 slots", "none"),
+        ((StateEntry("app.platform.gates", "_sem", "process", "", "none"),), "bound and eviction"),
+        ((StateEntry("app.platform.gates", "_sem", "process", "2 slots", " "),), "bound and eviction"),
+        ((StateEntry("app.platform.gone", "_sem", "process", "2 slots", "none"),), "no such module"),
+        ((StateEntry("app.platform.gates", "_renamed", "process", "2 slots", "none"),), "no such stateful name"),
+        ((StateEntry("app.platform.plans", "Gone", "UserContainer", "1", "LRU"),), "no such class"),
+        ((StateEntry("app.platform.gates", "_sem", "Global", "2", "none"),), "unknown owner"),  # type: ignore[arg-type]
+        ((StateEntry("app.platform.gates", "_sem", "process", "2", "none"),) * 2, "listed twice"),
+        (
+            (
+                StateEntry("app.platform.gates", "_sem", "process", "2", "none"),
+                StateEntry("app.platform.gates2", "_x", "process", "1", "none"),
+            ),
+            "more than one process-wide",
+        ),
     ],
 )
-def test_bad_registry_entries_fail(entry: StateEntry) -> None:
-    sources = {"app.platform.gates": "_sem = make_semaphore()\n"}
-    assert registry_problems((entry,), sources) != [], entry
+def test_bad_registry_entries_fail(entries: tuple[StateEntry, ...], problem: str) -> None:
+    sources = {**GATES, "app.platform.gates2": "_x = make()\n"}
+    assert any(problem in p for p in registry_problems(entries, sources)), registry_problems(entries, sources)
 
 
 @pytest.mark.inv("INV-11")
@@ -204,6 +274,25 @@ def test_bad_registry_entries_fail(entry: StateEntry) -> None:
         "try:\n    _x = []\nexcept Exception:\n    pass\n",
         "_pair = ([], 1)\n",
         "_d = dict(a=1)\n",
+        # S0017 verifier: class attributes from unknown calls, other blocks, expressions, aliases, tuple contents
+        "import threading\nclass Store:\n    _local = threading.local()\n",
+        "import asyncio\nclass Jobs:\n    queue = asyncio.Queue()\n",
+        "import weakref\nclass Reg:\n    _all = weakref.WeakValueDictionary()\n",
+        "(_cache := {})\n",
+        "import sys\nsetattr(sys.modules[__name__], '_cache', {})\n",
+        "import other\nother.CACHE.update(a=1)\n",
+        "for _i in range(3):\n    pass\n",
+        "while True:\n    _x = []\n    break\n",
+        "match 1:\n    case 1:\n        _x = []\n",
+        "try:\n    pass\nexcept* ValueError:\n    _x = []\n",
+        "with open('f') as fh:\n    _x = []\n",
+        "try:\n    pass\nexcept ValueError:\n    _x = []\n",
+        "from functools import lru_cache as memo\n@memo\ndef f(x):\n    return x\n",
+        "import functools as ft\n@ft.cache\ndef f(x):\n    return x\n",  # privacy-scan: allow email
+        "import cachetools\n@cachetools.cached(cache={})\ndef f(x):\n    return x\n",  # privacy-scan: allow email
+        "_t = tuple([[]])\n",
+        "_s = frozenset([frozenset(), []])\n",
+        "_x = ({},)[0]\n",
     ],
 )
 def test_planted_state_is_found(source: str) -> None:
