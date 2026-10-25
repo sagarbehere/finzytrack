@@ -9,14 +9,17 @@ commit time, `git log -1 --format=%ct <tag>`). With no anchor at all the build r
 clock, so two builds of one tag give the same bytes. The output folder must be new or empty, and outside the
 source tree except under the ignored `build/` folder: the build never rewrites a tracked file (review:L10 §1.5).
 It writes the ledger files and `generated-for.json` (the inputs they were made for).
-Exit 0 = written, 2 = refused (nothing written).
+Exit 0 = written, 2 = refused or failed (no output folder is left; missing parent folders may have been created).
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
+import tempfile
+from collections.abc import Mapping
 from datetime import date
 from pathlib import Path
 
@@ -39,16 +42,44 @@ class Refused(Exception):
     pass
 
 
+def repo_parts(out: Path) -> tuple[str, ...] | None:
+    """The parts of *out* below the repository, or None when it is outside.
+
+    The repository is matched by file identity (`samefile`) on each existing ancestor, so another spelling of it
+    on a case-insensitive disk is still the repository (S0027 verifier F4).
+    """
+    for ancestor in (out, *out.parents):
+        if ancestor.exists() and os.path.samefile(ancestor, REPO):
+            return out.parts[len(ancestor.parts) :]
+    return None
+
+
 def output_folder(raw: str) -> Path:
     """The resolved output folder, or Refused: inside the source tree (outside `build/`), or not empty."""
     out = Path(raw).resolve()
-    if out.is_relative_to(REPO) and not out.is_relative_to(REPO / "build"):
+    parts = repo_parts(out)
+    if parts is not None and parts[:1] != ("build",):
         msg = f"{out} is in the source tree; write to a temp folder or under {REPO / 'build'} (L10-18)"
         raise Refused(msg)
     if out.exists() and (not out.is_dir() or any(out.iterdir())):
         msg = f"{out} exists and is not empty; the build never overwrites files"
         raise Refused(msg)
     return out
+
+
+def write_all(out: Path, files: Mapping[str, str]) -> None:
+    """Write *files* into a temp folder beside *out*, then rename it to *out*; on any failure, leave nothing."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(tempfile.mkdtemp(prefix=f".{out.name}.", dir=out.parent))
+    try:
+        for rel, text in files.items():
+            (tmp / rel).write_text(text, encoding="utf-8", newline="\n")
+        if out.exists():
+            out.rmdir()  # checked empty by output_folder; rmdir refuses anything else
+        tmp.rename(out)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
 
 
 def resolve_anchor(iso: str | None, epoch: str | None) -> date:
@@ -74,14 +105,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         anchor = resolve_anchor(args.anchor, args.source_date_epoch)
         out = output_folder(args.out)
-    except (Refused, ValueError) as e:
+        ledger = generate(anchor, Size(args.size), default_fragments())  # fully, before anything is written
+        write_all(out, {**ledger.files, GENERATED_FOR: ledger.generated_for_json()})
+    except (Refused, ValueError, OSError) as e:
         print(f"gen_demo: refused: {e}", file=sys.stderr)
         return 2
-    ledger = generate(anchor, Size(args.size), default_fragments())
-    out.mkdir(parents=True, exist_ok=True)
-    for rel, text in ledger.files.items():
-        (out / rel).write_text(text, encoding="utf-8", newline="\n")
-    (out / GENERATED_FOR).write_text(ledger.generated_for_json(), encoding="utf-8", newline="\n")
     return 0
 
 

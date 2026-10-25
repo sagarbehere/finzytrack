@@ -91,6 +91,51 @@ def test_planted_violation_breaks_its_contract(tree: Path, module: str, text: st
     assert any(contract in line for line in broken), r.stdout
 
 
+# S0027 verifier F3: every forbidden entry of the purity contracts is planted on its own, so deleting one entry
+# from `.importlinter` fails here. The lists are the spec (ARCHITECTURE.md §2.4 rules 3 and 7), not read from
+# the contract file.
+RULE_3_FORBIDDEN = (
+    "fastapi",
+    "pydantic",
+    "sqlite3",
+    "httpx",
+    "portalocker",
+    "os",
+    "pathlib",
+    "subprocess",
+    "socket",
+    "time",
+    "random",
+    "secrets",
+    "uuid",
+)
+CONTENT_FORBIDDEN = (
+    "app.platform",
+    "app.mirror",
+    "app.workspaces",
+    "app.boot",
+    "app.api",
+    "app.main",
+    *RULE_3_FORBIDDEN,
+)
+
+
+@pytest.mark.parametrize(
+    ("source", "forbidden", "contract"),
+    [
+        *(("app.domain.planted", m, "domain is pure") for m in RULE_3_FORBIDDEN),
+        *(("app.content.demo.planted", m, "content is pure") for m in CONTENT_FORBIDDEN),
+    ],
+)
+def test_each_forbidden_entry_is_enforced(tree: Path, source: str, forbidden: str, contract: str) -> None:
+    if forbidden.startswith("app."):
+        plant(tree, f"{forbidden}.target", "")
+    plant(tree, source, f"import {forbidden}\n")
+    r = lint_imports(tree)
+    broken = [line for line in r.stdout.splitlines() if line.rstrip().endswith("BROKEN")]
+    assert any(contract in line for line in broken), f"{source} importing {forbidden} passed: {r.stdout}"
+
+
 def test_allowed_direction_passes(tree: Path) -> None:
     # Must pass: a higher layer importing a lower one (guards against contracts that refuse everything).
     plant(tree, "app.api.routes", "import app.platform\nimport app.domain\n")

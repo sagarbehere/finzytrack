@@ -12,6 +12,7 @@ Spec lines checked here (the Beancount-side gates are in `scripts/oracle/tests/t
 
 from __future__ import annotations
 
+import decimal
 import hashlib
 import os
 import re
@@ -26,6 +27,7 @@ from typing import override
 import pytest
 
 from app.content.demo import (
+    GENERATOR_VERSION,
     Directive,
     Fragment,
     FragmentContext,
@@ -129,6 +131,34 @@ def test_the_clock_shim_really_moves_the_clock() -> None:
     )
     r = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True)  # noqa: S603
     assert r.stdout in ("2000-01-01 946684800", "1999-12-31 946684800")
+
+
+def test_a_caller_decimal_context_does_not_change_the_bytes() -> None:
+    expected = text_of()
+    with decimal.localcontext(prec=6, rounding=decimal.ROUND_DOWN):
+        assert text_of() == expected
+
+
+# S0027 verifier F2: GENERATOR_VERSION is "raised when the same inputs would give other bytes". This pins the
+# bytes of each size at one anchor beside the version (a change detector, not a spec value: EP-29 exempts it as a
+# characterization pin). Output changes on purpose -> bump GENERATOR_VERSION and update both lines together.
+@dataclass(frozen=True)
+class Pin:
+    size: Size
+    sha256: str
+
+
+PINNED_VERSION = 1
+PINNED = (
+    Pin(Size.DEMO, sha256="a0dbf96d3b6fb0ee4d236b628b0a8def25fe161ce3cd813883ca222334b7d52c"),
+    Pin(Size.K5, sha256="9c09fd86ed13d79e13aab0fa6efb028dd0e3b18617400e496a79bfae1fb706f7"),
+    Pin(Size.K54, sha256="b2cc85a2696df1c216c0480aff7b09bf8d03b54fc30bacbdc473d44a027d8c51"),
+)
+
+
+def test_output_changes_only_with_a_new_generator_version() -> None:
+    digests = tuple(Pin(size, hashlib.sha256(text_of(ANCHOR, size).encode()).hexdigest()) for size in Size)
+    assert (GENERATOR_VERSION, digests) == (PINNED_VERSION, PINNED)
 
 
 # --- The anchor is an explicit input (ADR-0022 "the anchor is the release tag's date (SOURCE_DATE_EPOCH)") ---
@@ -304,6 +334,18 @@ def test_an_unbalanced_transaction_is_refused() -> None:
             "n",
             [Posting("Expenses:A", Decimal("1.00"), "USD"), Posting("Assets:B", Decimal("-0.99"), "USD")],
         )
+
+
+def test_a_long_account_and_a_long_amount_stay_separated() -> None:
+    # S0027 verifier F1: a 44-character account beside a 12-character amount merged into one token.
+    account = "Assets:Investments:Brokerage:Retirement:Roth"
+    text = transaction(
+        ANCHOR,
+        "P",
+        "n",
+        [Posting(account, Decimal("-12345678.90"), "USD"), Posting("Assets:B", Decimal("12345678.90"), "USD")],
+    ).text
+    assert f"  {account}  -12345678.90 USD" in text.splitlines()
 
 
 @pytest.mark.parametrize(

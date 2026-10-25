@@ -10,11 +10,14 @@ Spec lines checked here:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -129,3 +132,67 @@ def test_the_ignored_build_folder_is_accepted(tmp_path: Path) -> None:
             p.unlink()
         if target.exists():
             target.rmdir()
+
+
+def test_the_repository_spelled_in_another_case_is_refused() -> None:
+    # S0027 verifier F4: on a case-insensitive disk `.../FINZYTRACK/design` is the repository's design folder.
+    other = Path(str(REPO).swapcase())
+    if not other.exists():
+        pytest.skip("case-sensitive file system: the other spelling is another folder")
+    target = other / "design" / "s0027-case-probe"
+    r = run("--size", "demo", "--anchor", "2026-10-25", "--out", str(target))
+    assert r.returncode == 2
+    assert "source tree" in r.stderr
+    assert not (REPO / "design" / "s0027-case-probe").exists()
+
+
+def test_build_spelled_in_another_case_is_refused(tmp_path: Path) -> None:
+    # Only the exact ignored folder `build/` is allowed; `BUILD/` is not in .gitignore on a case-sensitive disk.
+    target = REPO / "BUILD" / f"s0027-{tmp_path.name}"
+    r = run("--size", "demo", "--anchor", "2026-10-25", "--out", str(target))
+    assert r.returncode == 2
+    assert not target.exists()
+
+
+def test_an_anchor_the_generator_cannot_use_is_refused_cleanly(tmp_path: Path) -> None:
+    # S0027 verifier F5: year 1 leaves no room for the span; refused with a message, no traceback, nothing written.
+    r = run("--size", "demo", "--anchor", "0001-06-01", "--out", str(tmp_path / "x"))
+    assert r.returncode == 2
+    assert "Traceback" not in r.stderr
+    assert "refused" in r.stderr
+    assert not (tmp_path / "x").exists()
+
+
+def test_a_file_in_place_of_a_parent_folder_is_refused_cleanly(tmp_path: Path) -> None:
+    (tmp_path / "afile").write_text("x")
+    r = run("--size", "demo", "--anchor", "2026-10-25", "--out", str(tmp_path / "afile" / "out"))
+    assert r.returncode == 2
+    assert "Traceback" not in r.stderr
+    assert (tmp_path / "afile").read_text() == "x"
+
+
+def load_script() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("gen_demo_under_test", SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_failure_after_the_first_write_leaves_nothing(tmp_path: Path) -> None:
+    # The second file cannot be written (its folder does not exist): no output folder and no temp folder remain.
+    out = tmp_path / "out"
+    write_all: Callable[[Path, dict[str, str]], None] = load_script().write_all
+    with pytest.raises(OSError, match="missing"):
+        write_all(out, {"main.beancount": "x\n", "missing/b.beancount": "y\n"})
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_an_empty_existing_folder_is_replaced_by_the_written_one(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    write_all: Callable[[Path, dict[str, str]], None] = load_script().write_all
+    write_all(out, {"main.beancount": "x\n"})
+    assert [p.name for p in tmp_path.iterdir()] == ["out"]
+    assert (out / "main.beancount").read_text() == "x\n"

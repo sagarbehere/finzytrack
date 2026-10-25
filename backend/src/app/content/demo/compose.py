@@ -7,6 +7,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
+from decimal import ROUND_HALF_EVEN, Context, localcontext
 
 from app.content.demo.household import Household
 from app.content.demo.ledger_text import Directive
@@ -44,7 +45,15 @@ class DemoLedger:
 
 
 def generate(anchor: date, size: Size, fragments: Sequence[Fragment]) -> DemoLedger:
-    """The demo ledger for *anchor* and *size*. Each fragment gets its own stream, seeded by its name only."""
+    """The demo ledger for *anchor* and *size*. Each fragment gets its own stream, seeded by its name only.
+
+    Decimal arithmetic runs in a fixed context, so a caller's `decimal` context cannot change the bytes.
+    """
+    with localcontext(Context(prec=28, rounding=ROUND_HALF_EVEN)):
+        return _generate(anchor, size, fragments)
+
+
+def _generate(anchor: date, size: Size, fragments: Sequence[Fragment]) -> DemoLedger:
     names = [f.name for f in fragments]
     for name in names:
         if not _NAME.fullmatch(name):

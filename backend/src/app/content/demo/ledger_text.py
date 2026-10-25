@@ -18,7 +18,8 @@ from decimal import Decimal
 _ACCOUNT = re.compile(r"(Assets|Liabilities|Equity|Income|Expenses)(:[A-Z][A-Za-z0-9-]*)+")
 _CURRENCY = re.compile(r"[A-Z]{3}")
 _UNSAFE_TEXT = re.compile(r'["\\\n\r]')
-_ACCOUNT_WIDTH = 40
+_ACCOUNT_WIDTH = 38
+_AMOUNT_WIDTH = 12
 
 # Ranks order directives that share a date: commodities, then opens, then transactions.
 RANK_COMMODITY = 0
@@ -95,5 +96,6 @@ def transaction(d: date, payee: str, narration: str, postings: Sequence[Posting]
         msg = f"transaction {d} {payee!r} does not balance: {off}"
         raise ValueError(msg)
     lines = [f'{d.isoformat()} {flag} "{payee}" "{narration}"']
-    lines += [f"  {p.account:<{_ACCOUNT_WIDTH}}{p.amount:>12} {p.currency}" for p in postings]
+    # At least two spaces between account and amount whatever their lengths (Beancount needs a separator).
+    lines += [f"  {p.account:<{_ACCOUNT_WIDTH}}  {p.amount:>{_AMOUNT_WIDTH}} {p.currency}" for p in postings]
     return Directive(d, RANK_TRANSACTION, "\n".join(lines))
