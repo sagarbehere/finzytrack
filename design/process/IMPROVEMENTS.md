@@ -72,3 +72,13 @@ Format:
 - Expected effect: classifier and diff regressions fail CI.
 - Observed effect: pending.
 - Status: kept (tightening, agent-approved).
+
+## IMP-0007: INV-24 enforcement list names the copy guards (2026-10-25)
+- Trigger: S0002 verifier finding F10 (the guards moved into `scripts/oracle/copies.py` and gained containment checks).
+- What changed: `design/INVARIANTS.md` INV-24 "Enforced by" adds `scripts/oracle/copies.py`, `scripts/tests/test_oracle_copies.py` and `scripts/oracle/tests/test_harness.py`. The rule text is unchanged.
+- PROCESS.md section: none (invariant content).
+- Why: "where is this enforced?" must stay accurate.
+- Expected effect: none on behaviour; the invariant check also requires the new files to mention INV-24.
+- Observed effect: pending.
+- Status: kept.
+- Owner approval: "I accept your recommendations for the four questions in the design/inbox/" (2026-10-25, in session; covers `design/inbox/answered/20261025-inv-24-enforced-by.md`)

@@ -17,3 +17,4 @@ Beancount cannot write 3.333… exactly. Whichever way the new lot is written (p
 Option 1. It keeps the books exact and visible, changes nothing else in the ledger, and is how practitioners usually handle it in Beancount. Option 2 is quieter but loosens checking for every INR transaction, which goes against "safety outranks every number". The account is one you pick, never one Finzytrack invents (INV-15).
 
 ## Answer (owner, verbatim, with date)
+"I accept your recommendations for the four questions in the design/inbox/" (owner, 2026-10-25, in session). Recorded in: ADR-0030 amendment; intent table row `inv.conversion`. Option 1 (the recommendation) applies.

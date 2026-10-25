@@ -63,16 +63,25 @@ class ModelTest(unittest.TestCase):
         self.assertFalse(any("Expenses:Rent" in k for k in added))
         self.assertEqual(total(e.files["txns.beancount"].added), 1)
 
-    def test_rename_with_a_custom_string_naming_the_account_is_non_comparable(self) -> None:
+    def test_rename_follows_custom_strings_and_metadata_values(self) -> None:
         self.d.write({"main.beancount": (self.d.path / "main.beancount").read_text()
-                      + '2020-01-01 custom "fava-sidebar-link" "Rent" "Expenses:Rent"\n'})
+                      + '2020-01-01 custom "fava-sidebar-link" "Rent" "Expenses:Rent"\n'
+                      + '2020-01-01 open Assets:Deposit USD\n  interest-account: "Expenses:Rent"\n  memo: "Expenses:Rent is old"\n'})
         before = sd.parse_set(self.d.path, "main.beancount")
-        with self.assertRaises(model.NonComparable):  # waiting for the owner (intent table, account.rename)
-            model.rename_account(before, "Expenses:Rent", "Expenses:Housing")
+        added = [k for f in model.rename_account(before, "Expenses:Rent", "Expenses:Housing").files.values() for k in f.added]
+        self.assertTrue(any('"Expenses:Housing"' in k and "sidebar" in k for k in added))
+        self.assertTrue(any('interest-account: "Expenses:Housing"' in k and '"Expenses:Rent is old"' in k for k in added))
 
-    def test_rename_of_an_account_with_subaccounts_is_non_comparable(self) -> None:
-        with self.assertRaises(model.NonComparable):  # the intended change is not decided yet (pilot)
-            model.rename_account(self.before, "Expenses:Food", "Expenses:Meals")
+    def test_rename_renames_the_subtree(self) -> None:
+        e = model.rename_account(self.before, "Expenses:Food", "Expenses:Meals")
+        added = " ".join(k for f in e.files.values() for k in f.added)
+        self.assertIn("Expenses:Meals:Snacks", added)
+        self.assertIn("Expenses:Meals ", added)
+        self.assertNotIn("Expenses:Food", added)
+
+    def test_rename_onto_an_existing_subaccount_name_is_non_comparable(self) -> None:
+        with self.assertRaises(model.NonComparable):
+            model.rename_account(self.before, "Expenses:Food:Snacks", "Expenses:Rent")
 
     def test_rename_onto_an_existing_account_is_non_comparable(self) -> None:
         with self.assertRaises(model.NonComparable):  # that is a merge, its own mutator (ADR-0049)

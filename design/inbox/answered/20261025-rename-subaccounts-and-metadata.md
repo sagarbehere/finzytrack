@@ -20,3 +20,4 @@ In both cases, if the rename does not follow, the ledger still loads but no long
 Option 1. It matches what the old app does, so comparisons with it keep working, and it matches what "rename" means to a person. The preview keeps it visible: the dialog lists every account and every metadata line before you confirm. Values are changed only when the whole value is the account name, never when it merely contains it.
 
 ## Answer (owner, verbatim, with date)
+"I accept your recommendations for the four questions in the design/inbox/" (owner, 2026-10-25, in session). Recorded in: ADR-0049 amendment (rename); intent table row `account.rename`. Option 1 (the recommendation) applies.

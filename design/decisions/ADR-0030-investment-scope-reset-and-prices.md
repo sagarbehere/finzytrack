@@ -39,6 +39,13 @@ About 7,300 lines of v0.3 investment code reached into portfolio-analytics and t
 - Booking methods are handled by Beancount, including specific-lot choice (ADR-0031).
 - The user doc on investments shrinks and gains a booking-methods section.
 
+
+## Amendment (2026-10-25): conversions whose cost does not divide exactly
+
+Owner: "I accept your recommendations for the four questions in the design/inbox/" (2026-10-25, in session). Covers `design/inbox/answered/20261025-conversion-cost-rounding.md`.
+- A conversion (merger, bonus, face-value change) keeps each lot's date and **total cost**. When the per-unit cost does not divide exactly (100 units at 10 INR becoming 300 units), the transaction gets a **rounding leg** to an account **the user picks** (never one Finzytrack invents, INV-15), so it balances exactly. The preview shows the leftover amount.
+- No ledger-wide tolerance option is written for this.
+
 ## References
 
 review:16 §1–§4; review:14 L5-11 and Q3; review:F §2 item 11; ADR-0025, ADR-0029, ADR-0031, ADR-0032, ADR-0047; CAP-INV-XIRR, CAP-INV-TWR, CAP-INV-CAS-REPLACE, CAP-PRICE-UPDATE.

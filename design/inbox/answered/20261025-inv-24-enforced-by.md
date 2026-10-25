@@ -14,3 +14,4 @@ INV-24 says agents and tests never touch your real data. Its "Enforced by" line 
 Option 1. It keeps "where is this enforced?" accurate, and it adds enforcement without changing the rule.
 
 ## Answer (owner, verbatim, with date)
+"I accept your recommendations for the four questions in the design/inbox/" (owner, 2026-10-25, in session). Recorded in: `design/INVARIANTS.md` INV-24; IMPROVEMENTS IMP-0007. Option 1 (the recommendation) applies.

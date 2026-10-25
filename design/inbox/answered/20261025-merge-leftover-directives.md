@@ -24,3 +24,4 @@ Two things are left that ADR-0049 does not say:
 Option 1. It keeps merge distinct from delete, as ADR-0049 intends: merge leaves an empty A, delete removes it. A budget on an account that can no longer have spending would only confuse the budget view. Moving the budget to B is not offered, because B usually has its own budget.
 
 ## Answer (owner, verbatim, with date)
+"I accept your recommendations for the four questions in the design/inbox/" (owner, 2026-10-25, in session). Recorded in: ADR-0049 amendment (merge); intent table row `account.merge`. Option 1 (the recommendation) applies.

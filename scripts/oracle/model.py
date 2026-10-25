@@ -85,40 +85,38 @@ def _names(value: Any, acct: str) -> bool:
 
 
 def renamed(entry: Any, old: str, new: str) -> Any:
-    """The entry with every account reference *old* re-pointed to *new* (exact name only)."""
-    r = lambda name: new if name == old else name  # noqa: E731
+    """The entry with A (*old*) and every `A:…` subaccount re-pointed to B (*new*): account tokens, and metadata and
+    `custom` string values that are exactly one of those names (ADR-0049 amendment, intent table `account.rename`)."""
+    def r(name: Any) -> Any:
+        return new + name[len(old):] if _names(name, old) else name
+
+    def meta(m: dict[str, Any] | None) -> dict[str, Any] | None:
+        return m if not m else {k: (v if k in ("filename", "lineno") else r(v)) for k, v in m.items()}
+
+    entry = entry._replace(meta=meta(entry.meta))
     if isinstance(entry, (data.Open, data.Close, data.Balance, data.Note, data.Document)):
         return entry._replace(account=r(entry.account))
     if isinstance(entry, data.Pad):
         return entry._replace(account=r(entry.account), source_account=r(entry.source_account))
     if isinstance(entry, data.Transaction):
-        return entry._replace(postings=[p._replace(account=r(p.account)) for p in entry.postings])
-    if isinstance(entry, data.Custom):  # account-typed values; a string only as a budget's quoted root (intent table)
-        return entry._replace(values=[v._replace(value=r(v.value))
-                                      if v.dtype is bc_account.TYPE or (v.dtype is str and entry.type == "budget") else v
+        return entry._replace(postings=[p._replace(account=r(p.account), meta=meta(p.meta)) for p in entry.postings])
+    if isinstance(entry, data.Custom):
+        return entry._replace(values=[v._replace(value=r(v.value)) if v.dtype in (bc_account.TYPE, str) else v
                                       for v in entry.values])
     return entry
 
 
 def rename_account(before: LedgerSet, old: str, new: str) -> Expected:
-    """Rename a leaf account: every posting and directive that names it (ADR-0049 `move_postings` with a new B,
-    plus its own open/close/balance/pad/budget)."""
+    """Rename A and its subtree: every reference to each renamed account (intent table `account.rename`)."""
     accounts = _accounts(before)
     if old not in accounts:
         raise NonComparable(f"{old} is not opened in this ledger")
-    if new in accounts:
-        raise NonComparable(f"{new} exists: that is a merge, its own mutator (ADR-0049)")
-    if any(a.startswith(old + ":") for a in accounts):
-        raise NonComparable(f"{old} has subaccounts: the intended change is not decided yet (intent table)")
+    targets = {new + a[len(old):] for a in accounts if _names(a, old)}
+    if targets & accounts:
+        raise NonComparable(f"{sorted(targets & accounts)} exist: that is a merge, its own mutator (ADR-0049)")
     exp = Expected()
     for rel, f in before.files.items():
         for k, e in f.by_key.items():
-            metas = [e.meta or {}] + [p.meta or {} for p in getattr(e, "postings", ())]
-            if any(_names(v, old) for m in metas for key, v in m.items() if key != "filename"):
-                raise NonComparable(f"metadata names {old}: the intended change is not decided yet (intent table)")
-            if isinstance(e, data.Custom) and e.type != "budget" and any(
-                    v.dtype is str and _names(v.value, old) for v in e.values):
-                raise NonComparable(f"a custom string value names {old}: not decided yet (intent table)")
             r = renamed(e, old, new)
             if canonical_key(r) != k:
                 exp.remove(rel, k, f.keys[k])

@@ -154,7 +154,7 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 ### INV-24: Agents and tests never touch real data
 - **Rule:** Agents and tests never touch the owner's real data or running backend. Tests run on copies in isolated data dirs and ports; real-ledger copies run only in the local tier.
 - **Why:** An agent mistake must never reach the owner's books (owner, 2026-10-24).
-- **Enforced by:** `.claude/hooks/guard_paths.py`, `.claude/hooks/guard_bash.py`, `scripts/tests/test_guards.py`, .claude/settings.json (deny rules), `scripts/oracle/launch_legacy.py` (refuses the live data folder). Planned: the acceptance harness port and data-dir checks; the local-tier path guard.
+- **Enforced by:** `.claude/hooks/guard_paths.py`, `.claude/hooks/guard_bash.py`, `scripts/tests/test_guards.py`, .claude/settings.json (deny rules), `scripts/oracle/launch_legacy.py` (refuses the live data folder), `scripts/oracle/copies.py` (the copy guards), `scripts/tests/test_oracle_copies.py`, `scripts/oracle/tests/test_harness.py` (copy containment, source unchanged). Planned: the acceptance harness port and data-dir checks; the local-tier path guard.
 - **Status:** enforced
 
 ### INV-25: Workspace operations never delete user files

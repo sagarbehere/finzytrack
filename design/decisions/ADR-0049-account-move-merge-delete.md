@@ -35,6 +35,21 @@ In v0.3 the delete dialog took its count from the period-filtered table, so it c
 
 - Accounts can promote its multi-entry mutators before Transactions promotes single-entry replace (ADR-0014).
 
+
+## Amendment (2026-10-25): rename covers the subtree and the values that name the account
+
+Owner: "I accept your recommendations for the four questions in the design/inbox/" (2026-10-25, in session). Covers `design/inbox/answered/20261025-rename-subaccounts-and-metadata.md`.
+- **Rename renames the whole subtree:** renaming A to B also renames every `A:…` account to `B:…`, with every reference to each of them.
+- **Values that are exactly an account of the subtree follow:** metadata values on any entry, and `custom` values (string or account-typed), when the whole value is the account name. Text that merely contains the name is left alone.
+- The preview lists every account renamed and every metadata or `custom` line that changes, before you confirm.
+
+## Amendment (2026-10-25): what a merge leaves behind
+
+Owner: "I accept your recommendations for the four questions in the design/inbox/" (2026-10-25, in session). Covers `design/inbox/answered/20261025-merge-leftover-directives.md`.
+- **Merge keeps A's `open` (and `close`)**, so A remains an empty account that can be closed or deleted later; this keeps merge distinct from delete with reassign.
+- **Merge drops A's `custom "budget"` directives**, listed in the preview; they are not moved to B.
+- A's own `balance` and `pad` directives are dropped, as the preview rules above already say.
+
 ## References
 
 review:10 §1a, I1, I11, D10; review:11 L3-06; ADR-0008, ADR-0009, ADR-0014, ADR-0035; INV-01, INV-15, INV-16.

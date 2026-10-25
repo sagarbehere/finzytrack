@@ -4,7 +4,7 @@
 
 What each ledger-writing mutator may change. Column meanings and rules: [README.md](README.md). Edit `intent-table.toml`, then run `python3 scripts/gen_intent_table.py`.
 
-50 mutators: 26 decided, 21 draft, 3 owner; kinds 12 add, 15 change-one, 23 many; 15 with no old-app counterpart.
+50 mutators: 28 decided, 22 draft; kinds 12 add, 15 change-one, 23 many; 15 with no old-app counterpart.
 
 ## Summary
 
@@ -14,8 +14,8 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 | `ws.seed-demo` | many | n/a | new_file | decided | M3 |
 | `account.create` | add | POST /api/accounts | insert | decided | M4 |
 | `account.edit` | change-one | PUT /api/accounts/{name} (without new_name) | replace; insert_meta; delete_meta | decided | M4 |
-| `account.rename` | many | PUT /api/accounts/{name} with new_name | replace_token | owner:20261025-rename-subaccounts-and-metadata.md | M4 |
-| `account.merge` | many | n/a | replace_token; delete | owner:20261025-merge-leftover-directives.md | M4 |
+| `account.rename` | many | PUT /api/accounts/{name} with new_name | replace_token; delete_meta; insert_meta; replace | decided | M4 |
+| `account.merge` | many | n/a | replace_token; delete | decided | M4 |
 | `account.delete-reassign` | many | n/a (the legacy delete cannot reassign) | replace_token; delete | decided | M4 |
 | `account.delete-with-transactions` | many | DELETE /api/accounts/{name} (delete_transactions=true, the default) | delete | decided | M4 |
 | `account.close` | add | POST /api/accounts/{name}/close | insert | decided | M4 |
@@ -53,7 +53,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 | `inv.reinvest` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
 | `inv.dividend` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
 | `inv.sell` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
-| `inv.conversion` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | owner:20261025-conversion-cost-rounding.md | M8 |
+| `inv.conversion` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
 | `inv.cd-maturity` | many | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
 | `inv.interest` | add | POST /api/investments/assemble, then POST /api/import/commit | insert | draft | M8 |
 | `settings.booking-default` | change-one | n/a | option_line | decided | M8 |
@@ -132,14 +132,14 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Capabilities:** CAP-ACCT-RENAME
 - **Kind of edit:** many
 - **Old endpoint:** PUT /api/accounts/{name} with new_name
-- **Edits:** replace_token
+- **Edits:** replace_token; delete_meta; insert_meta; replace
 - **Files:** every file of the set with a reference to the account
-- **Intended change:** every account token naming A becomes B: postings, `open`, `close`, `balance`, `pad` (both accounts), `note`, `document`, every account-typed `custom` value equal to A, and the quoted root of a `custom "budget"` equal to A; nothing else changes. B must not exist (that is a merge). Subaccounts, metadata values and other `custom` string values (e.g. a Fava sidebar link): see the inbox question
+- **Intended change:** A and every subaccount `A:…` become B and `B:…` (ADR-0049 amendment): every account token naming one of them (postings, `open`, `close`, `balance`, `pad` both accounts, `note`, `document`, account-typed `custom` values), and every metadata value on any entry and every `custom` string value that is exactly one of those account names; text that merely contains a name is untouched. Nothing else changes. No renamed name may already exist (that is a merge)
 - **Metadata written:** —
 - **May ask to acknowledge:** —
-- **Refused when:** B already exists (use account.merge); B breaks the account grammar; an encrypted file references A (not editable, ADR-0009)
-- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); non-comparable: accounts with subaccounts, or named in metadata or in a `custom` string value (the legacy renames all of these; see the inbox question)
-- **Status:** owner:20261025-rename-subaccounts-and-metadata.md
+- **Refused when:** a target name already exists (use account.merge); a target name breaks the account grammar; an encrypted file references a renamed account (not editable, ADR-0009)
+- **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins)
+- **Status:** decided
 - **Milestone:** M4
 - **ADRs:** ADR-0049; ADR-0009
 
@@ -150,12 +150,12 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Old endpoint:** n/a
 - **Edits:** replace_token; delete
 - **Files:** every file of the set with a posting, `note`, `document`, `pad` or `balance` naming A
-- **Intended change:** move_postings(A → B): every posting of A, A's `note` and `document` directives, and every `pad` whose source is A re-pointed to B; a transaction with legs on both keeps two B postings; A's own `balance` and `pad` directives are dropped, not moved (ADR-0049 preview rules). Whether A's `open`/`close` and budgets stay: see the inbox question
+- **Intended change:** move_postings(A → B): every posting of A, A's `note` and `document` directives, and every `pad` whose source is A re-pointed to B; a transaction with legs on both keeps two B postings; A's own `balance` and `pad` directives and A's `custom "budget"` directives dropped (listed in the preview); A's `open` and `close` stay, leaving an empty A (ADR-0049 and its amendment)
 - **Metadata written:** —
 - **May ask to acknowledge:** BalanceError on a `balance` assertion of B that newly fails (listed in the preview)
 - **Refused when:** B is not open over the whole date span of A's postings; B's currency constraints reject a moved posting; holdings at cost and A and B book differently (warning plus refusal until confirmed); A has subaccounts (ADR-0049)
 - **v0.3 oracle expectation:** none: no old endpoint
-- **Status:** owner:20261025-merge-leftover-directives.md
+- **Status:** decided
 - **Milestone:** M4
 - **ADRs:** ADR-0049; ADR-0009
 
@@ -758,12 +758,12 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Old endpoint:** POST /api/investments/assemble, then POST /api/import/commit
 - **Edits:** insert
 - **Files:** the routed insert file
-- **Intended change:** one transaction: every lot of the old security reduced and new lots in the new security with the same dates and the same total cost, no gain; how a ratio whose per-unit cost does not divide exactly is recorded: see the inbox question
+- **Intended change:** one transaction: every lot of the old security reduced and new lots in the new security with the same dates and the same total cost, no gain; when the per-unit cost does not divide exactly, a rounding leg to an account the user picks makes it balance exactly, shown in the preview (ADR-0030 amendment)
 - **Metadata written:** —
 - **May ask to acknowledge:** —
-- **Refused when:** any booking error (never acknowledgeable); a lot whose cost cannot be carried over exactly
+- **Refused when:** any booking error (never acknowledgeable); a ratio needing a rounding leg when the user has not picked the rounding account (INV-15: never invented)
 - **v0.3 oracle expectation:** I10; I2 (glob includes); I3 (plugins); M28; FIX-L3-02 (legacy rounds a `@@` total to its own unit price); FIX-L3-05 (legacy rewrites the written scale)
-- **Status:** owner:20261025-conversion-cost-rounding.md
+- **Status:** draft
 - **Milestone:** M8
 - **ADRs:** ADR-0030; ADR-0031; ADR-0009
 
