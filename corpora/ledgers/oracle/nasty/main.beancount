@@ -1,0 +1,38 @@
+; Oracle nasty fixture (synthetic data). Root file of a multi-file set with a glob include.
+option "title" "Oracle nasty fixture"
+option "operating_currency" "USD"
+plugin "beancount.plugins.implicit_prices"
+include "accounts.beancount"
+include "years/*.beancount"
+
+2024-01-01 pad Assets:Bank:Checking Equity:Opening
+2024-01-02 balance Assets:Bank:Checking 1000.00 USD
+
+pushtag #fixture
+2024-02-01 * "Grocer" "weekly shop"
+  id: "nasty-elided"
+  Expenses:Food:Groceries  42.10 USD ; a comment after a posting
+  Assets:Bank:Checking
+poptag #fixture
+
+2024-02-02 * "Broker" "buy at a total price"
+  id: "nasty-total-price"
+  Assets:Broker:Tok  7 TOK @@ 10.00 USD
+  Assets:Bank:Checking  -10.00 USD
+
+2024-02-03 * "Employer" "typed metadata"
+  id: "nasty-typed-meta"
+  rate: 1.50
+  paid-on: 2024-02-03
+  Assets:Bank:Checking  250 USD
+  Income:Salary  -250 USD
+
+2024-02-04 * "Broker" "lot with a date and a label"
+  id: "nasty-lot"
+  Assets:Broker:Fund  2 FUND {5.00 USD, 2024-01-15, "lot-a"}
+  Assets:Bank:Checking  -10.00 USD
+
+2024-02-05 * "Exchange" "currency exchange"
+  id: "nasty-fx"
+  Assets:Bank:Euro  100.00 EUR @ 1.10 USD
+  Assets:Bank:Checking  -110.00 USD

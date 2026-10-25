@@ -63,3 +63,12 @@ Format:
 - Expected effect: performance work never trades away safety; misses come to the owner as escalations (as S4 did).
 - Observed effect: pending.
 - Status: kept (tightening, agent-approved).
+
+## IMP-0006: T1 runs the oracle harness's unit tests (2026-10-25)
+- Trigger: slice S0002 (spike S9) adds `scripts/oracle/` with its own pinned Beancount environment; its semantic diff and classifiers decide whether a legacy divergence blocks promotion.
+- What changed: `.github/workflows/ci.yml` gains the `oracle-unit` job (uv 0.13.0, `uv run --locked`, the tests in `scripts/oracle/tests/`). The copy-guard meta-tests (`scripts/tests/test_oracle_copies.py`) run in the existing repo-checks job.
+- PROCESS.md section: §6 (T1 contents).
+- Why: a wrong classifier silently turns a real divergence into an "expected" one; the end-to-end runs need the legacy worktree and stay local, so the logic is pinned by unit tests that CI can run.
+- Expected effect: classifier and diff regressions fail CI.
+- Observed effect: pending.
+- Status: kept (tightening, agent-approved).

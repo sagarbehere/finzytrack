@@ -1,0 +1,75 @@
+[
+ {
+  "id": "upd-elided",
+  "mutator": "update_transaction",
+  "params": {
+   "txn_id": "nasty-elided",
+   "entry": "2024-02-01 * \"Grocer\" \"weekly shop, edited\" #fixture\n  id: \"nasty-elided\"\n  Expenses:Food:Groceries  42.10 USD\n  Assets:Bank:Checking\n"
+  }
+ },
+ {
+  "id": "upd-total-price",
+  "mutator": "update_transaction",
+  "params": {
+   "txn_id": "nasty-total-price",
+   "entry": "2024-02-02 * \"Broker\" \"buy at a total price, edited\"\n  id: \"nasty-total-price\"\n  Assets:Broker:Tok  7 TOK @@ 10.00 USD\n  Assets:Bank:Checking  -10.00 USD\n"
+  }
+ },
+ {
+  "id": "upd-typed-meta",
+  "mutator": "update_transaction",
+  "params": {
+   "txn_id": "nasty-typed-meta",
+   "entry": "2024-02-03 * \"Employer\" \"typed metadata, edited\"\n  id: \"nasty-typed-meta\"\n  rate: 1.50\n  paid-on: 2024-02-03\n  Assets:Bank:Checking  250 USD\n  Income:Salary  -250 USD\n"
+  }
+ },
+ {
+  "id": "upd-lot",
+  "mutator": "update_transaction",
+  "params": {
+   "txn_id": "nasty-lot",
+   "entry": "2024-02-04 * \"Broker\" \"lot with a date and a label, edited\"\n  id: \"nasty-lot\"\n  Assets:Broker:Fund  2 FUND {5.00 USD, 2024-01-15, \"lot-a\"}\n  Assets:Bank:Checking  -10.00 USD\n"
+  }
+ },
+ {
+  "id": "upd-glob",
+  "mutator": "update_transaction",
+  "params": {
+   "txn_id": "nasty-glob-beans",
+   "entry": "2023-03-02 * \"Cafe\" \"beans, edited\"\n  id: \"nasty-glob-beans\"\n  Expenses:Coffee  12.00 USD\n  Assets:Bank:Checking  -12.00 USD\n"
+  }
+ },
+ {
+  "id": "ren-coffee",
+  "mutator": "rename_account",
+  "params": {
+   "old": "Expenses:Coffee",
+   "new": "Expenses:Cafe"
+  }
+ },
+ {
+  "id": "ren-rent",
+  "mutator": "rename_account",
+  "params": {
+   "old": "Expenses:Rent",
+   "new": "Expenses:Housing"
+  }
+ },
+ {
+  "id": "ren-subaccounts",
+  "mutator": "rename_account",
+  "params": {
+   "old": "Expenses:Food",
+   "new": "Expenses:Meals"
+  }
+ },
+ {
+  "id": "imp-one",
+  "mutator": "import_append",
+  "params": {
+   "entries": [
+    "2024-03-01 * \"Cafe\" \"imported coffee\"\n  Assets:Bank:Checking  -3.50 USD\n    import-key: \"v1:h:nasty001\"\n  Expenses:Coffee  3.50 USD\n"
+   ]
+  }
+ }
+]

@@ -1,0 +1,10 @@
+; 2023 (synthetic), reached through the glob include.
+2023-03-01 * "Cafe" "flat white"
+  id: "nasty-glob-coffee"
+  Expenses:Coffee  4.20 USD
+  Assets:Bank:Checking
+
+2023-03-02 * "Cafe" "beans"
+  id: "nasty-glob-beans"
+  Expenses:Coffee  12.00 USD
+  Assets:Bank:Checking  -12.00 USD

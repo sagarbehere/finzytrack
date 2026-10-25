@@ -1,0 +1,11 @@
+# The oracle harness's own environment (design/journal/S0002-oracle-harness.md). Dev tooling, never bundled.
+# Beancount is pinned to the app's version (ADR-0004) so the harness parses exactly as the new app will.
+[project]
+name = "finzytrack-oracle"
+version = "0"
+requires-python = "==3.13.*"
+dependencies = ["beancount==3.2.0"]
+
+[tool.uv]
+package = false
+exclude-newer = "14 days"

@@ -870,7 +870,11 @@ The versions below are the newest stable releases published on or before **2026-
                                                 privacy_scan.py, concept_counters.py, gen_diagrams.py, oracle/ (the
                                                 differential-oracle harness launching the legacy worktree on
                                                 ledger COPIES only; it refuses the owner's live
-                                                v0.3 data folder; owner, 2026-10-24)
+                                                v0.3 data folder; owner, 2026-10-24): launch_legacy.py,
+                                                copies.py (copy guards, stdlib), semantic_diff.py (D1 step 2),
+                                                model.py (expected changes), adapters.py (one per mutator),
+                                                classify.py (ADR-0014 classes), harness.py; own pinned env
+                                                (pyproject.toml + uv.lock, Beancount 3.2.0)
   .githooks/pre-commit                          T0
   .github/workflows/  ci.yml (T1)  nightly.yml (T2)  packaged.yml (3-OS build + smoke)  release.yml
                                                 deterministic gates only: no AI, no agent runs (owner, 2026-10-24)

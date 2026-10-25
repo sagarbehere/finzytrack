@@ -1,0 +1,10 @@
+; Accounts (synthetic).
+2023-01-01 open Equity:Opening
+2023-01-01 open Assets:Bank:Checking USD
+2023-01-01 open Assets:Bank:Euro EUR
+2023-01-01 open Assets:Broker:Tok TOK
+2023-01-01 open Assets:Broker:Fund FUND
+2023-01-01 open Expenses:Food:Groceries USD
+2023-01-01 open Expenses:Coffee USD
+2023-01-01 open Expenses:Rent USD
+2023-01-01 open Income:Salary USD

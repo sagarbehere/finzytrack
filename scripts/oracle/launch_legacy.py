@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Start the legacy v0.3.0 app (tag legacy-final) on a COPY of a Finzytrack data root (INV-24).
 
-The differential-oracle harness and characterization tests use this to run the old app beside the new one.
-It refuses the owner's live data folder (default ~/FinzytrackData, or $FT_LIVE_DATA), the legacy worktree
-itself and this repo, refuses port 8001 (the owner's daily v0.3) and any port already in use, and never
-writes bytecode into the read-only legacy worktree.
+The differential-oracle harness (`harness.py`) and characterization tests use this to run the old app beside the
+new one. It refuses the owner's live data folder (or $FT_LIVE_DATA), the legacy worktree itself and this repo
+(`copies.refuse_dir`), refuses port 8001 (the owner's daily v0.3) and any port already in use, and never writes
+bytecode into the read-only legacy worktree.
 
 The owner's own daily v0.3 is NOT started by this script: it is the legacy worktree's run-v0.3.sh.
 
@@ -15,7 +15,8 @@ Usage:
 Legacy launcher facts (review:B-1.9): v0.3 desktop mode resolves config/, data/ and logs/ against the
 working directory, so the process runs with cwd = --root; it seeds config/ on first start when missing;
 it serves a built frontend only with --static-dir; its CLI is `python -m app.main` (click options
---server-port, --static-dir, --config, --mode).
+--server-port, --static-dir, --config, --mode). /health answers 503 until setup is complete and the ledger
+is readable.
 """
 
 from __future__ import annotations
@@ -31,25 +32,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+from copies import legacy_root, refuse_dir
+
 OWNER_PORT = 8001
 
 
-def legacy_root() -> Path:
-    return Path(os.environ.get("FT_LEGACY_ROOT", REPO.parent / "finzytrack-legacy")).expanduser().resolve()
-
-
-def live_data_root() -> Path:
-    return Path(os.environ.get("FT_LIVE_DATA", Path.home() / "FinzytrackData")).expanduser().resolve()
-
-
 def refuse_root(root: Path) -> str | None:
-    r = root.resolve()
-    for forbidden, why in ((live_data_root(), "the owner's live data folder"),
-                           (legacy_root(), "the legacy worktree"), (REPO.resolve(), "this repo")):
-        if r == forbidden or forbidden in r.parents or r in forbidden.parents:
-            return f"--root {root} is (or contains, or is inside) {why}; use a copy in a temp dir"
-    return None
+    problem = refuse_dir(root)
+    return f"--root {problem}" if problem else None
 
 
 def port_free(port: int) -> bool:
@@ -79,10 +69,58 @@ def wait_health(port: int, proc: subprocess.Popen[bytes], timeout: float = 60.0)
         except urllib.error.HTTPError as err:  # 503 = up but not ready (e.g. setup not complete): report it
             if err.code == 503:
                 return {"http": 503, **json.loads(err.read() or b"{}")}
-            time.sleep(0.3)
+            time.sleep(0.1)
         except (OSError, ValueError):
-            time.sleep(0.3)
+            time.sleep(0.1)
     return None
+
+
+class LegacyApp:
+    """The legacy app running on a copied data root; a context manager that always stops the process."""
+
+    def __init__(self, root: Path, port: int, static_dir: Path | None = None) -> None:
+        for problem in (refuse_root(root), refuse_port(port)):
+            if problem:
+                raise ValueError(f"launch_legacy: refused: {problem}")
+        self.python = legacy_root() / "venv/bin/python"
+        if not self.python.exists():
+            raise FileNotFoundError(f"launch_legacy: no legacy venv at {self.python}")
+        self.root, self.port, self.static_dir = root, port, static_dir
+        self.proc: subprocess.Popen[bytes] | None = None
+        self.health: dict | None = None
+
+    def start(self) -> dict:
+        self.root.mkdir(parents=True, exist_ok=True)
+        legacy = legacy_root()
+        env = {**os.environ, "PYTHONPATH": str(legacy / "backend"), "PYTHONDONTWRITEBYTECODE": "1",
+               "FINZYTRACK_MODE": "desktop"}
+        cmd = [str(self.python), "-m", "app.main", "--server-port", str(self.port)]
+        if self.static_dir:
+            cmd += ["--static-dir", str(self.static_dir.resolve())]
+        with (self.root / "launch_legacy.log").open("ab") as log:
+            self.proc = subprocess.Popen(cmd, cwd=self.root, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                         start_new_session=True)
+        self.health = wait_health(self.port, self.proc)
+        if self.health is None:
+            self.stop()
+            raise RuntimeError(f"launch_legacy: the legacy app did not become healthy; see {self.root / 'launch_legacy.log'}")
+        return self.health
+
+    def stop(self) -> None:
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.wait()
+
+    def __enter__(self) -> LegacyApp:
+        self.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.stop()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -92,36 +130,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--static-dir", type=Path)
     ap.add_argument("--smoke", action="store_true", help="start, check /health, stop")
     args = ap.parse_args(argv)
-
-    for problem in (refuse_root(args.root), refuse_port(args.port)):
-        if problem:
-            print(f"launch_legacy: refused: {problem}", file=sys.stderr)
-            return 2
-    legacy = legacy_root()
-    python = legacy / "venv/bin/python"
-    if not python.exists():
-        print(f"launch_legacy: no legacy venv at {python}", file=sys.stderr)
+    try:
+        app = LegacyApp(args.root, args.port, args.static_dir)
+        health = app.start()
+    except (ValueError, FileNotFoundError) as err:
+        print(err, file=sys.stderr)
         return 2
-    args.root.mkdir(parents=True, exist_ok=True)
-    env = {**os.environ, "PYTHONPATH": str(legacy / "backend"), "PYTHONDONTWRITEBYTECODE": "1",
-           "FINZYTRACK_MODE": "desktop"}
-    cmd = [str(python), "-m", "app.main", "--server-port", str(args.port)]
-    if args.static_dir:
-        cmd += ["--static-dir", str(args.static_dir.resolve())]
-    log = (args.root / "launch_legacy.log").open("ab")
-    proc = subprocess.Popen(cmd, cwd=args.root, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-    health = wait_health(args.port, proc)
-    if health is None:
-        print(f"launch_legacy: the legacy app did not become healthy; see {args.root / 'launch_legacy.log'}", file=sys.stderr)
-        proc.terminate()
+    except RuntimeError as err:
+        print(err, file=sys.stderr)
         return 1
-    print(json.dumps({"pid": proc.pid, "port": args.port, "root": str(args.root), "health": health}))
+    print(json.dumps({"pid": app.proc.pid if app.proc else None, "port": args.port, "root": str(args.root), "health": health}))
     if args.smoke:
-        proc.terminate()
-        try:
-            proc.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        app.stop()
     return 0
 
 

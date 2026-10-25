@@ -1,0 +1,8 @@
+; 2024 (synthetic), reached through the glob include.
+2024-01-01 custom "budget" Expenses:Rent "monthly" 900 USD
+2024-01-03 note Expenses:Rent "new landlord"
+
+2024-01-05 * "Landlord" "rent"
+  id: "nasty-rent"
+  Expenses:Rent  900.00 USD
+  Assets:Bank:Checking  -900.00 USD

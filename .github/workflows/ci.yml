@@ -31,3 +31,17 @@ jobs:
         run: python3 scripts/check_generated.py --all
       - name: Licences and THIRD_PARTY_NOTICES
         run: python3 scripts/check_licences.py
+  oracle-unit:
+    # The differential-oracle harness's semantic diff, models and classifiers (S0002). End-to-end runs need the
+    # legacy worktree and stay local (PROCESS.md §6, T-local).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install uv
+        run: python3 -m pip install uv==0.13.0
+      - name: Oracle unit tests
+        run: uv run --project scripts/oracle --locked python -m unittest discover -s scripts/oracle/tests -v
