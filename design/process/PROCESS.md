@@ -55,7 +55,7 @@ A **slice** is the smallest change that delivers one verifiable behaviour (hours
 |---|---|---|
 | High | Ledger writes, finance semantics, security, migrations, rubric items 1–3 | Full brief; tests first; verifier with neighbourhood context; doc check; red team (§4); capability row; journal and retro; UI smoke session if UI is touched |
 | Medium | New behaviour in one area with no ledger, finance or security impact | Short brief; tests first; verifier on the diff plus touched callers; doc check; journal line; smoke session if UI is touched |
-| Low | Docs, UI copy, refactors with no behaviour change, test-only changes | Brief of a few lines; verifier on the diff; gates |
+| Low | Docs, UI copy, refactors with no behaviour change, test-only changes | Brief of a few lines; verifier on the diff (doc check included); gates |
 
 The verifier may raise a slice's class, never lower it. **Lanes** (owner, 2026-10-24): the **full lane** for anything touching ledger writes; the **specialist lane** for finance and security work, whose specialist red team runs once per area unless a change alters what a number means or adds a new input; the **light lane** for read-only screens and catalogue entries (user docs at milestone end).
 

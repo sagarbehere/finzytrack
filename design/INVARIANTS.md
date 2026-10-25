@@ -124,7 +124,7 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 ### INV-19: Docs do not drift
 - **Rule:** Generated docs are never hand-edited. Every user-visible change updates the user docs in the same slice.
 - **Why:** Docs that duplicate code drift from it (review:20 §7).
-- **Enforced by:** `scripts/check_generated.py`, `scripts/tests/test_check_generated.py` (generated files carry a header and match a fresh generation); `.claude/agents/verifier.md` (the doc-impact check: the brief's expected doc changes against the diff, every slice).
+- **Enforced by:** `scripts/check_generated.py`, `scripts/tests/test_check_generated.py` (generated files carry a header and match a fresh generation); `.claude/agents/verifier.md` (the doc-impact half is review-only: the verifier compares the brief's expected doc changes with the diff, every slice).
 - **Status:** enforced
 
 ### INV-20: Performance does not regress
