@@ -21,6 +21,7 @@ Template:
 - <decision> (agent | owner: "<verbatim quote>", date)
 
 ## Hand-off (PROCESS.md §3 step 4; ADR-0057)
+(The verifier reads only the Brief, so this section does not steer its attacks; it is the implementer's own record.)
 - Checks that accept, tag or refuse, each with its must-not-pass test: <check → test>
 - Self-mutation (High, Medium): <plan summary; n tried / n killed; survivors → test added, or why equivalent>
 - Population (if the slice claims to cover a whole set): <inventory used, built by behaviour; counts in / out>

@@ -159,6 +159,85 @@ replace = "LOOP = True"
         self.assertRegex(out, r"hang\s+killed \(timeout\)")
 
 
+class PlanErrors(unittest.TestCase):
+    """A malformed plan or target is an error (exit 2), never a kill or a survivor (verifier S0005 F2, F8)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.repo = make_repo(self.root, {"check.py": CHECK, "test_check.py": TESTS, "blob.bin": ""})
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def assert_error(self, body: str) -> None:
+        code, out = run_main(self.repo, plan_file(self.root, body))
+        self.assertEqual(code, 2, out)
+        self.assertNotIn("killed", out)
+        self.assertNotIn("survived", out)
+
+    def test_missing_cmd(self) -> None:
+        self.assert_error(LOOSEN.replace('cmd = "python3 test_check.py"\n', ""))
+
+    def test_bad_timeouts(self) -> None:
+        for bad in ("0", "-1", '"10"', "true"):
+            with self.subTest(timeout=bad):
+                self.assert_error(f"timeout = {bad}\n" + LOOSEN)
+
+    def test_no_mutants(self) -> None:
+        self.assert_error('cmd = "python3 test_check.py"\n')
+
+    def test_duplicate_ids(self) -> None:
+        self.assert_error(LOOSEN + LOOSEN.split("[[mutant]]", 1)[0].replace("cmd = ", "# ") + "[[mutant]]"
+                          + LOOSEN.split("[[mutant]]", 1)[1])
+
+    def test_mutant_missing_a_field(self) -> None:
+        self.assert_error(LOOSEN.replace('replace = "return True"\n', ""))
+
+    def test_mutant_field_of_the_wrong_type(self) -> None:
+        self.assert_error(LOOSEN.replace('replace = "return True"', "replace = 3"))
+
+    def test_file_that_is_not_in_the_working_tree(self) -> None:
+        self.assert_error(LOOSEN.replace('file = "check.py"', 'file = "nope.py"'))
+
+    def test_non_utf8_target_with_absent_find(self) -> None:
+        (self.repo / "blob.bin").write_bytes(b"\xff\xfe binary")
+        self.assert_error(LOOSEN.replace('file = "check.py"', 'file = "blob.bin"'))
+
+    def test_baseline_timeout_is_an_error_not_a_kill(self) -> None:
+        # Verifier S0005 F1: a hanging baseline would otherwise score every mutant as a timeout kill.
+        hang = "LOOP = True\ndef accepts(x):\n    while LOOP:\n        pass\n    return x > 0\n"
+        (self.repo / "check.py").write_text(hang)
+        code, out = run_main(self.repo, plan_file(self.root, "timeout = 1\n" + LOOSEN))
+        self.assertEqual(code, 2, out)
+        self.assertNotIn("killed", out)
+        self.assertIn("baseline", out)
+
+
+class Bytes(unittest.TestCase):
+    """A mutant changes only its find bytes (verifier S0005 F3)."""
+
+    def test_crlf_file_keeps_its_line_endings(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            repo = make_repo(root, {"test_check.py": TESTS}, commit=False)
+            (repo / "check.py").write_bytes(b"def accepts(x):\r\n    return x > 0\r\n")
+            seen = root / "seen"
+            seen.mkdir()
+            # The command copies the mutated file out of the copy so the test can inspect its bytes.
+            plan = plan_file(root, f'''
+cmd = "cp check.py {seen}/check.py && python3 test_check.py"
+[[mutant]]
+id = "loosen"
+file = "check.py"
+find = "return x > 0\\r\\n"
+replace = "return True\\r\\n"
+''')
+            code, out = run_main(repo, plan)
+            self.assertEqual(code, 0, out)
+            self.assertEqual((seen / "check.py").read_bytes(), b"def accepts(x):\r\n    return True\r\n")
+
+
 class Copy(unittest.TestCase):
     """INV-24: the run happens on a copy; the checkout is never written."""
 
@@ -227,8 +306,42 @@ class Copy(unittest.TestCase):
         git(repo, "commit", "-q", "-m", "base", "--no-verify")
         code, out = run_main(repo, plan_file(self.root, LOOSEN))
         self.assertEqual(code, 2, out)
-        self.assertIn("outside the copy", out)
+        self.assertIn("leaves the tree", out)
         self.assertEqual(outside.read_text(), CHECK)
+
+    def test_command_cannot_write_through_a_symlink_out_of_the_tree(self) -> None:
+        # Verifier S0005 F4: the command runs in the copy; an absolute symlink there points back at the
+        # checkout (or anywhere). Such a tree is refused before anything runs.
+        repo = make_repo(self.root, {"check.py": CHECK, "target.txt": "orig\n"}, commit=False)
+        (repo / "test_check.py").write_text(
+            "import pathlib\npathlib.Path('link.txt').write_text('written by the test')\n" + TESTS)
+        (repo / "link.txt").symlink_to(repo / "target.txt")  # absolute, into the checkout
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "base", "--no-verify")
+        code, out = run_main(repo, plan_file(self.root, LOOSEN))
+        self.assertEqual(code, 2, out)
+        self.assertEqual((repo / "target.txt").read_text(), "orig\n")
+
+    def test_relative_symlink_to_outside_is_refused(self) -> None:
+        outside = self.root / "outside.txt"
+        outside.write_text("orig\n")
+        repo = make_repo(self.root, {"check.py": CHECK, "test_check.py": TESTS}, commit=False)
+        (repo / "link.txt").symlink_to("../outside.txt")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "base", "--no-verify")
+        code, out = run_main(repo, plan_file(self.root, LOOSEN))
+        self.assertEqual(code, 2, out)
+
+    def test_relative_symlink_inside_the_tree_stays_a_symlink(self) -> None:
+        # Must pass: an in-tree relative link is copied as a link, so writing through it stays in the copy.
+        tests = ("import os, sys\nfrom check import accepts\n"
+                 "sys.exit(0 if os.path.islink('alias.py') and accepts(1) and not accepts(0) else 1)\n")
+        repo = make_repo(self.root, {"check.py": CHECK, "test_check.py": tests}, commit=False)
+        (repo / "alias.py").symlink_to("check.py")
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "base", "--no-verify")
+        code, out = run_main(repo, plan_file(self.root, LOOSEN))
+        self.assertEqual(code, 0, out)
 
     def test_work_folder_holds_no_copies_afterwards(self) -> None:
         repo = make_repo(self.root, {"check.py": CHECK, "test_check.py": TESTS})

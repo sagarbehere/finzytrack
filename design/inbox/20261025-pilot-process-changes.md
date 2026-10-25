@@ -5,7 +5,7 @@
 - ADRs checked: ADR-0046 asks for this ADR; ADR-0001 and PROCESS.md §9 say PROCESS.md changes need your approval.
 
 ## Context (plain language, a concrete example first)
-In the last three slices the verifier found five serious bugs, and all five were the same kind: a check that let through something it should have refused. Example: the oracle's "price rounding is expected" rule accepted any price near the right one, not only the price the old app actually writes. The tests only asked "does the rule fire on a good case", never "does it stay quiet on a bad case". The verifier found most of these by deliberately breaking the code (a "mutant") and seeing that no test noticed.
+In the last three slices the verifier found five serious bugs, and all five were the same kind: a check that let through something it should have refused. Example: the oracle's "price rounding is expected" rule was applied to every priced line with a fixed one-cent margin, so it could hide a real price change, not only the rounding the old app does. The tests only asked "does the rule fire on a good case", never "does it stay quiet on a bad case". The verifier found most of these by deliberately breaking the code (a "mutant") and seeing that no test noticed.
 
 ## Options
 1. Approve all four PROCESS.md changes (ADR-0057 items 1–4): before hand-off the implementer (a) lists each accept/refuse check with its must-not-pass test, (b) breaks each such check on purpose with the new `scripts/mutants.py` and records how many breaks the tests caught, (c) builds "every X" lists by behaviour from the capability map, not by name; and (d) a second verifier round runs after fixing a serious finding or three or more medium ones.

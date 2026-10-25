@@ -13,11 +13,13 @@ A plan file (TOML, kept in the session scratchpad, not in the repo) lists the te
 
 Every run (the baseline, then each mutant) happens in a fresh copy of the working tree: tracked files plus
 untracked files that are not ignored, so uncommitted work is tested and ignored files (data, envs, caches)
-are not copied. The checkout itself is never written (INV-24).
+are not copied. The checkout itself is never written (INV-24): a symlink is copied as a symlink only when it
+is relative and stays inside the tree; any other symlink is refused, since the test command could write
+through it. A mutant changes only its `find` bytes; the rest of the file, line endings included, is kept.
 
 Outcomes: killed (the command failed), killed (timeout), survived (the command passed). A baseline that
-fails, a mutant whose `find` text is not exactly once in its file, or a mutant file outside the copy is an
-error: no mutant is counted. Exit 0 = every mutant killed, 1 = at least one survived, 2 = error.
+fails or times out, a malformed plan, a mutant whose `find` text is not exactly once in its file, or a mutant
+file outside the copy is an error: no mutant is counted. Exit 0 = every mutant killed, 1 = at least one survived, 2 = error.
 """
 
 from __future__ import annotations
@@ -55,17 +57,17 @@ def load(path: Path) -> tuple[str, int, list[Mutant]]:
     if not isinstance(cmd, str) or not cmd.strip():
         raise PlanError("plan: `cmd` (the test command) is required")
     timeout = data.get("timeout", DEFAULT_TIMEOUT)
-    if not isinstance(timeout, int) or timeout <= 0:
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
         raise PlanError("plan: `timeout` must be a positive number of seconds")
     raw = data.get("mutant", [])
-    if not raw:
+    if not isinstance(raw, list) or not raw:
         raise PlanError("plan: no [[mutant]] entries")
     out: list[Mutant] = []
     for m in raw:
-        try:
-            out.append(Mutant(str(m["id"]), str(m["file"]), str(m["find"]), str(m["replace"])))
-        except KeyError as e:
-            raise PlanError(f"plan: a mutant lacks {e.args[0]!r}") from None
+        fields = [m.get(k) if isinstance(m, dict) else None for k in ("id", "file", "find", "replace")]
+        if not all(isinstance(f, str) for f in fields) or not fields[0] or not fields[2]:
+            raise PlanError(f"plan: each mutant needs text fields id, file, find, replace (got {m!r})")
+        out.append(Mutant(*fields))
     ids = [m.id for m in out]
     if len(set(ids)) != len(ids):
         raise PlanError("plan: mutant ids must be unique")
@@ -82,6 +84,17 @@ def tree_files(repo: Path) -> list[str]:
     return [n for n in names if os.path.lexists(repo / n)]
 
 
+def check_links(repo: Path, files: list[str]) -> None:
+    """Refuse symlinks that are absolute or resolve outside the tree: the command could write through them."""
+    root = repo.resolve()
+    for name in files:
+        src = repo / name
+        if src.is_symlink():
+            link = os.readlink(src)
+            if os.path.isabs(link) or not (src.parent / link).resolve().is_relative_to(root):
+                raise PlanError(f"refused: symlink {name} -> {link} leaves the tree (the copy would write through it)")
+
+
 def snapshot(repo: Path, files: list[str], dest: Path) -> None:
     for name in files:
         src, dst = repo / name, dest / name
@@ -93,13 +106,9 @@ def snapshot(repo: Path, files: list[str], dest: Path) -> None:
 
 
 def target(copy: Path, m: Mutant) -> Path:
-    """The mutant's file inside the copy; refuses a path that resolves outside it (a symlink to elsewhere).
-
-    Absolute and `../` paths never get here: validate() accepts only files of the working tree."""
-    p = (copy / m.file).resolve()
-    if not p.is_relative_to(copy.resolve()):
-        raise PlanError(f"{m.id}: refused, {m.file!r} is outside the copy")
-    return p
+    """The mutant's file inside the copy. Containment holds because validate() accepts only files of the
+    working tree and check_links() refuses symlinks that leave it."""
+    return copy / m.file
 
 
 def validate(repo: Path, files: list[str], mutants: list[Mutant]) -> None:
@@ -108,7 +117,7 @@ def validate(repo: Path, files: list[str], mutants: list[Mutant]) -> None:
         p = target(repo, m)
         if Path(m.file).as_posix() not in known or not p.is_file():
             raise PlanError(f"{m.id}: {m.file!r} is not a file of the working tree")
-        n = p.read_text().count(m.find)
+        n = p.read_bytes().count(m.find.encode())
         if n != 1:
             raise PlanError(f"{m.id}: `find` occurs {n} times in {m.file} (must be exactly once)")
 
@@ -131,7 +140,7 @@ def run_once(repo: Path, files: list[str], work: Path, cmd: str, timeout: int, m
         snapshot(repo, files, copy)
         if m is not None:
             p = target(copy, m)
-            p.write_text(p.read_text().replace(m.find, m.replace, 1))
+            p.write_bytes(p.read_bytes().replace(m.find.encode(), m.replace.encode(), 1))
         return run_cmd(cmd, copy, timeout)
     finally:
         shutil.rmtree(copy, ignore_errors=True)
@@ -147,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cmd, timeout, mutants = load(a.plan)
         files = tree_files(repo)
+        check_links(repo, files)
         validate(repo, files, mutants)
         if a.work is not None:
             work = a.work.resolve()
@@ -157,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             work = Path(tempfile.mkdtemp(prefix="mutants-"))
             own_work = True
-    except (PlanError, OSError, tomllib.TOMLDecodeError, subprocess.CalledProcessError) as e:
+    except (PlanError, OSError, ValueError, subprocess.CalledProcessError) as e:  # TOMLDecodeError is a ValueError
         print(f"mutants: error: {e}", file=sys.stderr)
         return 2
     try:

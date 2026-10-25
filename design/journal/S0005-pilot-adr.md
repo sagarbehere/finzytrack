@@ -41,3 +41,18 @@
   - killed vs survived → `test_mutant_the_tests_miss_survives_and_fails_the_run` beside `test_mutant_the_tests_catch_is_killed`.
 - Self-mutation: 8 tried on `scripts/mutants.py`, 5 killed at first. Survivors: `no-containment` (no test for a tracked symlink pointing out of the copy → test added), `reuse-copy` (copies left in `--work` untested → test added), `no-absolute-check` (equivalent: an absolute path is never a working-tree file, so the check was dead code → removed). Re-run with a replacement mutant for `--work` inside the checkout: 8 tried, 8 killed.
 - Population: the slice count's rows come from `design/capabilities.toml`, counted by `milestone` and `status` (313 planned, 15 cut, 12 deferred).
+
+## Verifier
+- Round 1, head 3b8f1f8: **PASS WITH FINDINGS** (Medium kept). Attacks tried (11): gates at head; tests fail on base; the runner on this repo with 7 mutants of its own; a baseline timeout; a non-UTF-8 target; a CRLF target; a tracked absolute symlink the command writes through; path escapes (absolute, `../`, symlinked, `sub/../x`); ignored and untracked targets; the ADR's numbers against the journals and the capability map; doc impact.
+- Tests reviewed against the spec: every brief bullet has a test with hand-recomputable expectations; missing: baseline timeout, plan errors, bytes outside `find`, writes through a symlink, plan validation.
+- Findings and resolution (fix commit below):
+  - F1 Medium: a timed-out baseline was untested (a `== "fail"` mutant survived). Fixed: `test_baseline_timeout_is_an_error_not_a_kill`.
+  - F4 Medium (INV-24): a tracked absolute or escaping symlink let the test command write into the checkout through the copy. Fixed: `check_links` refuses such trees before anything runs; tests for absolute, relative-escaping and in-tree links (the last must pass and stays a link). The containment check in `target()` became unreachable and is removed.
+  - F5 Medium: ADR-0057 said "5 High and 15 Medium/Low"; the journals hold 39 findings, 5 High and 34 Medium/Low. Fixed in the ADR (not yet landed, so fixed in place) and noted in S0004's measurements.
+  - F2 Low: plan errors (non-UTF-8 file, wrong field types) ended in a traceback with exit 1, which reads as "survived". Fixed: fields are type-checked, files are read as bytes, every plan error exits 2; tests per error.
+  - F3 Low: text I/O rewrote CRLF line endings. Fixed: the mutant replaces bytes; CRLF test.
+  - F6 Low: the ADR named PROCESS step 7, which did not change. Fixed.
+  - F7 Low: the inbox example described a Medium finding as a High one. Fixed: it now describes S0002 F4.
+  - F8 Low: plan-validation refusals were untested. Fixed: `PlanErrors` tests.
+  - Question (Hand-off section unseen by the verifier): deliberate; the journal template now says so.
+- Self-mutation after the fixes: 19 tried (the verifier's 7 re-targeted plus 12), 19 killed.

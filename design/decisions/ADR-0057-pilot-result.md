@@ -12,7 +12,7 @@ This record closes the process pilot that ADR-0046 set up: what three slices mea
 The pilot ran the intent table (S0004) under the full process, together with two tooling slices (S0002, the oracle harness; S0003, the legacy API tests). The measurements are in `design/journal/S0004-intent-table.md`, "Pilot measurements". In short:
 
 - **Escalations:** 4, batched, none blocking. All four needed the owner. One was partly answered by an existing ADR; the verifier caught that and the question was narrowed before it reached the owner.
-- **Defects by finder:** verifiers 5 High and 15 Medium/Low; gates 1; found later 0. Verifier precision 100% (every finding was real), against a target of at least 70%.
+- **Defects by finder:** verifiers 39 findings, 5 High and 34 Medium/Low (S0002 16, S0003 5, S0004 18, both rounds counted); gates 1; found later 0. S0004's journal said 15; it was written before S0004's second round and undercounted. Verifier precision 100% (every finding was real), against a target of at least 70%.
 - **Second rounds paid:** after the first round's fixes, round 2 found 6 more findings in S0002 and 8 in S0004 (all Medium or Low).
 - **Ceremony share:** about 0.2 (S0002) and 0.7 (S0004), within the 1.0 target. The cost was rework the verifier forced, not ceremony.
 - **Owner time:** none inside the slices.
@@ -64,7 +64,7 @@ Measured pace so far: about 2–3 hours of agent wall time per slice, verifier r
 
 ## Consequences
 
-- `PROCESS.md` §3 (steps 4, 5 and 7), the implementer agent, the slice skill, the journal template and the inbox template carry the adjustments; `IMPROVEMENTS.md` IMP-0010 to IMP-0013 log them.
+- `PROCESS.md` §3 (steps 4 and 5), the implementer agent, the slice skill, the journal template and the inbox template carry the adjustments; `IMPROVEMENTS.md` IMP-0010 to IMP-0013 log them.
 - `scripts/mutants.py` with its meta-tests (`scripts/tests/test_mutants.py`).
 - More agent time per slice before hand-off (minutes per check), traded for fewer verifier rounds. The first reflection measures whether rounds and High findings per slice fall.
 
