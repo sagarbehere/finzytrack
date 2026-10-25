@@ -8,6 +8,7 @@ for the owner), the model refuses the case as non-comparable instead of guessing
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
 from beancount.core import account as bc_account
@@ -29,13 +30,13 @@ class Expected:
     files: dict[str, FileDiff] = field(default_factory=dict)
     entries: dict[str, Any] = field(default_factory=dict)  # key → entry, for the intended new entries
     created: set[str] = field(default_factory=set)  # keys of entries the mutator creates (not replacements)
-    totals: dict[str, frozenset[int]] = field(default_factory=dict)  # key → postings written with `@@`
+    totals: dict[str, dict[int, Decimal]] = field(default_factory=dict)  # key → {posting: `@@` total}
 
-    def add(self, rel: str, entry: Any, *, created: bool = False, totals: frozenset[int] = frozenset()) -> None:
+    def add(self, rel: str, entry: Any, *, created: bool = False, totals: dict[int, Decimal] | None = None) -> None:
         k = canonical_key(entry)
         self.files.setdefault(rel, FileDiff()).added[k] += 1
         self.entries.setdefault(k, entry)
-        self.totals.setdefault(k, totals)
+        self.totals.setdefault(k, totals or {})
         if created:
             self.created.add(k)
 
@@ -43,7 +44,7 @@ class Expected:
         self.files.setdefault(rel, FileDiff()).removed[key] += n
 
 
-def parse_intent(text: str) -> tuple[list[Any], dict[str, frozenset[int]]]:
+def parse_intent(text: str) -> tuple[list[Any], dict[str, dict[int, Decimal]]]:
     """The intent's entries and, per entry key, the postings it writes with a total price."""
     entries, errors, _, totals = parse_entries_with_totals(text, "<intent>")
     if errors or not entries:
@@ -118,7 +119,7 @@ def rename_account(before: LedgerSet, old: str, new: str) -> Expected:
             if canonical_key(r) != k:
                 exp.remove(rel, k, f.keys[k])
                 for _ in range(f.keys[k]):
-                    exp.add(rel, r, totals=f.totals.get(k, frozenset()))
+                    exp.add(rel, r, totals=f.totals.get(k))
     return exp
 
 

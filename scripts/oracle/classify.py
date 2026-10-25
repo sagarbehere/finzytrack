@@ -2,8 +2,8 @@
 
 Classes: I2 (glob-included entries copied into the root), I3 (plugin- or pad-generated entries persisted), I10
 (elided amounts or `{}` baked in as Beancount booked them; comments lost), M28 (metadata contract: legacy machinery
-keys instead of v0.4's, on entries the mutator creates), FIX-L3-02 (a `@@` total written as the legacy's rounded unit
-price; a lot's date or label dropped, or a cost without a date dropped), FIX-L3-05 (the written decimal scale changed,
+keys instead of v0.4's, on entries the mutator creates), FIX-L3-02 (a `@@` total written as exactly the legacy's rounded
+unit price; a lot's label dropped), FIX-L3-05 (the written decimal scale changed,
 `10` → `10.00`), FIX-L3-15 (typed metadata written as strings).
 
 An entry the legacy wrote differently is paired with the entry it should have been, and tagged with the smallest set
@@ -18,7 +18,7 @@ from __future__ import annotations
 import itertools
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
@@ -38,17 +38,26 @@ LEGACY_KEYS = frozenset({"id", "content_hash", "source_account", "external_id", 
 V04_KEYS = frozenset({"import-key", "txn-date", "original", "statement-amount"})
 M28_RENAMES = {"interest_rate": "interest-rate", "maturity_date": "maturity-date", "interest_account": "interest-account",
                "dividend_of": "dividend-of", "fetch_symbol": "fetch-symbol", "issue_date": "issue-date"}
-# The legacy commit endpoint's own rounding rule for a total price: the fewest decimals with
-# |units × unit price − total| < 0.005 (legacy app/api/routers/importer/transaction.py). Used only to recognise
-# that rule's output, never as a tolerance of ours (INV-02).
-LEGACY_TOTAL_ROUNDING = Decimal("0.005")
+
+
+def legacy_unit_price(units: Decimal, total: Decimal) -> Decimal:
+    """The unit price the legacy commit endpoint writes for `units @@ total`: the fewest decimal places (2 to 28) with
+    |units × price − total| < 0.005, else the full quotient (legacy app/api/routers/importer/transaction.py). Used only
+    to recognise that rule's output, never as a tolerance of ours (INV-02)."""
+    units = abs(units)
+    raw = total / units
+    for places in range(2, 29):
+        q = raw.quantize(Decimal(10) ** -places)
+        if abs(units * q - total) < Decimal("0.005"):
+            return q
+    return raw
 
 
 @dataclass(frozen=True)
 class Ctx:
     """What an eraser may know about the intended entry *x*: its booked form and its `@@` postings."""
     booked: Any | None = None
-    totals: frozenset[int] = frozenset()
+    totals: dict[int, Decimal] = field(default_factory=dict)  # posting index → its `@@` total as written
 
 
 Pair = tuple[Any, Any]
@@ -103,14 +112,11 @@ def erase_l3_02(x: Any, y: Any, ctx: Ctx) -> Pair:
     def fix(i: int, px: Any, py: Any) -> Pair:
         if i in ctx.totals and not (_unset(px.price) or _unset(py.price) or _unset(px.units) or _unset(py.units)) \
                 and px.units == py.units and px.price.currency == py.price.currency \
-                and abs(px.units.number * (py.price.number - px.price.number)) < LEGACY_TOTAL_ROUNDING:
+                and py.price.number == legacy_unit_price(px.units.number, ctx.totals[i]):
             py = py._replace(price=px.price)
-        if isinstance(px.cost, CostSpec):
-            if py.cost is None and _unset(px.cost.date):  # the legacy update payload drops a cost with no date
-                py = py._replace(cost=px.cost)
-            elif isinstance(py.cost, CostSpec) and py.cost in (px.cost._replace(label=None),
-                                                               px.cost._replace(date=None, label=None)):
-                py = py._replace(cost=px.cost)  # the lot's label (and date) dropped; number and currency kept
+        if isinstance(px.cost, CostSpec) and isinstance(py.cost, CostSpec) and px.cost.label is not None \
+                and py.cost == px.cost._replace(label=None):
+            py = py._replace(cost=px.cost)  # the legacy edit payload carries no lot label; everything else kept
         return px, py
     return _postings_pairwise(x, y, fix)
 
@@ -232,9 +238,11 @@ def compare(before: LedgerSet, after: LedgerSet, expected: Expected, before_fact
         u_rem[f], u_add[f], n_rem[f], n_add[f] = a_rem - e_rem, a_add - e_add, e_rem - a_rem, e_add - a_add
 
     def entry(key: str) -> Any:
+        """An intended entry, else the source's instance, else the written one: the booked form of an untargeted
+        entry is looked up by the source's file and line, so the source instance must win over the copy's."""
         if key in expected.entries:
             return expected.entries[key]
-        for s in (after, before):
+        for s in (before, after):
             try:
                 return s.entry(key)
             except KeyError:
@@ -243,7 +251,7 @@ def compare(before: LedgerSet, after: LedgerSet, expected: Expected, before_fact
 
     def intended_ctx(key: str) -> tuple[tuple[str, ...], Ctx]:
         allowed = CREATED if key in expected.created else REPLACED
-        return allowed, Ctx(None, expected.totals.get(key, frozenset()))
+        return allowed, Ctx(None, expected.totals.get(key, {}))
 
     def untargeted_ctx(key: str, facts: LoadFacts) -> tuple[tuple[str, ...], Ctx]:
         return UNTARGETED, Ctx(booked_of(facts, entry(key)))
@@ -263,7 +271,7 @@ def compare(before: LedgerSet, after: LedgerSet, expected: Expected, before_fact
             if k in before_facts.generated:
                 out.append(Divergence("I3", f, None, k, "generated by a plugin or a pad"))
                 continue
-            y = entry(k)
+            y = after.entry(k)
             to_root = f == before.root
             if to_root:  # I2: a glob-included entry duplicated into the root (the glob file still holds it)
                 dup = next(((c, "") for c, _ in held_glob if c == k), None) or next(
@@ -313,11 +321,13 @@ def compare(before: LedgerSet, after: LedgerSet, expected: Expected, before_fact
     return Report(out + new_errors(before_facts, after_facts, before.root))
 
 
-def balances(entries: list[Any]) -> bool:
-    """Whether Beancount itself accepts the entries on their own (accounts opened, nothing else): its weights and
-    tolerances, not ours (INV-02). A reduction with no lots to reduce counts as not accepted."""
-    accounts = sorted({p.account for e in entries for p in getattr(e, "postings", ())})
-    text = "".join(f"1900-01-01 open {a}\n" for a in accounts) + "\n".join(printer.format_entry(strip_location(e)) for e in entries)
+def balances(entries: list[Any], before: LedgerSet) -> bool:
+    """Whether Beancount itself accepts the entries next to the ledger's own `open` lines for their accounts
+    (currency constraints and booking methods included): its weights and tolerances, not ours (INV-02). An account
+    the ledger never opens, or a reduction with no lots to reduce, counts as not accepted (the safe side)."""
+    accounts = {p.account for e in entries for p in getattr(e, "postings", ())}
+    opens = [e for f in before.files.values() for e in f.by_key.values() if isinstance(e, data.Open) and e.account in accounts]
+    text = "\n".join(printer.format_entry(strip_location(e)) for e in opens + list(entries))
     _, errors, _ = loader.load_string(text)
     return not errors
 
@@ -334,7 +344,7 @@ def refused(before: LedgerSet, after: LedgerSet, expected: Expected, before_fact
     targets = [before.entry(k) for f in expected.files.values() for k in f.removed]
     intended = list(expected.entries.values())
     if mutator == "update_transaction" and code == "TRANSACTION_INVALID" and _priced(targets + intended) \
-            and intended and balances(intended):
+            and intended and balances(intended, before):
         first = Divergence("FIX-L3-02", before.root, None, None, "refused: the legacy validator ignores price and cost weights")
     else:
         first = Divergence("NOT_APPLIED", before.root, None, None, f"the legacy app refused ({code})")

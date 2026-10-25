@@ -71,5 +71,14 @@
     "2024-03-01 * \"Cafe\" \"imported coffee\"\n  Assets:Bank:Checking  -3.50 USD\n    import-key: \"v1:h:nasty001\"\n  Expenses:Coffee  3.50 USD\n"
    ]
   }
+ },
+ {
+  "id": "imp-total-price",
+  "mutator": "import_append",
+  "params": {
+   "entries": [
+    "2024-03-02 * \"Broker\" \"imported buy at a total price\"\n  Assets:Bank:Checking  -10.00 USD\n    import-key: \"v1:brk:nasty002\"\n  Assets:Broker:Tok  7 TOK @@ 10.00 USD\n"
+   ]
+  }
  }
 ]

@@ -136,7 +136,7 @@ class ClassifyTest(unittest.TestCase):
     def test_fix_l3_02_total_price_turned_into_a_rounded_unit_price(self) -> None:
         opens = OPENS + "2020-01-01 open Assets:Broker\n"
         src = '2020-01-06 * "Buy"\n  id: "t-9"\n  Assets:Broker  7 TOK @@ 10.00 USD\n  Assets:Cash  -10.00 USD\n'
-        legacy = '2020-01-06 * "Buy" "x"\n  id: "t-9"\n  Assets:Broker  7 TOK @ 1.4286 USD\n  Assets:Cash  -10.00 USD\n'
+        legacy = '2020-01-06 * "Buy" "x"\n  id: "t-9"\n  Assets:Broker  7 TOK @ 1.429 USD\n  Assets:Cash  -10.00 USD\n'
         c = Case({"main.beancount": opens + src}, {"main.beancount": opens + legacy},
                  lambda b: model.update_transaction(b, "t-9", src.replace('"Buy"', '"Buy" "x"')))
         self.assertEqual(c.classes(), ["FIX-L3-02"])
@@ -147,10 +147,10 @@ class ClassifyTest(unittest.TestCase):
                  lambda b: model.update_transaction(b, "t-1", src.replace('"lunch"', '"dinner"')))
         self.assertEqual(c.classes(), ["FIX-L3-05"])
 
-    def test_fix_l3_02_cost_date_dropped(self) -> None:
+    def test_fix_l3_02_lot_label_dropped(self) -> None:
         opens = OPENS + "2020-01-01 open Assets:Broker\n"
         src = '2020-01-06 * "Buy"\n  id: "t-9"\n  Assets:Broker  2 TOK {5.00 USD, 2020-01-01, "lot-a"}\n  Assets:Cash  -10.00 USD\n'
-        legacy = '2020-01-06 * "Buy" "x"\n  id: "t-9"\n  Assets:Broker  2 TOK {5.00 USD}\n  Assets:Cash  -10.00 USD\n'
+        legacy = '2020-01-06 * "Buy" "x"\n  id: "t-9"\n  Assets:Broker  2 TOK {5.00 USD, 2020-01-01}\n  Assets:Cash  -10.00 USD\n'
         c = Case({"main.beancount": opens + src}, {"main.beancount": opens + legacy},
                  lambda b: model.update_transaction(b, "t-9", src.replace('"Buy"', '"Buy" "x"')))
         self.assertEqual(c.classes(), ["FIX-L3-02"])
@@ -192,6 +192,45 @@ BROKER = OPENS + "2020-01-01 open Assets:Broker\n"
 
 
 class OverMatchTest(unittest.TestCase):
+    # Round 2 (findings R2-1 to R2-4) follows the round-1 attacks.
+
+    def test_l3_02_accepts_only_the_legacy_rounding_output_not_its_band(self) -> None:
+        src = '2020-01-06 * "Buy"\n  id: "t-9"\n  Assets:Broker  0.0001 BTC @@ 3.00 USD\n  Assets:Cash  -3.00 USD\n'
+        for written, verdict in (("30040", "UNEXPLAINED"), ("30000.00", "EXPECTED_DIVERGENCE")):
+            with self.subTest(written=written):
+                legacy = src.replace('"Buy"', '"Buy" "x"').replace("@@ 3.00 USD", f"@ {written} USD")
+                c = Case({"main.beancount": BROKER + src}, {"main.beancount": BROKER + legacy},
+                         lambda b: model.update_transaction(b, "t-9", src.replace('"Buy"', '"Buy" "x"')))
+                self.assertEqual(c.report.verdict, verdict, c.classes())
+
+    def test_l3_02_does_not_accept_a_dropped_lot_date_the_payload_carried(self) -> None:
+        src = '2020-01-06 * "Buy"\n  id: "t-9"\n  Assets:Broker  2 TOK {5.00 USD, 2020-01-01, "lot-a"}\n  Assets:Cash  -10.00 USD\n'
+        legacy = '2020-01-06 * "Buy" "x"\n  id: "t-9"\n  Assets:Broker  2 TOK {5.00 USD}\n  Assets:Cash  -10.00 USD\n'
+        c = Case({"main.beancount": BROKER + src}, {"main.beancount": BROKER + legacy},
+                 lambda b: model.update_transaction(b, "t-9", src.replace('"Buy"', '"Buy" "x"')))
+        self.assertEqual(c.report.verdict, "UNEXPLAINED", c.classes())
+
+    def test_i10_wrong_bake_within_tolerance_on_a_duplicate_in_a_separate_copy(self) -> None:
+        # as in the harness: before is the source folder, after a different (copied) folder
+        src = LedgerDir({"main.beancount": OPENS + T1 + ELIDED + ELIDED})
+        copy = LedgerDir({})
+        try:
+            before, bf = sd.parse_set(src.path, "main.beancount"), sd.load_facts(src.path, "main.beancount")
+            wrong = ELIDED.replace("  Assets:Cash\n", "  Assets:Cash  -2.004 USD\n")
+            copy.write({"main.beancount": OPENS + T1_EDITED + ELIDED + wrong})
+            after, af = sd.parse_set(copy.path, "main.beancount"), sd.load_facts(copy.path, "main.beancount")
+            r = classify.compare(before, after, update_t1(before), bf, af)
+        finally:
+            src.close()
+            copy.close()
+        self.assertEqual(r.verdict, "UNEXPLAINED", sorted(d.cls for d in r.divergences))
+
+    def test_refused_priced_edit_into_a_currency_constrained_account_is_not_l3_02(self) -> None:
+        src = '2020-01-06 * "Buy"\n  id: "t-9"\n  Assets:Broker  7 TOK @@ 10.00 USD\n  Assets:Cash  -10.00 USD\n'
+        bad = src.replace("Assets:Broker  7 TOK", "Assets:Cash  7 TOK")  # Assets:Cash is opened for USD only
+        c = Case({"main.beancount": BROKER + src}, {}, lambda b: model.update_transaction(b, "t-9", bad))
+        self.assertEqual(c.refused("update_transaction", "TRANSACTION_INVALID").verdict, "UNEXPLAINED")
+
     """The verifier's attacks on S0002 (findings F2-F6): a real divergence must never be tagged as expected."""
 
     def test_m28_does_not_mask_a_changed_legacy_id_on_an_untargeted_entry(self) -> None:

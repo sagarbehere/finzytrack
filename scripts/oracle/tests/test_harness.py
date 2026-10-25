@@ -82,6 +82,23 @@ class MainRefusesTest(unittest.TestCase):
             harness.check_contained(self.base / "copy", "main.beancount")
 
 
+class SourceUnchangedTest(unittest.TestCase):
+    def test_a_changed_source_folder_stops_the_run(self) -> None:
+        d = LedgerDir({"main.beancount": OPENS + TXN})
+        try:
+            run = harness.Run(d.path, "main.beancount", sd.parse_set(d.path, "main.beancount"),
+                              sd.load_facts(d.path, "main.beancount"), harness.ledger_files_bytes(d.path), d.path, d.path, 0)
+            harness.assert_source_unchanged(run, "c1")  # unchanged: fine
+            d.write({"main.beancount": OPENS})
+            with self.assertRaises(harness.Unsafe):
+                harness.assert_source_unchanged(run, "c1")
+            d.write({"main.beancount": OPENS + TXN, "new.txt": "x"})
+            with self.assertRaises(harness.Unsafe):
+                harness.assert_source_unchanged(run, "c1")
+        finally:
+            d.close()
+
+
 class ReportingTest(unittest.TestCase):
     def test_redact_keeps_counts_classes_and_ids_only(self) -> None:
         r = {"id": "upd-000", "mutator": "update_transaction", "verdict": "UNEXPLAINED", "classes": {"I10": 2},

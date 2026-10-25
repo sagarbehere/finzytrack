@@ -112,6 +112,12 @@ def check_contained(ledgers: Path, root_file: str) -> sd.LedgerSet:
     return s
 
 
+def assert_source_unchanged(run: Run, case_id: str) -> None:
+    """The backstop behind the containment check: the source folder's bytes are those the run started with."""
+    if ledger_files_bytes(run.src) != run.src_bytes:
+        raise Unsafe(f"case {case_id}: the source ledger folder changed during the run; stopping")
+
+
 def stray_files(run: Run, ledgers: Path, after: sd.LedgerSet) -> list[classify.Divergence]:
     """Files the legacy app created or changed that the semantic diff cannot see: outside the ledger set, or new and
     holding no entries (I2: a file literally named after a glob pattern)."""
@@ -144,8 +150,7 @@ def run_case(case: dict[str, Any], run: Run) -> dict[str, Any]:
         t_up = time.monotonic()
         status, body = adapters.send(run.port, req)
     t_done = time.monotonic()
-    if ledger_files_bytes(run.src) != run.src_bytes:
-        raise Unsafe(f"case {case['id']}: the source ledger folder changed during the run; stopping")
+    assert_source_unchanged(run, case["id"])
     after = sd.parse_set(ledgers, run.root_file)
     after_facts = sd.load_facts(ledgers, run.root_file)
     error = body.get("error") or {}

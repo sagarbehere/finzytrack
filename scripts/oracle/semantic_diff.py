@@ -13,6 +13,7 @@ import os
 import re
 from collections import Counter
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -60,7 +61,7 @@ class ParsedFile:
     header: frozenset[tuple[str, str, Any]]
     comment_lines: int
     errors: tuple[str, ...]
-    totals: dict[str, frozenset[int]]  # key → indexes of postings written with a total price (`@@`)
+    totals: dict[str, dict[int, Decimal]]  # key → {posting index: total} for postings written with `@@`
 
 
 @dataclass(frozen=True)
@@ -91,18 +92,23 @@ def _comment_lines(path: Path) -> int:
     return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.lstrip().startswith(";"))
 
 
-def total_price_postings(entry: Any, lines: list[str]) -> frozenset[int]:
-    """Indexes of the entry's postings whose source line writes a total price (`@@`); the parser keeps only the
-    per-unit quotient, so this is read from the text."""
-    out = set()
+TOTAL_PRICE = re.compile(r"@@\s+(-?\d[\d,]*(?:\.\d+)?|-?\.\d+)\s+[A-Z]")
+
+
+def total_price_postings(entry: Any, lines: list[str]) -> dict[int, Decimal]:
+    """The total (as written) of each of the entry's postings whose source line uses `@@`; the parser keeps only the
+    per-unit quotient, so this is read from the text. A total written as an expression is left out."""
+    out: dict[int, Decimal] = {}
     for i, p in enumerate(getattr(entry, "postings", ())):
         n = (p.meta or {}).get("lineno")
-        if n and 0 < n <= len(lines) and "@@" in lines[n - 1].split(";", 1)[0]:
-            out.add(i)
-    return frozenset(out)
+        if n and 0 < n <= len(lines):
+            m = TOTAL_PRICE.search(lines[n - 1].split(";", 1)[0])
+            if m:
+                out[i] = Decimal(m.group(1).replace(",", ""))
+    return out
 
 
-def parse_entries_with_totals(text: str, filename: str) -> tuple[list[Any], list[Any], dict[str, Any], dict[str, frozenset[int]]]:
+def parse_entries_with_totals(text: str, filename: str) -> tuple[list[Any], list[Any], dict[str, Any], dict[str, dict[int, Decimal]]]:
     entries, errors, opts = parser.parse_string(text, filename)
     lines = text.splitlines()
     return entries, errors, opts, {canonical_key(e): total_price_postings(e, lines) for e in entries}

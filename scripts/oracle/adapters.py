@@ -1,8 +1,8 @@
 """Per-mutator adapters: one intent → the legacy app's HTTP request (review:C DEP-11).
 
 Each adapter builds the payload the v0.3 frontend would send. The payloads are lossy by design where the old
-frontend was (review:D1 §12.8): amounts and metadata travel as strings, a lot needs a date to survive, `@@` is sent
-as a total. The divergences this causes are tagged by the classifiers, not fixed here.
+frontend was (review:D1 §12.8): amounts and metadata travel as strings, a lot needs a date to survive and loses its
+label, a `@@` total is sent as the total with `price_type "@@"` (as the frontend's `price.type`). The divergences this causes are tagged by the classifiers, not fixed here.
 """
 
 from __future__ import annotations
@@ -12,12 +12,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from beancount.core import data
 from beancount.core.number import MISSING
 
-from model import parse_entries
+from model import parse_intent
+from semantic_diff import canonical_key
 
 SOURCE_ROOTS = ("Assets:", "Liabilities:")
 
@@ -37,7 +39,8 @@ def _num(v: Any) -> str | None:
     return None if _unset(v) else format(v, "f")
 
 
-def _posting(p: Any) -> dict[str, Any]:
+def _posting(p: Any, total: Decimal | None = None) -> dict[str, Any]:
+    """One posting as the v0.3 frontend sent it; *total* is the `@@` total as written (the frontend sent `@@`)."""
     units, cost, price = p.units, p.cost, p.price
     out: dict[str, Any] = {"account": p.account, "amount": None, "currency": None}
     if not _unset(units):
@@ -46,18 +49,19 @@ def _posting(p: Any) -> dict[str, Any]:
         out["cost_amount"], out["cost_currency"] = _num(cost.number_per), None if cost.currency is MISSING else cost.currency
         out["cost_date"] = None if _unset(cost.date) else cost.date.isoformat()
     if not _unset(price):
-        out["price_amount"], out["price_currency"], out["price_type"] = _num(price.number), price.currency, "@"
+        out["price_amount"], out["price_currency"], out["price_type"] = (
+            (format(total, "f"), price.currency, "@@") if total is not None else (_num(price.number), price.currency, "@"))
     meta = {k: str(v) for k, v in (p.meta or {}).items() if k not in ("filename", "lineno")}
     if meta:
         out["posting_meta"] = meta
     return out
 
 
-def _header(t: Any) -> dict[str, Any]:
+def _header(t: Any, totals: dict[int, Decimal]) -> dict[str, Any]:
     meta = {k: str(v) for k, v in t.meta.items() if k not in ("filename", "lineno", "memo")}
     return {"date": t.date.isoformat(), "flag": t.flag, "payee": t.payee or "", "narration": t.narration or "",
             "memo": t.meta.get("memo"), "tags": sorted(t.tags), "links": sorted(t.links),
-            "postings": [_posting(p) for p in t.postings], "meta": meta}
+            "postings": [_posting(p, totals.get(i)) for i, p in enumerate(t.postings)], "meta": meta}
 
 
 def _fill_elided(t: Any, booked: Any | None) -> Any:
@@ -69,11 +73,11 @@ def _fill_elided(t: Any, booked: Any | None) -> Any:
 
 
 def update_transaction(params: dict[str, Any], booked: dict[str, Any]) -> Request:
-    (t,) = parse_entries(params["entry"])
+    (t,), totals = parse_intent(params["entry"])
     if not isinstance(t, data.Transaction):
         raise ValueError("update_transaction takes one transaction")
-    t = _fill_elided(t, booked.get(params["txn_id"]))
-    return Request("PUT", "/api/ledger/transactions", {"transactions": [{"id": params["txn_id"], **_header(t)}]})
+    head = _header(_fill_elided(t, booked.get(params["txn_id"])), totals[canonical_key(t)])
+    return Request("PUT", "/api/ledger/transactions", {"transactions": [{"id": params["txn_id"], **head}]})
 
 
 def rename_account(params: dict[str, Any], booked: dict[str, Any]) -> Request:
@@ -91,8 +95,9 @@ def _anchor(t: Any) -> str:
 def import_append(params: dict[str, Any], booked: dict[str, Any]) -> Request:
     txns = []
     for text in params["entries"]:
-        for t in parse_entries(text):
-            body = _header(t)
+        entries, totals = parse_intent(text)
+        for t in entries:
+            body = _header(t, totals[canonical_key(t)])
             if any(p["amount"] is None for p in body["postings"]):
                 raise ValueError("the old commit endpoint needs every amount; elide nothing in import intents")
             txns.append({**body, "source_account": _anchor(t)})
