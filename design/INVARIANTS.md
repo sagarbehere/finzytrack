@@ -172,7 +172,7 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 ### INV-27: The folder is the workspace, and it is never hostage
 - **Rule:** A workspace is a self-contained, portable folder: tar it on desktop, import it into a hosted version, and it just works, and the reverse. Everything that isn't a rebuildable cache or machine-local working state is inside the folder; the folder holds no absolute paths and no secret values (only their names). A workspace that passes `assess_portability(hosted)` round-trips desktop → hosted → desktop with a byte-identical ledger set and tool state.
 - **Why:** The user's data is never held hostage (owner, 2026-10-24).
-- **Enforced by:** planned: a round-trip test in CI; a raw-tar round trip; a layout test; a path-field schema test; the `assess_portability` corpus.
+- **Enforced by:** planned: a raw-tar round trip of a workspace folder in CI; a layout test; a path-field schema test; the `assess_portability` corpus. The Export → Import archive round trip joins when the archive ships (deferred past v0.4.0, ADR-0043). *(Enforcement list amended with the owner's approval, 2026-10-25; the rule is unchanged.)*
 - **Status:** pending (BL-0027, by M3)
 
 ### INV-28: Workspace-addressed

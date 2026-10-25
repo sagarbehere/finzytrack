@@ -942,5 +942,5 @@ Resolved (were questions in the review's architecture draft):
 
 Open:
 - **`lots`:** under ADR-0048 the v0.2.2 `lots` table keeps working; the owner is asked to re-confirm (ADR-0048).
-- **Documented mirror columns** `postings.transaction_content_hash` and `postings.source_account`/`source_account_type`: kept, filled or dropped is decided in the `r_*` view-surface ADR (review:28 §7). Until then they are part of the v0.2.2 compatibility surface (ADR-0048).
+- **Documented mirror columns** `postings.transaction_content_hash` and `postings.source_account`/`source_account_type`: DECIDED (owner, 2026-10-25), ADR-0055: kept through 0.4.x, both computed by the mirror.
 - **Frontend framework:** ADR-0006 is Proposed until S13 reports.

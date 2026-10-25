@@ -44,3 +44,13 @@ Format:
 - Expected effect: no accidental public push before review.
 - Observed effect: pending.
 - Status: kept.
+
+## IMP-0004: INV-27 enforcement list matches the v0.4.0 scope (2026-10-25)
+- Trigger: owner question Q6 (the Export → Import archive is deferred past v0.4.0, so INV-27's planned archive round trip cannot run in v0.4.0).
+- What changed: `design/INVARIANTS.md` INV-27 "Enforced by": the raw-tar folder round trip, layout, path-field schema and portability corpus checks; the archive round trip joins when the archive ships. The rule text is unchanged.
+- PROCESS.md section: none (invariant content).
+- Why: an enforcement list must be buildable within the release scope (ADR-0043).
+- Expected effect: INV-27 can leave "pending" in M3.
+- Observed effect: pending.
+- Status: kept.
+- Owner approval: "I'm accepting your recommendations/actions on questions 5-11." (2026-10-25, in session; covers Q6)

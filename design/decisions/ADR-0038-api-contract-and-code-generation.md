@@ -34,6 +34,13 @@ v0.3 generated its client with `openapi-typescript-codegen`, which is unmaintain
 - A schema change and its client regeneration land in the same commit.
 - Acceptance tests still run against a running backend that the agent starts on its own port and data dir (INV-24).
 
+## Amendment (2026-10-25, owner-accepted, spike S7)
+
+Owner: "I'm accepting your recommendations/actions on questions 5-11." (owner, 2026-10-25, in session)
+- **Response models carry no server-side defaults**, so every output field is required in the generated TypeScript types (one schema per model; FastAPI's separate input/output schemas are not used).
+- **Unknown keys on closed objects:** the decoder rejects them in tests and development builds (catches contract drift) and drops them in production builds.
+- From spike S7: decoding happens in a small typed wrapper around openapi-fetch (middleware cannot return decoded values); civil dates in query strings use a custom serializer; parameters use the `Annotated[..., Query()]` form so `x-ft-type` survives; decimals serialize with `format(d, "f")`.
+
 ## References
 
 review:25 §4.1–§4.3, §13 items 5, 7; review:10 D9; ADR-0018, ADR-0034, ADR-0037, ADR-0050; INV-19, INV-24, INV-28; EP-14, EP-16, EP-21.
