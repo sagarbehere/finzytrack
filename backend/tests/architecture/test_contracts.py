@@ -1,4 +1,4 @@
-"""Architecture contracts of the main sidecar (ARCHITECTURE.md §2.4; ADR-0054).
+"""Architecture contracts of the main sidecar (ARCHITECTURE.md §2.4; ADR-0054; INV-12 layering, INV-02).
 
 Each contract is checked on the real tree and, beside it, on a copy with a planted violation that the spec
 says must not pass (EP-29). The copy shadows the installed package through PYTHONPATH.

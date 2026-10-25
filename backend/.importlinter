@@ -1,4 +1,4 @@
-# Dependency contracts of the main sidecar (ARCHITECTURE.md §2.4; ADR-0054). T1 and pre-push run
+# Dependency contracts of the main sidecar (ARCHITECTURE.md §2.4; ADR-0054; INV-12). T1 and pre-push run
 # `lint-imports` from backend/. A package in parentheses is optional until its slice creates it; that slice
 # removes the parentheses. There are no transitional exemptions (PROCESS.md §6).
 # domain may not import app.platform at all (the layers contract), so rule 3's `app.platform.adapters` ban is
