@@ -17,6 +17,22 @@ const systemTime = [
   { selector: "CallExpression[callee.object.property.name='Date'][callee.property.name='now']", message: today },
 ]
 
+// L9.M-7: tests stub components by import (vi.mock of the module, findComponent(ImportedComponent)), never by
+// name: a name-keyed stub or lookup keeps passing after the component is renamed and silently tests nothing.
+const byName = 'L9.M-7: stub by import (vi.mock the module; findComponent(Imported)), never by component name'
+const stubsByName = [
+  { selector: "Property[key.name='stubs']", message: byName },
+  { selector: "Property[key.value='stubs']", message: byName },
+  { selector: "MemberExpression[property.name='stubs']", message: byName },
+  { selector: "MemberExpression[property.value='stubs']", message: byName },
+  {
+    selector:
+      "CallExpression[callee.property.name=/^find(All)?Components?$/] > ObjectExpression > Property[key.name='name']",
+    message: byName,
+  },
+]
+export const testFiles = ['tests/**/*.ts', 'src/**/*.test.ts', 'src/**/*.spec.ts']
+
 export default tseslint.config(
   { ignores: ['dist/**', 'playwright-report/**', 'test-results/**'] },
   ...tseslint.configs.strictTypeChecked,
@@ -58,5 +74,10 @@ export default tseslint.config(
         },
       ],
     },
+  },
+  {
+    // Later config replaces a rule's options, so the INV-07 bans are repeated here with the stub bans.
+    files: testFiles,
+    rules: { 'no-restricted-syntax': ['error', ...systemTime, ...stubsByName] },
   },
 )

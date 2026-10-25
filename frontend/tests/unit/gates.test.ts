@@ -40,10 +40,10 @@ describe('[EP-22] the TypeScript config', () => {
   })
 })
 
-async function ruleIds(code: string, file = 'main.ts'): Promise<string[]> {
+async function ruleIds(code: string, file = 'main.ts', dir = 'src'): Promise<string[]> {
   // The text replaces an existing file's content in memory; nothing is written to disk.
   const eslint = new ESLint({ cwd: root })
-  const [result] = await eslint.lintText(code, { filePath: `${root}/src/${file}` })
+  const [result] = await eslint.lintText(code, { filePath: `${root}/${dir}/${file}` })
   return (result?.messages ?? []).map((m) => m.ruleId ?? 'parse-error')
 }
 
@@ -73,5 +73,33 @@ describe('[INV-06][INV-07] lint bans', () => {
 
   it('accepts a plain template expression', async () => {
     expect(await ruleIds(sfc('amount'), 'App.vue')).toEqual([])
+  })
+})
+
+describe('[L9.M-7] tests stub components by import, not by name', () => {
+  const inTest = (code: string) => ruleIds(code, 'App.test.ts', 'tests/unit')
+
+  it.each([
+    ['a stubs map in mount options', 'mount(App, { global: { stubs: { Child: true } } })\n'],
+    ['a quoted stubs key', "mount(App, { global: { 'stubs': { Child: true } } })\n"],
+    ['stubs set on the global config', 'config.global.stubs = { Child: true }\n'],
+    ['stubs set by a computed key', "config.global['stubs'] = {}\n"],
+    ['findComponent by name', "wrapper.findComponent({ name: 'Child' })\n"],
+    ['findAllComponents by name', "wrapper.findAllComponents({ name: 'Child' })\n"],
+  ])('refuses %s', async (_label, code) => {
+    expect(await inTest(code)).toContain('no-restricted-syntax')
+  })
+
+  it('accepts stubbing and finding by import', async () => {
+    const ok = "vi.mock('../../src/Child.vue')\nwrapper.findComponent(Child)\nwrapper.findComponent({ ref: 'x' })\n"
+    expect(await inTest(ok)).not.toContain('no-restricted-syntax')
+  })
+
+  it('keeps the INV-07 bans in test files', async () => {
+    expect(await inTest('export const d = new Date()\n')).toContain('no-restricted-syntax')
+  })
+
+  it('does not touch app code', async () => {
+    expect(await ruleIds("export const o = { stubs: 1, name: 'x' }\n")).toEqual([])
   })
 })

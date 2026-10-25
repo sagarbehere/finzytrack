@@ -42,15 +42,15 @@ This file is the tracked home of the private review backlog (`review:99`). The r
 |---|---|
 | Finding index rows | 287 |
 | Unique (canonical) findings | 240 |
-| of which to build in v0.4.0 (`open`) | 230 |
-| of which `done` | 2 |
+| of which to build in v0.4.0 (`open`) | 229 |
+| of which `done` | 3 |
 | of which `post-v0.4` (hosted-only) | 4 |
 | of which `removed` (investment scope reset) | 4 |
 | Doubles (merged onto a canonical row) | 47 |
 | Invariant-enforcement items (`BL-0001`…`BL-0031`) | 31 |
 | Other new items (`BL-0032`…) | 13 |
 
-Canonical findings to build, by milestone: M0 2, M1a 10, M1b 6, M2 47, M3 15, M4 18, M5 20, M6 40, M7 37, M8 23, M9 12, M10–M12 0 (total 230; S0023 closed L1-06 and L9-18 and split M1).
+Canonical findings to build, by milestone: M0 1, M1a 10, M1b 6, M2 47, M3 15, M4 18, M5 20, M6 40, M7 37, M8 23, M9 12, M10–M12 0 (total 229; S0023 closed L1-06 and L9-18 and split M1; S0025 closed L9.M-7).
 
 ---
 
@@ -477,7 +477,7 @@ Evidence: `review:L9`, `review:L9-verif`, `review:17`; index `review:99 §4.10`.
 | L9.M-3 | One unsaved-change guard covering route, reload, tab and dialog | Medium | WS-UI | M2 | open | — | `review:L9-verif` |
 | L9.M-5 | Pickers migrate before their dialogs (ordering constraint) | Plan (High if missed) | WS-UI | M2 | open | — | `review:L9-verif` |
 | L9.M-6 | Help text and tooltips are portalled, not clipped | Low | WS-UI | M2 | open | — | `review:L9-verif` |
-| L9.M-7 | Tests stub components by import, not by name | Low | WS-QA | M0 | open | — | `review:L9-verif` |
+| L9.M-7 | Tests stub components by import, not by name | Low | WS-QA | M0 | done | — | `review:L9-verif`; closed by S0025 (lint ban in test files) |
 
 ### 3.11 L10 app lifecycle (18 canonical)
 
