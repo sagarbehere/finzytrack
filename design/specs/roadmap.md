@@ -9,7 +9,7 @@
 
 ## 1. Where we are (updated 2026-10-25)
 
-**Milestone M0, Foundations.** Nothing runs as an app yet.
+**Milestone M0, Foundations.** Nothing runs as an app yet beyond an empty window.
 
 Done in M0:
 - `next` from an empty tree; T0 and T1 gates (privacy scan, staged-file guard, invariant, capability, generated-artifact diff and licence checks); `design/` seeded; agents, skills and guard hooks (S0000). Their remaining parts are listed under "Left" below.
@@ -17,15 +17,14 @@ Done in M0:
 - The differential-oracle harness for three mutators (S0002); the legacy API tests run out of process, as reference reading (S0003).
 - The per-mutator intended-change table, the first of M1's specs (S0004).
 - The pilot's process ADR and the first slice count (S0005, ADR-0057); the backend skeleton (S0006); this roadmap (S0007); verification scaled to risk (S0008, ADR-0058).
-
-In progress (BL-0037, `in-progress`): the package skeletons with their CI gates: backend (S0006), frontend (S0009) and the Tauri shell (S0010) done; `nightly.yml` and the packaged three-OS build with `--smoke-test` remain.
+- The package skeletons with their CI gates (BL-0037): backend (S0006), frontend (S0009), the Tauri shell (S0010), and the packaged three-OS build where the empty window passes `--smoke-test`, with `nightly.yml` (S0012). The nightly schedule waits for the owner (`design/inbox/20261025-nightly-schedule-needs-main.md`).
 
 Left in M0, in this order:
-1. The rest of BL-0037 (nightly and packaged workflows), BL-0052 (the Cargo 14-day check).
+1. BL-0052 (the Cargo 14-day check).
 2. Guard and map checks: BL-0042 (the guard parser's false positives), BL-0039 (cut and deferred rows cite ADRs), BL-0035 (entropy secrets scan). The checks on the process's own paperwork (BL-0034, BL-0036, BL-0038, BL-0040) are parked until evidence asks for them (ADR-0058).
 3. The invariant enforcement due by M0 (CI fails at M0's exit while these invariants are pending): BL-0011 (INV-11, the globals/state-registry test), BL-0012 (INV-12, the import contracts, backend half done in S0006, and the frontend boundaries lint); and the rest of BL-0019 (the doc-impact check), BL-0023 (owner-reviewed anonymization of fixtures) and BL-0024 (the acceptance harness's port and data-dir checks, the local-tier path guard).
 4. M1's other specs: the D1 write corpus, the mirror surface and DDL, the INV-21 goldens, the Beancount domain vectors.
-5. The rest of review:27 §1(d) that M0's exit needs: the demo generator skeleton; the acceptance-suite harness (isolated backend, frozen clock, LLM stub, Chromium and WebKit); the P1 integrity tests written as `fixme`; the empty Tauri window passing `--smoke-test` on three OSes; the red-team session on the gates and the first seeded-defect run.
+5. The rest of review:27 §1(d) that M0's exit needs: the demo generator skeleton; the acceptance-suite harness (isolated backend, frozen clock, LLM stub, Chromium and WebKit); the P1 integrity tests written as `fixme`; the red-team session on the gates and the first seeded-defect run.
 
 Next milestone: **M1a** (read core and workspace-format core), then **M1b** (write contract), then **G1**, your go/no-go.
 

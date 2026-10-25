@@ -1,0 +1,21 @@
+{
+  "_comment": "The python-build-standalone runtime of the packaged app (ADR-0056; pin: design/ARCHITECTURE.md §10, EP-24). Hashes from the release's SHA256SUMS. Changing this file is a dependency-upgrade slice.",
+  "release": "20261009",
+  "released": "2026-10-09",
+  "python": "3.13.16",
+  "url": "https://github.com/astral-sh/python-build-standalone/releases/download/{release}/{file}",
+  "targets": {
+    "aarch64-apple-darwin": {
+      "file": "cpython-3.13.16+20261009-aarch64-apple-darwin-install_only_stripped.tar.gz",
+      "sha256": "11785155d0f70e634178219c20925d8f20be00a3da4684fc4f5019dd15602ef7"
+    },
+    "x86_64-pc-windows-msvc": {
+      "file": "cpython-3.13.16+20261009-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+      "sha256": "3a7adfb69e3ff02a41ed38ac637808532b438ab3c8619af46ca5dbec5c1f5190"
+    },
+    "x86_64-unknown-linux-gnu": {
+      "file": "cpython-3.13.16+20261009-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "sha256": "24801ea31c7d406d559a17e2226325c723d50c56900b9c0da7b62adaae2affc9"
+    }
+  }
+}

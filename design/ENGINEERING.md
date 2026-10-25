@@ -34,6 +34,7 @@ Several principles are the *engineering means* of an invariant. When that holds,
 | Concept counters, duplication | `scripts/concept_counters.py`, jscpd | T1 |
 | Models | Hypothesis state machine, XState model-based paths, TLC small config | T1; large configs T2 |
 | Mutation | mutmut, Stryker | T2, weekly and before each clearance (`PROCESS.md` (gates)) |
+| Packaged build | `.github/workflows/packaged.yml`: the app packaged on three OSes, installed where the format allows, `--smoke-test` passing and failing with the bundled runtime removed (`shell/package_app.py`, `shell/smoke_packaged.py`) | T2 (nightly) and on pushes that touch packaging |
 
 ---
 

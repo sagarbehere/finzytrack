@@ -766,6 +766,7 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 name = "finzytrack-shell"
 version = "0.4.0-dev.0"
 dependencies = [
+ "serde_json",
  "tauri",
  "tauri-build",
 ]

@@ -104,8 +104,8 @@ jobs:
       - name: acceptance smoke (Chromium and WebKit)
         run: pnpm -s e2e
   shell:
-    # The Tauri desktop shell (S0010; ADR-0007; ARCHITECTURE.md §5): format and pedantic clippy on Linux.
-    # Packaged builds and --smoke-test on three OSes arrive with packaged.yml (BL-0037).
+    # The Tauri desktop shell (S0010; ADR-0007; ARCHITECTURE.md §5): format, pedantic clippy and unit tests on
+    # Linux. Packaged builds and --smoke-test on three OSes: packaged.yml (S0012).
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
@@ -121,6 +121,8 @@ jobs:
         run: cargo fmt --check
       - name: clippy (pedantic, warnings are errors)
         run: cargo clippy --all-targets --locked -- -D warnings
+      - name: unit tests (incl. the --smoke-test verdict)
+        run: cargo test --locked
   oracle-unit:
     # The differential-oracle harness's semantic diff, models and classifiers (S0002). End-to-end runs need the
     # legacy worktree and stay local (PROCESS.md §6, T-local).

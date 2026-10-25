@@ -104,6 +104,15 @@ def rust_deps() -> list[tuple[str, str, str]] | None:
     return rust_from_metadata(json.loads(out.stdout))
 
 
+def runtime_deps() -> list[tuple[str, str, str]] | None:
+    """The interpreter the packaged app ships (ADR-0056). The libraries python-build-standalone links into
+    it are listed at bundling (BL-0053)."""
+    lock = ROOT / "shell/sidecar/pbs.lock.json"
+    if not lock.exists():
+        return None
+    return [("CPython", json.loads(lock.read_text(encoding="utf-8"))["python"], "Python-2.0")]
+
+
 def js_deps() -> list[tuple[str, str, str]] | None:
     if not (ROOT / "frontend/package.json").exists():
         return None
@@ -216,7 +225,8 @@ def main(argv: list[str]) -> int:
     with (ROOT / "licences.allow.toml").open("rb") as fh:
         cfg = tomllib.load(fh)
     allowed, pending = set(cfg["allowed"]), set(cfg.get("pending_legal_advice", {}))
-    groups = {"Python (backend sidecar)": python_deps(), "JavaScript (frontend)": js_deps(),
+    groups = {"Python runtime (python-build-standalone)": runtime_deps(),
+              "Python (backend sidecar)": python_deps(), "JavaScript (frontend)": js_deps(),
               "Rust (desktop shell)": rust_deps()}
     problems, warnings, text = evaluate(groups, allowed, pending)
     if "--write-notices" in argv:

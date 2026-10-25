@@ -35,6 +35,7 @@ if [[ -f shell/src-tauri/Cargo.toml ]]; then
   cargo_bin="$(command -v cargo || echo "$HOME/.cargo/bin/cargo")"
   run "rustfmt" bash -c "cd shell/src-tauri && $cargo_bin fmt --check"
   run "clippy" bash -c "cd shell/src-tauri && $cargo_bin clippy --all-targets --locked --quiet -- -D warnings"
+  run "shell unit tests" bash -c "cd shell/src-tauri && $cargo_bin test --locked --quiet"
 fi
 if [[ -f frontend/package.json ]]; then
   run "vue-tsc" bash -c "cd frontend && node_modules/.bin/vue-tsc --noEmit"

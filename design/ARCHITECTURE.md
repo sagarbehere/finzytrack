@@ -404,7 +404,9 @@ Hand-written TanStack Query hooks live in `features/*/queries.ts`. They are thin
 
 > **Amended by ADR-0054:** the shell spawns and supervises the **main sidecar** only; the main sidecar spawns and supervises the **ledger engine** (§2.0). Both are signed and covered by the orphan rules. Spike S1 also showed that a onedir tree ships as `bundle.resources`, not `externalBin`, and that the Linux updater handles AppImage, `.deb` and `.rpm`; the packaging is python-build-standalone, not PyInstaller, and Linux ships AppImage and `.deb` (ADR-0056); this section is rewritten in the first shell slice.
 
-**Identifier and platforms (owner, 2026-10-24; ADR-0007):** the Tauri identifier is `com.finzytrack.desktop` (permanent; it fixes `app_local_data_dir` and how updates find the app), product name "Finzytrack". Builds: Apple-silicon macOS (ad-hoc signed, not notarized), Windows 10/11 x64 (unsigned; the SmartScreen warning is documented), Linux x64 (Ubuntu 22.04 or newer; the updater updates the AppImage only, verified in spike S1). Intel Macs are not built. **Minimum macOS 14 (Sonoma); WebKit baseline Safari 17** (ADR-0007 amendment, owner 2026-10-25).
+**Identifier and platforms (owner, 2026-10-24; ADR-0007):** the Tauri identifier is `com.finzytrack.desktop` (permanent; it fixes `app_local_data_dir` and how updates find the app), product name "Finzytrack". Builds: Apple-silicon macOS (ad-hoc signed, not notarized), Windows 10/11 x64 (unsigned; the SmartScreen warning is documented), Linux x64 (Ubuntu 22.04 or newer; AppImage and `.deb`, both updated by the updater, ADR-0056). Intel Macs are not built. **Minimum macOS 14 (Sonoma); WebKit baseline Safari 17** (ADR-0007 amendment, owner 2026-10-25).
+
+**Packaging** (ADR-0056; S0012). `shell/sidecar/build_sidecar.py` builds `build/sidecar/python/`: the python-build-standalone runtime pinned in `shell/sidecar/pbs.lock.json` (hash-checked, extracted with tarfile's `data` filter), with the main sidecar's locked runtime closure and its own wheel installed, trimmed, compiled to unchecked-hash bytecode, with no symlinks left (the resource copy follows them), and on macOS every Mach-O ad-hoc signed inside-out. `shell/package_app.py` builds the frontend and runs `tauri build` with `tauri.packaged.conf.json`, an override that may only set `bundle` (the tree ships as `bundle.resources` at `sidecar/`, never `externalBin`; ad-hoc signing identity `-`; NSIS per-user install), which `scripts/tests/test_shell_config.py` checks merged. **`--smoke-test`** (`shell/src-tauri/src/smoke.rs`, the spec): exit 0 with one `FT_SMOKE_OK` line only when the main window's page finished loading and the package's own interpreter, run with `-I`, is 3.13 with its prefix and the `app` package inside the resource directory; otherwise `FT_SMOKE_FAIL` and exit 1. `.github/workflows/packaged.yml` runs it on the three platforms, on the installed package where the format allows, and again with the runtime moved away, which must fail.
 
 **Rust side** (`shell/src-tauri/`, Tauri 2.12):
 - **Sidecar supervisor.** It spawns the backend built with python-build-standalone (ADR-0056; the engine process of ADR-0054 beside it; every binary signed: ad-hoc on macOS until an Apple Developer ID exists) with arguments `--app-local-data … --app-cache … --port 0 --shell-token-env FT_SHELL_TOKEN [--workspace PATH]`. The backend binds a free loopback port and prints one handshake line (`FT_READY {"port":…, "version":…}`) on stdout. The shell then waits for `GET /api/boot`, opens the window and injects the port and token through an initialization script.
@@ -738,7 +740,7 @@ The versions below are the newest stable releases published on or before **2026-
 | Tauri | **tauri 2.12.3, tauri-build 2.7.2, @tauri-apps/cli 2.12.2, @tauri-apps/api 2.12.3** | ADR-0007 (3.0 is alpha, excluded) |
 | Tauri plugins | dialog 2.8.2, opener 2.7.1, updater 2.13.3, single-instance 2.5.3 (crate), process 2.4.0, shell 2.5.0 (sidecar spawn, Rust side only), log 2.10.1 | crates and JS packages at matching versions |
 | Java (TLC) | Temurin 21 LTS | TLA+ tools 1.7.4 |
-| PyInstaller | **6.22.3** | sidecar build; the review:backend-survival §3.3 items port |
+| python-build-standalone | **release 20261009** (CPython 3.13.16, `install_only_stripped`; hashes in `shell/sidecar/pbs.lock.json`) | the packaged runtime of both Python processes (ADR-0056, replacing PyInstaller) |
 
 **Backend libraries**
 
@@ -861,9 +863,11 @@ The versions below are the newest stable releases published on or before **2026-
     e2e/                                        Playwright acceptance flows + exploratory charters
     scripts/                                    frontend build tooling (.mjs): gen-api-extras, gen-recipe-types
   shell/
-    src-tauri/  Cargo.toml  Cargo.lock  rust-toolchain.toml  tauri.conf.json  capabilities/  src/main.rs  icons/   (S0010;
-                src/sidecar.rs arrives with the sidecar supervisor)
-    sidecar/    the python-build-standalone build of both Python processes (ADR-0056, ADR-0054)
+    src-tauri/  Cargo.toml  Cargo.lock  rust-toolchain.toml  tauri.conf.json  tauri.packaged.conf.json  capabilities/
+                src/main.rs  src/smoke.rs  icons/   (S0010, S0012; src/sidecar.rs arrives with the sidecar supervisor)
+    sidecar/    build_sidecar.py + pbs.lock.json: the python-build-standalone build of both Python processes
+                (ADR-0056, ADR-0054; S0012), output in build/sidecar/
+    package_app.py  smoke_packaged.py           the packaged build for this platform and its smoke check (S0012)
   formal/
     tla/        WriteProtocol.tla  WriteProtocol.cfg  WriteProtocol_small.cfg  MAPPING.md (generated)  tools.lock
   corpora/                                      shared repo assets: nasty ledgers, XSS/SQL/path attack-input corpora,
