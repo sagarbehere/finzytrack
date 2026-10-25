@@ -85,13 +85,17 @@ def tree_files(repo: Path) -> list[str]:
 
 
 def check_links(repo: Path, files: list[str]) -> None:
-    """Refuse symlinks that are absolute or resolve outside the tree: the command could write through them."""
-    root = repo.resolve()
+    """Refuse symlinks that are absolute or leave the tree: the command could write through them.
+
+    Containment is decided on the text of the link, not by resolving it from the checkout: the copy sits
+    elsewhere, so a link that climbs out and back in (`../../<checkout path>/x`) would resolve inside the
+    tree here and point at the real checkout from the copy."""
     for name in files:
         src = repo / name
         if src.is_symlink():
             link = os.readlink(src)
-            if os.path.isabs(link) or not (src.parent / link).resolve().is_relative_to(root):
+            lexical = os.path.normpath(os.path.join(os.path.dirname(name), link))
+            if os.path.isabs(link) or lexical == ".." or lexical.startswith("../"):
                 raise PlanError(f"refused: symlink {name} -> {link} leaves the tree (the copy would write through it)")
 
 

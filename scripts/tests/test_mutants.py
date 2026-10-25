@@ -204,6 +204,27 @@ class PlanErrors(unittest.TestCase):
         (self.repo / "blob.bin").write_bytes(b"\xff\xfe binary")
         self.assert_error(LOOSEN.replace('file = "check.py"', 'file = "blob.bin"'))
 
+    def test_plan_that_is_not_valid_toml(self) -> None:
+        self.assert_error("cmd = \n")
+
+    def test_plan_that_is_not_utf8(self) -> None:
+        plan = self.root / "mutants.toml"
+        plan.write_bytes(b"cmd = \"\xff\"\n")
+        code, out = run_main(self.repo, plan)
+        self.assertEqual(code, 2, out)
+
+    def test_mutant_entries_that_are_not_a_list(self) -> None:
+        self.assert_error('cmd = "python3 test_check.py"\nmutant = 5\n')
+
+    def test_empty_id(self) -> None:
+        self.assert_error(LOOSEN.replace('id = "loosen"', 'id = ""'))
+
+    def test_empty_find_on_an_empty_file(self) -> None:
+        # b"".count(b"") == 1, so without the check an empty find would "occur once" in an empty file.
+        (self.repo / "empty.py").write_text("")
+        self.assert_error(LOOSEN.replace('file = "check.py"', 'file = "empty.py"').replace(
+            'find = "return x > 0"', 'find = ""'))
+
     def test_baseline_timeout_is_an_error_not_a_kill(self) -> None:
         # Verifier S0005 F1: a hanging baseline would otherwise score every mutant as a timeout kill.
         hang = "LOOP = True\ndef accepts(x):\n    while LOOP:\n        pass\n    return x > 0\n"
@@ -331,6 +352,20 @@ class Copy(unittest.TestCase):
         git(repo, "commit", "-q", "-m", "base", "--no-verify")
         code, out = run_main(repo, plan_file(self.root, LOOSEN))
         self.assertEqual(code, 2, out)
+
+    def test_symlink_that_climbs_out_and_back_in_is_refused(self) -> None:
+        # Verifier S0005 R2-F1: from the checkout this link resolves inside the tree; from the copy, which
+        # sits elsewhere, it points at the real checkout.
+        repo = make_repo(self.root, {"check.py": CHECK, "target.txt": "orig\n"}, commit=False)
+        (repo / "test_check.py").write_text(
+            "import pathlib\npathlib.Path('link.txt').write_text('written by the test')\n" + TESTS)
+        climb = "../" * 40 + str(repo.resolve()).lstrip("/") + "/target.txt"
+        (repo / "link.txt").symlink_to(climb)
+        git(repo, "add", "-A")
+        git(repo, "commit", "-q", "-m", "base", "--no-verify")
+        code, out = run_main(repo, plan_file(self.root, LOOSEN))
+        self.assertEqual(code, 2, out)
+        self.assertEqual((repo / "target.txt").read_text(), "orig\n")
 
     def test_relative_symlink_inside_the_tree_stays_a_symlink(self) -> None:
         # Must pass: an in-tree relative link is copied as a link, so writing through it stays in the copy.

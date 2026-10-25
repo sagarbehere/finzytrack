@@ -56,3 +56,9 @@
   - F8 Low: plan-validation refusals were untested. Fixed: `PlanErrors` tests.
   - Question (Hand-off section unseen by the verifier): deliberate; the journal template now says so.
 - Self-mutation after the fixes: 19 tried (the verifier's 7 re-targeted plus 12), 19 killed.
+- Round 2, head 1abfb61: **PASS WITH FINDINGS** (F1–F3, F5–F8 confirmed fixed; F4 partly). Attacks tried (8): gates; the new tests against the round-1 runner (6 fail, 1 error); a symlink that climbs to `/` and back into the checkout; a symlink loop; 11 mutants of the fix code; plan-validation edge cases; the F5 recount (39, 5 High); F6 and F7 against the diff.
+  - R2-F1 Medium (INV-24): `check_links` resolved links from the checkout, so `../../…/<checkout path>/x` passed and wrote into the checkout from the copy. Fixed: containment is decided on the link's text (`normpath` of its path in the tree; absolute or leading `..` refused); test `test_symlink_that_climbs_out_and_back_in_is_refused`; the verifier's repro passes.
+  - R2-F2 Low: a malformed or non-UTF-8 plan was untested. Fixed: two tests.
+  - R2-F3 Low: empty `find`, empty `id` and a non-list `mutant` were untested. Fixed: three tests (the empty `find` matters on an empty file, where it "occurs once").
+  - R2-F4 Low: S0004's precision line lacked round 2. Fixed (8/8).
+  - The verifier's 11 mutants, re-targeted where the code moved, plus 3 against the new check (including a revert to the resolve-based check): 11 tried, 11 killed.
