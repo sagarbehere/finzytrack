@@ -43,6 +43,27 @@ const stubsByName = [
     message: byName,
   },
 ]
+// S0032 verifier F1: a fixme test passes only while its planned module is missing (tests/fixme.ts), which works only
+// when a failed assertion throws inside the body. `expect.soft` records a failure and `expect.assertions` /
+// `expect.hasAssertions` are checked after the body, so a buggy first implementation would still count as the expected
+// failure. Unit tests assert with plain `expect`.
+const deferred =
+  'S0032: a failed assertion must throw in the test body; use plain expect (no soft or counted assertions)'
+const deferredAssertions = [
+  {
+    selector: "MemberExpression[object.name='expect'][property.name=/^(soft|assertions|hasAssertions)$/]",
+    message: deferred,
+  },
+  {
+    selector: "MemberExpression[object.name='expect'][property.value=/^(soft|assertions|hasAssertions)$/]",
+    message: deferred,
+  },
+  {
+    selector:
+      "VariableDeclarator[init.name='expect'] > ObjectPattern > Property[key.name=/^(soft|assertions|hasAssertions)$/]",
+    message: deferred,
+  },
+]
 const testFiles = ['tests/**/*.ts', 'src/**/*.test.ts', 'src/**/*.spec.ts']
 
 export default tseslint.config(
@@ -129,6 +150,6 @@ export default tseslint.config(
   {
     // Later config replaces a rule's options, so the INV-07 bans are repeated here with the stub bans.
     files: testFiles,
-    rules: { 'no-restricted-syntax': ['error', ...systemTime, ...stubsByName] },
+    rules: { 'no-restricted-syntax': ['error', ...systemTime, ...stubsByName, ...deferredAssertions] },
   },
 )

@@ -154,10 +154,10 @@ def test_seeding_goes_through_the_write_contract_and_no_mirror_export_endpoint_e
     assert _file_writes() == []
 
     create_app = planned("app.api", "create_app")
+    seed_demo = planned("app.boot.demo", "seed_demo")
     paths = {route.path for route in create_app(lambda: None).routes}
     assert not {p for p in paths if p.endswith(("/ledger/export", "/export/status")) or "/mirror/export" in p}
 
-    seed_demo = planned("app.boot.demo", "seed_demo")
     plans: list[Any] = []
 
     class RecordingWriter:  # stands in for the engine client's commit, which takes the locks (ADR-0008)

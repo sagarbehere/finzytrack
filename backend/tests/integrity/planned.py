@@ -7,7 +7,10 @@ test's `fixme` marker; the arrange, act and assert stay as written.
 
 A `fixme` test may fail only with `PlannedMissing` (tests/conftest.py; S0032, seeded plants G01-G03): once the planned
 module and symbol exist, any failure is a real one, so a buggy first implementation turns the run red instead of
-passing as an expected failure.
+passing as an expected failure. Only the module and the name passed here are checked as "missing": an attribute the
+test assumes on the planned object (`LoadPolicy.desktop()`) is checked once its module exists, so a test makes every
+`planned()` lookup before it uses any of them (S0032 verifier F2), and a module built by an earlier slice with another
+API turns the test red only when every module it needs exists.
 """
 
 from __future__ import annotations

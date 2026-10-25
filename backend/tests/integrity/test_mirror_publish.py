@@ -69,9 +69,10 @@ class _MidBuildFault:
 @pytest.mark.fixme(id="I4", due="M1a", reason="capability not built")
 def test_readers_never_see_an_empty_or_partial_mirror(tmp_path: Path) -> None:
     load = planned("app.ledger.overlay", "load")
-    policy = planned("app.ledger.policy", "LoadPolicy").desktop()
+    load_policy = planned("app.ledger.policy", "LoadPolicy")
     build_generation = planned("app.mirror.publish", "build_generation")
     publish = planned("app.mirror.publish", "publish")
+    policy = load_policy.desktop()
 
     roots: dict[str, Path] = {}
     for name, text in (("A", LEDGER_A), ("B", LEDGER_B)):

@@ -102,6 +102,20 @@ describe('[L9.M-7] tests stub components by import, not by name', () => {
     expect(await inTest(ok)).not.toContain('no-restricted-syntax')
   })
 
+  it.each([
+    ['expect.soft', "expect.soft('Delete').toBe('Cancel')\n"],
+    ['expect.assertions', 'expect.assertions(2)\n'],
+    ['expect.hasAssertions', 'expect.hasAssertions()\n'],
+    ['an indexed expect.soft', "expect['soft']('Delete').toBe('Cancel')\n"],
+    ['soft taken by destructuring', "const { soft } = expect\nsoft('Delete').toBe('Cancel')\n"],
+  ])('refuses %s, which defers a failure past an expected-to-fail body (S0032 verifier F1)', async (_label, body) => {
+    expect(await inTest(`import { expect } from 'vitest'\n${body}`)).toContain('no-restricted-syntax')
+  })
+
+  it('accepts a plain expect', async () => {
+    expect(await inTest("import { expect } from 'vitest'\nexpect('Cancel').toBe('Cancel')\n")).toEqual([])
+  })
+
   it('keeps the INV-07 bans in test files', async () => {
     expect(await inTest('export const d = new Date()\n')).toContain('no-restricted-syntax')
   })

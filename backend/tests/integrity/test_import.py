@@ -32,6 +32,12 @@ from tests.integrity.planned import planned
 MODEL = "app.importing.core.model"
 
 
+def _draft_model() -> None:
+    """Look up every planned name the draft helpers use, so a test makes all its lookups before using any."""
+    for module, name in ((MODEL, "Draft"), (MODEL, "DraftPosting"), (MODEL, "Provenance"), ("app.domain", "Amount")):
+        planned(module, name)
+
+
 def _amount(number: str, currency: str) -> Any:
     return planned("app.domain", "Amount")(Decimal(number), currency)
 
@@ -64,6 +70,7 @@ def test_autocategorize_fills_only_open_slots() -> None:
     targets = planned("app.importing.core.suggest", "targets")
     apply = planned("app.importing.core.suggest", "apply")
     suggestion = planned(MODEL, "Suggestion")
+    _draft_model()
     statement = _draft("s1", [_posting("Liabilities:Card", "-12.00"), _posting(None)])
     buy = _draft(
         "b1",
@@ -113,6 +120,7 @@ def test_commit_rematches_skips_and_reports_duplicates_with_an_explicit_override
     match = planned("app.importing.core.match", "match")
     index_from_text = planned("app.importing.core.match", "index_from_text")
     plan_commit = planned("app.importing.core.commit", "plan_commit")
+    _draft_model()
     line = _draft(
         "s1",
         [_posting("Liabilities:Card", "-12.00", meta={"import-key": "v1:ofx:FIT123"}), _posting("Expenses:Food")],
@@ -142,6 +150,8 @@ def test_duplicate_detection_never_uses_the_legacy_content_hash() -> None:
     match = planned("app.importing.core.match", "match")
     index_from_text = planned("app.importing.core.match", "index_from_text")
     plan_commit = planned("app.importing.core.commit", "plan_commit")
+    importing = Path(planned("app.importing", "__file__")).parent
+    _draft_model()
     legacy_hash = hashlib.sha256(b"2026-03-04|Payee||-12.00 USD|Liabilities:Card").hexdigest()
     legacy = f"""2026-01-01 open Liabilities:Card USD
 2025-06-01 * "Other shop" ""
@@ -154,7 +164,6 @@ def test_duplicate_detection_never_uses_the_legacy_content_hash() -> None:
     found = match([line], index_from_text(legacy))["s1"]
     assert found.kind == "new"
     assert "content_hash" not in plan_commit([line], {"s1": "create"}, index_from_text(legacy)).inserts[0]
-    importing = Path(planned("app.importing", "__file__")).parent
     assert [m for m in _imported_app_modules(importing) if "content_hash" in m.read_text()] == []
 
 
@@ -218,6 +227,7 @@ def test_split_debit_credit_columns_parse_every_row() -> None:
 def test_tags_and_links_are_kept_on_commit() -> None:
     index_from_text = planned("app.importing.core.match", "index_from_text")
     plan_commit = planned("app.importing.core.commit", "plan_commit")
+    _draft_model()
     line = _draft(
         "s1",
         [_posting("Liabilities:Card", "-12.00"), _posting("Expenses:Travel")],

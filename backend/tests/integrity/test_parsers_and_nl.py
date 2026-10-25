@@ -77,16 +77,16 @@ def test_impossible_dates_are_refused_and_month_names_parse() -> None:
     assert exponent in (None, Decimal("123000"))
 
 
-def _nl_draft(payload: dict[str, Any], profile: Any) -> Any:
-    return planned("app.importing.core.nl", "from_model")(payload, profile)
+def _nl_draft(from_model: Any, payload: dict[str, Any], profile: Any) -> Any:
+    return from_model(payload, profile)
 
 
 @pytest.mark.fixme(id="L6-12", due="M6", reason="capability not built")
 def test_nl_transaction_checks_are_per_currency_and_default_to_the_profile_currency() -> None:
     check = planned("app.importing.core.nl", "check")
-    profile = planned("app.accounts.core", "LedgerProfile").for_test(
-        operating_currencies=("INR",), commodities=("AAPL", "EUR", "INR", "USD")
-    )
+    from_model = planned("app.importing.core.nl", "from_model")
+    ledger_profile = planned("app.accounts.core", "LedgerProfile")
+    profile = ledger_profile.for_test(operating_currencies=("INR",), commodities=("AAPL", "EUR", "INR", "USD"))
     fx = {
         "date": "2026-03-04",
         "postings": [
@@ -111,9 +111,9 @@ def test_nl_transaction_checks_are_per_currency_and_default_to_the_profile_curre
         "postings": [{"account": "Expenses:Food", "amount": "250"}, {"account": "Assets:Bank", "amount": "-250"}],
     }
 
-    unbalanced = check(_nl_draft(fx, profile), profile)
+    unbalanced = check(_nl_draft(from_model, fx, profile), profile)
     assert not unbalanced.balanced
     assert unbalanced.residuals == {"USD": Decimal("-100"), "EUR": Decimal("100")}
-    assert check(_nl_draft(buy, profile), profile).balanced  # 10 AAPL at cost 150 USD = 1500 USD
-    draft = _nl_draft(no_currency, profile)
+    assert check(_nl_draft(from_model, buy, profile), profile).balanced  # 10 AAPL at cost 150 USD = 1500 USD
+    draft = _nl_draft(from_model, no_currency, profile)
     assert {p.units.currency for p in draft.postings} == {"INR"}  # the profile's, never the first commodity (AAPL)

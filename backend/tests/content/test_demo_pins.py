@@ -106,7 +106,8 @@ def _clean_env() -> dict[str, str]:
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    cmd = ["git", "-C", str(repo), *args]
+    # Replacement refs could show another blob than the one committed; a signature check could add text to the output.
+    cmd = ["git", "--no-replace-objects", "-C", str(repo), *args]
     return subprocess.run(cmd, capture_output=True, text=True, check=False, env=_clean_env())  # noqa: S603 -- git with fixed arguments
 
 
@@ -120,12 +121,12 @@ def git_states(path: Path) -> list[tuple[str, str]]:
     if _git(repo, "rev-parse", "--is-shallow-repository").stdout.strip() != "false":
         pytest.fail("a shallow clone has no full history for the pins check: fetch it all (fetch-depth: 0 in CI)")
     rel = path.resolve().relative_to(repo.resolve()).as_posix()
-    log = _git(repo, "log", "--reverse", "--format=%H", "--", rel)
+    log = _git(repo, "log", "--no-show-signature", "--reverse", "--format=%H", "--", rel)
     if log.returncode != 0:
         pytest.fail(f"git log failed: {log.stderr.strip()}")
     states: list[tuple[str, str]] = []
     for sha in log.stdout.split():
-        shown = _git(repo, "show", f"{sha}:{rel}")
+        shown = _git(repo, "show", "--no-show-signature", f"{sha}:{rel}")
         states.append((sha[:12], shown.stdout if shown.returncode == 0 else ""))
     return [*states, ("working tree", path.read_text(encoding="utf-8") if path.exists() else "")]
 
@@ -287,3 +288,23 @@ def test_the_reader_ignores_a_git_dir_set_by_a_hook(tmp_path: Path, monkeypatch:
         repos[name] = repo
     monkeypatch.setenv("GIT_DIR", str(repos["other"] / ".git"))
     assert [text for _, text in git_states(repos["this"] / "pins.toml")] == [ONE, ONE]
+
+
+def test_the_reader_reads_the_committed_blobs_not_replacements(tmp_path: Path) -> None:
+    # A `git replace` of a rewritten pins blob by the original would hide the rewrite from a reader that honours it.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run(repo, "init", "-q")
+    rewritten = pins_text(*version(1, V1 | {"DEMO": "9" * 64}))
+    for i, text in enumerate([ONE, rewritten]):
+        (repo / "pins.toml").write_text(text)
+        _run(repo, "add", "pins.toml")
+        _run(repo, "commit", "-q", "-m", f"c{i}")
+    blobs: dict[str, str] = {}
+    for name, rev in (("one", "HEAD~1:pins.toml"), ("rewritten", "HEAD:pins.toml")):
+        blobs[name] = _git(repo, "rev-parse", rev).stdout.strip()
+    _run(repo, "replace", blobs["rewritten"], blobs["one"])
+    (repo / "pins.toml").write_text(ONE)  # the working tree agrees with the replacement too
+    states = git_states(repo / "pins.toml")
+    assert [text for _, text in states] == [ONE, rewritten, ONE]
+    assert history_problems(states) != []
