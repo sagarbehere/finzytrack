@@ -283,7 +283,7 @@ change = "changed"
 cites = ["ADR-0055", "INV-21"]
 why = "v0.2.2 computed it per posting: in a two-leg entry each posting got the other one, so the bank leg of a grocery purchase showed `Expenses:Food`; v0.4 gives every leg `Assets:Bank`. A transfer between two own accounts with no import key and no legacy key is NULL (v0.2.2: each leg showed the other account)."
 user_sql = true
-status = "draft"
+status = "owner:20261025-mirror-source-account-rows.md"
 
 [[table.column]]
 name = "source_account_type"
@@ -297,7 +297,7 @@ change = "changed"
 cites = ["ADR-0055"]
 why = "Follows `source_account`."
 user_sql = true
-status = "decided"
+status = "owner:20261025-mirror-source-account-rows.md"
 
 [[table.column]]
 name = "transaction_metadata_json"
