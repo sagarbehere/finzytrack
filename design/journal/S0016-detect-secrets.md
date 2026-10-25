@@ -33,3 +33,12 @@
 - F9 Low: one value reported once per plugin. Deduplicated per line.
 - Docs: roadmap wording; ARCHITECTURE.md §11 lists `scripts/secrets-scan/`.
 - Re-verification required (High fixes): round 2 below.
+- Round 2, head d861aaa: FAIL. Attacks: 13 (round-1 repros, new tests on old code, lone CR, file types, locales, git's file filter, argv, pin forms, mutants, written encodings, the config transformer, the full scan, three ways of running the tests). Round-1 F1, F2, F3 (name skips), F5–F9 hold.
+  - F1 Medium: a lone CR still moved a mark (detect-secrets reads with universal newlines). Fixed: CRLF, CR and LF each end a line; the test covers form feed, lone CR and CRLF.
+  - F2 Medium: generated `.txt` names lost detect-secrets' per-language keyword rules. Fixed: a plain suffix (`.go`, `.c`, `.yaml`, ...) is kept, anything else becomes `.txt`; tests for Go and C keywords and for suffix sanitising.
+  - F3 Medium: under a non-UTF-8 locale detect-secrets skipped files it could not decode, silently. Fixed: the tool runs with `PYTHONUTF8=1`; test under a Shift JIS locale.
+  - F4 Medium (tests): the mark test passed on the old code. Replaced (see F1).
+  - F5 Low: the `sha256:<hex>` pin form was dead code (detect-secrets never flags it). Dropped.
+  - F6 Low: a test checked a shared temp path. It now uses its own temp folder and checks that nothing is left behind.
+  - Self-mutation of round-3 fixes: 6 tried, 6 killed.
+- Re-verification required (3+ Medium on a High slice): round 3 below.

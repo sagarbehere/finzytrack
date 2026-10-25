@@ -15,8 +15,8 @@ Rules (design/process/PROCESS.md, "Privacy gate"):
   secret        API keys, tokens, private-key blocks, assigned credentials
   secret-entropy what detect-secrets 1.5.0 finds (vendor key formats, secret keywords, high-entropy strings),
                 run from its pinned environment `scripts/secrets-scan/` with network verification off, on every
-                blob whatever its name (BL-0035); a 64-hex value under a `sha256` or `checksum` key, or written
-                `sha256:<hex>`, is a hash pin. If the tool cannot run, the scan fails (exit 2), never passes
+                blob whatever its name (BL-0035); a 64-hex value under a `sha256` or `checksum` key is a hash
+                pin. If the tool cannot run, the scan fails (exit 2), never passes
   home-path     a real home directory (/Users/<name>, /home/<name>, /Volumes/<name>, ~<name>/, C:\\Users\\<name>)
   live-data-path the name of the owner's live data folder
   denylist      a literal from the owner's denylist (kept OUTSIDE the repo)
@@ -250,11 +250,10 @@ def scan_text(path: str, text: str, denylist: list[str]) -> list[Finding]:
 
 
 SECRETS_ENV = Path(__file__).resolve().parent / "secrets-scan"
-# A pin in a lockfile or pin file: a 64-hex value under a key named exactly `sha256` or `checksum`, or written
-# `sha256:<hex>` (uv.lock). The key must start at a word boundary, so `api_secret_sha256` is not a pin.
-HASH_PIN = re.compile(
-    r"""(?:(?<![\w-])["']?(?:sha256|checksum)["']?\s*[:=]\s*["']|["']sha256:)([0-9a-f]{64})["']"""
-)
+# A pin in a lockfile or pin file: a 64-hex value under a key named exactly `sha256` or `checksum`. The key
+# must start at a word boundary, so `api_secret_sha256` is not a pin.
+HASH_PIN = re.compile(r"""(?<![\w-])["']?(?:sha256|checksum)["']?\s*[:=]\s*["']([0-9a-f]{64})["']""")
+SAFE_SUFFIX = re.compile(r"\.[A-Za-z0-9]{1,12}")
 # detect-secrets skips files by name (lock files) and extension (.css, .svg, .map, ...); every blob is scanned.
 DS_DISABLED_FILTERS = ("detect_secrets.filters.heuristic.is_lock_file",
                        "detect_secrets.filters.heuristic.is_non_text_file")
@@ -265,13 +264,20 @@ class ToolError(Exception):
     pass
 
 
+def suffix(path: str) -> str:
+    ext = os.path.splitext(path.replace("\\", "/").rsplit("/", 1)[-1])[1]
+    return ext if SAFE_SUFFIX.fullmatch(ext) else ".txt"
+
+
 def detect_secrets(texts: dict[str, str]) -> dict[str, list[tuple[int, str]]]:
     """{path: [(line, hashed_secret)]} from detect-secrets over the given texts. Each text is written to the
     temporary folder under a generated name (`blob00000.txt`, ...), never under its own path, so no path can
     leave the folder or be read as an option (EP-30); the results are mapped back by that name."""
     if not texts:
         return {}
-    names = {f"blob{i:05d}.txt": path for i, path in enumerate(texts)}
+    # The file's own suffix is kept when it is plain (detect-secrets picks its keyword rules by file type);
+    # nothing else of the path reaches the tool.
+    names = {f"blob{i:05d}{suffix(path)}": path for i, path in enumerate(texts)}
     with tempfile.TemporaryDirectory() as tmp:
         for name, path in names.items():
             (Path(tmp) / name).write_text(texts[path], encoding="utf-8", newline="")
@@ -279,7 +285,9 @@ def detect_secrets(texts: dict[str, str]) -> dict[str, list[tuple[int, str]]]:
         cmd = ["uv", "run", "--project", str(SECRETS_ENV), "--locked", "--quiet", "detect-secrets", "scan",
                "--no-verify", *filters, "--", *names]
         try:
-            proc = subprocess.run(cmd, cwd=tmp, capture_output=True, text=True, timeout=300)
+            # PYTHONUTF8: under a non-UTF-8 locale detect-secrets would skip a file it cannot decode, silently
+            env = {**os.environ, "PYTHONUTF8": "1"}
+            proc = subprocess.run(cmd, cwd=tmp, capture_output=True, text=True, timeout=300, env=env)
         except (OSError, subprocess.TimeoutExpired) as e:
             raise ToolError(f"detect-secrets could not run: {e}") from e
         if proc.returncode != 0:
@@ -296,7 +304,8 @@ def detect_secrets(texts: dict[str, str]) -> dict[str, list[tuple[int, str]]]:
 def entropy_findings(texts: dict[str, str]) -> list[Finding]:
     out: list[Finding] = []
     for path, hits in detect_secrets(texts).items():
-        lines = texts[path].split("\n")  # as detect-secrets counts lines: only "\n" ends one
+        # as detect-secrets reads files (universal newlines): CRLF, CR and LF each end a line, nothing else does
+        lines = texts[path].replace("\r\n", "\n").replace("\r", "\n").split("\n")
         for lineno, hashed in sorted(set(hits)):  # one finding per value and line, whichever plugins found it
             line = lines[lineno - 1] if 0 < lineno <= len(lines) else ""
             allowed = {r.strip() for m in ALLOW_MARK.finditer(line) for r in m.group(1).split(",")}
