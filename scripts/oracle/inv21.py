@@ -258,6 +258,21 @@ def d_identified_twin(c, rows, cases, goldens, cfg=None):
     return False
 
 
+def _texts(t: data.Transaction) -> list[str]:
+    """The payee and narration texts of a transaction (absent ones left out)."""
+    return [x for x in (t.payee, t.narration) if isinstance(x, str)]
+
+
+def d_whitespace_only_difference(c, rows, cases, goldens, cfg=None):
+    """Two transactions whose hash inputs differ, but not once whitespace is trimmed and collapsed in every field."""
+    def squeeze(text: str) -> str:
+        return "|".join(" ".join(f.split()) for f in text.split("|"))
+    seen: dict[str, set[str]] = {}
+    for x in rows:
+        seen.setdefault(squeeze(x["hash_input"]), set()).add(x["hash_input"])
+    return any(len(v) > 1 for v in seen.values())
+
+
 FEATURES: dict[str, tuple[str, Detector]] = {
     # TransactionId rule 1 and 2: the legacy keys.
     "legacy-id": ("README Ids: the legacy `id` meta",
@@ -285,6 +300,23 @@ FEATURES: dict[str, tuple[str, Detector]] = {
     "no-payee": ("README Ids: payee empty when absent", lambda c, r, cs, g, cfg=None: any(t.payee is None
                                                                                           for t in c.txns)),
     "non-ascii": ("README Ids: UTF-8 text", lambda c, r, cs, g, cfg=None: any(not x["hash_input"].isascii() for x in r)),
+    # Payee and narration as written (S0032, seeded plant C04): nothing trimmed or collapsed.
+    "padded-text": ("README Ids: a payee or narration with spaces around it is hashed with them",
+                    lambda c, r, cs, g, cfg=None: any(x != x.strip() and x.strip() for t in c.txns for x in _texts(t))),
+    "inner-whitespace": ("README Ids: two spaces, a tab or a line break inside a payee or narration are kept",
+                         lambda c, r, cs, g, cfg=None: any(re.search(r"\s\s|[^\S ]", x.strip()) for t in c.txns
+                                                           for x in _texts(t))),
+    "blank-text": ("README Ids: a payee or narration of spaces only is not empty",
+                   lambda c, r, cs, g, cfg=None: any(x and not x.strip() for t in c.txns for x in _texts(t))),
+    "empty-text-payee": ("README Ids: an empty payee (empty text, not absent) hashes as empty",
+                         lambda c, r, cs, g, cfg=None: any(t.payee == "" for t in c.txns)),
+    "unicode-space": ("README Ids: a space outside ASCII (no-break space) is kept",
+                      lambda c, r, cs, g, cfg=None: any(any(ch.isspace() and not ch.isascii() for ch in x)
+                                                        for t in c.txns for x in _texts(t))),
+    "multi-line-text": ("README Ids: a line break inside a narration is kept",
+                        lambda c, r, cs, g, cfg=None: any("\n" in x for t in c.txns for x in _texts(t))),
+    "whitespace-only-difference": ("README Ids: entries that differ only in whitespace get different hashes",
+                                   d_whitespace_only_difference),
     "padding-transaction": ("README Ids: padding transactions are in the order too",
                             lambda c, r, cs, g, cfg=None: any(t.flag == "P" for t in c.txns)),
     "reorder-variant": ("README Ids: swapping twins in a file swaps their ids",

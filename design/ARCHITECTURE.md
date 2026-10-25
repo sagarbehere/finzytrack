@@ -819,7 +819,7 @@ The versions below are the newest stable releases published on or before **2026-
 | vite / @vitejs/plugin-react | 8.3.4 / 6.1.2 | |
 | vitest | 5.0.3 | with happy-dom 20.14.6, @testing-library/react 16.3.3, @testing-library/user-event 14.6.7 |
 | eslint | 10.12.0 | + typescript-eslint 8.71.1, eslint-plugin-react-hooks 7.1.1 (recommended-latest incl. compiler rules, as errors), eslint-plugin-boundaries 7.2.0, eslint-plugin-jsx-a11y 6.10.2 |
-| prettier | 3.9.10 | |
+| prettier | 3.9.10 | + eslint-config-prettier 10.1.8 (S0032): turns off the ESLint layout rules that fight prettier (10.1.6 and 10.1.7 were the compromised releases of 2025-07; never adopt them) |
 | @playwright/test / @axe-core/playwright | 1.64.0 / 4.13.0 | Chromium and WebKit (S13 measures in WebKit) |
 | fast-check | 4.10.2 | FE property tests (parsers, money, format) |
 | jscpd | 5.4.1 | duplicate detection (also run on Python) |

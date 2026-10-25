@@ -1,0 +1,55 @@
+; INV-21 goldens: payee and narration are hashed as written (synthetic data, S0032).
+; No whitespace is trimmed or collapsed, so entries that differ only in spaces
+; get different hashes and no ordinals.
+option "operating_currency" "USD"
+
+2020-01-01 open Assets:Bank USD
+2020-01-01 open Expenses:Food USD
+
+2020-05-01 * "Cafe" "coffee"
+  Expenses:Food   3.00 USD
+  Assets:Bank    -3.00 USD
+
+; A trailing and a leading space in the payee.
+2020-05-01 * "Cafe " "coffee"
+  Expenses:Food   3.00 USD
+  Assets:Bank    -3.00 USD
+
+2020-05-01 * " Cafe" "coffee"
+  Expenses:Food   3.00 USD
+  Assets:Bank    -3.00 USD
+
+; Spaces around the narration.
+2020-05-01 * "Cafe" "  coffee  "
+  Expenses:Food   3.00 USD
+  Assets:Bank    -3.00 USD
+
+; Two spaces and a tab inside.
+2020-05-01 * "Corner  Shop" "two  spaces	and a tab"
+  Expenses:Food   3.00 USD
+  Assets:Bank    -3.00 USD
+
+; An empty payee (empty text, not absent) and an empty narration.
+2020-05-01 * "" "empty payee"
+  Expenses:Food   3.00 USD
+  Assets:Bank    -3.00 USD
+
+2020-05-01 * "" ""
+  Expenses:Food   3.00 USD
+  Assets:Bank    -3.00 USD
+
+; A payee and a narration of spaces only.
+2020-05-01 * "   " "   "
+  Expenses:Food   3.00 USD
+  Assets:Bank    -3.00 USD
+
+; A no-break space (U+00A0) before the payee.
+2020-05-01 * " Kiosk" "no-break space"
+  Expenses:Food   3.00 USD
+  Assets:Bank    -3.00 USD
+
+; A narration over two lines.
+2020-05-02 * "Cafe" "first line
+second line"
+  Expenses:Food   3.00 USD
+  Assets:Bank    -3.00 USD

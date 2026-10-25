@@ -902,6 +902,140 @@
     }
    ]
   },
+  "text-whitespace": {
+   "transactions": [
+    {
+     "at": "main.beancount:9",
+     "flag": "*",
+     "transaction_id": "9d4f5d6ebf83f37bf6123414f550d76e54955bd135294b73e3be679015fdf14b",
+     "v022_transaction_id": "9d4f5d6ebf83f37bf6123414f550d76e54955bd135294b73e3be679015fdf14b",
+     "sha256": "9d4f5d6ebf83f37bf6123414f550d76e54955bd135294b73e3be679015fdf14b",
+     "hash_input": "2020-05-01|Cafe|coffee|-3.00 USD|Assets:Bank",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 9, \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 10}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 11}"
+     ]
+    },
+    {
+     "at": "main.beancount:14",
+     "flag": "*",
+     "transaction_id": "161f5e4abedecea24dfaec79b3f25a5d48c92e98dd9a3cab774590a36fac82de",
+     "v022_transaction_id": "161f5e4abedecea24dfaec79b3f25a5d48c92e98dd9a3cab774590a36fac82de",
+     "sha256": "161f5e4abedecea24dfaec79b3f25a5d48c92e98dd9a3cab774590a36fac82de",
+     "hash_input": "2020-05-01|Cafe |coffee|-3.00 USD|Assets:Bank",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 14, \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 15}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 16}"
+     ]
+    },
+    {
+     "at": "main.beancount:18",
+     "flag": "*",
+     "transaction_id": "860aa0e306b4c1419482415fb2ad7979e6e5852614fd8c69f02a372b8d77e56f",
+     "v022_transaction_id": "860aa0e306b4c1419482415fb2ad7979e6e5852614fd8c69f02a372b8d77e56f",
+     "sha256": "860aa0e306b4c1419482415fb2ad7979e6e5852614fd8c69f02a372b8d77e56f",
+     "hash_input": "2020-05-01| Cafe|coffee|-3.00 USD|Assets:Bank",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 18, \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 19}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 20}"
+     ]
+    },
+    {
+     "at": "main.beancount:23",
+     "flag": "*",
+     "transaction_id": "40c70b7c8c17dbf1cb11d1d63e988821ca49269cfa343d51856300ee6c768fcf",
+     "v022_transaction_id": "40c70b7c8c17dbf1cb11d1d63e988821ca49269cfa343d51856300ee6c768fcf",
+     "sha256": "40c70b7c8c17dbf1cb11d1d63e988821ca49269cfa343d51856300ee6c768fcf",
+     "hash_input": "2020-05-01|Cafe|  coffee  |-3.00 USD|Assets:Bank",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 23, \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 24}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 25}"
+     ]
+    },
+    {
+     "at": "main.beancount:28",
+     "flag": "*",
+     "transaction_id": "3d2edb968dccc4a027fbfac45a2c6b6d923a2325ceaf199d2cabcf839e02984a",
+     "v022_transaction_id": "3d2edb968dccc4a027fbfac45a2c6b6d923a2325ceaf199d2cabcf839e02984a",
+     "sha256": "3d2edb968dccc4a027fbfac45a2c6b6d923a2325ceaf199d2cabcf839e02984a",
+     "hash_input": "2020-05-01|Corner  Shop|two  spaces\tand a tab|-3.00 USD|Assets:Bank",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 28, \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 29}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 30}"
+     ]
+    },
+    {
+     "at": "main.beancount:33",
+     "flag": "*",
+     "transaction_id": "3f0c8bfd2e590b36216a24db71e27e2daaa5f74c47dce31be36528d1d11bc639",
+     "v022_transaction_id": "3f0c8bfd2e590b36216a24db71e27e2daaa5f74c47dce31be36528d1d11bc639",
+     "sha256": "3f0c8bfd2e590b36216a24db71e27e2daaa5f74c47dce31be36528d1d11bc639",
+     "hash_input": "2020-05-01||empty payee|-3.00 USD|Assets:Bank",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 33, \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 34}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 35}"
+     ]
+    },
+    {
+     "at": "main.beancount:37",
+     "flag": "*",
+     "transaction_id": "9147059de7e85ed02b568b6417384152dbab6a44895be88b40484e1ea6495758",
+     "v022_transaction_id": "9147059de7e85ed02b568b6417384152dbab6a44895be88b40484e1ea6495758",
+     "sha256": "9147059de7e85ed02b568b6417384152dbab6a44895be88b40484e1ea6495758",
+     "hash_input": "2020-05-01|||-3.00 USD|Assets:Bank",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 37, \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 38}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 39}"
+     ]
+    },
+    {
+     "at": "main.beancount:42",
+     "flag": "*",
+     "transaction_id": "f4dc57eff24740ae642dc1e372003cfa52a7a7df41701cc5044deaf78dac1f1d",
+     "v022_transaction_id": "f4dc57eff24740ae642dc1e372003cfa52a7a7df41701cc5044deaf78dac1f1d",
+     "sha256": "f4dc57eff24740ae642dc1e372003cfa52a7a7df41701cc5044deaf78dac1f1d",
+     "hash_input": "2020-05-01|   |   |-3.00 USD|Assets:Bank",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 42, \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 43}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 44}"
+     ]
+    },
+    {
+     "at": "main.beancount:47",
+     "flag": "*",
+     "transaction_id": "27177a00881217b46933a01c4a0ca1c925382d95dc116aff05af571feb3e50ff",
+     "v022_transaction_id": "27177a00881217b46933a01c4a0ca1c925382d95dc116aff05af571feb3e50ff",
+     "sha256": "27177a00881217b46933a01c4a0ca1c925382d95dc116aff05af571feb3e50ff",
+     "hash_input": "2020-05-01| Kiosk|no-break space|-3.00 USD|Assets:Bank",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 47, \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 48}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 49}"
+     ]
+    },
+    {
+     "at": "main.beancount:52",
+     "flag": "*",
+     "transaction_id": "b605371149c2f0945ee0769904b4ab4c3a344774d0d539ca671afbca9df00727",
+     "v022_transaction_id": "b605371149c2f0945ee0769904b4ab4c3a344774d0d539ca671afbca9df00727",
+     "sha256": "b605371149c2f0945ee0769904b4ab4c3a344774d0d539ca671afbca9df00727",
+     "hash_input": "2020-05-02|Cafe|first line\nsecond line|-3.00 USD|Assets:Bank",
+     "metadata_json": "{\"filename\": \"main.beancount\", \"lineno\": 52, \"__tolerances__\": {\"USD\": \"0.005\"}}",
+     "posting_metadata_json": [
+      "{\"filename\": \"main.beancount\", \"lineno\": 54}",
+      "{\"filename\": \"main.beancount\", \"lineno\": 55}"
+     ]
+    }
+   ]
+  },
   "twins-reorder-a": {
    "transactions": [
     {

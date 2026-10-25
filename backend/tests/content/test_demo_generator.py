@@ -27,7 +27,6 @@ from typing import override
 import pytest
 
 from app.content.demo import (
-    GENERATOR_VERSION,
     Directive,
     Fragment,
     FragmentContext,
@@ -139,26 +138,8 @@ def test_a_caller_decimal_context_does_not_change_the_bytes() -> None:
         assert text_of() == expected
 
 
-# S0027 verifier F2: GENERATOR_VERSION is "raised when the same inputs would give other bytes". This pins the
-# bytes of each size at one anchor beside the version (a change detector, not a spec value: EP-29 exempts it as a
-# characterization pin). Output changes on purpose -> bump GENERATOR_VERSION and update both lines together.
-@dataclass(frozen=True)
-class Pin:
-    size: Size
-    sha256: str
-
-
-PINNED_VERSION = 1
-PINNED = (
-    Pin(Size.DEMO, sha256="a0dbf96d3b6fb0ee4d236b628b0a8def25fe161ce3cd813883ca222334b7d52c"),
-    Pin(Size.K5, sha256="9c09fd86ed13d79e13aab0fa6efb028dd0e3b18617400e496a79bfae1fb706f7"),
-    Pin(Size.K54, sha256="b2cc85a2696df1c216c0480aff7b09bf8d03b54fc30bacbdc473d44a027d8c51"),
-)
-
-
-def test_output_changes_only_with_a_new_generator_version() -> None:
-    digests = tuple(Pin(size, hashlib.sha256(text_of(ANCHOR, size).encode()).hexdigest()) for size in Size)
-    assert (GENERATOR_VERSION, digests) == (PINNED_VERSION, PINNED)
+# S0027 verifier F2: the output changes only with a new GENERATOR_VERSION. The pins per version and their
+# append-only check are in tests/content/test_demo_pins.py and demo_pins.toml (S0032, seeded plant C08).
 
 
 # --- The anchor is an explicit input (ADR-0022 "the anchor is the release tag's date (SOURCE_DATE_EPOCH)") ---

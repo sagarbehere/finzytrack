@@ -1,4 +1,5 @@
 // Lint for frontend/ (ARCHITECTURE.md §10; frontend/CLAUDE.md). Warnings fail: --max-warnings 0.
+import prettierOff from 'eslint-config-prettier/flat'
 import pluginVue from 'eslint-plugin-vue'
 import vueA11y from 'eslint-plugin-vuejs-accessibility'
 import globals from 'globals'
@@ -49,6 +50,9 @@ export default tseslint.config(
   ...tseslint.configs.strictTypeChecked,
   ...pluginVue.configs['flat/recommended'],
   ...vueA11y.configs['flat/recommended'],
+  // prettier owns formatting: the presets' layout rules (vue/max-attributes-per-line and the like) are off, or
+  // `eslint --fix` and `prettier --write` undo each other (S0032). Our own rules below are not formatting rules.
+  prettierOff,
   {
     languageOptions: {
       globals: globals.browser,

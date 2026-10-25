@@ -1,10 +1,13 @@
 // @vitest-environment node
 // The frontend's type gate and lint bans cannot be loosened silently (EP-22, INV-06, INV-07).
-// The tsconfig is pinned whole; each ESLint ban is checked on planted code beside code that must pass.
+// The tsconfig and the knip config are pinned whole; each ESLint ban is checked on planted code beside code that must
+// pass; ESLint and prettier agree on formatting (S0032).
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-import { ESLint } from 'eslint'
+import { ESLint, type Linter } from 'eslint'
+import prettierOff from 'eslint-config-prettier'
+import * as prettier from 'prettier'
 import { describe, expect, it } from 'vitest'
 
 const root = fileURLToPath(new URL('../..', import.meta.url))
@@ -142,5 +145,63 @@ describe('[INV-24] Playwright specs run through the acceptance harness (S0030)',
       "import type { Page } from '@playwright/test'\n\nimport { expect, test } from './harness/fixtures'\n\n" +
       "test('x', async ({ page }: { page: Page }) => {\n  await expect(page).toHaveTitle('x')\n})\n"
     expect(await inSpec(ok)).not.toContain('@typescript-eslint/no-restricted-imports')
+  })
+})
+
+describe('[EP-22] the knip config', () => {
+  // Seeded plant E12: an `ignore` of src/** hid every unused file and export while knip stayed green.
+  it('is exactly the reviewed one @regression-guard', () => {
+    const config: unknown = JSON.parse(readFileSync(`${root}/knip.json`, 'utf8'))
+    expect(config).toEqual({
+      $schema: 'https://unpkg.com/knip@6/schema.json',
+      entry: [
+        'tests/unit/**/*.test.ts',
+        'e2e/**/*.spec.ts',
+        'eslint.boundaries.js',
+        'e2e/**/*.selftest.ts',
+        'e2e/harness/selftest/playwright.config.ts',
+      ],
+      project: ['src/**/*.{ts,vue}', 'tests/**/*.ts', 'e2e/**/*.ts'],
+      ignoreDependencies: ['license-checker-rseidelsohn', '@tauri-apps/cli'],
+    })
+  })
+})
+
+describe('ESLint agrees with prettier on formatting (S0032)', () => {
+  // eslint-plugin-vue's layout rules fought prettier's Vue output (the seeded-defect run's side finding):
+  // `eslint --fix` and `prettier --write` undid each other. eslint-config-prettier turns every such rule off.
+  const severity = (entry: Linter.RuleEntry | undefined): number => {
+    const level: unknown = Array.isArray(entry) ? entry[0] : entry
+    return level === 'error' || level === 2 ? 2 : level === 'warn' || level === 1 ? 1 : 0
+  }
+  const layout = [
+    'vue/max-attributes-per-line',
+    'vue/singleline-html-element-content-newline',
+    'vue/multiline-html-element-content-newline',
+    'vue/html-indent',
+    'vue/html-self-closing',
+    'vue/html-closing-bracket-newline',
+  ]
+
+  it('passes a prettier-formatted component with several attributes per element', async () => {
+    const file = `${root}/src/App.vue`
+    const source =
+      '<script setup lang="ts">\nconst label = \'x\'\n</script>\n\n<template>\n' +
+      '  <section class="a" :title="label" aria-label="probe" data-x="1"><span>{{ label }}</span></section>\n' +
+      '  <p class="b" :title="label">{{ label }}</p>\n  <br/>\n</template>\n'
+    const formatted = await prettier.format(source, { ...(await prettier.resolveConfig(file)), filepath: file })
+    expect(formatted).toContain('<p class="b" :title="label">{{ label }}</p>') // still several attributes on a line
+    expect(await ruleIds(formatted, 'App.vue')).toEqual([])
+  })
+
+  it('leaves every rule eslint-config-prettier turns off switched off, for Vue and TypeScript files', async () => {
+    const off = Object.keys(prettierOff.rules).filter((name) => severity(prettierOff.rules[name]) === 0)
+    expect(off).toEqual(expect.arrayContaining(layout))
+    const eslint = new ESLint({ cwd: root })
+    for (const file of ['src/App.vue', 'src/main.ts', 'tests/unit/gates.test.ts']) {
+      const config = (await eslint.calculateConfigForFile(`${root}/${file}`)) as Linter.Config
+      const on = off.filter((name) => severity(config.rules?.[name]) !== 0)
+      expect(on, file).toEqual([])
+    }
   })
 })

@@ -1,0 +1,22 @@
+# The demo generator's output, per GENERATOR_VERSION (app.content.demo.compose): the SHA-256 of main.beancount for each
+# size at the anchor 2026-10-25 (S0027 verifier F2; S0032, seeded plant C08). A change detector, not a spec value
+# (EP-29 exempts it as a characterization pin).
+#
+# Append-only. A version's pins never change and are never removed: output that changes on purpose raises
+# GENERATOR_VERSION and adds that version's pins below, in the same commit. tests/content/test_demo_pins.py checks the
+# file against its own git history, so regenerating the pins under the same version fails.
+
+[[pin]]
+version = 1
+size = "DEMO"
+sha256 = "a0dbf96d3b6fb0ee4d236b628b0a8def25fe161ce3cd813883ca222334b7d52c"
+
+[[pin]]
+version = 1
+size = "K5"
+sha256 = "9c09fd86ed13d79e13aab0fa6efb028dd0e3b18617400e496a79bfae1fb706f7"
+
+[[pin]]
+version = 1
+size = "K54"
+sha256 = "b2cc85a2696df1c216c0480aff7b09bf8d03b54fc30bacbdc473d44a027d8c51"

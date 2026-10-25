@@ -14,7 +14,9 @@ from app.content.demo.ledger_text import Directive
 from app.content.demo.model import Fragment, FragmentContext, Size, span_for
 from app.content.demo.rng import SeededRng
 
-GENERATOR_VERSION = 1  # raised when the same inputs would give other bytes
+# Raised when the same inputs would give other bytes, with the new version's pins added to
+# tests/content/demo_pins.toml in the same commit (append-only; tests/content/test_demo_pins.py).
+GENERATOR_VERSION = 1
 ROOT_FILE = "main.beancount"
 _NAME = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 

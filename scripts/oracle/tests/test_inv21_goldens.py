@@ -29,8 +29,8 @@ class RealCorpus(unittest.TestCase):
         # Inventory and corpus sizes, so a silently shrunk corpus or inventory is noticed (journal Hand-off).
         doc = json.loads((inv21.CORPUS / "goldens.json").read_text(encoding="utf-8"))
         keys = tomllib.loads((inv21.CORPUS / "keys.toml").read_text(encoding="utf-8"))["key"]
-        self.assertEqual(len(doc["cases"]), 11)
-        self.assertEqual(sum(len(c["transactions"]) for c in doc["cases"].values()), 67)
+        self.assertEqual(len(doc["cases"]), 12)
+        self.assertEqual(sum(len(c["transactions"]) for c in doc["cases"].values()), 77)
         self.assertEqual(len(keys), 22)
         self.assertEqual(sum(k["class"] == "read" for k in keys), 18)
 
@@ -337,6 +337,13 @@ NEAR_MISS: dict[str, str] = {
     "pipe-collision": COFFEE + "\n" + SNACK,
     "no-payee": '2020-02-01 * "" "b"\n  Expenses:Food  1 USD\n  Assets:Bank\n',
     "non-ascii": '2020-02-01 * "A" "b"\n  note: "Café"\n  Expenses:Food  1 USD\n  Assets:Bank\n',
+    "padded-text": '2020-02-01 * "   " "Corner  Shop\ta"\n  Expenses:Food  1 USD\n  Assets:Bank\n',
+    "inner-whitespace": '2020-02-01 * " Cafe " "  coffee to go  "\n  Expenses:Food  1 USD\n  Assets:Bank\n',
+    "blank-text": '2020-02-01 * " a " ""\n  Expenses:Food  1 USD\n  Assets:Bank\n',
+    "empty-text-payee": '2020-02-01 * "narration only"\n  Expenses:Food  1 USD\n  Assets:Bank\n',
+    "unicode-space": '2020-02-01 * "Café ₹" " a\tb "\n  Expenses:Food  1 USD\n  Assets:Bank\n',
+    "multi-line-text": '2020-02-01 * "A\tB" "line one, line two"\n  Expenses:Food  1 USD\n  Assets:Bank\n',
+    "whitespace-only-difference": COFFEE + "\n" + COFFEE.replace('"Cafe"', '"Cafx"') + "\n" + COFFEE,
     "padding-transaction": '2020-02-01 ! "A" "pending"\n  Expenses:Food  1 USD\n  Assets:Bank\n',
     "lineno-tie": COFFEE + "\n" + COFFEE,
     "source-account-key": '2020-02-01 * "A" "b"\n  source_account: "Assets:Bank"\n  Expenses:Food  1 USD\n  Assets:Bank\n',

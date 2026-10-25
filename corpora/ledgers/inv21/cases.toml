@@ -66,3 +66,7 @@ user_keys = ["issuer", "institution", "opened-on", "overdraft", "joint", "rank",
 
 [metadata-keys.v04_overrides]
 "main.beancount:66" = "k:v1:brk:TRADE0004"
+
+[text-whitespace]
+features = ["padded-text", "inner-whitespace", "blank-text", "empty-text-payee", "unicode-space", "multi-line-text",
+            "whitespace-only-difference"]

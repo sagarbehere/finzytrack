@@ -1,0 +1,82 @@
+# S0032: Close the seeded-defect run's misses outside the push gate
+
+Base: `796353ab` (the slice started on `d63e31f3`; S0031's verifier-round commit landed meanwhile and touches none of this slice's files).
+
+## Brief
+- Goal: close the misses of M0's first seeded-defect run (BL-0075) that do not touch the files S0031 owns: (1) G01/G02/G03: a `fixme` test passes on any failure, so a buggy first implementation of L4-03 or L9-01 stays green; a fixme may now pass only while its planned module is missing (pytest: `xfail(strict=True, raises=<planned()'s missing-module error>)`; vitest: the `fixme` helper fails the test on any other error); (2) C04: INV-21 goldens with leading, trailing, inner and whitespace-only payee and narration text and an empty-text payee, so a stripping derivation dies; (3) C08: the demo generator's output pins can no longer be regenerated without raising `GENERATOR_VERSION` (an append-only pins file checked against its git history); (4) E12: `frontend/knip.json` pinned whole in `gates.test.ts`; (5) the eslint-plugin-vue layout rules that fight prettier are turned off.
+- Implements: review:27 §1(d) (the seeded-defect run; roadmap M0 exit "CI fails on planted bugs (I2, I5, L4-03, L9-01)": the L4-03, L9-01 and I5 part), PROCESS.md §9 (every escape becomes a gate), S0029's fixme design, S0022's INV-21 goldens spec (`design/specs/mirror/inv21-goldens.md`), S0027's GENERATOR_VERSION rule, EP-22, EP-24, EP-29.
+- Capabilities: none change status.
+- Invariants touched: none change status. INV-21's goldens grow (it stays pending, BL-0021).
+- Risk class / lane: Medium / light (tests and test tooling; no product code, no ledger or user data).
+- Acceptance tests: `backend/tests/architecture/test_fixme_marker.py` (a fixme failing for any reason other than a missing planned module fails the run; a missing dependency of a present planned module is not "missing"); `frontend/tests/unit/fixmeHelpers.test.ts` (same for vitest); the seeded plants G01 and G02/G03 rerun in a scratch clone go red, every existing fixme stays expected-fail on the real tree; `scripts/oracle/tests/test_inv21_goldens.py` (new case and features with near misses; the narration-strip mutant of `inv21.py` dies); `backend/tests/content/test_demo_generator.py` (pins history: a rewritten entry, a removed version, a version that is not the newest, output that does not match, all refused); `frontend/tests/unit/gates.test.ts` (knip.json pinned; a prettier-formatted multi-attribute element passes eslint; every rule eslint-config-prettier turns off is off in the resolved config).
+- Expected doc impact: `backend/CLAUDE.md`, `frontend/CLAUDE.md` (fixme passes only while the module is missing; knip.json pinned), `design/specs/mirror/inv21-goldens.md` (features, counts), `design/ARCHITECTURE.md` §10 (eslint-config-prettier pin), `THIRD_PARTY_NOTICES` if the licence check asks, `design/backlog.md` (BL-0075 done; the misses left for the later slice get a row), `design/specs/roadmap.md` §1 item 4. No ADR expected (tightenings of existing tests); no user docs.
+- Open questions: none that hit the rubric (tightenings of test tooling; a new dev dependency that meets EP-24's age and the licence check).
+
+## The seeded-defect run (BL-0075), as recorded
+
+Run 1 at M0 exit, 2026-10-25/26, on `next` at `4fccbc6c`, in a scratch clone (not a worktree), gates only: pre-commit with each plant staged, the pre-push body run directly with only its allowPush block stripped, agent-safety plants probed through `guards.bash_problem`/`path_problem` on strings. Each plant alone, formatted, gates run, reverted. Plant scripts and logs stay in the session scratchpad (not committed).
+
+| Class | Plants | Caught | Rate |
+|---|---|---|---|
+| a privacy (INV-23) | 11 | 8 | 73% |
+| b agent safety (guard probes) | 21 | 19 | 90% |
+| c Beancount / finance | 10 | 7 | 70% |
+| d architecture / process | 8 | 7 | 88% |
+| e gates loosened | 12 | 5 | 42% |
+| f frontend rules | 8 | 4 | 50% |
+| g roadmap-named (L4-03, L9-01) | 2 | 0 | 0% |
+| All | 72 | 50 | 69% |
+| All except string-only guard probes | 51 | 31 | 61% |
+
+G1 target: at least 80%. The M0 exit item "CI fails on planted bugs (I2, I5, L4-03, L9-01)" was not met: buggy first implementations of L4-03 and L9-01 stayed green under strict xfail and `it.fails`; I5 by the same mechanism; I2 has no test yet beyond its write-corpus case C10, which was caught.
+
+Misses, ranked (should-catch gate, then prevention); the owner of each fix in brackets:
+1. G01 (L4-03 reader drops the `-` row), G02/G03 (L9-01 Delete focused): fixme tests pass on any failure; a fixme passes only while the planned module is missing [this slice].
+2. C08: demo tax 22% to 2.2% with the output pins regenerated and GENERATOR_VERSION unchanged; fail when the pins change while the version does not [this slice]; the oracle-total gate is BL-0063.
+3. C04: `inv21.py`'s content-hash derivation strips the narration and no golden has edge whitespace; whitespace and empty-field golden cases [this slice].
+4. E01, E02: privacy scan always returns 0 / `--staged` skips `.md`; CLI exit-code meta-tests [later slice, BL-0079].
+5. E03, E04: invariants line removed from pre-push; pre-commit privacy scan chained with `; true`; a meta-test pinning each hook's check list [later slice, BL-0079].
+6. A05 statement excerpt, A06 8-digit "Acct #", A11 UPI VPA alone; privacy rules and the owner's denylist [later slice, BL-0079].
+7. E06: skip marker on an architecture test (INV-12); refuse skips in `tests/architecture` and INV-tagged tests [S0031 red team M2, else BL-0079].
+8. Pre-commit-only catches (A08 bank CSV; eslint F02, F04, F06, F07); the guard and full eslint at pre-push [S0031 H2, M3].
+9. F01, F08 float money, F03 `Intl.DateTimeFormat().format()` today, F05 `startsWith('Assets:Cash')`, C09 backend float; BL-0006/BL-0007 bans [M1a].
+10. E10: L4-03 fixme and backlog row re-dated M6 to M12 together; a milestone change must cite a decision [later slice, BL-0079].
+11. E12: `knip.json` ignores `src/**`; pin knip.json [this slice].
+12. B09 `nc -z localhost 8001`, B15 write via `$FT_DATA_DIR`; the guard's loopback-space-port and unresolved `$VAR` targets [later slice, BL-0079; BL-0062 family].
+13. D05: INV-05 pending "by M0" at M0 passes plain pre-push; caught by the exit run (by design); optional warning [none].
+
+Side finding: eslint-plugin-vue layout rules conflict with prettier's Vue output [this slice].
+
+## Decisions
+- **What "missing" means (agent).** Backend: `planned(module, name)` raises `PlannedMissing` (an `ImportError`) only when the planned module itself, or a package on its dotted path, is absent (`ModuleNotFoundError.name` equal to the module or a dotted prefix of it), or when the module exists without the planned name. A planned module that exists but fails on import (a missing dependency, its own `ImportError`, a `from pkg import x` of a name the package lacks) raises that error unchanged, so the fixme is red. The missing-name case counts as missing because packages the tests reach already exist without the symbol (`app.domain` has no `Amount` yet); a buggy implementation under the planned name is still red. Frontend: `planned(path)` raises `PlannedMissing` when no file answers the path the way Vite resolves it (the path, `.ts`, `/index.ts`; a `.vue` is named with its extension); once a file exists, whatever the import and the body do is real. The frontend does not check exported names (the tests destructure them; a missing export is a red `TypeError`), which is stricter than the backend and acceptable because each planned path is one file.
+- **The vitest wrapper swallows, it does not rethrow (agent; correction of the brief's wording).** The brief says the helper "rethrows any error that is not the planned-module-missing error". Under `it.fails` a rethrown error is the expected outcome, so that would keep a buggy implementation green. `expectedToFail` rethrows only `PlannedMissing`; any other error is written to the console and the body returns, which `it.fails` reports as red ("expected to fail"). The runner call stays the helper's one `it.fails(` (pinned by `test_check_invariants.py`).
+- **Where the wiring is pinned (agent).** `scripts/check_invariants.py` (S0031's file) refuses the words `fixme` and `.fails` anywhere in a frontend test file outside the two helpers, so `fixmeHelpers.test.ts` cannot call the helper or name its runner. It tests `expectedToFail` and `planned()` by behaviour, and a new `scripts/tests/test_pending_helper.py` pins that the helper hands the runner `expectedToFail(meta, body)` and that the wrapper rethrows only `PlannedMissing` (each loosening planted). `planned()` takes an `exists` function for its own test (a file that exists but fails to import); stubbing `node:fs` from the test did not reach the helper's import.
+- **Demo pins: an append-only file checked against its git history (agent).** Options: (a) compare with the previous commit only; (b) a pins file whose every committed state must keep every earlier pin; (c) pins beside the version as before. (c) is what plant C08 defeated. (b) chosen over (a): it is the same cost, catches a rewrite in any commit (not only the last), and the working tree is the last state, so it fails before a commit too. It needs history: a shallow clone or a copy without `.git` fails (never skips); CI's backend job now fetches the full history (`fetch-depth: 0`). The reader drops `GIT_*` variables so a hook's `GIT_DIR` cannot point it at another repository. Self-mutation runs, whose tree copies have no `.git`, deselect the one history test (`-k "not git_history"`).
+- **INV-21 whitespace case (agent).** New case `text-whitespace` (10 transactions) and seven features with detectors and near misses: `padded-text`, `inner-whitespace`, `blank-text`, `empty-text-payee`, `unicode-space`, `multi-line-text`, `whitespace-only-difference`. Account names cannot hold whitespace in Beancount, so the account field's whitespace is the `source_account` value, already covered (`padded-source-account`). Values from v0.2.2's code through the committed generator and the `v0.2.2` tag; no existing golden changed. The mirror README now says that payee and narration are hashed exactly as Beancount read them.
+- **eslint-config-prettier 10.1.8 (agent; EP-24).** MIT, no dependencies, no install scripts, released 2025-07-18 (well past the 14-day minimum); it is the clean release after the compromised 10.1.6 and 10.1.7. Placed after the plugin presets and before our own rules, so a later deliberate rule still wins; a test checks that every rule the package turns off is off in the resolved config for a `.vue`, a `.ts` and a test file, so a preset added after it, or the package dropped, is red. `vue/first-attribute-linebreak` stays on: prettier's output already satisfies it.
+- **BL-0075 closed, BL-0079 opened (agent).** The run is done and recorded here; the misses outside this slice and S0031 move to BL-0079, at M0 like BL-0075, so the M0 exit run stays red until they are closed.
+
+## Hand-off (PROCESS.md §3 step 4; ADR-0057)
+(The verifier reads only the Brief, so this section does not steer its attacks; it is the implementer's own record.)
+- Checks that accept, tag or refuse, each with its must-not-pass test:
+  - `tests/conftest.py` fixme marker = `xfail(strict=True, raises=PlannedMissing)` with `tests/integrity/planned.py`: `backend/tests/architecture/test_fixme_marker.py` (a passing fixme, a fixme whose body fails on a built module, a hand-raised `ImportError` or `ModuleNotFoundError`, a built module with a missing dependency, one whose import raises, a submodule importing a name its package lacks: all FAILED; a missing module, submodule or name: XFAIL).
+  - `frontend/tests/fixme.ts` (`expectedToFail`, `planned`): `frontend/tests/unit/fixmeHelpers.test.ts` (a built module whose body throws, an error named like `PlannedMissing`, a failed dynamic import, a `TypeError`, a passing body: all resolve, which the runner reports red; a file that exists but fails to import is not `PlannedMissing`; a missing file, with or without extension, is) and `scripts/tests/test_pending_helper.py` (raw body to the runner, every error rethrown, rethrow before the check, body not awaited, a wrapper that drops the body: all refused).
+  - `backend/tests/content/test_demo_pins.py` (`parse`, `history_problems`, `current_problems`, `git_states`): pins regenerated under the same version, a pin removed, an old version dropped, the file deleted, an old version rewritten beside a new one, a rewrite in an earlier commit; ten malformed files; output differing, a size missing, a version with no pins, a version that is not the newest, no pins; a shallow clone, no checkout, a hook's `GIT_DIR`.
+  - INV-21 feature detectors (seven new): one near-miss ledger each in `scripts/oracle/tests/test_inv21_goldens.py`; the goldens catch a stripped narration (C04), a stripped payee, collapsed inner whitespace.
+  - `frontend/knip.json` pin and the eslint/prettier agreement: `frontend/tests/unit/gates.test.ts` (an `ignore` of `src/**` changes the pinned object; a prettier-formatted component with several attributes on a line must lint clean; every rule eslint-config-prettier turns off must be off in the resolved configs).
+- Seeded plants rerun (scratch clone, not a worktree; venv and node_modules symlinked and excluded; `PYTHONPATH=<clone>/backend/src`): on the base, G01, G02 and G03 stay green (reproduced); with this slice G01 fails `test_split_debit_credit_columns_parse_every_row`, G02 and G03 fail the L9-01 confirm test; every other fixme stays expected-fail (pytest 24 xfailed, vitest 9 expected fail). C04 (narration strip in `inv21.py`) fails the INV-21 test. C08 (tax 22% to 2.2%, pins regenerated under version 1) fails the history test both committed and uncommitted; the same change with `GENERATOR_VERSION = 2` and appended pins passes.
+- Tests fail on the base: `test_fixme_marker.py`, `fixmeHelpers.test.ts` (9 of 10), `test_pending_helper.py`, `test_inv21_goldens.py` (2 failures, 7 errors), `test_demo_pins.py` (the output test), the two eslint/prettier tests. The knip pin is a pin of the current file (`@regression-guard`).
+- Self-mutation (Medium): `scripts/mutants.py` plan `s0032/mut/plan-backend.toml` (cmd: the marker test, the pins tests and the integrity tests, the history test deselected): 19 tried; first run 18 killed, `planned-any-import-error` survived and got the `half.sub` case; rerun 19 killed. Plan `plan-oracle.toml` (cmd: the INV-21 test): 11 tried, 10 killed; `narration-collapse` survived because the mutant was the identity (`' '.join(x.split(' '))`), so it was replaced by a real collapse, which was killed (`plan-oracle2.toml`). Frontend by hand (`mut/frontend_mutants.py`): 9 tried (runner gets the raw body, wrapper rethrows all, wrapper matches by name, no existence check, wrong root, import errors called missing, prettier config dropped, prettier config moved first, knip ignores `src/**`); first run 7 killed, `planned-import-error-is-missing` got the exists-but-broken test and `eslint-prettier-first` was a duplicate rather than a move (fixed); rerun 9 killed. Total 39 tried, 39 killed after the fixes.
+- Population: the fixme markers on the real tree (S0029's inventory, by marker): 17 pytest markers giving 24 test items, 9 vitest, 7 Playwright `test.fixme` (body not run, unchanged). All 24 + 9 still expected-fail under the new rule.
+
+## Verifier
+- Not run in this session: the caller starts the verifier on the landed range.
+
+## Golden changes
+- `corpora/ledgers/inv21/goldens.json`: a new case `text-whitespace` (10 rows) added by the generator from v0.2.2's code; no existing row changed (the diff only adds lines).
+- `backend/tests/content/test_demo_generator.py` pins moved unchanged to `backend/tests/content/demo_pins.toml` (same three sha256 values, version 1).
+
+## Retro
+- What a cheaper gate could have found: the fixme hole was a design choice in S0029 (strict xfail without `raises`); the seeded run found it, which is what seeded runs are for. The scan in `check_invariants.py` forbids the runner's words even in comments of test files, which pushed one pin into a Python test; worth a look when the scan is next touched.
+- Where time went: the vitest helper's test (the scan's word rules, then `node:fs` stubbing that never reached the helper); the rest was direct.
+- Process cost: one implementer pass, no verifier yet.
