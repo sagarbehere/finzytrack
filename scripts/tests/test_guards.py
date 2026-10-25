@@ -128,7 +128,19 @@ class GuardTest(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertTrue(guards.bash_problem(cmd, self.repo))
         self.assertIsNone(guards.bash_problem("cat corpora/MANIFEST.tsv", self.repo))
-        # Stated limit (PROCESS.md §11, the guards are a safety net): an interpreter writing the file is not parsed.
+        # S0026 verifier F2: other spellings of the same file are the same file (case-insensitive disk, `..`, symlinks)
+        (self.repo / "corpora").mkdir()
+        manifest.write_text("")
+        (self.repo / "c2").symlink_to(self.repo / "corpora")
+        (self.repo / "m.tsv").symlink_to(manifest)
+        for raw in ("corpora/manifest.tsv", "Corpora/MANIFEST.tsv", "corpora/x/../MANIFEST.tsv", "c2/MANIFEST.tsv", "m.tsv"):
+            with self.subTest(raw=raw):
+                self.assertTrue(guards.path_problem(str(self.repo / raw), self.repo, writing=True))
+                self.assertTrue(guards.bash_problem(f"printf x >> {raw}", self.repo))
+        self.assertTrue(guards.bash_problem("sed -i '' s/a/b/ corpora/MANIFEST.tsv", self.repo))
+        self.assertTrue(guards.path_problem(str(self.repo / ".GIT" / "Config"), self.repo, writing=True))
+        # Stated limit (PROCESS.md §11, the guards are a safety net): writers the guard does not parse (interpreters,
+        # git checkout/restore/apply, patch, curl -o, awk -i inplace, ed) are not caught.
 
     def test_bl_0055_gaps(self) -> None:
         """BL-0055 (found by the S0014 verifier): each must be refused; the ordinary forms beside them must not."""

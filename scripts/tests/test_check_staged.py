@@ -114,9 +114,13 @@ class Bl0023(unittest.TestCase):
                 self.assertTrue(cs.check([path], blobs({path: STATEMENT})))
 
     def test_the_named_synthetic_assets_pass(self) -> None:
+        import json
+        as_json = json.dumps({"lines": STATEMENT.decode().splitlines()}, indent=1).encode()
         for path in cs.SYNTHETIC_ASSETS:
             with self.subTest(path=path):
-                self.assertEqual(cs.check([path], blobs({path: STATEMENT})), [])
+                self.assertEqual(cs.check([path], blobs({path: as_json})), [])
+                # S0026 verifier F5: the path alone does not vouch: a CSV written over it is refused
+                self.assertTrue(cs.check([path], blobs({path: STATEMENT})))
         for other in ("corpora/ledgers/inv21/goldens2.json", "corpora/ledgers/inv21/goldens.json.txt"):
             with self.subTest(near=other):  # a near or longer name is not exempt
                 self.assertTrue(cs.check([other], blobs({other: STATEMENT})))
@@ -144,6 +148,33 @@ class Bl0023(unittest.TestCase):
         path = "corpora/a.csv"
         row = f"{path}\t{hashlib.sha256(b'x,y').hexdigest()}\t2999-01-01\treviewed\n".encode()
         self.assertTrue(cs.check([path], blobs({path: b"x,y", cs.MANIFEST: row})))
+
+
+
+class Bl0023Round2(unittest.TestCase):
+    """S0026 verifier F1 (UTF-16/32 text) and F4 (the review date boundary; a bad committed row)."""
+
+    def test_unicode_text_exports_are_sniffed(self) -> None:
+        ofx = b"OFXHEADER:100\n<OFX><BANKTRANLIST><STMTTRN>\n"
+        for codec, bom in (("utf-16-le", b"\xff\xfe"), ("utf-16-be", b"\xfe\xff"), ("utf-32-le", b"\xff\xfe\x00\x00"),
+                           ("utf-32-be", b"\x00\x00\xfe\xff")):
+            for body in (STATEMENT, ofx):
+                for path in ("corpora/imports/s.txt", "notes/s.txt"):
+                    with self.subTest(codec=codec, path=path, ofx=body is ofx):
+                        blob = bom + body.decode().encode(codec)
+                        self.assertTrue(cs.check([path], blobs({path: blob})))
+
+    def test_a_row_dated_today_vouches(self) -> None:
+        from datetime import date
+        row = "a\t" + "0" * 64 + "\t2026-10-25\tok\n"
+        entries, problems = cs.parse_manifest(row, today=date(2026, 10, 25))
+        self.assertEqual((list(entries), problems), (["a"], []))
+        self.assertTrue(cs.parse_manifest(row, today=date(2026, 10, 24))[1])
+
+    def test_a_bad_committed_row_does_not_block_an_unrelated_commit(self) -> None:
+        bad = ("a\t" + "0" * 64 + "\t2999-01-01\tx\n").encode()
+        self.assertEqual(cs.check(["design/notes.md"], blobs({cs.MANIFEST: bad, "design/notes.md": b"hello\n"})), [])
+        self.assertTrue(cs.check([cs.MANIFEST], blobs({cs.MANIFEST: bad})))
 
 
 if __name__ == "__main__":

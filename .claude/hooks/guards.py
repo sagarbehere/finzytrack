@@ -99,9 +99,10 @@ def path_problem(raw: str, cwd: Path, writing: bool) -> str | None:
             return "the owner's live data folder is off-limits to agents (INV-24); use copies under a temp dir"
         if writing and any(_under(p, r) for r in legacy_roots()):
             return "the legacy worktree is read-only; copy code out of it, never write into it"
-        if writing and ".git" in p.parts and (p.name == "config" or "hooks" in p.parts[p.parts.index(".git"):]):
+        rp = Path(_norm(p))  # resolved (symlinks, `..`) and lower-cased: macOS disks are case-insensitive
+        if writing and ".git" in rp.parts and (rp.name == "config" or "hooks" in rp.parts[rp.parts.index(".git"):]):
             return "writing .git/config or .git/hooks could switch off the git gates (BL-0055); refused"
-        if writing and p.name == "MANIFEST.tsv" and p.parent.name == "corpora":
+        if writing and rp.name == "manifest.tsv" and rp.parent.name == "corpora":
             return ("only the owner adds rows to corpora/MANIFEST.tsv (INV-23: owner-reviewed exports); ask the owner "
                     "to review the anonymized file and add its row")
         if writing and p.is_file() and _generated(p):

@@ -24,6 +24,7 @@ import argparse
 import re
 import fnmatch
 import hashlib
+import json
 import subprocess
 import sys
 from datetime import date
@@ -85,15 +86,32 @@ def parse_manifest(text: str, today: date | None = None) -> tuple[dict[str, str]
     return entries, problems
 
 
+def as_text_bytes(blob: bytes) -> bytes:
+    """UTF-16/UTF-32 text with a BOM (Excel's "Unicode text" export) re-encoded as UTF-8, so the byte patterns see it."""
+    for bom, codec in ((b"\xff\xfe\x00\x00", "utf-32"), (b"\x00\x00\xfe\xff", "utf-32"),
+                       (b"\xff\xfe", "utf-16"), (b"\xfe\xff", "utf-16")):
+        if blob.startswith(bom):
+            return blob.decode(codec, errors="replace").encode("utf-8")
+    return blob
+
+
 def looks_like_statement(blob: bytes) -> bool:
     """Content sniffing for renamed exports: OFX markers, or many dated lines carrying amounts."""
-    head = blob[:200_000]
+    head = as_text_bytes(blob[:800_000])[:200_000]
     return bool(OFX_MARK.search(head)) or len(STATEMENT_LINE.findall(head)) >= 5
+
+
+def parses_as_json(blob: bytes) -> bool:
+    try:
+        json.loads(blob.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return False
+    return True
 
 
 def is_binary(blob: bytes) -> bool:
     head = blob[:8192]
-    if head.startswith((b"\xff\xfe", b"\xfe\xff")):
+    if head.startswith((b"\xff\xfe", b"\xfe\xff", b"\x00\x00\xfe\xff")):
         return False  # UTF-16 text; the privacy scanner decodes it
     return b"\0" in head
 
@@ -127,6 +145,8 @@ def check(paths: list[str], blob_of, symlinks: dict[str, str] | None = None) -> 
         elif blob is not None and is_binary(blob) and PurePosixPath(name).suffix.lower() not in MEDIA_EXTS and not reviewed:
             problems.append(f"{path}: binary file the privacy scan cannot read; only images and fonts, or files "
                             f"listed in {MANIFEST}, may be committed")
+        elif blob is not None and path in SYNTHETIC_ASSETS and not reviewed and not parses_as_json(blob):
+            problems.append(f"{path}: a named synthetic asset must stay JSON written by our tools; refused")
         elif blob is not None and PurePosixPath(name).suffix.lower() in SNIFF_EXTS and path not in SYNTHETIC_ASSETS \
                 and not reviewed and looks_like_statement(blob):
             problems.append(f"{path}: content looks like a bank/broker statement (dated lines with amounts or OFX "
