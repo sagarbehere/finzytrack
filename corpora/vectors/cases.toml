@@ -1,0 +1,948 @@
+# Beancount domain vectors: the hand-written inputs (S0024; spec design/specs/kernel/vectors.md; INV-02, ADR-0024).
+#
+# scripts/oracle/gen_domain_vectors.py runs Beancount on every case and writes vectors.json beside this file.
+# Each case or item declares its `polarity`: "positive" when Beancount accepts it (balanced, valid, found, known,
+# booked), "negative" when Beancount refuses it or gives nothing. The checks refuse a polarity Beancount disagrees
+# with. `spec` lists the citations: at least one `beancount:<module>.<symbol>` (the Beancount code that decides),
+# plus ADRs (`ADR-nnnn`) and review sections (`review:<doc> §<n>`).
+#
+# Transaction cases: `postings` are rendered as one transaction dated 2020-06-01 with narration "vector";
+# `setup` holds the directives before it; every account used and not opened is opened on 2000-01-01.
+
+beancount = "3.2.0"
+
+# ---- tolerance: transaction balancing (infer_tolerances, compute_residual, is_small) -------------------------
+
+[[tolerance]]
+id = "tolerance/integers-exact"
+polarity = "positive"
+spec = ["beancount:beancount.ops.validation.validate_check_transaction_balances", "ADR-0024"]
+about = "Integer amounts infer no tolerance; an exact sum balances."
+postings = [
+  { account = "Assets:Bank", units = "-10 USD" },
+  { account = "Expenses:Food", units = "10 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/written-scale-10.50"
+polarity = "negative"
+spec = ["beancount:beancount.core.interpolate.infer_tolerances", "review:L3-verif §2.5", "ADR-0023"]
+about = "Written 10.50 gives a tolerance of 0.005, so a 4-cent split error does not balance."
+postings = [
+  { account = "Assets:Bank", units = "-10.50 USD" },
+  { account = "Expenses:Food", units = "5.25 USD" },
+  { account = "Expenses:Rent", units = "5.21 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/rescaled-10.5-passes"
+polarity = "positive"
+spec = ["beancount:beancount.core.interpolate.infer_tolerances", "review:L3-verif §2.5", "ADR-0023"]
+about = "The same split with 10.50 rewritten as 10.5: the tolerance widens to 0.05 and the error passes. Why written scale must be kept."
+postings = [
+  { account = "Assets:Bank", units = "-10.5 USD" },
+  { account = "Expenses:Food", units = "5.25 USD" },
+  { account = "Expenses:Rent", units = "5.21 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/boundary-equal-passes"
+polarity = "positive"
+spec = ["beancount:beancount.core.inventory.Inventory.is_small", "beancount:beancount.core.interpolate.infer_tolerances"]
+about = "A residual exactly equal to the tolerance balances (the test is |residual| > tolerance)."
+postings = [
+  { account = "Assets:Bank", units = "-10.00 USD" },
+  { account = "Expenses:Food", units = "9.995 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/boundary-over-fails"
+polarity = "negative"
+spec = ["beancount:beancount.core.inventory.Inventory.is_small", "beancount:beancount.core.interpolate.infer_tolerances"]
+about = "The largest tolerance wins per currency (0.005 from 10.00), and a residual of 0.006 is over it."
+postings = [
+  { account = "Assets:Bank", units = "-10.00 USD" },
+  { account = "Expenses:Food", units = "9.994 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/multiplier-option"
+polarity = "positive"
+spec = ["beancount:beancount.core.interpolate.infer_tolerances", "ADR-0024"]
+about = "option tolerance_multiplier 0.6 makes the tolerance of 10.00 0.006, so the previous case balances."
+options = [["tolerance_multiplier", "0.6"]]
+postings = [
+  { account = "Assets:Bank", units = "-10.00 USD" },
+  { account = "Expenses:Food", units = "9.994 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/default-option-absent"
+polarity = "negative"
+spec = ["beancount:beancount.core.interpolate.infer_tolerances"]
+about = "Without a default, 9.99 infers 0.005 and a residual of 0.01 does not balance."
+postings = [
+  { account = "Assets:Bank", units = "-10 USD" },
+  { account = "Expenses:Food", units = "9.99 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/default-option-per-currency"
+polarity = "positive"
+spec = ["beancount:beancount.core.interpolate.infer_tolerances", "ADR-0024"]
+about = "inferred_tolerance_default USD:0.01 is the floor for USD: max(0.01, 0.005) = 0.01."
+options = [["inferred_tolerance_default", "USD:0.01"]]
+postings = [
+  { account = "Assets:Bank", units = "-10 USD" },
+  { account = "Expenses:Food", units = "9.99 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/default-star-applies-to-integers"
+polarity = "positive"
+spec = ["beancount:beancount.core.interpolate.infer_tolerances", "ADR-0024"]
+about = "The * default applies to a currency that inferred nothing (integer EUR legs)."
+options = [["inferred_tolerance_default", "*:0.001"]]
+postings = [
+  { account = "Assets:Broker", units = "10 VTI", price = "@ 100.0001 EUR" },
+  { account = "Assets:Bank", units = "-1000 EUR" },
+]
+
+[[tolerance]]
+id = "tolerance/default-star-limit"
+polarity = "negative"
+spec = ["beancount:beancount.core.interpolate.infer_tolerances"]
+about = "The * default is the limit for a currency that inferred nothing: a residual of 0.002 EUR is over 0.001."
+options = [["inferred_tolerance_default", "*:0.001"]]
+postings = [
+  { account = "Assets:Broker", units = "10 VTI", price = "@ 100.0002 EUR" },
+  { account = "Assets:Bank", units = "-1000 EUR" },
+]
+
+[[tolerance]]
+id = "tolerance/default-star-does-not-raise-inferred"
+polarity = "negative"
+spec = ["beancount:beancount.core.interpolate.infer_tolerances"]
+about = "Trap: the * default is not a floor. EUR inferred 0.0005 from 9.999, the * value 0.001 is ignored for EUR, and a residual of 0.001 fails."
+options = [["inferred_tolerance_default", "*:0.001"]]
+postings = [
+  { account = "Assets:Bank", units = "-10 EUR" },
+  { account = "Expenses:Food", units = "9.999 EUR" },
+]
+
+[[tolerance]]
+id = "tolerance/integer-cash-leg-zero-tolerance"
+polarity = "negative"
+spec = ["beancount:beancount.core.interpolate.infer_tolerances", "review:L3 §1.5.1", "ADR-0023"]
+about = "Priced legs do not give tolerance to their price currency: with only integer USD written, USD tolerance is 0 and 0.04 fails."
+postings = [
+  { account = "Assets:Broker", units = "10 VTI", price = "@ 100.004 USD" },
+  { account = "Assets:Bank", units = "-1000 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/padded-cash-leg"
+polarity = "positive"
+spec = ["beancount:beancount.core.interpolate.infer_tolerances", "review:L3 §1.5.1", "ADR-0023"]
+about = "The cash leg written as 1000.00 gives USD a tolerance of 0.005, which absorbs the 0.004 residual."
+postings = [
+  { account = "Assets:Broker", units = "10 VTI", price = "@ 100.0004 USD" },
+  { account = "Assets:Bank", units = "-1000.00 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/price-weight"
+polarity = "positive"
+spec = ["beancount:beancount.core.convert.get_weight", "beancount:beancount.core.interpolate.compute_residual"]
+about = "A priced leg weighs units x price in the price currency."
+postings = [
+  { account = "Assets:Broker", units = "10 VTI", price = "@ 100.123 USD" },
+  { account = "Assets:Bank", units = "-1001.23 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/total-price-division"
+polarity = "positive"
+spec = ["beancount:beancount.parser.grammar.Builder.posting", "review:L3-verif §2.3"]
+about = "@@ is divided into a per-unit price (0.01/7, 28 significant digits); the weight is units x that price, rounded again to 28 digits, which gives back exactly 0.01 here."
+postings = [
+  { account = "Assets:Wallet", units = "7 TOK", price = "@@ 0.01 BTC" },
+  { account = "Assets:Exchange", units = "-0.01 BTC" },
+]
+
+[[tolerance]]
+id = "tolerance/total-cost-division"
+polarity = "positive"
+spec = ["beancount:beancount.parser.booking_full.interpolate_group", "beancount:beancount.core.convert.get_weight"]
+about = "A total cost {{1000.00 USD}} on 3 units becomes a per-unit cost; its weight leaves a tiny residual."
+postings = [
+  { account = "Assets:Broker", units = "3 VTI", cost = "{{1000.00 USD}}" },
+  { account = "Assets:Bank", units = "-1000.00 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/cost-not-price-weighs"
+polarity = "positive"
+spec = ["beancount:beancount.core.convert.get_weight", "ADR-0025"]
+about = "A sale at cost with a price weighs at cost; the price is ignored for balancing, so the gain leg balances it."
+setup = """
+2020-01-01 * "buy"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-5 VTI", cost = "{100 USD}", price = "@ 120 USD" },
+  { account = "Assets:Bank", units = "600.00 USD" },
+  { account = "Income:Gains", units = "-100.00 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/sale-without-gain-leg"
+polarity = "negative"
+spec = ["beancount:beancount.core.convert.get_weight"]
+about = "The same sale without the gain leg leaves the gain as residual."
+setup = """
+2020-01-01 * "buy"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-5 VTI", cost = "{100 USD}", price = "@ 120 USD" },
+  { account = "Assets:Bank", units = "600.00 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/from-cost-option-off"
+polarity = "negative"
+spec = ["beancount:beancount.core.interpolate.infer_tolerances"]
+about = "Beancount's docstring example without infer_tolerance_from_cost: USD tolerance 0.005, residual 0.02176 fails."
+postings = [
+  { account = "Assets:Investments:VWELX", units = "18.572 VWELX", cost = "{30.96 USD}" },
+  { account = "Assets:Investments:VWELX", units = "18.572 VWELX", cost = "{30.96 USD}" },
+  { account = "Assets:Investments:Cash", units = "-1150.00 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/from-cost-option-on"
+polarity = "positive"
+spec = ["beancount:beancount.core.interpolate.infer_tolerances", "ADR-0024"]
+about = "With infer_tolerance_from_cost, unit precision times cost adds to USD tolerance (0.03096) and it balances."
+options = [["infer_tolerance_from_cost", "TRUE"]]
+postings = [
+  { account = "Assets:Investments:VWELX", units = "18.572 VWELX", cost = "{30.96 USD}" },
+  { account = "Assets:Investments:VWELX", units = "18.572 VWELX", cost = "{30.96 USD}" },
+  { account = "Assets:Investments:Cash", units = "-1150.00 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/elided-leg-quantized"
+polarity = "positive"
+spec = ["beancount:beancount.parser.booking_full.interpolate_group", "review:L3-verif §3.2", "ADR-0024"]
+about = "One elided leg is filled by Beancount, rounded to the currency's inferred precision (6.790, not 6.7897); the frontend port says indeterminate."
+postings = [
+  { account = "Assets:Bank", units = "-10.123 USD" },
+  { account = "Expenses:Food", units = "3.3333 USD" },
+  { account = "Expenses:Rent" },
+]
+
+[[tolerance]]
+id = "tolerance/two-elided-legs"
+polarity = "negative"
+spec = ["beancount:beancount.parser.booking_full.interpolate_group", "ADR-0024"]
+about = "Two elided legs in one currency cannot be filled: Beancount refuses."
+postings = [
+  { account = "Assets:Bank", units = "-10.00 USD" },
+  { account = "Expenses:Food" },
+  { account = "Expenses:Rent" },
+]
+
+[[tolerance]]
+id = "tolerance/reduction-needs-booking"
+polarity = "positive"
+spec = ["beancount:beancount.parser.booking_full.book_reductions", "review:L3-verif §3.2", "ADR-0024", "ADR-0031"]
+about = "A {} reduction's weight is known only after Beancount picks the lots (FIFO here): the frontend port says indeterminate."
+setup = """
+2000-01-01 open Assets:Broker "FIFO"
+2020-01-01 * "buy"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-5 VTI", cost = "{}", price = "@ 120 USD" },
+  { account = "Assets:Bank", units = "600.00 USD" },
+  { account = "Income:Gains", units = "-100.00 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/two-currencies-no-price"
+polarity = "negative"
+spec = ["beancount:beancount.core.interpolate.compute_residual"]
+about = "Legs in two currencies with no price leave a residual in each."
+postings = [
+  { account = "Assets:Bank", units = "-10.00 USD" },
+  { account = "Expenses:Food", units = "9.00 EUR" },
+]
+
+[[tolerance]]
+id = "tolerance/negative-price-refused"
+polarity = "negative"
+spec = ["beancount:beancount.parser.grammar.Builder.posting"]
+about = "A negative price is an error; Beancount uses its absolute value, so the residual itself is zero."
+postings = [
+  { account = "Assets:Broker", units = "10 VTI", price = "@ -100 USD" },
+  { account = "Assets:Bank", units = "-1000 USD" },
+]
+
+# ---- balance: balance-assertion tolerance (get_balance_tolerance) --------------------------------------------
+
+[[balance]]
+id = "balance/exact"
+polarity = "positive"
+spec = ["beancount:beancount.ops.balance.check"]
+about = "The balance equals the assertion."
+setup = """
+2020-01-01 * "deposit"
+  Assets:Bank  100.00 USD
+  Income:Salary  -100.00 USD
+"""
+account = "Assets:Bank"
+amount = "100.00 USD"
+
+[[balance]]
+id = "balance/inferred-boundary"
+polarity = "positive"
+spec = ["beancount:beancount.ops.balance.get_balance_tolerance", "review:L3 §1.5.2"]
+about = "An assertion written 100.00 tolerates twice the multiplier at its precision (0.01); a difference of exactly 0.01 passes."
+setup = """
+2020-01-01 * "deposit"
+  Assets:Bank  100.01 USD
+  Income:Salary  -100.01 USD
+"""
+account = "Assets:Bank"
+amount = "100.00 USD"
+
+[[balance]]
+id = "balance/inferred-over"
+polarity = "negative"
+spec = ["beancount:beancount.ops.balance.get_balance_tolerance"]
+about = "A difference of 0.05 is over the inferred 0.01."
+setup = """
+2020-01-01 * "deposit"
+  Assets:Bank  100.05 USD
+  Income:Salary  -100.05 USD
+"""
+account = "Assets:Bank"
+amount = "100.00 USD"
+
+[[balance]]
+id = "balance/integer-zero-tolerance"
+polarity = "negative"
+spec = ["beancount:beancount.ops.balance.get_balance_tolerance"]
+about = "An assertion written as an integer has zero tolerance."
+setup = """
+2020-01-01 * "deposit"
+  Assets:Bank  100.004 USD
+  Income:Salary  -100.004 USD
+"""
+account = "Assets:Bank"
+amount = "100 USD"
+
+[[balance]]
+id = "balance/explicit-tolerance"
+polarity = "positive"
+spec = ["beancount:beancount.ops.balance.get_balance_tolerance", "ADR-0024"]
+about = "An explicit ~ 0.1 replaces the inferred tolerance."
+setup = """
+2020-01-01 * "deposit"
+  Assets:Bank  100.05 USD
+  Income:Salary  -100.05 USD
+"""
+account = "Assets:Bank"
+amount = "100.00 USD"
+tolerance = "0.1"
+
+[[balance]]
+id = "balance/multiplier-option"
+polarity = "positive"
+spec = ["beancount:beancount.ops.balance.get_balance_tolerance", "ADR-0024"]
+about = "tolerance_multiplier 0.6 makes the assertion's tolerance 2 x 0.6 x 0.01 = 0.012."
+options = [["tolerance_multiplier", "0.6"]]
+setup = """
+2020-01-01 * "deposit"
+  Assets:Bank  100.012 USD
+  Income:Salary  -100.012 USD
+"""
+account = "Assets:Bank"
+amount = "100.00 USD"
+
+[[balance]]
+id = "balance/start-of-day"
+polarity = "positive"
+spec = ["beancount:beancount.ops.balance.check", "beancount:beancount.core.data.entry_sortkey"]
+about = "A balance assertion is checked at the start of its day: a transaction on the same date is not counted."
+setup = """
+2020-01-01 * "deposit"
+  Assets:Bank  100.00 USD
+  Income:Salary  -100.00 USD
+2020-06-01 * "same day"
+  Assets:Bank  5.00 USD
+  Income:Salary  -5.00 USD
+"""
+account = "Assets:Bank"
+amount = "100.00 USD"
+
+[[balance]]
+id = "balance/start-of-day-includes-fails"
+polarity = "negative"
+spec = ["beancount:beancount.ops.balance.check", "beancount:beancount.core.data.entry_sortkey"]
+about = "Asserting the end-of-day figure on the same date fails."
+setup = """
+2020-01-01 * "deposit"
+  Assets:Bank  100.00 USD
+  Income:Salary  -100.00 USD
+2020-06-01 * "same day"
+  Assets:Bank  5.00 USD
+  Income:Salary  -5.00 USD
+"""
+account = "Assets:Bank"
+amount = "105.00 USD"
+
+[[balance]]
+id = "balance/parent-sums-children"
+polarity = "positive"
+spec = ["beancount:beancount.ops.balance.check"]
+about = "An assertion on a parent account checks the sum of its sub-accounts."
+setup = """
+2020-01-01 * "deposit"
+  Assets:Bank:Checking  60.00 USD
+  Assets:Bank:Savings  40.00 USD
+  Income:Salary  -100.00 USD
+"""
+account = "Assets:Bank"
+amount = "100.00 USD"
+
+[[balance]]
+id = "balance/currency-not-allowed"
+polarity = "negative"
+spec = ["beancount:beancount.ops.balance.check"]
+about = "An assertion in a currency the account's open line does not allow is an error."
+setup = """
+2000-01-01 open Assets:Bank USD
+2020-01-01 * "deposit"
+  Assets:Bank  100.00 USD
+  Income:Salary  -100.00 USD
+"""
+account = "Assets:Bank"
+amount = "0 EUR"
+
+# ---- account: account-name grammar (lexer + valid_account_regexp(options), not account.is_valid) ------------
+
+[[account]]
+id = "account/default-roots"
+spec = ["beancount:beancount.parser.grammar.valid_account_regexp", "beancount:beancount.parser.grammar.Builder.account", "review:L3-verif §2.4", "ADR-0024"]
+about = "Default root names. The parser checks a prefix: only the root and first sub-component are constrained by the regexp; the lexer allows any non-ASCII letter. A valid name must also be the whole text: Assets:Bank USD parses with no error (USD becomes the open line's currency) but is not an account name."
+names = [
+  { name = "Assets:Retirement:401k", polarity = "positive" },
+  { name = "Assets:Bank:Café", polarity = "positive" },
+  { name = "Assets:Bank:éclair", polarity = "positive" },
+  { name = "Assets:Bank:日本", polarity = "positive" },
+  { name = "Assets:Bank:🏦", polarity = "positive" },
+  { name = "Assets:401k", polarity = "positive" },
+  { name = "Assets:Éclair", polarity = "positive" },
+  { name = "Assets:B", polarity = "positive" },
+  { name = "Assets:Bank-Account", polarity = "positive" },
+  { name = "Equity:Opening-Balances", polarity = "positive" },
+  { name = "Liabilities:CreditCard:Visa", polarity = "positive" },
+  { name = "Income:Salary", polarity = "positive" },
+  { name = "Expenses:食費", polarity = "negative" },
+  { name = "Assets:My_Bank", polarity = "negative" },
+  { name = "Assets", polarity = "negative" },
+  { name = "Assets:", polarity = "negative" },
+  { name = "assets:Bank", polarity = "negative" },
+  { name = "Assets:bank", polarity = "negative" },
+  { name = "Assets:Bank:a", polarity = "negative" },
+  { name = "Assets:Bank:Café_Bar", polarity = "negative" },
+  { name = "Assets:Bank Name", polarity = "negative" },
+  { name = "Assets:Bank USD", polarity = "negative" },
+  { name = "Assets:Ab.c", polarity = "negative" },
+  { name = "Assets:Bank::X", polarity = "negative" },
+  { name = "Assets:-X", polarity = "negative" },
+  { name = "Activos:Banco", polarity = "negative" },
+]
+
+[[account]]
+id = "account/custom-root"
+spec = ["beancount:beancount.parser.grammar.valid_account_regexp", "ADR-0024", "review:L3-verif §2.4"]
+about = "option name_assets Activos replaces the Assets root; the other roots keep their default names."
+options = [["name_assets", "Activos"]]
+names = [
+  { name = "Activos:Banco", polarity = "positive" },
+  { name = "Liabilities:Card", polarity = "positive" },
+  { name = "Assets:Bank", polarity = "negative" },
+]
+
+[[account]]
+id = "account/unicode-root"
+spec = ["beancount:beancount.parser.grammar.valid_account_regexp", "ADR-0024"]
+about = "A custom root may start with a non-ASCII capital."
+options = [["name_assets", "Ägare"]]
+names = [
+  { name = "Ägare:Bank", polarity = "positive" },
+]
+
+[[account]]
+id = "account/lowercase-root-option"
+spec = ["beancount:beancount.parser.options.options_validate_root_account", "beancount:beancount.parser.grammar.Builder.option", "ADR-0024"]
+about = "A root name must start with a capital: the option is refused and the name does not parse."
+options = [["name_assets", "activos"]]
+names = [
+  { name = "activos:Banco", polarity = "negative" },
+]
+
+# ---- currency: currency grammar (lexer CURRENCY rule; beancount.core.amount.CURRENCY_RE) --------------------
+
+[[currency]]
+id = "currency/grammar"
+spec = ["beancount:beancount.core.amount.CURRENCY_RE", "beancount:beancount.parser.parser.parse_string", "ADR-0024"]
+about = "Probed as a commodity directive and as an amount's currency; both must parse to exactly the code (a prefix match is not enough: USD ;x parses as a commodity USD with a comment)."
+codes = [
+  { code = "USD", polarity = "positive" },
+  { code = "V", polarity = "positive" },
+  { code = "AB", polarity = "positive" },
+  { code = "X1", polarity = "positive" },
+  { code = "NT.TO", polarity = "positive" },
+  { code = "BTC-USD", polarity = "positive" },
+  { code = "A'B", polarity = "positive" },
+  { code = "TLT_040921C144", polarity = "positive" },
+  { code = "/6J", polarity = "positive" },
+  { code = "/NQH21", polarity = "positive" },
+  { code = "/NQH21_QNEG21C13100", polarity = "positive" },
+  { code = "ABCDEFGHIJKLMNOPQRSTUVWXYZABCD", polarity = "positive" },
+  { code = "/6.3", polarity = "negative" },
+  { code = "CAC_", polarity = "negative" },
+  { code = "ABC.", polarity = "negative" },
+  { code = "usd", polarity = "negative" },
+  { code = "Usd", polarity = "negative" },
+  { code = "1USD", polarity = "negative" },
+  { code = "U$D", polarity = "negative" },
+  { code = "€", polarity = "negative" },
+  { code = "USD ;x", polarity = "negative" },
+]
+
+# ---- price: the price map (build_price_map, get_price) -------------------------------------------------------
+
+[[price]]
+id = "price/as-of"
+spec = ["beancount:beancount.core.prices.get_price", "beancount:beancount.core.prices.build_price_map", "ADR-0024", "ADR-0025", "review:L3 §1.5.6"]
+about = "As-of lookup is inclusive of the date; a future-dated price is excluded for an earlier date but is the latest price; lookups are quote-specific; the inverse is 1/price."
+setup = """
+2020-01-01 price VTI 100.00 USD
+2020-01-10 price VTI 110.00 USD
+2030-01-01 price VTI 999.00 USD
+"""
+queries = [
+  { base = "VTI", quote = "USD", date = "2020-01-10", polarity = "positive" },
+  { base = "VTI", quote = "USD", date = "2020-01-09", polarity = "positive" },
+  { base = "VTI", quote = "USD", date = "2019-12-31", polarity = "negative" },
+  { base = "VTI", quote = "USD", date = "2025-01-01", polarity = "positive" },
+  { base = "VTI", quote = "USD", date = "latest", polarity = "positive" },
+  { base = "USD", quote = "VTI", date = "2020-01-10", polarity = "positive" },
+  { base = "VTI", quote = "EUR", date = "2020-06-01", polarity = "negative" },
+  { base = "VTI", quote = "VTI", date = "2020-06-01", polarity = "positive" },
+]
+
+[[price]]
+id = "price/same-day-last-wins"
+spec = ["beancount:beancount.core.prices.build_price_map", "beancount:beancount.utils.misc_utils.sorted_uniquify", "ADR-0024"]
+about = "Two prices for one pair on one day: the later one in the file is kept."
+setup = """
+2020-01-01 price VTI 100.00 USD
+2020-01-01 price VTI 101.00 USD
+"""
+queries = [
+  { base = "VTI", quote = "USD", date = "2020-01-01", polarity = "positive" },
+]
+
+[[price]]
+id = "price/both-directions"
+spec = ["beancount:beancount.core.prices.build_price_map", "ADR-0024"]
+about = "Prices in both directions are merged into the direction with more points; on a shared day the inverted point is kept."
+setup = """
+2020-01-01 price USD 75 INR
+2020-01-02 price USD 76 INR
+2020-01-02 price INR 0.0125 USD
+"""
+queries = [
+  { base = "USD", quote = "INR", date = "2020-01-02", polarity = "positive" },
+  { base = "INR", quote = "USD", date = "2020-01-02", polarity = "positive" },
+  { base = "INR", quote = "USD", date = "2020-01-01", polarity = "positive" },
+]
+
+[[price]]
+id = "price/zero-not-inverted"
+spec = ["beancount:beancount.core.prices.build_price_map"]
+about = "A zero price is kept forward but has no inverse."
+setup = """
+2020-01-01 price XYZ 0 USD
+"""
+queries = [
+  { base = "XYZ", quote = "USD", date = "2020-01-01", polarity = "positive" },
+  { base = "USD", quote = "XYZ", date = "2020-01-01", polarity = "negative" },
+]
+
+[[price]]
+id = "price/no-triangulation"
+spec = ["beancount:beancount.core.prices.get_price", "ADR-0024"]
+about = "No chaining through a third currency: VTI in USD and USD in INR give no VTI in INR."
+setup = """
+2020-01-01 price VTI 100.00 USD
+2020-01-01 price USD 75 INR
+"""
+queries = [
+  { base = "VTI", quote = "INR", date = "2020-01-01", polarity = "negative" },
+]
+
+[[price]]
+id = "price/implicit-prices-plugin"
+spec = ["beancount:beancount.plugins.implicit_prices.add_implicit_prices", "beancount:beancount.core.prices.build_price_map"]
+about = "With the implicit_prices plugin, a posting's price and cost become price entries."
+setup = """
+plugin "beancount.plugins.implicit_prices"
+2020-01-01 * "buy"
+  Assets:Broker  10 VTI {100.00 USD}
+  Assets:Bank  -1000.00 USD
+2020-02-01 * "convert"
+  Assets:Bank  -100.00 USD @ 75.50 INR
+  Assets:BankIn  7550.00 INR
+"""
+queries = [
+  { base = "VTI", quote = "USD", date = "2020-01-01", polarity = "positive" },
+  { base = "USD", quote = "INR", date = "2020-02-01", polarity = "positive" },
+]
+
+[[price]]
+id = "price/no-implicit-without-plugin"
+spec = ["beancount:beancount.core.prices.build_price_map"]
+about = "Without the plugin, postings make no prices."
+setup = """
+2020-01-01 * "buy"
+  Assets:Broker  10 VTI {100.00 USD}
+  Assets:Bank  -1000.00 USD
+"""
+queries = [
+  { base = "VTI", quote = "USD", date = "2020-01-01", polarity = "negative" },
+]
+
+# ---- precision: display precision from the display context (dcontext) ---------------------------------------
+
+[[precision]]
+id = "precision/most-common-and-maximum"
+spec = ["beancount:beancount.core.display_context.DisplayContext", "ADR-0023", "review:L3-verif §3.1"]
+about = "Every number Beancount parses counts: units, costs, prices, balances. A 10-digit cost raises USD's maximum but not its most common; integers count as 0 digits."
+setup = """
+2020-01-01 price BTC 30000.12345678 USD
+2020-01-02 * "buy"
+  Assets:Wallet  0.12345678 BTC {100.1234567890 USD}
+  Assets:Bank  -12.36 USD
+2020-01-03 * "fee"
+  Assets:Bank  -1.00 USD
+  Expenses:Fees  1.00 USD
+2020-01-04 * "yen"
+  Assets:Yen  100 JPY
+  Income:Gift  -100 JPY
+2020-01-05 balance Assets:Pounds  0.000 GBP
+"""
+currencies = [
+  { currency = "USD", polarity = "positive" },
+  { currency = "BTC", polarity = "positive" },
+  { currency = "JPY", polarity = "positive" },
+  { currency = "GBP", polarity = "positive" },
+  { currency = "CHF", polarity = "negative" },
+]
+
+[[precision]]
+id = "precision/tie"
+spec = ["beancount:beancount.core.display_context.DisplayContext", "beancount:beancount.core.distribution.Distribution.mode", "ADR-0023"]
+about = "Equal counts of 1 and 2 fractional digits: Beancount's tie-break decides the most common."
+setup = """
+2020-01-01 * "a"
+  Assets:Bank  1.5 EUR
+  Income:Gift  -1.5 EUR
+2020-01-02 * "b"
+  Assets:Bank  1.25 EUR
+  Income:Gift  -1.25 EUR
+"""
+currencies = [
+  { currency = "EUR", polarity = "positive" },
+  { currency = "USD", polarity = "negative" },
+]
+
+# ---- booking: which lots a reduction books, per booking method (ADR-0031) ------------------------------------
+# Three lots of 10 VTI: 2020-01-01 at 100, 2020-02-01 at 120, 2020-03-01 at 90 (the setup of most cases).
+
+[[booking]]
+id = "booking/fifo"
+polarity = "positive"
+spec = ["beancount:beancount.parser.booking_method.booking_method_FIFO", "ADR-0031"]
+about = "FIFO takes the oldest lots first."
+setup = """
+2000-01-01 open Assets:Broker "FIFO"
+2020-01-01 * "lot 1"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+2020-02-01 * "lot 2"
+  Assets:Broker  10 VTI {120 USD}
+  Assets:Bank  -1200 USD
+2020-03-01 * "lot 3"
+  Assets:Broker  10 VTI {90 USD}
+  Assets:Bank  -900 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-15 VTI", cost = "{}" },
+  { account = "Assets:Bank" },
+]
+
+[[booking]]
+id = "booking/lifo"
+polarity = "positive"
+spec = ["beancount:beancount.parser.booking_method.booking_method_LIFO", "ADR-0031"]
+about = "LIFO takes the newest lots first."
+setup = """
+2000-01-01 open Assets:Broker "LIFO"
+2020-01-01 * "lot 1"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+2020-02-01 * "lot 2"
+  Assets:Broker  10 VTI {120 USD}
+  Assets:Bank  -1200 USD
+2020-03-01 * "lot 3"
+  Assets:Broker  10 VTI {90 USD}
+  Assets:Bank  -900 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-15 VTI", cost = "{}" },
+  { account = "Assets:Bank" },
+]
+
+[[booking]]
+id = "booking/hifo"
+polarity = "positive"
+spec = ["beancount:beancount.parser.booking_method.booking_method_HIFO", "ADR-0031"]
+about = "HIFO takes the highest-cost lots first."
+setup = """
+2000-01-01 open Assets:Broker "HIFO"
+2020-01-01 * "lot 1"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+2020-02-01 * "lot 2"
+  Assets:Broker  10 VTI {120 USD}
+  Assets:Bank  -1200 USD
+2020-03-01 * "lot 3"
+  Assets:Broker  10 VTI {90 USD}
+  Assets:Bank  -900 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-15 VTI", cost = "{}" },
+  { account = "Assets:Bank" },
+]
+
+[[booking]]
+id = "booking/strict-ambiguous"
+polarity = "negative"
+spec = ["beancount:beancount.parser.booking_method.booking_method_STRICT", "ADR-0031"]
+about = "STRICT (the default) refuses a reduction that matches several lots."
+setup = """
+2020-01-01 * "lot 1"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+2020-02-01 * "lot 2"
+  Assets:Broker  10 VTI {120 USD}
+  Assets:Bank  -1200 USD
+2020-03-01 * "lot 3"
+  Assets:Broker  10 VTI {90 USD}
+  Assets:Bank  -900 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-15 VTI", cost = "{}" },
+  { account = "Assets:Bank" },
+]
+
+[[booking]]
+id = "booking/strict-named-lot"
+polarity = "positive"
+spec = ["beancount:beancount.parser.booking_method.booking_method_STRICT", "ADR-0031"]
+about = "STRICT books a reduction whose lot spec names one lot."
+setup = """
+2020-01-01 * "lot 1"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+2020-02-01 * "lot 2"
+  Assets:Broker  10 VTI {120 USD}
+  Assets:Bank  -1200 USD
+2020-03-01 * "lot 3"
+  Assets:Broker  10 VTI {90 USD}
+  Assets:Bank  -900 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-5 VTI", cost = "{120 USD}" },
+  { account = "Assets:Bank" },
+]
+
+[[booking]]
+id = "booking/strict-with-size-exact"
+polarity = "positive"
+spec = ["beancount:beancount.parser.booking_method.booking_method_STRICT_WITH_SIZE", "ADR-0031"]
+about = "STRICT_WITH_SIZE accepts an ambiguous reduction when a lot has exactly its size, taking the oldest such lot."
+setup = """
+2000-01-01 open Assets:Broker "STRICT_WITH_SIZE"
+2020-01-01 * "lot 1"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+2020-02-01 * "lot 2"
+  Assets:Broker  10 VTI {120 USD}
+  Assets:Bank  -1200 USD
+2020-03-01 * "lot 3"
+  Assets:Broker  10 VTI {90 USD}
+  Assets:Bank  -900 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-10 VTI", cost = "{}" },
+  { account = "Assets:Bank" },
+]
+
+[[booking]]
+id = "booking/strict-with-size-no-match"
+polarity = "negative"
+spec = ["beancount:beancount.parser.booking_method.booking_method_STRICT_WITH_SIZE", "ADR-0031"]
+about = "STRICT_WITH_SIZE still refuses when no lot has the reduction's size."
+setup = """
+2000-01-01 open Assets:Broker "STRICT_WITH_SIZE"
+2020-01-01 * "lot 1"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+2020-02-01 * "lot 2"
+  Assets:Broker  10 VTI {120 USD}
+  Assets:Bank  -1200 USD
+2020-03-01 * "lot 3"
+  Assets:Broker  10 VTI {90 USD}
+  Assets:Bank  -900 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-15 VTI", cost = "{}" },
+  { account = "Assets:Bank" },
+]
+
+[[booking]]
+id = "booking/none"
+polarity = "positive"
+spec = ["beancount:beancount.parser.booking_full.book_reductions", "ADR-0031"]
+about = "NONE does no lot matching: a reduction at a stated cost is added as a negative lot of its own."
+setup = """
+2000-01-01 open Assets:Broker "NONE"
+2020-01-01 * "lot 1"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+2020-02-01 * "lot 2"
+  Assets:Broker  10 VTI {120 USD}
+  Assets:Bank  -1200 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-5 VTI", cost = "{110 USD}" },
+  { account = "Assets:Bank" },
+]
+
+[[booking]]
+id = "booking/average-refused"
+polarity = "negative"
+spec = ["beancount:beancount.parser.booking_method.booking_method_AVERAGE", "ADR-0031"]
+about = "AVERAGE is declared but Beancount 3.2.0 refuses to book with it."
+setup = """
+2000-01-01 open Assets:Broker "AVERAGE"
+2020-01-01 * "lot 1"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+2020-02-01 * "lot 2"
+  Assets:Broker  10 VTI {120 USD}
+  Assets:Bank  -1200 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-5 VTI", cost = "{}" },
+  { account = "Assets:Bank" },
+]
+
+[[booking]]
+id = "booking/fifo-not-enough"
+polarity = "negative"
+spec = ["beancount:beancount.parser.booking_method.booking_method_FIFO", "ADR-0031"]
+about = "Reducing more units than the lots hold is refused."
+setup = """
+2000-01-01 open Assets:Broker "FIFO"
+2020-01-01 * "lot 1"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-15 VTI", cost = "{}" },
+  { account = "Assets:Bank" },
+]
+
+[[booking]]
+id = "booking/option-default"
+polarity = "positive"
+spec = ["beancount:beancount.parser.booking.book", "ADR-0031"]
+about = "option booking_method FIFO applies to an account with no method on its open line."
+options = [["booking_method", "FIFO"]]
+setup = """
+2020-01-01 * "lot 1"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+2020-02-01 * "lot 2"
+  Assets:Broker  10 VTI {120 USD}
+  Assets:Bank  -1200 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-15 VTI", cost = "{}" },
+  { account = "Assets:Bank" },
+]
+
+[[booking]]
+id = "booking/account-overrides-option"
+polarity = "positive"
+spec = ["beancount:beancount.parser.booking.book", "ADR-0031"]
+about = "The open line's method (LIFO) overrides option booking_method FIFO."
+options = [["booking_method", "FIFO"]]
+setup = """
+2000-01-01 open Assets:Broker "LIFO"
+2020-01-01 * "lot 1"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+2020-02-01 * "lot 2"
+  Assets:Broker  10 VTI {120 USD}
+  Assets:Bank  -1200 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-15 VTI", cost = "{}" },
+  { account = "Assets:Bank" },
+]
+
+[[booking]]
+id = "booking/backdated-lifo"
+polarity = "positive"
+spec = ["beancount:beancount.parser.booking_method.booking_method_LIFO", "ADR-0031", "review:19 §5"]
+about = "A sale books against the lots held on its date: a lot bought later in time (2020-08-01) is not the newest for a 2020-06-01 sale."
+setup = """
+2000-01-01 open Assets:Broker "LIFO"
+2020-01-01 * "lot 1"
+  Assets:Broker  10 VTI {100 USD}
+  Assets:Bank  -1000 USD
+2020-02-01 * "lot 2"
+  Assets:Broker  10 VTI {120 USD}
+  Assets:Bank  -1200 USD
+2020-08-01 * "lot after the sale"
+  Assets:Broker  10 VTI {80 USD}
+  Assets:Bank  -800 USD
+"""
+postings = [
+  { account = "Assets:Broker", units = "-5 VTI", cost = "{}" },
+  { account = "Assets:Bank" },
+]

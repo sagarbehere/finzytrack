@@ -32,6 +32,9 @@ run "write corpus in Beancount" "$uv_bin" run --project scripts/oracle --locked 
 # The INV-21 goldens (S0022): the spec's derivation agrees with the v0.2.2 values, labels and key inventory hold.
 run "INV-21 goldens" "$uv_bin" run --project scripts/oracle --locked python -m unittest discover \
   -s scripts/oracle/tests -p test_inv21_goldens.py -q
+# The Beancount domain vectors (S0024): the committed vectors equal a fresh run of Beancount 3.2.0; checks hold.
+run "Beancount domain vectors" "$uv_bin" run --project scripts/oracle --locked python -m unittest discover \
+  -s scripts/oracle/tests -p test_domain_vectors.py -q
 # ADR-0060: CI no longer runs per push, so new Cargo.lock entries' publish dates are verified here (network only
 # when the lock gained entries since the remote branch).
 upstream="$(git rev-parse --verify --quiet '@{u}' || echo none)"

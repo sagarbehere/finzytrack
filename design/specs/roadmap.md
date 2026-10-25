@@ -23,13 +23,13 @@ Done in M0:
 - M1's D1 write corpus: the hand-written nasty cases with their checks, including the encrypted-file refusal (S0020; the generated 5k/54k ledgers come with the demo generator, the example ledgers with BL-0003).
 - M1's mirror surface spec: every table and column at M1a, the `r_*` views and the v0.2.2 compatibility names, with its check (S0021; owner decisions of 2026-10-25 applied; the DDL snapshot and checksums come with the M1a build, BL-0057).
 - M1's INV-21 goldens: TransactionIds, content hashes and metadata JSON for ledgers v0.2.x wrote, taken from v0.2.2's own code and re-derived from the spec, and the inventory of every metadata key a released version wrote (S0022; the M1a code must pass them and the old-workspace fixtures are still to come, BL-0021).
+- M1's Beancount domain vectors: transaction tolerance and residuals (with the frontend port's verdict), balance assertions, account and currency grammar, the price map, display precision and booking per method, each an input with Beancount 3.2.0's output, kept equal to a fresh run of the committed generator (S0024; the M1a engine code must pass them, BL-0002).
 
 Left in M0, in this order:
 1. BL-0042 is parked by the owner ("BL-0042 stays parked unless I ask", 2026-10-25); the guard gaps found in S0014 (BL-0055). The checks on the process's own paperwork (BL-0034, BL-0036, BL-0038, BL-0040) are parked until evidence asks for them (ADR-0058).
 2. The invariant enforcement due by M0 (CI fails at M0's exit while these invariants are pending): BL-0023 (the fixture gate's gaps, S0019), BL-0024 (the acceptance harness's port and data-dir checks, the local-tier path guard).
-3. M1's other specs: the Beancount domain vectors.
-4. The two review findings still open at M0 (`check_invariants.py` fails an M0-exit run while any backlog item due by M0 is open, S0023): L9.M-7 (a lint ban on name-keyed component stubs in tests) and L10-18 (a reproducible demo build per tag, with the demo generator).
-5. The rest of review:27 §1(d) that M0's exit needs: the demo generator skeleton; the acceptance-suite harness (isolated backend, frozen clock, LLM stub, Chromium and WebKit); the P1 integrity tests written as `fixme`; the red-team session on the gates and the first seeded-defect run.
+3. The two review findings still open at M0 (`check_invariants.py` fails an M0-exit run while any backlog item due by M0 is open, S0023): L9.M-7 (a lint ban on name-keyed component stubs in tests) and L10-18 (a reproducible demo build per tag, with the demo generator).
+4. The rest of review:27 §1(d) that M0's exit needs: the demo generator skeleton; the acceptance-suite harness (isolated backend, frozen clock, LLM stub, Chromium and WebKit); the P1 integrity tests written as `fixme`; the red-team session on the gates and the first seeded-defect run.
 
 Next milestone: **M1a** (read core and workspace-format core), then **M1b** (write contract), then **G1**, your go/no-go.
 

@@ -237,3 +237,12 @@ Format:
 - Expected effect: a spec or golden edit that breaks agreement fails before it reaches the remote.
 - Observed effect: pending.
 - Status: kept (tightening, agent-approved, PROCESS.md §9).
+
+## IMP-0024: the pre-push hook runs the Beancount domain vectors (2026-10-25)
+- Trigger: S0024 (the Beancount domain vectors).
+- What changed: `.githooks/pre-push` runs `scripts/oracle/tests/test_domain_vectors.py` in the oracle environment; PROCESS.md §6 T0 pre-push row.
+- PROCESS.md section: §6.
+- Why: the vectors pin what Beancount says about tolerance, grammar, prices, precision and booking (INV-02); with GitHub CI manual (ADR-0060), the pre-push hook is the only per-push place a hand edit, a case changed without regenerating, or a drift in the oracle environment is caught. The test takes about 1 s.
+- Expected effect: a vector that no longer equals Beancount's output fails before it reaches the remote.
+- Observed effect: pending.
+- Status: kept (tightening, agent-approved, PROCESS.md §9).

@@ -1,0 +1,3979 @@
+{
+ "about": "Beancount domain vectors (S0024): each vector is an input from corpora/vectors/cases.toml and what Beancount says about it. Written by scripts/oracle/gen_domain_vectors.py; spec design/specs/kernel/vectors.md. Never edit by hand.",
+ "beancount": "3.2.0",
+ "generator": "scripts/oracle/gen_domain_vectors.py",
+ "cases": "corpora/vectors/cases.toml",
+ "families": {
+  "tolerance": [
+   {
+    "id": "tolerance/integers-exact",
+    "spec": [
+     "beancount:beancount.ops.validation.validate_check_transaction_balances",
+     "ADR-0024"
+    ],
+    "about": "Integer amounts infer no tolerance; an exact sum balances.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Expenses:Food\n2020-06-01 * \"vector\"\n  Assets:Bank  -10 USD\n  Expenses:Food  10 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-10",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Expenses:Food",
+       "units": {
+        "number": "10",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {},
+      "default": "0"
+     },
+     "residual": {},
+     "balanced": true,
+     "interpolated": [],
+     "port": "balanced"
+    }
+   },
+   {
+    "id": "tolerance/written-scale-10.50",
+    "spec": [
+     "beancount:beancount.core.interpolate.infer_tolerances",
+     "review:L3-verif §2.5",
+     "ADR-0023"
+    ],
+    "about": "Written 10.50 gives a tolerance of 0.005, so a 4-cent split error does not balance.",
+    "polarity": "negative",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Expenses:Food\n2000-01-01 open Expenses:Rent\n2020-06-01 * \"vector\"\n  Assets:Bank  -10.50 USD\n  Expenses:Food  5.25 USD\n  Expenses:Rent  5.21 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-10.50",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Expenses:Food",
+       "units": {
+        "number": "5.25",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Expenses:Rent",
+       "units": {
+        "number": "5.21",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [
+      "Transaction does not balance: (-0.04 USD)"
+     ],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "USD": "0.005"
+      },
+      "default": "0"
+     },
+     "residual": {
+      "USD": "-0.04"
+     },
+     "balanced": false,
+     "interpolated": [],
+     "port": "unbalanced"
+    }
+   },
+   {
+    "id": "tolerance/rescaled-10.5-passes",
+    "spec": [
+     "beancount:beancount.core.interpolate.infer_tolerances",
+     "review:L3-verif §2.5",
+     "ADR-0023"
+    ],
+    "about": "The same split with 10.50 rewritten as 10.5: the tolerance widens to 0.05 and the error passes. Why written scale must be kept.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Expenses:Food\n2000-01-01 open Expenses:Rent\n2020-06-01 * \"vector\"\n  Assets:Bank  -10.5 USD\n  Expenses:Food  5.25 USD\n  Expenses:Rent  5.21 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-10.5",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Expenses:Food",
+       "units": {
+        "number": "5.25",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Expenses:Rent",
+       "units": {
+        "number": "5.21",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "USD": "0.05"
+      },
+      "default": "0"
+     },
+     "residual": {
+      "USD": "-0.04"
+     },
+     "balanced": true,
+     "interpolated": [],
+     "port": "balanced"
+    }
+   },
+   {
+    "id": "tolerance/boundary-equal-passes",
+    "spec": [
+     "beancount:beancount.core.inventory.Inventory.is_small",
+     "beancount:beancount.core.interpolate.infer_tolerances"
+    ],
+    "about": "A residual exactly equal to the tolerance balances (the test is |residual| > tolerance).",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Expenses:Food\n2020-06-01 * \"vector\"\n  Assets:Bank  -10.00 USD\n  Expenses:Food  9.995 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-10.00",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Expenses:Food",
+       "units": {
+        "number": "9.995",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "USD": "0.005"
+      },
+      "default": "0"
+     },
+     "residual": {
+      "USD": "-0.005"
+     },
+     "balanced": true,
+     "interpolated": [],
+     "port": "balanced"
+    }
+   },
+   {
+    "id": "tolerance/boundary-over-fails",
+    "spec": [
+     "beancount:beancount.core.inventory.Inventory.is_small",
+     "beancount:beancount.core.interpolate.infer_tolerances"
+    ],
+    "about": "The largest tolerance wins per currency (0.005 from 10.00), and a residual of 0.006 is over it.",
+    "polarity": "negative",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Expenses:Food\n2020-06-01 * \"vector\"\n  Assets:Bank  -10.00 USD\n  Expenses:Food  9.994 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-10.00",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Expenses:Food",
+       "units": {
+        "number": "9.994",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [
+      "Transaction does not balance: (-0.006 USD)"
+     ],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "USD": "0.005"
+      },
+      "default": "0"
+     },
+     "residual": {
+      "USD": "-0.006"
+     },
+     "balanced": false,
+     "interpolated": [],
+     "port": "unbalanced"
+    }
+   },
+   {
+    "id": "tolerance/multiplier-option",
+    "spec": [
+     "beancount:beancount.core.interpolate.infer_tolerances",
+     "ADR-0024"
+    ],
+    "about": "option tolerance_multiplier 0.6 makes the tolerance of 10.00 0.006, so the previous case balances.",
+    "polarity": "positive",
+    "input": {
+     "options": [
+      [
+       "tolerance_multiplier",
+       "0.6"
+      ]
+     ],
+     "ledger": "option \"tolerance_multiplier\" \"0.6\"\n2000-01-01 open Assets:Bank\n2000-01-01 open Expenses:Food\n2020-06-01 * \"vector\"\n  Assets:Bank  -10.00 USD\n  Expenses:Food  9.994 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-10.00",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Expenses:Food",
+       "units": {
+        "number": "9.994",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.6",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "USD": "0.006"
+      },
+      "default": "0"
+     },
+     "residual": {
+      "USD": "-0.006"
+     },
+     "balanced": true,
+     "interpolated": [],
+     "port": "balanced"
+    }
+   },
+   {
+    "id": "tolerance/default-option-absent",
+    "spec": [
+     "beancount:beancount.core.interpolate.infer_tolerances"
+    ],
+    "about": "Without a default, 9.99 infers 0.005 and a residual of 0.01 does not balance.",
+    "polarity": "negative",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Expenses:Food\n2020-06-01 * \"vector\"\n  Assets:Bank  -10 USD\n  Expenses:Food  9.99 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-10",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Expenses:Food",
+       "units": {
+        "number": "9.99",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [
+      "Transaction does not balance: (-0.01 USD)"
+     ],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "USD": "0.005"
+      },
+      "default": "0"
+     },
+     "residual": {
+      "USD": "-0.01"
+     },
+     "balanced": false,
+     "interpolated": [],
+     "port": "unbalanced"
+    }
+   },
+   {
+    "id": "tolerance/default-option-per-currency",
+    "spec": [
+     "beancount:beancount.core.interpolate.infer_tolerances",
+     "ADR-0024"
+    ],
+    "about": "inferred_tolerance_default USD:0.01 is the floor for USD: max(0.01, 0.005) = 0.01.",
+    "polarity": "positive",
+    "input": {
+     "options": [
+      [
+       "inferred_tolerance_default",
+       "USD:0.01"
+      ]
+     ],
+     "ledger": "option \"inferred_tolerance_default\" \"USD:0.01\"\n2000-01-01 open Assets:Bank\n2000-01-01 open Expenses:Food\n2020-06-01 * \"vector\"\n  Assets:Bank  -10 USD\n  Expenses:Food  9.99 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-10",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Expenses:Food",
+       "units": {
+        "number": "9.99",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {
+       "USD": "0.01"
+      },
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "USD": "0.01"
+      },
+      "default": "0"
+     },
+     "residual": {
+      "USD": "-0.01"
+     },
+     "balanced": true,
+     "interpolated": [],
+     "port": "balanced"
+    }
+   },
+   {
+    "id": "tolerance/default-star-applies-to-integers",
+    "spec": [
+     "beancount:beancount.core.interpolate.infer_tolerances",
+     "ADR-0024"
+    ],
+    "about": "The * default applies to a currency that inferred nothing (integer EUR legs).",
+    "polarity": "positive",
+    "input": {
+     "options": [
+      [
+       "inferred_tolerance_default",
+       "*:0.001"
+      ]
+     ],
+     "ledger": "option \"inferred_tolerance_default\" \"*:0.001\"\n2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker\n2020-06-01 * \"vector\"\n  Assets:Broker  10 VTI  @ 100.0001 EUR\n  Assets:Bank  -1000 EUR\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "10",
+        "currency": "VTI"
+       },
+       "cost": null,
+       "price": {
+        "number": "100.0001",
+        "currency": "EUR",
+        "total": false
+       },
+       "needs_booking": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-1000",
+        "currency": "EUR"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {
+       "*": "0.001"
+      },
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {},
+      "default": "0.001"
+     },
+     "residual": {
+      "EUR": "0.0010"
+     },
+     "balanced": true,
+     "interpolated": [],
+     "port": "balanced"
+    }
+   },
+   {
+    "id": "tolerance/default-star-limit",
+    "spec": [
+     "beancount:beancount.core.interpolate.infer_tolerances"
+    ],
+    "about": "The * default is the limit for a currency that inferred nothing: a residual of 0.002 EUR is over 0.001.",
+    "polarity": "negative",
+    "input": {
+     "options": [
+      [
+       "inferred_tolerance_default",
+       "*:0.001"
+      ]
+     ],
+     "ledger": "option \"inferred_tolerance_default\" \"*:0.001\"\n2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker\n2020-06-01 * \"vector\"\n  Assets:Broker  10 VTI  @ 100.0002 EUR\n  Assets:Bank  -1000 EUR\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "10",
+        "currency": "VTI"
+       },
+       "cost": null,
+       "price": {
+        "number": "100.0002",
+        "currency": "EUR",
+        "total": false
+       },
+       "needs_booking": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-1000",
+        "currency": "EUR"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {
+       "*": "0.001"
+      },
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [
+      "Transaction does not balance: (0.0020 EUR)"
+     ],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {},
+      "default": "0.001"
+     },
+     "residual": {
+      "EUR": "0.0020"
+     },
+     "balanced": false,
+     "interpolated": [],
+     "port": "unbalanced"
+    }
+   },
+   {
+    "id": "tolerance/default-star-does-not-raise-inferred",
+    "spec": [
+     "beancount:beancount.core.interpolate.infer_tolerances"
+    ],
+    "about": "Trap: the * default is not a floor. EUR inferred 0.0005 from 9.999, the * value 0.001 is ignored for EUR, and a residual of 0.001 fails.",
+    "polarity": "negative",
+    "input": {
+     "options": [
+      [
+       "inferred_tolerance_default",
+       "*:0.001"
+      ]
+     ],
+     "ledger": "option \"inferred_tolerance_default\" \"*:0.001\"\n2000-01-01 open Assets:Bank\n2000-01-01 open Expenses:Food\n2020-06-01 * \"vector\"\n  Assets:Bank  -10 EUR\n  Expenses:Food  9.999 EUR\n",
+     "postings": [
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-10",
+        "currency": "EUR"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Expenses:Food",
+       "units": {
+        "number": "9.999",
+        "currency": "EUR"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {
+       "*": "0.001"
+      },
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [
+      "Transaction does not balance: (-0.001 EUR)"
+     ],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "EUR": "0.0005"
+      },
+      "default": "0.001"
+     },
+     "residual": {
+      "EUR": "-0.001"
+     },
+     "balanced": false,
+     "interpolated": [],
+     "port": "unbalanced"
+    }
+   },
+   {
+    "id": "tolerance/integer-cash-leg-zero-tolerance",
+    "spec": [
+     "beancount:beancount.core.interpolate.infer_tolerances",
+     "review:L3 §1.5.1",
+     "ADR-0023"
+    ],
+    "about": "Priced legs do not give tolerance to their price currency: with only integer USD written, USD tolerance is 0 and 0.04 fails.",
+    "polarity": "negative",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker\n2020-06-01 * \"vector\"\n  Assets:Broker  10 VTI  @ 100.004 USD\n  Assets:Bank  -1000 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "10",
+        "currency": "VTI"
+       },
+       "cost": null,
+       "price": {
+        "number": "100.004",
+        "currency": "USD",
+        "total": false
+       },
+       "needs_booking": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-1000",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [
+      "Transaction does not balance: (0.040 USD)"
+     ],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {},
+      "default": "0"
+     },
+     "residual": {
+      "USD": "0.040"
+     },
+     "balanced": false,
+     "interpolated": [],
+     "port": "unbalanced"
+    }
+   },
+   {
+    "id": "tolerance/padded-cash-leg",
+    "spec": [
+     "beancount:beancount.core.interpolate.infer_tolerances",
+     "review:L3 §1.5.1",
+     "ADR-0023"
+    ],
+    "about": "The cash leg written as 1000.00 gives USD a tolerance of 0.005, which absorbs the 0.004 residual.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker\n2020-06-01 * \"vector\"\n  Assets:Broker  10 VTI  @ 100.0004 USD\n  Assets:Bank  -1000.00 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "10",
+        "currency": "VTI"
+       },
+       "cost": null,
+       "price": {
+        "number": "100.0004",
+        "currency": "USD",
+        "total": false
+       },
+       "needs_booking": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-1000.00",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "USD": "0.005"
+      },
+      "default": "0"
+     },
+     "residual": {
+      "USD": "0.0040"
+     },
+     "balanced": true,
+     "interpolated": [],
+     "port": "balanced"
+    }
+   },
+   {
+    "id": "tolerance/price-weight",
+    "spec": [
+     "beancount:beancount.core.convert.get_weight",
+     "beancount:beancount.core.interpolate.compute_residual"
+    ],
+    "about": "A priced leg weighs units x price in the price currency.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker\n2020-06-01 * \"vector\"\n  Assets:Broker  10 VTI  @ 100.123 USD\n  Assets:Bank  -1001.23 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "10",
+        "currency": "VTI"
+       },
+       "cost": null,
+       "price": {
+        "number": "100.123",
+        "currency": "USD",
+        "total": false
+       },
+       "needs_booking": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-1001.23",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "USD": "0.005"
+      },
+      "default": "0"
+     },
+     "residual": {},
+     "balanced": true,
+     "interpolated": [],
+     "port": "balanced"
+    }
+   },
+   {
+    "id": "tolerance/total-price-division",
+    "spec": [
+     "beancount:beancount.parser.grammar.Builder.posting",
+     "review:L3-verif §2.3"
+    ],
+    "about": "@@ is divided into a per-unit price (0.01/7, 28 significant digits); the weight is units x that price, rounded again to 28 digits, which gives back exactly 0.01 here.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Exchange\n2000-01-01 open Assets:Wallet\n2020-06-01 * \"vector\"\n  Assets:Wallet  7 TOK  @@ 0.01 BTC\n  Assets:Exchange  -0.01 BTC\n",
+     "postings": [
+      {
+       "account": "Assets:Wallet",
+       "units": {
+        "number": "7",
+        "currency": "TOK"
+       },
+       "cost": null,
+       "price": {
+        "number": "0.01",
+        "currency": "BTC",
+        "total": true
+       },
+       "needs_booking": false
+      },
+      {
+       "account": "Assets:Exchange",
+       "units": {
+        "number": "-0.01",
+        "currency": "BTC"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "BTC": "0.005"
+      },
+      "default": "0"
+     },
+     "residual": {},
+     "balanced": true,
+     "interpolated": [],
+     "port": "balanced"
+    }
+   },
+   {
+    "id": "tolerance/total-cost-division",
+    "spec": [
+     "beancount:beancount.parser.booking_full.interpolate_group",
+     "beancount:beancount.core.convert.get_weight"
+    ],
+    "about": "A total cost {{1000.00 USD}} on 3 units becomes a per-unit cost; its weight leaves a tiny residual.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker\n2020-06-01 * \"vector\"\n  Assets:Broker  3 VTI  {{1000.00 USD}}\n  Assets:Bank  -1000.00 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "3",
+        "currency": "VTI"
+       },
+       "cost": {
+        "per": "0",
+        "total": "1000.00",
+        "currency": "USD",
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-1000.00",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "USD": "0.005"
+      },
+      "default": "0"
+     },
+     "residual": {
+      "USD": "-0.0000000000000000000000001"
+     },
+     "balanced": true,
+     "interpolated": [],
+     "port": "balanced"
+    }
+   },
+   {
+    "id": "tolerance/cost-not-price-weighs",
+    "spec": [
+     "beancount:beancount.core.convert.get_weight",
+     "ADR-0025"
+    ],
+    "about": "A sale at cost with a price weighs at cost; the price is ignored for balancing, so the gain leg balances it.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker\n2000-01-01 open Income:Gains\n2020-01-01 * \"buy\"\n  Assets:Broker  10 VTI {100 USD}\n  Assets:Bank  -1000 USD\n2020-06-01 * \"vector\"\n  Assets:Broker  -5 VTI  {100 USD}  @ 120 USD\n  Assets:Bank  600.00 USD\n  Income:Gains  -100.00 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-5",
+        "currency": "VTI"
+       },
+       "cost": {
+        "per": "100",
+        "total": null,
+        "currency": "USD",
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": {
+        "number": "120",
+        "currency": "USD",
+        "total": false
+       },
+       "needs_booking": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "600.00",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Income:Gains",
+       "units": {
+        "number": "-100.00",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "USD": "0.005"
+      },
+      "default": "0"
+     },
+     "residual": {},
+     "balanced": true,
+     "interpolated": [],
+     "port": "balanced"
+    }
+   },
+   {
+    "id": "tolerance/sale-without-gain-leg",
+    "spec": [
+     "beancount:beancount.core.convert.get_weight"
+    ],
+    "about": "The same sale without the gain leg leaves the gain as residual.",
+    "polarity": "negative",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker\n2020-01-01 * \"buy\"\n  Assets:Broker  10 VTI {100 USD}\n  Assets:Bank  -1000 USD\n2020-06-01 * \"vector\"\n  Assets:Broker  -5 VTI  {100 USD}  @ 120 USD\n  Assets:Bank  600.00 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-5",
+        "currency": "VTI"
+       },
+       "cost": {
+        "per": "100",
+        "total": null,
+        "currency": "USD",
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": {
+        "number": "120",
+        "currency": "USD",
+        "total": false
+       },
+       "needs_booking": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "600.00",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [
+      "Transaction does not balance: (100.00 USD)"
+     ],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "USD": "0.005"
+      },
+      "default": "0"
+     },
+     "residual": {
+      "USD": "100.00"
+     },
+     "balanced": false,
+     "interpolated": [],
+     "port": "unbalanced"
+    }
+   },
+   {
+    "id": "tolerance/from-cost-option-off",
+    "spec": [
+     "beancount:beancount.core.interpolate.infer_tolerances"
+    ],
+    "about": "Beancount's docstring example without infer_tolerance_from_cost: USD tolerance 0.005, residual 0.02176 fails.",
+    "polarity": "negative",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Investments:Cash\n2000-01-01 open Assets:Investments:VWELX\n2020-06-01 * \"vector\"\n  Assets:Investments:VWELX  18.572 VWELX  {30.96 USD}\n  Assets:Investments:VWELX  18.572 VWELX  {30.96 USD}\n  Assets:Investments:Cash  -1150.00 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Investments:VWELX",
+       "units": {
+        "number": "18.572",
+        "currency": "VWELX"
+       },
+       "cost": {
+        "per": "30.96",
+        "total": null,
+        "currency": "USD",
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Assets:Investments:VWELX",
+       "units": {
+        "number": "18.572",
+        "currency": "VWELX"
+       },
+       "cost": {
+        "per": "30.96",
+        "total": null,
+        "currency": "USD",
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Assets:Investments:Cash",
+       "units": {
+        "number": "-1150.00",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [
+      "Transaction does not balance: (-0.02176 USD)"
+     ],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "USD": "0.005",
+       "VWELX": "0.0005"
+      },
+      "default": "0"
+     },
+     "residual": {
+      "USD": "-0.02176"
+     },
+     "balanced": false,
+     "interpolated": [],
+     "port": "unbalanced"
+    }
+   },
+   {
+    "id": "tolerance/from-cost-option-on",
+    "spec": [
+     "beancount:beancount.core.interpolate.infer_tolerances",
+     "ADR-0024"
+    ],
+    "about": "With infer_tolerance_from_cost, unit precision times cost adds to USD tolerance (0.03096) and it balances.",
+    "polarity": "positive",
+    "input": {
+     "options": [
+      [
+       "infer_tolerance_from_cost",
+       "TRUE"
+      ]
+     ],
+     "ledger": "option \"infer_tolerance_from_cost\" \"TRUE\"\n2000-01-01 open Assets:Investments:Cash\n2000-01-01 open Assets:Investments:VWELX\n2020-06-01 * \"vector\"\n  Assets:Investments:VWELX  18.572 VWELX  {30.96 USD}\n  Assets:Investments:VWELX  18.572 VWELX  {30.96 USD}\n  Assets:Investments:Cash  -1150.00 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Investments:VWELX",
+       "units": {
+        "number": "18.572",
+        "currency": "VWELX"
+       },
+       "cost": {
+        "per": "30.96",
+        "total": null,
+        "currency": "USD",
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Assets:Investments:VWELX",
+       "units": {
+        "number": "18.572",
+        "currency": "VWELX"
+       },
+       "cost": {
+        "per": "30.96",
+        "total": null,
+        "currency": "USD",
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Assets:Investments:Cash",
+       "units": {
+        "number": "-1150.00",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": true
+     }
+    },
+    "output": {
+     "errors": [],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "USD": "0.030960",
+       "VWELX": "0.0005"
+      },
+      "default": "0"
+     },
+     "residual": {
+      "USD": "-0.02176"
+     },
+     "balanced": true,
+     "interpolated": [],
+     "port": "balanced"
+    }
+   },
+   {
+    "id": "tolerance/elided-leg-quantized",
+    "spec": [
+     "beancount:beancount.parser.booking_full.interpolate_group",
+     "review:L3-verif §3.2",
+     "ADR-0024"
+    ],
+    "about": "One elided leg is filled by Beancount, rounded to the currency's inferred precision (6.790, not 6.7897); the frontend port says indeterminate.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Expenses:Food\n2000-01-01 open Expenses:Rent\n2020-06-01 * \"vector\"\n  Assets:Bank  -10.123 USD\n  Expenses:Food  3.3333 USD\n  Expenses:Rent\n",
+     "postings": [
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-10.123",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Expenses:Food",
+       "units": {
+        "number": "3.3333",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Expenses:Rent",
+       "units": null,
+       "cost": null,
+       "price": null,
+       "needs_booking": true
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "needs_booking": true,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "USD": "0.0005"
+      },
+      "default": "0"
+     },
+     "residual": {
+      "USD": "0.0003"
+     },
+     "balanced": true,
+     "interpolated": [
+      {
+       "account": "Expenses:Rent",
+       "units": {
+        "number": "6.790",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "interpolated": true
+      }
+     ],
+     "port": "indeterminate"
+    }
+   },
+   {
+    "id": "tolerance/two-elided-legs",
+    "spec": [
+     "beancount:beancount.parser.booking_full.interpolate_group",
+     "ADR-0024"
+    ],
+    "about": "Two elided legs in one currency cannot be filled: Beancount refuses.",
+    "polarity": "negative",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Expenses:Food\n2000-01-01 open Expenses:Rent\n2020-06-01 * \"vector\"\n  Assets:Bank  -10.00 USD\n  Expenses:Food\n  Expenses:Rent\n",
+     "postings": [
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-10.00",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Expenses:Food",
+       "units": null,
+       "cost": null,
+       "price": null,
+       "needs_booking": true
+      },
+      {
+       "account": "Expenses:Rent",
+       "units": null,
+       "cost": null,
+       "price": null,
+       "needs_booking": true
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [
+      "You may not have more than one auto-posting per currency"
+     ],
+     "needs_booking": true,
+     "dropped": true,
+     "tolerances": null,
+     "residual": null,
+     "balanced": null,
+     "interpolated": [],
+     "port": "indeterminate"
+    }
+   },
+   {
+    "id": "tolerance/reduction-needs-booking",
+    "spec": [
+     "beancount:beancount.parser.booking_full.book_reductions",
+     "review:L3-verif §3.2",
+     "ADR-0024",
+     "ADR-0031"
+    ],
+    "about": "A {} reduction's weight is known only after Beancount picks the lots (FIFO here): the frontend port says indeterminate.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Income:Gains\n2000-01-01 open Assets:Broker \"FIFO\"\n2020-01-01 * \"buy\"\n  Assets:Broker  10 VTI {100 USD}\n  Assets:Bank  -1000 USD\n2020-06-01 * \"vector\"\n  Assets:Broker  -5 VTI  {}  @ 120 USD\n  Assets:Bank  600.00 USD\n  Income:Gains  -100.00 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-5",
+        "currency": "VTI"
+       },
+       "cost": {
+        "per": null,
+        "total": null,
+        "currency": null,
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": {
+        "number": "120",
+        "currency": "USD",
+        "total": false
+       },
+       "needs_booking": true
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "600.00",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Income:Gains",
+       "units": {
+        "number": "-100.00",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "needs_booking": true,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "USD": "0.005"
+      },
+      "default": "0"
+     },
+     "residual": {},
+     "balanced": true,
+     "interpolated": [],
+     "port": "indeterminate"
+    }
+   },
+   {
+    "id": "tolerance/two-currencies-no-price",
+    "spec": [
+     "beancount:beancount.core.interpolate.compute_residual"
+    ],
+    "about": "Legs in two currencies with no price leave a residual in each.",
+    "polarity": "negative",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Expenses:Food\n2020-06-01 * \"vector\"\n  Assets:Bank  -10.00 USD\n  Expenses:Food  9.00 EUR\n",
+     "postings": [
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-10.00",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Expenses:Food",
+       "units": {
+        "number": "9.00",
+        "currency": "EUR"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [
+      "Transaction does not balance: (-10.00 USD, 9.00 EUR)"
+     ],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {
+       "EUR": "0.005",
+       "USD": "0.005"
+      },
+      "default": "0"
+     },
+     "residual": {
+      "EUR": "9.00",
+      "USD": "-10.00"
+     },
+     "balanced": false,
+     "interpolated": [],
+     "port": "unbalanced"
+    }
+   },
+   {
+    "id": "tolerance/negative-price-refused",
+    "spec": [
+     "beancount:beancount.parser.grammar.Builder.posting"
+    ],
+    "about": "A negative price is an error; Beancount uses its absolute value, so the residual itself is zero.",
+    "polarity": "negative",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker\n2020-06-01 * \"vector\"\n  Assets:Broker  10 VTI  @ -100 USD\n  Assets:Bank  -1000 USD\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "10",
+        "currency": "VTI"
+       },
+       "cost": null,
+       "price": {
+        "number": "100",
+        "currency": "USD",
+        "total": false
+       },
+       "needs_booking": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "-1000",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "needs_booking": false
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [
+      "Negative prices are not allowed: -100 USD (see http://furius.ca/beancount/doc/bug-negative-prices for workaround)"
+     ],
+     "needs_booking": false,
+     "dropped": false,
+     "tolerances": {
+      "by_currency": {},
+      "default": "0"
+     },
+     "residual": {},
+     "balanced": true,
+     "interpolated": [],
+     "port": "balanced"
+    }
+   }
+  ],
+  "balance": [
+   {
+    "id": "balance/exact",
+    "spec": [
+     "beancount:beancount.ops.balance.check"
+    ],
+    "about": "The balance equals the assertion.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "account": "Assets:Bank",
+     "amount": "100.00 USD",
+     "tolerance": null,
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Income:Salary\n2020-01-01 * \"deposit\"\n  Assets:Bank  100.00 USD\n  Income:Salary  -100.00 USD\n2020-06-01 balance Assets:Bank  100.00 USD\n"
+    },
+    "output": {
+     "errors": [],
+     "tolerance": "0.010",
+     "actual": "100.00",
+     "difference": "0.00"
+    }
+   },
+   {
+    "id": "balance/inferred-boundary",
+    "spec": [
+     "beancount:beancount.ops.balance.get_balance_tolerance",
+     "review:L3 §1.5.2"
+    ],
+    "about": "An assertion written 100.00 tolerates twice the multiplier at its precision (0.01); a difference of exactly 0.01 passes.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "account": "Assets:Bank",
+     "amount": "100.00 USD",
+     "tolerance": null,
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Income:Salary\n2020-01-01 * \"deposit\"\n  Assets:Bank  100.01 USD\n  Income:Salary  -100.01 USD\n2020-06-01 balance Assets:Bank  100.00 USD\n"
+    },
+    "output": {
+     "errors": [],
+     "tolerance": "0.010",
+     "actual": "100.01",
+     "difference": "0.01"
+    }
+   },
+   {
+    "id": "balance/inferred-over",
+    "spec": [
+     "beancount:beancount.ops.balance.get_balance_tolerance"
+    ],
+    "about": "A difference of 0.05 is over the inferred 0.01.",
+    "polarity": "negative",
+    "input": {
+     "options": [],
+     "account": "Assets:Bank",
+     "amount": "100.00 USD",
+     "tolerance": null,
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Income:Salary\n2020-01-01 * \"deposit\"\n  Assets:Bank  100.05 USD\n  Income:Salary  -100.05 USD\n2020-06-01 balance Assets:Bank  100.00 USD\n"
+    },
+    "output": {
+     "errors": [
+      "Balance failed for 'Assets:Bank': expected 100.00 USD != accumulated 100.05 USD (0.05 too much)"
+     ],
+     "tolerance": "0.010",
+     "actual": "100.05",
+     "difference": "0.05"
+    }
+   },
+   {
+    "id": "balance/integer-zero-tolerance",
+    "spec": [
+     "beancount:beancount.ops.balance.get_balance_tolerance"
+    ],
+    "about": "An assertion written as an integer has zero tolerance.",
+    "polarity": "negative",
+    "input": {
+     "options": [],
+     "account": "Assets:Bank",
+     "amount": "100 USD",
+     "tolerance": null,
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Income:Salary\n2020-01-01 * \"deposit\"\n  Assets:Bank  100.004 USD\n  Income:Salary  -100.004 USD\n2020-06-01 balance Assets:Bank  100 USD\n"
+    },
+    "output": {
+     "errors": [
+      "Balance failed for 'Assets:Bank': expected 100 USD != accumulated 100.004 USD (0.004 too much)"
+     ],
+     "tolerance": "0",
+     "actual": "100.004",
+     "difference": "0.004"
+    }
+   },
+   {
+    "id": "balance/explicit-tolerance",
+    "spec": [
+     "beancount:beancount.ops.balance.get_balance_tolerance",
+     "ADR-0024"
+    ],
+    "about": "An explicit ~ 0.1 replaces the inferred tolerance.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "account": "Assets:Bank",
+     "amount": "100.00 USD",
+     "tolerance": "0.1",
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Income:Salary\n2020-01-01 * \"deposit\"\n  Assets:Bank  100.05 USD\n  Income:Salary  -100.05 USD\n2020-06-01 balance Assets:Bank  100.00 ~ 0.1 USD\n"
+    },
+    "output": {
+     "errors": [],
+     "tolerance": "0.1",
+     "actual": "100.05",
+     "difference": "0.05"
+    }
+   },
+   {
+    "id": "balance/multiplier-option",
+    "spec": [
+     "beancount:beancount.ops.balance.get_balance_tolerance",
+     "ADR-0024"
+    ],
+    "about": "tolerance_multiplier 0.6 makes the assertion's tolerance 2 x 0.6 x 0.01 = 0.012.",
+    "polarity": "positive",
+    "input": {
+     "options": [
+      [
+       "tolerance_multiplier",
+       "0.6"
+      ]
+     ],
+     "account": "Assets:Bank",
+     "amount": "100.00 USD",
+     "tolerance": null,
+     "ledger": "option \"tolerance_multiplier\" \"0.6\"\n2000-01-01 open Assets:Bank\n2000-01-01 open Income:Salary\n2020-01-01 * \"deposit\"\n  Assets:Bank  100.012 USD\n  Income:Salary  -100.012 USD\n2020-06-01 balance Assets:Bank  100.00 USD\n"
+    },
+    "output": {
+     "errors": [],
+     "tolerance": "0.012",
+     "actual": "100.012",
+     "difference": "0.012"
+    }
+   },
+   {
+    "id": "balance/start-of-day",
+    "spec": [
+     "beancount:beancount.ops.balance.check",
+     "beancount:beancount.core.data.entry_sortkey"
+    ],
+    "about": "A balance assertion is checked at the start of its day: a transaction on the same date is not counted.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "account": "Assets:Bank",
+     "amount": "100.00 USD",
+     "tolerance": null,
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Income:Salary\n2020-01-01 * \"deposit\"\n  Assets:Bank  100.00 USD\n  Income:Salary  -100.00 USD\n2020-06-01 * \"same day\"\n  Assets:Bank  5.00 USD\n  Income:Salary  -5.00 USD\n2020-06-01 balance Assets:Bank  100.00 USD\n"
+    },
+    "output": {
+     "errors": [],
+     "tolerance": "0.010",
+     "actual": "100.00",
+     "difference": "0.00"
+    }
+   },
+   {
+    "id": "balance/start-of-day-includes-fails",
+    "spec": [
+     "beancount:beancount.ops.balance.check",
+     "beancount:beancount.core.data.entry_sortkey"
+    ],
+    "about": "Asserting the end-of-day figure on the same date fails.",
+    "polarity": "negative",
+    "input": {
+     "options": [],
+     "account": "Assets:Bank",
+     "amount": "105.00 USD",
+     "tolerance": null,
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Income:Salary\n2020-01-01 * \"deposit\"\n  Assets:Bank  100.00 USD\n  Income:Salary  -100.00 USD\n2020-06-01 * \"same day\"\n  Assets:Bank  5.00 USD\n  Income:Salary  -5.00 USD\n2020-06-01 balance Assets:Bank  105.00 USD\n"
+    },
+    "output": {
+     "errors": [
+      "Balance failed for 'Assets:Bank': expected 105.00 USD != accumulated 100.00 USD (5.00 too little)"
+     ],
+     "tolerance": "0.010",
+     "actual": "100.00",
+     "difference": "-5.00"
+    }
+   },
+   {
+    "id": "balance/parent-sums-children",
+    "spec": [
+     "beancount:beancount.ops.balance.check"
+    ],
+    "about": "An assertion on a parent account checks the sum of its sub-accounts.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "account": "Assets:Bank",
+     "amount": "100.00 USD",
+     "tolerance": null,
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Bank:Checking\n2000-01-01 open Assets:Bank:Savings\n2000-01-01 open Income:Salary\n2020-01-01 * \"deposit\"\n  Assets:Bank:Checking  60.00 USD\n  Assets:Bank:Savings  40.00 USD\n  Income:Salary  -100.00 USD\n2020-06-01 balance Assets:Bank  100.00 USD\n"
+    },
+    "output": {
+     "errors": [],
+     "tolerance": "0.010",
+     "actual": "100.00",
+     "difference": "0.00"
+    }
+   },
+   {
+    "id": "balance/currency-not-allowed",
+    "spec": [
+     "beancount:beancount.ops.balance.check"
+    ],
+    "about": "An assertion in a currency the account's open line does not allow is an error.",
+    "polarity": "negative",
+    "input": {
+     "options": [],
+     "account": "Assets:Bank",
+     "amount": "0 EUR",
+     "tolerance": null,
+     "ledger": "2000-01-01 open Income:Salary\n2000-01-01 open Assets:Bank USD\n2020-01-01 * \"deposit\"\n  Assets:Bank  100.00 USD\n  Income:Salary  -100.00 USD\n2020-06-01 balance Assets:Bank  0 EUR\n"
+    },
+    "output": {
+     "errors": [
+      "Invalid currency 'EUR' for Balance directive:"
+     ],
+     "tolerance": "0",
+     "actual": "0",
+     "difference": "0"
+    }
+   }
+  ],
+  "account": [
+   {
+    "id": "account/default-roots",
+    "spec": [
+     "beancount:beancount.parser.grammar.valid_account_regexp",
+     "beancount:beancount.parser.grammar.Builder.account",
+     "review:L3-verif §2.4",
+     "ADR-0024"
+    ],
+    "about": "Default root names. The parser checks a prefix: only the root and first sub-component are constrained by the regexp; the lexer allows any non-ASCII letter. A valid name must also be the whole text: Assets:Bank USD parses with no error (USD becomes the open line's currency) but is not an account name.",
+    "input": {
+     "options": []
+    },
+    "items": [
+     {
+      "polarity": "positive",
+      "input": {
+       "name": "Assets:Retirement:401k"
+      },
+      "output": {
+       "valid": true,
+       "errors": [],
+       "core_is_valid": true
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "name": "Assets:Bank:Café"
+      },
+      "output": {
+       "valid": true,
+       "errors": [],
+       "core_is_valid": true
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "name": "Assets:Bank:éclair"
+      },
+      "output": {
+       "valid": true,
+       "errors": [],
+       "core_is_valid": false
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "name": "Assets:Bank:日本"
+      },
+      "output": {
+       "valid": true,
+       "errors": [],
+       "core_is_valid": false
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "name": "Assets:Bank:🏦"
+      },
+      "output": {
+       "valid": true,
+       "errors": [],
+       "core_is_valid": false
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "name": "Assets:401k"
+      },
+      "output": {
+       "valid": true,
+       "errors": [],
+       "core_is_valid": true
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "name": "Assets:Éclair"
+      },
+      "output": {
+       "valid": true,
+       "errors": [],
+       "core_is_valid": true
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "name": "Assets:B"
+      },
+      "output": {
+       "valid": true,
+       "errors": [],
+       "core_is_valid": true
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "name": "Assets:Bank-Account"
+      },
+      "output": {
+       "valid": true,
+       "errors": [],
+       "core_is_valid": true
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "name": "Equity:Opening-Balances"
+      },
+      "output": {
+       "valid": true,
+       "errors": [],
+       "core_is_valid": true
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "name": "Liabilities:CreditCard:Visa"
+      },
+      "output": {
+       "valid": true,
+       "errors": [],
+       "core_is_valid": true
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "name": "Income:Salary"
+      },
+      "output": {
+       "valid": true,
+       "errors": [],
+       "core_is_valid": true
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "name": "Expenses:食費"
+      },
+      "output": {
+       "valid": false,
+       "errors": [
+        "Invalid account name: Expenses:食費"
+       ],
+       "core_is_valid": false
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "name": "Assets:My_Bank"
+      },
+      "output": {
+       "valid": false,
+       "errors": [
+        "Invalid token: '_Bank'"
+       ],
+       "core_is_valid": false
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "name": "Assets"
+      },
+      "output": {
+       "valid": false,
+       "errors": [
+        "Invalid token: 'Assets'"
+       ],
+       "core_is_valid": false
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "name": "Assets:"
+      },
+      "output": {
+       "valid": false,
+       "errors": [
+        "Invalid token: 'Assets:'"
+       ],
+       "core_is_valid": false
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "name": "assets:Bank"
+      },
+      "output": {
+       "valid": false,
+       "errors": [
+        "syntax error, unexpected KEY, expecting ACCOUNT",
+        "Invalid token: 'Bank'"
+       ],
+       "core_is_valid": false
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "name": "Assets:bank"
+      },
+      "output": {
+       "valid": false,
+       "errors": [
+        "Invalid token: 'Assets:bank'"
+       ],
+       "core_is_valid": false
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "name": "Assets:Bank:a"
+      },
+      "output": {
+       "valid": false,
+       "errors": [
+        "syntax error, unexpected COLON, expecting end of file or EOL",
+        "Invalid token: 'a'"
+       ],
+       "core_is_valid": false
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "name": "Assets:Bank:Café_Bar"
+      },
+      "output": {
+       "valid": false,
+       "errors": [
+        "Invalid token: '_Bar'"
+       ],
+       "core_is_valid": false
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "name": "Assets:Bank Name"
+      },
+      "output": {
+       "valid": false,
+       "errors": [
+        "Invalid token: 'Name'"
+       ],
+       "core_is_valid": false
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "name": "Assets:Bank USD"
+      },
+      "output": {
+       "valid": false,
+       "errors": [],
+       "core_is_valid": false
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "name": "Assets:Ab.c"
+      },
+      "output": {
+       "valid": false,
+       "errors": [
+        "Invalid token: '.c'"
+       ],
+       "core_is_valid": false
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "name": "Assets:Bank::X"
+      },
+      "output": {
+       "valid": false,
+       "errors": [
+        "syntax error, unexpected COLON, expecting end of file or EOL"
+       ],
+       "core_is_valid": false
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "name": "Assets:-X"
+      },
+      "output": {
+       "valid": false,
+       "errors": [
+        "Invalid token: 'Assets:-X'"
+       ],
+       "core_is_valid": false
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "name": "Activos:Banco"
+      },
+      "output": {
+       "valid": false,
+       "errors": [
+        "Invalid account name: Activos:Banco"
+       ],
+       "core_is_valid": true
+      }
+     }
+    ]
+   },
+   {
+    "id": "account/custom-root",
+    "spec": [
+     "beancount:beancount.parser.grammar.valid_account_regexp",
+     "ADR-0024",
+     "review:L3-verif §2.4"
+    ],
+    "about": "option name_assets Activos replaces the Assets root; the other roots keep their default names.",
+    "input": {
+     "options": [
+      [
+       "name_assets",
+       "Activos"
+      ]
+     ]
+    },
+    "items": [
+     {
+      "polarity": "positive",
+      "input": {
+       "name": "Activos:Banco"
+      },
+      "output": {
+       "valid": true,
+       "errors": [],
+       "core_is_valid": true
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "name": "Liabilities:Card"
+      },
+      "output": {
+       "valid": true,
+       "errors": [],
+       "core_is_valid": true
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "name": "Assets:Bank"
+      },
+      "output": {
+       "valid": false,
+       "errors": [
+        "Invalid account name: Assets:Bank"
+       ],
+       "core_is_valid": true
+      }
+     }
+    ]
+   },
+   {
+    "id": "account/unicode-root",
+    "spec": [
+     "beancount:beancount.parser.grammar.valid_account_regexp",
+     "ADR-0024"
+    ],
+    "about": "A custom root may start with a non-ASCII capital.",
+    "input": {
+     "options": [
+      [
+       "name_assets",
+       "Ägare"
+      ]
+     ]
+    },
+    "items": [
+     {
+      "polarity": "positive",
+      "input": {
+       "name": "Ägare:Bank"
+      },
+      "output": {
+       "valid": true,
+       "errors": [],
+       "core_is_valid": true
+      }
+     }
+    ]
+   },
+   {
+    "id": "account/lowercase-root-option",
+    "spec": [
+     "beancount:beancount.parser.options.options_validate_root_account",
+     "beancount:beancount.parser.grammar.Builder.option",
+     "ADR-0024"
+    ],
+    "about": "A root name must start with a capital: the option is refused and the name does not parse.",
+    "input": {
+     "options": [
+      [
+       "name_assets",
+       "activos"
+      ]
+     ]
+    },
+    "items": [
+     {
+      "polarity": "negative",
+      "input": {
+       "name": "activos:Banco"
+      },
+      "output": {
+       "valid": false,
+       "errors": [
+        "Error for option 'name_assets': Invalid root account name: 'activos'",
+        "syntax error, unexpected KEY, expecting ACCOUNT",
+        "Invalid token: 'Banco'"
+       ],
+       "core_is_valid": false
+      }
+     }
+    ]
+   }
+  ],
+  "currency": [
+   {
+    "id": "currency/grammar",
+    "spec": [
+     "beancount:beancount.core.amount.CURRENCY_RE",
+     "beancount:beancount.parser.parser.parse_string",
+     "ADR-0024"
+    ],
+    "about": "Probed as a commodity directive and as an amount's currency; both must parse to exactly the code (a prefix match is not enough: USD ;x parses as a commodity USD with a comment).",
+    "input": {},
+    "items": [
+     {
+      "polarity": "positive",
+      "input": {
+       "code": "USD"
+      },
+      "output": {
+       "valid": true,
+       "commodity_errors": [],
+       "amount_errors": []
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "code": "V"
+      },
+      "output": {
+       "valid": true,
+       "commodity_errors": [],
+       "amount_errors": []
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "code": "AB"
+      },
+      "output": {
+       "valid": true,
+       "commodity_errors": [],
+       "amount_errors": []
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "code": "X1"
+      },
+      "output": {
+       "valid": true,
+       "commodity_errors": [],
+       "amount_errors": []
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "code": "NT.TO"
+      },
+      "output": {
+       "valid": true,
+       "commodity_errors": [],
+       "amount_errors": []
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "code": "BTC-USD"
+      },
+      "output": {
+       "valid": true,
+       "commodity_errors": [],
+       "amount_errors": []
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "code": "A'B"
+      },
+      "output": {
+       "valid": true,
+       "commodity_errors": [],
+       "amount_errors": []
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "code": "TLT_040921C144"
+      },
+      "output": {
+       "valid": true,
+       "commodity_errors": [],
+       "amount_errors": []
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "code": "/6J"
+      },
+      "output": {
+       "valid": true,
+       "commodity_errors": [],
+       "amount_errors": []
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "code": "/NQH21"
+      },
+      "output": {
+       "valid": true,
+       "commodity_errors": [],
+       "amount_errors": []
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "code": "/NQH21_QNEG21C13100"
+      },
+      "output": {
+       "valid": true,
+       "commodity_errors": [],
+       "amount_errors": []
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "code": "ABCDEFGHIJKLMNOPQRSTUVWXYZABCD"
+      },
+      "output": {
+       "valid": true,
+       "commodity_errors": [],
+       "amount_errors": []
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "code": "/6.3"
+      },
+      "output": {
+       "valid": false,
+       "commodity_errors": [
+        "syntax error, unexpected SLASH, expecting CAPITAL or CURRENCY"
+       ],
+       "amount_errors": [
+        "syntax error, unexpected SLASH, expecting CAPITAL or CURRENCY"
+       ]
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "code": "CAC_"
+      },
+      "output": {
+       "valid": false,
+       "commodity_errors": [
+        "Invalid token: '_'"
+       ],
+       "amount_errors": [
+        "Invalid token: '_'"
+       ]
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "code": "ABC."
+      },
+      "output": {
+       "valid": false,
+       "commodity_errors": [
+        "Invalid token: '.'"
+       ],
+       "amount_errors": [
+        "Invalid token: '.'"
+       ]
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "code": "usd"
+      },
+      "output": {
+       "valid": false,
+       "commodity_errors": [
+        "Invalid token: 'usd'"
+       ],
+       "amount_errors": [
+        "Invalid token: 'usd'"
+       ]
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "code": "Usd"
+      },
+      "output": {
+       "valid": false,
+       "commodity_errors": [
+        "Invalid token: 'Usd'"
+       ],
+       "amount_errors": [
+        "Invalid token: 'Usd'"
+       ]
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "code": "1USD"
+      },
+      "output": {
+       "valid": false,
+       "commodity_errors": [
+        "syntax error, unexpected NUMBER, expecting CAPITAL or CURRENCY"
+       ],
+       "amount_errors": [
+        "syntax error, unexpected NUMBER, expecting CAPITAL or CURRENCY"
+       ]
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "code": "U$D"
+      },
+      "output": {
+       "valid": false,
+       "commodity_errors": [
+        "Invalid token: 'U$D'"
+       ],
+       "amount_errors": [
+        "Invalid token: 'U$D'"
+       ]
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "code": "€"
+      },
+      "output": {
+       "valid": false,
+       "commodity_errors": [
+        "Invalid token: '€'"
+       ],
+       "amount_errors": [
+        "Invalid token: '€'"
+       ]
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "code": "USD ;x"
+      },
+      "output": {
+       "valid": false,
+       "commodity_errors": [],
+       "amount_errors": [
+        "syntax error, unexpected EOL, expecting PLUS or MINUS or LPAREN or NUMBER"
+       ]
+      }
+     }
+    ]
+   }
+  ],
+  "price": [
+   {
+    "id": "price/as-of",
+    "spec": [
+     "beancount:beancount.core.prices.get_price",
+     "beancount:beancount.core.prices.build_price_map",
+     "ADR-0024",
+     "ADR-0025",
+     "review:L3 §1.5.6"
+    ],
+    "about": "As-of lookup is inclusive of the date; a future-dated price is excluded for an earlier date but is the latest price; lookups are quote-specific; the inverse is 1/price.",
+    "input": {
+     "options": [],
+     "ledger": "2020-01-01 price VTI 100.00 USD\n2020-01-10 price VTI 110.00 USD\n2030-01-01 price VTI 999.00 USD\n"
+    },
+    "items": [
+     {
+      "polarity": "positive",
+      "input": {
+       "base": "VTI",
+       "quote": "USD",
+       "date": "2020-01-10"
+      },
+      "output": {
+       "date": "2020-01-10",
+       "number": "110.00"
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "base": "VTI",
+       "quote": "USD",
+       "date": "2020-01-09"
+      },
+      "output": {
+       "date": "2020-01-01",
+       "number": "100.00"
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "base": "VTI",
+       "quote": "USD",
+       "date": "2019-12-31"
+      },
+      "output": {
+       "date": null,
+       "number": null
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "base": "VTI",
+       "quote": "USD",
+       "date": "2025-01-01"
+      },
+      "output": {
+       "date": "2020-01-10",
+       "number": "110.00"
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "base": "VTI",
+       "quote": "USD",
+       "date": "latest"
+      },
+      "output": {
+       "date": "2030-01-01",
+       "number": "999.00"
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "base": "USD",
+       "quote": "VTI",
+       "date": "2020-01-10"
+      },
+      "output": {
+       "date": "2020-01-10",
+       "number": "0.009090909090909090909090909091"
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "base": "VTI",
+       "quote": "EUR",
+       "date": "2020-06-01"
+      },
+      "output": {
+       "date": null,
+       "number": null
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "base": "VTI",
+       "quote": "VTI",
+       "date": "2020-06-01"
+      },
+      "output": {
+       "date": null,
+       "number": "1"
+      }
+     }
+    ]
+   },
+   {
+    "id": "price/same-day-last-wins",
+    "spec": [
+     "beancount:beancount.core.prices.build_price_map",
+     "beancount:beancount.utils.misc_utils.sorted_uniquify",
+     "ADR-0024"
+    ],
+    "about": "Two prices for one pair on one day: the later one in the file is kept.",
+    "input": {
+     "options": [],
+     "ledger": "2020-01-01 price VTI 100.00 USD\n2020-01-01 price VTI 101.00 USD\n"
+    },
+    "items": [
+     {
+      "polarity": "positive",
+      "input": {
+       "base": "VTI",
+       "quote": "USD",
+       "date": "2020-01-01"
+      },
+      "output": {
+       "date": "2020-01-01",
+       "number": "101.00"
+      }
+     }
+    ]
+   },
+   {
+    "id": "price/both-directions",
+    "spec": [
+     "beancount:beancount.core.prices.build_price_map",
+     "ADR-0024"
+    ],
+    "about": "Prices in both directions are merged into the direction with more points; on a shared day the inverted point is kept.",
+    "input": {
+     "options": [],
+     "ledger": "2020-01-01 price USD 75 INR\n2020-01-02 price USD 76 INR\n2020-01-02 price INR 0.0125 USD\n"
+    },
+    "items": [
+     {
+      "polarity": "positive",
+      "input": {
+       "base": "USD",
+       "quote": "INR",
+       "date": "2020-01-02"
+      },
+      "output": {
+       "date": "2020-01-02",
+       "number": "80"
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "base": "INR",
+       "quote": "USD",
+       "date": "2020-01-02"
+      },
+      "output": {
+       "date": "2020-01-02",
+       "number": "0.0125"
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "base": "INR",
+       "quote": "USD",
+       "date": "2020-01-01"
+      },
+      "output": {
+       "date": "2020-01-01",
+       "number": "0.01333333333333333333333333333"
+      }
+     }
+    ]
+   },
+   {
+    "id": "price/zero-not-inverted",
+    "spec": [
+     "beancount:beancount.core.prices.build_price_map"
+    ],
+    "about": "A zero price is kept forward but has no inverse.",
+    "input": {
+     "options": [],
+     "ledger": "2020-01-01 price XYZ 0 USD\n"
+    },
+    "items": [
+     {
+      "polarity": "positive",
+      "input": {
+       "base": "XYZ",
+       "quote": "USD",
+       "date": "2020-01-01"
+      },
+      "output": {
+       "date": "2020-01-01",
+       "number": "0"
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "base": "USD",
+       "quote": "XYZ",
+       "date": "2020-01-01"
+      },
+      "output": {
+       "date": null,
+       "number": null
+      }
+     }
+    ]
+   },
+   {
+    "id": "price/no-triangulation",
+    "spec": [
+     "beancount:beancount.core.prices.get_price",
+     "ADR-0024"
+    ],
+    "about": "No chaining through a third currency: VTI in USD and USD in INR give no VTI in INR.",
+    "input": {
+     "options": [],
+     "ledger": "2020-01-01 price VTI 100.00 USD\n2020-01-01 price USD 75 INR\n"
+    },
+    "items": [
+     {
+      "polarity": "negative",
+      "input": {
+       "base": "VTI",
+       "quote": "INR",
+       "date": "2020-01-01"
+      },
+      "output": {
+       "date": null,
+       "number": null
+      }
+     }
+    ]
+   },
+   {
+    "id": "price/implicit-prices-plugin",
+    "spec": [
+     "beancount:beancount.plugins.implicit_prices.add_implicit_prices",
+     "beancount:beancount.core.prices.build_price_map"
+    ],
+    "about": "With the implicit_prices plugin, a posting's price and cost become price entries.",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:BankIn\n2000-01-01 open Assets:Broker\nplugin \"beancount.plugins.implicit_prices\"\n2020-01-01 * \"buy\"\n  Assets:Broker  10 VTI {100.00 USD}\n  Assets:Bank  -1000.00 USD\n2020-02-01 * \"convert\"\n  Assets:Bank  -100.00 USD @ 75.50 INR\n  Assets:BankIn  7550.00 INR\n"
+    },
+    "items": [
+     {
+      "polarity": "positive",
+      "input": {
+       "base": "VTI",
+       "quote": "USD",
+       "date": "2020-01-01"
+      },
+      "output": {
+       "date": "2020-01-01",
+       "number": "100.00"
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "base": "USD",
+       "quote": "INR",
+       "date": "2020-02-01"
+      },
+      "output": {
+       "date": "2020-02-01",
+       "number": "75.50"
+      }
+     }
+    ]
+   },
+   {
+    "id": "price/no-implicit-without-plugin",
+    "spec": [
+     "beancount:beancount.core.prices.build_price_map"
+    ],
+    "about": "Without the plugin, postings make no prices.",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker\n2020-01-01 * \"buy\"\n  Assets:Broker  10 VTI {100.00 USD}\n  Assets:Bank  -1000.00 USD\n"
+    },
+    "items": [
+     {
+      "polarity": "negative",
+      "input": {
+       "base": "VTI",
+       "quote": "USD",
+       "date": "2020-01-01"
+      },
+      "output": {
+       "date": null,
+       "number": null
+      }
+     }
+    ]
+   }
+  ],
+  "precision": [
+   {
+    "id": "precision/most-common-and-maximum",
+    "spec": [
+     "beancount:beancount.core.display_context.DisplayContext",
+     "ADR-0023",
+     "review:L3-verif §3.1"
+    ],
+    "about": "Every number Beancount parses counts: units, costs, prices, balances. A 10-digit cost raises USD's maximum but not its most common; integers count as 0 digits.",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Pounds\n2000-01-01 open Assets:Wallet\n2000-01-01 open Assets:Yen\n2000-01-01 open Expenses:Fees\n2000-01-01 open Income:Gift\n2020-01-01 price BTC 30000.12345678 USD\n2020-01-02 * \"buy\"\n  Assets:Wallet  0.12345678 BTC {100.1234567890 USD}\n  Assets:Bank  -12.36 USD\n2020-01-03 * \"fee\"\n  Assets:Bank  -1.00 USD\n  Expenses:Fees  1.00 USD\n2020-01-04 * \"yen\"\n  Assets:Yen  100 JPY\n  Income:Gift  -100 JPY\n2020-01-05 balance Assets:Pounds  0.000 GBP\n"
+    },
+    "items": [
+     {
+      "polarity": "positive",
+      "input": {
+       "currency": "USD"
+      },
+      "output": {
+       "most_common": 2,
+       "maximum": 10
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "currency": "BTC"
+      },
+      "output": {
+       "most_common": 8,
+       "maximum": 8
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "currency": "JPY"
+      },
+      "output": {
+       "most_common": 0,
+       "maximum": 0
+      }
+     },
+     {
+      "polarity": "positive",
+      "input": {
+       "currency": "GBP"
+      },
+      "output": {
+       "most_common": 3,
+       "maximum": 3
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "currency": "CHF"
+      },
+      "output": {
+       "most_common": null,
+       "maximum": null
+      }
+     }
+    ]
+   },
+   {
+    "id": "precision/tie",
+    "spec": [
+     "beancount:beancount.core.display_context.DisplayContext",
+     "beancount:beancount.core.distribution.Distribution.mode",
+     "ADR-0023"
+    ],
+    "about": "Equal counts of 1 and 2 fractional digits: Beancount's tie-break decides the most common.",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Income:Gift\n2020-01-01 * \"a\"\n  Assets:Bank  1.5 EUR\n  Income:Gift  -1.5 EUR\n2020-01-02 * \"b\"\n  Assets:Bank  1.25 EUR\n  Income:Gift  -1.25 EUR\n"
+    },
+    "items": [
+     {
+      "polarity": "positive",
+      "input": {
+       "currency": "EUR"
+      },
+      "output": {
+       "most_common": 2,
+       "maximum": 2
+      }
+     },
+     {
+      "polarity": "negative",
+      "input": {
+       "currency": "USD"
+      },
+      "output": {
+       "most_common": null,
+       "maximum": null
+      }
+     }
+    ]
+   }
+  ],
+  "booking": [
+   {
+    "id": "booking/fifo",
+    "spec": [
+     "beancount:beancount.parser.booking_method.booking_method_FIFO",
+     "ADR-0031"
+    ],
+    "about": "FIFO takes the oldest lots first.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker \"FIFO\"\n2020-01-01 * \"lot 1\"\n  Assets:Broker  10 VTI {100 USD}\n  Assets:Bank  -1000 USD\n2020-02-01 * \"lot 2\"\n  Assets:Broker  10 VTI {120 USD}\n  Assets:Bank  -1200 USD\n2020-03-01 * \"lot 3\"\n  Assets:Broker  10 VTI {90 USD}\n  Assets:Bank  -900 USD\n2020-06-01 * \"vector\"\n  Assets:Broker  -15 VTI  {}\n  Assets:Bank\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-15",
+        "currency": "VTI"
+       },
+       "cost": {
+        "per": null,
+        "total": null,
+        "currency": null,
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": true
+      },
+      {
+       "account": "Assets:Bank",
+       "units": null,
+       "cost": null,
+       "price": null,
+       "needs_booking": true
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "booked": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-10",
+        "currency": "VTI"
+       },
+       "cost": {
+        "number": "100",
+        "currency": "USD",
+        "date": "2020-01-01",
+        "label": null
+       },
+       "price": null,
+       "interpolated": false
+      },
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-5",
+        "currency": "VTI"
+       },
+       "cost": {
+        "number": "120",
+        "currency": "USD",
+        "date": "2020-02-01",
+        "label": null
+       },
+       "price": null,
+       "interpolated": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "1600",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "interpolated": true
+      }
+     ]
+    }
+   },
+   {
+    "id": "booking/lifo",
+    "spec": [
+     "beancount:beancount.parser.booking_method.booking_method_LIFO",
+     "ADR-0031"
+    ],
+    "about": "LIFO takes the newest lots first.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker \"LIFO\"\n2020-01-01 * \"lot 1\"\n  Assets:Broker  10 VTI {100 USD}\n  Assets:Bank  -1000 USD\n2020-02-01 * \"lot 2\"\n  Assets:Broker  10 VTI {120 USD}\n  Assets:Bank  -1200 USD\n2020-03-01 * \"lot 3\"\n  Assets:Broker  10 VTI {90 USD}\n  Assets:Bank  -900 USD\n2020-06-01 * \"vector\"\n  Assets:Broker  -15 VTI  {}\n  Assets:Bank\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-15",
+        "currency": "VTI"
+       },
+       "cost": {
+        "per": null,
+        "total": null,
+        "currency": null,
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": true
+      },
+      {
+       "account": "Assets:Bank",
+       "units": null,
+       "cost": null,
+       "price": null,
+       "needs_booking": true
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "booked": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-10",
+        "currency": "VTI"
+       },
+       "cost": {
+        "number": "90",
+        "currency": "USD",
+        "date": "2020-03-01",
+        "label": null
+       },
+       "price": null,
+       "interpolated": false
+      },
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-5",
+        "currency": "VTI"
+       },
+       "cost": {
+        "number": "120",
+        "currency": "USD",
+        "date": "2020-02-01",
+        "label": null
+       },
+       "price": null,
+       "interpolated": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "1500",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "interpolated": true
+      }
+     ]
+    }
+   },
+   {
+    "id": "booking/hifo",
+    "spec": [
+     "beancount:beancount.parser.booking_method.booking_method_HIFO",
+     "ADR-0031"
+    ],
+    "about": "HIFO takes the highest-cost lots first.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker \"HIFO\"\n2020-01-01 * \"lot 1\"\n  Assets:Broker  10 VTI {100 USD}\n  Assets:Bank  -1000 USD\n2020-02-01 * \"lot 2\"\n  Assets:Broker  10 VTI {120 USD}\n  Assets:Bank  -1200 USD\n2020-03-01 * \"lot 3\"\n  Assets:Broker  10 VTI {90 USD}\n  Assets:Bank  -900 USD\n2020-06-01 * \"vector\"\n  Assets:Broker  -15 VTI  {}\n  Assets:Bank\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-15",
+        "currency": "VTI"
+       },
+       "cost": {
+        "per": null,
+        "total": null,
+        "currency": null,
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": true
+      },
+      {
+       "account": "Assets:Bank",
+       "units": null,
+       "cost": null,
+       "price": null,
+       "needs_booking": true
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "booked": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-10",
+        "currency": "VTI"
+       },
+       "cost": {
+        "number": "120",
+        "currency": "USD",
+        "date": "2020-02-01",
+        "label": null
+       },
+       "price": null,
+       "interpolated": false
+      },
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-5",
+        "currency": "VTI"
+       },
+       "cost": {
+        "number": "100",
+        "currency": "USD",
+        "date": "2020-01-01",
+        "label": null
+       },
+       "price": null,
+       "interpolated": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "1700",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "interpolated": true
+      }
+     ]
+    }
+   },
+   {
+    "id": "booking/strict-ambiguous",
+    "spec": [
+     "beancount:beancount.parser.booking_method.booking_method_STRICT",
+     "ADR-0031"
+    ],
+    "about": "STRICT (the default) refuses a reduction that matches several lots.",
+    "polarity": "negative",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker\n2020-01-01 * \"lot 1\"\n  Assets:Broker  10 VTI {100 USD}\n  Assets:Bank  -1000 USD\n2020-02-01 * \"lot 2\"\n  Assets:Broker  10 VTI {120 USD}\n  Assets:Bank  -1200 USD\n2020-03-01 * \"lot 3\"\n  Assets:Broker  10 VTI {90 USD}\n  Assets:Bank  -900 USD\n2020-06-01 * \"vector\"\n  Assets:Broker  -15 VTI  {}\n  Assets:Bank\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-15",
+        "currency": "VTI"
+       },
+       "cost": {
+        "per": null,
+        "total": null,
+        "currency": null,
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": true
+      },
+      {
+       "account": "Assets:Bank",
+       "units": null,
+       "cost": null,
+       "price": null,
+       "needs_booking": true
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [
+      "Ambiguous matches for \"-15 VTI {}\": 10 VTI {100 USD, 2020-01-01}, 10 VTI {120 USD, 2020-02-01}, 10 VTI {90 USD, 2020-03-01}"
+     ],
+     "booked": []
+    }
+   },
+   {
+    "id": "booking/strict-named-lot",
+    "spec": [
+     "beancount:beancount.parser.booking_method.booking_method_STRICT",
+     "ADR-0031"
+    ],
+    "about": "STRICT books a reduction whose lot spec names one lot.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker\n2020-01-01 * \"lot 1\"\n  Assets:Broker  10 VTI {100 USD}\n  Assets:Bank  -1000 USD\n2020-02-01 * \"lot 2\"\n  Assets:Broker  10 VTI {120 USD}\n  Assets:Bank  -1200 USD\n2020-03-01 * \"lot 3\"\n  Assets:Broker  10 VTI {90 USD}\n  Assets:Bank  -900 USD\n2020-06-01 * \"vector\"\n  Assets:Broker  -5 VTI  {120 USD}\n  Assets:Bank\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-5",
+        "currency": "VTI"
+       },
+       "cost": {
+        "per": "120",
+        "total": null,
+        "currency": "USD",
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": null,
+       "cost": null,
+       "price": null,
+       "needs_booking": true
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "booked": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-5",
+        "currency": "VTI"
+       },
+       "cost": {
+        "number": "120",
+        "currency": "USD",
+        "date": "2020-02-01",
+        "label": null
+       },
+       "price": null,
+       "interpolated": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "600",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "interpolated": true
+      }
+     ]
+    }
+   },
+   {
+    "id": "booking/strict-with-size-exact",
+    "spec": [
+     "beancount:beancount.parser.booking_method.booking_method_STRICT_WITH_SIZE",
+     "ADR-0031"
+    ],
+    "about": "STRICT_WITH_SIZE accepts an ambiguous reduction when a lot has exactly its size, taking the oldest such lot.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker \"STRICT_WITH_SIZE\"\n2020-01-01 * \"lot 1\"\n  Assets:Broker  10 VTI {100 USD}\n  Assets:Bank  -1000 USD\n2020-02-01 * \"lot 2\"\n  Assets:Broker  10 VTI {120 USD}\n  Assets:Bank  -1200 USD\n2020-03-01 * \"lot 3\"\n  Assets:Broker  10 VTI {90 USD}\n  Assets:Bank  -900 USD\n2020-06-01 * \"vector\"\n  Assets:Broker  -10 VTI  {}\n  Assets:Bank\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-10",
+        "currency": "VTI"
+       },
+       "cost": {
+        "per": null,
+        "total": null,
+        "currency": null,
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": true
+      },
+      {
+       "account": "Assets:Bank",
+       "units": null,
+       "cost": null,
+       "price": null,
+       "needs_booking": true
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "booked": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-10",
+        "currency": "VTI"
+       },
+       "cost": {
+        "number": "100",
+        "currency": "USD",
+        "date": "2020-01-01",
+        "label": null
+       },
+       "price": null,
+       "interpolated": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "1000",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "interpolated": true
+      }
+     ]
+    }
+   },
+   {
+    "id": "booking/strict-with-size-no-match",
+    "spec": [
+     "beancount:beancount.parser.booking_method.booking_method_STRICT_WITH_SIZE",
+     "ADR-0031"
+    ],
+    "about": "STRICT_WITH_SIZE still refuses when no lot has the reduction's size.",
+    "polarity": "negative",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker \"STRICT_WITH_SIZE\"\n2020-01-01 * \"lot 1\"\n  Assets:Broker  10 VTI {100 USD}\n  Assets:Bank  -1000 USD\n2020-02-01 * \"lot 2\"\n  Assets:Broker  10 VTI {120 USD}\n  Assets:Bank  -1200 USD\n2020-03-01 * \"lot 3\"\n  Assets:Broker  10 VTI {90 USD}\n  Assets:Bank  -900 USD\n2020-06-01 * \"vector\"\n  Assets:Broker  -15 VTI  {}\n  Assets:Bank\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-15",
+        "currency": "VTI"
+       },
+       "cost": {
+        "per": null,
+        "total": null,
+        "currency": null,
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": true
+      },
+      {
+       "account": "Assets:Bank",
+       "units": null,
+       "cost": null,
+       "price": null,
+       "needs_booking": true
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [
+      "Ambiguous matches for \"-15 VTI {}\": 10 VTI {100 USD, 2020-01-01}, 10 VTI {120 USD, 2020-02-01}, 10 VTI {90 USD, 2020-03-01}"
+     ],
+     "booked": []
+    }
+   },
+   {
+    "id": "booking/none",
+    "spec": [
+     "beancount:beancount.parser.booking_full.book_reductions",
+     "ADR-0031"
+    ],
+    "about": "NONE does no lot matching: a reduction at a stated cost is added as a negative lot of its own.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker \"NONE\"\n2020-01-01 * \"lot 1\"\n  Assets:Broker  10 VTI {100 USD}\n  Assets:Bank  -1000 USD\n2020-02-01 * \"lot 2\"\n  Assets:Broker  10 VTI {120 USD}\n  Assets:Bank  -1200 USD\n2020-06-01 * \"vector\"\n  Assets:Broker  -5 VTI  {110 USD}\n  Assets:Bank\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-5",
+        "currency": "VTI"
+       },
+       "cost": {
+        "per": "110",
+        "total": null,
+        "currency": "USD",
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": null,
+       "cost": null,
+       "price": null,
+       "needs_booking": true
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "booked": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-5",
+        "currency": "VTI"
+       },
+       "cost": {
+        "number": "110",
+        "currency": "USD",
+        "date": "2020-06-01",
+        "label": null
+       },
+       "price": null,
+       "interpolated": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "550",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "interpolated": true
+      }
+     ]
+    }
+   },
+   {
+    "id": "booking/average-refused",
+    "spec": [
+     "beancount:beancount.parser.booking_method.booking_method_AVERAGE",
+     "ADR-0031"
+    ],
+    "about": "AVERAGE is declared but Beancount 3.2.0 refuses to book with it.",
+    "polarity": "negative",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker \"AVERAGE\"\n2020-01-01 * \"lot 1\"\n  Assets:Broker  10 VTI {100 USD}\n  Assets:Bank  -1000 USD\n2020-02-01 * \"lot 2\"\n  Assets:Broker  10 VTI {120 USD}\n  Assets:Bank  -1200 USD\n2020-06-01 * \"vector\"\n  Assets:Broker  -5 VTI  {}\n  Assets:Bank\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-5",
+        "currency": "VTI"
+       },
+       "cost": {
+        "per": null,
+        "total": null,
+        "currency": null,
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": true
+      },
+      {
+       "account": "Assets:Bank",
+       "units": null,
+       "cost": null,
+       "price": null,
+       "needs_booking": true
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [
+      "AVERAGE method is not supported"
+     ],
+     "booked": []
+    }
+   },
+   {
+    "id": "booking/fifo-not-enough",
+    "spec": [
+     "beancount:beancount.parser.booking_method.booking_method_FIFO",
+     "ADR-0031"
+    ],
+    "about": "Reducing more units than the lots hold is refused.",
+    "polarity": "negative",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker \"FIFO\"\n2020-01-01 * \"lot 1\"\n  Assets:Broker  10 VTI {100 USD}\n  Assets:Bank  -1000 USD\n2020-06-01 * \"vector\"\n  Assets:Broker  -15 VTI  {}\n  Assets:Bank\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-15",
+        "currency": "VTI"
+       },
+       "cost": {
+        "per": null,
+        "total": null,
+        "currency": null,
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": true
+      },
+      {
+       "account": "Assets:Bank",
+       "units": null,
+       "cost": null,
+       "price": null,
+       "needs_booking": true
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [
+      "Not enough lots to reduce \"-15 VTI {}\": 10 VTI {100 USD, 2020-01-01}"
+     ],
+     "booked": []
+    }
+   },
+   {
+    "id": "booking/option-default",
+    "spec": [
+     "beancount:beancount.parser.booking.book",
+     "ADR-0031"
+    ],
+    "about": "option booking_method FIFO applies to an account with no method on its open line.",
+    "polarity": "positive",
+    "input": {
+     "options": [
+      [
+       "booking_method",
+       "FIFO"
+      ]
+     ],
+     "ledger": "option \"booking_method\" \"FIFO\"\n2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker\n2020-01-01 * \"lot 1\"\n  Assets:Broker  10 VTI {100 USD}\n  Assets:Bank  -1000 USD\n2020-02-01 * \"lot 2\"\n  Assets:Broker  10 VTI {120 USD}\n  Assets:Bank  -1200 USD\n2020-06-01 * \"vector\"\n  Assets:Broker  -15 VTI  {}\n  Assets:Bank\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-15",
+        "currency": "VTI"
+       },
+       "cost": {
+        "per": null,
+        "total": null,
+        "currency": null,
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": true
+      },
+      {
+       "account": "Assets:Bank",
+       "units": null,
+       "cost": null,
+       "price": null,
+       "needs_booking": true
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "booked": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-10",
+        "currency": "VTI"
+       },
+       "cost": {
+        "number": "100",
+        "currency": "USD",
+        "date": "2020-01-01",
+        "label": null
+       },
+       "price": null,
+       "interpolated": false
+      },
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-5",
+        "currency": "VTI"
+       },
+       "cost": {
+        "number": "120",
+        "currency": "USD",
+        "date": "2020-02-01",
+        "label": null
+       },
+       "price": null,
+       "interpolated": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "1600",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "interpolated": true
+      }
+     ]
+    }
+   },
+   {
+    "id": "booking/account-overrides-option",
+    "spec": [
+     "beancount:beancount.parser.booking.book",
+     "ADR-0031"
+    ],
+    "about": "The open line's method (LIFO) overrides option booking_method FIFO.",
+    "polarity": "positive",
+    "input": {
+     "options": [
+      [
+       "booking_method",
+       "FIFO"
+      ]
+     ],
+     "ledger": "option \"booking_method\" \"FIFO\"\n2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker \"LIFO\"\n2020-01-01 * \"lot 1\"\n  Assets:Broker  10 VTI {100 USD}\n  Assets:Bank  -1000 USD\n2020-02-01 * \"lot 2\"\n  Assets:Broker  10 VTI {120 USD}\n  Assets:Bank  -1200 USD\n2020-06-01 * \"vector\"\n  Assets:Broker  -15 VTI  {}\n  Assets:Bank\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-15",
+        "currency": "VTI"
+       },
+       "cost": {
+        "per": null,
+        "total": null,
+        "currency": null,
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": true
+      },
+      {
+       "account": "Assets:Bank",
+       "units": null,
+       "cost": null,
+       "price": null,
+       "needs_booking": true
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "booked": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-10",
+        "currency": "VTI"
+       },
+       "cost": {
+        "number": "120",
+        "currency": "USD",
+        "date": "2020-02-01",
+        "label": null
+       },
+       "price": null,
+       "interpolated": false
+      },
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-5",
+        "currency": "VTI"
+       },
+       "cost": {
+        "number": "100",
+        "currency": "USD",
+        "date": "2020-01-01",
+        "label": null
+       },
+       "price": null,
+       "interpolated": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "1700",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "interpolated": true
+      }
+     ]
+    }
+   },
+   {
+    "id": "booking/backdated-lifo",
+    "spec": [
+     "beancount:beancount.parser.booking_method.booking_method_LIFO",
+     "ADR-0031",
+     "review:19 §5"
+    ],
+    "about": "A sale books against the lots held on its date: a lot bought later in time (2020-08-01) is not the newest for a 2020-06-01 sale.",
+    "polarity": "positive",
+    "input": {
+     "options": [],
+     "ledger": "2000-01-01 open Assets:Bank\n2000-01-01 open Assets:Broker \"LIFO\"\n2020-01-01 * \"lot 1\"\n  Assets:Broker  10 VTI {100 USD}\n  Assets:Bank  -1000 USD\n2020-02-01 * \"lot 2\"\n  Assets:Broker  10 VTI {120 USD}\n  Assets:Bank  -1200 USD\n2020-08-01 * \"lot after the sale\"\n  Assets:Broker  10 VTI {80 USD}\n  Assets:Bank  -800 USD\n2020-06-01 * \"vector\"\n  Assets:Broker  -5 VTI  {}\n  Assets:Bank\n",
+     "postings": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-5",
+        "currency": "VTI"
+       },
+       "cost": {
+        "per": null,
+        "total": null,
+        "currency": null,
+        "date": null,
+        "label": null,
+        "merge": false
+       },
+       "price": null,
+       "needs_booking": true
+      },
+      {
+       "account": "Assets:Bank",
+       "units": null,
+       "cost": null,
+       "price": null,
+       "needs_booking": true
+      }
+     ],
+     "tolerance_options": {
+      "tolerance_multiplier": "0.5",
+      "inferred_tolerance_default": {},
+      "infer_tolerance_from_cost": false
+     }
+    },
+    "output": {
+     "errors": [],
+     "booked": [
+      {
+       "account": "Assets:Broker",
+       "units": {
+        "number": "-5",
+        "currency": "VTI"
+       },
+       "cost": {
+        "number": "120",
+        "currency": "USD",
+        "date": "2020-02-01",
+        "label": null
+       },
+       "price": null,
+       "interpolated": false
+      },
+      {
+       "account": "Assets:Bank",
+       "units": {
+        "number": "600",
+        "currency": "USD"
+       },
+       "cost": null,
+       "price": null,
+       "interpolated": true
+      }
+     ]
+    }
+   }
+  ]
+ }
+}

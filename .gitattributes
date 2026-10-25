@@ -2,3 +2,5 @@
 corpora/ledgers/write/** -text
 # The INV-21 goldens pin line numbers and the exact text Beancount reads (S0022).
 corpora/ledgers/inv21/** -text
+# The Beancount domain vectors are compared byte for byte with a fresh run of the generator (S0024).
+corpora/vectors/** -text

@@ -855,7 +855,7 @@ The versions below are the newest stable releases published on or before **2026-
             error codes, streams) · corpus/ (D1, D2 equivalence) · goldens/ · architecture/ (AST bans,
             globals, route scope, tla mapping)
     scripts/                                    backend-internal tools (cwd = backend/): export_openapi.py,
-                                                gen_domain_vectors.py, corpus generators wrapper
+                                                corpus generators wrapper
   frontend/
     package.json  pnpm-lock.yaml  pnpm-workspace.yaml  tsconfig.json  eslint.config.js  vite.config.ts
     playwright.config.ts  knip.json  .prettierrc.json                (S0009)
@@ -872,7 +872,8 @@ The versions below are the newest stable releases published on or before **2026-
   formal/
     tla/        WriteProtocol.tla  WriteProtocol.cfg  WriteProtocol_small.cfg  MAPPING.md (generated)  tools.lock
   corpora/                                      shared repo assets: nasty ledgers, XSS/SQL/path attack-input corpora,
-                                                anonymized exports (owner-reviewed, privacy gate), old-workspace fixtures
+                                                anonymized exports (owner-reviewed, privacy gate), old-workspace fixtures,
+                                                vectors/ (the Beancount domain vectors, S0024)
   scripts/                                      repo-wide tools (run from root): check_invariants.py, check_capabilities.py,
                                                 privacy_scan.py, mutants.py (self-mutation before hand-off, ADR-0057), concept_counters.py, gen_diagrams.py, oracle/ (the
                                                 differential-oracle harness launching the legacy worktree on
@@ -881,7 +882,9 @@ The versions below are the newest stable releases published on or before **2026-
                                                 copies.py (copy guards, stdlib), semantic_diff.py (D1 step 2),
                                                 model.py (expected changes), adapters.py (one per mutator),
                                                 classify.py (ADR-0014 classes), harness.py,
-                                                legacy_api_tests.py + legacy_shim.py (S12); own pinned env
+                                                legacy_api_tests.py + legacy_shim.py (S12), gen_domain_vectors.py
+                                                (the Beancount domain vectors; the main sidecar has no Beancount,
+                                                ADR-0054); own pinned env
                                                 (pyproject.toml + uv.lock, Beancount 3.2.0); secrets-scan/ (the
                                                 privacy scan's detect-secrets environment, S0016)
   .githooks/pre-commit                          T0
