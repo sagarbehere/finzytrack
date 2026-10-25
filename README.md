@@ -10,4 +10,10 @@ Everything about how v0.4 is designed and built is in [`design/`](design/README.
 
 ## Licence
 
-Finzytrack's own code is licensed under the **GNU General Public License, version 2 or (at your option) any later version** (GPL-2.0-or-later); see [`LICENSE`](LICENSE) for the text of version 2. Third-party components keep their own licences; see [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES).
+Finzytrack's own code is licensed under the **GNU General Public License, version 2 or (at your option) any later version** (GPL-2.0-or-later); see [`LICENSE`](LICENSE) for the text of version 2.
+
+The desktop app consists of separate programs that talk to each other over a local connection ([ADR-0054](design/decisions/ADR-0054-beancount-in-its-own-engine-process.md)):
+- the **ledger engine**, which includes [Beancount](https://github.com/beancount/beancount) (GPL-2.0-only), is distributed under **GPL version 2**;
+- the **main backend and the user interface** are distributed under **GPL version 3**, as the "or later" option allows.
+
+Third-party components keep their own licences; see [`THIRD_PARTY_NOTICES`](THIRD_PARTY_NOTICES).

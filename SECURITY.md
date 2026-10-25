@@ -2,7 +2,7 @@
 
 ## Reporting a problem
 
-Please report security problems privately through GitHub's "Report a vulnerability" (Security → Advisories) on this repository. Do not open a public issue. You get an answer within a week.
+Please report security problems privately through GitHub's "Report a vulnerability" (Security → Advisories) on this repository. Do not open a public issue.
 
 ## Supported versions
 
