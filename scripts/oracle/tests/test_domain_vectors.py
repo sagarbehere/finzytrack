@@ -43,6 +43,9 @@ SHOWN_BY = {
         'a cost with no currency: indeterminate': [
             'tolerance/partial-cost-number-only',
         ],
+        'a per-unit cost with the total left out: indeterminate': [
+            'tolerance/partial-cost-per-with-total-left-out',
+        ],
         'a cost with only a total: indeterminate': [
             'tolerance/partial-cost-total-only',
         ],
@@ -198,6 +201,10 @@ SHOWN_BY = {
             'price/inverted-wins-anywhere USD INR 2020-01-02',
             'price/double-inversion USD INR 2020-01-01',
             'price/double-inversion INR USD 2020-01-01',
+            'price/fewer-counts-directives USD INR 2020-01-01',
+            'price/equal-counts-forward-first USD INR 2020-01-01',
+            'price/equal-counts-inverse-first USD INR 2020-01-01',
+            'price/equal-counts-inverse-first INR USD 2020-01-01',
             'price/zero-not-inverted XYZ USD 2020-01-01',
             'price/implicit-prices-plugin VTI USD 2020-01-01',
             'price/implicit-prices-plugin USD INR 2020-02-01',
@@ -223,9 +230,19 @@ SHOWN_BY = {
         ],
         'a point inverted twice': [
             'price/double-inversion USD INR 2020-01-01',
+            'price/equal-counts-inverse-first USD INR 2020-01-01',
+        ],
+        'the direction with fewer directives is inverted, duplicates counted': [
+            'price/fewer-counts-directives USD INR 2020-01-01',
+        ],
+        'equal directive counts: the later direction is inverted': [
+            'price/equal-counts-forward-first USD INR 2020-01-01',
+            'price/equal-counts-inverse-first USD INR 2020-01-01',
+            'price/equal-counts-inverse-first INR USD 2020-01-01',
         ],
         'same-day duplicates': [
             'price/same-day-last-wins VTI USD 2020-01-01',
+            'price/fewer-counts-directives USD INR 2020-01-01',
         ],
         'another quote currency gives none': [
             'price/as-of VTI EUR 2020-06-01',
@@ -308,8 +325,8 @@ class RealVectors(unittest.TestCase):
                       sum(i["polarity"] == "negative" for _, i in vectors.units(doc, f)))
                   for f in vectors.FAMILIES}
         self.assertEqual(counts, {
-            "tolerance": (30, 18, 12), "balance": (10, 6, 4), "account": (4, 15, 16), "currency": (1, 12, 9),
-            "price": (9, 16, 5), "precision": (2, 5, 2), "booking": (13, 9, 4),
+            "tolerance": (32, 19, 13), "balance": (10, 6, 4), "account": (4, 15, 16), "currency": (1, 12, 9),
+            "price": (12, 20, 5), "precision": (2, 5, 2), "booking": (13, 9, 4),
         })
 
     def test_which_vectors_show_each_behaviour(self) -> None:
@@ -587,6 +604,18 @@ class Port(Corpus):
         self.vec("tolerance/negative-price-refused")["output"]["port"] = "balanced"
         self.assertReports("tolerance/negative-price-refused: port verdict 'balanced', the rule gives 'not-pinned'")
 
+    def test_port_targets_follow_the_verdict(self) -> None:
+        cases = {
+            "tolerance/negative-price-refused": ["needs_booking", "tolerances", "residual", "port"],
+            "tolerance/elided-leg-quantized": ["needs_booking", "tolerances", "residual", "port"],
+            "tolerance/written-scale-10.50": ["needs_booking", "port"],
+        }
+        for vid, targets in cases.items():
+            with self.subTest(vid):
+                self.doc = json.loads((vectors.CORPUS / "vectors.json").read_text(encoding="utf-8"))
+                self.vec(vid)["output"]["port_targets"] = targets
+                self.assertReports(f"{vid}: port_targets")
+
     def test_not_pinned_only_for_refused_entries(self) -> None:
         self.vec("tolerance/written-scale-10.50")["output"]["port"] = "not-pinned"
         self.assertReports("port verdict 'not-pinned', the rule gives 'unbalanced'")
@@ -694,6 +723,13 @@ class Fresh(Corpus):
     def test_a_transaction_that_does_not_parse(self) -> None:
         self.edit_cases('{ account = "Assets:Bank", units = "-10 USD" }', '{ account = "assets:Bank", units = "-10 USD" }')
         self.assertReports("generator: tolerance/integers-exact: the transaction does not parse", fresh=True)
+
+    def test_a_price_that_is_not_a_plain_number(self) -> None:
+        for written in ("@ (200/2) USD", "@ 1,000 USD", "@@ +1000 USD"):
+            with self.subTest(written):
+                shutil.copy(vectors.CORPUS / "cases.toml", self.corpus / "cases.toml")
+                self.edit_cases('price = "@ 100.123 USD"', f'price = "{written}"')
+                self.assertReports("generator: tolerance/price-weight: write the price", fresh=True)
 
     def test_a_second_balance_entry(self) -> None:
         self.edit_cases('  Income:Salary  -100.00 USD\n"""\naccount = "Assets:Bank"\namount = "100.00 USD"\n',

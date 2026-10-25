@@ -45,6 +45,14 @@ OPEN_DATE = "2000-01-01"
 TXN_DATE = "2020-06-01"
 NARRATION = "vector"
 BALANCE_ERROR = "Transaction does not balance"
+PLAIN_NUMBER = re.compile(r"-?[0-9]+(\.[0-9]+)?")
+# What a frontend port reproduces from input.postings, per verdict; the other outputs are Beancount's (engine only).
+PORT_TARGETS = {
+    "balanced": ["needs_booking", "tolerances", "residual", "port"],
+    "unbalanced": ["needs_booking", "tolerances", "residual", "port"],
+    "indeterminate": ["needs_booking", "port"],
+    "not-pinned": ["needs_booking"],
+}
 ABOUT = (
     "Beancount domain vectors (S0024): each vector is an input from corpora/vectors/cases.toml and what Beancount "
     "says about it. Written by scripts/oracle/gen_domain_vectors.py; spec design/specs/kernel/vectors.md. "
@@ -172,6 +180,9 @@ def written_postings(case: dict[str, Any], parsed: Any) -> list[dict[str, Any]]:
             text = given["price"].strip()
             total = text.startswith("@@")
             number = LEFT_OUT if p.price.number is MISSING else text[2 if total else 1:].split()[0]
+            if number != LEFT_OUT and not PLAIN_NUMBER.fullmatch(number):
+                raise VectorError(f"{case['id']}: write the price {number!r} as a plain number (the port is served "
+                                  "the written text; Beancount would evaluate an expression or drop commas)")
             price = {"number": number, "currency": w_cur(p.price.currency), "total": total}
         out.append({
             "account": p.account,
@@ -255,6 +266,7 @@ def gen_tolerance(case: dict[str, Any]) -> dict[str, Any]:
         out["port"] = "not-pinned"  # Beancount refuses this entry for another reason; the contract refuses the write
     else:
         out["port"] = "balanced" if out["balanced"] else "unbalanced"
+    out["port_targets"] = PORT_TARGETS[out["port"]]
     return {"input": inp, "output": out}
 
 

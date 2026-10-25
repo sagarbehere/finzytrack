@@ -370,6 +370,26 @@ postings = [
   { account = "Assets:Bank", units = "-1005.00 USD" },
 ]
 
+[[tolerance]]
+id = "tolerance/partial-cost-per-with-total-left-out"
+polarity = "positive"
+spec = ["beancount:beancount.parser.booking_full.interpolate_group", "review:L3-verif §3.2", "ADR-0024"]
+about = "{100 # USD} writes the per-unit cost but leaves the total out: Beancount fills it from the cash leg (5), so the port says indeterminate (read as {100 USD} it would be unbalanced by 5)."
+postings = [
+  { account = "Assets:Broker", units = "10 VTI", cost = "{100 # USD}" },
+  { account = "Assets:Bank", units = "-1005 USD" },
+]
+
+[[tolerance]]
+id = "tolerance/partial-cost-both-numbers-left-out"
+polarity = "negative"
+spec = ["beancount:beancount.parser.booking_full.interpolate_group", "review:L3-verif §3.2", "ADR-0024"]
+about = "{# USD} leaves both the per-unit and the total cost out: Beancount refuses it (too many missing numbers); the port still says indeterminate, from the written input."
+postings = [
+  { account = "Assets:Broker", units = "10 VTI", cost = "{# USD}" },
+  { account = "Assets:Bank", units = "-1000 USD" },
+]
+
 # ---- balance: balance-assertion tolerance (get_balance_tolerance) --------------------------------------------
 
 [[balance]]
@@ -676,6 +696,46 @@ setup = """
 2020-01-01 price INR 0.0133 USD
 2020-01-02 price INR 0.0132 USD
 2020-01-01 price USD 76 INR
+"""
+queries = [
+  { base = "USD", quote = "INR", date = "2020-01-01", polarity = "positive" },
+  { base = "INR", quote = "USD", date = "2020-01-01", polarity = "positive" },
+]
+
+[[price]]
+id = "price/fewer-counts-directives"
+spec = ["beancount:beancount.core.prices.build_price_map", "ADR-0024"]
+about = "The direction to invert is the one with fewer price directives, same-day duplicates counted: USD in INR has three directives on one day, INR in USD two on two days, so INR in USD is inverted and USD in INR on 2020-01-01 is 80 (counting dates would give 76.99999999999999999999999998)."
+setup = """
+2020-01-01 price USD 75 INR
+2020-01-01 price USD 76 INR
+2020-01-01 price USD 77 INR
+2020-01-01 price INR 0.0125 USD
+2020-01-02 price INR 0.0130 USD
+"""
+queries = [
+  { base = "USD", quote = "INR", date = "2020-01-01", polarity = "positive" },
+]
+
+[[price]]
+id = "price/equal-counts-forward-first"
+spec = ["beancount:beancount.core.prices.build_price_map", "ADR-0024"]
+about = "Equal directive counts: the direction whose first directive comes later in Beancount's entry order is inverted. USD in INR comes first, so INR in USD is inverted and wins the shared day: 80."
+setup = """
+2020-01-01 price USD 75 INR
+2020-01-01 price INR 0.0125 USD
+"""
+queries = [
+  { base = "USD", quote = "INR", date = "2020-01-01", polarity = "positive" },
+]
+
+[[price]]
+id = "price/equal-counts-inverse-first"
+spec = ["beancount:beancount.core.prices.build_price_map", "ADR-0024"]
+about = "The same two directives in the other order: USD in INR is now the later one, so it is inverted and wins: USD in INR comes back from 1/(1/75)."
+setup = """
+2020-01-01 price INR 0.0125 USD
+2020-01-01 price USD 75 INR
 """
 queries = [
   { base = "USD", quote = "INR", date = "2020-01-01", polarity = "positive" },

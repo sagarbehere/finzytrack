@@ -184,6 +184,13 @@ def units(doc: dict[str, Any], family: str) -> list[Unit]:
 
 LEFT_OUT = "MISSING"  # a part the author left out for Beancount to fill; null means "not written"
 BALANCE_ERROR = "Transaction does not balance"
+# What a frontend port must reproduce from input.postings, per verdict (spec "The frontend port's verdict").
+PORT_TARGETS = {
+    "balanced": ["needs_booking", "tolerances", "residual", "port"],
+    "unbalanced": ["needs_booking", "tolerances", "residual", "port"],
+    "indeterminate": ["needs_booking", "port"],
+    "not-pinned": ["needs_booking"],
+}
 
 
 def written_needs_booking(p: dict[str, Any]) -> bool:
@@ -211,6 +218,9 @@ def port_problems(case: dict[str, Any]) -> list[str]:
                 else "balanced" if o["balanced"] else "unbalanced")
     if o["port"] != expected:
         problems.append(f"{where}: port verdict {o['port']!r}, the rule gives {expected!r}")
+    if o.get("port_targets") != PORT_TARGETS.get(expected):
+        problems.append(f"{where}: port_targets {o.get('port_targets')!r}, a {expected!r} vector has "
+                        f"{PORT_TARGETS.get(expected)!r}")
     said_unbalanced = any(e.startswith(BALANCE_ERROR) for e in o["errors"])
     if o["balanced"] is not None and o["balanced"] == said_unbalanced:
         problems.append(f"{where}: balanced={o['balanced']} disagrees with Beancount's own validation errors")
@@ -290,6 +300,23 @@ def _inverted_wins_before_forward(case: dict[str, Any], item: dict[str, Any]) ->
     return bool(rev and fwd and max(fwd) > max(n for n, _ in rev))
 
 
+def _directive_counts(case: dict[str, Any], b: str, q: str) -> tuple[int, int, int, int]:
+    """(directives b->q, directives q->b, dates b->q, dates q->b) in the case's ledger."""
+    fwd, rev = _forward(case, b, q), _forward(case, q, b)
+    return len(fwd), len(rev), len(set(fwd)), len(set(rev))
+
+
+def _counts_disagree(case: dict[str, Any], item: dict[str, Any]) -> bool:
+    """Counting directives and counting dates pick different directions to invert."""
+    nf, nr, df, dr = _directive_counts(case, item["input"]["base"], item["input"]["quote"])
+    return nf > 0 and nr > 0 and (nf < nr) != (df < dr) and nf != nr and df != dr
+
+
+def _equal_counts(case: dict[str, Any], item: dict[str, Any]) -> bool:
+    nf, nr, _, _ = _directive_counts(case, item["input"]["base"], item["input"]["quote"])
+    return nf > 0 and nf == nr
+
+
 def _inverted_twice(case: dict[str, Any], item: dict[str, Any]) -> bool:
     """The result equals neither a written line of that day nor its inverse: the point went through 1/(1/x)."""
     o, b, q = item["output"], item["input"]["base"], item["input"]["quote"]
@@ -341,6 +368,9 @@ COVERAGE: dict[str, dict[str, Pred]] = {
             _cost_shape(p)[:3] == ("MISSING", None, "MISSING") and _cost_shape(p)[3] is not None for p in _wp(c)),
         "a cost with no currency: indeterminate": lambda c, i: i["output"]["port"] == "indeterminate" and any(
             _cost_shape(p)[2] == "MISSING" and _cost_shape(p)[0] not in (None, "MISSING") for p in _wp(c)),
+        "a per-unit cost with the total left out: indeterminate": lambda c, i: (
+            i["output"]["port"] == "indeterminate" and any(
+                _cost_shape(p)[1] == "MISSING" and _cost_shape(p)[0] not in (None, "MISSING") for p in _wp(c))),
         "a cost with only a total: indeterminate": lambda c, i: i["output"]["port"] == "indeterminate" and any(
             _cost_shape(p)[0] == "MISSING" and _cost_shape(p)[1] not in (None, "MISSING") for p in _wp(c)),
         "a refused entry has no port verdict": lambda c, i: i["output"]["port"] == "not-pinned",
@@ -423,6 +453,10 @@ COVERAGE: dict[str, dict[str, Pred]] = {
             c, i["input"]["base"], i["input"]["quote"]) and bool(_forward(c, i["input"]["quote"], i["input"]["base"])),
         "the inverted point wins wherever it is in the file": lambda c, i: _inverted_wins_before_forward(c, i),
         "a point inverted twice": lambda c, i: _inverted_twice(c, i),
+        "the direction with fewer directives is inverted, duplicates counted": lambda c, i: (
+            i["output"]["number"] is not None and _counts_disagree(c, i)),
+        "equal directive counts: the later direction is inverted": lambda c, i: (
+            i["output"]["number"] is not None and _equal_counts(c, i)),
         "same-day duplicates": lambda c, i: (
             i["output"]["number"] is not None and len(_forward(c, i["input"]["base"], i["input"]["quote"]))
             != len(set(_forward(c, i["input"]["base"], i["input"]["quote"])))),
