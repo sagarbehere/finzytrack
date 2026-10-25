@@ -16,7 +16,9 @@ Rules (design/process/PROCESS.md, "Privacy gate"):
   secret-entropy what detect-secrets 1.5.0 finds (vendor key formats, secret keywords, high-entropy strings),
                 run from its pinned environment `scripts/secrets-scan/` with network verification off, on every
                 blob whatever its name (BL-0035); a 64-hex value under a `sha256` or `checksum` key is a hash
-                pin. If the tool cannot run, the scan fails (exit 2), never passes
+                pin. A mark or pin excuses a hit only on its own line under every numbering detect-secrets may
+                use, so in a YAML file with a NEL, LINE or PARAGRAPH SEPARATOR above the value it may not excuse:
+                put the mark on a line of its own there (fails closed by design, S0016) If the tool cannot run, the scan fails (exit 2), never passes
   home-path     a real home directory (/Users/<name>, /home/<name>, /Volumes/<name>, ~<name>/, C:\\Users\\<name>)
   live-data-path the name of the owner's live data folder
   denylist      a literal from the owner's denylist (kept OUTSIDE the repo)
@@ -26,7 +28,8 @@ The owner's denylist (amounts, names, account fragments) is read from $FT_PRIVAC
 committed. A line containing `privacy-scan: allow <rule>` suppresses that rule on that line;
 every suppression is visible in review.
 
-Matches are printed redacted. Exit status: 0 clean, 1 findings, 2 usage or internal error.
+Matches are printed redacted. Exit status: 0 clean, 1 findings, 2 usage or internal error (including a
+Python older than 3.12, or detect-secrets unable to run).
 """
 
 from __future__ import annotations

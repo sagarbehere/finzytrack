@@ -330,7 +330,7 @@ class SecretEntropy(unittest.TestCase):
             with self.subTest(sep=repr(sep), case="mark on the line below"):
                 self.assertIn("secret-entropy", self.found(f"a: 1{sep}k: {self.B64}\n{mark}\n", "c.yaml"))
             with self.subTest(sep=repr(sep), case="a marked line with the same number elsewhere"):
-                text = f'a: 1{sep}k: {self.B64}\nold: "{self.B64[::-1]}"  {mark}\n'
+                text = f'a: 1{sep}k: {self.B64}\nold: "{self.B64}"  {mark}\n'
                 self.assertIn("secret-entropy", self.found(text, "c.yaml"))
             with self.subTest(sep=repr(sep), case="a pin with the same number elsewhere"):
                 text = f'a: 1{sep}token: {self.HEX}\nsha256: "{self.HEX}"\n'
@@ -342,6 +342,15 @@ class SecretEntropy(unittest.TestCase):
     def test_too_old_a_python_refuses(self) -> None:
         with mock.patch.object(ps.sys, "version_info", (3, 9, 6)), redirect_stderr(io.StringIO()):
             self.assertEqual(ps.main(["--quiet", "x.md"]), 2)
+
+    def test_a_supported_python_scans(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "a.md"
+            path.write_text("hello\n")
+            for version in ((3, 12, 0), (3, 13, 5)):
+                with self.subTest(version=version), mock.patch.object(ps.sys, "version_info", version), \
+                        redirect_stderr(io.StringIO()):
+                    self.assertEqual(ps.main(["--quiet", str(path)]), 0)
 
     def test_a_crlf_mark_above_a_secret_does_not_cover_it(self) -> None:
         # F3: CRLF is one line end, not two.

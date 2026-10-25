@@ -54,3 +54,12 @@
   - R4-F3 Low (tests): the YAML test used a value both scans find. Replaced by YAML-only values (mark below, a marked line and a pin with the same number elsewhere) and an unparsable file.
   - R4-F4 Low: under Python 3.9 the scanner crashed (exit 1). It now refuses with exit 2 below Python 3.12; test.
 - Re-verification required: round 5 below.
+- Round 5, head e62f313: PASS WITH FINDINGS. Attacks: 9 (all prior repros, 19 cases; the suite and full scan; new tests on base; ordering of excused and unexcused hits; values spanning YAML lines; legitimate marks after separators; `.yml`/`.eyaml`; 9 mutants; the floor under the system Python 3.9).
+  - R5-F1 Low: in a parsable YAML file with a NEL/LS/PS above a value, its correct mark no longer excuses it (universal numbering is also required). Accepted: it fails closed, the characters are rare, and the workaround (a mark that holds under both numberings) is stated in the module doc.
+  - R5-F2 Low (tests): the marked-line subtest now uses the same value, so it guards R4-F1. R5-F3 Low (tests): a supported Python (3.12, 3.13) gets past the floor.
+  - Doc: the module doc names the Python floor and the exit status 2.
+  - Note: a single-quoted YAML string spanning lines is found by neither detect-secrets scan (a gap in the tool, recorded here, not fixed).
+
+## Retro
+- Five verifier rounds on one privacy gate. Rounds 1–2 were real holes (paths, option injection, name skips, line counting); rounds 3–5 came from each fix (kept suffixes, then the union, then its line mapping) opening the next case. EP-30 would have pointed earlier to the shape that ended it: decide conservatively (excuse only under every numbering) instead of modelling the tool's numbering exactly.
+- Process cost: about 2 h 30 min building and fixing over five rounds; verifiers about 6 + 8 + 4.5 + 4 + 4 min.
