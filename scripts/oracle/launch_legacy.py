@@ -4,7 +4,8 @@
 The differential-oracle harness (`harness.py`) and characterization tests use this to run the old app beside the
 new one. It refuses the owner's live data folder (or $FT_LIVE_DATA), the legacy worktree itself and this repo
 (`copies.refuse_dir`), refuses port 8001 (the owner's daily v0.3) and any port already in use, and never writes
-bytecode into the read-only legacy worktree.
+bytecode into the read-only legacy worktree. The process gets an allowlisted environment (no credentials) and, by
+default, no outbound HTTP (`legacy_env`, `offline_env`).
 
 The owner's own daily v0.3 is NOT started by this script: it is the legacy worktree's run-v0.3.sh.
 
@@ -38,6 +39,21 @@ OWNER_PORT = 8001
 # Nothing listens on the discard port: proxied requests fail at once instead of reaching the internet.
 DEAD_PROXY = "http://127.0.0.1:9"
 PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")
+
+
+# The only variables of the caller's environment a legacy process inherits: no credentials, tokens or `${ENV}`
+# values the legacy config could expand (its email profiles expand IMAP credentials from the environment).
+ENV_KEEP = ("PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TZ", "USER", "LOGNAME")
+
+
+def legacy_env(base: dict[str, str], *, offline: bool = True) -> dict[str, str]:
+    """The environment of a legacy process: the allowlisted variables of *base*, the launcher's own, and (offline)
+    the dead proxy. HTTP clients that honour proxies cannot reach the internet; non-HTTP clients such as IMAP find
+    no credentials to use."""
+    legacy = legacy_root()
+    env = {k: base[k] for k in ENV_KEEP if k in base}
+    env |= {"PYTHONPATH": str(legacy / "backend"), "PYTHONDONTWRITEBYTECODE": "1", "FINZYTRACK_MODE": "desktop"}
+    return offline_env(env) if offline else env
 
 
 def offline_env(env: dict[str, str]) -> dict[str, str]:
@@ -104,11 +120,7 @@ class LegacyApp:
 
     def start(self) -> dict:
         self.root.mkdir(parents=True, exist_ok=True)
-        legacy = legacy_root()
-        env = {**os.environ, "PYTHONPATH": str(legacy / "backend"), "PYTHONDONTWRITEBYTECODE": "1",
-               "FINZYTRACK_MODE": "desktop"}
-        if self.offline:
-            env = offline_env(env)
+        env = legacy_env(dict(os.environ), offline=self.offline)
         cmd = [str(self.python), "-m", "app.main", "--server-port", str(self.port)]
         if self.static_dir:
             cmd += ["--static-dir", str(self.static_dir.resolve())]

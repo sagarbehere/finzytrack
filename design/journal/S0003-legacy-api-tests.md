@@ -21,20 +21,30 @@
 - The app under test is the legacy worktree's code started by `launch_legacy.LegacyApp`; the tests themselves run from the copy (agent).
 
 ## Result (spike S12: FAIL against its criterion; the fallback applies)
-- Legacy suite in process (copy, disposable venv): 1109 tests, 1099 passed, 9 failed, 1 skipped in about 25 s. The 9 legacy failures are the legacy's own.
-- API-level tests (a client fixture in their closure): 170. Passing in process: 165 (the denominator).
-- Out of process through the thin shim: **107 of 165 pass (65%)**, criterion ≥ 80%. 220 s wall time, about 1.3 s per test (one legacy process per test).
-- The 58 that do not run out of process are all structural, none flaky:
-  - 38 not shimmed: their modules build their own in-process client (open deposit 25, statement import 12, prices 1). Statement import is cut (ADR-0030).
-  - 15 depend on in-process stubs that cannot cross a process boundary: the AI/LLM client (natural-language parser 9, LLM investment parse 4) or a mock's recorded call arguments (categorize 2).
-  - 4 stub the AMFI price source; out of process they hit the offline proxy (a 502 or "unavailable"), which shows the egress block works.
-  - 1 captures in-process log records.
-- Decision (agent, by the spike's own fallback, review:C §5 S12): the legacy API tests are **reference reading for each vertical's characterization slice**, not an M0 deliverable. The runner stays: it runs 107 of them out of process against v0.3 on demand (`scripts/oracle/legacy_api_tests.py`), which a vertical's first slice can use as a starting characterization set for its endpoints. Raising the ratio would need a stub LLM endpoint and per-module client patching, which is no longer a thin shim.
+Corrected after the verifier's F2. The first count chose API-level tests by fixture name and missed about 100 tests whose clients have other names. It reported 107 / 165 = 65%, which was wrong.
+- Legacy suite in process (copy, disposable venv): 1109 tests, 1099 passed, 9 failed, 1 skipped.
+  - About 5 of the 9 failures depend on pytest's working directory ("Backup directory does not exist: data/backups"), not on the legacy code. They pass out of process, where the working directory is the root. They are outside the denominator either way.
+- API-level tests: **280**. A test counts when an in-process FastAPI `TestClient` was built during it or handed to it, whatever the fixture is called. **269** pass in process (the denominator).
+- Out of process through the thin shim: **107 of 269 pass (40%)**, against the ≥ 80% criterion. About 226 s, one legacy process per test.
+- The 162 that do not run out of process are structural, none flaky:
+  - **142 not shimmed:** their modules build their own in-process client. By module: documents 29, open deposit 26, prices 26, metadata 23, statement import 15 (a cut feature, ADR-0030), isolation 12, commodities 6, static cache headers 3, setup 2.
+  - **15 depend on in-process stubs** that cannot cross a process boundary: the AI/LLM client (natural-language parser 9, LLM investment parse 4) or a mock's recorded call arguments (categorize 2).
+  - **4 stub the AMFI price source.** Out of process they hit the offline proxy and fail, which also shows the egress block works.
+  - **1 captures in-process log records.**
+- Of the 107, **105 are offered as characterization tests**. The other 2 use a `monkeypatch`/`mocker` stub that never reached the legacy process, so they may pass for the wrong reason (F5).
+  - Limit: tests that stub with `mock.patch` decorators or context managers are not detected. The verifier found 7 such tests among the 107. A vertical's first slice reads each test it adopts.
+- Decision (agent, by the spike's own fallback, review:C §5 S12): the legacy API tests are **reference reading for each vertical's characterization slice**, not an M0 deliverable. The runner stays: `scripts/oracle/legacy_api_tests.py` runs them out of process against v0.3 on demand and lists which ones are usable. Raising the ratio would need per-module client patching and a stub LLM endpoint, which is no longer a thin shim.
 
 ## Verifier
-- Head SHA verified:
-- Attacks tried:
-- Findings:
+- Round 1, head e4d1f90: **PASS WITH FINDINGS** (risk class Medium kept). Attacks tried (11): the full runner end to end with counts compared; JUnit-to-node-id mapping (all 170 found); the API-level rule against every client fixture in the suite; the work-folder guard through `main()` with and without `--skip-setup`; a mutant removing the offline wiring; egress for every network client the legacy app uses; shimmed tests whose stubs were silently ignored; writes into the legacy worktree; `ProcessClient`'s error path and port races; tests flipping outcome; the rubric and ADR check for the fallback.
+- Findings and resolution:
+  - F1 Medium (INV-24): `main()` created `--work` before checking it, and `--skip-setup` skipped the check. Fixed: `refuse_dir(work)` runs first, always. A test covers both modes and shows the legacy tree is unchanged.
+  - F2 Medium: the API-level population was wrong (by fixture name). Fixed: the shim records every test during which a `TestClient` is built or received. The corrected numbers are in Result. The verdict is the same, and the recorded ratio is now true.
+  - F3 Low: a mutant removing the offline wiring survived. Fixed: `LegacyApp.start` builds its environment with `legacy_env` (tested, including that `start` uses it). The shim itself runs only inside the legacy test venv and is covered by the end-to-end run, not by a stdlib meta-test.
+  - F4 Low: the proxy only covers HTTP clients, and IMAP reads credentials from the inherited environment. Fixed: a legacy process now gets an allowlisted environment (PATH, HOME, locale, TMPDIR, TZ, user names) and none of the caller's other variables, so no credential or `${ENV}` value is there to use. The docstring says exactly that.
+  - F5 Low: passing tests whose in-process stub was ignored were offered as characterization tests. Fixed for `monkeypatch`/`mocker` stubs; the limit for `mock.patch` is stated in Result.
+  - Question: the about 5 legacy in-process failures that depend on the working directory are noted in Result.
 
 ## Retro
--
+- The first count was wrong because the population was chosen by name rather than by behaviour. Recording what a test actually does (here, building a `TestClient`) is the cheaper and correct rule.
+- Process cost: implementation about 50 min; two full runs about 5 min each; brief, docs and verifier about 25 min; fixes about 25 min.

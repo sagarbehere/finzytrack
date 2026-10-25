@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -45,6 +47,11 @@ class OutcomeTest(unittest.TestCase):
         self.assertEqual(s["failing_out_of_process"], {"t3": "failed: assert"})
         self.assertAlmostEqual(s["ratio"], 1 / 3)
 
+    def test_passing_tests_with_an_ignored_stub_are_not_characterization_tests(self) -> None:
+        inproc = {"t1": ("passed", ""), "t2": ("passed", "")}
+        s = lat.compare_outcomes(inproc, dict(inproc), api={"t1", "t2"}, shimmed={"t1", "t2"}, stubbed=frozenset({"t2"}))
+        self.assertEqual((s["passing_out_of_process"], s["characterization_set"], s["passing_with_an_ignored_stub"]), (2, 1, ["t2"]))
+
 
 class CopyTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -79,8 +86,33 @@ class CopyTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             lat.copy_backend(self.legacy / "scratch")
 
+    def test_main_refuses_a_work_folder_in_the_legacy_worktree_before_creating_anything(self) -> None:
+        (self.legacy / "venv/bin").mkdir(parents=True)
+        (self.legacy / "venv/bin/python").write_text("")
+        for extra in ([], ["--skip-setup"]):
+            for work in (self.legacy / "scratch", self.legacy):
+                with self.subTest(work=work, extra=extra):
+                    before = sorted(str(p) for p in self.legacy.rglob("*"))
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        self.assertEqual(lat.main(["--work", str(work), *extra]), 2)
+                    self.assertEqual(sorted(str(p) for p in self.legacy.rglob("*")), before)
+
 
 class OfflineTest(unittest.TestCase):
+    def test_the_legacy_process_gets_an_allowlisted_offline_environment(self) -> None:
+        base = {"PATH": "/bin", "HOME": "/h", "IMAP_PASSWORD": "s3cret", "OPENAI_API_KEY": "k", "OTHER_SETTING": "/x"}
+        env = launch_legacy.legacy_env(base)
+        for secret in ("IMAP_PASSWORD", "OPENAI_API_KEY", "OTHER_SETTING"):
+            self.assertNotIn(secret, env)
+        self.assertEqual((env["PATH"], env["HTTPS_PROXY"], env["PYTHONDONTWRITEBYTECODE"]), ("/bin", launch_legacy.DEAD_PROXY, "1"))
+        allowed = set(launch_legacy.ENV_KEEP) | {"PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "FINZYTRACK_MODE", "NO_PROXY", "no_proxy"}
+        allowed |= {v for k in launch_legacy.PROXY_VARS for v in (k, k.lower())}
+        self.assertLessEqual(set(env), allowed)
+
+    def test_start_uses_the_legacy_environment(self) -> None:
+        import inspect
+        self.assertIn("legacy_env(", inspect.getsource(launch_legacy.LegacyApp.start))
+
     def test_outbound_http_goes_to_an_unreachable_proxy_and_loopback_is_exempt(self) -> None:
         env = launch_legacy.offline_env({"HTTPS_PROXY": "http://real-proxy:8080", "PATH": "/bin"})
         for k in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):

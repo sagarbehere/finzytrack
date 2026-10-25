@@ -95,15 +95,21 @@ def parse_junit(path: Path) -> dict[str, tuple[str, str]]:
 
 
 def compare_outcomes(inproc: dict[str, tuple[str, str]], outproc: dict[str, tuple[str, str]], api: set[str],
-                     shimmed: set[str]) -> dict:
+                     shimmed: set[str], stubbed: frozenset[str] = frozenset()) -> dict:
+    """The S12 measure. Denominator: API-level tests (an in-process TestClient was built or received) that pass in
+    process. A test passes out of process only if it passed and the shim served it. Passing tests that use an
+    in-process stub are reported apart: their stub never reached the other process, so they are not offered as
+    characterization tests."""
     base = sorted(t for t in api if inproc.get(t, ("",))[0] == "passed")
     passing = [t for t in base if outproc.get(t, ("",))[0] == "passed" and t in shimmed]
     not_shimmed = [t for t in base if t not in shimmed]
     failing = {t: f"{outproc.get(t, ('missing', ''))[0]}: {outproc.get(t, ('', ''))[1]}".rstrip(": ")
                for t in base if t in shimmed and outproc.get(t, ("",))[0] != "passed"}
     return {"api_tests": len(api), "denominator": len(base), "passing_out_of_process": len(passing),
-            "ratio": len(passing) / len(base) if base else 0.0, "not_shimmed": not_shimmed,
-            "failing_out_of_process": failing}
+            "ratio": len(passing) / len(base) if base else 0.0,
+            "characterization_set": len([t for t in passing if t not in stubbed]),
+            "passing_with_an_ignored_stub": sorted(t for t in passing if t in stubbed),
+            "not_shimmed": not_shimmed, "failing_out_of_process": failing}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -112,6 +118,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skip-setup", action="store_true", help="reuse the copy and venv in --work")
     args = ap.parse_args(argv)
     work = args.work.resolve()
+    problem = refuse_dir(work)  # before anything is created or written (INV-24)
+    if problem:
+        print(f"legacy_api_tests: refused: {problem}", file=sys.stderr)
+        return 2
     work.mkdir(parents=True, exist_ok=True)
     backend = work / "backend"
     if args.skip_setup:
@@ -124,11 +134,13 @@ def main(argv: list[str] | None = None) -> int:
     api = set((work / "api_tests.txt").read_text(encoding="utf-8").split())
     shimmed = set((work / "shimmed.txt").read_text(encoding="utf-8").split()) if (work / "shimmed.txt").exists() else set()
     inproc = parse_junit(work / "inprocess.xml")
-    summary = compare_outcomes(inproc, parse_junit(work / "process.xml"), api, shimmed)
+    stubbed = frozenset((work / "stubbed.txt").read_text(encoding="utf-8").split())
+    summary = compare_outcomes(inproc, parse_junit(work / "process.xml"), api, shimmed, stubbed)
     summary |= {"all_tests": len(inproc), "in_process_passed": sum(o == "passed" for o, _ in inproc.values()),
                 "seconds": {"in_process": round(t_in), "out_of_process": round(t_out)}}
     (work / "s12-report.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
-    print(json.dumps({k: v for k, v in summary.items() if k not in ("not_shimmed", "failing_out_of_process")}, indent=1))
+    lists = ("not_shimmed", "failing_out_of_process", "passing_with_an_ignored_stub")
+    print(json.dumps({k: v for k, v in summary.items() if k not in lists}, indent=1))
     print(f"not shimmed: {len(summary['not_shimmed'])}, failing out of process: {len(summary['failing_out_of_process'])}")
     return 0 if summary["ratio"] >= 0.8 else 1
 
