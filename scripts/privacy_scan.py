@@ -269,17 +269,25 @@ def suffix(path: str) -> str:
     return ext if SAFE_SUFFIX.fullmatch(ext) else ".txt"
 
 
-def detect_secrets(texts: dict[str, str]) -> dict[str, list[tuple[int, str]]]:
-    """{path: [(line, hashed_secret)]} from detect-secrets over the given texts. Each text is written to the
-    temporary folder under a generated name (`blob00000.txt`, ...), never under its own path, so no path can
-    leave the folder or be read as an option (EP-30); the results are mapped back by that name."""
+YAML_SUFFIXES = frozenset({".yaml", ".yml", ".eyaml"})
+
+
+def detect_secrets(texts: dict[str, str]) -> dict[str, list[tuple[int, str, str]]]:
+    """{path: [(line, hashed_secret, suffix scanned as)]} from detect-secrets over the given texts. Each text is
+    written to the temporary folder under generated names, never under its own path, so no path can leave the
+    folder or be read as an option (EP-30). detect-secrets' rules depend on the file type, and neither choice
+    finds everything (YAML scalars and unquoted values only as `.txt`; Go or C keywords only under their own
+    suffix), so every text is scanned twice: as `blob00000.txt` and as `blob00000-t<suffix>`, and the findings
+    are united."""
     if not texts:
         return {}
-    # The file's own suffix is kept when it is plain (detect-secrets picks its keyword rules by file type);
-    # nothing else of the path reaches the tool.
-    names = {f"blob{i:05d}{suffix(path)}": path for i, path in enumerate(texts)}
+    names: dict[str, tuple[str, str]] = {}
+    for i, path in enumerate(texts):
+        names[f"blob{i:05d}.txt"] = (path, ".txt")
+        if suffix(path) != ".txt":
+            names[f"blob{i:05d}-t{suffix(path)}"] = (path, suffix(path))
     with tempfile.TemporaryDirectory() as tmp:
-        for name, path in names.items():
+        for name, (path, _) in names.items():
             (Path(tmp) / name).write_text(texts[path], encoding="utf-8", newline="")
         filters = [arg for f in DS_DISABLED_FILTERS for arg in ("--disable-filter", f)]
         cmd = ["uv", "run", "--project", str(SECRETS_ENV), "--locked", "--quiet", "detect-secrets", "scan",
@@ -298,15 +306,32 @@ def detect_secrets(texts: dict[str, str]) -> dict[str, list[tuple[int, str]]]:
             raise ToolError(f"detect-secrets output unreadable: {e}") from e
         if not set(results) <= set(names):
             raise ToolError(f"detect-secrets reported unknown files: {sorted(set(results) - set(names))[:3]}")
-    return {names[name]: [(r["line_number"], r["hashed_secret"]) for r in found] for name, found in results.items()}
+    out: dict[str, list[tuple[int, str, str]]] = {}
+    for name, found in results.items():
+        path, as_suffix = names[name]
+        out.setdefault(path, []).extend((r["line_number"], r["hashed_secret"], as_suffix) for r in found)
+    return out
+
+
+def text_lines(text: str, as_suffix: str) -> list[str]:
+    """The lines as detect-secrets numbered them: universal newlines (CRLF, CR, LF); for YAML its transformer
+    reads with PyYAML, which also ends lines at NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if as_suffix in YAML_SUFFIXES:
+        for sep in ("\x85", "\u2028", "\u2029"):
+            text = text.replace(sep, "\n")
+    return text.split("\n")
 
 
 def entropy_findings(texts: dict[str, str]) -> list[Finding]:
     out: list[Finding] = []
     for path, hits in detect_secrets(texts).items():
-        # as detect-secrets reads files (universal newlines): CRLF, CR and LF each end a line, nothing else does
-        lines = texts[path].replace("\r\n", "\n").replace("\r", "\n").split("\n")
-        for lineno, hashed in sorted(set(hits)):  # one finding per value and line, whichever plugins found it
+        seen: set[tuple[int, str]] = set()
+        for lineno, hashed, as_suffix in sorted(set(hits)):
+            if (lineno, hashed) in seen:
+                continue  # one finding per value and line, whichever plugin or scan found it
+            seen.add((lineno, hashed))
+            lines = text_lines(texts[path], as_suffix)
             line = lines[lineno - 1] if 0 < lineno <= len(lines) else ""
             allowed = {r.strip() for m in ALLOW_MARK.finditer(line) for r in m.group(1).split(",")}
             if "secret-entropy" in allowed:

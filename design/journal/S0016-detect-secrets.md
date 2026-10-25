@@ -42,3 +42,10 @@
   - F6 Low: a test checked a shared temp path. It now uses its own temp folder and checks that nothing is left behind.
   - Self-mutation of round-3 fixes: 6 tried, 6 killed.
 - Re-verification required (3+ Medium on a High slice): round 3 below.
+- Round 3, head c288bc2: FAIL. Attacks: 10 (prior repros; injection with kept suffixes; name skips; a differential scan of 25 texts under their own suffix and as `.txt`; transformers; YAML line counting; mutants; full scan; the locale test on Linux; test hygiene).
+  - R3-F1 Medium: keeping the suffix lost detections that only the `.txt` rules make (YAML block, folded and multi-line scalars; unquoted Python values and keywords; `.properties`). Fixed (EP-30): every text is scanned twice, as `.txt` and under its kept suffix, and the findings united; six cases tested.
+  - R3-F2 Medium: in YAML, PyYAML ends lines at NEL, LS and PS too, so a mark could cover another line. Fixed: YAML-scan hits are mapped with those breaks; tests for all three.
+  - R3-F3 Low (tests): a CRLF mark above a secret. Added.
+  - Note: on Linux CI the Shift JIS locale is probably absent, so the locale test only bites on macOS (the pre-push hook runs it there).
+  - Self-mutation of round-4 fixes: 4 tried, 3 killed; `yaml-breaks-ignored` is equivalent under the union (the `.txt` scan reports the value on its true line); kept for correct line numbers on YAML-only hits.
+- Re-verification required: round 4 below.

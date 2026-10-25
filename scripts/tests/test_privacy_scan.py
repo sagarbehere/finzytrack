@@ -307,6 +307,33 @@ class SecretEntropy(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIn("secret-entropy", self.found(text, path))
 
+    def test_detection_does_not_depend_on_the_file_name(self) -> None:
+        # S0016 round-3 F1: each text is scanned as `.txt` and under its own suffix, and the findings united.
+        word = "pass" + "word"
+        cases = {
+            "yaml block scalar": ("c.yaml", f"key: |\n  {self.B64}\n"),
+            "yaml folded scalar": ("c.yml", f"key: >\n  text\n  {self.B64}\n"),
+            "yaml multi-line plain scalar": ("c.yaml", f"key: aaa\n  {self.B64}\n"),
+            "python unquoted value": ("a.py", f"x = {self.B64}\n"),
+            "python unquoted keyword": ("a.py", f"db_{word} = hunter2abc\n"),
+            "properties": ("a.properties", f"b={self.B64}\n"),
+        }
+        for name, (path, text) in cases.items():
+            with self.subTest(case=name):
+                self.assertIn("secret-entropy", self.found(text, path))
+
+    def test_yaml_line_breaks_do_not_move_a_mark(self) -> None:
+        # F2: PyYAML also ends lines at NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR.
+        mark = "# privacy-scan: allow secret-entropy"
+        for sep in ("\u2028", "\x85", "\u2029"):
+            with self.subTest(sep=repr(sep)):
+                self.assertIn("secret-entropy", self.found(f'a: 1{sep}b: "{self.B64}"\n{mark}\n', "c.yaml"))
+
+    def test_a_crlf_mark_above_a_secret_does_not_cover_it(self) -> None:
+        # F3: CRLF is one line end, not two.
+        text = "a = 1\r\n# privacy-scan: allow secret-entropy\r\n" + f'token = "{self.B64}"\r\n'
+        self.assertIn("secret-entropy", self.found(text, "x.py"))
+
     def test_a_non_utf8_locale_does_not_skip_files(self) -> None:
         # F3: the tool runs in UTF-8 mode whatever the locale, so a file with non-ASCII text is still read.
         text = "# caf\u00e9 \u00c1\u00e9\u00ff\u20ac\n" + f'token = "{self.B64}"\n'  # not decodable as Shift JIS
