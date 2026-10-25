@@ -29,3 +29,12 @@
 - F5 Low: `mode: 'full'` is deprecated. Kept: `partialMatch: false` did not classify `src/main.ts` the same way when tried (Decisions above); revisit in the plugin's upgrade slice.
 - F6 Low: `frontend/CLAUDE.md` now names the layer map. F7 Low: INV-12's line states that `import(variable)` and `import.meta.glob(...)` are review-only.
 - Re-verification required (High fix): round 2 below.
+- Round 2, head bcd2949: PASS WITH FINDINGS. Attacks: 6 (round-1 repros; bypass probes incl. `?raw`, absolute and `#` specifiers, `/@fs/`, targets outside src, dynamic imports, other extensions; false refusals of legitimate same-layer imports; the real tree; 16 mutants; INV-12's wording).
+  - F1 Medium: `checkUnknownLocals` refuses Vite query imports (`?url`, `?raw`, `?worker`) and the `./x.js`-for-`x.ts` spelling, which compile and build. Resolution: both refusals are deliberate for now (fail closed), stated in `eslint.boundaries.js` and `frontend/CLAUDE.md`, pinned by tests; resolving query imports is BL-0056, for the first slice that imports an asset.
+  - F2 Low: refusal rows for `.tsx`, `.cts`, `.jsx`, `.mjs`, `.cjs` and the `~/` alias added. F3 Low: the dead `src/**` pattern removed (the bare `src` is what a `src/…` specifier is matched as).
+  - No High: no further round (ADR-0058).
+
+## Retro
+- The first map was built from the examples in §3.1, not from the ways an import can be written; the verifier's list of import forms (extensions, aliases, unresolvable spellings) was the spec to start from — the same lesson as S0010's CSP guard.
+- Committing with `;` instead of `&&` let a failing invariant check through (7b8d369 fixed it); chain gates with `&&`.
+- Process cost: about 1 h 15 min building (much of it learning the plugin's v7 config); verifiers 7 + 3 min; fixes about 40 min.

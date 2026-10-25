@@ -61,7 +61,7 @@ export function policies(edges = FEATURE_EDGES) {
     {
       from: { element: { type: '!domain' } },
       allow: {
-        to: { module: { origin: ['external', 'core'], source: '!{@tauri-apps/**,@/**,~/**,src,src/**,@,~}' } },
+        to: { module: { origin: ['external', 'core'], source: '!{@tauri-apps/**,@/**,~/**,src,@,~}' } },
       },
     },
     {
@@ -86,8 +86,10 @@ export function boundariesConfig(edges = FEATURE_EDGES) {
         'import/resolver': { node: { extensions: ['.ts', '.mts', '.tsx', '.vue', '.js', '.mjs'] } },
       },
       rules: {
-        // checkUnknownLocals: a local import the resolver cannot place (`./clock.js` for clock.ts) is refused, not
-        // skipped (S0018 verifier F1)
+        // checkUnknownLocals: a local import the resolver cannot place is refused, not skipped (S0018 verifier F1).
+        // Deliberate consequences, pinned by tests: write `./clock`, not `./clock.js`, for clock.ts; Vite query
+        // imports (`?url`, `?raw`, `?worker`) are refused until the first slice that needs one teaches the map to
+        // resolve them (BL-0056).
         'boundaries/dependencies': [
           'error',
           { default: 'disallow', checkAllOrigins: true, checkUnknownLocals: true, policies: policies(edges) },

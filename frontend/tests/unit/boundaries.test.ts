@@ -123,6 +123,16 @@ describe('[INV-12] frontend dependency direction', () => {
     ['an .mts file in domain importing platform', 'src/domain/evil.mts', "import '../platform/clock'\n"],
     ['an alias-looking @/ import', 'src/features/accounts/hooks/useTree.ts', "import '@/app/router'\n"],
     ['an alias-looking src/ import', 'src/features/accounts/hooks/useTree.ts', "import 'src/app/router'\n"],
+    ['an alias-looking ~/ import', 'src/features/accounts/hooks/useTree.ts', "import '~/app/router'\n"],
+    // every script kind under src/ is linted (round-2 F2)
+    ...['tsx', 'cts', 'jsx', 'mjs', 'cjs'].map((ext): [string, string, string] => [
+      `a .${ext} file in domain importing platform`,
+      `src/domain/evil.${ext}`,
+      "import '../platform/clock'\n",
+    ]),
+    // deliberate, until BL-0056: Vite query imports are refused (round-2 F1)
+    ['a Vite ?url import', 'src/features/accounts/hooks/useTree.ts', "import '../views/List.vue?url'\n"],
+    ['a Vite ?raw import', 'src/domain/money.ts', "import './dates?raw'\n"],
     // F3: the other forbidden pairs of the map
     ['app deep-importing a feature', 'src/app/router.ts', "import '../features/accounts/views/List.vue'\n"],
     ['app importing api/generated', 'src/app/router.ts', "import '../api/generated/types'\n"],
