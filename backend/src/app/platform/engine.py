@@ -4,8 +4,10 @@ The main sidecar never imports Beancount; the ledger engine, a separate process,
 reach it only through `EnginePort`. The real adapter is `app.platform.adapters.engine_client.EngineClient` (spawn,
 handshake, timeouts, supervision); tests use a fake. Every call returns a tagged union: the typed result, an
 `EngineRefusal` (the engine read the request and said no), or an `EngineFailure` (no answer: the engine crashed,
-timed out, broke the protocol, is incompatible, or stopped restarting). A failed request is never resent by the
-client: whether to try again is the caller's choice, because a write is not idempotent.
+timed out, broke the protocol, is incompatible, or stopped restarting; or the request was too large to send). A
+failed request is never resent by the client: whether to try again is the caller's choice, because a write is not
+idempotent. Caller errors raise `ValueError` before anything is sent: a timeout that is not a positive, finite
+number, and params that are not JSON data. The engine never sees those, so they are no `EngineRefusal`.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ type FailureKind = Literal[
     "start_failed",  # the engine did not start or did not complete the handshake
     "unavailable",  # the engine stopped too often in the restart window; not restarted until the window passes
     "closed",  # the client was closed
+    "too_large",  # the request is longer than the protocol's line limit; nothing was sent, the engine is untouched
 ]
 
 
@@ -58,7 +61,7 @@ class EngineRefusal:
 
 @dataclass(frozen=True, slots=True)
 class EngineFailure:
-    """No answer from the engine. `detail` is for the log, not for the user."""
+    """No answer from the engine (or, for `too_large`, nothing sent). `detail` is for the log, not for the user."""
 
     kind: FailureKind
     detail: str
@@ -76,7 +79,8 @@ class EnginePort(Protocol):
     def call(
         self, op: str, params: Mapping[str, object], timeout: float
     ) -> Mapping[str, object] | EngineRefusal | EngineFailure:
-        """Send one request and return its `result` object as plain data."""
+        """Send one request and return its `result` object as plain data. The timeout bounds the wait for the
+        reply; a (re)start the call needs first is bounded separately by the adapter's policy."""
         ...
 
     def close(self) -> None:

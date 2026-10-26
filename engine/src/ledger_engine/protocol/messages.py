@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 PROTOCOL_VERSION = 1
 MAX_LINE_BYTES = 16 * 1024 * 1024
 MAX_ID = 2**31 - 1  # exact in every JSON reader; the client wraps its counter below it
+MAX_ECHO_CHARS = 128  # the longest `op` a refusal echoes (S0035 independent verifier F1)
 
 type RefusalKey = Literal[
     "protocol.malformed",
@@ -109,7 +110,8 @@ def _reply_model(op: str, spec: OpSpec) -> type[Message]:
 
 class Refusal(Message):
     """A refused request, or a line that was not a request. `id` and `op` are those of the request when it could
-    be read that far, else null."""
+    be read that far, else null; `op` is null too when it cannot be echoed exactly (not valid Unicode, or longer
+    than 128 characters)."""
 
     model_config = ConfigDict(
         strict=True,

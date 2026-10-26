@@ -36,6 +36,33 @@ IMPORTS = (
     "import os, beancount\n",
 )
 
+EVASIONS = (
+    "from importlib import import_module as im\nim('beancount.loader')\n",
+    "import importlib\nimportlib.import_module(name='beancount')\n",
+    "__import__(name='beancount.core')\n",
+    "exec('import beancount')\n",
+    "exec('from beancount import loader')\n",
+    "eval(\"__import__('beancount')\")\n",
+    "import runpy\nrunpy.run_module('beancount.scripts.check')\n",
+    "from runpy import run_module\nrun_module(mod_name='beancount.scripts.check')\n",
+    "import pkgutil\npkgutil.resolve_name('beancount.loader:load_file')\n",
+    "import pkgutil\npkgutil.resolve_name('beancount:loader')\n",
+)
+DYNAMIC = (
+    "import importlib\nimportlib.import_module(name)\n",
+    "from importlib import import_module as im\nim(name)\n",
+    "load = __import__\nload(name)\n",
+    "__import__(name)\n",
+    "import runpy\nrunpy.run_path(path)\n",
+    "import runpy\n",
+    "import pkgutil\npkgutil.resolve_name(name)\n",
+    "exec(code)\n",
+    "eval(code)\n",
+    "import builtins\nbuiltins.exec(code)\n",
+    "f = getattr(importlib, 'import_module')\n",
+    "spec.loader.exec_module(module)\n",
+)
+
 
 class Boundary(unittest.TestCase):
     def setUp(self) -> None:
@@ -94,6 +121,38 @@ class Boundary(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(self.plant("backend/src/app/planted.py", text), [])
                 self.assertEqual(self.plant("engine/src/ledger_engine/planted.py", text), [])
+
+    def test_literal_imports_in_other_shapes_are_seen_everywhere(self) -> None:
+        """S0035 independent verifier F5: a literal Beancount name reached by an aliased or keyword import call,
+        exec/eval of a literal, runpy or pkgutil.resolve_name is an import too."""
+        for text in EVASIONS:
+            for where in ("backend/src/app/planted.py", "scripts/planted.py", "engine/tests/test_planted.py"):
+                with self.subTest(where=where, text=text):
+                    found = self.plant(where, text)
+                    if where.startswith("engine/tests/"):
+                        self.assertEqual(found, [], f"{where}: {text!r} refused")  # the engine's tests may
+                    else:
+                        self.assertTrue(found, f"{where}: {text!r} passed")
+            with self.subTest(where="the engine's tests importing app", text=text):
+                self.assertTrue(self.plant("engine/tests/test_planted.py", text.replace("beancount", "app")))
+
+    def test_any_dynamic_import_or_exec_in_the_engine_source_is_refused(self) -> None:
+        """EP-30, conservative: inside engine/src only the gateway may import, run or evaluate code by name, so a
+        computed name cannot carry Beancount (or `app`) past the scan."""
+        for text in DYNAMIC:
+            for where in ("engine/src/ledger_engine/protocol/planted.py", "engine/src/ledger_engine/ledger/overlay.py"):
+                with self.subTest(where=where, text=text):
+                    self.assertTrue(self.plant(where, text), f"{where}: {text!r} passed")
+            with self.subTest(where=GATEWAY, text=text):
+                self.assertEqual(self.plant(GATEWAY, text), [])
+            with self.subTest(where="engine/tests", text=text):
+                self.assertEqual(self.plant("engine/tests/test_planted.py", text), [])
+
+    def test_ordinary_engine_code_passes(self) -> None:
+        for text in ("from importlib.metadata import version\nversion('beancount')\n", "import re\nre.compile('x')\n",
+                     "x = {'exec': 1}\n", "def evaluate(): pass\n", "import json\njson.loads('1')\n"):
+            with self.subTest(text=text):
+                self.assertEqual(self.plant("engine/src/ledger_engine/protocol/planted.py", text), [])
 
     def test_an_unparsable_file_fails_closed(self) -> None:
         self.assertTrue(self.plant("backend/src/app/planted.py", "def (:\n"))

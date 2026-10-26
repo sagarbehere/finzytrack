@@ -19,6 +19,7 @@ from typing import IO, Any
 import pytest
 
 from ledger_engine.protocol.messages import MAX_LINE_BYTES
+from ledger_engine.protocol.server import PARENT_POLL_SECONDS
 
 ENGINE = [sys.executable, "-I", "-m", "ledger_engine", "--test-ops"]
 DEADLINE = 15.0
@@ -200,10 +201,27 @@ def test_a_parent_that_died_while_the_engine_was_starting_is_caught() -> None:
         assert proc.wait(DEADLINE) == 3  # EXIT_PARENT_GONE, while its stdin is still open
 
 
-@pytest.mark.parametrize("pid", ["1", "0", "-5", "x"])
+@pytest.mark.parametrize("pid", ["0", "-5", "x"])
 def test_a_parent_pid_that_cannot_be_a_spawner_is_refused(pid: str) -> None:
     r = subprocess.run([*ENGINE, "--parent-pid", pid], stdin=subprocess.DEVNULL, capture_output=True, timeout=DEADLINE)  # noqa: S603
     assert r.returncode == 2  # argparse's usage error
+
+
+def test_a_parent_that_is_pid_1_starts_the_engine_without_the_parent_watchdog() -> None:
+    """S0035 independent verifier F6: a main sidecar running as pid 1 (a container without an init) must be able
+    to start the engine. Its own parent is not pid 1, so a watchdog would end it at the first poll; stdin EOF still
+    ends it."""
+    with subprocess.Popen(  # noqa: S603
+        [*ENGINE, "--parent-pid", "1"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    ) as proc:
+        assert call(proc, "handshake", 1)["ok"] is True
+        polls = threading.Event()
+        polls.wait(4 * PARENT_POLL_SECONDS)  # several watchdog polls would have passed
+        assert proc.poll() is None
+        assert call(proc, "ping", 2)["ok"] is True
+        assert proc.stdin is not None
+        proc.stdin.close()
+        assert proc.wait(DEADLINE) == 0
 
 
 @pytest.mark.skipif(not POSIX, reason="the parent-pid poll is POSIX; Windows relies on stdin EOF and the Job Object")

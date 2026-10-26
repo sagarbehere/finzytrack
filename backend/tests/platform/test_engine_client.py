@@ -16,11 +16,13 @@ import time
 import tomllib
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from app.platform.adapters.engine_client import EngineClient, EngineCommand, RestartPolicy
+from app.platform.adapters.engine_client import EngineClient, EngineCommand, RestartPolicy, next_request_id
 from app.platform.engine import EngineFailure, EngineInfo, EnginePort, EngineRefusal, Pong
+from app.platform.engine_protocol import MAX_ID
 
 REPO = Path(__file__).resolve().parents[3]
 ENGINE_VENV = REPO / "engine" / ".venv"
@@ -319,16 +321,47 @@ def test_a_broken_handshake_in_our_own_protocol_is_a_failed_start_not_incompatib
         c.close()
 
 
-def test_params_too_deep_to_encode_are_refused_before_sending(client: EngineClient) -> None:
-    """S0035 verifier F4(b): a request that cannot be encoded is refused locally; the engine is untouched."""
-    client.start()
-    pid = client.pid
+def _deep() -> object:
     deep: object = []
     for _ in range(200_000):
         deep = [deep]
-    out = client.call("ping", {"x": deep}, timeout=DEADLINE)
-    assert isinstance(out, EngineRefusal)
-    assert out.key == "protocol.malformed"
+    return deep
+
+
+@pytest.mark.parametrize(
+    ("op", "params"),
+    [
+        ("ping", {"x": _deep()}),  # S0035 verifier F4(b)
+        ("ping", {"x": float("nan")}),
+        ("ping", {"x": object()}),
+        ("ping", {"x": "\ud800"}),
+        ("x\udfff", {}),
+    ],
+    ids=["too-deep", "nan", "not-json", "surrogate-in-params", "surrogate-in-op"],
+)
+def test_a_request_that_is_not_json_data_raises_before_sending(
+    client: EngineClient, op: str, params: dict[str, object]
+) -> None:
+    """S0035 independent verifier F7: the engine never saw it, so it is no `EngineRefusal`; params that are not
+    JSON data are the caller's error (like a bad timeout) and raise. The engine is untouched."""
+    client.start()
+    pid = client.pid
+    with pytest.raises(ValueError, match="not JSON data"):
+        client.call(op, params, timeout=DEADLINE)
+    assert client.ping(timeout=DEADLINE) == Pong()
+    assert client.pid == pid
+
+
+def test_a_request_longer_than_the_line_limit_is_not_sent_and_is_no_stop(client: EngineClient) -> None:
+    """S0035 independent verifier F7: a too-large request depends on the data, so it is an outcome the caller
+    handles, distinct from the engine's refusals; nothing is sent and it does not count towards the restart bound."""
+    client.start()
+    pid = client.pid
+    big = {"x": "a" * (16 * 1024 * 1024)}
+    for _ in range(RestartPolicy().max_crashes + 1):
+        out = client.call("ping", big, timeout=DEADLINE)
+        assert isinstance(out, EngineFailure)
+        assert out.kind == "too_large"
     assert client.ping(timeout=DEADLINE) == Pong()
     assert client.pid == pid
 
@@ -349,6 +382,129 @@ def test_a_timeout_that_is_not_a_positive_number_is_refused_before_sending(
     assert client.pid == pid
 
 
+@pytest.mark.parametrize(
+    "policy",
+    [
+        {"start_timeout": float("inf")},
+        {"start_timeout": 0.0},
+        {"start_timeout": float("nan")},
+        {"close_timeout": float("inf")},
+        {"close_timeout": -1.0},
+        {"delays": (0.5, float("inf"))},
+        {"delays": (-1.0,)},
+        {"delays": (float("nan"),)},
+        {"window": float("inf")},
+        {"window": 0.0},
+        {"max_crashes": 0},
+    ],
+)
+def test_a_restart_policy_without_finite_bounds_is_refused(policy: dict[str, Any]) -> None:
+    """S0035 independent verifier F3: starting is bounded by the policy, not by the caller's timeout, so every
+    time in the policy must be finite."""
+    with pytest.raises(ValueError, match="RestartPolicy"):
+        RestartPolicy(**policy)
+
+
+def test_the_longest_start_is_the_largest_backoff_plus_the_start_timeout() -> None:
+    assert RestartPolicy().longest_start == 8.0 + 15.0
+    assert RestartPolicy(delays=(), start_timeout=2.0).longest_start == 2.0
+
+
+SILENT = "import sys; sys.stdin.read()"  # starts, never answers the handshake
+
+
+def test_a_start_is_bounded_by_the_policy_not_by_the_callers_timeout(fake_time: FakeTime) -> None:
+    """S0035 independent verifier F3 (decided: the caller's timeout covers the wait for its reply; a start that the
+    call needs is bounded by `RestartPolicy.longest_start`). A short timeout must not cut a cold start short: that
+    would stop a healthy engine that is still importing and count it towards `unavailable`."""
+    policy = RestartPolicy(start_timeout=1.0)
+    c = EngineClient(stand_in(SILENT), policy, monotonic=fake_time.monotonic, pause=fake_time.pause)
+    try:
+        began = time.monotonic()
+        out = c.ping(timeout=0.2)
+        took = time.monotonic() - began
+        assert isinstance(out, EngineFailure)
+        assert out.kind == "start_failed"
+        assert 1.0 <= took < policy.longest_start + 5.0
+    finally:
+        c.close()
+
+
+def test_the_stderr_of_an_engine_that_failed_to_start_is_kept(fake_time: FakeTime) -> None:
+    """S0035 independent verifier F4: the stderr tail is the only diagnosis of a crash; it outlives the run."""
+    script = "import sys; sys.stderr.write('marker: cannot start\\n'); sys.stderr.flush(); sys.exit(3)"
+    c = EngineClient(stand_in(script), monotonic=fake_time.monotonic, pause=fake_time.pause)
+    try:
+        out = c.start()
+        assert isinstance(out, EngineFailure)
+        assert c.pid is None
+        assert "marker: cannot start" in c.stderr_tail()
+    finally:
+        c.close()
+
+
+DIES_ON_PING = r"""
+import json, sys
+req = json.loads(sys.stdin.readline())
+sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 1, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.flush()
+sys.stdin.readline()
+sys.stderr.write("marker: died on ping\n")
+sys.stderr.flush()
+sys.exit(7)
+"""
+
+
+def test_the_stderr_of_an_engine_that_crashed_mid_request_is_kept_until_the_next_start(fake_time: FakeTime) -> None:
+    c = EngineClient(stand_in(DIES_ON_PING), monotonic=fake_time.monotonic, pause=fake_time.pause)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        out = c.ping(timeout=DEADLINE)
+        assert isinstance(out, EngineFailure)
+        assert out.kind == "crashed"
+        assert "marker: died on ping" in c.stderr_tail()
+        assert isinstance(c.start(), EngineInfo)  # a new run: its own tail
+        assert "marker: died on ping" not in c.stderr_tail()
+    finally:
+        c.close()
+
+
+def test_a_stop_exactly_one_window_old_no_longer_counts(fake_time: FakeTime) -> None:
+    """The window is half-open: a stop `window` seconds ago has left it (S0035 independent verifier F8, M2)."""
+    c = EngineClient(stand_in("import sys; sys.exit(3)"), monotonic=fake_time.monotonic, pause=fake_time.pause)
+    try:
+        first = fake_time.now
+        kinds = [r.kind for r in (c.start() for _ in range(4)) if isinstance(r, EngineFailure)]
+        assert kinds == ["start_failed", "start_failed", "start_failed", "unavailable"]
+        fake_time.now = first + RestartPolicy().window
+        again = c.start()
+        assert isinstance(again, EngineFailure)
+        assert again.kind == "start_failed"  # two stops left in the window: a start was tried
+    finally:
+        c.close()
+
+
+def test_an_engine_that_cannot_be_spawned_counts_towards_the_bound(fake_time: FakeTime) -> None:
+    """S0035 independent verifier F8 (M9): a missing interpreter is a stop like any other, with the same backoff."""
+    missing = EngineCommand(argv=(str(REPO / "no-such-dir" / "python"),), env=None)
+    c = EngineClient(missing, monotonic=fake_time.monotonic, pause=fake_time.pause)
+    try:
+        kinds = [r.kind for r in (c.start() for _ in range(4)) if isinstance(r, EngineFailure)]
+        assert kinds == ["start_failed", "start_failed", "start_failed", "unavailable"]
+        assert fake_time.pauses == [0.5, 2.0]
+    finally:
+        c.close()
+
+
+def test_request_ids_count_from_1_and_wrap_below_the_largest_id() -> None:
+    """S0035 independent verifier F8 (M14): ids stay in 1..MAX_ID, the range every JSON reader holds exactly."""
+    assert next_request_id(0) == 1
+    assert next_request_id(1) == 2
+    assert next_request_id(MAX_ID - 1) == MAX_ID
+    assert next_request_id(MAX_ID) == 1
+
+
 def test_close_ends_the_engine_and_later_calls_fail(client: EngineClient) -> None:
     client.start()
     pid = client.pid
@@ -367,6 +523,8 @@ def test_the_engine_environment_drops_the_shell_token_and_python_overrides() -> 
         "FT_OTHER": "x",
         "PYTHONPATH": "/x",
         "PYTHONHOME": "/y",
+        "ft_lower": "x",  # Windows names are case-insensitive (S0035 independent verifier F8, M4)
+        "Python_Mixed": "x",
         "HOME": "/var/empty",
         "PATH": "/bin",
         "TZ": "Asia/Kolkata",

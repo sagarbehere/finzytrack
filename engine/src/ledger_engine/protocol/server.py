@@ -8,10 +8,16 @@
   The private copies are not inherited by child processes.
 - **Order.** Requests are handled one at a time, in order; each gets exactly one reply.
 - **Refusals** carry a stable key and a plain message (`messages.RefusalKey`); the engine keeps serving after any
-  refusal. A handler that raises is `engine.internal`: the traceback goes to stderr, never into the reply.
+  refusal. A handler that raises, or returns a result that is not its op's, is `engine.internal`: the traceback
+  goes to stderr, never into the reply. The engine never dies on input (S0035 independent verifier F1): a refusal
+  echoes `op` only when it is valid Unicode and at most `MAX_ECHO_CHARS` long (else null), its message is made
+  valid Unicode and cut to `MAX_MESSAGE_CHARS`, and the read loop answers anything that still escapes with a fixed
+  `engine.internal` reply.
 - **Parent-death watchdog** (spike S1): the engine exits when its stdin reaches EOF (after finishing the request in
   hand), and on POSIX also when its parent is no longer `--parent-pid` (polled from the start, so a parent that
-  died while the engine was starting is caught), even mid-request and with stdin still open.
+  died while the engine was starting is caught), even mid-request and with stdin still open. A parent that is pid 1
+  (a main sidecar running as a container's first process) cannot be told apart from re-parenting, so then only
+  stdin EOF applies (S0035 independent verifier F6).
   On Windows the main sidecar's Job Object (ARCHITECTURE.md §5) ends the engine with its parent.
 - **No resident ledger (INV-10).** The engine holds no ledger between requests; today it has no ledger operations
   at all. The overlay load and the heavy-load semaphore arrive with their slices (WS-WRITE, BL-0003).
@@ -35,6 +41,7 @@ from typing import IO, Any
 from pydantic import ValidationError
 
 from ledger_engine.protocol.messages import (
+    MAX_ECHO_CHARS,
     MAX_ID,
     MAX_LINE_BYTES,
     OPS,
@@ -52,6 +59,8 @@ from ledger_engine.protocol.messages import (
 ENVELOPE = frozenset({"v", "id", "op", "params"})
 PARENT_POLL_SECONDS = 0.25
 EXIT_PARENT_GONE = 3
+INIT_PID = 1
+MAX_MESSAGE_CHARS = 1000
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,25 +192,54 @@ class Engine:
             where = "; ".join(f"params.{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())
             return _refusal(rid, op, "protocol.invalid_params", where or "Invalid params.")
         try:
-            result = handler.run(params)
+            reply = _accepted(rid, op, handler.run(params))
         except Exception:  # noqa: BLE001 (the engine's request boundary, EP-13: logged, then a typed refusal)
             _log(f"internal error in {op}:\n{traceback.format_exc()}")
-            return _refusal(rid, op, "engine.internal", "The engine failed on this request; details are in its log.")
+            return _refusal(rid, op, "engine.internal", INTERNAL_MESSAGE)
         if op == "handshake":
             self._ready = True
-        model = REPLY_MODELS.get(op)
-        if model is None:  # a test op: not in the schema, same envelope
-            return json.dumps(
-                {"v": PROTOCOL_VERSION, "id": rid, "op": op, "ok": True, "result": result.model_dump(mode="json")},
-                separators=(",", ":"),
-            ).encode()
-        reply = {"v": PROTOCOL_VERSION, "id": rid, "op": op, "ok": True, "result": result}
-        return model.model_validate(reply).model_dump_json().encode()
+        return reply
+
+
+INTERNAL_MESSAGE = "The engine failed on this request; details are in its log."
+
+
+def _accepted(rid: int, op: str, result: Message) -> bytes:
+    """The accepted reply, validated against the op's reply model (a wrong result raises here, inside the request
+    boundary)."""
+    model = REPLY_MODELS.get(op)
+    if model is None:  # a test op: not in the schema, same envelope
+        return json.dumps(
+            {"v": PROTOCOL_VERSION, "id": rid, "op": op, "ok": True, "result": result.model_dump(mode="json")},
+            separators=(",", ":"),
+        ).encode()
+    reply = {"v": PROTOCOL_VERSION, "id": rid, "op": op, "ok": True, "result": result}
+    return model.model_validate(reply).model_dump_json().encode()
+
+
+def _echo(op: str | None) -> str | None:
+    """The op as it can be echoed exactly, else None: an altered echo would read as a reply to another request."""
+    if op is None or len(op) > MAX_ECHO_CHARS:
+        return None
+    try:
+        op.encode("utf-8")
+    except UnicodeEncodeError:  # a lone surrogate, sent as a \ud800 escape
+        return None
+    return op
+
+
+def _text(message: str) -> str:
+    """A message that can always be encoded: lone surrogates replaced, cut to `MAX_MESSAGE_CHARS`."""
+    return message[:MAX_MESSAGE_CHARS].encode("utf-8", "replace").decode("utf-8")
 
 
 def _refusal(rid: int | None, op: str | None, key: RefusalKey, message: str) -> bytes:
-    body = RefusalBody(key=key, message=message)
-    return Refusal(v=PROTOCOL_VERSION, id=rid, op=op, ok=False, error=body).model_dump_json().encode()
+    body = RefusalBody(key=key, message=_text(message))
+    return Refusal(v=PROTOCOL_VERSION, id=rid, op=_echo(op), ok=False, error=body).model_dump_json().encode()
+
+
+# The read loop's last resort: fixed bytes, so answering cannot fail too.
+LAST_RESORT = _refusal(None, None, "engine.internal", INTERNAL_MESSAGE) + b"\n"
 
 
 def claim_stdio() -> tuple[IO[bytes], IO[bytes]]:
@@ -232,7 +270,11 @@ def serve(channel_in: IO[bytes], channel_out: IO[bytes], engine: Engine) -> None
             return
         if len(line) > MAX_LINE_BYTES + 1 and not line.endswith(b"\n"):  # over-long and cut: skip to its end
             _discard_rest_of_line(channel_in)
-        reply = engine.handle(line)
+        try:
+            reply = engine.handle(line)
+        except Exception:  # noqa: BLE001 (the read loop's last resort, EP-13: every line gets one reply)
+            _log(f"internal error outside the request boundary:\n{traceback.format_exc()}")
+            reply = LAST_RESORT
         try:
             channel_out.write(reply)
             channel_out.flush()
@@ -258,9 +300,14 @@ def watch_parent(parent: int, exit_now: Callable[[int], None] = os._exit) -> thr
     return thread
 
 
+def watches_parent(parent: int) -> bool:
+    """POSIX only, and not for pid 1: a child of pid 1 cannot tell its parent's death from re-parenting."""
+    return os.name == "posix" and parent != INIT_PID
+
+
 def _pid(text: str) -> int:
     value = int(text)
-    if value <= 1:
+    if value < INIT_PID:
         msg = f"{text} is not a parent process id"
         raise argparse.ArgumentTypeError(msg)
     return value
@@ -277,7 +324,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     parent = args.parent_pid if args.parent_pid is not None else os.getppid()
     channel_in, channel_out = claim_stdio()
-    if os.name == "posix":
+    if watches_parent(parent):
         watch_parent(parent)
+    else:
+        _log(f"the parent is pid {parent}; the engine ends on stdin EOF only")
     serve(channel_in, channel_out, Engine(test_ops=args.test_ops))
     return 0

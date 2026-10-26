@@ -253,7 +253,7 @@
     },
     "Refusal": {
       "additionalProperties": false,
-      "description": "A refused request, or a line that was not a request. `id` and `op` are those of the request when it could\nbe read that far, else null.",
+      "description": "A refused request, or a line that was not a request. `id` and `op` are those of the request when it could\nbe read that far, else null; `op` is null too when it cannot be echoed exactly (not valid Unicode, or longer\nthan 128 characters).",
       "examples": [
         {
           "error": {

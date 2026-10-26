@@ -7,9 +7,16 @@ ARCHITECTURE.md §2.0, §5).
   process group, so the shell's group kill reaches it; on Windows the Job Object does (§5).
 - **Handshake.** Every start sends `handshake` first; another protocol version is `incompatible` and is never
   retried (until `reset`).
-- **Requests** are serialized, one in flight, each with the caller's timeout. A reader thread turns the engine's
-  stdout into lines, so a wait always ends: by a reply, by the timeout, or by end of stream when the engine dies.
-  A timeout or an invalid reply stops the engine (its state is unknown); a request is never resent.
+- **Requests** are serialized, one in flight. The caller's timeout bounds the wait for its reply; a start the call
+  needs first is bounded by the policy (`RestartPolicy.longest_start`: the largest backoff delay plus the handshake
+  timeout), not by the caller's timeout, so a short timeout cannot cut a cold start short and count a healthy
+  engine as a stop (S0035 independent verifier F3). A call therefore returns within `longest_start` + its timeout,
+  after any call ahead of it on the lock. A reader thread turns the engine's stdout into lines, so a wait always
+  ends: by a reply, by the timeout, or by end of stream when the engine dies. A timeout or an invalid reply stops
+  the engine (its state is unknown); a request is never resent.
+- **Encoding** happens before anything is started or sent: params that are not JSON data raise `ValueError` (a
+  caller error, like a bad timeout); a request longer than the line limit is `EngineFailure("too_large")`, which
+  leaves the engine untouched and is no stop (S0035 independent verifier F7).
 - **Supervision.** An engine that stopped (crash, timeout, violation, failed start) is restarted by the next
   request, after a backoff delay that grows with the stops in the window (`RestartPolicy`). After
   `max_crashes` stops in `window` seconds the client answers `unavailable` without starting it, until the window
@@ -17,7 +24,8 @@ ARCHITECTURE.md §2.0, §5).
 - **Shutdown.** `close()` closes the engine's stdin (it finishes the request in hand and exits), then terminates and
   finally kills it if it does not exit in time.
 - **Bounded state** (INV-10, INV-11): one engine process, one request in flight, the last `STDERR_LINES` lines of
-  the engine's stderr, at most `max_crashes` stop times. The client is owned by the user container
+  the engine's stderr (of the running engine, else of the last one that stopped: the only diagnosis of a crash),
+  at most `max_crashes` stop times. The client is owned by the user container
   (`platform/state_registry.py`).
 """
 
@@ -55,6 +63,11 @@ STDERR_LINE_BYTES = 64 * 1024
 DROPPED_ENV_PREFIXES = ("FT_", "PYTHON")
 
 
+def next_request_id(previous: int) -> int:
+    """The id after `previous`: 1..MAX_ID, wrapping (one request is in flight, so ids never clash)."""
+    return previous % MAX_ID + 1
+
+
 def engine_env(environ: Mapping[str, str]) -> dict[str, str]:
     """The engine's environment: the parent's, without `FT_*` and `PYTHON*` variables."""
     return {k: v for k, v in environ.items() if not k.upper().startswith(DROPPED_ENV_PREFIXES)}
@@ -86,6 +99,23 @@ class RestartPolicy:
     delays: tuple[float, ...] = (0.5, 2.0, 8.0)
     start_timeout: float = 15.0
     close_timeout: float = 5.0
+
+    def __post_init__(self) -> None:
+        """Every time is finite, so every start and stop is bounded (S0035 independent verifier F3)."""
+        positive = {"window": self.window, "start_timeout": self.start_timeout, "close_timeout": self.close_timeout}
+        bad = [f"{k}={v!r}" for k, v in positive.items() if not (v > 0 and math.isfinite(v))]
+        if not all(d >= 0 and math.isfinite(d) for d in self.delays):
+            bad.append(f"delays={self.delays!r}")
+        if self.max_crashes < 1:
+            bad.append(f"max_crashes={self.max_crashes!r}")
+        if bad:
+            msg = f"RestartPolicy needs positive, finite times and at least one crash: {', '.join(bad)}"
+            raise ValueError(msg)
+
+    @property
+    def longest_start(self) -> float:
+        """The longest a start can take before the request goes out: the largest backoff plus the handshake."""
+        return max(self.delays, default=0.0) + self.start_timeout
 
 
 def _check_timeout(timeout: float) -> None:
@@ -149,6 +179,7 @@ class EngineClient:
         self._incompatible: EngineFailure | None = None
         self._closed = False
         self._next_id = 0
+        self._last_stderr: deque[str] = deque[str]()
 
     # -- the port ---------------------------------------------------------------------------------------------
 
@@ -195,9 +226,10 @@ class EngineClient:
             return self._info
 
     def stderr_tail(self) -> str:
-        """The last lines the engine wrote to stderr (its log until structured logging arrives)."""
+        """The last lines the engine wrote to stderr (its log until structured logging arrives): of the running
+        engine, else of the last one that stopped (S0035 independent verifier F4)."""
         run = self._run
-        return "\n".join(list(run.stderr)) if run is not None else ""
+        return "\n".join(list(run.stderr if run is not None else self._last_stderr))
 
     def reset(self) -> None:
         """Forget past stops and an incompatible verdict, so the next request starts the engine at once."""
@@ -210,23 +242,31 @@ class EngineClient:
     def _request(
         self, op: str, params: Mapping[str, object], timeout: float
     ) -> Accepted | EngineRefusal | EngineFailure:
+        line = self._encode(op, params)
+        if isinstance(line, EngineFailure):
+            return line
         ready = self._ensure_running()
         if isinstance(ready, EngineFailure):
             return ready
         run, _ = ready
-        return self._exchange(run, op, params, timeout)
+        return self._exchange(run, line, timeout)
+
+    def _encode(self, op: str, params: Mapping[str, object]) -> tuple[int, str, bytes] | EngineFailure:
+        """The next request line, made before anything is started or sent (S0035 independent verifier F7)."""
+        self._next_id = next_request_id(self._next_id)
+        try:
+            line = encode_request(self._next_id, op, params)
+        except (TypeError, ValueError, RecursionError) as e:
+            msg = f"the request is not JSON data ({type(e).__name__}); nothing was sent"
+            raise ValueError(msg) from e
+        if len(line) - 1 > MAX_LINE_BYTES:
+            return EngineFailure("too_large", f"the request is longer than {MAX_LINE_BYTES} bytes; nothing was sent")
+        return self._next_id, op, line
 
     def _exchange(
-        self, run: _Running, op: str, params: Mapping[str, object], timeout: float
+        self, run: _Running, request: tuple[int, str, bytes], timeout: float
     ) -> Accepted | EngineRefusal | EngineFailure:
-        self._next_id = self._next_id % MAX_ID + 1  # 1..MAX_ID, wrapping (one request in flight, so ids never clash)
-        rid = self._next_id
-        try:
-            line = encode_request(rid, op, params)
-        except (TypeError, ValueError, RecursionError) as e:
-            return EngineRefusal("protocol.malformed", f"The request is not JSON data: {type(e).__name__}")
-        if len(line) - 1 > MAX_LINE_BYTES:
-            return EngineRefusal("protocol.malformed", f"The request is longer than {MAX_LINE_BYTES} bytes.")
+        rid, op, line = request
         stdin = run.proc.stdin
         if stdin is None:  # pragma: no cover (always a pipe here)
             return self._stopped("crashed", "the engine has no stdin")
@@ -305,7 +345,10 @@ class EngineClient:
             thread = threading.Thread(target=target, args=args, name=f"engine-{target.__name__}", daemon=True)
             thread.start()
             run.threads.append(thread)
-        reply = self._exchange(run, "handshake", {}, self._policy.start_timeout)
+        handshake = self._encode("handshake", {})
+        if isinstance(handshake, EngineFailure):  # pragma: no cover (a handshake is a few bytes)
+            return EngineFailure("start_failed", self._stopped("crashed", handshake.detail).detail)
+        reply = self._exchange(run, handshake, self._policy.start_timeout)
         if isinstance(reply, EngineFailure):
             return EngineFailure("start_failed", f"handshake: {reply.kind}: {reply.detail}")
         if isinstance(reply, EngineRefusal):
@@ -339,6 +382,10 @@ class EngineClient:
             self._kill(run)
         self._stops.append(self._monotonic())
         return EngineFailure(kind, detail)
+
+    def _keep_stderr(self, run: _Running) -> None:
+        """After the run's threads are joined: its stderr tail outlives it (S0035 independent verifier F4)."""
+        self._last_stderr = run.stderr
 
     def _exit_detail(self, run: _Running) -> str:
         try:
@@ -374,6 +421,7 @@ class EngineClient:
             return
         for thread in run.threads:
             thread.join(self._policy.close_timeout)
+        self._keep_stderr(run)
         for pipe in (run.proc.stdin, run.proc.stdout, run.proc.stderr):
             if pipe is not None:
                 with contextlib.suppress(OSError):
