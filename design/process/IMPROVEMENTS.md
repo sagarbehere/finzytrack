@@ -282,3 +282,12 @@ Format:
 - Expected effect: each planted case in the meta-tests is refused; the engine's runtime closure is judged by the GPL-2.0-compatible list.
 - Observed effect: pending.
 - Status: kept (tightening, agent-approved, PROCESS.md §9), except the `StateEntry` acceptance in the globals scan, which accepts more than before and is owner-approved (owner, 2026-10-26: "The loosened gate is approved.").
+
+## IMP-0029: implementers never start the verifier (2026-10-26)
+- Trigger: owner, 2026-10-26, after S0034 and S0035 were verified by verifiers their own implementers had started: "make sure that future implementers don't start a verifier themselves. That's a problem if it ever happens."
+- What changed: `.claude/agents/implementer.md` frontmatter `disallowedTools: Agent, Task` (the implementer has no tool to start any agent) and its hand-off text (commit with green gates, stop, report the range); a backstop PreToolUse hook `.claude/hooks/guard_agent.py` on `Agent|Task` that refuses the call when the hook input's `agent_type` is `implementer` (registered in `.claude/settings.json`; meta-tests `scripts/tests/test_claude_hooks.py` `ImplementersNeverStartAgents`); PROCESS.md §3 step 5 and the slice skill's step 7 say the orchestrator starts the verifier.
+- PROCESS.md section: §3 step 5.
+- Why: the verifier's independence rests on it seeing only the range, the slice ID and the brief; an implementer choosing the verifier's prompt can steer it, and nobody can check what it was given.
+- Expected effect: every verifier round is started by the orchestrator. Checked live: a fresh implementer had no Agent tool (a first probe right after the edit still had it, before the definition reloaded; the hook covers such a window).
+- Observed effect: pending.
+- Status: kept (owner-requested tightening). Owner approval: "make sure that future implementers don't start a verifier themselves. That's a problem if it ever happens." (2026-10-26, in session)

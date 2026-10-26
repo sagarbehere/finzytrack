@@ -320,3 +320,40 @@ class StopHookCacheAndTimeLimits(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImplementersNeverStartAgents(unittest.TestCase):
+    """Owner, 2026-10-26: an implementer never starts a verifier (or any agent); the orchestrator does."""
+
+    def run_hook(self, payload: str) -> int:
+        return subprocess.run([sys.executable, str(HOOKS / "guard_agent.py")], input=payload, text=True,
+                              capture_output=True, timeout=30).returncode
+
+    def test_an_implementer_spawning_any_agent_is_blocked(self) -> None:
+        for tool in ("Agent", "Task"):
+            for kind in ("verifier", "Explore", "implementer", "general-purpose"):
+                with self.subTest(tool=tool, kind=kind):
+                    event = {"tool_name": tool, "agent_type": "implementer", "tool_input": {"subagent_type": kind}}
+                    self.assertEqual(self.run_hook(json.dumps(event)), 2)
+
+    def test_unreadable_input_is_blocked(self) -> None:
+        for payload in ("not json", "[1]", ""):
+            with self.subTest(payload=payload):
+                self.assertEqual(self.run_hook(payload), 2)
+
+    def test_the_orchestrator_and_other_tools_pass(self) -> None:  # @regression-guard
+        for event in ({"tool_name": "Agent", "tool_input": {"subagent_type": "verifier"}},
+                      {"tool_name": "Agent", "agent_type": "verifier"},
+                      {"tool_name": "Bash", "agent_type": "implementer"}):
+            with self.subTest(event=event):
+                self.assertEqual(self.run_hook(json.dumps(event)), 0)
+
+    def test_the_hook_is_registered_for_the_agent_tool(self) -> None:
+        settings = json.loads((HOOKS.parent / "settings.json").read_text())
+        entries = [e for e in settings["hooks"]["PreToolUse"] if "guard_agent.py" in json.dumps(e)]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(set(entries[0]["matcher"].split("|")), {"Agent", "Task"})
+
+    def test_the_definition_also_denies_the_tool(self) -> None:
+        head = (HOOKS.parent / "agents/implementer.md").read_text().split("---")[1]
+        self.assertIn("disallowedTools: Agent, Task", head)
