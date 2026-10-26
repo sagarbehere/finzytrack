@@ -386,6 +386,36 @@ class Signals(unittest.TestCase):
                             p.kill()
                             p.wait()
 
+    def test_a_signal_as_the_stop_starts_is_held(self) -> None:  # S0043 verifier F2
+        """A stop signal that lands as `stop_group` is entered, after a hang or after a first interrupt: the stop still
+        runs, and the interrupt is raised after it. A profile hook sends the signal at `stop_group`'s call event (an
+        exception in a profile hook unsets it, so the first interrupt comes from the check, which signals its parent)."""
+        codes = {"hung": "import time; time.sleep(120)",
+                 "interrupted": "import os, signal, time; os.kill(os.getppid(), signal.SIGTERM); time.sleep(120)"}
+        for path in codes:
+            pids: list[int] = []
+            fired: list[str] = []
+
+            def prof(frame, event, _arg, path=path, pids=pids, fired=fired) -> None:
+                if event != "call":
+                    return
+                if frame.f_code is subprocess.Popen.wait.__code__ and not pids:
+                    pids.append(frame.f_locals["self"].pid)
+                elif frame.f_code is gt.stop_group.__code__ and "stop" not in fired:
+                    fired.append("stop")
+                    signal.raise_signal(signal.SIGTERM)
+
+            with self.subTest(path), signal_handlers_kept():
+                gt.stop_checks_on_signals()
+                sys.setprofile(prof)
+                try:
+                    with self.assertRaises(KeyboardInterrupt):
+                        gt.run_check([PY, "-c", codes[path]], self.repo, 2.0 if path == "hung" else None, True)
+                finally:
+                    sys.setprofile(None)
+                self.assertIn("stop", fired)
+                ended_or_stopped(self, pids[0], f"{path}: the check outlived run_check")
+
     def test_a_second_signal_while_stopping_does_not_cut_the_stop_short(self) -> None:
         """A second Ctrl-C or SIGTERM during the stop's grace time: a check that ignores SIGTERM still gets SIGKILL,
         and the interrupt is not lost."""

@@ -125,15 +125,20 @@ def record(history: dict, key: str, seconds: float) -> dict:
 class _Held:
     """Stop signals that land while a check is being started or stopped (BL-0098). `_interrupted` records them here
     instead of raising, so an interrupt cannot cut in after the check's process exists but before `run_check` holds
-    it, nor between the stop's SIGTERM and its SIGKILL; each is raised once the check is held or stopped."""
+    it, nor between the stop's SIGTERM and its SIGKILL; each is raised once the check is held or stopped.
+
+    The hold before a stop starts in the `except` body, as a plain store before `stop_group` is called: CPython runs
+    a signal handler only at a call, a function's entry or a backward jump, so none can run between the exception
+    and that store, and one that runs as `stop_group` is entered is held (S0043 verifier F2)."""
 
     signals: list[int] | None = None
 
 
 def stop_group(proc: subprocess.Popen) -> None:
     """Stop the check and everything it started in its process group: SIGTERM, then SIGKILL. A stop signal that lands
-    meanwhile waits until the stop is done, then raises KeyboardInterrupt."""
-    _Held.signals = held = []
+    meanwhile waits until the stop is done, then raises KeyboardInterrupt. A hold its caller started is kept."""
+    held = _Held.signals if _Held.signals is not None else []
+    _Held.signals = held
     try:
         for sig in (signal.SIGTERM, signal.SIGKILL):
             try:
@@ -174,13 +179,18 @@ def run_check(cmd: list[str], cwd: Path, timeout: float | None, capture: bool) -
                 raise KeyboardInterrupt(f"signal {held[0]}")
             rc = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
+            if _Held.signals is None:  # hold before the stop starts (the class docstring)
+                _Held.signals = []
             stop_group(proc)
             return Outcome("hung", time.monotonic() - start, _read(out))
         except BaseException:
+            if _Held.signals is None:  # hold before the stop starts (the class docstring)
+                _Held.signals = []
             stop_group(proc)  # interrupted (Ctrl-C, SIGTERM): never leave the check running
             raise
         return Outcome("passed" if rc == 0 else "failed", time.monotonic() - start, _read(out))
     finally:
+        _Held.signals = None
         if out is not None:
             out.close()
 

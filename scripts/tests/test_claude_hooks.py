@@ -20,6 +20,7 @@ from unittest import mock
 
 HOOKS = Path(__file__).resolve().parents[2] / ".claude/hooks"
 SCRIPTS = Path(__file__).resolve().parents[1]
+WAIT_BACKSTOP_S = 60.0  # a hang backstop only: the process waits end on their condition (BL-0098, S0043)
 
 
 def load(name: str):
@@ -427,10 +428,22 @@ class StopHookSignals(unittest.TestCase):
 
     @staticmethod
     def alive(pid: int) -> bool:
+        """Running: an ended process its new parent has not reaped yet (a zombie) does not count (BL-0098, S0043)."""
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
             return False
+        state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False)
+        return bool(state.stdout.strip()) and not state.stdout.strip().startswith("Z")
+
+    @staticmethod
+    def wait_until(condition) -> bool:
+        """Poll until `condition` holds; False only past the hang backstop (WAIT_BACKSTOP_S), never a fixed window."""
+        deadline = time.monotonic() + WAIT_BACKSTOP_S
+        while not condition():
+            if time.monotonic() > deadline:
+                return False
+            time.sleep(0.05)
         return True
 
     def test_ending_the_hook_stops_its_checks(self) -> None:
@@ -442,23 +455,19 @@ class StopHookSignals(unittest.TestCase):
                                         text=True)
                 hook.stdin.write("{}")
                 hook.stdin.close()
-                for _ in range(600):
-                    if self.pids.exists() and len(self.pids.read_text().split()) == 2:
-                        break
-                    time.sleep(0.05)
+                started = self.wait_until(lambda: hook.poll() is not None
+                                          or (self.pids.exists() and len(self.pids.read_text().split()) == 2))
+                self.assertTrue(started and hook.poll() is None, "the hook's checks never started")
                 pids = [int(x) for x in self.pids.read_text().split()]
                 hook.send_signal(sig)
                 try:
-                    code = hook.wait(timeout=60)
+                    code = hook.wait(timeout=WAIT_BACKSTOP_S)
                     err = hook.stderr.read()
                 finally:
                     hook.stderr.close()
-                    for _ in range(200):
-                        if not any(self.alive(pid) for pid in pids):
-                            break
-                        time.sleep(0.05)
+                    self.wait_until(lambda: not any(self.alive(pid) for pid in pids))
                     left = [pid for pid in pids if self.alive(pid)]
-                    for pid in left:  # this test's own processes, a moment after it started them
+                    for pid in left:  # this test's own processes, still running past the backstop
                         os.kill(pid, signal.SIGKILL)
                 self.assertEqual(left, [], "a check outlived the hook")
                 self.assertEqual(code, 2, err)

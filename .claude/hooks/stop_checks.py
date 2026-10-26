@@ -12,9 +12,9 @@ and untracked files that are not ignored, hashed through a temporary index; the 
 the Python version in the clone's git directory; the same key next time is green at once (the git-hooks check
 still runs). Each check runs under the hang detector of `scripts/gate_timer.py` (a limit from its own history, not
 a budget; none for the privacy scan of changed files, whose time grows with them) and under BACKSTOP_S for the whole
-hook, below the harness's Stop timeout in .claude/settings.json (a hook the harness kills fails open). SIGTERM and
-SIGHUP stop the running check before the hook ends. The hook never crashes: a check that did not finish, or any
-error here, is red. The key file is agent-writable, so this is a convenience gate; the pre-push hook is the
+hook, below the harness's Stop timeout in .claude/settings.json (a hook the harness kills fails open). SIGTERM,
+SIGHUP and SIGINT stop the running check before the hook ends. The hook never crashes: a check that did not finish,
+or any error here, is red. The key file is agent-writable, so this is a convenience gate; the pre-push hook is the
 authoritative one, with no cache.
 """
 

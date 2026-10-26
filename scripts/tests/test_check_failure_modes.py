@@ -141,6 +141,15 @@ class MustNotPass(Fixture):
             with self.subTest(hidden=hidden):
                 self.refused(spec(drop="E1", extra=hidden + "\n"), "no row for the ledger engine: crash")
 
+    def test_a_fence_and_a_comment_never_mask_each_other(self) -> None:  # S0043 verifier F1
+        e7 = row("E7", "told to stop")
+        extra = f"\n```\n<!-- a note\n```\n\nThen it closes with -->.\n\n```\n{e7}\n```\n"
+        self.refused(spec(drop="E7", extra=extra), "no row for the ledger engine: told to stop")
+        extra = f"\n<!-- a comment that shows\n```\n-->\n\n```\n{e7}\n```\n"
+        self.refused(spec(drop="E7", extra=extra), "no row for the ledger engine: told to stop")
+        self.assertEqual([line for _, line in cfm.visible_lines("a\n```\n<!-- b\n```\nc\n<!--\n```\n-->\nd\n")],
+                         ["a", "c", "d"])
+
     def test_a_test_cell_that_is_not_references_is_refused(self) -> None:
         for test in ("", "n/a:", "covered by the smoke run", "`t/test_x.py::test_one` (mostly)", "BL-0901",
                      "same as S2; BL-0901 (M2)"):
@@ -160,6 +169,10 @@ class MustNotPass(Fixture):
         self.refused_test("`t/test_x.py::test_gone`", "no test test_gone")
         self.refused_test("`t/test_x.py::Suite::test_one`", "no test test_one")
         self.refused_test("`t/test_x.py::Other::test_two`", "no class Other")
+
+    def test_a_name_in_a_comment_or_string_is_not_a_test(self) -> None:  # S0043 verifier F3 (restored from S0041)
+        (self.repo / "t" / "test_y.py").write_text('# def test_ghost(\nX = "def test_ghost("\n')
+        self.refused_test("`t/test_y.py::test_ghost`", "no test test_ghost")
 
     def test_a_function_that_is_not_a_test_is_refused(self) -> None:
         self.refused_test("`t/test_x.py::helper`", "helper is not a test name")

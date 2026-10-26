@@ -55,16 +55,20 @@ def cells_of(line: str) -> list[str]:
 
 
 def visible_lines(text: str) -> Iterator[tuple[int, str]]:
-    """(line number, line) outside fenced code blocks and HTML comments; a line that touches a comment is hidden."""
+    """(line number, line) outside fenced code blocks and HTML comments; a line that touches a comment is hidden.
+    One state at a time: inside a fence only its closing fence counts, inside a comment only `-->`, so a fence and a
+    comment never mask each other (S0043 verifier F1)."""
     fenced = commented = False
     for n, line in enumerate(text.splitlines(), 1):
-        if not commented and FENCE.match(line):
-            fenced = not fenced
+        if fenced:
+            fenced = not FENCE.match(line)
         elif commented:
             commented = "-->" not in line
+        elif FENCE.match(line):
+            fenced = True
         elif "<!--" in line:
             commented = "-->" not in line.split("<!--", 1)[1]
-        elif not fenced:
+        else:
             yield n, line
 
 

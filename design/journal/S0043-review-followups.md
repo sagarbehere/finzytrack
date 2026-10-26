@@ -39,11 +39,17 @@
 - Population: the 28 (program, failure) pairs come from `PROGRAMS` × `FAILURES`, unchanged from S0041; the real spec gives the same 28 rows and the same counts before and after.
 
 ## Verifier
-- pending
+- Round 1, head 39458cff: pass with findings (one Medium, two Lows, two extras); report in the owner's private archive, `m1a/s0043-verifier/`. It confirmed both timer defects (the two new tests fail on the base commit). Tooling with no ledger or user data and no High: no further round (ADR-0058).
+- F1 Medium: the rewritten `visible_lines` looked for `<!--` inside a code fence, so a fenced `<!--` swallowed the closing fence and a later fenced example row counted as real (a spec missing E7 passed; the base check refused it). Fixed: one state at a time, inside a fence only the closing fence counts, inside a comment only `-->`; test `MustNotPass::test_a_fence_and_a_comment_never_mask_each_other` (the verifier's cases plus a fence inside a comment), which fails on 39458cff.
+- F2 Low: signals were held only from `stop_group`'s first statement, so a stop signal as `stop_group` was entered (after a hang or after a first interrupt) raised before any kill and the check outlived `run_check`. Fixed: each `except` body of `run_check` starts the hold with a plain store before calling `stop_group`, which keeps a hold its caller started (CPython runs a handler only at a call, a function's entry or a backward jump, so nothing can run between the exception and that store; stated in `_Held`'s docstring). Test `Signals::test_a_signal_as_the_stop_starts_is_held` (both paths; a profile hook sends SIGTERM at `stop_group`'s call event), which fails on 39458cff.
+- F3 Low (EP-29): the rewrite had dropped S0041's test that a `def test_...` inside a comment or string is not a test; restored as `MustNotPass::test_a_name_in_a_comment_or_string_is_not_a_test`.
+- Extra 1: `scripts/tests/test_claude_hooks.py::StopHookSignals::test_ending_the_hook_stops_its_checks` had the same fixed windows and the `os.kill(pid, 0)` zombie problem; it now waits by condition with a 60 s hang backstop, and a zombie counts as ended (the test only; the small helper is repeated there rather than shared between test modules).
+- Extra 2: `.claude/hooks/stop_checks.py`'s docstring now names SIGINT too. Edited through a scratch copy that compiles, then copied in; the hook has no byte pin (`scripts/tests/hook_pins/` pins only the git hooks), and its tests pass.
+- Mutants for the fixes (plan `mutants-s0043-r1.toml` in the session scratchpad): 6 tried, 6 killed, 0 survived (F1: a comment opener ends a fence, a fence inside a comment counts; F3: `def` anywhere on a line; F2: no hold after a hang, no hold after an interrupt, `stop_group` dropping its caller's hold).
 
 ## Retro
-- Verifier findings: pending (round 1 not yet run).
+- Verifier findings: round 1, one Medium (F1, a regression the rewrite brought into a kept rule: a fence and a comment masking each other) and two Lows (F2, a third signal window in the timer; F3, a dropped negative test). F1 and F3 were both losses from rewriting a check's tests from scratch: running S0041's old tests against the new check, before deleting them, would have caught both. That is the cheaper gate for the next rewrite of a check.
 - What a cheaper gate could have found: the two timer races were findable by reading the signal path against "every exit stops the check"; S0034's signal test only exercised a signal during `proc.wait`. A test that injects the signal at each step (start, wait, stop) is the cheaper gate, now added.
 - Where time went: the BL-0098 diagnosis (a stress script, 90 runs, no reproduction) and the mutant run (about 20 minutes, mostly the timer tests' real processes).
 - Orientation gap: the brief's zombie hypothesis did not fit the timer, which reaps its own check; reading `stop_group` settled that.
-- Process cost: one implementer pass so far.
+- Process cost: two implementer passes (the slice and the round-1 fixes), one verifier round.
