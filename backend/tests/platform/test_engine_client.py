@@ -539,7 +539,9 @@ def test_the_engine_is_told_its_parent(client: EngineClient) -> None:
     client.start()
     pid = client.pid
     assert pid is not None
-    args = subprocess.run(["ps", "-o", "args=", "-p", str(pid)], capture_output=True, text=True, check=False)  # noqa: S603, S607
+    # -ww: procps on Linux cuts the column to the terminal width (80 without one); the manual CI run of
+    # 2026-10-26 saw "... -m ledger_eng" with the flag cut off. macOS ps takes -ww too.
+    args = subprocess.run(["ps", "-ww", "-o", "args=", "-p", str(pid)], capture_output=True, text=True, check=False)  # noqa: S603, S607
     assert f"--parent-pid {os.getpid()}" in args.stdout
 
 
