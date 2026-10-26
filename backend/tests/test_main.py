@@ -9,6 +9,7 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -267,6 +268,28 @@ def test_the_sidecar_starts_a_real_engine_and_closes_it_on_sigterm(dirs: tuple[P
     assert names.count("engine.ready") == 1
     assert names.count("engine.closed") == 1
     assert code == 0, "".join(sidecar.raw)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="the parent-death watchdog is POSIX; Windows is the manual CI run")
+def test_a_sidecar_ended_hard_leaves_no_engine_behind(dirs: tuple[Path, Path]) -> None:
+    """@regression-guard (S0041, failure-modes rows M1, M4, E5): a sidecar that crashes or is ended by the OS (SIGKILL:
+    no handler, no `finally`, no close) cannot close its engine; the engine notices on its own (its parent watchdog,
+    stdin EOF) and ends, so no orphan engine keeps running. The sidecar's log ends without `engine.closed`."""
+    sidecar = Sidecar(dirs, "--engine-venv", str(ENGINE_VENV))
+    try:
+        sidecar.handshake()
+        pid = sidecar.event("engine.ready")["pid"]
+        assert isinstance(pid, int)
+        assert pid_alive(pid)
+    finally:
+        sidecar.proc.send_signal(signal.SIGKILL)
+        sidecar.proc.wait(timeout=DEADLINE)
+    end = time.monotonic() + DEADLINE
+    tick = threading.Event()
+    while pid_alive(pid) and time.monotonic() < end:
+        tick.wait(0.05)
+    assert not pid_alive(pid), "the engine outlived its sidecar"
+    assert "engine.closed" not in [e.get("event") for e in sidecar.events()]
 
 
 def test_a_missing_engine_is_a_reported_state_and_the_sidecar_keeps_answering(

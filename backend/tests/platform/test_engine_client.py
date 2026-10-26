@@ -854,3 +854,85 @@ def test_closing_a_running_engine_logs_no_stop() -> None:
     assert isinstance(c.start(), EngineInfo)
     c.close()
     assert events.names == ["engine.ready", "engine.closed"]
+
+
+# -- Cross-process failure modes (S0041; design/specs/failure-modes.md) ---------------------------------------------
+
+
+class RaisingSink:
+    """An `EventSink` that fails on every event, after recording its name."""
+
+    def __init__(self) -> None:
+        self.names: list[str] = []
+
+    def __call__(self, event: Event, /, **fields: object) -> None:
+        self.names.append(event.name)
+        msg = "the log sink is broken"
+        raise RuntimeError(msg)
+
+
+def test_a_log_sink_that_raises_changes_nothing_in_the_supervision(fake_time: FakeTime) -> None:
+    """S0041 (S0040 carry-over): the log is diagnostics, so a sink that fails must not change what the client does.
+    Before, the sink's exception reached the caller after the state had moved: a start returned no facts, and a crash
+    mid-request raised instead of returning its typed failure. Every event still reaches the sink first."""
+    sink = RaisingSink()
+    c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=fake_time.pause, log=sink)
+    try:
+        assert isinstance(c.start(), EngineInfo)  # engine.ready failed to log
+        first = c.pid
+        assert first is not None
+        t, out = in_thread(lambda: c.call("test.stall", {}, timeout=60.0))
+        assert wait_until(lambda: "stalling" in c.stderr_tail()), "the engine never started the request"
+        kill(first)
+        t.join(DEADLINE)
+        assert not t.is_alive(), "the caller hung after the engine died"
+        assert len(out) == 1, "the caller got an exception instead of its typed failure"
+        failure = out[0]
+        assert isinstance(failure, EngineFailure)
+        assert failure.kind == "crashed"
+        assert stopped(first)
+        assert isinstance(c.state, Crashed)
+        assert c.ping(timeout=DEADLINE) == Pong()  # restarted
+        assert c.pid not in (None, first)
+    finally:
+        c.close()  # engine.closed failed to log; close still returns
+    assert isinstance(c.state, Closed)
+    assert sink.names == ["engine.ready", "engine.stopped", "engine.ready", "engine.closed"]
+
+
+class InterruptedSink:
+    """An `EventSink` interrupted on `engine.ready` (Ctrl-C landing while the line is written)."""
+
+    def __call__(self, event: Event, /, **fields: object) -> None:
+        if event.name == "engine.ready":
+            raise KeyboardInterrupt
+
+
+def test_an_interrupt_inside_the_log_sink_still_reaches_the_caller(fake_time: FakeTime) -> None:
+    """@regression-guard (S0041): only the sink's own failures are dropped; an interrupt goes on to the caller, as
+    everywhere else in a call, and the client stays usable."""
+    c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=fake_time.pause, log=InterruptedSink())
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            c.start()
+        assert isinstance(c.state, Ready)
+        assert c.ping(timeout=DEADLINE) == Pong()
+    finally:
+        c.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGSTOP is POSIX; Windows is the manual CI run")
+def test_a_frozen_engine_times_out_is_ended_and_replaced(client: EngineClient) -> None:
+    """@regression-guard (S0041, failure-modes row E2): an engine frozen by the OS (SIGSTOP: its own watchdog is frozen
+    too) is a hang. The caller's timeout notices it, the client ends the frozen process (SIGKILL reaches a stopped
+    process), and the next request starts a new engine."""
+    client.start()
+    pid = client.pid
+    assert pid is not None
+    os.kill(pid, signal.SIGSTOP)
+    out = client.ping(timeout=0.5)
+    assert isinstance(out, EngineFailure)
+    assert out.kind == "timeout"
+    assert stopped(pid), "the frozen engine was left behind"
+    assert client.ping(timeout=DEADLINE) == Pong()
+    assert client.pid not in (None, pid)

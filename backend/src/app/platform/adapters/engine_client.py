@@ -33,7 +33,9 @@ ARCHITECTURE.md §2.0, §5, §7).
 - **Shutdown.** `close()` closes the engine's stdin (it finishes the request in hand and exits), then terminates and
   finally kills it if it does not exit in time.
 - **Log.** The table's `Log` effects go to the `log` sink (the structured log, S0039): `engine.ready` and
-  `engine.start_failed` on every start, `engine.stopped`, `engine.unavailable`, `engine.closed`.
+  `engine.start_failed` on every start, `engine.stopped`, `engine.unavailable`, `engine.closed`. A sink that raises
+  loses that line and changes nothing else: the remaining effects run and the caller gets its own outcome (S0041;
+  before, the exception reached the caller after the state had moved).
 - **Stderr.** Each line the engine writes to stderr is kept in a bounded tail and handed to `on_stderr` if given
   (the composition root forwards it to the log, S0038). A callback that raises is dropped for the rest of that
   engine's run; the tail goes on.
@@ -361,7 +363,10 @@ class EngineClient:
                 if run is not None:
                     self._shutdown(run)
             case Log(event=event, fields=fields):
-                self._log(event, **fields)
+                # The log is diagnostics: a failing sink loses this line, never the supervision (S0041). Interrupts
+                # (`BaseException`) still go on, to the `_call` guard.
+                with contextlib.suppress(Exception):
+                    self._log(event, **fields)
             case Fail(failure=failure):
                 return failure
             case Spawn() | Handshake() | Pause():

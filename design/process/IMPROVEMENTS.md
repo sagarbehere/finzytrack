@@ -292,3 +292,12 @@ Format:
 - Verifier (orchestrator-started, head 2019985b): PASS WITH FINDINGS; F1 Medium (the nested claude CLI) and F2-F5 Low (docstring, fail-open on odd input types, tests that passed with the hook missing, the test class below `unittest.main()`) fixed in the next commit. Stated limit: the Bash check matches `claude` as a command word or quoted argument; a deliberately obfuscated invocation (assembled from parts, an alias) is review's, like the other shell guards (S0028).
 - Observed effect: pending.
 - Status: kept (owner-requested tightening). Owner approval: "make sure that future implementers don't start a verifier themselves. That's a problem if it ever happens." (2026-10-26, in session)
+
+## IMP-0030: the failure-mode spec cannot drift from its tests and backlog rows (2026-10-26)
+- Trigger: S0041 (BL-0090, the cross-process failure-mode spec); journal `design/journal/S0041-failure-modes.md`.
+- What changed: a check. New `scripts/check_failure_modes.py` (with `scripts/tests/test_check_failure_modes.py`, which also runs it on the real spec, so it runs with the meta-tests at every push): `design/specs/failure-modes.md` has exactly one row per (program, failure) pair; each row's Test cell holds only references to tests that exist (a Python `def test_…`, inside its class when named; a Rust `#[test] fn`), to backlog rows that are open with the stated milestone, a `same as` another real row, or an `n/a` with a reason; each engine row names states that exist in the generated statechart reference.
+- PROCESS.md section: none (a spec check run by the existing meta-test step of §6).
+- Why: the spec answers an owner question about confidence; a row whose test was renamed, or whose backlog row closed without the spec citing the new test, would claim cover that is not there.
+- Expected effect: a slice that closes a backlog row the spec cites (BL-0065, BL-0073, BL-0091 to BL-0097) fails at push until the spec cites the test that closed it.
+- Observed effect: pending.
+- Status: kept (tightening, agent-approved, PROCESS.md §9).
