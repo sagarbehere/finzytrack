@@ -465,42 +465,65 @@ class StopHookSignals(unittest.TestCase):
                 self.assertIn("stop_checks was interrupted", err)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ImplementersNeverStartAgents(unittest.TestCase):
-    """Owner, 2026-10-26: an implementer never starts a verifier (or any agent); the orchestrator does."""
+    """Owner, 2026-10-26: an implementer never starts a verifier (or any agent); the orchestrator does (IMP-0029)."""
 
-    def run_hook(self, payload: str) -> int:
-        return subprocess.run([sys.executable, str(HOOKS / "guard_agent.py")], input=payload, text=True,
-                              capture_output=True, timeout=30).returncode
+    def run_hook(self, payload: str) -> tuple[int, str]:
+        r = subprocess.run([sys.executable, str(HOOKS / "guard_agent.py")], input=payload, text=True,
+                           capture_output=True, timeout=30)
+        return r.returncode, r.stderr
+
+    def assert_blocked(self, payload: str) -> None:
+        code, err = self.run_hook(payload)
+        self.assertEqual(code, 2)
+        self.assertIn("guard_agent: blocked", err)  # not just exit 2: a missing hook file also exits 2
+
+    def bash(self, command: str, agent: str | None = "implementer") -> str:
+        event: dict[str, object] = {"tool_name": "Bash", "tool_input": {"command": command}}
+        if agent is not None:
+            event["agent_type"] = agent
+        return json.dumps(event)
 
     def test_an_implementer_spawning_any_agent_is_blocked(self) -> None:
-        for tool in ("Agent", "Task"):
+        for tool in ("Agent", "Task", "SendMessage"):
             for kind in ("verifier", "Explore", "implementer", "general-purpose"):
                 with self.subTest(tool=tool, kind=kind):
-                    event = {"tool_name": tool, "agent_type": "implementer", "tool_input": {"subagent_type": kind}}
-                    self.assertEqual(self.run_hook(json.dumps(event)), 2)
+                    self.assert_blocked(json.dumps({"tool_name": tool, "agent_type": "implementer", "agent_id": "a1",
+                                                    "tool_input": {"subagent_type": kind}}))
+
+    def test_an_implementer_running_the_claude_cli_is_blocked(self) -> None:  # IMP-0029 verifier F1
+        for command in ("claude -p --agent verifier hi", "cd x && claude -p hi", "~/.local/bin/claude -p hi",
+                        "echo $(claude -p hi)", "npx @anthropic-ai/claude-code -p hi",
+                        "python3 -c \"import subprocess; subprocess.run(['claude', '-p', 'hi'])\""):
+            with self.subTest(command=command):
+                self.assert_blocked(self.bash(command))
 
     def test_unreadable_input_is_blocked(self) -> None:
-        for payload in ("not json", "[1]", ""):
+        for payload in ("not json", "[1]", "", json.dumps({"tool_name": "Agent", "agent_type": ["implementer"]}),
+                        json.dumps({"tool_name": ["Agent"], "agent_type": "implementer"}),
+                        json.dumps({"tool_name": "Bash", "agent_type": "implementer", "tool_input": "x"})):
             with self.subTest(payload=payload):
-                self.assertEqual(self.run_hook(payload), 2)
+                self.assert_blocked(payload)
 
-    def test_the_orchestrator_and_other_tools_pass(self) -> None:  # @regression-guard
-        for event in ({"tool_name": "Agent", "tool_input": {"subagent_type": "verifier"}},
-                      {"tool_name": "Agent", "agent_type": "verifier"},
-                      {"tool_name": "Bash", "agent_type": "implementer"}):
-            with self.subTest(event=event):
-                self.assertEqual(self.run_hook(json.dumps(event)), 0)
+    def test_the_orchestrator_other_agents_and_ordinary_commands_pass(self) -> None:  # @regression-guard
+        for payload in (json.dumps({"tool_name": "Agent", "tool_input": {"subagent_type": "verifier"}}),
+                        json.dumps({"tool_name": "Agent", "agent_type": "verifier", "agent_id": "a2"}),
+                        self.bash("claude -p hi", agent=None), self.bash("claude -p hi", agent="verifier"),
+                        self.bash("cat .claude/hooks/guard_bash.py && git add .claude/settings.json"),
+                        self.bash("ls ~/.claude/projects"), self.bash("python3 scripts/run_meta_tests.py")):
+            with self.subTest(payload=payload):
+                self.assertEqual(self.run_hook(payload)[0], 0)
 
-    def test_the_hook_is_registered_for_the_agent_tool(self) -> None:
+    def test_the_hook_is_registered_for_every_route(self) -> None:
         settings = json.loads((HOOKS.parent / "settings.json").read_text())
         entries = [e for e in settings["hooks"]["PreToolUse"] if "guard_agent.py" in json.dumps(e)]
         self.assertEqual(len(entries), 1)
-        self.assertEqual(set(entries[0]["matcher"].split("|")), {"Agent", "Task"})
+        self.assertEqual(set(entries[0]["matcher"].split("|")), {"Agent", "Task", "SendMessage", "Bash"})
 
-    def test_the_definition_also_denies_the_tool(self) -> None:
+    def test_the_definition_also_denies_the_tools(self) -> None:
         head = (HOOKS.parent / "agents/implementer.md").read_text().split("---")[1]
-        self.assertIn("disallowedTools: Agent, Task", head)
+        self.assertIn("disallowedTools: Agent, Task, SendMessage", head)
+
+
+if __name__ == "__main__":
+    unittest.main()

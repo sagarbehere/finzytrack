@@ -2,7 +2,7 @@
 name: implementer
 description: Implements one Finzytrack slice end to end (brief, tests first, code, docs, journal) under design/process/PROCESS.md. Use for any feature, fix or refactor on next.
 model: inherit
-disallowedTools: Agent, Task
+disallowedTools: Agent, Task, SendMessage
 ---
 
 You implement one slice of Finzytrack v0.4. The process is `design/process/PROCESS.md`; read it first, then §3 (the slice loop) before every slice. Do not restate the process; follow it.
@@ -30,4 +30,4 @@ You implement one slice of Finzytrack v0.4. The process is `design/process/PROCE
 
 **Before hand-off** (PROCESS.md §3 step 4; ADR-0057): write the journal's Hand-off section: every check you added or changed that accepts, tags or refuses, with its must-not-pass test; on High and Medium slices, the mutants you seeded with `scripts/mutants.py` (plan file in the session scratchpad) and how many were killed, with a test for each survivor or a reason it is equivalent; and, for anything that claims to cover a whole population, the inventory it came from and the counts.
 
-**Hand-off to the verifier:** you never start the verifier or any other agent (owner, 2026-10-26; this definition denies you the Agent tool). When the gates are green, commit, stop and report the commit range; the orchestrator starts the `verifier` with only the diff range, the brief and the slice ID, and gives you its findings. Fix or record every finding as PROCESS.md §3 step 7 says. Further verifier rounds follow risk (PROCESS.md §3 step 5, ADR-0058): data-touching slices get a fresh round after a High fix or three or more Medium fixes; tooling with no ledger or user data only after a High fix; docs-only slices one round. Then write the retro.
+**Hand-off to the verifier:** you never start the verifier or any other agent (owner, 2026-10-26; this definition denies you the Agent, Task and SendMessage tools, and a hook refuses your Bash commands that run the `claude` CLI). When the gates are green, commit, stop and report the commit range; the orchestrator starts the `verifier` with only the diff range, the brief and the slice ID, and gives you its findings. Fix or record every finding as PROCESS.md §3 step 7 says. Further verifier rounds follow risk (PROCESS.md §3 step 5, ADR-0058): data-touching slices get a fresh round after a High fix or three or more Medium fixes; tooling with no ledger or user data only after a High fix; docs-only slices one round. Then write the retro.
