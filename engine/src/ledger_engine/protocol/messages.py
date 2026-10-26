@@ -9,6 +9,8 @@ could not read that far has `id` and `op` null. `handshake` must be the first re
 
 Only plain data crosses: no Beancount objects, pickles, callbacks or shared memory (ADR-0054 decision 2).
 Adding an op adds its params and result models to `OPS`; changing a message's meaning bumps `PROTOCOL_VERSION`.
+One thing no version may change: every message is a JSON object whose top-level `v` is its sender's protocol
+version. A side that reads another `v` reads no further and treats the peer as incompatible (S0035 verifier F2).
 """
 
 from __future__ import annotations

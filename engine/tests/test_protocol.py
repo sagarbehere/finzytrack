@@ -113,6 +113,16 @@ def test_malformed_lines_are_refused_with_no_id(raw: bytes) -> None:
     assert reply["v"] == 1
 
 
+@pytest.mark.parametrize("depth", [10_000, 200_000])
+def test_deeply_nested_json_is_refused_and_the_engine_keeps_serving(depth: int) -> None:
+    """S0035 verifier F3: nesting deep enough to exhaust the parser is malformed, not a crash."""
+    engine = ready()
+    raw = b'{"v": 1, "id": 4, "op": "ping", "params": {"x": ' + b"[" * depth + b"]" * depth + b"}}\n"
+    assert len(raw) < MAX_LINE_BYTES
+    assert refusal(answer(engine, raw)) == "protocol.malformed"
+    assert answer(engine, request("ping", rid=5))["ok"] is True
+
+
 def test_an_over_long_line_is_refused() -> None:
     padding = "x" * MAX_LINE_BYTES
     raw = line({"v": 1, "id": 1, "op": "ping", "params": {"pad": padding}})

@@ -183,6 +183,13 @@ def test_unreadable_replies_are_violations(raw: bytes) -> None:
     assert isinstance(decode_reply(raw, 1, "ping"), Violation)
 
 
+def test_a_deeply_nested_reply_is_a_violation_not_a_crash() -> None:
+    """S0035 verifier F4(a): nesting that exhausts the parser is an invalid reply."""
+    depth = 200_000
+    raw = b'{"v":1,"id":1,"op":"ping","ok":true,"result":{"x":' + b"[" * depth + b"]" * depth + b"}}\n"
+    assert isinstance(decode_reply(raw, 1, "ping"), Violation)
+
+
 def test_an_over_long_reply_is_a_violation() -> None:
     raw = b'{"v":1,"id":1,"op":"ping","ok":true,"result":{"status":"' + b"o" * MAX_LINE_BYTES + b'"}}\n'
     assert isinstance(decode_reply(raw, 1, "ping"), Violation)

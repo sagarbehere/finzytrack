@@ -152,6 +152,8 @@ class Engine:
             return _refusal(None, None, "protocol.malformed", "The line is not UTF-8.")
         except ValueError:
             return _refusal(None, None, "protocol.malformed", "The line is not one JSON value.")
+        except RecursionError:  # S0035 verifier F3: nesting that exhausts the parser is malformed, not a crash
+            return _refusal(None, None, "protocol.malformed", "The line nests too deeply.")
         if not isinstance(obj, dict):
             return _refusal(None, None, "protocol.malformed", "A request is a JSON object.")
         request: dict[str, Any] = obj  # pyright: ignore[reportUnknownVariableType] (json.loads output)

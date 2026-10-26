@@ -242,9 +242,15 @@ MISMATCH = """{"v": 1, "id": req["id"], "op": "handshake", "ok": False,
          "error": {"key": "protocol.version_mismatch", "message": "this engine speaks protocol 2"}}"""
 NEWER = """{"v": 1, "id": req["id"], "op": "handshake", "ok": True,
          "result": {"protocol": 2, "engine_version": "9", "beancount_version": "3.2.0"}}"""
+# S0035 verifier F2: a real protocol-2 engine stamps its own version on every reply, in a shape this side cannot
+# know; the client must still recognise it by `v` and call it incompatible.
+V2_REFUSAL = """{"v": 2, "id": req["id"], "op": "handshake", "ok": False,
+         "error": {"key": "protocol.version_mismatch", "message": "this engine speaks protocol 2"}}"""
+V2_REPLY = """{"v": 2, "id": req["id"], "op": "handshake", "ok": True, "result": {"protocol": 2, "new": True}}"""
+V2_OTHER_SHAPE = """{"v": 2, "kind": "hello", "speaks": [2]}"""
 
 
-@pytest.mark.parametrize("mode", [MISMATCH, NEWER])
+@pytest.mark.parametrize("mode", [MISMATCH, NEWER, V2_REFUSAL, V2_REPLY, V2_OTHER_SHAPE])
 def test_an_incompatible_engine_is_never_retried(tmp_path: Path, fake_time: FakeTime, mode: str) -> None:
     starts = tmp_path / "starts"
     script = COUNTING.replace("{MODE}", mode)
@@ -269,15 +275,20 @@ req = json.loads(sys.stdin.readline())
 sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
     "result": {"protocol": 1, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
 sys.stdout.flush()
-sys.stdin.readline()
-sys.stdout.write("this is not a reply\n")
+req = json.loads(sys.stdin.readline())
+sys.stdout.write(BAD + "\n")
 sys.stdout.flush()
 sys.stdin.read()
 """
+NOT_A_REPLY = '"this is not a reply"'
+DEEP_REPLY = '\'{"v":1,"id":%d,"op":"ping","ok":true,"result":{"x":%s%s}}\' % (req["id"], "[" * 200000, "]" * 200000)'
 
 
-def test_a_reply_that_breaks_the_protocol_is_a_failure_and_ends_the_engine(fake_time: FakeTime) -> None:
-    c = EngineClient(stand_in(GARBAGE), monotonic=fake_time.monotonic, pause=fake_time.pause)
+@pytest.mark.parametrize("bad", [NOT_A_REPLY, DEEP_REPLY])
+def test_a_reply_that_breaks_the_protocol_is_a_failure_and_ends_the_engine(fake_time: FakeTime, bad: str) -> None:
+    """Includes S0035 verifier F4(a): a reply nested deeply enough to exhaust the parser."""
+    script = GARBAGE.replace("BAD", bad)
+    c = EngineClient(stand_in(script), monotonic=fake_time.monotonic, pause=fake_time.pause)
     try:
         assert isinstance(c.start(), EngineInfo)
         pid = c.pid
@@ -288,6 +299,54 @@ def test_a_reply_that_breaks_the_protocol_is_a_failure_and_ends_the_engine(fake_
         assert stopped(pid)
     finally:
         c.close()
+
+
+def test_a_broken_handshake_in_our_own_protocol_is_a_failed_start_not_incompatible(
+    tmp_path: Path, fake_time: FakeTime
+) -> None:
+    """Only another `v` makes an engine incompatible; a malformed protocol-1 reply is a failed start, retried."""
+    starts = tmp_path / "starts"
+    broken = """{"v": 1, "id": req["id"], "ok": True}"""
+    command = EngineCommand(
+        argv=(sys.executable, "-I", "-c", COUNTING.replace("{MODE}", broken), str(starts)), env=None
+    )
+    c = EngineClient(command, monotonic=fake_time.monotonic, pause=fake_time.pause)
+    try:
+        kinds = [r.kind for r in (c.start() for _ in range(2)) if isinstance(r, EngineFailure)]
+        assert kinds == ["start_failed", "start_failed"]
+        assert starts.read_text() == "xx"
+    finally:
+        c.close()
+
+
+def test_params_too_deep_to_encode_are_refused_before_sending(client: EngineClient) -> None:
+    """S0035 verifier F4(b): a request that cannot be encoded is refused locally; the engine is untouched."""
+    client.start()
+    pid = client.pid
+    deep: object = []
+    for _ in range(200_000):
+        deep = [deep]
+    out = client.call("ping", {"x": deep}, timeout=DEADLINE)
+    assert isinstance(out, EngineRefusal)
+    assert out.key == "protocol.malformed"
+    assert client.ping(timeout=DEADLINE) == Pong()
+    assert client.pid == pid
+
+
+@pytest.mark.parametrize("timeout", [0.0, -1.0, float("nan"), float("inf")])
+def test_a_timeout_that_is_not_a_positive_number_is_refused_before_sending(
+    client: EngineClient, timeout: float
+) -> None:
+    """S0035 verifier F4(c): a bad timeout raises before anything is written, so no reply is left queued to be
+    mistaken for the next request's."""
+    client.start()
+    pid = client.pid
+    with pytest.raises(ValueError, match="timeout"):
+        client.call("ping", {}, timeout=timeout)
+    with pytest.raises(ValueError, match="timeout"):
+        client.ping(timeout=timeout)
+    assert client.ping(timeout=DEADLINE) == Pong()
+    assert client.pid == pid
 
 
 def test_close_ends_the_engine_and_later_calls_fail(client: EngineClient) -> None:

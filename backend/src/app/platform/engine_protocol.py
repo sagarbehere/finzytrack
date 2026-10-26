@@ -78,6 +78,23 @@ def _is_int(value: object) -> bool:
     return type(value) is int
 
 
+def foreign_version(line: bytes) -> int | None:
+    """The protocol version of a reply from an engine that speaks another one, else None.
+
+    Every message carries `v`, the sender's protocol version, at its top level; that is the one part of the
+    protocol no version may change (S0035 verifier F2). A reply whose `v` is an integer other than
+    `PROTOCOL_VERSION` is read no further: its shape belongs to a protocol this side does not know.
+    """
+    try:
+        data: object = json.loads(line.decode("utf-8"))
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    v = cast("dict[str, object]", data).get("v")
+    return v if type(v) is int and v != PROTOCOL_VERSION else None
+
+
 def decode_reply(line: bytes, rid: int, op: str) -> Accepted | EngineRefusal | Violation:
     """Decode one reply line to the request `rid` for `op`."""
     if not line.endswith(b"\n"):
@@ -90,6 +107,8 @@ def decode_reply(line: bytes, rid: int, op: str) -> Accepted | EngineRefusal | V
         )
     except ValueError:  # UnicodeDecodeError and JSONDecodeError are ValueErrors
         return Violation("the reply is not one JSON value in UTF-8")
+    except RecursionError:  # S0035 verifier F4(a)
+        return Violation("the reply nests too deeply")
     if not isinstance(data, dict):
         return Violation("the reply is not a JSON object")
     reply = cast("dict[str, object]", data)

@@ -24,6 +24,7 @@ ARCHITECTURE.md §2.0, §5).
 from __future__ import annotations
 
 import contextlib
+import math
 import os
 import queue
 import subprocess
@@ -46,6 +47,7 @@ from app.platform.engine_protocol import (
     decode_pong,
     decode_reply,
     encode_request,
+    foreign_version,
 )
 
 STDERR_LINES = 200
@@ -84,6 +86,14 @@ class RestartPolicy:
     delays: tuple[float, ...] = (0.5, 2.0, 8.0)
     start_timeout: float = 15.0
     close_timeout: float = 5.0
+
+
+def _check_timeout(timeout: float) -> None:
+    """A timeout is a positive, finite number of seconds: an infinite one could wait forever on a stuck engine.
+    Checked before anything is sent, so a bad value never leaves a request in flight."""
+    if not (timeout > 0 and math.isfinite(timeout)):
+        msg = f"timeout must be a positive, finite number of seconds, not {timeout!r}"
+        raise ValueError(msg)
 
 
 def _real_pause(seconds: float) -> None:
@@ -148,6 +158,7 @@ class EngineClient:
             return ready if isinstance(ready, EngineFailure) else ready[1]
 
     def ping(self, timeout: float) -> Pong | EngineRefusal | EngineFailure:
+        _check_timeout(timeout)
         with self._lock:
             out = self._request("ping", {}, timeout)
             if not isinstance(out, Accepted):
@@ -158,6 +169,7 @@ class EngineClient:
     def call(
         self, op: str, params: Mapping[str, object], timeout: float
     ) -> Mapping[str, object] | EngineRefusal | EngineFailure:
+        _check_timeout(timeout)
         with self._lock:
             out = self._request(op, params, timeout)
             return out.result if isinstance(out, Accepted) else out
@@ -211,8 +223,8 @@ class EngineClient:
         rid = self._next_id
         try:
             line = encode_request(rid, op, params)
-        except (TypeError, ValueError) as e:
-            return EngineRefusal("protocol.malformed", f"The request is not JSON data: {e}")
+        except (TypeError, ValueError, RecursionError) as e:
+            return EngineRefusal("protocol.malformed", f"The request is not JSON data: {type(e).__name__}")
         if len(line) - 1 > MAX_LINE_BYTES:
             return EngineRefusal("protocol.malformed", f"The request is longer than {MAX_LINE_BYTES} bytes.")
         stdin = run.proc.stdin
@@ -224,13 +236,29 @@ class EngineClient:
         except OSError:
             return self._stopped("crashed", self._exit_detail(run))
         try:
+            return self._await_reply(run, rid, op, timeout)
+        except BaseException:
+            # The request is out and its reply may still come: an engine left running would hand that reply to the
+            # next request (S0035 verifier F4c). Stop it, then let the error go on.
+            self._stopped("crashed", "the client failed while waiting for the reply")
+            raise
+
+    def _await_reply(
+        self, run: _Running, rid: int, op: str, timeout: float
+    ) -> Accepted | EngineRefusal | EngineFailure:
+        try:
             raw = run.replies.get(timeout=timeout)
         except queue.Empty:
             return self._stopped("timeout", f"no reply to {op} within {timeout} s; the engine was stopped")
         if raw is None:
             return self._stopped("crashed", self._exit_detail(run))
         reply = decode_reply(raw, rid, op)
-        return self._violated(reply.detail) if isinstance(reply, Violation) else reply
+        if isinstance(reply, Violation):
+            foreign = foreign_version(raw) if op == "handshake" else None
+            if foreign is not None:  # another protocol: `_spawn` stops it and marks it incompatible (verifier F2)
+                return EngineRefusal("protocol.version_mismatch", f"the engine speaks protocol {foreign}")
+            return self._violated(reply.detail)
+        return reply
 
     def _ensure_running(self) -> tuple[_Running, EngineInfo] | EngineFailure:
         if self._closed:
