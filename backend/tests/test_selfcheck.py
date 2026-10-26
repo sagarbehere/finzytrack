@@ -53,6 +53,19 @@ def test_a_working_engine_is_reported_with_both_views() -> None:
     assert str(engine_site().resolve()) not in resolved(report["main_path"])
 
 
+def test_a_failed_view_probe_is_named_while_the_engine_works(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S0038 verifier F2: a working engine whose path probe fails still reports why (a regression guard: it kills
+    the mutant that drops `view_error` from `error`)."""
+
+    def failed_view(_python: Path, _site: Path) -> tuple[list[str] | None, bool | None, str | None]:
+        return None, None, "engine view: TimeoutExpired"
+
+    monkeypatch.setattr(selfcheck, "_engine_view", failed_view)
+    report = selfcheck.report(Path(sys.executable), engine_site())
+    assert report["pong"] is True
+    assert report["error"] == "engine view: TimeoutExpired"
+
+
 def test_a_missing_engine_is_reported_not_raised(tmp_path: Path) -> None:
     report = selfcheck.report(Path(sys.executable), tmp_path / "missing")
     assert report["pong"] is False

@@ -180,6 +180,7 @@ class FakeRun:
             target = Path(cmd[cmd.index("--target") + 1])
             (target / "bin").mkdir(parents=True, exist_ok=True)
             (target / "bin" / "bean-check").write_text("#!/build/python\n")
+            (target / ".lock").write_text("")  # uv's install lock at the target's root (S0038 verifier F3)
         return subprocess.CompletedProcess(cmd, 0, out, "")
 
 
@@ -219,6 +220,9 @@ class EngineInstall(unittest.TestCase):
     def test_console_scripts_are_removed(self) -> None:
         # Their shebangs name the build machine's interpreter; the engine is only ever run by the client.
         self.assertFalse((self.site / "bin").exists())
+
+    def test_uvs_install_lock_is_not_shipped(self) -> None:  # S0038 verifier F3
+        self.assertFalse((self.site / ".lock").exists())
 
     def test_the_engine_site_is_where_the_main_sidecar_looks_for_it(self) -> None:
         source = (ROOT / "backend/src/app/platform/adapters/engine_client.py").read_text(encoding="utf-8")

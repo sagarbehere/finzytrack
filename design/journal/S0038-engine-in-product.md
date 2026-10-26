@@ -47,7 +47,12 @@
 - Population: none claimed beyond the two closures, which come from the locks (`uv export --frozen --no-dev` of `backend/` and `engine/`), not from a list of names; on this build: main site 1 distribution (`finzytrack-backend`; the main closure is empty today), engine site 13 (12 locked + `finzytrack-engine`).
 
 ## Verifier
-- Pending: the orchestrator starts the verifier on this slice's commit range.
+- Round 1 (orchestrator-started), range 0dc00e55..5df6c1ac (with 0a407014, the `ps -ww` test fix, and bb0b5a78, the M0 exit record), head 5df6c1ac: PASS WITH FINDINGS, class Medium kept. Attacks 12: the real packaged tree built and self-checked; leaks both ways through a `.pth` (each refused twice); the engine moved away; packaged `app.main` with SIGTERM, also at the moment of FT_READY (no orphan); 21 Python and 8 Rust mutants (28 killed, 1 survivor: F2); new tests fail on the base source; Windows console scripts under `--target` (uv uses `bin` on every platform); spoofed verdicts through engine stderr (wrapped, not parsed); full gate runs. No High or Medium. Report archived in the owner's private archive, `m1a/s0038-verifier/`.
+- F1 Low (roadmap §1 still listed BL-0076 as left in M0, from bb0b5a78): fixed; the list is now "closed at the M0 exit, as they stood".
+- F2 Low (mutant m19, `error or view_error` → `error`, survived): `test_a_failed_view_probe_is_named_while_the_engine_works`.
+- F3 Low (uv's empty `.lock` at the engine site's root shipped): removed in `install_engine`; `test_uvs_install_lock_is_not_shipped` (fails on 5df6c1ac).
+- Questions recorded for later: the M2 sidecar supervisor must drain the sidecar's stderr (`StderrLog` writes under a lock, so an undrained pipe could block the engine's stderr pump and the final `engine.closed`); a SIGTERM between the outer `finally` and `SIG_IGN` skips `engine.close()` (the engine still ends on stdin EOF and its watchdog).
+- No further round (ADR-0058: no High, no ledger data).
 
 ## Retro
 - (Written after the verifier round.) Before hand-off: three mutants survived first (B7, R1, S20); two became tests, one is equivalent. The guard hook refused several Bash commands whose text named process signals (test code written through heredocs); writing such code with the file tools avoids it.

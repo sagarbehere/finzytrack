@@ -184,13 +184,15 @@ def install_sidecar(py: Path) -> None:
 
 def install_engine(py: Path, site: Path) -> None:
     """The engine into its own site-packages, never into the interpreter (`py` only selects the wheels' tags).
-    Console scripts are removed: their shebangs name this build's interpreter, and only the client runs the engine."""
+    Console scripts are removed: their shebangs name this build's interpreter, and only the client runs the engine.
+    uv's empty install lock at the target's root is removed too (S0038 verifier F3)."""
     site.mkdir(parents=True, exist_ok=True)
     install_project(ROOT / "engine",
                     ["uv", "pip", "install", "--python", str(py), "--target", str(site), "--no-deps"])
     scripts = site / "bin"
     if scripts.is_dir():
         shutil.rmtree(scripts)
+    (site / ".lock").unlink(missing_ok=True)
 
 
 def normalized(name: str) -> str:
