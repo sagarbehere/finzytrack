@@ -185,13 +185,23 @@ class Cli(unittest.TestCase):
 
     def test_report_lists_this_run_and_the_total(self) -> None:
         env = {"FT_GATE_RUN": "push-1"}
-        self.cli("run", "pre-push", "first check", "true", env=env)
+        times = self.repo / ".git/finzytrack/times-pre-push.json"
+        times.parent.mkdir(parents=True)
+        times.write_text(json.dumps({"first check": [1.0, 2.0, 3.0, 4.0, 2.5]}))  # usual 2.5 s (S0034 verifier F5)
+        self.cli("run", "pre-push", "first check", PY, "-c", "import time; time.sleep(0.5)", env=env)
         self.cli("run", "pre-push", "second check", "false", env=env)
         r = self.cli("report", "pre-push", env=env)
         self.assertEqual(r.returncode, 0)
-        self.assertIn("first check", r.stderr)
-        self.assertIn("FAILED  second check", r.stderr)
-        self.assertIn("total", r.stderr)
+        lines = r.stderr.splitlines()
+        first = next(line for line in lines if line.endswith("  first check"))
+        second = next(line for line in lines if line.endswith("  second check"))
+        total = next(line for line in lines if line.endswith("  total"))
+        self.assertRegex(first, r"^ +\d+\.\d s  \(usual 2\.5 s\)  first check$")
+        self.assertRegex(second, r"^ +\d+\.\d s  \(no usual yet\)  FAILED  second check$")
+        self.assertRegex(total, r"^ +\d+\.\d s  \(usual 2\.5 s, over the checks with a usual time\)  total$")
+        seconds = [float(x.split()[0]) for x in (first, second, total)]
+        self.assertGreaterEqual(seconds[0], 0.5)
+        self.assertAlmostEqual(seconds[2], seconds[0] + seconds[1], delta=0.11)
         other = self.cli("report", "pre-push", env={"FT_GATE_RUN": "push-2"})
         self.assertEqual(other.returncode, 0)
         self.assertNotIn("first check", other.stderr)

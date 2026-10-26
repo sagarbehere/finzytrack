@@ -30,7 +30,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-K = 3  # a check over K times its usual time is treated as hung
+K = 8  # a check over K times its usual time is treated as hung (S0034 verifier F2: concurrent runs, see the journal)
 N = 5  # usual time = the median of the last N green runs
 MIN_SAMPLES = 3  # fewer green runs than this: no limit yet
 FLOOR_S = 60.0  # a check is never stopped as hung before this many seconds
@@ -218,14 +218,18 @@ def report(repo: Path, hook: str) -> str:
         return f"{hook}: no check times recorded for this run"
     lines = [f"{hook}: check times (usual = the median of the last {N} green runs in this clone)"]
     total = total_usual = 0.0
+    any_usual = False
     for c in (c for c in checks if isinstance(c, dict)):
         seconds, u = float(c.get("seconds") or 0), c.get("usual")
         total += seconds
-        total_usual += float(u) if isinstance(u, (int, float)) else 0.0
+        if isinstance(u, (int, float)):
+            total_usual += float(u)
+            any_usual = True
         note = f"usual {u:.1f} s" if isinstance(u, (int, float)) else "no usual yet"
         status = "" if c.get("status") == "passed" else f"  {str(c.get('status')).upper()}"
         lines.append(f"  {seconds:7.1f} s  ({note}){status}  {c.get('label', '')}")
-    lines.append(f"  {total:7.1f} s  (usual {total_usual:.1f} s, over the checks with a usual time)  total")
+    note = f"usual {total_usual:.1f} s, over the checks with a usual time" if any_usual else "no usual yet"
+    lines.append(f"  {total:7.1f} s  ({note})  total")
     return "\n".join(lines)
 
 

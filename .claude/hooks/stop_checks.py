@@ -34,6 +34,7 @@ CHECKS = [
     ("capability map", ["python3", "scripts/check_capabilities.py"]),
 ]
 BACKSTOP_S = 1500  # the whole hook; below the Stop timeout in .claude/settings.json (1800 s)
+GIT_TIMEOUT_S = 120  # one git plumbing call; capped further by the time left before the backstop
 GREEN_FILE = "stop-green"  # in gate_timer.state_dir(): the key of the last tree every check passed on
 
 
@@ -50,7 +51,7 @@ def load_timer():
 
 def changed_files() -> list[str]:
     out = subprocess.run(["git", "status", "--porcelain", "-z", "--untracked-files=all"], cwd=REPO,
-                         capture_output=True, text=True, timeout=120).stdout
+                         capture_output=True, text=True, timeout=GIT_TIMEOUT_S).stdout
     files = []
     for entry in out.split("\0"):
         if len(entry) > 3 and entry[0] != "D" and entry[1] != "D":
@@ -71,20 +72,25 @@ def hooks_path_problem(repo: Path) -> str | None:
             "to run `git config core.hooksPath .githooks` (agents may not change it)")
 
 
-def tree_key(repo: Path) -> str | None:
-    """A key of the working tree's content and the Python version, or None when it cannot be computed.
+def tree_key(repo: Path, deadline: float | None = None) -> str | None:
+    """A key of the working tree's content, which of its files are tracked, and the Python version, or None when it
+    cannot be computed (or not before `deadline`, a time.monotonic() value).
 
     A temporary index starts from HEAD (no assume-unchanged or skip-worktree flags) and `git add -A` puts every
-    tracked and untracked, not ignored, file in it; `git write-tree` names the result. The real index is not read
-    or written."""
+    tracked and untracked, not ignored, file in it; `git write-tree` names the result. The real index is only read,
+    for the list of tracked paths (`git ls-files`): a check that reads tracked files only, such as `git grep`, sees
+    a file go from tracked to untracked (S0034 verifier F3)."""
     with tempfile.TemporaryDirectory() as tmp:
         env = {**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index")}
         env.pop("GIT_DIR", None)
         env.pop("GIT_WORK_TREE", None)
 
-        def git(*args: str) -> subprocess.CompletedProcess[str]:
-            return subprocess.run(["git", "-C", str(repo), *args], env=env, capture_output=True, text=True,
-                                  timeout=120)
+        def git(*args: str, real_index: bool = False) -> subprocess.CompletedProcess[str]:
+            timeout = GIT_TIMEOUT_S if deadline is None else min(GIT_TIMEOUT_S, deadline - time.monotonic())
+            if timeout <= 0:
+                raise subprocess.TimeoutExpired(["git", *args], 0)
+            return subprocess.run(["git", "-C", str(repo), *args], env=None if real_index else env,
+                                  capture_output=True, text=True, timeout=timeout)
 
         try:
             if git("rev-parse", "--verify", "--quiet", "HEAD").returncode == 0 and git("read-tree", "HEAD").returncode:
@@ -92,17 +98,19 @@ def tree_key(repo: Path) -> str | None:
             if git("add", "-A").returncode:
                 return None
             tree = git("write-tree")
+            tracked = git("ls-files", "-z", real_index=True)
         except (OSError, subprocess.SubprocessError):
             return None
-    if tree.returncode or not tree.stdout.strip():
+    if tree.returncode or not tree.stdout.strip() or tracked.returncode:
         return None
-    return hashlib.sha256(f"tree {tree.stdout.strip()}\npython {sys.version}\n".encode()).hexdigest()
+    paths = hashlib.sha256(tracked.stdout.encode()).hexdigest()
+    return hashlib.sha256(f"tree {tree.stdout.strip()}\ntracked {paths}\npython {sys.version}\n".encode()).hexdigest()
 
 
 def run_checks(timer, deadline: float) -> list[str]:
     failures = []
     # The timer must fail a failing check; if it passes one, every check below would read as passed.
-    canary = timer.run_check([sys.executable, "-c", "raise SystemExit(1)"], REPO, 60, capture=True)
+    canary = timer.run_check([sys.executable, "-c", "raise SystemExit(1)"], REPO, 60, capture=True)  # never passes
     if canary.passed:
         return ["the check timer (scripts/gate_timer.py) passed a failing check; no check result can be trusted"]
     checks = list(CHECKS)
@@ -126,12 +134,13 @@ def check(event: dict) -> list[str]:
     timer = load_timer()
     folder = timer.state_dir(REPO)
     green_file = folder / GREEN_FILE if folder else None
-    key = tree_key(REPO)
+    key = tree_key(REPO, deadline)
     if key is not None and green_file is not None and _read(green_file) == key:
         return failures  # every check passed on this exact tree before
     failures += run_checks(timer, deadline)
-    # Store the key only after a fully green run on a tree that did not change while the checks ran.
-    if not failures and key is not None and green_file is not None and tree_key(REPO) == key:
+    # Store the key only after a fully green run on a tree that did not change while the checks ran, and only when
+    # the check of that fits before the backstop (S0034 verifier F4).
+    if not failures and key is not None and green_file is not None and tree_key(REPO, deadline) == key:
         try:
             green_file.parent.mkdir(parents=True, exist_ok=True)
             green_file.write_text(key)

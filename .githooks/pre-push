@@ -54,7 +54,7 @@ while IFS= read -r range; do
 done <<< "$ranges"
 # A backstop over the whole pushed tree (S0031 verifier F5): the staged-file guard on every tracked file.
 run "staged-file guard (all tracked files)" bash -c "set -o pipefail; git ls-files -z | xargs -0 python3 scripts/check_staged.py --paths"
-# In parallel, one process per test module; the same tests as `unittest discover -s scripts/tests` (S0034).
+# In parallel, one process per test class; the same tests as `unittest discover -s scripts/tests` (S0034).
 run "check-script meta-tests" python3 scripts/run_meta_tests.py
 run "privacy scan (all tracked files)" python3 scripts/privacy_scan.py --all --quiet
 run "invariants" python3 scripts/check_invariants.py

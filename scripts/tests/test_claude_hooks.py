@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -140,7 +141,7 @@ class StopHookCacheAndTimeLimits(unittest.TestCase):
             ("an untracked file added", lambda: (self.repo / "new.txt").write_text("n\n")),
             ("an untracked file edited", lambda: (self.repo / "new.txt").write_text("m\n")),
             ("a tracked file deleted", lambda: (self.repo / "a.txt").unlink()),
-            ("a change staged in the real index", lambda: subprocess.run(
+            ("an untracked file staged and a deletion staged (what is tracked changes)", lambda: subprocess.run(
                 ["git", "-C", str(self.repo), "add", "-A"], check=True)),
         ]
         self.stop_hook()
@@ -150,11 +151,18 @@ class StopHookCacheAndTimeLimits(unittest.TestCase):
                 change()
                 code, _ = self.stop_hook()
                 self.assertEqual(code, 0)
-                expected += 1 if label != "a change staged in the real index" else 0
+                expected += 1
                 self.assertEqual(self.runs(), expected)
         (self.repo / "ignored.txt").write_text("i\n")  # ignored files are not part of the tree
         self.stop_hook()
         self.assertEqual(self.runs(), expected)
+
+    def test_staging_a_content_change_alone_is_not_a_new_tree(self) -> None:
+        (self.repo / "a.txt").write_text("b\n")
+        self.stop_hook()
+        subprocess.run(["git", "-C", str(self.repo), "add", "a.txt"], check=True)
+        self.stop_hook()
+        self.assertEqual(self.runs(), 1)
 
     def test_the_python_version_is_part_of_the_key(self) -> None:
         self.stop_hook()
@@ -187,11 +195,63 @@ class StopHookCacheAndTimeLimits(unittest.TestCase):
 
     def test_a_tree_that_changed_during_the_checks_is_not_cached(self) -> None:
         side = self.repo / "side.txt"
-        writes = [("counting", self.counting), ("writer", [sys.executable, "-c", f"open({str(side)!r}, 'w').write('s')"])]
+        writer = [sys.executable, "-c", f"open({str(side)!r}, 'w').write('s')"]
+        writes = [("counting", self.counting), ("writer", writer)]
         self.assertEqual(self.stop_hook(writes)[0], 0)
         side.unlink()  # the tree is back to what the checks started on, which they never saw whole
         self.stop_hook()
         self.assertEqual(self.runs(), 2)
+
+    def test_a_file_that_stops_being_tracked_is_checked_again(self) -> None:  # S0034 verifier F3
+        # `git grep` (check_capabilities.py) reads tracked files only: same content on disk, other result
+        self.stop_hook()
+        subprocess.run(["git", "-C", str(self.repo), "rm", "-q", "--cached", "a.txt"], check=True)
+        self.stop_hook()
+        self.assertEqual(self.runs(), 2)
+
+    def test_a_tracked_file_that_matches_gitignore_is_part_of_the_key(self) -> None:  # S0034 verifier F5
+        (self.repo / "ignored.txt").write_text("tracked anyway\n")
+        subprocess.run(["git", "-C", str(self.repo), "add", "-f", "ignored.txt"], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", "forced"], check=True)
+        self.stop_hook()
+        (self.repo / "ignored.txt").write_text("edited\n")
+        self.stop_hook()
+        self.assertEqual(self.runs(), 2)
+
+    def test_the_backstop_wins_over_a_longer_history_limit(self) -> None:  # S0034 verifier F1
+        times = self.repo / ".git/finzytrack/times-stop.json"
+        times.parent.mkdir(parents=True)
+        times.write_text(json.dumps({"sleepy": [100.0] * 5}))  # a 300 s limit from its history
+        sleepy = [("sleepy", [sys.executable, "-c", "import time; time.sleep(60)"])]
+        start = time.monotonic()
+        with mock.patch.object(self.stop, "BACKSTOP_S", 2):
+            code, err = self.stop_hook(sleepy)
+        self.assertEqual(code, 2)
+        self.assertLess(time.monotonic() - start, 20)
+        self.assertIn("backstop", err)
+
+    def test_the_key_check_after_the_run_stays_inside_the_backstop(self) -> None:  # S0034 verifier F4
+        real, calls = self.stop.tree_key, []
+
+        def slow(repo, deadline=None):
+            calls.append(1)
+            if len(calls) == 2:  # stands in for a slow `git add -A` after the checks
+                time.sleep(max(0.0, deadline - time.monotonic()) + 0.5 if deadline else 3)
+            return real(repo, deadline)
+
+        start = time.monotonic()
+        with mock.patch.object(self.stop, "BACKSTOP_S", 2), mock.patch.object(self.stop, "tree_key", slow):
+            code, _ = self.stop_hook()
+        self.assertEqual(code, 0)
+        self.assertLess(time.monotonic() - start, 2 + 1.5)
+        self.assertEqual(self.stop_hook()[0], 0)
+        self.assertEqual(self.runs(), 2)  # no key was stored past the backstop
+
+    def test_an_interrupt_is_red_not_a_crash(self) -> None:  # S0034 verifier F5
+        with mock.patch.object(self.stop, "run_checks", side_effect=KeyboardInterrupt()):
+            code, err = self.stop_hook()
+        self.assertEqual(code, 2)
+        self.assertIn("the tree is red", err)
 
     def test_a_missing_hooks_path_still_fails_on_a_cached_tree(self) -> None:
         self.stop_hook()
