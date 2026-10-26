@@ -29,12 +29,14 @@ ARCHITECTURE.md §2.0, §5, §7).
   timeout), not by the caller's timeout, so a short timeout cannot cut a cold start short and count a healthy
   engine as a stop (S0035 independent verifier F3). A timeout or an invalid reply stops the engine (its state is
   unknown); a request is never resent.
-- **Bounds.** Every wait in the client is bounded: a stop waits at most `close_timeout` for the exit it reports
-  (`_exit_detail`) and `close_timeout` for the reap (the exit and the reader and writer threads, under one deadline).
-  A call therefore returns within `longest_start` + its timeout + 3 x `close_timeout` (a dead engine noticed first,
-  then the stop of its own start or request), after any call ahead of it on the lock; `close()` within
-  `close_timeout` for a dead engine noticed first, then 3 x `close_timeout` (stdin closed, terminated, killed,
-  reaped), after the call in flight. The one wait left to the OS is `Popen` (fork and exec). A thread that cannot end
+- **Bounds.** Every wait in the client is bounded. Ending one engine waits at most `RestartPolicy.longest_stop`
+  (3 x `close_timeout`: a shutdown's wait for the exit at the end of input, its wait after SIGTERM, and the reap,
+  which waits for the exit and the reader and writer threads under one deadline; a kill waits less). A call carries
+  out at most two stops (an engine found dead first, then the stop of its own start or request), so it returns
+  within `RestartPolicy.longest_call(timeout)` = `longest_start` + its timeout + 2 x `longest_stop`, after any call
+  ahead of it on the lock; `close()` within `RestartPolicy.longest_close` (2 x `longest_stop`) after the call in
+  flight. The bounds are conservative, read off the code's worst paths (S0042 verifier F2: an exact per-path sum
+  was wrong once). The one wait left to the OS is `Popen` (fork and exec). A thread that cannot end
   (a pipe that a child of the engine still holds open) is left behind with its pipe, never waited for: closing a pipe
   while its thread is inside a read or write would wait for that thread (S0042).
 - **Encoding** happens before anything is started or sent: params that are not JSON data raise `ValueError` (a

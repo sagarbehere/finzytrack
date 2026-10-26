@@ -7,6 +7,7 @@ monotonic clock and pause, so no test waits for real backoff time (EP-28).
 
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import subprocess
@@ -1190,3 +1191,107 @@ def test_a_stopped_engine_leaves_no_thread_behind(client: EngineClient) -> None:
     assert client.ping(timeout=DEADLINE) == Pong()
     client.close()
     assert engine_threads(before) == []
+
+
+# -- S0042 verifier round 1 (F1-F3) ---------------------------------------------------------------------------------
+
+
+class NeverEnds:
+    """A stand-in for a pipe thread whose pipe a child of the engine holds: each join waits out its whole timeout."""
+
+    def __init__(self, waits: list[float]) -> None:
+        self.waits = waits
+
+    def join(self, timeout: float | None = None) -> None:
+        assert timeout is not None, "a reap must never join without a limit"
+        self.waits.append(timeout)
+        threading.Event().wait(timeout)
+
+
+def test_the_reap_waits_close_timeout_in_all_for_threads_that_do_not_end(fake_time: FakeTime) -> None:
+    """S0042 verifier F1: the reap itself, not only `join_all`, waits `close_timeout` in all for threads that never
+    end (before the fix to the test gap, `_reap` joining each thread for `close_timeout` passed every test)."""
+    policy = RestartPolicy(close_timeout=0.5)
+    c = EngineClient(engine_command(), policy, monotonic=fake_time.monotonic, pause=fake_time.pause)
+    assert isinstance(c.start(), EngineInfo)
+    run = c._run  # pyright: ignore[reportPrivateUsage] (the reap's threads have no public handle)
+    assert run is not None
+    real = list(run.threads)
+    waits: list[float] = []
+    run.threads[:] = [NeverEnds(waits) for _ in real]  # pyright: ignore[reportArgumentType, reportCallIssue]
+    c.close()
+    for t in real:
+        t.join(DEADLINE)
+    assert len(waits) == len(real)
+    assert sum(waits) <= policy.close_timeout, f"the reap waited {waits}: close_timeout each, not in all"
+
+
+def test_every_pipe_of_a_stopped_engine_is_closed(client: EngineClient) -> None:
+    """S0042 verifier F3: each pipe thread closes its own pipe when it ends (the reap closes none), so a stopped
+    engine leaves no open pipe behind, whatever the garbage collector does."""
+    client.start()
+    run = client._run  # pyright: ignore[reportPrivateUsage] (the pipes have no public handle)
+    assert run is not None
+    pipes = (run.proc.stdin, run.proc.stdout, run.proc.stderr)
+    out = client.call("test.stall", {}, timeout=0.5)
+    assert isinstance(out, EngineFailure)
+    assert out.kind == "timeout"
+    assert [p is not None and p.closed for p in pipes] == [True, True, True]
+
+
+def test_the_longest_call_and_close_are_derived_from_the_policy() -> None:
+    """S0042 verifier F2: the stated bounds, as code: a stop is three waits of `close_timeout`, a call at most two
+    stops plus a start plus its own wait, a close at most two stops."""
+    policy = RestartPolicy()
+    assert policy.longest_stop == 3 * 5.0
+    assert policy.longest_call(2.0) == 8.0 + 15.0 + 2.0 + 2 * 15.0
+    assert policy.longest_close == 2 * 15.0
+
+
+WORST_PATH = r"""
+import json, os, signal, subprocess, sys, threading
+work = sys.argv[1]
+runs = os.path.join(work, "runs")
+n = int(open(runs).read()) + 1 if os.path.exists(runs) else 1
+open(runs, "w").write(str(n))
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+req = json.loads(sys.stdin.readline())
+child = subprocess.Popen([sys.executable, "-I", "-c", "import threading; threading.Event().wait()"],
+                         stdin=subprocess.DEVNULL)  # holds this engine's stdout and stderr
+open(os.path.join(work, "children"), "a").write(f"{child.pid}\n")
+sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 1 if n == 1 else 2, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.flush()
+if n == 1:
+    sys.exit(0)
+threading.Event().wait()
+"""
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGTERM ignored, grandchildren; Windows is the manual CI run")
+def test_a_call_on_the_slowest_path_stays_within_the_stated_bound(tmp_path: Path) -> None:
+    """S0042 verifier F2: the path that waits longest today: an engine found dead first whose output a child holds
+    (its reap waits out `close_timeout`), then a new engine that speaks another protocol and ignores both the end of
+    its input and SIGTERM (a shutdown: three waits). The call ends within `RestartPolicy.longest_call`, an upper
+    bound by design, so this checks the stated bound, not a time budget."""
+    policy = RestartPolicy(delays=(0.0,), start_timeout=5.0, close_timeout=1.0)
+    command = EngineCommand(argv=(sys.executable, "-I", "-c", WORST_PATH, str(tmp_path)), env=None)
+    c = EngineClient(command, policy)
+    children = tmp_path / "children"
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        pid = c.pid
+        assert pid is not None
+        assert stopped(pid), "the first engine did not exit"
+        began = time.monotonic()
+        out = c.call("anything", {}, timeout=0.01)
+        took = time.monotonic() - began
+        assert isinstance(out, EngineFailure)
+        assert out.kind == "incompatible"
+        assert took >= 4 * policy.close_timeout, "the path did not wait as expected: the test proves nothing then"
+        assert took <= policy.longest_call(0.01)
+    finally:
+        c.close()
+        for line in children.read_text().split() if children.exists() else []:
+            with contextlib.suppress(ProcessLookupError):
+                kill(int(line))

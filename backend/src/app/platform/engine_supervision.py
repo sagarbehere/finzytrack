@@ -75,6 +75,24 @@ class RestartPolicy:
         """The longest a start can take before the request goes out: the largest backoff plus the handshake."""
         return max(self.delays, default=0.0) + self.start_timeout
 
+    @property
+    def longest_stop(self) -> float:
+        """The longest the client's ending of one engine can wait (S0042): a shutdown waits `close_timeout` for the
+        engine to exit at the end of its input, `close_timeout` after SIGTERM, and `close_timeout` for the reap (the
+        exit and the pipe threads under one deadline); a kill waits less (the exit it reports, then the reap)."""
+        return 3 * self.close_timeout
+
+    def longest_call(self, timeout: float) -> float:
+        """An upper bound on one call with `timeout`, once it holds the client's lock (S0042): a call carries out at
+        most two stops (an engine found dead first, then the stop of its own start or request), at most one start,
+        and its own wait. `Popen` itself (fork and exec) is the OS's and not counted."""
+        return self.longest_start + timeout + 2 * self.longest_stop
+
+    @property
+    def longest_close(self) -> float:
+        """An upper bound on `close()` once it holds the lock: an engine found dead first, then the shutdown."""
+        return 2 * self.longest_stop
+
 
 # -- States ---------------------------------------------------------------------------------------------------------
 
