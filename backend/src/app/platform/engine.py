@@ -79,8 +79,9 @@ class EnginePort(Protocol):
     def call(
         self, op: str, params: Mapping[str, object], timeout: float
     ) -> Mapping[str, object] | EngineRefusal | EngineFailure:
-        """Send one request and return its `result` object as plain data. The timeout bounds the wait for the
-        reply; a (re)start the call needs first is bounded separately by the adapter's policy."""
+        """Send one request and return its `result` object as plain data. The timeout covers sending the request
+        and waiting for its reply (S0042); a (re)start the call needs first is bounded separately by the adapter's
+        policy."""
         ...
 
     def close(self) -> None:

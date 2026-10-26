@@ -31,8 +31,8 @@ REGISTRY: tuple[StateEntry, ...] = (
         "app.platform.adapters.engine_client",
         "EngineClient",
         "UserContainer",  # ADR-0054 decision 4: one engine serves the user container
-        "one engine process, one request in flight, the last 200 stderr lines, one supervision state "
-        "(app.platform.engine_supervision) holding at most max_crashes stop times",
+        "one engine process with three pipe threads, one request in flight, the last 200 stderr lines, one "
+        "supervision state (app.platform.engine_supervision) holding at most max_crashes stop times",
         "close() when the user container closes; a stopped engine is restarted by the next request, bounded by "
         "RestartPolicy",
     ),

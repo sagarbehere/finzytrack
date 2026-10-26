@@ -20,18 +20,28 @@ ARCHITECTURE.md §2.0, §5, §7).
   when the sidecar is gone.
 - **Handshake.** Every start sends `handshake` first; another protocol version is `incompatible` and is never
   retried (until `reset`).
-- **Requests** are serialized, one in flight. The caller's timeout bounds the wait for its reply; a start the call
+- **Requests** are serialized, one in flight. The caller's timeout covers sending the request and waiting for its
+  reply, as one wait (S0042): a writer thread owns the engine's stdin and writes each request, a reader thread turns
+  the engine's stdout into lines, and the caller only waits for the reply queue, so a wait always ends: by a reply,
+  by the timeout, by a failed write, or by end of stream when the engine dies. An engine that stops reading (frozen,
+  stuck) cannot hold the caller in a write, however large the request (area review 2026-10-26 F3). A start the call
   needs first is bounded by the policy (`RestartPolicy.longest_start`: the largest backoff delay plus the handshake
   timeout), not by the caller's timeout, so a short timeout cannot cut a cold start short and count a healthy
-  engine as a stop (S0035 independent verifier F3). A call therefore returns within `longest_start` + its timeout,
-  after any call ahead of it on the lock. A reader thread turns the engine's stdout into lines, so a wait always
-  ends: by a reply, by the timeout, or by end of stream when the engine dies. A timeout or an invalid reply stops
-  the engine (its state is unknown); a request is never resent.
+  engine as a stop (S0035 independent verifier F3). A timeout or an invalid reply stops the engine (its state is
+  unknown); a request is never resent.
+- **Bounds.** Every wait in the client is bounded: a stop waits at most `close_timeout` for the exit it reports
+  (`_exit_detail`) and `close_timeout` for the reap (the exit and the reader and writer threads, under one deadline).
+  A call therefore returns within `longest_start` + its timeout + 3 x `close_timeout` (a dead engine noticed first,
+  then the stop of its own start or request), after any call ahead of it on the lock; `close()` within
+  `close_timeout` for a dead engine noticed first, then 3 x `close_timeout` (stdin closed, terminated, killed,
+  reaped), after the call in flight. The one wait left to the OS is `Popen` (fork and exec). A thread that cannot end
+  (a pipe that a child of the engine still holds open) is left behind with its pipe, never waited for: closing a pipe
+  while its thread is inside a read or write would wait for that thread (S0042).
 - **Encoding** happens before anything is started or sent: params that are not JSON data raise `ValueError` (a
   caller error, like a bad timeout); a request longer than the line limit is `EngineFailure("too_large")`, which
   leaves the engine untouched and is no stop (S0035 independent verifier F7). Neither reaches the table.
-- **Shutdown.** `close()` closes the engine's stdin (it finishes the request in hand and exits), then terminates and
-  finally kills it if it does not exit in time.
+- **Shutdown.** `close()` has the writer close the engine's stdin (it finishes the request in hand and exits), then
+  terminates and finally kills it if it does not exit in time.
 - **Log.** The table's `Log` effects go to the `log` sink (the structured log, S0039): `engine.ready` and
   `engine.start_failed` on every start, `engine.stopped`, `engine.unavailable`, `engine.closed`. A sink that raises
   loses that line and changes nothing else: the remaining effects run and the caller gets its own outcome (S0041;
@@ -39,10 +49,10 @@ ARCHITECTURE.md §2.0, §5, §7).
 - **Stderr.** Each line the engine writes to stderr is kept in a bounded tail and handed to `on_stderr` if given
   (the composition root forwards it to the log, S0038). A callback that raises is dropped for the rest of that
   engine's run; the tail goes on.
-- **Bounded state** (INV-10, INV-11): one engine process, one request in flight, the last `STDERR_LINES` lines of
-  the engine's stderr (of the running engine, else of the last one that stopped: the only diagnosis of a crash),
-  one supervision state holding at most `max_crashes` stop times. The client is owned by the user container
-  (`platform/state_registry.py`).
+- **Bounded state** (INV-10, INV-11): one engine process with three threads (writer, reader, stderr), one request in
+  flight, the last `STDERR_LINES` lines of the engine's stderr (of the running engine, else of the last one that
+  stopped: the only diagnosis of a crash), one supervision state holding at most `max_crashes` stop times. The
+  client is owned by the user container (`platform/state_registry.py`).
 """
 
 from __future__ import annotations
@@ -55,7 +65,7 @@ import subprocess
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Generator, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Literal
@@ -187,10 +197,20 @@ def _no_log(event: Event, /, **fields: object) -> None:
     """The sink when none is given (the packaged self-check, tests)."""
 
 
+class WriteFailed:
+    """The writer could not hand a request to the engine (its stdin is closed: the engine ended or closed it). The
+    class itself is the marker in the reply queue (a type, so no module-level instance, INV-11)."""
+
+
+type _Reply = bytes | type[WriteFailed] | None
+"""A reply line, a failed write, or None at the end of the engine's output."""
+
+
 @dataclass
 class _Running:
     proc: subprocess.Popen[bytes]
-    replies: queue.Queue[bytes | None] = field(default_factory=lambda: queue.Queue[bytes | None]())
+    replies: queue.Queue[_Reply] = field(default_factory=lambda: queue.Queue[_Reply]())
+    requests: queue.Queue[bytes | None] = field(default_factory=lambda: queue.Queue[bytes | None]())
     stderr: deque[str] = field(default_factory=lambda: deque[str](maxlen=STDERR_LINES))
     threads: list[threading.Thread] = field(default_factory=lambda: list[threading.Thread]())
 
@@ -210,29 +230,57 @@ class _Foreign:
     what: str
 
 
-def _pump_lines(pipe: IO[bytes], replies: queue.Queue[bytes | None]) -> None:
+def join_all(threads: Iterable[threading.Thread], timeout: float, clock: Callable[[], float] = time.monotonic) -> None:
+    """Join `threads` under one shared deadline of `timeout` seconds, not `timeout` each (S0042): a reap waits at
+    most `close_timeout` however many threads its run has."""
+    deadline = clock() + timeout
+    for thread in threads:
+        thread.join(max(0.0, deadline - clock()))
+
+
+def _pump_requests(pipe: IO[bytes], requests: queue.Queue[bytes | None], replies: queue.Queue[_Reply]) -> None:
+    """Each request line to the engine's stdin, until None (close stdin: the engine finishes and exits) or a failed
+    write (reported as `WriteFailed` beside the replies). The only user of stdin: the caller waits for the reply
+    queue, never for this write, so an engine that does not read cannot hold the caller (S0042). The pipe is closed
+    here, when the thread ends, because closing it from another thread would wait for a write in progress."""
+    try:
+        while (line := requests.get()) is not None:
+            try:
+                pipe.write(line)
+                pipe.flush()
+            except (OSError, ValueError):
+                replies.put(WriteFailed)
+                return
+    finally:
+        with contextlib.suppress(OSError, ValueError):
+            pipe.close()
+
+
+def _pump_lines(pipe: IO[bytes], replies: queue.Queue[_Reply]) -> None:
     """Reply lines into the queue; None at end of stream. A line longer than the limit is passed on cut (without
-    its newline), so the decoder refuses it."""
-    while True:
-        line = pipe.readline(MAX_LINE_BYTES + 2)
-        if not line:
-            replies.put(None)
-            return
-        replies.put(line)
+    its newline), so the decoder refuses it. The pipe is closed here, when the stream ends (see `_pump_requests`)."""
+    with contextlib.closing(pipe):
+        while True:
+            line = pipe.readline(MAX_LINE_BYTES + 2)
+            if not line:
+                replies.put(None)
+                return
+            replies.put(line)
 
 
 def _pump_stderr(pipe: IO[bytes], tail: deque[str], sink: Callable[[str], None] | None) -> None:
-    while True:
-        line = pipe.readline(STDERR_LINE_BYTES)
-        if not line:
-            return
-        text = line.decode("utf-8", errors="replace").rstrip("\n")
-        tail.append(text)
-        if sink is not None:
-            try:
-                sink(text)
-            except Exception:  # noqa: BLE001 (a broken log sink must not stop the tail or the engine)
-                sink = None
+    with contextlib.closing(pipe):
+        while True:
+            line = pipe.readline(STDERR_LINE_BYTES)
+            if not line:
+                return
+            text = line.decode("utf-8", errors="replace").rstrip("\n")
+            tail.append(text)
+            if sink is not None:
+                try:
+                    sink(text)
+                except Exception:  # noqa: BLE001 (a broken log sink must not stop the tail or the engine)
+                    sink = None
 
 
 class EngineClient:
@@ -463,22 +511,18 @@ class EngineClient:
     def _exchange_any(
         self, run: _Running, request: tuple[int, str, bytes], timeout: float, *, handshake: bool
     ) -> Accepted | EngineRefusal | _Lost | _Foreign:
-        """`_exchange`; for our own handshake (`handshake`), a reply in another protocol is `_Foreign`."""
+        """`_exchange`; for our own handshake (`handshake`), a reply in another protocol is `_Foreign`. The request is
+        handed to the writer thread and the timeout covers its write and the reply together: one wait (S0042)."""
         rid, op, line = request
-        stdin = run.proc.stdin
-        if stdin is None:  # pragma: no cover (always a pipe here)
-            return _Lost("crashed", "the engine has no stdin")
-        try:
-            stdin.write(line)
-            stdin.flush()
-        except OSError:
-            return _Lost("crashed", self._exit_detail(run))
+        run.requests.put(line)
         try:
             raw = run.replies.get(timeout=timeout)
         except queue.Empty:
             return _Lost("timeout", f"no reply to {op} within {timeout} s; the engine was stopped")
         if raw is None:
             return _Lost("crashed", self._exit_detail(run))
+        if not isinstance(raw, bytes):  # WriteFailed: the request never reached the engine
+            return _Lost("crashed", self._exit_detail(run, "input"))
         reply = decode_reply(raw, rid, op)
         if isinstance(reply, Violation):
             foreign = foreign_version(raw) if handshake else None
@@ -504,11 +548,14 @@ class EngineClient:
             return SpawnFailed(f"the engine could not be started: {e}", self._monotonic())
         run = _Running(proc)
         self._run = run  # at once, so an interrupted start kills it (the table's `Kill`)
-        if proc.stdout is None or proc.stderr is None:  # pragma: no cover (pipes were requested)
+        if proc.stdin is None or proc.stdout is None or proc.stderr is None:  # pragma: no cover (pipes were requested)
             self._run = None
             self._kill(run)
-            return SpawnFailed("the engine has no output pipes", self._monotonic())
+            return SpawnFailed("the engine has no pipes", self._monotonic())
         pumps = (
+            threading.Thread(
+                target=_pump_requests, args=(proc.stdin, run.requests, run.replies), name="engine-requests", daemon=True
+            ),
             threading.Thread(target=_pump_lines, args=(proc.stdout, run.replies), name="engine-replies", daemon=True),
             threading.Thread(
                 target=_pump_stderr, args=(proc.stderr, run.stderr, self._on_stderr), name="engine-stderr", daemon=True
@@ -544,11 +591,11 @@ class EngineClient:
         """After the run's threads are joined: its stderr tail outlives it (S0035 independent verifier F4)."""
         self._last_stderr = run.stderr
 
-    def _exit_detail(self, run: _Running) -> str:
+    def _exit_detail(self, run: _Running, closed: Literal["input", "output"] = "output") -> str:
         try:
             code = run.proc.wait(self._policy.close_timeout)
         except subprocess.TimeoutExpired:
-            return "the engine closed its output but did not exit"
+            return f"the engine closed its {closed} but did not exit"
         return f"the engine exited with code {code}"
 
     def _kill(self, run: _Running) -> None:
@@ -557,10 +604,7 @@ class EngineClient:
         self._reap(run)
 
     def _shutdown(self, run: _Running) -> None:
-        stdin = run.proc.stdin
-        if stdin is not None:
-            with contextlib.suppress(OSError):
-                stdin.close()
+        run.requests.put(None)  # the writer closes stdin: the engine finishes the request in hand and exits
         try:
             run.proc.wait(self._policy.close_timeout)
         except subprocess.TimeoutExpired:
@@ -572,14 +616,14 @@ class EngineClient:
         self._reap(run)
 
     def _reap(self, run: _Running) -> None:
+        """Wait for the exit and the run's threads under one deadline of `close_timeout` (real time: these are real
+        waits). Each thread closes its own pipe when it ends; a thread still running (a child of the engine holds its
+        pipe open) is left with its pipe, never waited for again (S0042)."""
+        deadline = time.monotonic() + self._policy.close_timeout
+        run.requests.put(None)  # an idle writer ends; one inside a write ends when the write fails
         try:
             run.proc.wait(self._policy.close_timeout)
         except subprocess.TimeoutExpired:  # pragma: no cover (after SIGKILL the OS ends it)
             return
-        for thread in run.threads:
-            thread.join(self._policy.close_timeout)
+        join_all(run.threads, max(0.0, deadline - time.monotonic()))
         self._keep_stderr(run)
-        for pipe in (run.proc.stdin, run.proc.stdout, run.proc.stderr):
-            if pipe is not None:
-                with contextlib.suppress(OSError):
-                    pipe.close()

@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 
-from app.platform.adapters.engine_client import EngineClient, EngineCommand, next_request_id
+from app.platform.adapters.engine_client import EngineClient, EngineCommand, join_all, next_request_id
 from app.platform.engine import EngineFailure, EngineInfo, EnginePort, EngineRefusal, Pong
 from app.platform.engine_protocol import MAX_ID
 from app.platform.engine_supervision import Busy, Closed, Crashed, Idle, Ready, RestartPolicy, Unavailable
@@ -936,3 +936,257 @@ def test_a_frozen_engine_times_out_is_ended_and_replaced(client: EngineClient) -
     assert stopped(pid), "the frozen engine was left behind"
     assert client.ping(timeout=DEADLINE) == Pong()
     assert client.pid not in (None, pid)
+
+
+# -- Sending a request has a time limit too (S0042; area review 2026-10-26 F3) --------------------------------------
+
+LARGE = {"blob": "x" * (1 << 20)}  # 1 MiB: far beyond a pipe's buffer (16-64 KiB), well under the line limit
+
+
+def frozen_until_released(pid: int, *threads: threading.Thread) -> list[threading.Thread]:
+    """The threads still running after a hang detector's wait. It then releases the frozen engine (SIGCONT), so that
+    on a client that hangs the test still ends and nothing is left stuck behind the call lock."""
+    for t in threads:
+        t.join(DEADLINE)
+    hung = [t for t in threads if t.is_alive()]
+    if hung:
+        os.kill(pid, signal.SIGCONT)
+        for t in hung:
+            t.join(DEADLINE)
+    return hung
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGSTOP is POSIX; Windows is the manual CI run")
+def test_a_large_request_to_a_frozen_engine_ends_within_its_limit_and_ends_the_engine(fake_time: FakeTime) -> None:
+    """Area review 2026-10-26 F3 (failure-modes row E2): the request was written with no time limit, so a request
+    larger than the pipe's buffer to an engine that does not read never returned, holding the lock. The caller's
+    limit covers the write: the call returns its timeout while the engine is still frozen, and the engine is ended."""
+    events = Events()
+    c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=fake_time.pause, log=events)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        pid = c.pid
+        assert pid is not None
+        os.kill(pid, signal.SIGSTOP)
+        t, out = in_thread(lambda: c.call("no.such.op", LARGE, timeout=0.5))
+        assert frozen_until_released(pid, t) == [], "the call did not return while the engine was frozen"
+        failure = out[0]
+        assert isinstance(failure, EngineFailure)
+        assert failure.kind == "timeout"
+        assert stopped(pid), "the frozen engine was left behind"
+        assert [f.get("kind") for e, f in events.seen if e.name == "engine.stopped"] == ["timeout"]
+        assert c.ping(timeout=DEADLINE) == Pong()
+        assert c.pid not in (None, pid)
+    finally:
+        c.close()
+
+
+STOPS_READING = r"""
+import json, sys, threading
+req = json.loads(sys.stdin.readline())
+sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 1, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.flush()
+threading.Event().wait()
+"""
+
+
+def test_a_large_request_to_an_engine_that_stops_reading_times_out(fake_time: FakeTime) -> None:
+    """The same hang without a signal (every OS): an engine stuck after its handshake reads nothing more."""
+    c = EngineClient(stand_in(STOPS_READING), monotonic=fake_time.monotonic, pause=fake_time.pause)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        pid = c.pid
+        assert pid is not None
+        t, out = in_thread(lambda: c.call("anything", LARGE, timeout=0.5))
+        t.join(DEADLINE)
+        if t.is_alive():
+            kill(pid)  # release the hung call, so the test ends
+            t.join(DEADLINE)
+            pytest.fail("the call did not return while the engine was not reading")
+        failure = out[0]
+        assert isinstance(failure, EngineFailure)
+        assert failure.kind == "timeout"
+        assert stopped(pid)
+        assert isinstance(c.state, Crashed)
+    finally:
+        c.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGSTOP is POSIX; Windows is the manual CI run")
+def test_close_returns_while_a_large_request_to_a_frozen_engine_is_out(fake_time: FakeTime) -> None:
+    """Area review F3: quit (close) waited behind the hung call's lock forever. Now it waits at most for that call's
+    limit and its stop."""
+    c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=fake_time.pause)
+    assert isinstance(c.start(), EngineInfo)
+    pid = c.pid
+    assert pid is not None
+    os.kill(pid, signal.SIGSTOP)
+    t, out = in_thread(lambda: c.call("no.such.op", LARGE, timeout=0.5))
+    assert wait_until(lambda: isinstance(c.state, Busy))
+    closer = threading.Thread(target=c.close, daemon=True)
+    closer.start()
+    assert frozen_until_released(pid, t, closer) == [], "close() or the call hung on the frozen engine"
+    failure = out[0]
+    assert isinstance(failure, EngineFailure)
+    assert failure.kind == "timeout"
+    assert isinstance(c.state, Closed)
+    assert stopped(pid)
+
+
+HOLDS_OUTPUT = r"""
+import json, subprocess, sys
+req = json.loads(sys.stdin.readline())
+sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 1, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.flush()
+child = subprocess.Popen([sys.executable, "-I", "-c", "import threading; threading.Event().wait()"],
+                         stdin=subprocess.DEVNULL)  # inherits the engine's stdout and stderr
+sys.stderr.write(f"marker: child {child.pid}\n")
+sys.stderr.flush()
+sys.stdin.read()
+"""
+
+
+@pytest.mark.skipif(os.name != "posix", reason="ends a grandchild by pid; Windows is the manual CI run")
+def test_close_returns_when_a_child_of_the_engine_holds_its_output() -> None:
+    """S0042 (same class as F3): a process the engine started (a user's plugin, say) keeps the engine's output pipes
+    open after the engine exits, so the client's readers never see their end. Closing a pipe while its reader is
+    inside `readline` waits for that reader, so close() hung after the joins timed out. Each reader now closes its own
+    pipe when it ends; close() leaves a pipe that is still being read alone."""
+    c = EngineClient(stand_in(HOLDS_OUTPUT), RestartPolicy(close_timeout=0.5))
+    grandchild: int | None = None
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        pid = c.pid
+        assert pid is not None
+        assert wait_until(lambda: "marker: child " in c.stderr_tail())
+        grandchild = int(c.stderr_tail().split("marker: child ")[1].split()[0])
+        closer = threading.Thread(target=c.close, daemon=True)
+        closer.start()
+        closer.join(DEADLINE)
+        hung = closer.is_alive()
+        if hung:
+            kill(grandchild)  # releases the readers, so the test ends
+            grandchild = None
+            closer.join(DEADLINE)
+        assert not hung, "close() hung on a pipe held open by the engine's child"
+        assert isinstance(c.state, Closed)
+        assert stopped(pid)
+    finally:
+        if grandchild is not None:
+            kill(grandchild)
+
+
+def test_a_large_request_to_a_reading_engine_is_answered(client: EngineClient) -> None:
+    """@regression-guard (S0042): the must-not-pass beside the time limit on the write: a large request to an engine
+    that reads is delivered whole and answered, and is no stop."""
+    out = client.call("no.such.op", LARGE, timeout=DEADLINE)
+    assert isinstance(out, EngineRefusal)
+    assert out.key == "protocol.unknown_op"
+    pid = client.pid
+    assert client.ping(timeout=DEADLINE) == Pong()
+    assert client.pid == pid
+
+
+CLOSES_ITS_INPUT = r"""
+import json, os, sys, threading
+req = json.loads(sys.stdin.readline())
+sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 1, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.flush()
+os.close(0)
+sys.stderr.write("marker: input closed\n")
+sys.stderr.flush()
+threading.Event().wait()
+"""
+
+
+def test_a_request_the_engine_cannot_take_is_a_crash_at_once_not_a_timeout(fake_time: FakeTime) -> None:
+    """@regression-guard (S0042): a write that fails (the engine closed its input but runs on, its output open) is
+    reported by the writer at once as a crash; the caller does not wait out its limit for a reply that cannot come."""
+    c = EngineClient(stand_in(CLOSES_ITS_INPUT), RestartPolicy(close_timeout=0.5), monotonic=fake_time.monotonic)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        pid = c.pid
+        assert pid is not None
+        assert wait_until(lambda: "marker: input closed" in c.stderr_tail())
+        t, out = in_thread(lambda: c.call("anything", {}, timeout=600.0))
+        t.join(DEADLINE)
+        if t.is_alive():
+            kill(pid)
+            t.join(DEADLINE)
+            pytest.fail("the caller waited for a reply to a request that was never taken")
+        failure = out[0]
+        assert isinstance(failure, EngineFailure)
+        assert failure.kind == "crashed"
+        assert stopped(pid)
+    finally:
+        c.close()
+
+
+MARKS_ITS_END = r"""
+import json, signal, sys
+signal.signal(signal.SIGTERM, lambda *_: (open(sys.argv[1], "w").write("terminated"), sys.exit(0)))
+req = json.loads(sys.stdin.readline())
+sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 1, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.flush()
+sys.stdin.read()
+open(sys.argv[1], "w").write("end of input")
+"""
+
+
+@pytest.mark.skipif(os.name != "posix", reason="a SIGTERM handler; Windows is the manual CI run")
+def test_close_ends_the_engine_by_closing_its_input(tmp_path: Path) -> None:
+    """@regression-guard (S0042: the writer thread now closes stdin): close() lets the engine see the end of its input
+    and exit by itself, which lets it finish the request in hand; it is not terminated."""
+    end = tmp_path / "end"
+    command = EngineCommand(argv=(sys.executable, "-I", "-c", MARKS_ITS_END, str(end)), env=None)
+    c = EngineClient(command)
+    assert isinstance(c.start(), EngineInfo)
+    c.close()
+    assert end.read_text() == "end of input"
+
+
+class Joinable:
+    """A stand-in thread that records how long it was asked to wait and takes that long on the given clock."""
+
+    def __init__(self, clock: FakeTime) -> None:
+        self.clock = clock
+        self.waits: list[float] = []
+
+    def join(self, timeout: float | None = None) -> None:
+        assert timeout is not None
+        self.waits.append(timeout)
+        self.clock.now += timeout  # as if the thread never ended
+
+
+def test_threads_are_joined_under_one_deadline_not_one_each() -> None:
+    """S0042: a reap waits at most `close_timeout` in all, however many threads its run has."""
+    clock = FakeTime()
+    threads = [Joinable(clock) for _ in range(3)]
+    began = clock.now
+    join_all(threads, 2.0, clock.monotonic)  # pyright: ignore[reportArgumentType] (duck-typed threads)
+    assert clock.now - began == 2.0
+    assert [t.waits for t in threads] == [[2.0], [0.0], [0.0]]
+
+
+def engine_threads(before: set[threading.Thread]) -> list[str]:
+    """The engine threads started since `before` that still run (another test's leftovers do not count)."""
+    return sorted(t.name for t in threading.enumerate() if t.name.startswith("engine-") and t not in before)
+
+
+def test_a_stopped_engine_leaves_no_thread_behind(client: EngineClient) -> None:
+    """S0042: the reap ends the writer as well as the readers, after a stop (here a timeout) and at close: no engine
+    thread or pipe outlives its engine, so restarts do not pile them up (INV-10, INV-11)."""
+    before = set(threading.enumerate())
+    client.start()
+    assert engine_threads(before) == ["engine-replies", "engine-requests", "engine-stderr"]
+    out = client.call("test.stall", {}, timeout=0.5)
+    assert isinstance(out, EngineFailure)
+    assert out.kind == "timeout"
+    assert engine_threads(before) == []
+    assert client.ping(timeout=DEADLINE) == Pong()
+    client.close()
+    assert engine_threads(before) == []
