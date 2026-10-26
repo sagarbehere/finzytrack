@@ -6,6 +6,9 @@ on:
       ref:
         description: "Commit or branch of next to test"
         default: "next"
+      milestone_exit:
+        description: "Milestone-exit run for this milestone (e.g. M0); empty: an ordinary run"
+        default: ""
 permissions:
   contents: read
   actions: read
@@ -14,6 +17,7 @@ jobs:
     uses: sagarbehere/finzytrack/.github/workflows/ci.yml@next
     with:
       ref: ${{ inputs.ref }}
+      milestone_exit: ${{ inputs.milestone_exit }}
   t2:
     uses: sagarbehere/finzytrack/.github/workflows/nightly.yml@next
     with:
