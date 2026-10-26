@@ -33,6 +33,17 @@ if [[ -n "$py_files" ]]; then
     echo "pre-commit: backend/.venv/bin/ruff missing; run 'uv sync' in backend/" >&2; fail=1
   fi
 fi
+eng_files="$(printf '%s\n' "$staged" | grep -E '^engine/.*\.py$' || true)"
+if [[ -n "$eng_files" ]]; then
+  if [[ -x engine/.venv/bin/ruff ]]; then
+    # shellcheck disable=SC2086
+    run "ruff format (engine)" engine/.venv/bin/ruff format --check --config engine/ruff.toml $eng_files
+    # shellcheck disable=SC2086
+    run "ruff lint (engine)" engine/.venv/bin/ruff check --config engine/ruff.toml $eng_files
+  else
+    echo "pre-commit: engine/.venv/bin/ruff missing; run 'uv sync --locked' in engine/" >&2; fail=1
+  fi
+fi
 fe_files="$(printf '%s\n' "$staged" | grep -E '^frontend/.*\.(ts|tsx|vue|js|mjs|css|json)$' || true)"
 if [[ -n "$fe_files" ]]; then
   if [[ -x frontend/node_modules/.bin/prettier && -x frontend/node_modules/.bin/eslint ]]; then

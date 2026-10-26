@@ -82,6 +82,14 @@ if [[ -f backend/pyproject.toml ]]; then
   run "declared dependencies" bash -c "cd backend && .venv/bin/deptry src"
   run "backend tests" bash -c "cd backend && .venv/bin/pytest -q -x"
 fi
+# The ledger engine, its own environment (S0035, ADR-0054): format, lint, strict types and tests, incl. its
+# architecture test (the import boundary). The backend tests above also need engine/.venv: they spawn the engine.
+if [[ -f engine/pyproject.toml ]]; then
+  run "ruff format (engine)" bash -c "cd engine && .venv/bin/ruff format --check --config ruff.toml ."
+  run "ruff lint (engine)" bash -c "cd engine && .venv/bin/ruff check --config ruff.toml ."
+  run "pyright (engine)" bash -c "cd engine && .venv/bin/pyright"
+  run "engine tests" bash -c "cd engine && .venv/bin/python -m pytest -q -x"
+fi
 if [[ -f shell/src-tauri/Cargo.toml ]]; then
   cargo_bin="$(command -v cargo || echo "$HOME/.cargo/bin/cargo")"
   run "rustfmt" bash -c "cd shell/src-tauri && $cargo_bin fmt --check"
