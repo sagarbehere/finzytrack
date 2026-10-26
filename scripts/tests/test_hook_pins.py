@@ -21,7 +21,8 @@ the hook's bytes and are deliberately coarse: they refuse whole forms rather tha
 - Only the `run` function is defined, exactly as pinned: no `function` keyword, and no `()` or command group `{` on
   any other line; `fail=0` is set once before the first check; pre-commit and pre-push end with `exit "$fail"`.
 A loosening that edits the hook and its pin together and avoids these forms (a gate turned false, `if false`, a check
-removed, a loop fed nothing) is review's to see: the pin's change is in the diff.
+removed, a loop fed nothing, `false && run ...`, `[[ -z x ]] || run ...`, a tool variable pointed at `true`, a `PATH`
+prefix, `; fail=1` dropped from a branch) is review's to see: the pin's change is in the diff. The list is not complete.
 """
 
 from __future__ import annotations

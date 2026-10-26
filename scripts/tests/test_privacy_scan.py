@@ -306,7 +306,20 @@ class SeededMissesS0033(unittest.TestCase):
                 # a currency code after the amount excuses a line only when it has one amount (or an account name)
                 ("currency codes with a running balance", "2026-03-01  SALARY ACME  1,84,250.00 INR  2,10,000.00 INR\n"
                  "2026-03-02  ATM PUNE  5,000.00 INR  2,05,000.00 INR\n"
-                 "2026-03-03  LIC PREMIUM  12,600.00 INR  1,92,400.00 INR\n")):
+                 "2026-03-03  LIC PREMIUM  12,600.00 INR  1,92,400.00 INR\n"),
+                # S0033 verifier R3-1: only an ISO 4217 currency code ending the line excuses one amount; an
+                # upper-case type column or reference after the amount is a statement's
+                ("a DEBIT/CREDIT column", "2026-03-01  RENT TO SOMEONE  42,000.00  DEBIT\n"
+                 "2026-03-02  SALARY ACME  1,84,250.00  CREDIT\n2026-03-03  SCHOOL FEES  18,600.00  DEBIT\n"),
+                ("a tab-separated DEBIT/CREDIT column", "2026-03-01\tRENT TO SOMEONE\t42,000.00\tDEBIT\n"
+                 "2026-03-02\tSALARY ACME\t1,84,250.00\tCREDIT\n2026-03-03\tSCHOOL FEES\t18,600.00\tDEBIT\n"),
+                ("WDL/DEP codes", "2026-03-01  ATM PUNE  5,000.00  WDL\n2026-03-02  SALARY  1,84,250.00  DEP\n"
+                 "2026-03-03  RENT  42,000.00  WDL\n"),
+                ("a reference after the amount", "2026-03-01  UPI SWIGGY  450.00  UPI607" + "12345" + "6789\n"
+                 "2026-03-02  UPI ZOMATO  320.00  UPI607" + "12345" + "6790\n"
+                 "2026-03-03  NEFT ACME  900.00  N063" + "1234" + "5678\n"),
+                ("a currency code followed by more text", "2026-03-01  RENT TO SOMEONE  42,000.00 INR DEBIT\n"
+                 "2026-03-02  SALARY ACME  1,84,250.00 INR CREDIT\n2026-03-03  SCHOOL FEES  18,600.00 INR DEBIT\n")):
             with self.subTest(name):
                 self.assertEqual(rules_in("notes.md", text).count("statement-excerpt"), 1)
         self.assertEqual(rules_in("notes.md", self.EXCERPT).count("statement-excerpt"), 1)  # plant A05
