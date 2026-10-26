@@ -170,7 +170,10 @@ jobs:
       # packages they need are installed on every run, since apt packages are not in the cache.
       - name: Playwright version (the browser cache key)
         id: pw
-        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+        run: |
+          version="$(node -p "require('@playwright/test/package.json').version")"
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
         id: pw-cache
         with:

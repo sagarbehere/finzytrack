@@ -28,7 +28,11 @@
 - Population: "every job in the manual CI workflows": the three files in `.github/workflows/` (ci.yml 6 jobs, nightly.yml 2, packaged.yml 1 = 9); 8 carry a limit, 1 (`nightly.yml` `packaged`) calls `packaged.yml`, where GitHub allows no `timeout-minutes`, and the called job carries it. The test asserts at least 8 checked.
 
 ## Verifier
-(pending: the orchestrator starts it on the commit range)
+- Round 1 (orchestrator-started), head 90638ea3: PASS WITH FINDINGS, class Medium kept. Attacks 11 (check_own mutants, the rename test on ext4, the INV-24 claim, the lstat patch, the workflows parsed, the version read, the cache key failure path, test mutants, cache semantics, doc consistency, base run). Report archived in the owner's private archive, `m1a/s0036-verifier/`.
+- F1 Low (an empty Playwright version keyed a cache no later run replaces): fixed; the step fails on an empty version (`test -n "$version"`), asserted in `test_the_browsers_are_cached_by_the_exact_playwright_version` (fails on 90638ea3).
+- F2 Low (the pin regex skipped a `uses:` line with a trailing comment): fixed (`PIN_LINE`), `test_a_trailing_comment_does_not_hide_a_uses_line`.
+- F3 Medium (BL-0076's row still required `milestone_exit: M0`, against roadmap §3.2): the row now says the run starts without `milestone_exit` and the exit check runs locally, with the owner's words.
+- F4 Medium (owner question: replacing the CI-side exit check for M0 by a local run): already the owner's decision. Fix 3 of the agreed diagnosis was "rerun without `milestone_exit`; a green run closes BL-0076 with the owner's words and the run; then `FT_MILESTONE_EXIT=M0` passes locally", approved verbatim "go ahead with all three fixes" (2026-10-26, Decisions above). No further round (ADR-0058: tooling, no High).
 
 ## Golden changes
 - `scripts/tests/test_acceptance_harness.py` `test_a_made_folder_that_was_replaced_is_refused`: the expectation "a folder removed and made again with mkdir is refused" does not hold on Linux ext4 (inode reused at once); owner-approved, see Decisions. Verifier verdict: pending.

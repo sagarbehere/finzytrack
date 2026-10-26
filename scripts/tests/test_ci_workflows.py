@@ -39,6 +39,9 @@ def job_timeout(block: str) -> int | None:
     return int(found[0]) if len(found) == 1 else None
 
 
+PIN_LINE = r"^\s*(?:- )?uses: (\S+)(?:\s+#.*)?$"
+
+
 class TimeoutTest(unittest.TestCase):
     def test_every_job_has_one_hang_backstop_far_above_a_normal_run(self) -> None:
         seen = 0
@@ -81,6 +84,8 @@ class PlaywrightCacheTest(unittest.TestCase):
         version = self.step("require('@playwright/test/package.json').version")
         self.assertIn("    id: pw\n", version)
         self.assertIn('>> "$GITHUB_OUTPUT"', version)
+        # S0036 verifier F1: an empty version would key a cache no later version replaces; the step must fail
+        self.assertIn('test -n "$version"', version)
         cache = self.step("uses: actions/cache@")
         self.assertIn("    id: pw-cache\n", cache)
         self.assertIn("path: ~/.cache/ms-playwright\n", cache)
@@ -98,10 +103,14 @@ class PlaywrightCacheTest(unittest.TestCase):
 
 
 class ActionPinTest(unittest.TestCase):
+    def test_a_trailing_comment_does_not_hide_a_uses_line(self) -> None:  # S0036 verifier F2
+        text = "      - uses: actions/checkout@main  # x\n"
+        self.assertEqual(re.findall(PIN_LINE, text, re.MULTILINE), ["actions/checkout@main"])
+
     def test_every_remote_action_is_pinned_to_a_major_version_tag(self) -> None:  # @regression-guard
         # The repo's convention (owner/name@vN); a branch name or no ref would follow whatever is pushed there.
         for wf in WORKFLOWS:
-            for ref in re.findall(r"^\s*(?:- )?uses: (\S+)$", wf.read_text(), re.MULTILINE):
+            for ref in re.findall(PIN_LINE, wf.read_text(), re.MULTILINE):
                 with self.subTest(workflow=wf.name, uses=ref):
                     if ref.startswith("./"):
                         continue
