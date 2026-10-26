@@ -66,3 +66,10 @@ source = "tatsu_lts-5.16.0.dist-info/licenses/LICENSE: the 3-clause BSD text plu
 version = "5.16.0"
 text = 'This product includes software developed by "Juancarlo Añez" (https://apalala.bitbucket.io).'
 source = "tatsu_lts-5.16.0.dist-info/licenses/LICENSE, clause 4; read 2026-10-26 (S0037)"
+
+# Bundled Python packages whose distribution ships no licence or notice file (verifier S0037 F1). The check reads every
+# licence file a distribution declares or lists; one with none fails unless named here for its exact version, with
+# where its licence was read instead.
+[no_licence_text.beancount]
+version = "3.2.0"
+reason = "the 3.2.0 wheel ships no licence file (no License-File, none in RECORD); METADATA License: GPL-2.0-only, beancount/__init__.py __license__ = 'GNU GPLv2', and the upstream repository's LICENSE is GPL version 2; no acknowledgment clause; read 2026-10-26 (S0037)"
