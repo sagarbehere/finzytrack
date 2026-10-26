@@ -2,6 +2,8 @@
 # Started by hand, before each release and on demand (ADR-0060); the per-push gate is the T0 pre-push hook.
 # Jobs for backend/, frontend/ and shell/ are added by the slice that creates each package (BL-0037).
 # backend: S0006; frontend: S0009; shell: S0010; engine: S0035.
+# Every job's timeout-minutes is a hang backstop only, far above a normal run, not a budget (owner rule, S0034;
+# S0036: the frontend job was cancelled at its old 15-minute limit while installing the Playwright browsers).
 name: ci
 on:
   workflow_dispatch:
@@ -27,7 +29,7 @@ permissions:
 jobs:
   repo-checks:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,7 +73,7 @@ jobs:
     # The main sidecar (S0006; ARCHITECTURE.md §2, §10; ADR-0054): format, lint, strict types, import
     # contracts, declared dependencies, tests (incl. the architecture tests: no Beancount in this environment).
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: backend
@@ -105,9 +107,9 @@ jobs:
   engine:
     # The ledger engine, its own process and environment (S0035; ADR-0054; ARCHITECTURE.md §2.0, §10): format,
     # lint, strict types, tests (incl. the architecture test, which runs scripts/check_engine_boundary.py over
-    # `git ls-files`). timeout-minutes is a hang backstop only, not a budget (S0034).
+    # `git ls-files`).
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: engine
@@ -134,7 +136,7 @@ jobs:
     # The Vue frontend (S0009; ARCHITECTURE.md §3, §10; ADR-0053): types, lint, format, unit tests (incl. the
     # pinned tsconfig and the lint bans), unused code, and the Playwright flows through the acceptance harness (S0030).
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: frontend
@@ -164,15 +166,29 @@ jobs:
           python-version: "3.13"
       - name: Backend environment (the acceptance harness starts the sidecar and the demo generator from it; S0030)
         run: python3 -m pip install uv==0.13.0 && uv sync --locked --directory ../backend
-      - name: Playwright browsers
+      # The browsers are cached by the exact Playwright version the lockfile installs (S0036); the Linux system
+      # packages they need are installed on every run, since apt packages are not in the cache.
+      - name: Playwright version (the browser cache key)
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-chromium-webkit
+      - name: Playwright browsers and system packages (cache miss)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
         run: pnpm exec playwright install --with-deps chromium webkit
+      - name: Playwright system packages (cache hit)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium webkit
       - name: acceptance flows through the harness (Chromium and WebKit west of UTC, Chromium in Kolkata)
         run: pnpm -s e2e
   shell:
     # The Tauri desktop shell (S0010; ADR-0007; ARCHITECTURE.md §5): format, pedantic clippy and unit tests on
     # Linux. Packaged builds and --smoke-test on three OSes: packaged.yml (S0012).
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: shell/src-tauri
@@ -194,7 +210,7 @@ jobs:
     # The differential-oracle harness's semantic diff, models and classifiers (S0002). End-to-end runs need the
     # legacy worktree and stay local (PROCESS.md §6, T-local).
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:

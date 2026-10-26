@@ -4,6 +4,8 @@
 # Each OS builds its own artifacts (shell/package_app.py), installs them as a user would where it can, runs the
 # smoke test (spec: shell/src-tauri/src/smoke.rs), and runs it again with the bundled runtime moved away, which
 # must fail (the must-not-pass case, EP-29).
+# The job's timeout-minutes is a hang backstop only, far above a normal build, not a budget (owner rule, S0034;
+# S0036). The 12-minute step limits bound one fixed smoke run each, which does not grow with the code.
 name: packaged
 on:
   workflow_call:
@@ -28,7 +30,7 @@ jobs:
           - os: windows-2022
           - os: ubuntu-22.04  # the oldest supported Ubuntu, so the glibc baseline is 22.04 (ARCHITECTURE.md §5)
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 120
     defaults:
       run:
         shell: bash

@@ -18,6 +18,7 @@ import tempfile
 import unittest
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "scripts" / "acceptance"))
@@ -117,18 +118,75 @@ class TempRootTest(EnvMixin):
         finally:
             root.remove()
 
-    def test_a_made_folder_that_was_replaced_is_refused(self) -> None:
+    def test_a_made_folder_that_was_replaced_is_refused(self) -> None:  # @regression-guard (S0036)
+        """A made folder replaced at the same path is refused when the check can tell (S0036).
+
+        What the check cannot tell: a folder removed and then made again with mkdir. On Linux ext4 the new folder
+        gets the freed inode at once, so device and inode are the same (macOS APFS does not reuse it at once).
+        That case cannot reach live data: the new folder is a plain folder inside this run's own root. A link is
+        refused by its type, a mount or another file system by its device. Change times are not compared: the
+        app writes into these folders.
+        """
         root = harness.TempRoot(parent=self.base)
         try:
             d = root.make_dir("workspace")
+            other = root.path / "other"
+            other.mkdir()  # exists while d exists, so its inode differs from d's on every file system
             d.rmdir()
-            d.mkdir()  # same path, another folder
+            other.rename(d)  # same path, another folder
             with self.assertRaises(harness.Refused):
                 root.check_own(d)
             d.rmdir()
             d.symlink_to(self.live)  # same path, now a link to the live data folder
             with self.assertRaises(harness.Refused):
                 root.check_own(d)
+        finally:
+            root.remove()
+
+    def test_a_made_folder_on_another_device_is_refused(self) -> None:  # @regression-guard (S0036)
+        """A mount over a made folder keeps its path but changes its device; mounting needs root, so the device
+        number `os.lstat` reports for the folder is changed instead (S0036)."""
+        root = harness.TempRoot(parent=self.base)
+        try:
+            d = root.make_dir("workspace")
+            real = os.lstat
+
+            def lstat(p: os.PathLike[str] | str) -> os.stat_result:
+                st = real(p)
+                if Path(p) != d:
+                    return st
+                fields = list(st)
+                fields[stat.ST_DEV] = st.st_dev + 1
+                return os.stat_result(fields)
+
+            with mock.patch.object(harness.os, "lstat", lstat), self.assertRaises(harness.Refused):
+                root.check_own(d)
+            root.check_own(d)
+        finally:
+            root.remove()
+
+    def test_a_link_that_took_the_made_folders_inode_is_refused(self) -> None:  # @regression-guard (S0036)
+        """On ext4 a link made right after the folder was removed can get the folder's inode, so only its type
+        tells it apart; `os.lstat` reports the made folder's device and inode for the link here."""
+        root = harness.TempRoot(parent=self.base)
+        try:
+            d = root.make_dir("workspace")
+            made = os.lstat(d)
+            d.rmdir()
+            d.symlink_to(self.live)
+            real = os.lstat
+
+            def lstat(p: os.PathLike[str] | str) -> os.stat_result:
+                st = real(p)
+                if Path(p) != d:
+                    return st
+                fields = list(st)
+                fields[stat.ST_DEV], fields[stat.ST_INO] = made.st_dev, made.st_ino
+                return os.stat_result(fields)
+
+            with mock.patch.object(harness.os, "lstat", lstat), self.assertRaises(harness.Refused):
+                root.check_own(d)
+            d.unlink()
         finally:
             root.remove()
 

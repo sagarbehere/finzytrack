@@ -1,6 +1,8 @@
 # T2 (design/process/PROCESS.md §6): deterministic only; no AI, no agent runs, no secrets. Started by hand, before each
 # release and on demand (ADR-0060); there is no schedule. Grows as T2 items arrive (full acceptance suite, 54k
 # performance and memory, D1 corpus, docs link check). A dispatcher on main calls it with `ref: next`.
+# Every job's timeout-minutes is a hang backstop only, far above a normal run, not a budget (owner rule, S0034;
+# S0036); the cargo-age run grows with the number of crates in the lockfile.
 name: nightly
 on:
   workflow_call:
@@ -17,7 +19,7 @@ jobs:
     # EP-24: every publish date in shell/src-tauri/Cargo.lock.dates re-read from crates.io (about 12 minutes at
     # crates.io's one request per second).
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:

@@ -83,6 +83,8 @@ Not repeated per milestone (review:27 §0.5): every slice met the definition of 
 
 **Run before declaring an exit:** `FT_MILESTONE_EXIT=Mx python3 scripts/check_invariants.py` (with Mx the milestone, e.g. `M0`) must pass: no invariant still pending and no backlog item (review finding or `BL-`) still open or in progress that is due by Mx (S0023). The plain pre-push run checks only the backlog's shape. The manual CI run does the same check when started with the `milestone_exit` input (S0031).
 
+**Where the green manual CI run is recorded:** in the milestone's journal entry (the run's link and the commit it tested), not as a backlog row. A backlog row due by the milestone whose subject is the exit run would keep that run red while the row is open, since the run itself checks for open rows. BL-0076 is the M0 exception, written before this rule: it is closed on a green run started without `milestone_exit`, and the exit check then runs locally (S0036).
+
 **Lanes** (ADR-0044): the full process for anything that writes the ledger; finance and security red teams once per area unless a change alters what a number means or adds an input; a light lane for read-only screens and catalogue entries, whose user docs are written at milestone end. Cross-cutting lens reviews run at G1, G2, after M8 and at M11 only, each with a spot audit by a fresh context and the seeded-defect catch rate (ADR-0044, ADR-0045); one whole-system review runs at M11.
 
 ## 4. The milestones
