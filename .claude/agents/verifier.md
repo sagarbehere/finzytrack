@@ -27,6 +27,7 @@ Risk class: <as briefed> -> <yours, if raised>
 Attacks tried: <numbered list; High >= 5, Medium >= 3>
 Tests reviewed against the spec: <each new or changed test file: spec lines checked, expected values recomputed, missing negative or spec cases>
 Findings: <ID, severity, cites, one-line summary, repro path or command>
+Overflow: <only if your prompt capped the findings: one line per finding beyond the cap (ID, severity, claim, file:line); a cap never drops a High: report every High in Findings whatever the count (PROCESS.md §4)>
 Doc check: <findings or "consistent with the brief">
 Verdict: PASS | PASS WITH FINDINGS | FAIL
 ```

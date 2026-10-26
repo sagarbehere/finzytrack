@@ -301,3 +301,12 @@ Format:
 - Expected effect: a slice that closes a backlog row the spec cites (BL-0065, BL-0073, BL-0091 to BL-0097) fails at push until the spec cites the test that closed it.
 - Observed effect: pending.
 - Status: kept (tightening, agent-approved, PROCESS.md §9).
+
+## IMP-0031: a review cap never drops a High; findings beyond it go to an Overflow list (2026-10-26)
+- Trigger: owner request. Starting the first area review on `next` (the engine and backend core), the orchestrator capped its report at 15 findings; the owner asked for the rationale ("Curious why we are capping the findings. What's the rationale there?"), and on the answer (a cap forces ranking and bounds fix cost, but a plain cap can silently drop a real finding) decided: "The cap rule should be a standing one for all reviewers".
+- What changed: prompt and doc. PROCESS.md §4 (review altitudes): altitudes 2–4 default to at most 15 ranked findings; for every reviewer, a cap never drops a High and every finding beyond the cap is listed one line each in an Overflow list. `.claude/agents/verifier.md`: the same rule in the report format (the slice verifier is uncapped by default; the rule binds it whenever a prompt caps it).
+- PROCESS.md section: §4.
+- Why: the cap exists so reviews rank and so low-value findings do not drive fix rounds (ADR-0058); without the Overflow list it would also hide findings, and a High must never be lost to a count.
+- Expected effect: no review report drops a finding silently; triage sees the overflow and decides each line.
+- Observed effect: pending (first use: the engine and backend core area review, 2026-10-26).
+- Status: kept (owner decision). Owner approval: "The cap rule should be a standing one for all reviewers" (2026-10-26, in session).
