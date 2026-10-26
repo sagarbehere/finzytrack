@@ -43,8 +43,14 @@ PRE_COMMIT_RUN = """run() {  # run <label> <command...>
   local label="$1"; shift
   if ! "$@"; then echo "pre-commit: FAILED: $label" >&2; fail=1; fi
 }"""
-PRE_PUSH_RUN = 'run() { local label="$1"; shift; if ! "$@"; then echo "pre-push: FAILED: $label" >&2; fail=1; fi; }'
+# S0034: each pre-push check runs through the check timer (scripts/gate_timer.py: the hang detector and the time
+# report), which exits 0 only for a check that ran and passed; the canary line, run before the first check, fails the
+# push when the timer passes a failing command.
+PRE_PUSH_RUN = ('run() { local label="$1"; shift; if ! python3 scripts/gate_timer.py run pre-push "$label" "$@"; '
+                'then echo "pre-push: FAILED: $label" >&2; fail=1; fi; }')
 RUN_DEFINITION = {"pre-commit": PRE_COMMIT_RUN, "pre-push": PRE_PUSH_RUN}
+PRE_PUSH_CANARY = ('if ! bash -c "! python3 scripts/gate_timer.py run pre-push canary false"; then echo "pre-push: '
+                   'FAILED: the check timer passed a failing check" >&2; fail=1; fi')
 
 QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"|\'[^\']*\'')
 EXEC_PRE_COMMIT = 'exec "$(dirname "$0")/pre-commit" "$@"'
@@ -114,6 +120,9 @@ def problems(name: str, raw: bytes, pin: bytes | None = None) -> list[str]:
             out.append(f"{name}: the `run` function differs from the pinned definition")
         if not lines or lines[-1] != 'exit "$fail"':
             out.append(f'{name}: the last line must be `exit "$fail"`')
+        if name == "pre-push" and (lines.count(PRE_PUSH_CANARY) != 1 or PRE_PUSH_RUN not in lines
+                                   or lines.index(PRE_PUSH_CANARY) != lines.index(PRE_PUSH_RUN) + 1):
+            out.append(f"{name}: the check timer's canary must follow the `run` function, once")
         fails = [i for i, s in enumerate(lines) if re.search(r"(?<![\w$-])fail=0\b", s)]
         first_run = next((i for i, s in enumerate(lines) if s.startswith("run ") or " run " in s), len(lines))
         if len(fails) != 1 or fails[0] > first_run:
@@ -219,6 +228,14 @@ class HookChecksArePinned(unittest.TestCase):
                 inv, ": \f" + inv)),
             "a carriage return inside a pinned line": ("pre-push", pre_push.replace(inv, inv.replace(".py", ".py\r"))),
         }
+        # S0034: the timer bypassed, the canary removed, moved after the checks or inverted
+        cases["run bypasses the timer"] = ("pre-push", pre_push.replace(
+            'python3 scripts/gate_timer.py run pre-push "$label" "$@"', '"$@"'))
+        cases["the canary removed"] = ("pre-push", pre_push.replace(PRE_PUSH_CANARY + "\n", ""))
+        cases["the canary moved after the checks"] = ("pre-push", pre_push.replace(PRE_PUSH_CANARY + "\n", "").replace(
+            '\nexit "$fail"', "\n" + PRE_PUSH_CANARY + '\nexit "$fail"'))
+        cases["the canary inverted"] = ("pre-push", pre_push.replace(PRE_PUSH_CANARY, PRE_PUSH_CANARY.replace(
+            'bash -c "! python3', 'bash -c "python3')))
         for label, (name, text) in cases.items():
             with self.subTest(label):
                 self.assertNotEqual(text.encode(), read_hook(HOOKS / name), "the mutation did not apply")
@@ -234,7 +251,8 @@ class HookChecksArePinned(unittest.TestCase):
                   "an echo then exec", "fail=00", "an echo then kill", "a string spanning lines hides a check",
                   "a form feed splits a line for the pin but not for bash", "a carriage return inside a pinned line",
                   "a comment line ends in a backslash", "fail set to a variable", "fail decremented",
-                  "fail reset in spaced arithmetic")
+                  "fail reset in spaced arithmetic", "run bypasses the timer", "the canary removed",
+                  "the canary moved after the checks", "the canary inverted")
         cases["a check through bash -c outside run"] = ("pre-push", pre_push.replace(
             inv, 'bash -c "python3 scripts/check_invariants.py || true"\n'))
         cases["a comment line ends in a backslash"] = ("pre-push", pre_push.replace(inv, "# note \\\n" + inv))

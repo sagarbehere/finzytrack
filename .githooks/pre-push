@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# T0 pre-push (design/process/PROCESS.md, "Gates"): repo checks, types and changed-area tests, <= 2 min.
+# T0 pre-push (design/process/PROCESS.md, "Gates"): repo checks, types and package tests. No time budget (S0034):
+# each check runs through scripts/gate_timer.py, which stops a check far over its own usual time as hung, and the
+# hook ends with each check's time against its usual time and the total.
 # Install once per clone:  git config core.hooksPath .githooks
 set -euo pipefail
 # S0031 verifier F2: replacement objects would let every local read see other objects than the ones pushed.
@@ -30,7 +32,9 @@ fi
 head_at_start="$(git rev-parse HEAD)"
 
 fail=0
-run() { local label="$1"; shift; if ! "$@"; then echo "pre-push: FAILED: $label" >&2; fail=1; fi; }
+# S0034: the timer exits 0 only for a check that ran and passed; the canary fails the push if it passes `false`.
+run() { local label="$1"; shift; if ! python3 scripts/gate_timer.py run pre-push "$label" "$@"; then echo "pre-push: FAILED: $label" >&2; fail=1; fi; }
+if ! bash -c "! python3 scripts/gate_timer.py run pre-push canary false"; then echo "pre-push: FAILED: the check timer passed a failing check" >&2; fail=1; fi
 
 # S0031 (H2): commits that skipped pre-commit (cherry-pick, rebase, revert, a hookless clone) and files added and
 # removed again inside the range: the staged-file guard and the privacy scan read every blob the range adds or
@@ -50,7 +54,8 @@ while IFS= read -r range; do
 done <<< "$ranges"
 # A backstop over the whole pushed tree (S0031 verifier F5): the staged-file guard on every tracked file.
 run "staged-file guard (all tracked files)" bash -c "set -o pipefail; git ls-files -z | xargs -0 python3 scripts/check_staged.py --paths"
-run "check-script meta-tests" python3 -m unittest discover -s scripts/tests -q
+# In parallel, one process per test module; the same tests as `unittest discover -s scripts/tests` (S0034).
+run "check-script meta-tests" python3 scripts/run_meta_tests.py
 run "privacy scan (all tracked files)" python3 scripts/privacy_scan.py --all --quiet
 run "invariants" python3 scripts/check_invariants.py
 run "capability map" python3 scripts/check_capabilities.py
@@ -94,5 +99,7 @@ if [[ -f frontend/package.json ]]; then
 fi
 # Last (S0031 verifier F3): HEAD and the tree are still what the checks started on; a process that changed the
 # tree during the checks changed what they tested.
+# Information only (it never fails): this push's check times against their usual times, and the total (S0034).
+run "check times" python3 scripts/gate_timer.py report pre-push
 run "tree unchanged during the checks" python3 scripts/check_push.py --still "$head_at_start"
 exit "$fail"

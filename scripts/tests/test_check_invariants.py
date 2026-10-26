@@ -35,7 +35,7 @@ class InvariantCheck(unittest.TestCase):
         (self.root / "scripts/tests").mkdir(parents=True)
         (self.root / "scripts/tests/test_one.py").write_text("# covers INV-01\n")
         (self.root / ".githooks").mkdir()
-        (self.root / ".githooks/pre-push").write_text("run x python3 -m unittest discover -s scripts/tests -q\n")
+        (self.root / ".githooks/pre-push").write_text("run x python3 scripts/run_meta_tests.py\n")
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -496,7 +496,7 @@ class EnforcementFilesDoNotSwitchTestsOff(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
-        self.put(".githooks/pre-push", "discover -s scripts/tests\n.venv/bin/pytest\nnode_modules/.bin/vitest run\n")
+        self.put(".githooks/pre-push", "python3 scripts/run_meta_tests.py\n.venv/bin/pytest\nnode_modules/.bin/vitest run\n")
 
     def tearDown(self) -> None:
         self.tmp.cleanup()

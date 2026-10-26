@@ -40,8 +40,8 @@ jobs:
         run: python3 -m pip install uv==0.13.0
       - name: Backend environment (the licence check reads its runtime closure; the harness meta-tests start the sidecar)
         run: uv sync --locked --directory backend
-      - name: Check-script meta-tests
-        run: python3 -m unittest discover -s scripts/tests -v
+      - name: Check-script meta-tests (in parallel, one process per module; S0034)
+        run: python3 scripts/run_meta_tests.py -v
       - name: Privacy scan of every tracked file (INV-23)
         run: python3 scripts/privacy_scan.py --all
       - name: Staged-file guard over every tracked file (INV-23)

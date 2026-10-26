@@ -1,0 +1,214 @@
+"""Meta-tests for scripts/gate_timer.py (S0034): a check's time limit is a hang detector set from its own history,
+never a budget; a check that did not finish, could not start or failed never passes. Scratch repositories only."""
+
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import gate_timer as gt  # noqa: E402
+
+PY = sys.executable
+
+
+class Limits(unittest.TestCase):
+    def test_no_limit_without_enough_green_history(self) -> None:
+        self.assertIsNone(gt.limit({}, "x"))
+        self.assertIsNone(gt.limit({"x": [100.0] * (gt.MIN_SAMPLES - 1)}, "x"))
+        self.assertIsNotNone(gt.limit({"x": [100.0] * gt.MIN_SAMPLES}, "x"))
+
+    def test_limit_is_k_times_the_median_of_the_last_n_with_a_floor(self) -> None:
+        old = [1000.0] * 10
+        recent = [100.0, 110.0, 90.0, 400.0, 105.0]  # median 105; the old values and the outlier do not count
+        self.assertEqual(gt.N, 5)
+        self.assertEqual(gt.limit({"x": old + recent}, "x"), gt.K * 105.0)
+        self.assertEqual(gt.limit({"x": [1.0, 1.0, 1.0]}, "x"), gt.FLOOR_S)  # a tiny check does not trip on noise
+        self.assertGreater(gt.K, 1)
+        self.assertGreater(gt.FLOOR_S, 0)
+
+    def test_bad_history_values_are_ignored(self) -> None:
+        self.assertIsNone(gt.limit({"x": "fast"}, "x"))
+        self.assertIsNone(gt.limit({"x": [True, -5, "1", None]}, "x"))
+        self.assertEqual(gt.usual({"x": [2, 4.0, 6]}, "x"), 4.0)
+
+    def test_commit_ids_do_not_split_a_history(self) -> None:
+        a = gt.check_key("privacy scan (pushed commits 8434091d..9844295a)")
+        b = gt.check_key("privacy scan (pushed commits 0123456789abcdef0123456789abcdef01234567..abcdef1)")
+        self.assertEqual(a, b)
+        self.assertNotEqual(gt.check_key("invariants"), gt.check_key("capability map"))
+
+    def test_record_keeps_the_last_ones(self) -> None:
+        h: dict = {}
+        for i in range(gt.KEEP + 5):
+            h = gt.record(h, "x", float(i))
+        self.assertEqual(len(h["x"]), gt.KEEP)
+        self.assertEqual(h["x"][-1], float(gt.KEEP + 4))
+
+
+class RunCheck(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_exit_status_decides(self) -> None:
+        self.assertEqual(gt.run_check([PY, "-c", "pass"], self.dir, 30, True).status, "passed")
+        for code in ("raise SystemExit(1)", "raise SystemExit(2)", "import os; os.kill(os.getpid(), 9)"):
+            with self.subTest(code=code):
+                self.assertEqual(gt.run_check([PY, "-c", code], self.dir, 30, True).status, "failed")
+
+    def test_a_check_that_cannot_start_is_an_error_not_a_crash(self) -> None:
+        out = gt.run_check([str(self.dir / "no-such-tool")], self.dir, 30, True)
+        self.assertEqual(out.status, "error")
+        self.assertFalse(out.passed)
+
+    def test_a_hung_check_and_what_it_started_are_stopped(self) -> None:
+        pid_file = self.dir / "grandchild.pid"
+        code = (f"import subprocess, sys, time; p = subprocess.Popen([sys.executable, '-c', 'import time; "
+                f"time.sleep(60)']); open({str(pid_file)!r}, 'w').write(str(p.pid)); time.sleep(60)")
+        start = time.monotonic()
+        out = gt.run_check([PY, "-c", code], self.dir, 2, True)
+        self.assertEqual(out.status, "hung")
+        self.assertFalse(out.passed)
+        self.assertLess(time.monotonic() - start, 30)
+        grandchild = int(pid_file.read_text())
+        for _ in range(50):  # the grandchild was killed with the group; it may take a moment to be reaped
+            try:
+                os.kill(grandchild, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        else:
+            os.kill(grandchild, 9)
+            self.fail("the hung check's child kept running")
+
+    def test_output_is_captured(self) -> None:
+        out = gt.run_check([PY, "-c", "print('hello'); import sys; print('err', file=sys.stderr)"], self.dir, 30, True)
+        self.assertIn("hello", out.output)
+        self.assertIn("err", out.output)
+
+
+class Timed(unittest.TestCase):
+    """`timed` in a scratch repository: the history lives in its git directory, and only greens are recorded."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name) / "r"
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        self.times = self.repo / ".git/finzytrack/times-t.json"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def history(self) -> dict:
+        return json.loads(self.times.read_text()) if self.times.exists() else {}
+
+    def test_only_green_runs_are_recorded_outside_the_tree(self) -> None:
+        self.assertTrue(gt.timed(self.repo, "t", "ok", [PY, "-c", "pass"], capture=True).passed)
+        self.assertFalse(gt.timed(self.repo, "t", "bad", [PY, "-c", "raise SystemExit(1)"], capture=True).passed)
+        self.assertEqual(list(self.history()), ["ok"])
+        status = subprocess.run(["git", "-C", str(self.repo), "status", "--porcelain", "--ignored"],
+                                capture_output=True, text=True, check=True).stdout
+        self.assertEqual(status, "")
+
+    def test_a_check_far_over_its_history_is_stopped_and_reported_with_the_numbers(self) -> None:
+        self.times.parent.mkdir(parents=True)
+        self.times.write_text(json.dumps({"slow": [0.2] * gt.N}))
+        with mock.patch.object(gt, "FLOOR_S", 1.0):
+            out = gt.timed(self.repo, "t", "slow", [PY, "-c", "import time; time.sleep(60)"], capture=True)
+        self.assertEqual(out.status, "hung")
+        self.assertIn(f"took over {gt.K}x its usual 0.2 s", out.message)
+        self.assertIn("hung?", out.message)
+        self.assertEqual(self.history(), {"slow": [0.2] * gt.N})  # a hung run is never recorded
+
+    def test_the_deadline_caps_a_check_with_no_history(self) -> None:
+        out = gt.timed(self.repo, "t", "new", [PY, "-c", "import time; time.sleep(60)"], capture=True,
+                       deadline=time.monotonic() + 1)
+        self.assertEqual(out.status, "hung")
+        self.assertIn("backstop", out.message)
+
+    def test_slow_but_under_the_limit_passes(self) -> None:
+        self.times.parent.mkdir(parents=True)
+        self.times.write_text(json.dumps({"s": [0.1] * gt.N}))
+        with mock.patch.object(gt, "FLOOR_S", 1.5):
+            out = gt.timed(self.repo, "t", "s", [PY, "-c", "import time; time.sleep(0.6)"], capture=True)
+        self.assertTrue(out.passed)  # 6x its usual time, but under the floor: slowness alone never fails
+
+    def test_a_corrupt_history_is_no_history(self) -> None:
+        self.times.parent.mkdir(parents=True)
+        self.times.write_text("{not json")
+        self.assertTrue(gt.timed(self.repo, "t", "ok", [PY, "-c", "pass"], capture=True).passed)
+        self.assertEqual(list(self.history()), ["ok"])
+
+
+class Cli(unittest.TestCase):
+    """The pre-push hook's view: `gate_timer.py run` exits 0 only for a check that ran and passed."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name) / "r"
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        self.script = Path(gt.__file__).resolve()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def cli(self, *args: str, env: dict | None = None) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([PY, str(self.script), *args], cwd=self.repo, capture_output=True, text=True,
+                              env={**os.environ, **(env or {})}, timeout=120)
+
+    def test_run_exit_codes(self) -> None:
+        self.assertEqual(self.cli("run", "pre-push", "ok", "true").returncode, 0)
+        for cmd in (["false"], [PY, "-c", "raise SystemExit(3)"], [str(self.repo / "missing")],
+                    [PY, "-c", "import os; os.kill(os.getpid(), 15)"]):
+            with self.subTest(cmd=cmd):
+                self.assertNotEqual(self.cli("run", "pre-push", "x", *cmd).returncode, 0)
+        self.assertNotEqual(self.cli("run", "pre-push", "no command").returncode, 0)
+        self.assertNotEqual(self.cli("run").returncode, 0)
+
+    def test_the_check_keeps_its_arguments_and_output(self) -> None:
+        r = self.cli("run", "pre-push", "echo", PY, "-c", "import sys; print(sys.argv[1:])", "a b", "--", "-v")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("['a b', '--', '-v']", r.stdout)
+
+    def test_report_lists_this_run_and_the_total(self) -> None:
+        env = {"FT_GATE_RUN": "push-1"}
+        self.cli("run", "pre-push", "first check", "true", env=env)
+        self.cli("run", "pre-push", "second check", "false", env=env)
+        r = self.cli("report", "pre-push", env=env)
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("first check", r.stderr)
+        self.assertIn("FAILED  second check", r.stderr)
+        self.assertIn("total", r.stderr)
+        other = self.cli("report", "pre-push", env={"FT_GATE_RUN": "push-2"})
+        self.assertEqual(other.returncode, 0)
+        self.assertNotIn("first check", other.stderr)
+
+    def test_report_never_fails(self) -> None:
+        log = self.repo / ".git/finzytrack/last-run-pre-push.json"
+        log.parent.mkdir(parents=True)
+        for text in ("{bad", json.dumps({"run": "p", "checks": [{"seconds": "x"}], "at": time.time()})):
+            log.write_text(text)
+            with self.subTest(text=text):
+                self.assertEqual(self.cli("report", "pre-push", env={"FT_GATE_RUN": "p"}).returncode, 0)
+
+    def test_main_never_passes_when_the_timer_breaks(self) -> None:
+        with mock.patch.object(gt, "timed", side_effect=RuntimeError("boom")), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(gt.main(["run", "pre-push", "x", "true"]), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
