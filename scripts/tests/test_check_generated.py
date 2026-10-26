@@ -131,5 +131,18 @@ class EngineSchema(unittest.TestCase):
         self.assertTrue(any("could not run" in p for p in problems), problems)
 
 
+class Statecharts(unittest.TestCase):
+    """The engine supervision reference is generated from the backend's table (S0040; EP-20; ARCHITECTURE.md §7)."""
+
+    PATH = "design/generated/statecharts/engine-supervision.md"
+
+    def test_registered_with_the_table_and_its_generator_as_sources(self) -> None:
+        cmd, sources = cg.GENERATORS[self.PATH]
+        self.assertIn("backend/src/app/platform/engine_supervision.py", sources)
+        self.assertIn("backend/scripts/gen_statecharts.py", sources)
+        self.assertIn("backend/scripts/gen_statecharts.py", cmd)
+        self.assertIn("backend/.venv", cmd[0])  # the table imports the backend package
+
+
 if __name__ == "__main__":
     unittest.main()

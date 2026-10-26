@@ -20,9 +20,11 @@ from typing import Any
 
 import pytest
 
-from app.platform.adapters.engine_client import EngineClient, EngineCommand, RestartPolicy, next_request_id
+from app.platform.adapters.engine_client import EngineClient, EngineCommand, next_request_id
 from app.platform.engine import EngineFailure, EngineInfo, EnginePort, EngineRefusal, Pong
 from app.platform.engine_protocol import MAX_ID
+from app.platform.engine_supervision import Closed, Crashed, Idle, Ready, RestartPolicy, Unavailable
+from app.platform.observability import Event
 
 REPO = Path(__file__).resolve().parents[3]
 ENGINE_VENV = REPO / "engine" / ".venv"
@@ -550,3 +552,256 @@ def test_the_engine_command_runs_the_venv_interpreter_isolated() -> None:
     assert Path(command.argv[0]).parent.parent == ENGINE_VENV
     assert command.argv[1:] == ("-I", "-m", "ledger_engine")
     assert EngineCommand.for_venv(ENGINE_VENV, environ={}, test_ops=True).argv[-1] == "--test-ops"
+
+
+# -- The statechart in the client (S0040; ARCHITECTURE.md §7) ------------------------------------------------------
+
+
+class Events:
+    """An `EventSink` that records what it is given."""
+
+    def __init__(self) -> None:
+        self.seen: list[tuple[Event, dict[str, object]]] = []
+
+    def __call__(self, event: Event, /, **fields: object) -> None:
+        self.seen.append((event, fields))
+
+    @property
+    def names(self) -> list[str]:
+        return [e.name for e, _ in self.seen]
+
+
+def test_the_clients_state_follows_the_supervision_table(client: EngineClient) -> None:
+    """S0040 brief: idle until the first request (lazy start), ready after the handshake, closed after close."""
+    assert isinstance(client.state, Idle)
+    assert isinstance(client.start(), EngineInfo)
+    state = client.state
+    assert isinstance(state, Ready)
+    assert state.info == client.info
+    assert state.pid == client.pid
+    client.close()
+    assert isinstance(client.state, Closed)
+
+
+def test_the_lifecycle_is_logged_on_every_start_and_stop(fake_time: FakeTime) -> None:
+    """S0040 brief: every start and stop is logged through the structured log's sink, not only the first start
+    (S0038 logged only that one): ready, the stop between requests, ready again, closed."""
+    events = Events()
+    c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=fake_time.pause, log=events)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        first = c.pid
+        assert first is not None
+        kill(first)
+        assert stopped(first)
+        assert c.ping(timeout=DEADLINE) == Pong()
+        second = c.pid
+    finally:
+        c.close()
+    assert events.names == ["engine.ready", "engine.stopped", "engine.ready", "engine.closed"]
+    assert events.seen[0][1]["pid"] == first
+    assert events.seen[1][1]["kind"] == "crashed"
+    assert events.seen[2][1]["pid"] == second
+    assert events.seen[2][1]["protocol"] == 1
+
+
+def test_a_timeout_is_logged_as_a_stop_of_kind_timeout(fake_time: FakeTime) -> None:
+    events = Events()
+    c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=fake_time.pause, log=events)
+    try:
+        out = c.call("test.stall", {}, timeout=0.5)
+        assert isinstance(out, EngineFailure)
+        assert out.kind == "timeout"
+    finally:
+        c.close()
+    assert events.names == ["engine.ready", "engine.stopped", "engine.closed"]
+    assert events.seen[1][1]["kind"] == "timeout"
+
+
+def test_the_stop_that_reaches_the_bound_makes_the_client_unavailable_at_once(fake_time: FakeTime) -> None:
+    """S0040 decision: `Unavailable` from the third stop on, logged once; later refusals log nothing more."""
+    events = Events()
+    c = EngineClient(
+        stand_in("import sys; sys.exit(3)"), monotonic=fake_time.monotonic, pause=fake_time.pause, log=events
+    )
+    try:
+        for _ in range(3):
+            out = c.start()
+            assert isinstance(out, EngineFailure)
+            assert out.kind == "start_failed"
+        assert isinstance(c.state, Unavailable)
+        assert events.names == ["engine.start_failed"] * 3 + ["engine.unavailable"]
+        assert events.seen[3][1] == {"stops": 3}
+        again = c.start()
+        assert isinstance(again, EngineFailure)
+        assert again.kind == "unavailable"
+        assert len(events.seen) == 4
+    finally:
+        c.close()
+
+
+def test_an_incompatible_engine_is_logged_once_as_a_failed_start(tmp_path: Path, fake_time: FakeTime) -> None:
+    events = Events()
+    command = EngineCommand(
+        argv=(sys.executable, "-I", "-c", COUNTING.replace("{MODE}", NEWER), str(tmp_path / "starts")), env=None
+    )
+    c = EngineClient(command, monotonic=fake_time.monotonic, pause=fake_time.pause, log=events)
+    try:
+        for _ in range(3):
+            out = c.start()
+            assert isinstance(out, EngineFailure)
+            assert out.kind == "incompatible"
+    finally:
+        c.close()
+    assert events.names == ["engine.start_failed", "engine.closed"]
+    assert events.seen[0][1]["kind"] == "incompatible"
+
+
+class Interrupting:
+    """A pause that is interrupted the first time (the caller's thread got an exception mid-backoff)."""
+
+    def __init__(self, time: FakeTime) -> None:
+        self.time = time
+        self.calls = 0
+
+    def __call__(self, seconds: float) -> None:
+        self.calls += 1
+        if self.calls == 1:
+            raise KeyboardInterrupt
+        self.time.pause(seconds)
+
+
+def test_an_interrupted_backoff_leaves_the_client_usable(fake_time: FakeTime) -> None:
+    """S0040: an exception in the middle of a restart must not leave the statechart in a passing state, where every
+    later request would be an `IllegalTransition`."""
+    pause = Interrupting(fake_time)
+    c = EngineClient(engine_command(), monotonic=fake_time.monotonic, pause=pause)
+    try:
+        c.start()
+        pid = c.pid
+        assert pid is not None
+        kill(pid)
+        assert stopped(pid)
+        with pytest.raises(KeyboardInterrupt):
+            c.ping(timeout=DEADLINE)
+        assert isinstance(c.state, Crashed)
+        assert c.ping(timeout=DEADLINE) == Pong()
+    finally:
+        c.close()
+
+
+def test_an_exception_while_spawning_counts_as_a_failed_start_and_leaves_the_client_usable(
+    fake_time: FakeTime,
+) -> None:
+    """`Popen` raises `ValueError` (not `OSError`) for an argument with a NUL byte; the error goes to the caller as
+    before, and the client is left `Crashed` with the stop counted, not stuck in `Starting`."""
+    bad = EngineCommand(argv=(sys.executable, "-c", "pass\x00"), env=None)
+    c = EngineClient(bad, monotonic=fake_time.monotonic, pause=fake_time.pause)
+    try:
+        with pytest.raises(ValueError, match="null"):
+            c.start()
+        state = c.state
+        assert isinstance(state, Crashed)
+        assert state.last == "start_failed"
+        assert len(state.stops) == 1
+        assert c.pid is None
+    finally:
+        c.close()
+
+
+WRONG_PONG = r"""
+import json, sys
+req = json.loads(sys.stdin.readline())
+sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 1, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.flush()
+req = json.loads(sys.stdin.readline())
+sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "ping", "ok": True, "result": {"status": "no"}}) + "\n")
+sys.stdout.flush()
+sys.stdin.read()
+"""
+
+
+def test_a_ping_answered_with_the_wrong_result_is_a_violation_and_ends_the_engine(fake_time: FakeTime) -> None:
+    """A well-formed reply whose result is not the ping's `{status: ok}` is an invalid reply (S0035: it stops the
+    engine, its state is unknown); S0040 self-mutation C6."""
+    c = EngineClient(stand_in(WRONG_PONG), monotonic=fake_time.monotonic, pause=fake_time.pause)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        pid = c.pid
+        assert pid is not None
+        out = c.ping(timeout=DEADLINE)
+        assert isinstance(out, EngineFailure)
+        assert out.kind == "protocol_violation"
+        assert stopped(pid)
+        assert isinstance(c.state, Crashed)
+    finally:
+        c.close()
+
+
+WRONG_INFO = """{"v": 1, "id": req["id"], "op": "handshake", "ok": True, "result": {"protocol": "one"}}"""
+
+
+def test_a_handshake_with_the_wrong_result_is_a_failed_start_and_is_retried(
+    tmp_path: Path, fake_time: FakeTime
+) -> None:
+    """A protocol-1 reply whose result is not `EngineInfo` is a failed start, counted and retried, never an
+    exception (S0035; S0040 self-mutation C13)."""
+    starts = tmp_path / "starts"
+    command = EngineCommand(
+        argv=(sys.executable, "-I", "-c", COUNTING.replace("{MODE}", WRONG_INFO), str(starts)), env=None
+    )
+    c = EngineClient(command, monotonic=fake_time.monotonic, pause=fake_time.pause)
+    try:
+        kinds = [r.kind for r in (c.start() for _ in range(2)) if isinstance(r, EngineFailure)]
+        assert kinds == ["start_failed", "start_failed"]
+        assert starts.read_text() == "xx"
+        assert isinstance(c.state, Crashed)
+    finally:
+        c.close()
+
+
+STALLS = r"""
+import json, sys
+req = json.loads(sys.stdin.readline())
+sys.stdout.write(json.dumps({"v": 1, "id": req["id"], "op": "handshake", "ok": True,
+    "result": {"protocol": 1, "engine_version": "0", "beancount_version": "3.2.0"}}) + "\n")
+sys.stdout.flush()
+sys.stdin.readline()
+sys.stderr.write("marker: request read\n")
+sys.stderr.flush()
+sys.stdin.read()
+"""
+
+
+@pytest.mark.skipif(os.name != "posix", reason="raises SIGINT in the test process; Windows is the manual CI run")
+def test_an_exception_while_waiting_for_a_reply_stops_the_engine_and_leaves_the_client_usable(
+    fake_time: FakeTime,
+) -> None:
+    """The request is out and its reply may still come (S0035 verifier F4c): the engine is stopped, the exception goes
+    on, and the table rests in `Crashed`, not in `Busy` (S0040 self-mutation C2). SIGINT, sent to this (the waiting)
+    thread, stands in for any exception that reaches a call while its request is out (Ctrl-C, or SystemExit from a
+    signal handler); where exactly it lands does not matter, every such place must end the same way."""
+    c = EngineClient(stand_in(STALLS), monotonic=fake_time.monotonic, pause=fake_time.pause)
+    waiting = threading.get_ident()
+
+    def interrupt() -> None:
+        if wait_until(lambda: "marker: request read" in c.stderr_tail()):
+            signal.pthread_kill(waiting, signal.SIGINT)
+
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        pid = c.pid
+        assert pid is not None
+        threading.Thread(target=interrupt, daemon=True).start()
+        began = time.monotonic()
+        with pytest.raises(KeyboardInterrupt):
+            c.call("anything", {}, timeout=60.0)
+        assert time.monotonic() - began < 30.0, "the signal did not reach the wait (the test proves nothing then)"
+        assert stopped(pid)
+        state = c.state
+        assert isinstance(state, Crashed)
+        assert state.last == "crashed"
+        assert isinstance(c.start(), EngineInfo)  # usable: a new engine starts
+    finally:
+        c.close()

@@ -50,7 +50,7 @@ from app.platform.observability import (
     new_session_id,
     valid_session_id,
 )
-from app.platform.observability.events import ENGINE_CLOSED, ENGINE_STDERR
+from app.platform.observability.events import ENGINE_STDERR
 
 LOOPBACK = "127.0.0.1"
 DISTRIBUTION = "finzytrack-backend"
@@ -141,11 +141,11 @@ def wire(args: Args, log: EventSink) -> Wiring:
     def engine_stderr(line: str) -> None:
         log(ENGINE_STDERR, line=UntrustedText(line))  # the engine's stderr can carry ledger text (BL-0088)
 
-    engine = EngineClient(engine_command(args), on_stderr=engine_stderr)
+    engine = EngineClient(engine_command(args), on_stderr=engine_stderr, log=log)  # it logs its lifecycle (S0040)
     return Wiring(
         clock=FrozenClock(args.frozen_clock) if args.frozen_clock else SystemClock(),
         engine=engine,
-        boot=EngineBoot(engine, log, pid=lambda: engine.pid),
+        boot=EngineBoot(engine, pid=lambda: engine.pid),
     )
 
 
@@ -211,8 +211,7 @@ def main(argv: list[str] | None = None) -> int:
             server.server_close()
     finally:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)  # the close below is bounded (RestartPolicy) and must finish
-        wiring.engine.close()
-        log(ENGINE_CLOSED)
+        wiring.engine.close()  # logs engine.closed
     return 0
 
 

@@ -1,6 +1,13 @@
 """The ledger-engine client: the `EnginePort` adapter that runs the engine as a child process (ADR-0054 decision 4;
-ARCHITECTURE.md §2.0, §5).
+ARCHITECTURE.md §2.0, §5, §7).
 
+- **Supervision is a statechart** (S0040). Every lifecycle decision is the pure table's
+  (`app.platform.engine_supervision`): when to start the engine, the backoff before a restart, the bound after
+  which it is `unavailable`, `incompatible`, `closed`, and what is logged. This client is its shell: it observes the
+  process, feeds each observation to `transition` as an event, and carries out the effects (spawn, handshake,
+  pause, kill, shut down, log, fail the caller). `state` is the table's current state. An exception that reaches
+  a public call while a start, a backoff or a request is under way is fed in as `Interrupted` before it goes on,
+  so the table always rests in a state the next call can use.
 - **Spawn.** `EngineCommand` names the interpreter and environment: `for_venv` in development and tests,
   `for_packaged` in the bundle (S0038), where one interpreter serves both processes with two separate
   site-packages (ADR-0056): the engine runs `python -I -S -B -c <bootstrap> <engine site>`, so the interpreter's own
@@ -22,19 +29,17 @@ ARCHITECTURE.md §2.0, §5).
   the engine (its state is unknown); a request is never resent.
 - **Encoding** happens before anything is started or sent: params that are not JSON data raise `ValueError` (a
   caller error, like a bad timeout); a request longer than the line limit is `EngineFailure("too_large")`, which
-  leaves the engine untouched and is no stop (S0035 independent verifier F7).
-- **Supervision.** An engine that stopped (crash, timeout, violation, failed start) is restarted by the next
-  request, after a backoff delay that grows with the stops in the window (`RestartPolicy`). After
-  `max_crashes` stops in `window` seconds the client answers `unavailable` without starting it, until the window
-  passes or `reset()` (the user's "try again").
+  leaves the engine untouched and is no stop (S0035 independent verifier F7). Neither reaches the table.
 - **Shutdown.** `close()` closes the engine's stdin (it finishes the request in hand and exits), then terminates and
   finally kills it if it does not exit in time.
+- **Log.** The table's `Log` effects go to the `log` sink (the structured log, S0039): `engine.ready` and
+  `engine.start_failed` on every start, `engine.stopped`, `engine.unavailable`, `engine.closed`.
 - **Stderr.** Each line the engine writes to stderr is kept in a bounded tail and handed to `on_stderr` if given
   (the composition root forwards it to the log, S0038). A callback that raises is dropped for the rest of that
   engine's run; the tail goes on.
 - **Bounded state** (INV-10, INV-11): one engine process, one request in flight, the last `STDERR_LINES` lines of
   the engine's stderr (of the running engine, else of the last one that stopped: the only diagnosis of a crash),
-  at most `max_crashes` stop times. The client is owned by the user container
+  one supervision state holding at most `max_crashes` stop times. The client is owned by the user container
   (`platform/state_registry.py`).
 """
 
@@ -48,16 +53,15 @@ import subprocess
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Generator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO
+from typing import IO, Literal
 
-from app.platform.engine import EngineFailure, EngineInfo, EngineRefusal, FailureKind, Pong
+from app.platform.engine import EngineFailure, EngineInfo, EngineRefusal, Pong
 from app.platform.engine_protocol import (
     MAX_ID,
     MAX_LINE_BYTES,
-    PROTOCOL_VERSION,
     Accepted,
     Violation,
     decode_info,
@@ -66,6 +70,41 @@ from app.platform.engine_protocol import (
     encode_request,
     foreign_version,
 )
+from app.platform.engine_supervision import (
+    RESTING,
+    Answered,
+    BackoffElapsed,
+    Busy,
+    Close,
+    Effect,
+    Ended,
+    Exited,
+    Fail,
+    Handshake,
+    HandshakeFailed,
+    HandshakeForeign,
+    HandshakeOk,
+    Idle,
+    Interrupted,
+    Kill,
+    Log,
+    Pause,
+    Ready,
+    Request,
+    Reset,
+    RestartPolicy,
+    Send,
+    Shutdown,
+    Spawn,
+    Spawned,
+    SpawnFailed,
+    SupervisionEvent,
+    SupervisionState,
+    TimedOut,
+    Violated,
+    transition,
+)
+from app.platform.observability import Event, EventSink
 
 STDERR_LINES = 200
 STDERR_LINE_BYTES = 64 * 1024
@@ -130,35 +169,6 @@ class EngineCommand:
         return cls(argv=argv, env=engine_env(os.environ if environ is None else environ))
 
 
-@dataclass(frozen=True, slots=True)
-class RestartPolicy:
-    """Backoff and bound for restarts. `delays[n-1]` is the wait before a start that follows n recent stops (the
-    last delay repeats); `max_crashes` stops within `window` seconds make the engine `unavailable`."""
-
-    max_crashes: int = 3
-    window: float = 300.0
-    delays: tuple[float, ...] = (0.5, 2.0, 8.0)
-    start_timeout: float = 15.0
-    close_timeout: float = 5.0
-
-    def __post_init__(self) -> None:
-        """Every time is finite, so every start and stop is bounded (S0035 independent verifier F3)."""
-        positive = {"window": self.window, "start_timeout": self.start_timeout, "close_timeout": self.close_timeout}
-        bad = [f"{k}={v!r}" for k, v in positive.items() if not (v > 0 and math.isfinite(v))]
-        if not all(d >= 0 and math.isfinite(d) for d in self.delays):
-            bad.append(f"delays={self.delays!r}")
-        if self.max_crashes < 1:
-            bad.append(f"max_crashes={self.max_crashes!r}")
-        if bad:
-            msg = f"RestartPolicy needs positive, finite times and at least one crash: {', '.join(bad)}"
-            raise ValueError(msg)
-
-    @property
-    def longest_start(self) -> float:
-        """The longest a start can take before the request goes out: the largest backoff plus the handshake."""
-        return max(self.delays, default=0.0) + self.start_timeout
-
-
 def _check_timeout(timeout: float) -> None:
     """A timeout is a positive, finite number of seconds: an infinite one could wait forever on a stuck engine.
     Checked before anything is sent, so a bad value never leaves a request in flight."""
@@ -171,12 +181,31 @@ def _real_pause(seconds: float) -> None:
     threading.Event().wait(seconds)
 
 
+def _no_log(event: Event, /, **fields: object) -> None:
+    """The sink when none is given (the packaged self-check, tests)."""
+
+
 @dataclass
 class _Running:
     proc: subprocess.Popen[bytes]
     replies: queue.Queue[bytes | None] = field(default_factory=lambda: queue.Queue[bytes | None]())
     stderr: deque[str] = field(default_factory=lambda: deque[str](maxlen=STDERR_LINES))
     threads: list[threading.Thread] = field(default_factory=lambda: list[threading.Thread]())
+
+
+@dataclass(frozen=True, slots=True)
+class _Lost:
+    """No valid answer to a request that went out (an observation; the table decides what it means)."""
+
+    kind: Literal["timeout", "crashed", "protocol_violation"]
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class _Foreign:
+    """The handshake was answered in another protocol."""
+
+    what: str
 
 
 def _pump_lines(pipe: IO[bytes], replies: queue.Queue[bytes | None]) -> None:
@@ -205,7 +234,8 @@ def _pump_stderr(pipe: IO[bytes], tail: deque[str], sink: Callable[[str], None] 
 
 
 class EngineClient:
-    """`EnginePort` over a child process. Thread-safe: calls are serialized."""
+    """`EnginePort` over a child process, supervised by the table in `app.platform.engine_supervision`.
+    Thread-safe: calls are serialized."""
 
     def __init__(
         self,
@@ -215,53 +245,52 @@ class EngineClient:
         monotonic: Callable[[], float] = time.monotonic,
         pause: Callable[[float], None] = _real_pause,
         on_stderr: Callable[[str], None] | None = None,
+        log: EventSink | None = None,
     ) -> None:
         self._command = command
         self._on_stderr = on_stderr
+        self._log: EventSink = log or _no_log
         self._policy = policy or RestartPolicy()
         self._monotonic = monotonic
         self._pause = pause
         self._lock = threading.RLock()
+        self._state: SupervisionState = Idle()
         self._run: _Running | None = None
-        self._info: EngineInfo | None = None
-        self._stops: deque[float] = deque(maxlen=max(self._policy.max_crashes, 1))
-        self._incompatible: EngineFailure | None = None
-        self._closed = False
         self._next_id = 0
         self._last_stderr: deque[str] = deque[str]()
 
     # -- the port ---------------------------------------------------------------------------------------------
 
     def start(self) -> EngineInfo | EngineFailure:
-        with self._lock:
+        with self._call():
             ready = self._ensure_running()
             return ready if isinstance(ready, EngineFailure) else ready[1]
 
     def ping(self, timeout: float) -> Pong | EngineRefusal | EngineFailure:
         _check_timeout(timeout)
-        with self._lock:
-            out = self._request("ping", {}, timeout)
-            if not isinstance(out, Accepted):
-                return out
-            pong = decode_pong(out.result)
-            return self._violated(pong.detail) if isinstance(pong, Violation) else pong
+        with self._call():
+            out = self._request("ping", {}, timeout, decode_pong)
+            return Pong() if isinstance(out, Accepted) else out
 
     def call(
         self, op: str, params: Mapping[str, object], timeout: float
     ) -> Mapping[str, object] | EngineRefusal | EngineFailure:
         _check_timeout(timeout)
-        with self._lock:
-            out = self._request(op, params, timeout)
+        with self._call():
+            out = self._request(op, params, timeout, None)
             return out.result if isinstance(out, Accepted) else out
 
     def close(self) -> None:
-        with self._lock:
-            self._closed = True
-            run, self._run = self._run, None
-            if run is not None:
-                self._shutdown(run)
+        with self._call():
+            self._drive(Close())
 
     # -- diagnostics ------------------------------------------------------------------------------------------
+
+    @property
+    def state(self) -> SupervisionState:
+        """The supervision table's current state (S0040): what the future /health and /api/boot report."""
+        with self._lock:
+            return self._state
 
     @property
     def pid(self) -> int | None:
@@ -272,7 +301,8 @@ class EngineClient:
     @property
     def info(self) -> EngineInfo | None:
         with self._lock:
-            return self._info
+            state = self._state
+            return state.info if isinstance(state, (Ready, Busy)) else None
 
     def stderr_tail(self) -> str:
         """The last lines the engine wrote to stderr: of the running
@@ -282,15 +312,92 @@ class EngineClient:
 
     def reset(self) -> None:
         """Forget past stops and an incompatible verdict, so the next request starts the engine at once."""
-        with self._lock:
-            self._stops.clear()
-            self._incompatible = None
+        with self._call():
+            self._drive(Reset())
 
-    # -- internals --------------------------------------------------------------------------------------------
+    # -- the shell around the table ---------------------------------------------------------------------------
+
+    @contextlib.contextmanager
+    def _call(self) -> Generator[None]:
+        """A public call: it holds the lock, and an exception that leaves the table in a passing state (a start, a
+        backoff or a request under way) is fed in as `Interrupted` before it goes on, so the next call finds the table
+        at rest, wherever the exception landed (a signal's included). For a request that is out, the table stops the
+        engine: its reply may still come and would be handed to the next request (S0035 verifier F4c)."""
+        with self._lock:
+            try:
+                yield
+            except BaseException as e:
+                if not isinstance(self._state, RESTING):
+                    self._feed(Interrupted(f"the client failed: {type(e).__name__}", self._monotonic()))
+                raise
+
+    def _drive(self, event: SupervisionEvent) -> EngineFailure | None:
+        """Feed `event`, then carry out each follow-up (spawn, handshake, pause) and feed its outcome, until the table
+        rests or fails the caller."""
+        follow = self._feed(event)
+        while not isinstance(follow, EngineFailure) and follow is not None:
+            follow = self._feed(self._perform(follow))
+        return follow
+
+    def _feed(self, event: SupervisionEvent) -> EngineFailure | Spawn | Handshake | Pause | None:
+        """One transition: its effects carried out in order; returns the caller's failure or the follow-up."""
+        step = transition(self._policy, self._state, event)
+        self._state = step.state
+        out: EngineFailure | Spawn | Handshake | Pause | None = None
+        for effect in step.effects:
+            out = self._effect(effect) or out
+        return out
+
+    def _effect(self, effect: Effect) -> EngineFailure | Spawn | Handshake | Pause | None:
+        match effect:
+            case Kill():
+                run, self._run = self._run, None
+                if run is not None:
+                    self._kill(run)
+            case Shutdown():
+                run, self._run = self._run, None
+                if run is not None:
+                    self._shutdown(run)
+            case Log(event=event, fields=fields):
+                self._log(event, **fields)
+            case Fail(failure=failure):
+                return failure
+            case Spawn() | Handshake() | Pause():
+                return effect
+        return None
+
+    def _perform(self, effect: Spawn | Handshake | Pause) -> SupervisionEvent:
+        match effect:
+            case Spawn():
+                return self._spawn()
+            case Handshake():
+                return self._handshake()
+            case Pause(seconds=seconds):
+                self._pause(seconds)
+                return BackoffElapsed()
+
+    def _ensure_running(self) -> tuple[_Running, EngineInfo] | EngineFailure:
+        run = self._run
+        if isinstance(self._state, Ready) and run is not None and run.proc.poll() is not None:
+            self._drive(Exited(self._exit_detail(run), self._monotonic()))  # it stopped since the last request
+        failure = self._drive(Request(self._monotonic()))
+        if failure is not None:
+            return failure
+        state, run = self._state, self._run
+        if not isinstance(state, Ready) or run is None:  # pragma: no cover (the table rests in Ready or fails)
+            msg = f"the supervision table rested in {type(state).__name__} without a failure"
+            raise RuntimeError(msg)
+        return run, state.info
 
     def _request(
-        self, op: str, params: Mapping[str, object], timeout: float
+        self,
+        op: str,
+        params: Mapping[str, object],
+        timeout: float,
+        validate: Callable[[Mapping[str, object]], object] | None,
     ) -> Accepted | EngineRefusal | EngineFailure:
+        """One request through the table: `Send`, then the answer or its absence. `validate` checks a result's
+        shape (a `Violation` stops the engine like any invalid reply)."""
         line = self._encode(op, params)
         if isinstance(line, EngineFailure):
             return line
@@ -298,7 +405,28 @@ class EngineClient:
         if isinstance(ready, EngineFailure):
             return ready
         run, _ = ready
-        return self._exchange(run, line, timeout)
+        self._feed(Send())
+        out = self._exchange(run, line, timeout)  # an exception from here on is fed in as `Interrupted` (`_call`)
+        if isinstance(out, Accepted) and validate is not None:
+            checked = validate(out.result)
+            if isinstance(checked, Violation):
+                out = _Lost("protocol_violation", f"{checked.detail}; the engine was stopped")
+        if isinstance(out, _Lost):
+            failure = self._feed(self._lost(out))
+            if not isinstance(failure, EngineFailure):  # pragma: no cover (every stop in Busy fails the caller)
+                msg = "the supervision table stopped a request without failing it"
+                raise RuntimeError(msg)  # noqa: TRY004 (a broken table, not a wrong argument)
+            return failure
+        self._feed(Answered())
+        return out
+
+    def _lost(self, out: _Lost) -> TimedOut | Ended | Violated:
+        now = self._monotonic()
+        if out.kind == "timeout":
+            return TimedOut(out.detail, now)
+        if out.kind == "crashed":
+            return Ended(out.detail, now)
+        return Violated(out.detail, now)
 
     def _encode(self, op: str, params: Mapping[str, object]) -> tuple[int, str, bytes] | EngineFailure:
         """The next request line, made before anything is started or sent (S0035 independent verifier F7)."""
@@ -314,68 +442,41 @@ class EngineClient:
 
     def _exchange(
         self, run: _Running, request: tuple[int, str, bytes], timeout: float
-    ) -> Accepted | EngineRefusal | EngineFailure:
+    ) -> Accepted | EngineRefusal | _Lost:
+        """Write the request and read its answer: an observation only; the table decides what follows."""
+        out = self._exchange_any(run, request, timeout, handshake=False)
+        if isinstance(out, _Foreign):  # pragma: no cover (read only for our own handshake)
+            return _Lost("protocol_violation", out.what)
+        return out
+
+    def _exchange_any(
+        self, run: _Running, request: tuple[int, str, bytes], timeout: float, *, handshake: bool
+    ) -> Accepted | EngineRefusal | _Lost | _Foreign:
+        """`_exchange`; for our own handshake (`handshake`), a reply in another protocol is `_Foreign`."""
         rid, op, line = request
         stdin = run.proc.stdin
         if stdin is None:  # pragma: no cover (always a pipe here)
-            return self._stopped("crashed", "the engine has no stdin")
+            return _Lost("crashed", "the engine has no stdin")
         try:
             stdin.write(line)
             stdin.flush()
         except OSError:
-            return self._stopped("crashed", self._exit_detail(run))
-        try:
-            return self._await_reply(run, rid, op, timeout)
-        except BaseException:
-            # The request is out and its reply may still come: an engine left running would hand that reply to the
-            # next request (S0035 verifier F4c). Stop it, then let the error go on.
-            self._stopped("crashed", "the client failed while waiting for the reply")
-            raise
-
-    def _await_reply(
-        self, run: _Running, rid: int, op: str, timeout: float
-    ) -> Accepted | EngineRefusal | EngineFailure:
+            return _Lost("crashed", self._exit_detail(run))
         try:
             raw = run.replies.get(timeout=timeout)
         except queue.Empty:
-            return self._stopped("timeout", f"no reply to {op} within {timeout} s; the engine was stopped")
+            return _Lost("timeout", f"no reply to {op} within {timeout} s; the engine was stopped")
         if raw is None:
-            return self._stopped("crashed", self._exit_detail(run))
+            return _Lost("crashed", self._exit_detail(run))
         reply = decode_reply(raw, rid, op)
         if isinstance(reply, Violation):
-            foreign = foreign_version(raw) if op == "handshake" else None
-            if foreign is not None:  # another protocol: `_spawn` stops it and marks it incompatible (verifier F2)
-                return EngineRefusal("protocol.version_mismatch", f"the engine speaks protocol {foreign}")
-            return self._violated(reply.detail)
+            foreign = foreign_version(raw) if handshake else None
+            if foreign is not None:  # another protocol: incompatible, never retried (S0035 verifier F2)
+                return _Foreign(f"the engine speaks protocol {foreign}")
+            return _Lost("protocol_violation", f"{reply.detail}; the engine was stopped")
         return reply
 
-    def _ensure_running(self) -> tuple[_Running, EngineInfo] | EngineFailure:
-        if self._closed:
-            return EngineFailure("closed", "the engine client was closed")
-        if self._incompatible is not None:
-            return self._incompatible
-        run = self._run
-        if run is not None and run.proc.poll() is None and self._info is not None:
-            return run, self._info
-        if run is not None:  # it stopped since the last request
-            self._stopped("crashed", self._exit_detail(run))
-        now = self._monotonic()
-        while self._stops and now - self._stops[0] >= self._policy.window:
-            self._stops.popleft()
-        if len(self._stops) >= self._policy.max_crashes:
-            return EngineFailure(
-                "unavailable",
-                f"the engine stopped {len(self._stops)} times in {self._policy.window:g} s; not restarting yet",
-            )
-        if self._stops:
-            delays = self._policy.delays
-            delay = delays[min(len(self._stops), len(delays)) - 1] if delays else 0.0
-            wait = self._stops[-1] + delay - now
-            if wait > 0:
-                self._pause(wait)
-        return self._spawn()
-
-    def _spawn(self) -> tuple[_Running, EngineInfo] | EngineFailure:
+    def _spawn(self) -> Spawned | SpawnFailed:
         argv = [*self._command.argv, "--parent-pid", str(os.getpid())]
         env = dict(self._command.env) if self._command.env is not None else None
         try:
@@ -389,13 +490,13 @@ class EngineClient:
                 creationflags=creation_flags(os.name),
             )
         except OSError as e:
-            self._stops.append(self._monotonic())
-            return EngineFailure("start_failed", f"the engine could not be started: {e}")
+            return SpawnFailed(f"the engine could not be started: {e}", self._monotonic())
         run = _Running(proc)
-        self._run = run
-        self._info = None
+        self._run = run  # at once, so an interrupted start kills it (the table's `Kill`)
         if proc.stdout is None or proc.stderr is None:  # pragma: no cover (pipes were requested)
-            return EngineFailure("start_failed", self._stopped("crashed", "the engine has no output pipes").detail)
+            self._run = None
+            self._kill(run)
+            return SpawnFailed("the engine has no output pipes", self._monotonic())
         pumps = (
             threading.Thread(target=_pump_lines, args=(proc.stdout, run.replies), name="engine-replies", daemon=True),
             threading.Thread(
@@ -405,43 +506,28 @@ class EngineClient:
         for thread in pumps:
             thread.start()
             run.threads.append(thread)
-        handshake = self._encode("handshake", {})
-        if isinstance(handshake, EngineFailure):  # pragma: no cover (a handshake is a few bytes)
-            return EngineFailure("start_failed", self._stopped("crashed", handshake.detail).detail)
-        reply = self._exchange(run, handshake, self._policy.start_timeout)
-        if isinstance(reply, EngineFailure):
-            return EngineFailure("start_failed", f"handshake: {reply.kind}: {reply.detail}")
-        if isinstance(reply, EngineRefusal):
-            if reply.key == "protocol.version_mismatch":
-                return self._incompatible_engine(run, reply.message)
-            detail = self._stopped("crashed", f"the engine refused the handshake: {reply.key}").detail
-            return EngineFailure("start_failed", detail)
-        info = decode_info(reply.result)
+        return Spawned(proc.pid)
+
+    def _handshake(self) -> HandshakeOk | HandshakeForeign | HandshakeFailed:
+        run = self._run
+        if run is None:  # pragma: no cover (the table sends a handshake only right after a spawn)
+            return HandshakeFailed("handshake: no engine process", self._monotonic())
+        request = self._encode("handshake", {})
+        if isinstance(request, EngineFailure):  # pragma: no cover (a handshake is a few bytes)
+            return HandshakeFailed(f"handshake: {request.detail}", self._monotonic())
+        out = self._exchange_any(run, request, self._policy.start_timeout, handshake=True)
+        if isinstance(out, _Foreign):
+            return HandshakeForeign(out.what)
+        if isinstance(out, _Lost):
+            return HandshakeFailed(f"handshake: {out.kind}: {out.detail}", self._monotonic())
+        if isinstance(out, EngineRefusal):
+            if out.key == "protocol.version_mismatch":
+                return HandshakeForeign(out.message)
+            return HandshakeFailed(f"the engine refused the handshake: {out.key}", self._monotonic())
+        info = decode_info(out.result)
         if isinstance(info, Violation):
-            return EngineFailure("start_failed", f"handshake: {self._violated(info.detail).detail}")
-        if info.protocol != PROTOCOL_VERSION:
-            return self._incompatible_engine(run, f"the engine speaks protocol {info.protocol}")
-        self._info = info
-        return run, info
-
-    def _incompatible_engine(self, run: _Running, what: str) -> EngineFailure:
-        """Another protocol version: stop the engine and never start it again (until `reset`)."""
-        self._run = None
-        self._shutdown(run)
-        self._incompatible = EngineFailure("incompatible", f"{what}; this sidecar speaks {PROTOCOL_VERSION}")
-        return self._incompatible
-
-    def _violated(self, detail: str) -> EngineFailure:
-        return self._stopped("protocol_violation", f"{detail}; the engine was stopped")
-
-    def _stopped(self, kind: FailureKind, detail: str) -> EngineFailure:
-        """The running engine is gone or untrusted: stop it, record the stop for the backoff, report `kind`."""
-        run, self._run = self._run, None
-        self._info = None
-        if run is not None:
-            self._kill(run)
-        self._stops.append(self._monotonic())
-        return EngineFailure(kind, detail)
+            return HandshakeFailed(f"handshake: {info.detail}; the engine was stopped", self._monotonic())
+        return HandshakeOk(info)
 
     def _keep_stderr(self, run: _Running) -> None:
         """After the run's threads are joined: its stderr tail outlives it (S0035 independent verifier F4)."""

@@ -25,11 +25,11 @@ from pathlib import Path
 from app.platform.adapters.engine_client import (
     EngineClient,
     EngineCommand,
-    RestartPolicy,
     packaged_argv,
     packaged_engine_site,
 )
 from app.platform.engine import EngineFailure, EngineRefusal
+from app.platform.engine_supervision import RestartPolicy
 
 ENGINE_ONLY = ("beancount", "beanquery", "ledger_engine")
 PING_TIMEOUT = 15.0

@@ -1,7 +1,7 @@
 """The engine's first start at boot as a reported state (`app.platform.engine_boot`; S0038; ADR-0054 decision 4).
 
-A fake `EnginePort` stands in for the engine: the state machine is starting, then ready or down, and each outcome is
-logged once as its registered event (ARCHITECTURE.md §6A.3; S0039). A failure is a state, never an exception.
+A fake `EnginePort` stands in for the engine: the state is starting, then ready or down. A failure is a state, never
+an exception. The outcome is logged by the client's supervision table, once per start (S0040), not here.
 """
 
 from __future__ import annotations
@@ -10,8 +10,6 @@ from collections.abc import Mapping
 
 from app.platform.engine import EngineFailure, EngineInfo, EngineRefusal, Pong
 from app.platform.engine_boot import EngineBoot, EngineDown, EngineReady, EngineStarting
-from app.platform.observability import Event
-from app.platform.observability.events import ENGINE_READY, ENGINE_START_FAILED
 
 INFO = EngineInfo(protocol=1, engine_version="0.4.0.dev0", beancount_version="3.2.0")
 
@@ -37,39 +35,23 @@ class FakeEngine:
         pass
 
 
-class Events:
-    """An `EventSink` that records what it is given."""
-
-    def __init__(self) -> None:
-        self.seen: list[tuple[Event, dict[str, object]]] = []
-
-    def __call__(self, event: Event, /, **fields: object) -> None:
-        self.seen.append((event, fields))
-
-
-def test_a_started_engine_is_ready_and_logged_with_its_facts() -> None:
-    events = Events()
-    boot = EngineBoot(FakeEngine(INFO), events, pid=lambda: 4242)
+def test_a_started_engine_is_ready_with_its_facts() -> None:
+    boot = EngineBoot(FakeEngine(INFO), pid=lambda: 4242)
     assert isinstance(boot.state, EngineStarting)
     assert boot.run() == EngineReady(INFO, 4242)
     assert boot.state == EngineReady(INFO, 4242)
-    assert events.seen == [
-        (ENGINE_READY, {"pid": 4242, "protocol": 1, "engine_version": "0.4.0.dev0", "beancount_version": "3.2.0"})
-    ]
 
 
-def test_a_failed_start_is_a_down_state_logged_as_an_error() -> None:
-    events = Events()
+def test_a_failed_start_is_a_down_state() -> None:
     failure = EngineFailure("start_failed", "the engine could not be started: no such file")
-    boot = EngineBoot(FakeEngine(failure), events)
+    boot = EngineBoot(FakeEngine(failure))
     assert boot.run() == EngineDown(failure)
     assert boot.state == EngineDown(failure)
-    assert events.seen == [(ENGINE_START_FAILED, {"kind": "start_failed", "detail": failure.detail})]
 
 
 def test_the_background_start_runs_once_and_sets_the_state() -> None:
     engine = FakeEngine(INFO)
-    boot = EngineBoot(engine, Events())
+    boot = EngineBoot(engine)
     boot.start_in_background().join(10)
     assert engine.starts == 1
     assert isinstance(boot.state, EngineReady)

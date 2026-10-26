@@ -262,6 +262,10 @@ def test_the_sidecar_starts_a_real_engine_and_closes_it_on_sigterm(dirs: tuple[P
     assert not pid_alive(pid), "the sidecar exited before closing its engine"
     closed = sidecar.event("engine.closed")
     assert closed["source"] == "backend"
+    # One line each (S0040: the client's table logs the lifecycle; the composition root no longer logs it too).
+    names = [e.get("event") for e in sidecar.events()]
+    assert names.count("engine.ready") == 1
+    assert names.count("engine.closed") == 1
     assert code == 0, "".join(sidecar.raw)
 
 

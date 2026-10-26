@@ -23,6 +23,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 # The engine's own environment (ADR-0054): its schema is generated from models only that environment can import.
 ENGINE_PYTHON = ROOT / ("engine/.venv/Scripts/python.exe" if os.name == "nt" else "engine/.venv/bin/python")
+# The backend's own environment: the statechart references are generated from tables only it can import (S0040).
+BACKEND_PYTHON = ROOT / ("backend/.venv/Scripts/python.exe" if os.name == "nt" else "backend/.venv/bin/python")
 # generated path -> (command printing the expected content, source paths)
 GENERATORS: dict[str, tuple[list[str], list[str]]] = {
     "design/capabilities.md": (
@@ -45,6 +47,10 @@ GENERATORS: dict[str, tuple[list[str], list[str]]] = {
             "engine/pyproject.toml",
             "engine/uv.lock",
         ],
+    ),
+    "design/generated/statecharts/engine-supervision.md": (
+        [str(BACKEND_PYTHON), "-I", "backend/scripts/gen_statecharts.py", "--stdout"],
+        ["backend/src/app/platform/engine_supervision.py", "backend/scripts/gen_statecharts.py"],
     ),
 }
 MARK = "GENERATED"
@@ -95,7 +101,7 @@ def check_one(path: str, staged: bool) -> list[str]:
     try:
         fresh = expected(path)
     except GeneratorFailed as e:
-        return [*problems, f"{path}: the generator could not run ({e}); for the engine, run `uv sync --locked` in engine/"]
+        return [*problems, f"{path}: the generator could not run ({e}); for the engine or the backend, run `uv sync --locked` in engine/ or backend/"]
     if have != fresh:
         problems.append(f"{path}: out of date or hand-edited; regenerate it ({' '.join(GENERATORS[path][0][1:])})")
     return problems

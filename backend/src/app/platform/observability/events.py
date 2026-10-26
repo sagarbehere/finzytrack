@@ -77,7 +77,7 @@ class EventSink(Protocol):
     def __call__(self, event: Event, /, **fields: object) -> None: ...
 
 
-# -- The ledger engine at boot (S0038; ARCHITECTURE.md §2.0) -------------------------------------------------------
+# -- The ledger engine's lifecycle (S0038; logged by its supervision table since S0040; ARCHITECTURE.md §2.0, §7) ---
 
 ENGINE_READY = Event(
     "engine.ready",
@@ -114,6 +114,23 @@ ENGINE_START_FAILED = Event(
         Field("detail", Kind.DEBUG_DETAIL),  # free text: an OS error, the engine's refusal
     ),
 )
+ENGINE_STOPPED = Event(
+    "engine.stopped",
+    "warning",  # a degraded dependency (§6A.5): the next request restarts it
+    "platform",
+    (
+        # The ways a running engine stops (`app.platform.engine_supervision`, S0040); a failed start is
+        # `engine.start_failed`.
+        Field("kind", Kind.ENUM, frozenset({"crashed", "timeout", "protocol_violation"})),
+        Field("detail", Kind.DEBUG_DETAIL),  # free text: an exit code, the op and timeout, a decoder's complaint
+    ),
+)
+ENGINE_UNAVAILABLE = Event(
+    "engine.unavailable",
+    "error",  # the engine of every write and BQL query is down until the restart window lets a stop go
+    "platform",
+    (Field("stops", Kind.COUNT),),
+)
 ENGINE_STDERR = Event("engine.stderr", "info", "platform", (Field("line", Kind.DEBUG_DETAIL),), source="engine")
 ENGINE_CLOSED = Event("engine.closed", "info", "platform", ())
 
@@ -136,7 +153,17 @@ UNCAUGHT = Event(
 UNREGISTERED = Event("log.unregistered", "error", "platform", ())
 """An `Event` that is not in the registry was logged: neither its name nor its fields are written."""
 
-EVENTS = (ENGINE_READY, ENGINE_START_FAILED, ENGINE_STDERR, ENGINE_CLOSED, LIB_RECORD, UNCAUGHT, UNREGISTERED)
+EVENTS = (
+    ENGINE_READY,
+    ENGINE_START_FAILED,
+    ENGINE_STOPPED,
+    ENGINE_UNAVAILABLE,
+    ENGINE_STDERR,
+    ENGINE_CLOSED,
+    LIB_RECORD,
+    UNCAUGHT,
+    UNREGISTERED,
+)
 
 
 def registry_problems(events: tuple[Event, ...]) -> list[str]:

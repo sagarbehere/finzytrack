@@ -89,3 +89,27 @@ forbidden_modules =
 ignore_imports =
     app.platform.observability.* -> logging
     app.platform.observability.* -> structlog
+
+[importlinter:contract:engine-supervision-pure]
+# The engine supervision table decides; the client does the I/O (S0040; EP-01, EP-17). It may name log events (the
+# registry is data) but not write them, and it reads no clock: every time comes in on an event.
+name = The engine supervision table is pure (ARCHITECTURE.md §7, EP-01)
+type = forbidden
+source_modules =
+    app.platform.engine_supervision
+forbidden_modules =
+    app.platform.adapters
+    app.platform.observability.log
+    app.platform.observability.redaction
+    os
+    pathlib
+    subprocess
+    threading
+    queue
+    socket
+    signal
+    time
+    random
+    secrets
+    uuid
+    datetime

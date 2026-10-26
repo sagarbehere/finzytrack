@@ -13,7 +13,7 @@ import pytest
 
 from app.platform.engine import FailureKind
 from app.platform.observability import COMMON, EVENTS, Event, Field, Kind, registry_problems
-from app.platform.observability.events import ENGINE_START_FAILED
+from app.platform.observability.events import ENGINE_START_FAILED, ENGINE_STOPPED, ENGINE_UNAVAILABLE
 
 GOOD = Event("engine.ready", "info", "platform", (Field("pid", Kind.ID), Field("protocol", Kind.ID)))
 
@@ -81,3 +81,20 @@ def test_free_text_fields_of_the_engine_events_are_debug_detail_only() -> None:
     kinds = {(e.name, f.name): f.kind for e in EVENTS for f in e.fields}
     assert kinds[("engine.stderr", "line")] is Kind.DEBUG_DETAIL
     assert kinds[("engine.start_failed", "detail")] is Kind.DEBUG_DETAIL
+
+
+def test_a_stop_is_logged_with_exactly_the_kinds_a_running_engine_can_stop_with() -> None:
+    """S0040 brief: a running engine stops by crashing, by timing out or by breaking the protocol; a failed start is
+    `engine.start_failed`, and the other failure kinds never stop a running engine."""
+    (kind,) = (f for f in ENGINE_STOPPED.fields if f.name == "kind")
+    assert kind.kind is Kind.ENUM
+    assert kind.values == frozenset({"crashed", "timeout", "protocol_violation"})
+    assert {f.name: f.kind for f in ENGINE_STOPPED.fields} == {"kind": Kind.ENUM, "detail": Kind.DEBUG_DETAIL}
+    assert ENGINE_STOPPED.level == "warning"
+
+
+def test_unavailable_is_logged_with_the_count_of_stops_only() -> None:
+    """S0040 decision: the engine that serves every write is down until the window passes: an error, like a failed
+    start; its one field is the number of stops."""
+    assert {f.name: f.kind for f in ENGINE_UNAVAILABLE.fields} == {"stops": Kind.COUNT}
+    assert ENGINE_UNAVAILABLE.level == "error"

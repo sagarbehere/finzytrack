@@ -126,6 +126,25 @@ CONTENT_FORBIDDEN = (
     "app.main",
     *RULE_3_FORBIDDEN,
 )
+# S0040: the engine supervision table decides and the client does the I/O (EP-01): no adapter, no log writer, no
+# process, thread, file or clock module. Every time comes in on an event.
+SUPERVISION_FORBIDDEN = (
+    "app.platform.adapters",
+    "app.platform.observability.log",
+    "app.platform.observability.redaction",
+    "os",
+    "pathlib",
+    "subprocess",
+    "threading",
+    "queue",
+    "socket",
+    "signal",
+    "time",
+    "random",
+    "secrets",
+    "uuid",
+    "datetime",
+)
 
 
 @pytest.mark.parametrize(
@@ -133,6 +152,7 @@ CONTENT_FORBIDDEN = (
     [
         *(("app.domain.planted", m, "domain is pure") for m in RULE_3_FORBIDDEN),
         *(("app.content.demo.planted", m, "content is pure") for m in CONTENT_FORBIDDEN),
+        *(("app.platform.engine_supervision", m, "supervision table is pure") for m in SUPERVISION_FORBIDDEN),
     ],
 )
 def test_each_forbidden_entry_is_enforced(tree: Path, source: str, forbidden: str, contract: str) -> None:
@@ -153,6 +173,13 @@ def test_allowed_direction_passes(tree: Path) -> None:
     plant(tree, "app.workspaces.registry", "import app.mirror\nimport app.platform\n")  # §2.3: may import mirror
     plant(tree, "app.content.demo.planted", "import app.domain\nimport hashlib\n")  # §2.3: content may use domain
     plant(tree, "app.platform.observability.planted", "import logging\nimport structlog\n")  # its one home
+    # S0040: the table may use the port's types, the codec's constants and the event registry (data).
+    plant(
+        tree,
+        "app.platform.engine_supervision",
+        "import math\nimport app.platform.engine\nimport app.platform.engine_protocol\n"
+        "import app.platform.observability.events\n",
+    )
     r = lint_imports(tree)
     assert r.returncode == 0, r.stdout + r.stderr
 
