@@ -9,7 +9,7 @@
 
 ## 1. Where we are (updated 2026-10-26)
 
-**Milestone M0, Foundations.** Nothing runs as an app yet beyond an empty window.
+**Milestone M1a, Read core and workspace-format core (since 2026-10-26).** M0 closed on 2026-10-26 (owner: "Agreed, close M0 on this run plus the fix"; record `design/journal/M0-exit.md`). In M1a so far: the ledger engine as its own process (S0035), beanquery in the engine (S0037); in progress: the engine in the product (BL-0083). Nothing runs as an app yet beyond an empty window.
 
 Done in M0:
 - `next` from an empty tree; T0 and T1 gates (privacy scan, staged-file guard, invariant, capability, generated-artifact diff and licence checks); `design/` seeded; agents, skills and guard hooks (S0000). Their remaining parts are listed under "Left" below.
@@ -33,7 +33,7 @@ Left in M0, in this order:
 3. No review finding due by M0 is open (`check_invariants.py` fails an M0-exit run while one is, S0023): L9.M-7 closed by S0025, L10-18 by S0027.
 4. The rest of review:27 §1(d) that M0's exit needs: the misses of the first seeded-defect run (run 1 done: 72 plants, 69% caught, journal S0032; S0032 made a fixme pass only while its planned module is missing, so a buggy first L4-03, L9-01 or I5 is red; S0033 closed the rest, BL-0079: CLI exit-code tests of the privacy scan, each hook's code pinned, three privacy rules (UPI addresses, short account numbers after an account word, statement excerpts in prose and messages), no skip in an architecture test, and a push check that refuses an uncited deferral of a backlog item; three verifier rounds, landed 2026-10-26) and a green manual full CI run (BL-0076, the one M0 exit item left: `FT_MILESTONE_EXIT=M0 python3 scripts/check_invariants.py` reports only BL-0076 as of 9844295a). The red-team session on the gates is done (BL-0074): its must-fix findings are closed by S0031 (the push gate checks the pushed commits and every blob they add, lint at push, no skipped enforcement test, the oracle tests at push), the privacy denylist is the owner's question (`design/inbox/20261025-privacy-denylist.md`). The P1 integrity tests are written (S0029); the acceptance-suite harness is built (S0030: per-worker temp root, fresh demo, the main sidecar on its own port with a frozen clock, the LLM stub, `TZ` west of UTC plus a Kolkata project, Chromium and WebKit, axe and console, request and LLM failures as hard failures; the parts that need M2's API are BL-0071, streaming LLM replies BL-0072).
 
-Next milestone: **M1a** (read core and workspace-format core), then **M1b** (write contract), then **G1**, your go/no-go.
+Next: the rest of **M1a**, then **M1b** (write contract), then **G1**, your go/no-go.
 
 ## 2. The milestones at a glance
 
