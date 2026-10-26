@@ -256,8 +256,14 @@ class SeededMissesS0033(unittest.TestCase):
         register = ("```\ndate        account                  position\n"
                     "2026-03-01  Expenses:Food:Groceries  45.20 USD\n2026-03-02  Expenses:Transport       12.00 USD\n"
                     "2026-03-05  Expenses:Food:Dining     30.50 USD\n```\n")
-        prices = ("| date | commodity | price |\n|---|---|---|\n| 2026-03-01 | INFY | 1520.35 |\n"
-                  "| 2026-03-02 | INFY | 1525.10 |\n| 2026-03-03 | RELIANCE.NS | 2519.80 |\n")
+        # S0033 verifier R2-3: a price table needs its commodity after the price, or an allow mark
+        prices = ("| date | commodity | price |\n|---|---|---|\n| 2026-03-01 | INFY | 1520.35 INR |\n"
+                  "| 2026-03-02 | INFY | 1525.10 INR |\n| 2026-03-03 | RELIANCE.NS | 2519.80 INR |\n")
+        marked_prices = "".join(f"| 2026-03-0{d} | INFY | 152{d}.35 |  privacy-scan: allow statement-excerpt\n"
+                                for d in (1, 2, 3))
+        running = ("2026-03-01  Coffee  Expenses:Food  4.50 USD  4.50 USD\n"
+                   "2026-03-02  Tea  Expenses:Food  2.50 USD  7.00 USD\n"
+                   "2026-03-03  Cake  Expenses:Food  3.50 USD  10.50 USD\n")
         balances = ("2026-01-31  Assets:Bank:Checking  1000.00 USD\n2026-02-28  Assets:Bank:Checking  1250.00 USD\n"
                     "2026-03-31  Liabilities:CreditCard  -1100.00 USD\n")
         priced = ("| 2026-03-01 | Corner Store | 140.00 INR |\n| 2026-03-02 | Fuel Station | 2,300.50 INR |\n"
@@ -267,7 +273,8 @@ class SeededMissesS0033(unittest.TestCase):
         accounts = ("| date | account | amount |\n|---|---|---|\n| 2026-03-01 | Expenses:Food:Groceries | 45.20 |\n"
                     "| 2026-03-02 | Income:Salary | -900.00 |\n| 2026-03-03 | Assets:Bank:Checking | 1,020.25 |\n")
         for name, text in (("register", register), ("prices", prices), ("balances", balances), ("priced", priced),
-                           ("narrated", narrated), ("accounts without a commodity", accounts)):
+                           ("narrated", narrated), ("accounts without a commodity", accounts),
+                           ("a marked price table", marked_prices), ("register with a running balance", running)):
             with self.subTest(name):
                 self.assertNotIn("statement-excerpt", rules_in("design/specs/x.md", text))
 
@@ -286,7 +293,20 @@ class SeededMissesS0033(unittest.TestCase):
                 ("a currency code on a non-ISO date", "01 Mar 2026  RENT TO SOMEONE  42,000.00 INR\n"
                  "02 Mar 2026  FUEL STATION  2,300.50 INR\n03 Mar 2026  PHARMACY  89.90 INR\n"),
                 ("an account name on a non-ISO date", "01/03/2026  Expenses:Food  45.20\n"
-                 "02/03/2026  Expenses:Food  12.00\n03/03/2026  Expenses:Food  30.50\n")):
+                 "02/03/2026  Expenses:Food  12.00\n03/03/2026  Expenses:Food  30.50\n"),
+                # S0033 verifier R2-3: a one-token narration is a statement's too (the price-table excuse is gone)
+                ("hyphenated narrations with a running balance", "2026-03-01  NEFT-ACME-CORP  1,84,250.00  2,10,000.00\n"
+                 "2026-03-02  ATM-WDL-PUNE  5,000.00  2,05,000.00\n2026-03-03  ACH-LIC-PREMIUM  12,600.00  1,92,400.00\n"),
+                ("a CSV with dotted narrations", "2026-03-01,UPI.SWIGGY.1234,450.00,12000.00\n"
+                 "2026-03-02,UPI.ZOMATO.99,320.00,11680.00\n2026-03-03,NEFT.ACME,900.00,10780.00\n"),
+                ("one-word narrations with a running balance", "| 2026-03-01 | SALARY | 184250.00 | 210000.00 |\n"
+                 "| 2026-03-02 | ATM | 5000.00 | 205000.00 |\n| 2026-03-03 | RENT | 42000.00 | 163000.00 |\n"),
+                ("a price-table shape without a commodity", "| 2026-03-01 | RENT | 42000.00 |\n"
+                 "| 2026-03-02 | FUEL | 2300.50 |\n| 2026-03-03 | ATM | 500.00 |\n"),
+                # a currency code after the amount excuses a line only when it has one amount (or an account name)
+                ("currency codes with a running balance", "2026-03-01  SALARY ACME  1,84,250.00 INR  2,10,000.00 INR\n"
+                 "2026-03-02  ATM PUNE  5,000.00 INR  2,05,000.00 INR\n"
+                 "2026-03-03  LIC PREMIUM  12,600.00 INR  1,92,400.00 INR\n")):
             with self.subTest(name):
                 self.assertEqual(rules_in("notes.md", text).count("statement-excerpt"), 1)
         self.assertEqual(rules_in("notes.md", self.EXCERPT).count("statement-excerpt"), 1)  # plant A05

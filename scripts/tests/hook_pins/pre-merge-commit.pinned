@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# T0 pre-merge-commit (S0031, the M0 gate red team H2): a merge commit runs the pre-commit checks on its staged
+# result. (A conflicted merge is finished by `git commit`, which runs pre-commit itself; cherry-pick, rebase and
+# revert run no commit hook, and the pre-push hook re-checks every pushed blob.)
+# Install once per clone:  git config core.hooksPath .githooks
+set -euo pipefail
+exec "$(dirname "$0")/pre-commit" "$@"

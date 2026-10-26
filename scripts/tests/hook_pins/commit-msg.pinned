@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# T0 commit-msg (S0031 verifier F4): a commit message is published like a file, so the privacy scan reads it
+# (everything above git's scissors line). The pre-push hook scans the pushed commits' messages again.
+# Install once per clone:  git config core.hooksPath .githooks
+set -euo pipefail
+export GIT_NO_REPLACE_OBJECTS=1
+cd "$(git rev-parse --show-toplevel)"
+if ! python3 scripts/privacy_scan.py --message "$1" --quiet; then
+  echo "commit-msg: FAILED: privacy scan of the commit message" >&2
+  exit 1
+fi

@@ -18,7 +18,7 @@ Rules (design/process/PROCESS.md, "Privacy gate"):
   upi-handle    a UPI address `<name>@<handle>` with a known UPI handle (`@okaxis`, `@ybl`, ...), not an email (S0033)
   statement-excerpt three or more statement lines (date, text, amount in columns) within six lines, in Markdown and
                 text files and commit and tag messages (S0033); Beancount's own shapes (an ISO-dated line with an
-                account name, a commodity code after the amount, or a commodity code alone as its text) do not count
+                account name, or with one amount and a commodity code after it) do not count
   pan           Indian PAN (five letters, four digits, one letter)
   iban          IBAN with a valid mod-97 checksum
   email         any address outside the reserved example/test domains
@@ -120,23 +120,26 @@ STATEMENT_SUFFIXES = {".md", ".markdown", ".rst", ".adoc", ".txt"}
 _DATE = (r"(?:\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{4}-\d{2}-\d{2}"
          r"|\d{1,2}[ -](?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[ ,-]*\d{2,4})")
 _GAP = r"(?:\s*[|,;\t]\s*|\s{2,})"
+_AMOUNT = r"[-+]?(?:\d{1,3}(?:,\d{2,3})+|\d+)\.\d{2}"
 _BEANCOUNT = r"(?:\*|!|txn\b|open\b|close\b|balance\b|price\b|pad\b|note\b|document\b|event\b|custom\b|commodity\b|query\b|\")"
 STATEMENT_LINE = re.compile(rf"(?i)^[\s|>]*(?P<date>{_DATE}){_GAP}(?!{_BEANCOUNT})(?=[^\n]*[a-z])"
                             rf"(?P<text>[^\n]{{2,}}?){_GAP}"
-                            r"[-+]?(?:\d{1,3}(?:,\d{2,3})+|\d+)\.\d{2}\b(?P<after>[^\n]*)")
+                            rf"{_AMOUNT}\b(?P<after>[^\n]*)")
 # S0033 verifier F4: Beancount's own shapes in specs (bean-query register output, balance histories, price tables)
 # are not statements. A line with an ISO date (the only date Beancount writes) does not count when its text holds an
-# account name under one of the five standard roots, or its amount is followed by a commodity code (`45.20 USD`; a
-# `Dr`/`Cr` marker is a statement's), or its text is a commodity code alone and no `Dr`/`Cr` follows (`| INFY |`, a
-# price table). Case matters: statement narrations are upper case (`EXPENSES:FOOD`, `UPI:SWIGGY` still count).
-# Stated limit: an ISO-dated statement whose amounts carry a currency code, or whose narration is one upper-case
-# word, is read as Beancount; the other date forms are never excused.
+# account name under one of the five standard roots, or it has one amount and that amount is followed by a commodity
+# code (`45.20 USD`, `| INFY | 1520.35 INR |`; a `Dr`/`Cr` marker is a statement's). Case matters: statement
+# narrations are upper case (`EXPENSES:FOOD`, `UPI:SWIGGY` still count). Verifier R2-3: a commodity-shaped token as
+# the text (`| INFY | 1520.35 |`) excused statement rows too (`NEFT-ACME-CORP`, `UPI.SWIGGY.1234`, `SALARY`), so it
+# no longer excuses a line, and a commodity code excuses only a line with one amount (a statement row has a running
+# balance). A price table without commodity codes carries the allow mark on its lines. Stated limit: an ISO-dated
+# statement row with one amount followed by a currency code, or with a capitalised account-like narration
+# (`Expenses:Food`), is read as Beancount; the other date forms are never excused.
 ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 BEAN_ACCOUNT = re.compile(r"(?<![\w:])(?:Assets|Liabilities|Equity|Income|Expenses)(?::[A-Z0-9][A-Za-z0-9-]*)+(?![\w:])")
 _COMMODITY = r"[A-Z](?:[A-Z0-9'._-]{0,22}[A-Z0-9])?"
 COMMODITY_AFTER = re.compile(rf"^[ \t]+(?!(?i:cr|dr)\b){_COMMODITY}(?![\w'.-])")
-COMMODITY_ALONE = re.compile(rf"[\s|,;]*{_COMMODITY}[\s|,;]*")
-DR_CR = re.compile(r"(?i)\b(?:cr|dr)\b")
+SECOND_AMOUNT = re.compile(_AMOUNT)
 STATEMENT_MIN_LINES, STATEMENT_WINDOW = 3, 6
 LIVE_DATA_NAME = re.compile(r"(?i)finzytrack[_-]?data\b")  # the owner's live data folder, by name  privacy-scan: allow live-data-path
 SECRETS: list[tuple[str, re.Pattern[str]]] = [
@@ -333,9 +336,7 @@ def statement_line(line: str) -> bool:
     if not ISO_DATE.fullmatch(m.group("date")):
         return True
     text, after = m.group("text"), m.group("after")
-    if BEAN_ACCOUNT.search(text) or COMMODITY_AFTER.match(after):
-        return False
-    return not (COMMODITY_ALONE.fullmatch(text) and not DR_CR.search(after))
+    return not (BEAN_ACCOUNT.search(text) or (COMMODITY_AFTER.match(after) and not SECOND_AMOUNT.search(after)))
 
 
 def statement_excerpts(path: str, text: str) -> list[Finding]:
