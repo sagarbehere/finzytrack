@@ -23,6 +23,18 @@ pydantic[email]==2.14.0
 """
 
 
+TATSU_ACK = "This product includes software developed by \"Juancarlo Añez\" (https://apalala.bitbucket.io)."
+TATSU_TEXT = """Copyright (C) 2017-2026 Juancarlo Añez
+ 3. Neither the name of the copyright holder nor the names of its
+    contributors may be used to endorse or promote products derived
+    from this software without specific prior written permission.
+
+ 4. Redistributions of any form whatsoever must retain the following
+    acknowledgment: 'This product includes software developed by
+    "Juancarlo Añez" (https://apalala.bitbucket.io).'
+"""
+
+
 class RuntimeOnly(unittest.TestCase):
     def test_export_names_are_parsed_and_normalized(self) -> None:
         self.assertEqual(cl.runtime_names(EXPORT), {"fastapi", "typing-extensions", "pydantic"})
@@ -302,6 +314,78 @@ class Mapping(unittest.TestCase):
         self.assertEqual((deps, problems), ([("other", "1", "BSD License")], []))
 
 
+class Acknowledgments(unittest.TestCase):
+    """A licence that asks every redistribution to keep an acknowledgment (TatSu-LTS's clause 4; the 4-clause BSD
+    and Apache 1.1 clauses) is honoured only when THIRD_PARTY_NOTICES carries it (S0037). The check reads the licence
+    texts, because the reported licence ("BSD License") does not show the clause."""
+
+    ACK = {"tatsu-lts": cl.Acknowledgment(version="5.16.0", text=TATSU_ACK, source="LICENSE in the wheel")}
+    DEPS = {"Python (ledger engine)": [("TatSu-LTS", "5.16.0", "BSD-3-Clause-Attribution"), ("six", "1.17.0", "MIT")]}
+    TEXTS = {"tatsu-lts": TATSU_TEXT, "six": "Permission is hereby granted, free of charge"}
+
+    def test_a_configured_acknowledgment_found_in_the_licence_passes_and_is_noted(self) -> None:
+        problems, notes = cl.acknowledgments(self.DEPS, self.TEXTS, self.ACK)
+        self.assertEqual((problems, notes), ([], {"tatsu-lts": TATSU_ACK}))
+
+    def test_a_clause_without_a_configured_acknowledgment_is_refused(self) -> None:
+        # Must not pass: the notices would drop a required acknowledgment.
+        for clause in ("must retain the following acknowledgment: 'x'",
+                       "must retain the following\n   acknowledgement: 'x'",
+                       "All advertising materials mentioning features or use of this software must display the "
+                       "following acknowledgement: This product includes software developed by X.",
+                       "The end-user documentation included with the redistribution, if any, must include the "
+                       "following ACKNOWLEDGMENT: \"This product includes software developed by X.\""):
+            with self.subTest(clause=clause):
+                problems, _ = cl.acknowledgments({"P": [("lib", "1", "BSD-3-Clause")]}, {"lib": clause}, {})
+                self.assertEqual(len(problems), 1)
+
+    def test_a_clause_in_a_notice_file_counts_too(self) -> None:
+        problems, _ = cl.acknowledgments({"P": [("lib", "1", "MIT")]},
+                                         {"lib": "MIT text\n\nNOTICE: must retain the following acknowledgment"}, {})
+        self.assertEqual(len(problems), 1)
+
+    def test_texts_without_the_clause_need_no_entry(self) -> None:
+        for text in ("Permission is hereby granted", "We acknowledge the contributors.", ""):
+            with self.subTest(text=text):
+                self.assertEqual(cl.acknowledgments({"P": [("lib", "1", "MIT")]}, {"lib": text}, {}), ([], {}))
+
+    def test_an_acknowledgment_not_in_the_licence_text_is_refused(self) -> None:
+        wrong = {"tatsu-lts": cl.Acknowledgment("5.16.0", "This product includes software developed by someone.",
+                                                "LICENSE")}
+        problems, _ = cl.acknowledgments(self.DEPS, self.TEXTS, wrong)
+        self.assertEqual(len(problems), 1)
+
+    def test_a_shortened_acknowledgment_is_refused(self) -> None:
+        # Must not pass: a configured text that is only a part of the required sentence.
+        short = {"tatsu-lts": cl.Acknowledgment("5.16.0", "This product includes software", "LICENSE")}
+        problems, _ = cl.acknowledgments(self.DEPS, self.TEXTS, short)
+        self.assertEqual(len(problems), 1)
+
+    def test_an_acknowledgment_for_another_version_is_refused(self) -> None:
+        deps = {"E": [("TatSu-LTS", "5.17.0", "BSD-3-Clause-Attribution")]}
+        problems, _ = cl.acknowledgments(deps, self.TEXTS, self.ACK)
+        self.assertEqual(len(problems), 1)
+
+    def test_an_acknowledgment_for_a_package_that_is_not_bundled_is_refused(self) -> None:
+        problems, _ = cl.acknowledgments({"E": [("six", "1.17.0", "MIT")]}, self.TEXTS, self.ACK)
+        self.assertEqual(len(problems), 1)
+
+    def test_a_package_whose_text_is_unknown_cannot_confirm_its_acknowledgment(self) -> None:
+        problems, _ = cl.acknowledgments(self.DEPS, {"six": "MIT"}, self.ACK)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("was not read", problems[0])  # the cause, not "the wrong sentence"
+
+    def test_line_breaks_and_quotes_in_the_licence_do_not_hide_the_text(self) -> None:
+        # The licence wraps the sentence over two lines; the configured text is one line.
+        self.assertEqual(cl.acknowledgments(self.DEPS, self.TEXTS, self.ACK)[0], [])
+
+    def test_the_notices_carry_the_acknowledgment_under_the_package(self) -> None:
+        _, _, text = cl.evaluate(self.DEPS, {"MIT", "BSD-3-Clause-Attribution"}, set(),
+                                 notes={"tatsu-lts": TATSU_ACK})
+        self.assertIn(f"TatSu-LTS 5.16.0  BSD-3-Clause-Attribution\n  Acknowledgment: {TATSU_ACK}\n", text)
+        self.assertNotIn("six 1.17.0  MIT\n  Acknowledgment", text)
+
+
 class Config(unittest.TestCase):
     """The committed licences.allow.toml against ADR-0054 decision 5 and the S0035 brief."""
 
@@ -319,8 +403,37 @@ class Config(unittest.TestCase):
             with self.subTest(licence=lic):
                 self.assertEqual(cl.judge(lic, self.cfg.engine.allowed, self.cfg.engine.pending), cl.ALLOWED)
 
-    def test_the_reviewed_beancount_dependencies_are_the_two_adr_0054_names(self) -> None:
-        self.assertEqual(set(self.cfg.engine.reviewed), {"regex", "python-dateutil"})
+    def test_the_reviewed_engine_dependencies_are_adr_0054s_names_and_tatsu(self) -> None:
+        # ADR-0054 decision 5, amended 2026-10-26 by the owner (S0037): beanquery's TatSu-LTS joins the list.
+        self.assertEqual(set(self.cfg.engine.reviewed), {"regex", "python-dateutil", "tatsu-lts"})
+
+    def test_tatsu_is_reviewed_as_bsd_with_attribution_which_the_engine_list_does_not_allow(self) -> None:
+        self.assertEqual(self.cfg.engine.reviewed["tatsu-lts"], "BSD-3-Clause-Attribution")
+        self.assertEqual(self.cfg.mapping["tatsu-lts"].spdx, "BSD-3-Clause-Attribution")
+        self.assertEqual(self.cfg.mapping["tatsu-lts"].version, "5.16.0")
+        self.assertEqual(cl.judge("BSD-3-Clause-Attribution", self.cfg.engine.allowed, self.cfg.engine.pending),
+                         cl.REFUSED)  # it passes only as a reviewed package, with a warning
+
+    def test_beanquery_is_mapped_to_gpl_2_0_only(self) -> None:
+        self.assertEqual((self.cfg.mapping["beanquery"].version, self.cfg.mapping["beanquery"].spdx),
+                         ("0.2.0", "GPL-2.0-only"))
+
+    def test_tatsus_acknowledgment_is_configured_verbatim_and_in_the_committed_notices(self) -> None:
+        entry = self.cfg.acknowledgments["tatsu-lts"]
+        self.assertEqual(entry.version, "5.16.0")
+        self.assertEqual(entry.text, TATSU_ACK)
+        self.assertIn(f"tatsu-lts 5.16.0  BSD-3-Clause-Attribution\n  Acknowledgment: {TATSU_ACK}\n",
+                      cl.NOTICES.read_text(encoding="utf-8").replace("TatSu-LTS", "tatsu-lts"))
+
+    def test_a_malformed_acknowledgment_is_refused(self) -> None:
+        for body in ('version = "1"\nsource = "LICENSE"\n', 'version = "1"\ntext = "x"\n',
+                     'text = "x"\nsource = "LICENSE"\n', 'version = "1"\ntext = " "\nsource = "LICENSE"\n'):
+            with self.subTest(body=body), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "allow.toml"
+                path.write_text('allowed = ["MIT"]\n[engine]\nallowed = ["MIT"]\n[acknowledgment.pkg]\n' + body,
+                                encoding="utf-8")
+                with self.assertRaises(SystemExit):
+                    cl.load_config(path)
 
     def test_the_shared_list_is_unchanged_for_the_main_sidecar(self) -> None:
         self.assertIn("Apache-2.0", self.cfg.pending)
@@ -363,10 +476,22 @@ class EngineWiring(unittest.TestCase):
         self.assertEqual(tool[0], str(cl.ROOT / "engine/.venv/bin/pip-licenses"))
         self.assertEqual(deps, [("beancount", "3.2.0", "GPL-2.0-only")])
 
-    def run_main(self, engine: list[tuple[str, str, str]], backend: list[tuple[str, str, str]]) -> int:
-        """main() over stubbed groups, writing the notices to a temporary file."""
-        def deps(project: str = "backend") -> list[tuple[str, str, str]]:
-            return engine if project == "engine" else backend
+    TATSU = ("TatSu-LTS", "5.16.0", "BSD License")
+
+    def run_main(self, engine: list[tuple[str, str, str]], backend: list[tuple[str, str, str]],
+                 texts: dict[str, str] | None = None) -> int:
+        """main() over stubbed groups (licence texts `texts`, by package), writing the notices to a temporary file;
+        the notices written are kept in `self.notices`. The committed config names TatSu-LTS's acknowledgment, so
+        the engine always bundles TatSu-LTS with its licence text unless a test passes its own."""
+        texts = {"tatsu-lts": TATSU_TEXT, **(texts or {})}
+        if not any(cl.norm(n) == "tatsu-lts" for n, _, _ in engine):
+            engine = [*engine, self.TATSU]
+
+        def deps(project: str = "backend", into: dict[str, str] | None = None) -> list[tuple[str, str, str]]:
+            chosen = engine if project == "engine" else backend
+            if into is not None:
+                into.update({cl.norm(n): texts.get(cl.norm(n), "MIT") for n, _, _ in chosen})
+            return chosen
 
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch.object(cl, "NOTICES", Path(tmp) / "NOTICES"), \
@@ -374,7 +499,45 @@ class EngineWiring(unittest.TestCase):
                 mock.patch.object(cl, "runtime_deps", lambda: None), \
                 mock.patch.object(cl, "js_deps", lambda: None), \
                 mock.patch.object(cl, "rust_deps", lambda: None):
-            return cl.main(["--write-notices"])
+            code = cl.main(["--write-notices"])
+            self.notices = (Path(tmp) / "NOTICES").read_text(encoding="utf-8")
+            return code
+
+    def test_main_passes_tatsu_with_its_acknowledgment_in_the_notices(self) -> None:
+        self.assertEqual(self.run_main([self.TATSU], []), 0)
+        self.assertIn(f"  Acknowledgment: {TATSU_ACK}\n", self.notices)
+
+    def test_main_refuses_an_unconfigured_acknowledgment_clause(self) -> None:
+        # Must not pass: a bundled package whose licence asks for an acknowledgment nobody configured.
+        self.assertEqual(self.run_main([("lib", "1", "MIT")], [], {"lib": "must retain the following acknowledgment"}), 1)
+        self.assertEqual(self.run_main([], [("lib", "1", "MIT")], {"lib": "must display the following acknowledgement"}),
+                         1)  # in the main sidecar too
+        self.assertEqual(self.run_main([("lib", "1", "MIT")], [("lib2", "1", "MIT")]), 0)  # the same, without the clause
+
+    def test_main_refuses_tatsu_when_its_licence_text_lacks_the_acknowledgment(self) -> None:
+        self.assertEqual(self.run_main([self.TATSU], [], {"tatsu-lts": "BSD 3-clause text only"}), 1)
+
+    def test_python_deps_reads_licence_and_notice_texts_of_bundled_packages(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **_kwargs):
+            calls.append(cmd)
+            out = "tatsu-lts==5.16.0\n" if "export" in cmd else (
+                '[{"Name": "TatSu-LTS", "Version": "5.16.0", "License": "BSD License", "LicenseText": "L",'
+                ' "NoticeText": "N"}, {"Name": "pytest", "Version": "9", "License": "MIT", "LicenseText": "P",'
+                ' "NoticeText": "UNKNOWN"}]')
+            return mock.Mock(stdout=out)
+
+        texts: dict[str, str] = {}
+        with mock.patch.object(cl.subprocess, "run", fake_run), \
+                mock.patch.object(cl.shutil, "which", lambda _n: "/bin/uv"), \
+                mock.patch.object(cl.Path, "exists", lambda _p: True):
+            deps = cl.python_deps("engine", texts)
+        tool = next(c for c in calls if "export" not in c)
+        for flag in ("--with-license-file", "--with-notice-file", "--no-license-path"):
+            self.assertIn(flag, tool)
+        self.assertEqual(deps, [("TatSu-LTS", "5.16.0", "BSD License")])
+        self.assertEqual(texts, {"tatsu-lts": "L\nN"})  # dev tools' texts are not kept
 
     def test_main_judges_the_engine_by_the_engine_list(self) -> None:
         # Must not pass: Apache-2.0 (only pending in the shared list) in the engine.

@@ -6,10 +6,11 @@ name = "finzytrack-engine"
 version = "0.4.0.dev0"
 requires-python = "==3.13.*"
 license = "GPL-2.0-or-later"
-# beanquery 0.2.0 (ARCHITECTURE.md §10) joins with the first BQL slice: its TatSu-LTS dependency's licence is
-# with the owner (design/inbox/20261026-beanquery-tatsu-licence.md, BL-0081).
+# beanquery 0.2.0 (ARCHITECTURE.md §10) by the owner's decision of 2026-10-26 (S0037; ADR-0054 amendment): its
+# dependency TatSu-LTS is on licences.allow.toml's [engine.reviewed] list pending legal advice (BL-0085).
 dependencies = [
   "beancount==3.2.0",
+  "beanquery==0.2.0",
   "pydantic==2.14.0",
 ]
 

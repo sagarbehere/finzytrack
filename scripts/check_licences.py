@@ -14,6 +14,12 @@ compatible licences, plus the reviewed Beancount dependencies in `[engine.review
 only while its licence is the reviewed expression); everything else by the shared list. pip-licenses reports
 trove-classifier names for some packages; `[mapping.<package>]` gives the reviewed SPDX id for one exact version
 (BL-0050).
+Acknowledgments (S0037): a licence may require every redistribution to keep an acknowledgment sentence (TatSu-LTS's
+clause 4, the 4-clause BSD and Apache 1.1 clauses). For the Python groups the check reads each bundled package's
+licence and notice texts; a text that asks for "the following acknowledgment" needs an `[acknowledgment.<package>]`
+entry for that exact version whose text equals the sentence the licence quotes, and the notices carry it under the
+package's line. An entry for a package that is not bundled, or whose text cannot be confirmed, is refused. Stated
+limit: JavaScript and Rust licence texts are not read here (they are collected at bundling, M11; BL-0086).
 Usage: python3 scripts/check_licences.py [--write-notices]
 """
 
@@ -60,8 +66,9 @@ def bundled(
     return [by_name[n] for n in sorted(runtime)]
 
 
-def python_deps(project: str = "backend") -> list[tuple[str, str, str]] | None:
-    """The bundled packages of one Python process: `backend` (the main sidecar) or `engine` (ADR-0054)."""
+def python_deps(project: str = "backend", into: dict[str, str] | None = None) -> list[tuple[str, str, str]] | None:
+    """The bundled packages of one Python process: `backend` (the main sidecar) or `engine` (ADR-0054). With `into`,
+    each bundled package's licence and notice texts are added to it (normalized name -> text)."""
     if not (ROOT / project / "pyproject.toml").exists():
         return None
     tool = ROOT / project / ".venv/bin/pip-licenses"
@@ -74,9 +81,22 @@ def python_deps(project: str = "backend") -> list[tuple[str, str, str]] | None:
         [uv, "export", "--frozen", "--no-dev", "--no-emit-project", "--no-hashes", "--directory", str(ROOT / project)],
         capture_output=True, text=True, check=True,
     )
-    out = subprocess.run([str(tool), "--format=json", "--with-system", "--from=mixed"], capture_output=True, text=True, check=True)
-    installed = [(d["Name"], d["Version"], d["License"]) for d in json.loads(out.stdout)]
-    return bundled(installed, runtime_names(export.stdout), project)
+    out = subprocess.run(
+        [str(tool), "--format=json", "--with-system", "--from=mixed", "--with-license-file", "--with-notice-file",
+         "--no-license-path"],
+        capture_output=True, text=True, check=True,
+    )
+    report = json.loads(out.stdout)
+    deps = bundled([(d["Name"], d["Version"], d["License"]) for d in report], runtime_names(export.stdout), project)
+    if into is not None:
+        names = {norm(n) for n, _, _ in deps}
+        into.update({norm(d["Name"]): licence_text(d) for d in report if norm(d["Name"]) in names})
+    return deps
+
+
+def licence_text(entry: dict[str, str]) -> str:
+    """A pip-licenses entry's licence and notice texts, without its "UNKNOWN" placeholders."""
+    return "\n".join(t for t in (entry.get("LicenseText", ""), entry.get("NoticeText", "")) if t and t != "UNKNOWN")
 
 
 def rust_from_metadata(meta: dict) -> list[tuple[str, str, str]]:
@@ -226,11 +246,21 @@ class Reviewed:
 
 
 @dataclass(frozen=True)
+class Acknowledgment:
+    """The acknowledgment one exact version of a package's licence requires every redistribution to keep (S0037)."""
+
+    version: str
+    text: str
+    source: str
+
+
+@dataclass(frozen=True)
 class Config:
     allowed: frozenset[str]
     pending: frozenset[str]
     engine: Policy
     mapping: dict[str, Reviewed]
+    acknowledgments: dict[str, Acknowledgment] = field(default_factory=dict)
 
 
 ENGINE_GROUP = "Python (ledger engine)"
@@ -246,12 +276,18 @@ def load_config(path: Path) -> Config:
         if not all(isinstance(entry.get(k), str) and entry[k].strip() for k in ("version", "spdx", "source")):
             raise SystemExit(f"check-licences: [mapping.{name}] needs version, spdx and source (where it was read)")
         mapping[norm(name)] = Reviewed(entry["version"], entry["spdx"], entry["source"])
+    acks: dict[str, Acknowledgment] = {}
+    for name, entry in cfg.get("acknowledgment", {}).items():
+        if not all(isinstance(entry.get(k), str) and entry[k].strip() for k in ("version", "text", "source")):
+            raise SystemExit(f"check-licences: [acknowledgment.{name}] needs version, text and source (where it was read)")
+        acks[norm(name)] = Acknowledgment(entry["version"], entry["text"], entry["source"])
     return Config(
         allowed=frozenset(cfg["allowed"]),
         pending=frozenset(cfg.get("pending_legal_advice", {})),
         engine=Policy(frozenset(engine.get("allowed", [])), frozenset(),
                       {norm(n): e for n, e in engine.get("reviewed", {}).items()}),
         mapping=mapping,
+        acknowledgments=acks,
     )
 
 
@@ -274,12 +310,67 @@ def apply_mapping(
     return out, problems
 
 
+# An acknowledgment clause, then the sentence it requires: quoted ('...' or "...", the closing quote followed by
+# a space, a line end or the text's end), or unquoted up to the first full stop that ends a sentence.
+ACK_CLAUSE = re.compile(r"following\s+acknowledge?ment\s*:?", re.IGNORECASE)
+ACK_QUOTED = re.compile(r"\s*(['\"])(.+?)\1(?=\s|$)", re.DOTALL)
+ACK_SENTENCE = re.compile(r"\s*(.+?\.)(?=\s|$)", re.DOTALL)
+
+
+def squash(text: str) -> str:
+    return " ".join(text.split())
+
+
+def required_acknowledgments(text: str) -> list[str | None]:
+    """The sentences a licence text requires to be kept, one per clause; None for a clause whose sentence cannot be
+    read (refused: nobody can say what the notices must carry)."""
+    out: list[str | None] = []
+    for clause in ACK_CLAUSE.finditer(text):
+        rest = text[clause.end():]
+        quoted = ACK_QUOTED.match(rest)
+        sentence = quoted.group(2) if quoted else (m.group(1) if (m := ACK_SENTENCE.match(rest)) else None)
+        out.append(squash(sentence) if sentence else None)
+    return out
+
+
+def acknowledgments(
+    groups: dict[str, list[tuple[str, str, str]] | None], texts: dict[str, str], configured: dict[str, Acknowledgment]
+) -> tuple[list[str], dict[str, str]]:
+    """(problems, notes): every bundled package with a known licence text that requires an acknowledgment has a
+    configured entry for its exact version whose text equals the required sentence; every configured entry is
+    confirmed that way. `notes` (normalized name -> text) are what the notices carry."""
+    problems: list[str] = []
+    notes: dict[str, str] = {}
+    bundled_versions = {norm(n): (n, v) for deps in groups.values() if deps for n, v, _ in deps}
+    for key, (name, version) in sorted(bundled_versions.items()):
+        required = required_acknowledgments(texts.get(key, ""))
+        entry = configured.get(key)
+        if entry is None:
+            if required:
+                problems.append(f"{name} {version}: its licence requires an acknowledgment in every redistribution; "
+                                "add it to [acknowledgment] in licences.allow.toml")
+            continue
+        if entry.version != version:
+            problems.append(f"{name} {version}: the acknowledgment entry is for version {entry.version}; read the "
+                            "licence again and update [acknowledgment] in licences.allow.toml")
+        elif key not in texts:
+            problems.append(f"{name} {version}: its licence text was not read, so its acknowledgment cannot be confirmed")
+        elif not required or any(r != squash(entry.text) for r in required):
+            problems.append(f"{name} {version}: the configured acknowledgment is not the sentence its licence requires")
+        else:
+            notes[key] = squash(entry.text)
+    for key in sorted(configured.keys() - bundled_versions.keys()):
+        problems.append(f"{key}: [acknowledgment] names a package that is not bundled; remove the entry")
+    return problems, notes
+
+
 def evaluate(
     groups: dict[str, list[tuple[str, str, str]] | None], allowed: set[str], pending: set[str],
-    overrides: dict[str, Policy] | None = None,
+    overrides: dict[str, Policy] | None = None, notes: dict[str, str] | None = None,
 ) -> tuple[list[str], list[str], str]:
     """(problems, warnings, notices text), each dependency judged by `judge` under its group's policy: the shared
-    `allowed`/`pending`, or the group's entry in `overrides`."""
+    `allowed`/`pending`, or the group's entry in `overrides`. `notes` (normalized name -> acknowledgment) are
+    written under the package's line."""
     problems, warnings, lines = [], [], [HEADER]
     shared = Policy(frozenset(allowed), frozenset(pending))
     for title, deps in groups.items():
@@ -292,7 +383,7 @@ def evaluate(
             lines.append("(no bundled dependencies)\n")
         for name, version, lic in sorted(deps):
             if policy.reviewed.get(norm(name)) == lic:
-                warnings.append(f"{name} {version}: {lic} (reviewed dependency of Beancount, pending legal advice)")
+                warnings.append(f"{name} {version}: {lic} (reviewed engine dependency, ADR-0054; pending legal advice)")
             else:
                 verdict = judge(lic, set(policy.allowed), set(policy.pending))
                 if verdict == PENDING:
@@ -301,6 +392,8 @@ def evaluate(
                     where = " of the ledger engine (ADR-0054)" if policy is not shared else ""
                     problems.append(f"{name} {version}: licence {lic!r} is not on the allowlist{where}")
             lines.append(f"{name} {version}  {lic}\n")
+            if norm(name) in (notes or {}):
+                lines.append(f"  Acknowledgment: {(notes or {})[norm(name)]}\n")
     return problems, warnings, "".join(lines)
 
 
@@ -315,11 +408,14 @@ def main(argv: list[str]) -> int:
         mapping_problems.extend(problems)
         return out
 
+    texts: dict[str, str] = {}
     groups = {"Python runtime (python-build-standalone)": runtime_deps(),
-              "Python (backend sidecar)": mapped(python_deps("backend")), ENGINE_GROUP: mapped(python_deps("engine")),
+              "Python (backend sidecar)": mapped(python_deps("backend", texts)),
+              ENGINE_GROUP: mapped(python_deps("engine", texts)),
               "JavaScript (frontend)": js_deps(), "Rust (desktop shell)": rust_deps()}
-    problems, warnings, text = evaluate(groups, set(cfg.allowed), set(cfg.pending), {ENGINE_GROUP: cfg.engine})
-    problems = mapping_problems + problems
+    ack_problems, notes = acknowledgments(groups, texts, cfg.acknowledgments)
+    problems, warnings, text = evaluate(groups, set(cfg.allowed), set(cfg.pending), {ENGINE_GROUP: cfg.engine}, notes)
+    problems = mapping_problems + ack_problems + problems
     if "--write-notices" in argv:
         NOTICES.write_text(text, encoding="utf-8")
     elif not NOTICES.exists() or NOTICES.read_text(encoding="utf-8") != text:

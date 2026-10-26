@@ -7,8 +7,11 @@ CPython 3.13.16  Python-2.0
 (no bundled dependencies)
 
 == Python (ledger engine) ==
+TatSu-LTS 5.16.0  BSD-3-Clause-Attribution
+  Acknowledgment: This product includes software developed by "Juancarlo Añez" (https://apalala.bitbucket.io).
 annotated-types 0.8.0  MIT
 beancount 3.2.0  GPL-2.0-only
+beanquery 0.2.0  GPL-2.0-only
 click 8.5.0  BSD-3-Clause
 pydantic 2.14.0  MIT
 pydantic_core 2.50.0  MIT

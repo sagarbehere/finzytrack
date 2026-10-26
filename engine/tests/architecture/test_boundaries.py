@@ -33,3 +33,8 @@ def test_the_engine_environment_cannot_import_the_main_sidecar() -> None:
 def test_the_engine_environment_has_beancount() -> None:
     # ADR-0054 decision 1: Beancount lives in the engine's environment.
     assert find_spec("beancount") is not None
+
+
+def test_the_engine_environment_has_beanquery() -> None:
+    # ADR-0054 decision 1; owner decision 2026-10-26 (S0037): BQL lives in the engine's environment too.
+    assert find_spec("beanquery") is not None

@@ -44,6 +44,21 @@ wheels = [
 ]
 
 [[package]]
+name = "beanquery"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "beancount" },
+    { name = "click" },
+    { name = "python-dateutil" },
+    { name = "tatsu-lts" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7c/90/801eec23a07072dcf8df061cb6f27be6045e08c12a90b287e872ce0a12d3/beanquery-0.2.0.tar.gz", hash = "sha256:2d72b50a39003435c7fed183666572b8ea878b9860499d0f196b38469384cd2c", size = 99399, upload-time = "2025-03-24T20:27:53.116Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8b/b8/5b31f6047e50bc82f743760b4e0e7b42a9989c5b8986909c1309d65263ed/beanquery-0.2.0-py3-none-any.whl", hash = "sha256:980b7a328486d58cfd3e8fa98983fd501c33cf3a9be67f8b1e16c81e94018a3c", size = 108224, upload-time = "2025-03-24T20:27:51.728Z" },
+]
+
+[[package]]
 name = "click"
 version = "8.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -67,6 +82,7 @@ version = "0.4.0.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "beancount" },
+    { name = "beanquery" },
     { name = "pydantic" },
 ]
 
@@ -82,6 +98,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "beancount", specifier = "==3.2.0" },
+    { name = "beanquery", specifier = "==0.2.0" },
     { name = "pydantic", specifier = "==2.14.0" },
 ]
 
@@ -364,6 +381,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
+name = "tatsu-lts"
+version = "5.16.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d3/81/9ab714191017d23a0e73921e7d869890e5bf6a5eca89dee57d2b76c6c536/tatsu_lts-5.16.0.tar.gz", hash = "sha256:40ad376b4ed4e139a8d00d00bd6659d44c3b7546933fb3314132f776bfa1f44f", size = 226534, upload-time = "2026-01-14T00:00:57.794Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/84/d3/c4c50188b3a75530eab685899c2efae85a1892be50335f4700963d8a1e14/tatsu_lts-5.16.0-py3-none-any.whl", hash = "sha256:43b21f741a8d1b03148e84294aa6867ab0607f9c3325d93df8b0cf3ad8ece74b", size = 82963, upload-time = "2026-01-14T00:00:56.406Z" },
 ]
 
 [[package]]

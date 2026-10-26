@@ -32,6 +32,11 @@ allowed = [
 # Beancount 3.2.0 requires both (its METADATA: Requires-Dist regex, python-dateutil).
 "regex" = "Apache-2.0 AND CNRI-Python"
 "python-dateutil" = "Apache-2.0 AND BSD-3-Clause"
+# beanquery 0.2.0 requires TatSu-LTS. Added by the owner's decision (ADR-0054 amendment, 2026-10-26): "Please include
+# the bin query in the engine, sorting out the license issues, make that a backlog item. I don't want functionality
+# to be compromised during development because of legal questions." ("bin query" = beanquery.) Its clause 4
+# (an acknowledgment every redistribution must keep) is the open question; the legal review settles it (BL-0085).
+"tatsu-lts" = "BSD-3-Clause-Attribution"
 
 # Reviewed SPDX ids for packages whose reported licence is a trove-classifier name (BL-0050). One exact version
 # each: an upgrade is refused until the licence is read again.
@@ -44,3 +49,20 @@ source = "six-1.17.0.dist-info/LICENSE (MIT text); METADATA License: MIT; read 2
 version = "2.9.0.post0"
 spdx = "Apache-2.0 AND BSD-3-Clause"
 source = "python_dateutil-2.9.0.post0.dist-info/LICENSE: Apache-2.0 for contributions after 2017-12-01, and 'the above BSD License applies to all code' (3-clause text); read 2026-10-26 (S0035)"
+
+[mapping.beanquery]
+version = "0.2.0"
+spdx = "GPL-2.0-only"
+source = "beanquery-0.2.0.dist-info/licenses/LICENSE (GPL version 2 text, no 'or later'); METADATA classifier GPLv2; its modules say __license__ = 'GNU GPLv2'; read 2026-10-26 (S0037)"
+
+[mapping.tatsu-lts]
+version = "5.16.0"
+spdx = "BSD-3-Clause-Attribution"
+source = "tatsu_lts-5.16.0.dist-info/licenses/LICENSE: the 3-clause BSD text plus clause 4 'Redistributions of any form whatsoever must retain the following acknowledgment', which is SPDX BSD-3-Clause-Attribution; METADATA classifier BSD License; read 2026-10-26 (S0037)"
+
+# Acknowledgments a licence requires every redistribution to keep (S0037). THIRD_PARTY_NOTICES carries the text under
+# the package's line. One exact version each; the text must equal the sentence the licence quotes.
+[acknowledgment.tatsu-lts]
+version = "5.16.0"
+text = 'This product includes software developed by "Juancarlo Añez" (https://apalala.bitbucket.io).'
+source = "tatsu_lts-5.16.0.dist-info/licenses/LICENSE, clause 4; read 2026-10-26 (S0037)"

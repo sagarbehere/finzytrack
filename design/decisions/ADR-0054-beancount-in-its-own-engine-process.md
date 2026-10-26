@@ -46,6 +46,13 @@ In Python, importing a module into the same process is treated as combining the 
 - **Performance (estimates, to be measured in M1a by extending the S4 harness):** reads are unchanged (they use the mirror); a write adds one local round trip with a plan in and a result out (typically a few kB, well under 10 ms) on top of the engine work S4 measured; large BQL results pay JSON serialization (page or stream them); a second interpreter costs roughly 40–80 MB while running; the engine starts in parallel with the main sidecar. Rule: entries never cross the boundary per request.
 - **SQLite:** no licensing effect. SQLite is public domain and Python's `sqlite3` is part of CPython (PSF licence, GPL-compatible); the mirror file is data, and reading it from the main sidecar or from outside tools is not linking.
 
+## Amendment (2026-10-26): TatSu-LTS on the engine's reviewed list
+
+Owner: "Please include the bin query in the engine, sorting out the license issues, make that a backlog item. I don't want functionality to be compromised during development because of legal questions." (2026-10-26, in session; "bin query" = beanquery; `design/inbox/answered/20261026-beanquery-tatsu-licence.md`).
+- Decision 5's reviewed list now also names **TatSu-LTS**, which beanquery requires. Its licence is BSD with a fourth clause (SPDX `BSD-3-Clause-Attribution`): every redistribution must keep an acknowledgment sentence. Like `regex` and `python-dateutil` it passes the engine's licence check with a warning, pending legal advice, and only while its licence is the reviewed expression.
+- `THIRD_PARTY_NOTICES` carries the acknowledgment verbatim; the licence check reads the Python packages' licence texts and refuses a bundled package whose licence asks for an acknowledgment the notices do not carry (S0037).
+- beanquery 0.2.0 joined the engine in S0037. Functionality is not held by the licence question: the legal review before v0.4.0 (ADR-0042) settles TatSu-LTS together with `regex`'s CNRI-Python part (BL-0085).
+
 ## References
 
 ADR-0002, ADR-0007, ADR-0010, ADR-0015, ADR-0042; INV-02, INV-10; review:spikes/licence-inventory; review:spikes/s01-tauri-sidecar, s04-overlay-54k, s05-tla-write-protocol.
