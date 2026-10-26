@@ -9,12 +9,10 @@ from __future__ import annotations
 import http.client
 import json
 import os
-import queue
 import subprocess
 import sys
 import threading
 import time
-from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
@@ -25,11 +23,12 @@ from app import main
 from app.platform.adapters.clock import SystemClock
 from app.platform.adapters.engine_client import EngineClient, EngineCommand, packaged_engine_site
 from app.platform.clock import FrozenClock
-from app.platform.engine_boot import EngineStarting, Level
+from app.platform.engine_boot import EngineStarting
+from app.platform.observability import Event
 
 
-def no_log(level: Level, event: str, fields: Mapping[str, object]) -> None:
-    """An `EventLog` that drops every event."""
+def no_log(event: Event, /, **fields: object) -> None:
+    """An `EventSink` that drops every event."""
 
 
 @pytest.fixture
@@ -165,9 +164,11 @@ def test_wire_builds_the_engine_client_without_starting_it(dirs: tuple[Path, Pat
 
 
 class Sidecar:
-    """`python -m app.main` as the shell runs it, with its stdout handshake and its stderr events read apart."""
+    """`python -m app.main` as the shell runs it: its stdout handshake, its stderr, and its events read from the log
+    file (ARCHITECTURE.md §6A.1; S0039)."""
 
     def __init__(self, dirs: tuple[Path, Path], *extra: str) -> None:
+        self.log_path = dirs[0] / "logs" / "finzytrack.jsonl"
         self.proc = subprocess.Popen(  # noqa: S603 (fixed argv: this interpreter running the entry under test)
             [sys.executable, "-m", "app.main", *argv(*dirs), "--port", "0", *extra],
             stdin=subprocess.DEVNULL,
@@ -176,20 +177,28 @@ class Sidecar:
             text=True,
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         )
-        self.events: queue.Queue[dict[str, object]] = queue.Queue()
         self.raw: list[str] = []
-        threading.Thread(target=self._pump, daemon=True).start()
+        self._pumping = threading.Thread(target=self._pump, daemon=True)
+        self._pumping.start()
 
     def _pump(self) -> None:
         assert self.proc.stderr is not None
-        for line in self.proc.stderr:
-            self.raw.append(line)
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(event, dict):
-                self.events.put(cast("dict[str, object]", event))
+        self.raw.extend(self.proc.stderr)
+
+    def stderr_after_exit(self) -> str:
+        """All the process wrote to stderr; call once it has exited."""
+        self._pumping.join(DEADLINE)
+        return "".join(self.raw)
+
+    def events(self) -> list[dict[str, object]]:
+        """The whole lines of the log file so far."""
+        if not self.log_path.exists():
+            return []
+        out: list[dict[str, object]] = []
+        for line in self.log_path.read_text(encoding="utf-8").splitlines(keepends=True):
+            if line.endswith("\n"):
+                out.append(cast("dict[str, object]", json.loads(line)))
+        return out
 
     def handshake(self) -> int:
         assert self.proc.stdout is not None
@@ -199,14 +208,13 @@ class Sidecar:
 
     def event(self, name: str, timeout: float = DEADLINE) -> dict[str, object]:
         end = time.monotonic() + timeout
-        while (left := end - time.monotonic()) > 0:
-            try:
-                event = self.events.get(timeout=left)
-            except queue.Empty:
-                break
-            if event.get("event") == name:
-                return event
-        pytest.fail(f"no {name} event within {timeout} s; stderr: {''.join(self.raw)}")
+        tick = threading.Event()
+        while time.monotonic() < end:
+            for event in self.events():
+                if event.get("event") == name:
+                    return event
+            tick.wait(0.05)
+        pytest.fail(f"no {name} event within {timeout} s; log: {self.events()}; stderr: {''.join(self.raw)}")
 
     def stop(self) -> int:
         """SIGTERM, as the shell's exit and the harness stop it."""
@@ -289,9 +297,102 @@ def test_the_handshake_does_not_wait_for_the_engine(tmp_path: Path, dirs: tuple[
         handshake_at = time.monotonic() - began
         stderr_line = sidecar.event("engine.stderr")
         assert stderr_line["source"] == "engine"
-        assert stderr_line["line"] == "slow stand-in: waiting"
+        # BL-0088: the engine's stderr is untrusted text, redacted outside debug mode.
+        assert stderr_line["line"] == f"<untrusted len={len('slow stand-in: waiting')}>"
+        assert "slow stand-in" not in sidecar.log_path.read_text(encoding="utf-8")
         sidecar.event("engine.ready")
         ready_at = time.monotonic() - began
         assert ready_at - handshake_at > 2.0, (handshake_at, ready_at)
     finally:
         sidecar.stop()
+
+
+# -- The structured log (S0039; BL-0088; ARCHITECTURE.md §6A.1) -------------------------------------------------
+
+
+def test_the_session_id_comes_from_the_shell_or_is_made_per_launch(dirs: tuple[Path, Path]) -> None:
+    assert main.parse_args(argv(*dirs, "--session-id", "0f3c2a1b-from-shell")).session_id == "0f3c2a1b-from-shell"
+    assert main.parse_args(argv(*dirs)).session_id is None
+
+
+@pytest.mark.parametrize("bad", ["short", "has space here", "a" * 65, "Assets:Bank:Checking"])
+def test_a_bad_session_id_is_refused(dirs: tuple[Path, Path], bad: str) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main.parse_args(argv(*dirs, "--session-id", bad))
+    assert exc.value.code == 2
+
+
+def test_the_sidecars_events_go_to_the_log_file_with_its_session_and_never_to_stderr(
+    tmp_path: Path, dirs: tuple[Path, Path]
+) -> None:
+    empty = tmp_path / "no-engine"
+    empty.mkdir()
+    sidecar = Sidecar(dirs, "--engine-venv", str(empty), "--session-id", "0f3c2a1b-from-shell")
+    try:
+        sidecar.handshake()
+        failed = sidecar.event("engine.start_failed")
+        assert failed["session_id"] == "0f3c2a1b-from-shell"
+        assert str(failed["detail"]).startswith("<text len=")  # free text, shown only in debug mode
+        assert str(empty) not in sidecar.log_path.read_text(encoding="utf-8")
+    finally:
+        assert sidecar.stop() == 0
+    closed = sidecar.event("engine.closed")
+    assert closed["session_id"] == "0f3c2a1b-from-shell"
+    assert '"event"' not in sidecar.stderr_after_exit(), "an event reached stderr"
+
+
+def test_a_generated_session_id_is_the_same_on_every_line_of_a_launch(tmp_path: Path, dirs: tuple[Path, Path]) -> None:
+    empty = tmp_path / "no-engine"
+    empty.mkdir()
+    sidecar = Sidecar(dirs, "--engine-venv", str(empty))
+    try:
+        sidecar.handshake()
+        sidecar.event("engine.start_failed")
+    finally:
+        sidecar.stop()
+    sidecar.event("engine.closed")
+    ids = {e["session_id"] for e in sidecar.events()}
+    assert len(ids) == 1
+    (only,) = ids
+    assert isinstance(only, str)
+    assert len(only) == 32
+
+
+def test_the_sidecar_refuses_to_start_when_its_log_folder_leads_outside(
+    tmp_path: Path, dirs: tuple[Path, Path]
+) -> None:
+    outside = tmp_path / "synced"
+    outside.mkdir()
+    (dirs[0] / "logs").symlink_to(outside, target_is_directory=True)
+    r = subprocess.run(  # noqa: S603 (fixed argv: this interpreter running the entry under test)
+        [sys.executable, "-m", "app.main", *argv(*dirs), "--port", "0"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=DEADLINE,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        check=False,
+    )
+    assert r.returncode == 2, r.stderr
+    assert "FT_READY" not in r.stdout
+    assert "log" in r.stderr
+    assert list(outside.iterdir()) == []
+
+
+def test_an_exception_that_leaves_main_is_logged_as_its_type_and_never_printed(dirs: tuple[Path, Path]) -> None:
+    """The port is taken, so the bind fails inside `main`: the traceback (which would quote source lines and the
+    error's message) goes to the log as type and code locations only, and stderr stays empty."""
+    taken = main.bind(0)
+    try:
+        port = main.bound_address(taken)[1]
+        sidecar = Sidecar(dirs, "--port", str(port), "--engine-venv", str(dirs[0]))
+        code = sidecar.proc.wait(timeout=DEADLINE)
+    finally:
+        taken.server_close()
+    assert code == 1
+    uncaught = sidecar.event("app.uncaught")
+    assert uncaught["thread"] == "MainThread"
+    exception = cast("dict[str, object]", uncaught["exception"])
+    assert exception["type"] == "OSError"
+    assert set(exception) == {"type", "at"}
+    assert sidecar.stderr_after_exit() == ""

@@ -454,9 +454,12 @@ class EngineTest(EnvMixin):
             with self.subTest(pid=pid):
                 self.assertIsNone(harness.engine_state(event_line("engine.ready", pid=pid)))
 
-    def wait(self, text: str, alive: bool = True, timeout: float = 0.3) -> int:
-        log = self.base / "sidecar.log"
-        log.write_text(text)
+    def wait(self, text: str | None, alive: bool = True, timeout: float = 0.3) -> int:
+        log = self.base / "app-local-data" / "logs" / "finzytrack.jsonl"
+        log.unlink(missing_ok=True)
+        if text is not None:
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text(text)
         proc = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()" if alive else "pass"],  # noqa: S603
                                 stdin=subprocess.PIPE)
         try:
@@ -468,6 +471,11 @@ class EngineTest(EnvMixin):
                 proc.stdin.close()
             proc.wait(timeout=10)
 
+    def test_the_engine_verdict_is_read_from_the_sidecars_log_file(self) -> None:
+        dirs = harness.Dirs(self.base / "home", self.base / "app-local-data", self.base / "app-cache",
+                            self.base / "workspace")
+        self.assertEqual(harness.log_file(dirs), self.base / "app-local-data" / "logs" / "finzytrack.jsonl")
+
     def test_wait_for_engine_returns_the_engine_pid(self) -> None:
         self.assertEqual(self.wait(event_line("engine.ready", pid=4242)), 4242)
 
@@ -475,6 +483,7 @@ class EngineTest(EnvMixin):
         cases = {
             "failed": (event_line("engine.start_failed", kind="start_failed", detail="x"), True),
             "no verdict in time": (event_line("engine.stderr", line="still starting"), True),
+            "no log file yet": (None, True),
         }
         for name, (text, alive) in cases.items():
             with self.subTest(case=name), self.assertRaises(harness.Refused):
@@ -525,7 +534,9 @@ class EndToEndTest(EnvMixin):
             conn.request("GET", "/v1/models")
             self.assertEqual(conn.getresponse().status, 200)
             conn.close()
-            engine = harness.engine_state((root / "sidecar.log").read_text())
+            # S0039: the sidecar's events are in its structured log, not on its stderr.
+            self.assertNotIn('"engine.ready"', (root / "sidecar.log").read_text())
+            engine = harness.engine_state((root / "app-local-data" / harness.LOG_FILE).read_text())
             assert engine is not None and engine[0] == "ready", engine
             engine_pid = engine[1]
             assert isinstance(engine_pid, int)

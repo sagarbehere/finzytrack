@@ -99,7 +99,7 @@ def report_packaged() -> dict[str, object]:
 
 
 def main() -> int:
-    print(json.dumps(report_packaged()))
+    sys.stdout.write(json.dumps(report_packaged()) + "\n")
     return 0
 
 

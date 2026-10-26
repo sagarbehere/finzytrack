@@ -22,7 +22,8 @@ The checks remove whole classes of risk (EP-30) rather than modelling paths:
 - Processes: only the `Popen` handles this run created are ever signalled. The engine is the sidecar's child: the
   sidecar closes it when stopped (SIGTERM), and it also ends on its own when the sidecar is gone.
 - Engine: a run whose sidecar reports `engine.start_failed`, exits, or reports no engine verdict in time is
-  refused; the verdict is read from the sidecar's stderr events (`app.platform.adapters.stderr_log`).
+  refused; the verdict is read from the sidecar's structured log, `<app-local-data>/logs/finzytrack.jsonl`
+  (ARCHITECTURE.md §6A.1; S0039). Its text fields are redacted there, so a refusal names the failure's kind only.
 Exit status: 0 after a clean stop, 2 when refused or when a step failed.
 """
 
@@ -55,6 +56,7 @@ BACKEND = REPO / "backend"
 ENGINE_VENV = REPO / "engine" / ".venv"
 # Above the engine client's longest start (RestartPolicy.longest_start: 8 s backoff + 15 s handshake).
 ENGINE_TIMEOUT_S = 60.0
+LOG_FILE = Path("logs") / "finzytrack.jsonl"  # the sidecar's structured log, under its --app-local-data
 sys.path.insert(0, str(REPO / "scripts" / "oracle"))
 
 import copies  # noqa: E402  (the shared copy guards, stdlib only)
@@ -238,8 +240,12 @@ def require_backend_python() -> None:
         raise Refused(f"{engine} is missing; run `uv sync --locked` in engine/ first")
 
 
+def log_file(dirs: Dirs) -> Path:
+    return dirs.app_local_data / LOG_FILE
+
+
 def engine_state(log_text: str) -> tuple[str, int | str] | None:
-    """The sidecar's first engine verdict in its stderr events: ("ready", pid) or ("failed", reason); None while
+    """The sidecar's first engine verdict in its log: ("ready", pid) or ("failed", reason); None while
     there is none. Only whole lines count (the last one may still be being written)."""
     for line in log_text.splitlines(keepends=True):
         if not line.endswith("\n"):
@@ -266,7 +272,7 @@ def wait_for_engine(log: Path, proc: subprocess.Popen[Any], timeout: float = ENG
     end = time.monotonic() + timeout
     tick = threading.Event()
     while True:
-        state = engine_state(log.read_text(encoding="utf-8", errors="replace"))
+        state = engine_state(log.read_text(encoding="utf-8", errors="replace") if log.exists() else "")
         if state is not None:
             kind, value = state
             if kind == "ready" and isinstance(value, int):
@@ -541,7 +547,7 @@ def main(argv: list[str] | None = None) -> int:
             proc = kids.spawn(backend_argv(root, dirs, frozen), cwd=root.path, env=env, stdin=subprocess.DEVNULL,
                               stdout=subprocess.PIPE, stderr=log, text=True)
         port, version = read_handshake(proc, timeout=30)
-        wait_for_engine(root.path / "sidecar.log", proc)
+        wait_for_engine(log_file(dirs), proc)
         probe(port)
         print(READY + json.dumps({
             "backend": f"http://{LOOPBACK}:{port}", "llm": f"http://{LOOPBACK}:{stub.port}/v1",

@@ -3,23 +3,20 @@
 The composition root starts the engine on a thread while the sidecar binds its port and prints its handshake, so a
 slow or missing engine delays only itself. The outcome is a state, never an exception: `EngineStarting`, then
 `EngineReady` (the handshake's facts and the engine's pid) or `EngineDown` (the typed failure). Each outcome is
-logged once as an event (`engine.ready`, `engine.start_failed`). A later request restarts a stopped engine through
-the client's own supervision (`RestartPolicy`); this module only reports the first start. The future `/api/boot` and
-`/health` read `state`.
+logged once as its registered event (`engine.ready`, `engine.start_failed`; ARCHITECTURE.md §6A). A later request
+restarts a stopped engine through the client's own supervision (`RestartPolicy`); this module only reports the first
+start. The future `/api/boot` and `/health` read `state`.
 """
 
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
 
 from app.platform.engine import EngineFailure, EngineInfo, EnginePort
-
-type Level = Literal["debug", "info", "warning", "error"]
-type EventLog = Callable[[Level, str, Mapping[str, object]], None]
-"""Writes one event: its level, its name and its own fields (ARCHITECTURE.md §6A line shape)."""
+from app.platform.observability import EventSink
+from app.platform.observability.events import ENGINE_READY, ENGINE_START_FAILED
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +41,7 @@ type EngineState = EngineStarting | EngineReady | EngineDown
 class EngineBoot:
     """The engine's first start and its reported state. Owned by the user container (`state_registry`)."""
 
-    def __init__(self, engine: EnginePort, log: EventLog, pid: Callable[[], int | None] = lambda: None) -> None:
+    def __init__(self, engine: EnginePort, log: EventSink, pid: Callable[[], int | None] = lambda: None) -> None:
         self._engine = engine
         self._log = log
         self._pid = pid
@@ -61,18 +58,15 @@ class EngineBoot:
         out = self._engine.start()
         if isinstance(out, EngineFailure):
             state: EngineState = EngineDown(out)
-            self._log("error", "engine.start_failed", {"kind": out.kind, "detail": out.detail})
+            self._log(ENGINE_START_FAILED, kind=out.kind, detail=out.detail)
         else:
             state = EngineReady(out, self._pid())
             self._log(
-                "info",
-                "engine.ready",
-                {
-                    "pid": state.pid,
-                    "protocol": out.protocol,
-                    "engine_version": out.engine_version,
-                    "beancount_version": out.beancount_version,
-                },
+                ENGINE_READY,
+                pid=state.pid,
+                protocol=out.protocol,
+                engine_version=out.engine_version,
+                beancount_version=out.beancount_version,
             )
         with self._lock:
             self._state = state

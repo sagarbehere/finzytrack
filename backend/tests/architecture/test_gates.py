@@ -115,3 +115,22 @@ def test_dates_from_an_injected_clock_pass(tmp_path: Path) -> None:
     # Must pass: the allowed shape, a date derived from a value handed in.
     source = "from datetime import date, datetime\n\n\ndef today_from(now: datetime) -> date:\n    return now.date()\n"
     assert ruff_codes(tmp_path, source).strip() in ("", "All checks passed!")
+
+
+# EP-15 (S0039): no print and no f-string log calls; events go through the registered-event log.
+@pytest.mark.parametrize(
+    ("source", "code"),
+    [
+        ("print('hello')\n", "T201"),
+        ("from pprint import pprint\n\npprint({})\n", "T203"),
+        ("import logging\n\nx = 1\nlogging.getLogger('a').info(f'payee {x}')\n", "G004"),
+    ],
+)
+def test_print_and_f_string_log_calls_are_refused(tmp_path: Path, source: str, code: str) -> None:
+    assert code in ruff_codes(tmp_path, source, layer="platform")
+
+
+def test_writing_to_a_stream_passes(tmp_path: Path) -> None:
+    # Must pass: the handshake line is written to stdout without print (ARCHITECTURE.md §5).
+    source = "import sys\n\nsys.stdout.write('FT_READY {}\\n')\n"
+    assert ruff_codes(tmp_path, source, layer="platform").strip() in ("", "All checks passed!")

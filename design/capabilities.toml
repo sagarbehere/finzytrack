@@ -5165,8 +5165,8 @@ release_blocking = "yes"
 doc = "reference/backups-and-logs.md#logs"
 legacy_entry = "`logging_context.py`; `app/main.py` logging setup"
 demo = "no"
-backlog = ["L11-03", "L11.M-9"]
-adrs = []
+backlog = ["L11-03", "L11.M-9", "BL-0093"]
+adrs = ["ADR-0039"]
 code = []
 tests = []
 

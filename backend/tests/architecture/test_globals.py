@@ -11,11 +11,12 @@ Each rule sits beside the planted case that must not pass (EP-29).
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path
 
 import pytest
 
+from app.platform.observability.events import Event, Field
 from app.platform.state_registry import REGISTRY, StateEntry
 
 SRC = Path(__file__).resolve().parents[2] / "src"
@@ -24,8 +25,9 @@ IMMUTABLE_CALLS = frozenset({"re.compile", "NewType", "TypeVar", "ParamSpec", "T
 # Immutable only when every element is: `tuple([[]])` holds a list.
 CONTAINER_CALLS = frozenset({"frozenset", "tuple"})
 # Frozen, slotted records of this tree, immutable only when every argument is (S0035: the registry's own entries,
-# `StateEntry`, a frozen dataclass of strings; before its first entry the registry was `()`).
-RECORD_CALLS = frozenset({"StateEntry"})
+# `StateEntry`, a frozen dataclass of strings; before its first entry the registry was `()`. S0039: the event
+# registry's `Event` and `Field`, frozen dataclasses of strings, enums, frozensets and tuples of `Field`).
+RECORD_CALLS = frozenset({"StateEntry", "Event", "Field"})
 # In a class body, a per-instance default is not class state.
 CLASS_CALLS = frozenset({"field", "dataclasses.field"})
 # Memoizing decorators by their last name part, wherever imported from (functools, cachetools, ...).
@@ -303,6 +305,11 @@ def test_bad_registry_entries_fail(entries: tuple[StateEntry, ...], problem: str
         "_r = (StateEntry('m', make(), 'UserContainer', '1', 'x'),)\n",
         "_r = Entry('m', 'n', 'UserContainer', '1', 'x')\n",
         "_x = ({},)[0]\n",
+        # S0039: an event or field of the registry holding a mutable value or an unknown call is state.
+        "E = Event('a.b', 'info', 'platform', [Field('x', Kind.ID)])\n",
+        "E = Event('a.b', 'info', 'platform', (Field('x', Kind.ENUM, {'a'}),))\n",
+        "E = Event('a.b', 'info', 'platform', (Field('x', Kind.ENUM, values=set()),))\n",
+        "E = Event('a.b', 'info', make(), ())\n",
     ],
 )
 def test_planted_state_is_found(source: str) -> None:
@@ -327,6 +334,7 @@ def test_planted_state_is_found(source: str) -> None:
         "def f():\n    local = {}\n    return local\n",
         "SECONDS = 60 * 60\n",
         "REGISTRY = (StateEntry('m', 'n', 'UserContainer', 'one ' 'process', eviction='close()'),)\n",
+        "E = Event('a.b', 'info', 'platform', (Field('k', Kind.ENUM, frozenset({'a', 'b'})),), source='engine')\n",
     ],
 )
 def test_immutable_values_pass(source: str) -> None:
@@ -338,3 +346,14 @@ def test_a_registered_name_passes_and_an_unregistered_one_does_not() -> None:
     found = scan("_sem = make_semaphore()\n_other = []\n", "app.platform.gates")
     entry = StateEntry("app.platform.gates", "_sem", "process", "2 slots", "none (fixed size)")
     assert [f.name for f in unregistered(found, (entry,))] == ["_other"]
+
+
+def test_the_record_calls_are_frozen_slotted_dataclasses() -> None:
+    """RECORD_CALLS trusts a call by its name; each name must be a frozen, slotted record of this tree."""
+    records = {"StateEntry": StateEntry, "Event": Event, "Field": Field}
+    assert set(records) == RECORD_CALLS
+    for name, cls in records.items():
+        assert is_dataclass(cls), name
+        assert getattr(cls, "__dataclass_params__").frozen, name  # noqa: B009 (not in the class's static type)
+        assert hasattr(cls, "__slots__"), name
+        assert fields(cls), name

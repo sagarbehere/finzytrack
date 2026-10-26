@@ -1,7 +1,7 @@
 """The composition root and main sidecar entry (ARCHITECTURE.md §2.2 `main.py`, §5 the shell interface).
 
     python -m app.main --app-local-data DIR --app-cache DIR [--port N] [--workspace DIR] [--frozen-clock ISO]
-                       [--engine-venv DIR]
+                       [--engine-venv DIR] [--session-id ID]
 
 It binds a free loopback port (`--port 0`) and prints one handshake line, `FT_READY {"port":…,"version":…}`, on
 stdout. `--frozen-clock` (an instant with its UTC offset) is test-only: the acceptance harness freezes the backend's
@@ -10,8 +10,11 @@ clock through it (S0030; review:27 §1(d)), since the CLI is the one channel bet
 The ledger engine (ADR-0054; S0038) starts at boot on its own thread, in parallel with the bind and the handshake;
 its outcome is a state (`app.platform.engine_boot`) and an event, never a crash, and the sidecar answers either way.
 The engine is the packaged one beside this interpreter (`<prefix>/../engine/site-packages`, ADR-0056) unless
-`--engine-venv` (development and tests) names a virtual environment that has it. Events go to stderr as JSON lines
-(`app.platform.adapters.stderr_log`), the engine's own stderr lines among them. On exit, also on SIGTERM, the
+`--engine-venv` (development and tests) names a virtual environment that has it. Events go to the structured log,
+`<app-local-data>/logs/finzytrack.jsonl` (`app.platform.observability`; ARCHITECTURE.md §6A), the engine's own
+stderr lines among them, redacted; other libraries' records, warnings and uncaught exceptions too. Every line carries
+the launch's `--session-id` (the shell's), or one made here. A log path that leads outside the app-local-data folder
+or into the workspace is refused: the process exits with code 2 before the handshake. On exit, also on SIGTERM, the
 engine is closed before the process ends.
 
 Until the API edge exists (FastAPI and uvicorn, `/api/boot`: L1-07, L10-09, M2) the server has no routes and
@@ -32,11 +35,22 @@ from pathlib import Path
 from types import FrameType
 from typing import Any, override
 
+from app.domain.text import UntrustedText
 from app.platform.adapters.clock import SystemClock
 from app.platform.adapters.engine_client import EngineClient, EngineCommand, packaged_engine_site
-from app.platform.adapters.stderr_log import StderrLog
 from app.platform.clock import Clock, FrozenClock
-from app.platform.engine_boot import EngineBoot, EventLog
+from app.platform.engine_boot import EngineBoot
+from app.platform.observability import (
+    EventLog,
+    EventSink,
+    LogContext,
+    LogRefusal,
+    Roots,
+    log_file,
+    new_session_id,
+    valid_session_id,
+)
+from app.platform.observability.events import ENGINE_CLOSED, ENGINE_STDERR
 
 LOOPBACK = "127.0.0.1"
 DISTRIBUTION = "finzytrack-backend"
@@ -50,6 +64,7 @@ class Args:
     workspace: Path | None
     frozen_clock: datetime | None
     engine_venv: Path | None
+    session_id: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +106,13 @@ def _instant(text: str) -> datetime:
     return at
 
 
+def _session_id(text: str) -> str:
+    if not valid_session_id(text):
+        msg = f"{text!r} is not a session id (8 to 64 letters, digits or hyphens)"
+        raise argparse.ArgumentTypeError(msg)
+    return text
+
+
 def parse_args(argv: list[str] | None) -> Args:
     parser = argparse.ArgumentParser(prog="app.main", description="Finzytrack main sidecar")
     parser.add_argument("--app-local-data", required=True, type=_folder)
@@ -101,8 +123,9 @@ def parse_args(argv: list[str] | None) -> Args:
     parser.add_argument(
         "--engine-venv", type=_folder, help="development and tests: run the engine from this virtual environment"
     )
+    parser.add_argument("--session-id", type=_session_id, help="this launch's id, from the shell (made here if absent)")
     ns = parser.parse_args(argv)
-    return Args(ns.app_local_data, ns.app_cache, ns.port, ns.workspace, ns.frozen_clock, ns.engine_venv)
+    return Args(ns.app_local_data, ns.app_cache, ns.port, ns.workspace, ns.frozen_clock, ns.engine_venv, ns.session_id)
 
 
 def engine_command(args: Args) -> EngineCommand:
@@ -112,11 +135,11 @@ def engine_command(args: Args) -> EngineCommand:
     return EngineCommand.for_packaged(Path(sys.executable), packaged_engine_site(Path(sys.prefix)))
 
 
-def wire(args: Args, log: EventLog) -> Wiring:
+def wire(args: Args, log: EventSink) -> Wiring:
     """Build, never start: the engine starts in `main` (S0038)."""
 
     def engine_stderr(line: str) -> None:
-        log("info", "engine.stderr", {"source": "engine", "line": line})
+        log(ENGINE_STDERR, line=UntrustedText(line))  # the engine's stderr can carry ledger text (BL-0088)
 
     engine = EngineClient(engine_command(args), on_stderr=engine_stderr)
     return Wiring(
@@ -128,6 +151,19 @@ def wire(args: Args, log: EventLog) -> Wiring:
 
 def handshake_line(port: int, ver: str) -> str:
     return "FT_READY " + json.dumps({"port": port, "version": ver}, separators=(",", ":"))
+
+
+def open_log(args: Args, app_version: str) -> EventLog | LogRefusal:
+    """The structured log, before anything logs. Its timestamps are real time, even under `--frozen-clock`."""
+    path = log_file(args.app_local_data, args.workspace)
+    if isinstance(path, LogRefusal):
+        return path
+    context = LogContext(session_id=args.session_id or new_session_id(), app_version=app_version)
+    roots = Roots(args.app_local_data.resolve(), args.app_cache.resolve())
+    try:
+        return EventLog(path, context=context, clock=SystemClock(), roots=roots)
+    except OSError:
+        return LogRefusal("the log file cannot be opened")
 
 
 class _NoRoutes(BaseHTTPRequestHandler):
@@ -155,21 +191,28 @@ def _stop(signum: int, frame: FrameType | None) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     app_version = version(DISTRIBUTION)
-    log = StderrLog(sys.stderr, SystemClock(), app_version)
+    log = open_log(args, app_version)
+    if isinstance(log, LogRefusal):
+        sys.stderr.write(f"app.main: refused: {log.reason}\n")
+        return 2
+    # Kept until the process ends: an exception that leaves `main` is logged by the log's hook, never printed. The
+    # handler is closed by logging's own shutdown at exit; every line is already flushed.
+    log.capture_process()
     wiring = wire(args, log)  # nothing reads the clock yet; the first use case receives it from here
     signal.signal(signal.SIGTERM, _stop)
     try:
         wiring.boot.start_in_background()
         server = bind(args.port)
         try:
-            print(handshake_line(bound_address(server)[1], app_version), flush=True)
+            sys.stdout.write(handshake_line(bound_address(server)[1], app_version) + "\n")
+            sys.stdout.flush()
             server.serve_forever()
         finally:
             server.server_close()
     finally:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)  # the close below is bounded (RestartPolicy) and must finish
         wiring.engine.close()
-        log("info", "engine.closed", {})
+        log(ENGINE_CLOSED)
     return 0
 
 

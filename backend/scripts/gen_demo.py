@@ -108,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         ledger = generate(anchor, Size(args.size), default_fragments())  # fully, before anything is written
         write_all(out, {**ledger.files, GENERATED_FOR: ledger.generated_for_json()})
     except (Refused, ValueError, OSError) as e:
-        print(f"gen_demo: refused: {e}", file=sys.stderr)
+        sys.stderr.write(f"gen_demo: refused: {e}\n")
         return 2
     return 0
 

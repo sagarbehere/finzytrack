@@ -42,4 +42,12 @@ REGISTRY: tuple[StateEntry, ...] = (
         "one EngineState value (starting, ready with its handshake facts and pid, or down with its failure)",
         "replaced once when the first start ends; dropped with the user container",
     ),
+    StateEntry(
+        "app.platform.observability.log",
+        "EventLog",
+        "UserContainer",  # S0039: built by the composition root before anything logs, one per launch, closed last
+        "one open log file and its handler lock; no buffered lines; on disk max_bytes x (backups + 1) (LogSettings)",
+        "kept until the process ends (logging closes the handler at exit), after the engine is closed; the file "
+        "rotates by size",
+    ),
 )

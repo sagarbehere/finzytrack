@@ -79,6 +79,12 @@ def test_contracts_hold_on_the_tree() -> None:
         ("app.content.planted", "import os\n", "content is pure"),
         ("app.content.demo.planted", "import app.platform\n", "content is pure"),
         ("app.content.demo.planted", "import app.boot.lifecycle\n", "content is pure"),
+        # EP-15, EP-26 (S0039): only the registered-event log writes log lines; nothing else reaches a handler.
+        ("app.planted", "import logging\n", "One logger"),
+        ("app.platform.adapters.planted", "from logging import getLogger\n", "One logger"),
+        ("app.platform.planted", "import structlog\n", "One logger"),
+        ("app.domain.planted", "from structlog.contextvars import bind_contextvars\n", "One logger"),
+        ("app.platform.observability_twin", "import logging.handlers\n", "One logger"),
     ],
 )
 def test_planted_violation_breaks_its_contract(tree: Path, module: str, text: str, contract: str) -> None:
@@ -88,7 +94,8 @@ def test_planted_violation_breaks_its_contract(tree: Path, module: str, text: st
     r = lint_imports(tree)
     assert r.returncode != 0, f"planted {module}: {text!r} passed"
     # Every contract's name is printed with KEPT or BROKEN; the planted one must be the one that broke.
-    broken = [line for line in r.stdout.splitlines() if line.rstrip().endswith("BROKEN")]
+    # " BROKEN" may be followed by "(n ignored imports)" (S0039: the one-logger contract ignores its own package).
+    broken = [line for line in r.stdout.splitlines() if " BROKEN" in line]
     assert any(contract in line for line in broken), r.stdout
 
 
@@ -145,6 +152,7 @@ def test_allowed_direction_passes(tree: Path) -> None:
     plant(tree, "app.boot.lifecycle", "import app.workspaces\n")  # §2.3: boot may import kernel packages
     plant(tree, "app.workspaces.registry", "import app.mirror\nimport app.platform\n")  # §2.3: may import mirror
     plant(tree, "app.content.demo.planted", "import app.domain\nimport hashlib\n")  # §2.3: content may use domain
+    plant(tree, "app.platform.observability.planted", "import logging\nimport structlog\n")  # its one home
     r = lint_imports(tree)
     assert r.returncode == 0, r.stdout + r.stderr
 

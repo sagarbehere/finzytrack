@@ -76,3 +76,16 @@ forbidden_modules =
     random
     secrets
     uuid
+
+[importlinter:contract:one-logger]
+# Only app.platform.observability imports logging or structlog: every line goes through the registry and redaction.
+name = One logger (ARCHITECTURE.md §6A, EP-15, EP-26)
+type = forbidden
+source_modules =
+    app
+forbidden_modules =
+    logging
+    structlog
+ignore_imports =
+    app.platform.observability.* -> logging
+    app.platform.observability.* -> structlog
