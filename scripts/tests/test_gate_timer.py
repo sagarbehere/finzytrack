@@ -26,13 +26,46 @@ REPO = Path(__file__).resolve().parents[2]
 
 @contextlib.contextmanager
 def signal_handlers_kept():
-    """`gate_timer.main` installs SIGTERM/SIGHUP handlers; an in-process call must not leave them in this process."""
-    kept = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGHUP)}
+    """`gate_timer.main` installs SIGTERM/SIGHUP/SIGINT handlers; an in-process call must not leave them here."""
+    kept = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)}
     try:
         yield
     finally:
         for sig, handler in kept.items():
             signal.signal(sig, handler)
+
+
+BACKSTOP_S = 60.0  # a hang backstop only: the waits below end on their condition (BL-0098)
+
+
+def wait_until(condition, what: str) -> None:
+    """Poll `condition` until it holds; fail only past the hang backstop."""
+    deadline = time.monotonic() + BACKSTOP_S
+    while not condition():
+        if time.monotonic() > deadline:
+            raise AssertionError(f"{what} (still after the {BACKSTOP_S:.0f} s backstop; hung?)")
+        time.sleep(0.05)
+
+
+def running(pid: int) -> bool:
+    """The process exists and has not ended. An ended process its new parent has not reaped yet (a zombie) does not
+    count, though `os.kill(pid, 0)` alone sees it as alive (BL-0098)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False)
+    return bool(state.stdout.strip()) and not state.stdout.strip().startswith("Z")
+
+
+def ended_or_stopped(test: unittest.TestCase, pid: int, what: str) -> None:
+    """Wait until `pid` has ended; past the backstop, kill it (this test started it) and fail."""
+    try:
+        wait_until(lambda: not running(pid), what)
+    except AssertionError as exc:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+        test.fail(str(exc))
 
 
 class Limits(unittest.TestCase):
@@ -104,16 +137,8 @@ class RunCheck(unittest.TestCase):
         self.assertEqual(out.status, "hung")
         self.assertFalse(out.passed)
         self.assertLess(time.monotonic() - start, 30)
-        grandchild = int(pid_file.read_text())
-        for _ in range(50):  # the grandchild was killed with the group; it may take a moment to be reaped
-            try:
-                os.kill(grandchild, 0)
-            except ProcessLookupError:
-                break
-            time.sleep(0.1)
-        else:
-            os.kill(grandchild, 9)
-            self.fail("the hung check's child kept running")
+        # killed with the group; its parent died too, so a new parent reaps it, which may take a moment (BL-0098)
+        ended_or_stopped(self, int(pid_file.read_text()), "the hung check's child kept running")
 
     def test_output_is_captured(self) -> None:
         out = gt.run_check([PY, "-c", "print('hello'); import sys; print('err', file=sys.stderr)"], self.dir, 30, True)
@@ -310,7 +335,9 @@ class SizeDependent(unittest.TestCase):
 
 class Signals(unittest.TestCase):
     """S0034 verifier round 2 F3: an aborted push (Ctrl-C, SIGTERM, a closed terminal) stops the check's process
-    group, which runs in its own session and so gets no terminal signal itself, and the timer fails."""
+    group, which runs in its own session and so gets no terminal signal itself, and the timer fails. BL-0098 (S0043):
+    the waits end on a condition with a hang backstop, never after a fixed time, and a signal that lands while the
+    check is starting or being stopped still stops it."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -320,29 +347,75 @@ class Signals(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_a_signal_to_the_timer_stops_the_check_and_fails(self) -> None:  # @regression-guard
+    def test_a_signal_to_the_timer_stops_the_check_and_fails(self) -> None:  # @regression-guard (reworked, BL-0098)
         for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             with self.subTest(sig.name):
                 pid_file = Path(self.tmp.name) / f"{sig.name}.pid"
                 code = f"import os, time; open({str(pid_file)!r}, 'w').write(str(os.getpid())); time.sleep(120)"
                 timer = subprocess.Popen([PY, str(Path(gt.__file__).resolve()), "run", "pre-push", "sig", PY, "-c",
                                           code], cwd=self.repo, stderr=subprocess.DEVNULL)
-                for _ in range(300):
-                    if pid_file.exists() and pid_file.read_text():
-                        break
-                    time.sleep(0.05)
+                wait_until(lambda: timer.poll() is not None or (pid_file.exists() and pid_file.read_text()),
+                           "the check never started")
+                self.assertIsNone(timer.poll(), "the timer ended before its check started")
                 child = int(pid_file.read_text())
                 timer.send_signal(sig)
-                self.assertNotEqual(timer.wait(timeout=60), 0)
-                for _ in range(100):
-                    try:
-                        os.kill(child, 0)
-                    except ProcessLookupError:
-                        break
-                    time.sleep(0.05)
-                else:
-                    os.kill(child, signal.SIGKILL)
-                    self.fail(f"{sig.name}: the check kept running")
+                self.assertNotEqual(timer.wait(timeout=BACKSTOP_S), 0)
+                ended_or_stopped(self, child, f"{sig.name}: the check kept running after the timer exited")
+
+    def test_a_signal_while_the_check_is_starting_still_stops_it(self) -> None:
+        """The signal lands after the check's process exists but before `run_check` holds it (under load the check
+        can start and write its pid before the timer returns from Popen)."""
+        real = subprocess.Popen
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            started: list[subprocess.Popen] = []
+
+            def popen(*args, sig=sig, started=started, **kwargs):
+                started.append(real(*args, **kwargs))
+                os.kill(os.getpid(), sig)
+                return started[-1]
+
+            with self.subTest(sig.name), signal_handlers_kept():
+                gt.stop_checks_on_signals()
+                try:
+                    with mock.patch.object(gt.subprocess, "Popen", popen), self.assertRaises(KeyboardInterrupt):
+                        gt.run_check([PY, "-c", "import time; time.sleep(120)"], self.repo, None, True)
+                    self.assertIsNotNone(started[0].poll(), f"{sig.name}: the check kept running")
+                finally:
+                    for p in started:
+                        if p.poll() is None:
+                            p.kill()
+                            p.wait()
+
+    def test_a_second_signal_while_stopping_does_not_cut_the_stop_short(self) -> None:
+        """A second Ctrl-C or SIGTERM during the stop's grace time: a check that ignores SIGTERM still gets SIGKILL,
+        and the interrupt is not lost."""
+        ready = Path(self.tmp.name) / "ready"
+        code = (f"import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); open({str(ready)!r}, 'w')"
+                f".write('1'); time.sleep(120)")
+        real = os.killpg
+
+        def killpg(pgid: int, sig: int) -> None:
+            real(pgid, sig)
+            if sig == signal.SIGTERM:
+                os.kill(os.getpid(), signal.SIGTERM)
+
+        with signal_handlers_kept():
+            gt.stop_checks_on_signals()
+            proc = subprocess.Popen([PY, "-c", code], start_new_session=True)
+            try:
+                wait_until(lambda: proc.poll() is not None or (ready.exists() and ready.read_text()),
+                           "the check never started")
+                with mock.patch.object(gt.os, "killpg", killpg), mock.patch.object(gt, "GRACE_S", 0.5), \
+                        self.assertRaises(KeyboardInterrupt):
+                    gt.stop_group(proc)
+                try:
+                    self.assertEqual(proc.wait(timeout=BACKSTOP_S), -signal.SIGKILL)
+                except subprocess.TimeoutExpired:
+                    self.fail("the check kept running: the second signal cut the stop short")
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
 
 
 if __name__ == "__main__":

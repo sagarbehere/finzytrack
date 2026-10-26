@@ -122,18 +122,33 @@ def record(history: dict, key: str, seconds: float) -> dict:
     return {**history, key: (greens(history, key) + [round(seconds, 3)])[-KEEP:]}
 
 
+class _Held:
+    """Stop signals that land while a check is being started or stopped (BL-0098). `_interrupted` records them here
+    instead of raising, so an interrupt cannot cut in after the check's process exists but before `run_check` holds
+    it, nor between the stop's SIGTERM and its SIGKILL; each is raised once the check is held or stopped."""
+
+    signals: list[int] | None = None
+
+
 def stop_group(proc: subprocess.Popen) -> None:
-    """Stop the check and everything it started in its process group: SIGTERM, then SIGKILL."""
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        try:
-            os.killpg(proc.pid, sig)
-        except (ProcessLookupError, PermissionError):
-            pass
-        try:
-            proc.wait(timeout=GRACE_S)
-            return
-        except subprocess.TimeoutExpired:
-            continue
+    """Stop the check and everything it started in its process group: SIGTERM, then SIGKILL. A stop signal that lands
+    meanwhile waits until the stop is done, then raises KeyboardInterrupt."""
+    _Held.signals = held = []
+    try:
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(proc.pid, sig)
+            except (ProcessLookupError, PermissionError):
+                pass
+            try:
+                proc.wait(timeout=GRACE_S)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    finally:
+        _Held.signals = None
+    if held:
+        raise KeyboardInterrupt(f"signal {held[0]}")
 
 
 def run_check(cmd: list[str], cwd: Path, timeout: float | None, capture: bool) -> Outcome:
@@ -142,12 +157,21 @@ def run_check(cmd: list[str], cwd: Path, timeout: float | None, capture: bool) -
     out = tempfile.TemporaryFile() if capture else None  # a file, not a pipe: a leftover grandchild cannot block
     start = time.monotonic()
     try:
+        _Held.signals = held = []  # a stop signal from here until the check is held waits (BL-0098)
         try:
             proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=out,
                                     stderr=subprocess.STDOUT if capture else None, start_new_session=True)
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            return Outcome("error", time.monotonic() - start, message=f"could not start: {exc}")
+        except BaseException as exc:
+            _Held.signals = None
+            if held:
+                raise KeyboardInterrupt(f"signal {held[0]}") from exc
+            if isinstance(exc, (OSError, ValueError, subprocess.SubprocessError)):
+                return Outcome("error", time.monotonic() - start, message=f"could not start: {exc}")
+            raise
         try:
+            _Held.signals = None  # from here a stop signal raises inside this try, which stops the check
+            if held:
+                raise KeyboardInterrupt(f"signal {held[0]}")
             rc = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             stop_group(proc)
@@ -243,14 +267,18 @@ def report(repo: Path, hook: str) -> str:
 
 
 def _interrupted(signum: int, _frame) -> None:
+    if _Held.signals is not None:
+        _Held.signals.append(signum)
+        return
     raise KeyboardInterrupt(f"signal {signum}")
 
 
 def stop_checks_on_signals() -> None:
-    """SIGTERM and SIGHUP (a killed or closed hook) raise KeyboardInterrupt, as Ctrl-C does, so `run_check` stops the
-    check's process group on the way out: the check runs in a session of its own and gets no signal itself. Used by
-    `main` and by the Stop hook (S0034 verifier round 2 F4)."""
-    for sig in (signal.SIGTERM, signal.SIGHUP):
+    """SIGTERM and SIGHUP (a killed or closed hook) and SIGINT (Ctrl-C) raise KeyboardInterrupt, so `run_check` stops
+    the check's process group on the way out: the check runs in a session of its own and gets no signal itself. Used
+    by `main` and by the Stop hook (S0034 verifier round 2 F4). A signal while a check starts or stops is held
+    until that is done (`_Held`, BL-0098)."""
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         signal.signal(sig, _interrupted)
 
 

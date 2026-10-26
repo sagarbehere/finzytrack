@@ -300,7 +300,7 @@ Format:
 - Why: the spec answers an owner question about confidence; a row whose test was renamed, or whose backlog row closed without the spec citing the new test, would claim cover that is not there.
 - Expected effect: a slice that closes a backlog row the spec cites (BL-0065, BL-0073, BL-0091 to BL-0097) fails at push until the spec cites the test that closed it.
 - Observed effect: pending.
-- Status: kept (tightening, agent-approved, PROCESS.md §9).
+- Status: kept (tightening, agent-approved, PROCESS.md §9); narrowed by IMP-0032 (S0043): the format rules were dropped, the rules above that keep the spec honest stay.
 
 ## IMP-0031: a review cap never drops a High; findings beyond it go to an Overflow list (2026-10-26)
 - Trigger: owner request. Starting the first area review on `next` (the engine and backend core), the orchestrator capped its report at 15 findings; the owner asked for the rationale ("Curious why we are capping the findings. What's the rationale there?"), and on the answer (a cap forces ranking and bounds fix cost, but a plain cap can silently drop a real finding) decided: "The cap rule should be a standing one for all reviewers".
@@ -310,3 +310,12 @@ Format:
 - Expected effect: no review report drops a finding silently; triage sees the overflow and decides each line.
 - Observed effect: pending (first use: the engine and backend core area review, 2026-10-26).
 - Status: kept (owner decision). Owner approval: "The cap rule should be a standing one for all reviewers" (2026-10-26, in session).
+
+## IMP-0032: the failure-mode spec check keeps its honesty rules and stops policing the Markdown (2026-10-26)
+- Trigger: area review finding, triage approved by the owner: the first area review of the engine and backend core (2026-10-26, finding F11, Low, proportion: the check and its tests, 322 and 337 lines, mostly policed formatting); journal `design/journal/S0043-review-followups.md`.
+- What changed: a check (loosening). `scripts/check_failure_modes.py` keeps: every (program, failure) pair has exactly one row; a row of an unknown program is refused; rows in code fences and HTML comments do not count; every cited test exists inside the repo (with its class when named); every cited backlog row is open with the stated milestone; `same as` names a row of the same program that itself cites a test; every engine transition a row names is in the statechart reference's Transitions table. Dropped: the cell count per program, the row number matching the failure's number, a row ID used twice (the pair rule still refuses two rows for one failure), a refused unknown failure name, the four-word minimum for an `n/a` reason, every cell of a `same as` row repeating it. `scripts/tests/test_check_failure_modes.py`: one must-not-pass per kept rule, a test that the dropped rules no longer refuse, and the real spec passing. Checker 322 to 234 lines, tests 337 to 229.
+- PROCESS.md section: none (the check runs in the existing meta-test step of §6).
+- Why: the spec's value is that what it claims is tested is tested; rules about the table's shape cost upkeep and catch no false claim (a missing failure is still caught by the pair rule).
+- Expected effect: the same 28 rows pass with the same counts; a spec edit that only changes formatting no longer fails the push.
+- Observed effect: pending.
+- Status: kept (loosening, owner-approved). Owner approval, 2026-10-26, in session, on the whole triage of the area review (recorded in `design/inbox/20261026-engine-concurrency-and-cancel.md`): "I agree with all your recommendations." and "The rest of the recommendations can be implemented".
