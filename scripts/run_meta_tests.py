@@ -21,6 +21,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -48,6 +49,8 @@ def _load_gate_timer():
 gate_timer = _load_gate_timer()
 PATTERN = "test*.py"  # unittest discover's default
 MODULE_WIDE = ("setUpModule", "tearDownModule", "load_tests")  # a module with one of these runs in one process
+# unittest's placeholder for a class or module fixture that raised: "setUpClass (module.Class)", "setUpModule (module)"
+FIXTURE_SKIP = re.compile(r"^(setUpClass|setUpModule) \((.+)\)$")
 
 
 def as_unittest_main() -> None:
@@ -79,6 +82,14 @@ def unit_of(test: unittest.TestCase) -> str:
     return f"{module}:{type(test).__qualname__}"
 
 
+def fixture_skipped(kind: str, name: str, test: unittest.TestCase) -> bool:
+    """Whether the `kind` fixture of `name` that raised SkipTest skipped `test`: a setUpModule names the module, a
+    setUpClass `module.Class`."""
+    if kind == "setUpModule":
+        return type(test).__module__ == name
+    return f"{type(test).__module__}.{type(test).__qualname__}" == name
+
+
 def worker(start: Path, unit: str, result_path: Path, verbose: bool) -> int:
     """Run one unit's tests (found by discovering its module's file name) and write what ran to `result_path`."""
     module, _, cls = unit.partition(":")
@@ -90,6 +101,17 @@ def worker(start: Path, unit: str, result_path: Path, verbose: bool) -> int:
         def startTest(self, test: unittest.TestCase) -> None:  # noqa: N802 (unittest's name)
             ran.append(test.id())
             super().startTest(test)
+
+        def addSkip(self, test: unittest.TestCase, reason: str) -> None:  # noqa: N802 (unittest's name)
+            # A setUpClass or setUpModule that raises SkipTest skips its tests without starting them; unittest
+            # passes them as skipped, so they count as run here, but only this unit's tests of that class or module
+            # (S0034 verifier round 2 F6).
+            fixture = FIXTURE_SKIP.match(getattr(test, "description", "")) \
+                if isinstance(test, unittest.suite._ErrorHolder) else None  # noqa: SLF001 (unittest's holder)
+            if fixture:
+                kind, name = fixture.groups()
+                ran.extend(t.id() for t in mine if fixture_skipped(kind, name, t))
+            super().addSkip(test, reason)
 
     runner = unittest.TextTestRunner(stream=sys.stderr, verbosity=2 if verbose else 0, resultclass=Recorder)
     result = runner.run(unittest.TestSuite(mine))

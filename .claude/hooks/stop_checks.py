@@ -11,9 +11,11 @@ S0034: it does not re-prove what is proven. After a green run it stores a key of
 and untracked files that are not ignored, hashed through a temporary index; the real index is never touched) and
 the Python version in the clone's git directory; the same key next time is green at once (the git-hooks check
 still runs). Each check runs under the hang detector of `scripts/gate_timer.py` (a limit from its own history, not
-a budget) and under BACKSTOP_S for the whole hook, below the harness's Stop timeout in .claude/settings.json (a hook
-the harness kills fails open). The hook never crashes: a check that did not finish, or any error here, is red. The
-key file is agent-writable, so this is a convenience gate; the pre-push hook is the authoritative one, with no cache.
+a budget; none for the privacy scan of changed files, whose time grows with them) and under BACKSTOP_S for the whole
+hook, below the harness's Stop timeout in .claude/settings.json (a hook the harness kills fails open). SIGTERM and
+SIGHUP stop the running check before the hook ends. The hook never crashes: a check that did not finish, or any
+error here, is red. The key file is agent-writable, so this is a convenience gate; the pre-push hook is the
+authoritative one, with no cache.
 """
 
 from __future__ import annotations
@@ -79,11 +81,13 @@ def tree_key(repo: Path, deadline: float | None = None) -> str | None:
     A temporary index starts from HEAD (no assume-unchanged or skip-worktree flags) and `git add -A` puts every
     tracked and untracked, not ignored, file in it; `git write-tree` names the result. The real index is only read,
     for the list of tracked paths (`git ls-files`): a check that reads tracked files only, such as `git grep`, sees
-    a file go from tracked to untracked (S0034 verifier F3)."""
+    a file go from tracked to untracked (S0034 verifier F3). The objects `git add` and `git write-tree` make go to a
+    temporary object folder that reads the clone's store as an alternate, so no untracked file (a large export, a
+    private note) becomes an object of the clone (S0034 verifier round 2 F5)."""
     with tempfile.TemporaryDirectory() as tmp:
         env = {**os.environ, "GIT_INDEX_FILE": str(Path(tmp) / "index")}
-        env.pop("GIT_DIR", None)
-        env.pop("GIT_WORK_TREE", None)
+        for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
+            env.pop(name, None)
 
         def git(*args: str, real_index: bool = False) -> subprocess.CompletedProcess[str]:
             timeout = GIT_TIMEOUT_S if deadline is None else min(GIT_TIMEOUT_S, deadline - time.monotonic())
@@ -93,6 +97,15 @@ def tree_key(repo: Path, deadline: float | None = None) -> str | None:
                                   capture_output=True, text=True, timeout=timeout)
 
         try:
+            store = git("rev-parse", "--git-path", "objects")
+            if store.returncode or not store.stdout.strip():
+                return None
+            real = Path(store.stdout.strip())
+            real = (real if real.is_absolute() else repo / real).resolve()
+            objects = Path(tmp) / "objects"
+            objects.mkdir()
+            quoted = '"' + str(real).replace("\\", "\\\\").replace('"', '\\"') + '"'  # git's C-style quoting
+            env.update(GIT_OBJECT_DIRECTORY=str(objects), GIT_ALTERNATE_OBJECT_DIRECTORIES=quoted)
             if git("rev-parse", "--verify", "--quiet", "HEAD").returncode == 0 and git("read-tree", "HEAD").returncode:
                 return None
             if git("add", "-A").returncode:
@@ -113,12 +126,16 @@ def run_checks(timer, deadline: float) -> list[str]:
     canary = timer.run_check([sys.executable, "-c", "raise SystemExit(1)"], REPO, 60, capture=True)  # never passes
     if canary.passed:
         return ["the check timer (scripts/gate_timer.py) passed a failing check; no check result can be trusted"]
-    checks = list(CHECKS)
+    checks = [(label, cmd, False) for label, cmd in CHECKS]
     files = changed_files()
     if files:
-        checks.append(("privacy scan of changed files", ["python3", "scripts/privacy_scan.py", "--quiet", *files]))
-    for label, cmd in checks:
-        outcome = timer.timed(REPO, "stop", label, cmd, capture=True, deadline=deadline)
+        # its time grows with the changed files, so its history predicts no hang: no history limit, only the
+        # backstop (S0034 verifier round 2 F1)
+        checks.append(("privacy scan of changed files", ["python3", "scripts/privacy_scan.py", "--quiet", *files],
+                       True))
+    for label, cmd, size_dependent in checks:
+        outcome = timer.timed(REPO, "stop", label, cmd, capture=True, deadline=deadline,
+                              size_dependent=size_dependent)
         if not outcome.passed:
             head = outcome.message or f"{label}: {outcome.status}"
             failures.append(f"$ {' '.join(cmd[:4])}{' ...' if len(cmd) > 4 else ''}\n{head}\n{outcome.output[-2000:]}")
@@ -127,11 +144,14 @@ def run_checks(timer, deadline: float) -> list[str]:
 
 def check(event: dict) -> list[str]:
     deadline = time.monotonic() + BACKSTOP_S
+    timer = load_timer()
+    # The checks run in sessions of their own: when the harness ends this hook (SIGTERM, SIGHUP), the interrupt
+    # stops the running check's process group, as in `gate_timer.py run` (S0034 verifier round 2 F4).
+    timer.stop_checks_on_signals()
     failures = []
     problem = hooks_path_problem(REPO)
     if problem:
         failures.append(f"git hooks: {problem}")
-    timer = load_timer()
     folder = timer.state_dir(REPO)
     green_file = folder / GREEN_FILE if folder else None
     key = tree_key(REPO, deadline)
@@ -165,6 +185,8 @@ def main() -> int:
         event = {}
     try:
         failures = check(event)
+    except KeyboardInterrupt as exc:  # Ctrl-C, or SIGTERM/SIGHUP from the harness: the running check was stopped
+        failures = [f"stop_checks was interrupted, so the checks did not finish: {exc!r}"]
     except BaseException as exc:  # noqa: BLE001 (the hook never crashes: a crash would let the session stop green)
         failures = [f"stop_checks itself failed, so the checks did not run: {exc!r}"]
     if not failures:

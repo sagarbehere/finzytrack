@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # T0 pre-push (design/process/PROCESS.md, "Gates"): repo checks, types and package tests. No time budget (S0034):
 # each check runs through scripts/gate_timer.py, which stops a check far over its own usual time as hung, and the
-# hook ends with each check's time against its usual time and the total.
+# hook ends with each check's time against its usual time and the total. A check whose time grows with what is
+# pushed is marked --size-dependent and has no such limit (S0034 verifier round 2 F1).
 # Install once per clone:  git config core.hooksPath .githooks
 set -euo pipefail
 # S0031 verifier F2: replacement objects would let every local read see other objects than the ones pushed.
@@ -43,14 +44,14 @@ if ! bash -c "! python3 scripts/gate_timer.py run pre-push canary false"; then e
 while IFS= read -r range; do
   [[ -n "$range" ]] || continue
   if [[ "$range" == tag\ * ]]; then
-    run "privacy scan (pushed tag message ${range#tag })" python3 scripts/privacy_scan.py --tag-message "${range#tag }" --quiet
+    run "privacy scan (pushed tag message ${range#tag })" --size-dependent python3 scripts/privacy_scan.py --tag-message "${range#tag }" --quiet
     continue
   fi
-  run "staged-file guard (pushed commits $range)" python3 scripts/check_staged.py --range "$range"
-  run "privacy scan (pushed commits and messages $range)" python3 scripts/privacy_scan.py --range "$range" --quiet
+  run "staged-file guard (pushed commits $range)" --size-dependent python3 scripts/check_staged.py --range "$range"
+  run "privacy scan (pushed commits and messages $range)" --size-dependent python3 scripts/privacy_scan.py --range "$range" --quiet
   # S0033 (seeded-defect run 1 E10): an open backlog item moved to a later milestone, parked, deferred, removed or
   # deleted since the remote's version must cite an ADR or the owner's words on its row in the same push.
-  run "deferred backlog items (pushed commits $range)" python3 scripts/check_deferrals.py --range "$range"
+  run "deferred backlog items (pushed commits $range)" --size-dependent python3 scripts/check_deferrals.py --range "$range"
 done <<< "$ranges"
 # A backstop over the whole pushed tree (S0031 verifier F5): the staged-file guard on every tracked file.
 run "staged-file guard (all tracked files)" bash -c "set -o pipefail; git ls-files -z | xargs -0 python3 scripts/check_staged.py --paths"
@@ -68,9 +69,9 @@ run "write corpus" python3 scripts/check_write_corpus.py
 # (S0024), the demo generator at every size (S0027), and the harness's INV-24 copy and launcher guards.
 run "oracle tests" "$uv_bin" run --project scripts/oracle --locked python -m unittest discover -s scripts/oracle/tests -q
 # ADR-0060: CI no longer runs per push, so new Cargo.lock entries' publish dates are verified here (network only
-# when the lock gained entries since the remote branch).
+# when the lock gained entries since the remote branch; one request a second, so its time grows with them).
 upstream="$(git rev-parse --verify --quiet '@{u}' || echo none)"
-run "cargo 14-day rule (new entries verified)" python3 scripts/check_cargo_age.py --verify-since "$upstream"
+run "cargo 14-day rule (new entries verified)" --size-dependent python3 scripts/check_cargo_age.py --verify-since "$upstream"
 
 # S0031 (M3): format and lint over the whole tree at push (pre-commit lints only staged files, and reads the
 # working-tree copy).

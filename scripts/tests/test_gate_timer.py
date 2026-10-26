@@ -7,6 +7,8 @@ import contextlib
 import io
 import json
 import os
+import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -19,6 +21,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import gate_timer as gt  # noqa: E402
 
 PY = sys.executable
+REPO = Path(__file__).resolve().parents[2]
+
+
+@contextlib.contextmanager
+def signal_handlers_kept():
+    """`gate_timer.main` installs SIGTERM/SIGHUP handlers; an in-process call must not leave them in this process."""
+    kept = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        yield
+    finally:
+        for sig, handler in kept.items():
+            signal.signal(sig, handler)
 
 
 class Limits(unittest.TestCase):
@@ -35,6 +49,13 @@ class Limits(unittest.TestCase):
         self.assertEqual(gt.limit({"x": [1.0, 1.0, 1.0]}, "x"), gt.FLOOR_S)  # a tiny check does not trip on noise
         self.assertGreater(gt.K, 1)
         self.assertGreater(gt.FLOOR_S, 0)
+
+    def test_the_numbers_are_pinned_and_process_md_says_them(self) -> None:  # @regression-guard (S0034 verifier F2)
+        self.assertEqual((gt.K, gt.N, gt.MIN_SAMPLES, gt.FLOOR_S), (8, 5, 3, 60.0))
+        process = (REPO / "design/process/PROCESS.md").read_text(encoding="utf-8")
+        self.assertIn(f"over {gt.K}\u00d7 the median of its last {gt.N} green runs in the clone (at least "
+                      f"{gt.FLOOR_S:.0f} s)", process)
+        self.assertIn(f"with fewer than {gt.MIN_SAMPLES} green runs it has no limit", process)
 
     def test_bad_history_values_are_ignored(self) -> None:
         self.assertIsNone(gt.limit({"x": "fast"}, "x"))
@@ -218,6 +239,110 @@ class Cli(unittest.TestCase):
         with mock.patch.object(gt, "timed", side_effect=RuntimeError("boom")), \
                 contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(gt.main(["run", "pre-push", "x", "true"]), 1)
+
+
+class SizeDependent(unittest.TestCase):
+    """S0034 verifier round 2 F1: a check whose time grows with its input (the pushed range, the changed files, the
+    new lock entries) shares one history across input sizes, so its history predicts no hang: it has no history
+    limit, only the caller's backstop. A fixed-size check keeps its limit."""
+
+    LABEL = "privacy scan (pushed commits and messages 8434091d..9844295a)"
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name) / "r"
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        self.times = self.repo / ".git/finzytrack/times-pre-push.json"
+        self.times.parent.mkdir(parents=True)
+        self.times.write_text(json.dumps({gt.check_key(self.LABEL): [0.1] * gt.N}))  # a limit of FLOOR_S
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_a_long_input_is_never_stopped_while_a_fixed_size_check_still_is(self) -> None:
+        slow = [PY, "-c", "import time; time.sleep(2.5)"]
+        with mock.patch.object(gt, "FLOOR_S", 1.0):
+            sized = gt.timed(self.repo, "pre-push", self.LABEL, slow, capture=True, size_dependent=True)
+            fixed = gt.timed(self.repo, "pre-push", self.LABEL, slow, capture=True)
+        self.assertTrue(sized.passed, sized.message)
+        self.assertEqual(fixed.status, "hung")
+
+    def test_the_backstop_still_stops_a_size_dependent_check(self) -> None:
+        out = gt.timed(self.repo, "pre-push", self.LABEL, [PY, "-c", "import time; time.sleep(60)"], capture=True,
+                       size_dependent=True, deadline=time.monotonic() + 1)
+        self.assertEqual(out.status, "hung")
+        self.assertIn("backstop", out.message)
+
+    def test_the_cli_marker(self) -> None:
+        """`run <hook> <label> --size-dependent <command...>`: the marker is the timer's, not the command's."""
+        cmd = [PY, "-c", "import sys, time; time.sleep(2.5); sys.exit(sys.argv[1:] != ['x'])", "x"]
+        with mock.patch.object(gt, "FLOOR_S", 1.0), signal_handlers_kept(), contextlib.chdir(self.repo), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(gt.main(["run", "pre-push", self.LABEL, gt.SIZE_DEPENDENT, *cmd]), 0, err.getvalue())
+            self.assertEqual(gt.main(["run", "pre-push", self.LABEL, *cmd]), 1)
+            self.assertIn("hung?", err.getvalue())
+            self.assertEqual(gt.main(["run", "pre-push", self.LABEL, gt.SIZE_DEPENDENT]), 2)  # no command: usage
+            self.assertIn(f"no command after {gt.SIZE_DEPENDENT}", err.getvalue())
+
+    def test_the_report_says_which_checks_have_no_limit(self) -> None:
+        env = {**os.environ, "FT_GATE_RUN": "push-1"}
+        script = str(Path(gt.__file__).resolve())
+        for args in ([self.LABEL, gt.SIZE_DEPENDENT, "true"], ["invariants", "true"]):
+            subprocess.run([PY, script, "run", "pre-push", *args], cwd=self.repo, env=env, check=True, timeout=120)
+        lines = subprocess.run([PY, script, "report", "pre-push"], cwd=self.repo, env=env, capture_output=True,
+                               text=True, check=True, timeout=120).stderr.splitlines()
+        sized = next(line for line in lines if line.endswith(self.LABEL))
+        fixed = next(line for line in lines if line.endswith("  invariants"))
+        self.assertRegex(sized, r"^ +\d+\.\d s  \(usual 0\.1 s; no hang limit, its time grows with its input\)  ")
+        self.assertRegex(fixed, r"^ +\d+\.\d s  \(no usual yet\)  invariants$")
+
+    def test_the_pre_push_marks_exactly_the_checks_whose_time_grows_with_the_push(self) -> None:
+        """Marked: the checks of each pushed range or tag, and the crates.io re-read of new lock entries (one
+        request a second). Not marked: every check of the whole tree, whose history follows the tree's growth."""
+        runs = [line.strip() for line in (REPO / ".githooks/pre-push").read_text().splitlines()
+                if line.strip().startswith('run "')]
+        marked = {m.group(1) for line in runs if (m := re.match(rf'run "([^"]*)" {gt.SIZE_DEPENDENT} ', line))}
+        grows = {m.group(1) for line in runs if (m := re.match(r'run "([^"]*)"', line))
+                 and ("$range" in m.group(1) or "${range#tag }" in m.group(1) or m.group(1).startswith("cargo "))}
+        self.assertEqual(len(grows), 5)
+        self.assertEqual(marked, grows)
+
+
+class Signals(unittest.TestCase):
+    """S0034 verifier round 2 F3: an aborted push (Ctrl-C, SIGTERM, a closed terminal) stops the check's process
+    group, which runs in its own session and so gets no terminal signal itself, and the timer fails."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name) / "r"
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_a_signal_to_the_timer_stops_the_check_and_fails(self) -> None:  # @regression-guard
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            with self.subTest(sig.name):
+                pid_file = Path(self.tmp.name) / f"{sig.name}.pid"
+                code = f"import os, time; open({str(pid_file)!r}, 'w').write(str(os.getpid())); time.sleep(120)"
+                timer = subprocess.Popen([PY, str(Path(gt.__file__).resolve()), "run", "pre-push", "sig", PY, "-c",
+                                          code], cwd=self.repo, stderr=subprocess.DEVNULL)
+                for _ in range(300):
+                    if pid_file.exists() and pid_file.read_text():
+                        break
+                    time.sleep(0.05)
+                child = int(pid_file.read_text())
+                timer.send_signal(sig)
+                self.assertNotEqual(timer.wait(timeout=60), 0)
+                for _ in range(100):
+                    try:
+                        os.kill(child, 0)
+                    except ProcessLookupError:
+                        break
+                    time.sleep(0.05)
+                else:
+                    os.kill(child, signal.SIGKILL)
+                    self.fail(f"{sig.name}: the check kept running")
 
 
 if __name__ == "__main__":

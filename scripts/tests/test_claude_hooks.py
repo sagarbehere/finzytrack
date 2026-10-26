@@ -8,6 +8,8 @@ import importlib.util
 import io
 import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -17,6 +19,7 @@ from pathlib import Path
 from unittest import mock
 
 HOOKS = Path(__file__).resolve().parents[2] / ".claude/hooks"
+SCRIPTS = Path(__file__).resolve().parents[1]
 
 
 def load(name: str):
@@ -120,14 +123,88 @@ class StopHookCacheAndTimeLimits(unittest.TestCase):
     def runs(self) -> int:
         return len(self.count.read_text()) if self.count.exists() else 0
 
-    def stop_hook(self, checks: list | None = None, event: dict | None = None) -> tuple[int, str]:
+    def stop_hook(self, checks: list | None = None, event: dict | None = None, scan: bool = False) -> tuple[int, str]:
+        """The hook on the scratch tree. Without `scan`, no privacy scan of changed files (these trees have no
+        scripts/); with it, the scan runs as in the real hook (see `real_scripts`)."""
         err = io.StringIO()
         checks = [("counting", self.counting)] if checks is None else checks
-        # the privacy scan of changed files is the real repository's script; these trees have none
-        with mock.patch.object(self.stop, "REPO", self.repo), mock.patch.object(self.stop, "CHECKS", checks), \
-                mock.patch.object(self.stop, "changed_files", return_value=[]), \
-                mock.patch.object(sys, "stdin", io.StringIO(json.dumps(event or {}))), contextlib.redirect_stderr(err):
-            return self.stop.main(), err.getvalue()
+        with contextlib.ExitStack() as stack:
+            if not scan:
+                stack.enter_context(mock.patch.object(self.stop, "changed_files", return_value=[]))
+            with mock.patch.object(self.stop, "REPO", self.repo), mock.patch.object(self.stop, "CHECKS", checks), \
+                    mock.patch.object(sys, "stdin", io.StringIO(json.dumps(event or {}))), \
+                    contextlib.redirect_stderr(err):
+                return self.stop.main(), err.getvalue()
+
+    def real_scripts(self) -> None:
+        """The scratch tree's scripts/ is the real repository's (a symlink, untracked, not a file, so not scanned),
+        and the privacy scan reads an empty denylist instead of the owner's."""
+        (self.repo / "scripts").symlink_to(SCRIPTS, target_is_directory=True)
+        deny = Path(self.tmp.name) / "denylist.txt"
+        deny.write_text("")
+        patch = mock.patch.dict(os.environ, {"FT_PRIVACY_DENYLIST": str(deny)})
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_a_privacy_finding_in_a_changed_file_is_red(self) -> None:  # @regression-guard (S0034 verifier R2 F7)
+        self.real_scripts()
+        planted = "write to " + "someone" + "@" + "gmail" + ".com\n"  # an email address outside the example domains
+        cases = {
+            "an untracked file": lambda text: (self.repo / "notes.md").write_text(text),
+            "a tracked file edited": lambda text: (self.repo / "a.txt").write_text(text),
+        }
+        for label, write in cases.items():
+            with self.subTest(label):
+                write(planted)
+                code, err = self.stop_hook(scan=True)
+                self.assertEqual(code, 2, err)
+                self.assertIn("privacy scan of changed files", err)
+                write("clean\n")
+                self.assertEqual(self.stop_hook(scan=True), (0, ""))  # the same scan passes a clean change
+
+    def test_only_the_scan_of_changed_files_has_no_history_limit(self) -> None:  # S0034 verifier round 2 F1
+        """Its time grows with the changed files, so its history predicts no hang; the fixed checks keep theirs."""
+        self.real_scripts()
+        (self.repo / "a.txt").write_text("changed\n")
+        timer, seen = self.stop.load_timer(), {}
+        real = timer.timed
+
+        def spy(repo, hook, label, cmd, **kw):
+            seen[label] = kw.get("size_dependent", False)
+            return real(repo, hook, label, cmd, **kw)
+
+        with mock.patch.object(timer, "timed", spy):
+            self.assertEqual(self.stop_hook(scan=True), (0, ""))
+        self.assertEqual(seen, {"counting": False, "privacy scan of changed files": True})
+
+    def test_the_key_writes_nothing_into_the_object_store(self) -> None:  # S0034 verifier round 2 F5
+        """A large or private untracked file must not become a loose object of the clone each time it changes."""
+        worktree = Path(self.tmp.name) / "wt"
+        subprocess.run(["git", "-C", str(self.repo), "worktree", "add", "-q", "--detach", str(worktree)], check=True)
+        odd = Path(self.tmp.name) / 'a:b "c"'  # a path git must read quoted as an alternate
+        subprocess.run(["git", "clone", "-q", str(self.repo), str(odd)], check=True)
+
+        def objects(store: Path) -> str:
+            return subprocess.run(["git", "-C", str(store), "count-objects", "-v"], capture_output=True,
+                                  text=True, check=True).stdout
+
+        keys = set()
+        for tree, store in ((self.repo, self.repo), (worktree, self.repo), (odd, odd)):
+            before = objects(store)
+            for i in range(2):
+                with self.subTest(tree=tree.name, run=i):
+                    (tree / "export.csv").write_bytes(os.urandom(100_000))
+                    (tree / "a.txt").write_text(f"edit {i}\n")
+                    key = self.stop.tree_key(tree)
+                    self.assertIsNotNone(key)
+                    keys.add(key)
+                    self.assertEqual(objects(store), before)
+        self.assertEqual(len(keys), 6)  # the key still follows the content
+        (self.repo / "export.csv").write_bytes(b"same\n")
+        (worktree / "export.csv").write_bytes(b"same\n")
+        (self.repo / "a.txt").write_text("same\n")
+        (worktree / "a.txt").write_text("same\n")
+        self.assertEqual(self.stop.tree_key(self.repo), self.stop.tree_key(worktree))
 
     def test_a_proven_tree_is_not_checked_again(self) -> None:
         self.assertEqual(self.stop_hook(), (0, ""))
@@ -316,6 +393,76 @@ class StopHookCacheAndTimeLimits(unittest.TestCase):
         labels = [label for label, _ in self.stop.CHECKS]
         self.assertEqual(labels, ["check-script meta-tests", "invariants", "capability map"])
         self.assertEqual(self.stop.CHECKS[0][1], ["python3", "scripts/run_meta_tests.py"])
+
+
+class StopHookSignals(unittest.TestCase):
+    """S0034 verifier round 2 F4: the harness ends the Stop hook (its timeout, the user interrupting) while a check
+    runs. The checks run in sessions of their own, so the hook must stop them on the way out: no orphans."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        self.repo = base / "r"
+        config = base / "gitconfig"
+        config.write_text("[user]\n\tname = t\n\temail = t@example.invalid\n")
+        self.env = {**os.environ, "GIT_CONFIG_GLOBAL": str(config), "GIT_CONFIG_NOSYSTEM": "1"}
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True, env=self.env)
+        subprocess.run(["git", "-C", str(self.repo), "config", "core.hooksPath", ".githooks"], check=True, env=self.env)
+        (self.repo / ".claude/hooks").mkdir(parents=True)
+        (self.repo / "scripts").mkdir()
+        shutil.copy(HOOKS / "stop_checks.py", self.repo / ".claude/hooks/stop_checks.py")
+        shutil.copy(SCRIPTS / "gate_timer.py", self.repo / "scripts/gate_timer.py")
+        self.pids = base / "pids"
+        # stands in for the meta-test runner: it starts a worker and both run long
+        (self.repo / "scripts/run_meta_tests.py").write_text(
+            "import os, subprocess, sys, time\n"
+            "w = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+            f"open({str(self.pids)!r}, 'w').write(f'{{os.getpid()}} {{w.pid}}')\n"
+            "time.sleep(120)\n")
+        subprocess.run(["git", "-C", str(self.repo), "add", "-A"], check=True, env=self.env)
+        subprocess.run(["git", "-C", str(self.repo), "commit", "-qm", "init"], check=True, env=self.env)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    @staticmethod
+    def alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    def test_ending_the_hook_stops_its_checks(self) -> None:
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(sig.name):
+                self.pids.unlink(missing_ok=True)
+                hook = subprocess.Popen([sys.executable, str(self.repo / ".claude/hooks/stop_checks.py")],
+                                        cwd=self.repo, env=self.env, stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        text=True)
+                hook.stdin.write("{}")
+                hook.stdin.close()
+                for _ in range(600):
+                    if self.pids.exists() and len(self.pids.read_text().split()) == 2:
+                        break
+                    time.sleep(0.05)
+                pids = [int(x) for x in self.pids.read_text().split()]
+                hook.send_signal(sig)
+                try:
+                    code = hook.wait(timeout=60)
+                    err = hook.stderr.read()
+                finally:
+                    hook.stderr.close()
+                    for _ in range(200):
+                        if not any(self.alive(pid) for pid in pids):
+                            break
+                        time.sleep(0.05)
+                    left = [pid for pid in pids if self.alive(pid)]
+                    for pid in left:  # this test's own processes, a moment after it started them
+                        os.kill(pid, signal.SIGKILL)
+                self.assertEqual(left, [], "a check outlived the hook")
+                self.assertEqual(code, 2, err)
+                self.assertIn("stop_checks was interrupted", err)
 
 
 if __name__ == "__main__":

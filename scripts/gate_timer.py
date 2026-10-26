@@ -7,9 +7,14 @@ in this clone: once it has passed MIN_SAMPLES times, a run that takes over K tim
 last N green runs), and at least FLOOR_S seconds, is stopped as hung and fails. A check with less history has no
 limit here. Slowness alone never fails a check, and a check that did not finish never passes.
 
+A check whose time grows with its input (the pushed range, the changed files, the new lock entries) is marked
+`--size-dependent` by its caller and has no history limit: its history mixes input sizes, so a long push would be
+stopped as hung (S0034 verifier round 2 F1). It is still timed and reported, and the caller's backstop still applies.
+
 Usage (the pre-push hook's `run` function, and its time report at the end):
-  python3 scripts/gate_timer.py run <hook> <label> <command...>   run one check; exit 0 only when it ran and passed
-  python3 scripts/gate_timer.py report <hook>                    this hook run's check times against their usual
+  python3 scripts/gate_timer.py run <hook> <label> [--size-dependent] <command...>
+                                         run one check; exit 0 only when it ran and passed
+  python3 scripts/gate_timer.py report <hook>   this hook run's check times against their usual
 
 The history lives in the clone's git directory (`git rev-parse --git-path finzytrack`), never in the tree. Agents
 can write it: a forged history can raise a limit (weaker hang detection) or lower it (a false failure), never make a
@@ -37,6 +42,7 @@ FLOOR_S = 60.0  # a check is never stopped as hung before this many seconds
 KEEP = 20  # green durations kept per check
 GRACE_S = 5.0  # after SIGTERM, wait this long before SIGKILL
 SHA = re.compile(r"\b[0-9a-f]{7,40}\b")
+SIZE_DEPENDENT = "--size-dependent"  # the marker, right after the label: no history limit (the module docstring)
 
 
 @dataclass(frozen=True)
@@ -166,14 +172,15 @@ def _read(out) -> str:
 
 
 def timed(repo: Path, hook: str, label: str, cmd: list[str], capture: bool, deadline: float | None = None,
-          log: bool = False) -> Outcome:
+          log: bool = False, size_dependent: bool = False) -> Outcome:
     """Run a check under its hang limit and record its time when it passed. `deadline` (a time.monotonic() value)
-    caps the limit, for a caller with its own backstop. `log` keeps this hook run's times for `report`."""
+    caps the limit, for a caller with its own backstop. `log` keeps this hook run's times for `report`.
+    `size_dependent`: the check's time grows with its input, so it has no history limit (only `deadline`)."""
     folder = state_dir(repo)
     history_file = folder / f"times-{hook}.json" if folder else None
     history = load_json(history_file)
     key = check_key(label)
-    u, lim = usual(history, key), limit(history, key)
+    u, lim = usual(history, key), None if size_dependent else limit(history, key)
     remaining = None if deadline is None else max(deadline - time.monotonic(), 0.0)
     by_backstop = remaining is not None and (lim is None or remaining < lim)
     outcome = run_check(cmd, repo, remaining if by_backstop else lim, capture)
@@ -187,7 +194,7 @@ def timed(repo: Path, hook: str, label: str, cmd: list[str], capture: bool, dead
     if outcome.passed:
         save_json(history_file, record(load_json(history_file), key, outcome.seconds))
     if log and folder is not None:
-        log_run(folder / f"last-run-{hook}.json", label, u, outcome)
+        log_run(folder / f"last-run-{hook}.json", label, u, outcome, size_dependent)
     return outcome
 
 
@@ -196,7 +203,7 @@ def run_id() -> str:
     return os.environ.get("FT_GATE_RUN") or str(os.getppid())
 
 
-def log_run(path: Path, label: str, usual_s: float | None, outcome: Outcome) -> None:
+def log_run(path: Path, label: str, usual_s: float | None, outcome: Outcome, size_dependent: bool = False) -> None:
     """Append one check to this hook run's log; a log from another run (or over an hour old) is replaced."""
     log, now = load_json(path), time.time()
     at = log.get("at")
@@ -205,7 +212,7 @@ def log_run(path: Path, label: str, usual_s: float | None, outcome: Outcome) -> 
         log = {"run": run_id(), "checks": []}
     log["at"] = now
     log["checks"].append({"label": label, "seconds": round(outcome.seconds, 3), "usual": usual_s,
-                          "status": outcome.status})
+                          "status": outcome.status, "size_dependent": size_dependent})
     save_json(path, log)
 
 
@@ -226,6 +233,8 @@ def report(repo: Path, hook: str) -> str:
             total_usual += float(u)
             any_usual = True
         note = f"usual {u:.1f} s" if isinstance(u, (int, float)) else "no usual yet"
+        if c.get("size_dependent") is True:
+            note += "; no hang limit, its time grows with its input"
         status = "" if c.get("status") == "passed" else f"  {str(c.get('status')).upper()}"
         lines.append(f"  {seconds:7.1f} s  ({note}){status}  {c.get('label', '')}")
     note = f"usual {total_usual:.1f} s, over the checks with a usual time" if any_usual else "no usual yet"
@@ -237,15 +246,28 @@ def _interrupted(signum: int, _frame) -> None:
     raise KeyboardInterrupt(f"signal {signum}")
 
 
+def stop_checks_on_signals() -> None:
+    """SIGTERM and SIGHUP (a killed or closed hook) raise KeyboardInterrupt, as Ctrl-C does, so `run_check` stops the
+    check's process group on the way out: the check runs in a session of its own and gets no signal itself. Used by
+    `main` and by the Stop hook (S0034 verifier round 2 F4)."""
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, _interrupted)
+
+
 def main(argv: list[str]) -> int:
     repo = Path.cwd()
     if len(argv) >= 4 and argv[0] == "run":
         hook, label, cmd = argv[1], argv[2], argv[3:]
-        for sig in (signal.SIGTERM, signal.SIGHUP):
-            signal.signal(sig, _interrupted)  # stop the check's process group on the way out
+        size_dependent = cmd[0] == SIZE_DEPENDENT
+        if size_dependent:
+            cmd = cmd[1:]
+        if not cmd:
+            print(f"{hook}: {label}: no command after {SIZE_DEPENDENT}", file=sys.stderr)
+            return 2
+        stop_checks_on_signals()
         try:
             os.environ["FT_GATE_RUN"] = run_id()  # the report, started through `run`, sees this hook run's ID
-            outcome = timed(repo, hook, label, cmd, capture=False, log=True)
+            outcome = timed(repo, hook, label, cmd, capture=False, log=True, size_dependent=size_dependent)
         except Exception as exc:  # noqa: BLE001 (a check that did not run is a failure, never a pass)
             print(f"{hook}: {label}: the check timer failed: {exc!r}", file=sys.stderr)
             return 1
@@ -258,7 +280,7 @@ def main(argv: list[str]) -> int:
         except Exception as exc:  # noqa: BLE001 (the report is information; it never fails the hook)
             print(f"{argv[1]}: no check time report: {exc!r}", file=sys.stderr)
         return 0
-    print("usage: gate_timer.py run <hook> <label> <command...> | report <hook>", file=sys.stderr)
+    print(f"usage: gate_timer.py run <hook> <label> [{SIZE_DEPENDENT}] <command...> | report <hook>", file=sys.stderr)
     return 2
 
 

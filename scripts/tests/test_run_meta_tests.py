@@ -144,6 +144,67 @@ class Fixtures(unittest.TestCase):
                 self.assertNotEqual(u, 0, "the fixture should fail under unittest too")
                 self.assertEqual(r, 1)
 
+    def test_a_fixture_that_skips_its_tests_passes_as_under_unittest(self) -> None:  # S0034 verifier round 2 F6
+        """A setUpClass or setUpModule raising SkipTest skips its tests without starting them; unittest passes."""
+        cases = {
+            "setUpClass": """
+                import unittest
+                class A(unittest.TestCase):
+                    @classmethod
+                    def setUpClass(cls):
+                        raise unittest.SkipTest("tool not installed")
+                    def test_x(self): pass
+                class B(unittest.TestCase):
+                    def test_y(self): pass
+            """,
+            "setUpModule": """
+                import unittest
+                def setUpModule():
+                    raise unittest.SkipTest("tool not installed")
+                class A(unittest.TestCase):
+                    def test_x(self): pass
+                class B(unittest.TestCase):
+                    def test_y(self): pass
+            """,
+            "setUpClass in a module with module fixtures": """
+                import unittest
+                def setUpModule(): pass
+                class A(unittest.TestCase):
+                    @classmethod
+                    def setUpClass(cls):
+                        raise unittest.SkipTest("tool not installed")
+                    def test_x(self): pass
+                class B(unittest.TestCase):
+                    def test_y(self): pass
+            """,
+        }
+        for label, text in cases.items():
+            with self.subTest(label):
+                for p in self.start.glob("*.py"):
+                    p.unlink()
+                self.put("test_fx_cls.py", text)
+                self.assertEqual(self.verdicts(), (0, 0))
+
+    def test_a_skipping_fixture_does_not_excuse_other_tests(self) -> None:  # S0034 verifier round 2 F6
+        """Only the tests the parent discovered for the skipped class are excused: drift still fails."""
+        count = Path(self.tmp.name) / "count"
+        self.put("test_fx_drift.py", textwrap.dedent(f"""
+            import pathlib, unittest
+            p = pathlib.Path({str(count)!r})
+            n = int(p.read_text()) if p.exists() else 0
+            p.write_text(str(n + 1))
+            class A(unittest.TestCase):
+                @classmethod
+                def setUpClass(cls):
+                    raise unittest.SkipTest("tool not installed")
+                def test_x(self): pass
+            if n:
+                A.test_extra = lambda self: None
+        """))
+        r = runner("--start", str(self.start))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("not the 1 discovered", r.stderr)
+
     def test_no_tests_fails(self) -> None:
         self.put("test_fx_empty.py", "import unittest\n")
         self.assertNotEqual(runner("--start", str(self.start)).returncode, 0)
