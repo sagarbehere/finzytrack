@@ -4,6 +4,7 @@ package passes only with an allowed licence. Expected outcomes come from the che
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -233,6 +234,161 @@ class Allowlist(unittest.TestCase):
     def test_absent_package_is_noted(self) -> None:
         _, _, text = cl.evaluate({"JavaScript": None}, self.ALLOWED, self.PENDING)
         self.assertIn("(package not present yet)", text)
+
+
+class EngineAllowlist(unittest.TestCase):
+    """ADR-0054 decision 5: the engine (a GPL-2.0-only program) has its own list: GPL-2.0-compatible licences plus an
+    explicit, reviewed list of Beancount's own dependencies, which pass with a warning pending legal advice. The
+    main sidecar, the frontend and the shell keep the shared list (S0035 brief: "main: as today")."""
+
+    ENGINE = cl.Policy(allowed=frozenset({"MIT", "BSD-3-Clause"}), pending=frozenset(),
+                       reviewed={"regex": "Apache-2.0 AND CNRI-Python"})
+
+    def run_engine(self, *deps: tuple[str, str, str]) -> tuple[list[str], list[str], str]:
+        return cl.evaluate({"Python (ledger engine)": list(deps)}, {"MIT", "Apache-2.0"}, set(),
+                           {"Python (ledger engine)": self.ENGINE})
+
+    def test_a_licence_the_shared_list_allows_is_refused_in_the_engine(self) -> None:
+        problems, _, _ = self.run_engine(("lib", "1", "Apache-2.0"))
+        self.assertEqual(len(problems), 1)
+        main_problems, _, _ = cl.evaluate({"Python (backend sidecar)": [("lib", "1", "Apache-2.0")]},
+                                          {"MIT", "Apache-2.0"}, set(), {"Python (ledger engine)": self.ENGINE})
+        self.assertEqual(main_problems, [])  # the override applies to its own group only
+
+    def test_an_engine_licence_on_its_list_passes(self) -> None:
+        self.assertEqual(self.run_engine(("lib", "1", "BSD-3-Clause"))[:2], ([], []))
+
+    def test_a_reviewed_beancount_dependency_warns(self) -> None:
+        problems, warnings, text = self.run_engine(("regex", "2026.9.29", "Apache-2.0 AND CNRI-Python"))
+        self.assertEqual(problems, [])
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("regex 2026.9.29  Apache-2.0 AND CNRI-Python", text)
+
+    def test_a_reviewed_dependency_whose_licence_changed_is_refused(self) -> None:
+        problems, _, _ = self.run_engine(("regex", "2027.1.1", "Apache-2.0 AND GPL-3.0-only"))
+        self.assertEqual(len(problems), 1)
+
+    def test_the_review_names_one_package_only(self) -> None:
+        problems, _, _ = self.run_engine(("regex2", "1", "Apache-2.0 AND CNRI-Python"))
+        self.assertEqual(len(problems), 1)
+
+    def test_review_matches_normalized_names(self) -> None:
+        policy = cl.Policy(allowed=frozenset(), pending=frozenset(), reviewed={"python-dateutil": "Apache-2.0"})
+        problems, warnings, _ = cl.evaluate({"E": [("python_dateutil", "2.9.0.post0", "Apache-2.0")]}, set(), set(),
+                                            {"E": policy})
+        self.assertEqual((problems, len(warnings)), ([], 1))
+
+
+class Mapping(unittest.TestCase):
+    """BL-0050: pip-licenses reports trove-classifier names; a reviewed per-package mapping gives the SPDX id."""
+
+    MAP = {"six": cl.Reviewed(version="1.17.0", spdx="MIT", source="LICENSE in the wheel")}
+
+    def test_a_classifier_name_with_a_reviewed_mapping_is_judged_by_its_spdx_id(self) -> None:
+        deps, problems = cl.apply_mapping([("six", "1.17.0", "MIT License")], self.MAP)
+        self.assertEqual((deps, problems), ([("six", "1.17.0", "MIT")], []))
+
+    def test_a_mapping_for_another_version_is_a_problem(self) -> None:
+        deps, problems = cl.apply_mapping([("six", "1.18.0", "MIT License")], self.MAP)
+        self.assertEqual(len(problems), 1)
+        self.assertEqual(deps, [("six", "1.18.0", "MIT License")])  # judged as reported: refused
+
+    def test_names_match_across_spelling(self) -> None:
+        deps, _ = cl.apply_mapping([("Six", "1.17.0", "MIT License")], self.MAP)
+        self.assertEqual(deps, [("Six", "1.17.0", "MIT")])
+
+    def test_unmapped_packages_keep_their_reported_licence(self) -> None:
+        deps, problems = cl.apply_mapping([("other", "1", "BSD License")], self.MAP)
+        self.assertEqual((deps, problems), ([("other", "1", "BSD License")], []))
+
+
+class Config(unittest.TestCase):
+    """The committed licences.allow.toml against ADR-0054 decision 5 and the S0035 brief."""
+
+    def setUp(self) -> None:
+        self.cfg = cl.load_config(cl.ROOT / "licences.allow.toml")
+
+    def test_the_engine_list_has_no_licence_gpl_2_0_only_code_cannot_take(self) -> None:
+        for lic in ("Apache-2.0", "LGPL-3.0-or-later", "LGPL-3.0-only", "GPL-3.0-only", "GPL-3.0-or-later",
+                    "Apache-2.0 WITH LLVM-exception", "AGPL-3.0-only"):
+            with self.subTest(licence=lic):
+                self.assertNotEqual(cl.judge(lic, self.cfg.engine.allowed, self.cfg.engine.pending), cl.ALLOWED)
+
+    def test_the_engine_list_takes_beancount_and_our_code(self) -> None:
+        for lic in ("GPL-2.0-only", "GPL-2.0-or-later", "MIT", "BSD-3-Clause", "PSF-2.0"):
+            with self.subTest(licence=lic):
+                self.assertEqual(cl.judge(lic, self.cfg.engine.allowed, self.cfg.engine.pending), cl.ALLOWED)
+
+    def test_the_reviewed_beancount_dependencies_are_the_two_adr_0054_names(self) -> None:
+        self.assertEqual(set(self.cfg.engine.reviewed), {"regex", "python-dateutil"})
+
+    def test_the_shared_list_is_unchanged_for_the_main_sidecar(self) -> None:
+        self.assertIn("Apache-2.0", self.cfg.pending)
+        self.assertIn("LGPL-3.0-or-later", self.cfg.allowed)
+        self.assertNotIn("Apache-2.0", self.cfg.allowed)
+
+    def test_every_mapping_names_a_version_an_spdx_id_and_where_it_was_read(self) -> None:
+        self.assertTrue(self.cfg.mapping)
+        for name, entry in self.cfg.mapping.items():
+            with self.subTest(package=name):
+                self.assertTrue(entry.version and entry.source)
+                ids = set(entry.spdx.replace("(", " ").replace(")", " ").split()) - {"AND", "OR", "WITH"}
+                self.assertEqual(cl.judge(entry.spdx, ids, set()), cl.ALLOWED)  # parses as an SPDX expression
+
+    def test_a_mapping_without_a_source_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "allow.toml"
+            path.write_text('allowed = ["MIT"]\n[engine]\nallowed = ["MIT"]\n[engine.reviewed]\n'
+                            '[mapping.six]\nversion = "1.17.0"\nspdx = "MIT"\n', encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                cl.load_config(path)
+
+
+class EngineWiring(unittest.TestCase):
+    def test_the_engine_group_reads_the_engine_environment(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **_kwargs):
+            calls.append(cmd)
+            out = "beancount==3.2.0\n" if "export" in cmd else '[{"Name": "beancount", "Version": "3.2.0", "License": "GPL-2.0-only"}]'
+            return mock.Mock(stdout=out)
+
+        with mock.patch.object(cl.subprocess, "run", fake_run), \
+                mock.patch.object(cl.shutil, "which", lambda _n: "/bin/uv"), \
+                mock.patch.object(cl.Path, "exists", lambda _p: True):
+            deps = cl.python_deps("engine")
+        export = next(c for c in calls if "export" in c)
+        self.assertEqual(export[export.index("--directory") + 1], str(cl.ROOT / "engine"))
+        tool = next(c for c in calls if "export" not in c)
+        self.assertEqual(tool[0], str(cl.ROOT / "engine/.venv/bin/pip-licenses"))
+        self.assertEqual(deps, [("beancount", "3.2.0", "GPL-2.0-only")])
+
+    def run_main(self, engine: list[tuple[str, str, str]], backend: list[tuple[str, str, str]]) -> int:
+        """main() over stubbed groups, writing the notices to a temporary file."""
+        def deps(project: str = "backend") -> list[tuple[str, str, str]]:
+            return engine if project == "engine" else backend
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(cl, "NOTICES", Path(tmp) / "NOTICES"), \
+                mock.patch.object(cl, "python_deps", deps), \
+                mock.patch.object(cl, "runtime_deps", lambda: None), \
+                mock.patch.object(cl, "js_deps", lambda: None), \
+                mock.patch.object(cl, "rust_deps", lambda: None):
+            return cl.main(["--write-notices"])
+
+    def test_main_judges_the_engine_by_the_engine_list(self) -> None:
+        # Must not pass: Apache-2.0 (only pending in the shared list) in the engine.
+        self.assertEqual(self.run_main([("lib", "1", "Apache-2.0")], []), 1)
+        self.assertEqual(self.run_main([], [("lib", "1", "Apache-2.0")]), 0)  # the main sidecar: a warning
+
+    def test_main_applies_the_reviewed_mapping_to_the_engine(self) -> None:
+        self.assertEqual(self.run_main([("six", "1.17.0", "MIT License")], []), 0)
+        self.assertEqual(self.run_main([("six", "1.18.0", "MIT License")], []), 1)
+
+    def test_an_engine_without_its_tool_fails_closed(self) -> None:
+        with mock.patch.object(cl.Path, "exists", lambda p: str(p).endswith("pyproject.toml")):
+            with self.assertRaises(SystemExit):
+                cl.python_deps("engine")
 
 
 if __name__ == "__main__":

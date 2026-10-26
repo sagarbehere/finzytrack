@@ -13,6 +13,7 @@ dev = [
   "deptry==0.25.1",
   "hypothesis==6.168.4",
   "import-linter==2.15",
+  "jsonschema==4.26.0",
   "pip-licenses==5.5.5",
   "pyright==1.1.414",
   "pytest==9.1.1",

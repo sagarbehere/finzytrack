@@ -6,6 +6,18 @@ CPython 3.13.16  Python-2.0
 == Python (backend sidecar) ==
 (no bundled dependencies)
 
+== Python (ledger engine) ==
+annotated-types 0.8.0  MIT
+beancount 3.2.0  GPL-2.0-only
+click 8.5.0  BSD-3-Clause
+pydantic 2.14.0  MIT
+pydantic_core 2.50.0  MIT
+python-dateutil 2.9.0.post0  Apache-2.0 AND BSD-3-Clause
+regex 2026.9.29  Apache-2.0 AND CNRI-Python
+six 1.17.0  MIT
+typing-inspection 0.4.4  MIT
+typing_extensions 4.16.0  PSF-2.0
+
 == JavaScript (frontend) ==
 @babel/helper-string-parser 7.29.7  MIT
 @babel/helper-validator-identifier 7.29.7  MIT

@@ -26,4 +26,13 @@ class StateEntry:
     eviction: str
 
 
-REGISTRY: tuple[StateEntry, ...] = ()
+REGISTRY: tuple[StateEntry, ...] = (
+    StateEntry(
+        "app.platform.adapters.engine_client",
+        "EngineClient",
+        "UserContainer",  # ADR-0054 decision 4: one engine serves the user container
+        "one engine process, one request in flight, the last 200 stderr lines, at most max_crashes stop times",
+        "close() when the user container closes; a stopped engine is restarted by the next request, bounded by "
+        "RestartPolicy",
+    ),
+)

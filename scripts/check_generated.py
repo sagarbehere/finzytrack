@@ -6,17 +6,23 @@ Every generated file is listed in GENERATORS with the command that produces it o
             generator's source is staged, its output must be regenerated in the same commit;
   --all     regenerate everything and compare with the working tree;
   --only P  check one generated path.
-Everything under design/generated/ must be listed here. Exit 0 = ok, 1 = stale or hand-edited.
+Everything under design/generated/ must be listed here. The header is the first line, or for a JSON file a
+top-level `$comment` key that comes first. A generator that cannot run (the engine's environment not synced) is a
+problem, not a crash. Exit 0 = ok, 1 = stale, hand-edited or not checkable.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+# The engine's own environment (ADR-0054): its schema is generated from models only that environment can import.
+ENGINE_PYTHON = ROOT / ("engine/.venv/Scripts/python.exe" if os.name == "nt" else "engine/.venv/bin/python")
 # generated path -> (command printing the expected content, source paths)
 GENERATORS: dict[str, tuple[list[str], list[str]]] = {
     "design/capabilities.md": (
@@ -31,13 +37,43 @@ GENERATORS: dict[str, tuple[list[str], list[str]]] = {
         [sys.executable, "scripts/gen_mirror_surface.py", "--stdout"],
         ["design/specs/mirror/surface.toml", "scripts/gen_mirror_surface.py"],
     ),
+    "contracts/engine-protocol.schema.json": (
+        [str(ENGINE_PYTHON), "-I", "-m", "ledger_engine.protocol.schema"],
+        [
+            "engine/src/ledger_engine/protocol/messages.py",
+            "engine/src/ledger_engine/protocol/schema.py",
+            "engine/pyproject.toml",
+            "engine/uv.lock",
+        ],
+    ),
 }
 MARK = "GENERATED"
 
 
+class GeneratorFailed(Exception):
+    pass
+
+
 def expected(path: str) -> str:
     cmd, _ = GENERATORS[path]
-    return subprocess.run(cmd, cwd=ROOT, check=True, capture_output=True, text=True).stdout
+    try:
+        return subprocess.run(cmd, cwd=ROOT, check=True, capture_output=True, text=True).stdout
+    except (OSError, subprocess.CalledProcessError) as e:
+        detail = e.stderr.strip().splitlines()[-1:] if isinstance(e, subprocess.CalledProcessError) and e.stderr else [str(e)]
+        raise GeneratorFailed(f"{' '.join(cmd)}: {' '.join(detail)}") from e
+
+
+def has_header(path: str, text: str) -> bool:
+    """A JSON file carries its header as the first key of its top-level object, `$comment`; any other file on
+    its first line."""
+    if path.endswith(".json"):
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return False
+        return isinstance(data, dict) and next(iter(data), None) == "$comment" and MARK in str(data["$comment"])
+    first_line = text.splitlines()[0] if text else ""
+    return MARK in first_line
 
 
 def current(path: str, staged: bool) -> str | None:
@@ -53,10 +89,14 @@ def check_one(path: str, staged: bool) -> list[str]:
     if have is None:
         return [f"{path}: missing; run its generator"]
     problems = []
-    first_line = have.splitlines()[0] if have else ""
-    if MARK not in first_line:
-        problems.append(f"{path}: first line must carry the GENERATED header")
-    if have != expected(path):
+    if not has_header(path, have):
+        where = "a top-level `$comment` first" if path.endswith(".json") else "its first line"
+        problems.append(f"{path}: the GENERATED header must be {where}")
+    try:
+        fresh = expected(path)
+    except GeneratorFailed as e:
+        return [*problems, f"{path}: the generator could not run ({e}); for the engine, run `uv sync --locked` in engine/"]
+    if have != fresh:
         problems.append(f"{path}: out of date or hand-edited; regenerate it ({' '.join(GENERATORS[path][0][1:])})")
     return problems
 

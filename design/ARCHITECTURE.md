@@ -78,23 +78,24 @@ The same backend can later run in hosted mode under a hosted user root (ADR-0041
 
 ## 2. Backend
 
-### 2.0 Two processes (ADR-0054, 2026-10-25)
+### 2.0 Two processes (ADR-0054)
 
-**This amendment overrides the single-process wording elsewhere in §2 and in §5, §10, §11 until those sections are rewritten in the first M1a slice.**
+The Python backend is two programs. Where this document names `ledger.*` or the build half of `mirror` (row builders, DDL, generation publish), that code runs in the **ledger engine**; the main sidecar reaches it only through the `EnginePort` (§2.3) and reads the published mirror itself.
 
 | Process | Holds | Licence of the combined program |
 |---|---|---|
-| **Ledger engine** (`engine/`, its own environment and lockfile) | `beancount`, `beanquery` and their own dependencies; our packages `ledger` (overlay load, `LoadPolicy`, `beancount_port`, grammar and tolerance, the write-safety contract and writer, journal, recovery) and the build half of `mirror` (row builders, DDL, generation publish); BQL execution | GPL-2.0-only (our code is GPL-2.0-or-later) |
-| **Main sidecar** (`backend/`) | FastAPI and every other package of §2.2: workspaces, boot, recipes and SQL over the published mirror, importing readers, categorizer, prices, AI, logging; an `engine_client` port that implements the use cases' ledger interfaces over the protocol | GPLv3 (via "or later"); never imports `beancount` |
+| **Ledger engine** (`engine/`, package `ledger_engine`, its own environment and lockfile) | `beancount` and its own dependencies (`beanquery` joins with the first BQL slice, BL-0081); our packages `protocol` (the message models, the schema generator, the server), `ledger` (overlay load, `LoadPolicy`, `beancount_port`, grammar and tolerance, the write-safety contract and writer, journal, recovery) and the build half of `mirror`; BQL execution; the heavy-load semaphore | GPL-2.0-only (our code is GPL-2.0-or-later) |
+| **Main sidecar** (`backend/`, package `app`) | FastAPI and every other package of §2.2: workspaces, boot, recipes and SQL over the published mirror, importing readers, categorizer, prices, AI, logging; the `EnginePort` and its adapter `platform.adapters.engine_client` | GPLv3 (via "or later"); never imports `beancount` |
 
-- **Protocol:** request/response JSON over a local pipe or loopback socket, schema in `contracts/engine-protocol.schema.json` (versioned, generated from the engine's message models, decoded on the main side like the HTTP API). It carries intents and plans, refusals with error keys, semantic diffs, located errors, query tables, ledger facts (Ledger Profile, account grammar pattern, tolerances) and mirror-generation ids. No Beancount objects, pickles, callbacks or shared memory. Entries never cross per request.
+- **Protocol** (S0035): JSON Lines, one request per line on the engine's stdin and one reply per line on its protocol channel, a private copy of its original stdout; fd 1 points at stderr inside the engine, so a stray print (a user's plugin) cannot corrupt a reply. Every message carries `v` (the protocol version), `id` and `op`; a reply adds `ok` and `result` or `error {key, message}`; `handshake` comes first; at most 16 MiB per line; one request in flight. The schema `contracts/engine-protocol.schema.json` is generated from the engine's message models (`ledger_engine.protocol.messages`) and diff-checked (`scripts/check_generated.py`); the main side decodes with its own strict codec (`app.platform.engine_protocol`), held to the schema by contract tests. It will carry intents and plans, refusals with error keys, semantic diffs, located errors, query tables, ledger facts (Ledger Profile, account grammar pattern, tolerances) and mirror-generation ids. No Beancount objects, pickles, callbacks or shared memory. Entries never cross per request. Ops so far: `handshake`, `ping`.
 - **Reads** use the published mirror from the main sidecar (§9.1, unchanged). **Writes, BQL, reconciliation loads and Beancount-derived facts** go to the engine.
-- **Supervision:** the main sidecar spawns the engine, with the parent-death watchdog of spike S1 and restart with backoff. The engine owns the heavy-load semaphore and keeps no resident ledger (INV-10).
-- **Enforcement:** an architecture test per environment (no `beancount` import outside `engine/`; the main environment cannot import it; the engine imports nothing from `backend/`); two licence allowlists (engine: GPL-2.0-compatible plus Beancount's own reviewed dependencies; main: GPL-3.0-compatible); protocol contract tests on both sides.
+- **Supervision** (S0035): `EngineClient` spawns the engine (`python -I -m ledger_engine --parent-pid <pid>`, with the parent's environment minus `FT_*` and `PYTHON*`), handshakes, sends each request with the caller's timeout, and never resends one. A crash, a timeout or an invalid reply stops the engine and the caller gets a typed `EngineFailure`; the next request restarts it after a growing delay (0.5 s, 2 s, 8 s), and after three stops in five minutes it is `unavailable` until the window passes or `reset()`. An engine that speaks another protocol version is `incompatible` and never retried. The engine exits on stdin EOF and, on POSIX, when its parent is no longer `--parent-pid` (spike S1's watchdog); on Windows the Job Object ends it (§5). It keeps no resident ledger (INV-10).
+- **Enforcement:** `scripts/check_engine_boundary.py` (only `engine/`, `scripts/oracle/` and `corpora/` import `beancount`/`beanquery`; inside the engine only `ledger_engine/ledger/beancount_port.py`; the engine never imports `app`; nothing outside the engine imports `ledger_engine`); per environment, the main one cannot import Beancount (`backend/tests/architecture/test_contracts.py`, `.importlinter`) and the engine's cannot import `app` (`engine/tests/architecture/test_boundaries.py`); two licence lists (`licences.allow.toml`: `[engine]`, GPL-2.0-compatible plus the reviewed Beancount dependencies; the shared list for the main sidecar); protocol contract tests on both sides.
+- **Not built yet:** the engine's operations (overlay load, mirror build, writes, facts), the composition root starting the engine, both trees in the packaged build, and the protocol-overhead measurement (BL-0082, BL-0083).
 
 ### 2.1 Shape: vertical feature slices over a shared kernel, functional core and imperative shell
 
-The backend is one Python package, `app`, in `backend/src/app/`. Two axes organize it:
+The main sidecar is one Python package, `app`, in `backend/src/app/`; the ledger engine is `ledger_engine`, in `engine/src/` (§2.0). Two axes organize both:
 
 1. **Kernel versus slices (EP-11).** A small set of shared packages (`domain`, `platform`, `ledger`, `mirror`, `workspaces`) is the kernel. Every user-facing capability lives in one **feature slice** (`accounts`, `transactions`, `importing`, `recipes`, `investments`, `prices`, `budgets`, `documents`, `settings`, `ai`). Slices depend on the kernel. They never depend on each other, except through a small set of declared edges (§2.4).
 2. **Core versus shell, inside every package (EP-01).** A package's `core/` is pure: functions and frozen value types over plain data, with no I/O, no clock and no framework. The package's shell (`usecases.py`, `http.py`, the adapters) orchestrates the I/O through injected ports and calls the core. Core modules are *deep* (EP-02): a few public functions over a cohesive implementation, not a scatter of tiny helpers.
@@ -115,24 +116,15 @@ backend/src/app/
                  rounding policy, metadata vocabulary, PriceIndex,
                  the DomainError taxonomy, the shared tagged-union Result types
   platform/      KERNEL, mostly ports. Port protocols (Clock, Ids, Rng, FileSystem, Http, Imap,
-                 Llm, SecretResolver, Locks, ProcessInfo), the heavy-load semaphore and the per-workspace
+                 Llm, SecretResolver, Locks, ProcessInfo, EnginePort), the per-workspace
                  limiter, the registry base (self-describing catalogs), observability (log context,
                  @timed), the PlanStore, the error-code registry
+    engine.py    EnginePort and its typed results (EngineInfo, EngineRefusal, EngineFailure) (S0035)
+    engine_protocol.py  the protocol codec: encode requests, decode replies strictly (pure) (S0035)
     adapters/    the only place that does real I/O: real fs (atomic replace, fsync_dir), portalocker
-                 locks (incl. legacy locks), httpx, imaplib+TLS, Pydantic AI gateway, .env resolver
-  ledger/        KERNEL. Beancount wrapped, never re-implemented (EP-03, INV-02).
-    core/        source_edit (Fava-ported splicing: locate, apply_edits, route_insert, replace_token),
-                 semantic diff (canonical entry keys), error keys, IntendedChange, Edit/EditPlan types
-    overlay.py   load(root, overlay, policy) -> LoadResult  (the D2 replica of _parse_recursive, pinned; ADR-0010)
-    policy.py    LoadPolicy (desktop permissive; hosted body deferred, ADR-0041)
-    contract.py  the write-safety contract as a pipeline of steps (ADR-0008), each fail-closed
-    writer.py    the single commit path: locks -> fingerprint -> backup -> atomic write -> read-back
-    journal.py   the write-intent journal for multi-file commits (ADR-0012)
-    grammar.py   parse_account(text, profile) and Tolerance construction, via beancount_port (ADR-0024)
-    beancount_port.py  the only module that imports beancount.*  (typed facade + stubs)
-  mirror/        KERNEL. Projection of a LoadResult into SQLite.
-    core/        row builders (ported from sqlite_exporter), DDL, r_* view definitions, fingerprint
-    publish.py   generation build + atomic publish (symlink / Windows pointer file, ADR-0015), GC
+                 locks (incl. legacy locks), httpx, imaplib+TLS, Pydantic AI gateway, .env resolver,
+                 engine_client (spawns and supervises the ledger engine, S0035)
+  mirror/        KERNEL, the read half (the build half is in the engine, below).
     reader.py    typed reads returning domain DTOs
     query.py     QueryRunner: the one hardened runner for user SQL (L5-07), dsum, price_asof,
                  steps schema (ADR-0029)
@@ -172,6 +164,28 @@ backend/src/app/
   main.py        COMPOSITION ROOT + sidecar entry: CLI args, roots, build_user_container, uvicorn
 ```
 
+The ledger engine's tree (ADR-0054; `engine/`, its own environment):
+
+```
+engine/src/ledger_engine/
+  __main__.py    `python -I -m ledger_engine`: the engine process (S0035)
+  protocol/      messages.py (the message models: the schema's single source), schema.py (generates
+                 contracts/engine-protocol.schema.json), server.py (the stdio loop, channel, watchdog) (S0035)
+  ledger/        KERNEL. Beancount wrapped, never re-implemented (EP-03, INV-02).
+    core/        source_edit (Fava-ported splicing: locate, apply_edits, route_insert, replace_token),
+                 semantic diff (canonical entry keys), error keys, IntendedChange, Edit/EditPlan types
+    overlay.py   load(root, overlay, policy) -> LoadResult  (the D2 replica of _parse_recursive, pinned; ADR-0010)
+    policy.py    LoadPolicy (desktop permissive; hosted body deferred, ADR-0041)
+    contract.py  the write-safety contract as a pipeline of steps (ADR-0008), each fail-closed
+    writer.py    the single commit path: locks -> fingerprint -> backup -> atomic write -> read-back
+    journal.py   the write-intent journal for multi-file commits (ADR-0012)
+    grammar.py   parse_account(text, profile) and Tolerance construction, via beancount_port (ADR-0024)
+    beancount_port.py  the only module that imports beancount.*  (typed facade + stubs)
+  mirror/        the build half: projection of a LoadResult into SQLite.
+    core/        row builders (ported from sqlite_exporter), DDL, r_* view definitions, fingerprint
+    publish.py   generation build + atomic publish (symlink / Windows pointer file, ADR-0015), GC
+```
+
 Each slice has the same internal layout, so an agent finds things by convention:
 
 ```
@@ -192,9 +206,9 @@ Each slice has the same internal layout, so an agent finds things by convention:
 | Package | Responsibility | Public interface (ports / entry points) | May import |
 |---|---|---|---|
 | `domain` | Domain primitives and their rules; the error taxonomy | `Amount`, `Commodity`, `Currency` (a refinement, §2.6), `AccountName` and `Tolerance` (brands/value types; their only constructors live in `ledger.grammar`, ADR-0024), `today(tz, clock)`, `quantize_derived`, `PriceIndex`, `MetadataKey`, `DomainError` subclasses, `Result` unions | stdlib, `decimal`, `zoneinfo`, `dateutil` (nothing else) |
-| `platform` | Ports, concurrency primitives, registries, observability, plans, error registry | Protocols: `Clock`, `Ids`, `Rng`, `FileSystem`, `Locks`, `Http`, `Imap`, `Llm`, `SecretResolver`; `HeavyLoadGate`, `WorkspaceLimiter`, `Registry[T]`, `PlanStore`, `log_context`, `timed`, `ErrorCode` | `domain`, stdlib; `platform.adapters` alone may import portalocker, httpx, pydantic_ai, imaplib, ssl |
-| `ledger` | Read and write the ledger set through Beancount; the write-safety contract | `overlay.load`, `parse_files`, `grammar.parse_account(text, profile)`, `grammar.tolerance(...)` (the Beancount grammar and tolerance behind `beancount_port`; INV-02 unchanged), `LoadPolicy`, `Edit`, `EditPlan`, `IntendedChange`, `contract.prepare(plan) -> Prepared \| Refused`, `writer.commit(prepared, acks) -> Committed \| Refused`, `ErrorKey`, `CanonicalEntryKey` | `domain`, `platform` (ports only); `beancount_port` alone imports `beancount` |
-| `mirror` | Build, publish and read the SQLite projection; hardened user SQL | `build_generation(load_result) -> Generation`, `publish(gen)`, `Reader` (typed reads), `QueryRunner.run_user_sql(UserSql, params)`, `ledger_version()` | `domain`, `platform`, `ledger` (LoadResult type only); stdlib `sqlite3` |
+| `platform` | Ports, concurrency primitives, registries, observability, plans, error registry | Protocols: `Clock`, `Ids`, `Rng`, `FileSystem`, `Locks`, `Http`, `Imap`, `Llm`, `EnginePort`, `SecretResolver`; `WorkspaceLimiter`, `Registry[T]`, `PlanStore`, `log_context`, `timed`, `ErrorCode` | `domain`, stdlib; `platform.adapters` alone may import portalocker, httpx, pydantic_ai, imaplib, ssl |
+| `ledger` (engine) | Read and write the ledger set through Beancount; the write-safety contract | `overlay.load`, `parse_files`, `grammar.parse_account(text, profile)`, `grammar.tolerance(...)` (the Beancount grammar and tolerance behind `beancount_port`; INV-02 unchanged), `LoadPolicy`, `Edit`, `EditPlan`, `IntendedChange`, `contract.prepare(plan) -> Prepared \| Refused`, `writer.commit(prepared, acks) -> Committed \| Refused`, `ErrorKey`, `CanonicalEntryKey` | the engine's own packages and its environment; `beancount_port` alone imports `beancount` (§2.0) |
+| `mirror` | Build and publish (in the engine), read the SQLite projection and run hardened user SQL (main sidecar) | engine: `build_generation(load_result) -> Generation`, `publish(gen)`; main: `Reader` (typed reads), `QueryRunner.run_user_sql(UserSql, params)`, `ledger_version()` | main: `domain`, `platform`; stdlib `sqlite3` |
 | `workspaces` | Workspace format, registry, open/switch, containers, legacy coexistence | `format.assess_workspace`, `format.assess_portability`, `format.resolve_open_target`, `Registry`, `open_workspace(key) -> Opened \| NotReady(phase)`, `WorkspaceContainer`, `UserContainer` | `domain`, `platform`, `ledger`, `mirror`; `format/` imports only `domain` + pydantic (extractable, ADR-0017) |
 | `boot` | App-level assessment and lifecycle runs; migrations; content packs; demo | `assess_app(probe) -> AppPhase`, `LifecyclePlan`, `execute(plan, consent)`, `Migration` registry, `ContentPack` | kernel packages; `content` |
 | `content` | Shipped read-only content and the demo/corpus generator | `packs.load(id, version)`, `demo.generate(anchor_date, size, fragments)` (built S0027: `Fragment`, `Size` demo/5k/54k, `default_fragments()`) | `domain`, `ledger.core` (printer-free text builders) |
@@ -209,7 +223,8 @@ Each slice has the same internal layout, so an agent finds things by convention:
 |---|---|---|---|
 | `FileSystem` | `platform.adapters.fs` (read, `atomic_replace` = temp + fsync + `os.replace` + `fsync_dir`, stat, list, `newline=""`) | in-memory FS with crash injection at every call | Confined: takes `WorkspacePath` / `AppPath` only (§2.6) |
 | `Locks` | portalocker 3.x semantics (`flock` / `LockFileEx`), per canonical file plus legacy `.write.lock` (ADR-0020) | in-process fake with an interleaving scheduler | The primitive is pinned in ADR-0005 |
-| Ledger store | `ledger.overlay` + `ledger.writer` over `FileSystem` and `Locks` | the same code over the fake FS | Not a separate port: it *is* the kernel; its I/O goes through `FileSystem` |
+| Ledger store | `ledger.overlay` + `ledger.writer` over `FileSystem` and `Locks`, in the engine | the same code over the fake FS | Not a separate port inside the engine: it *is* the kernel; its I/O goes through `FileSystem` |
+| `EnginePort` (main sidecar) | `platform.adapters.engine_client.EngineClient` (spawn, handshake, timeouts, bounded restarts; S0035) | a fake `EnginePort` | The only way the main sidecar reaches the ledger engine (§2.0); results are tagged unions (EP-13) |
 | Mirror | `mirror.publish` / `mirror.reader` over SQLite files in the cache dir | the same over a temp dir | Generation files behind a symlink or pointer file |
 | `Clock` | `zoneinfo`-aware system clock | `FrozenClock` | `today(tz)` derives from it (INV-07) |
 | `Ids`, `Rng` | uuid7 (`uuid-utils`), `secrets` | seeded sequences | Every id in the core is injected (EP-10) |
@@ -223,10 +238,10 @@ Each slice has the same internal layout, so an agent finds things by convention:
 
 import-linter (`backend/.importlinter`, T1) holds these contracts from the first commit, with no transitional exemptions (`PROCESS.md` (structural checks)):
 
-1. **Layers (kernel):** `api` > (slices) > `boot` > `workspaces` > `mirror` > `ledger` > `platform` > `domain`. `boot` may import `workspaces` (its lifecycle executor assesses and migrates workspaces, §2.3); `workspaces` never imports `boot` (S0006 settled the earlier "siblings" wording, which contradicted §2.3).
+1. **Layers (kernel):** `api` > (slices) > `boot` > `workspaces` > `mirror` > `platform` > `domain` in the main sidecar; `ledger` and the mirror's build half are in the engine (§2.0). `boot` may import `workspaces` (its lifecycle executor assesses and migrates workspaces, §2.3); `workspaces` never imports `boot` (S0006 settled the earlier "siblings" wording, which contradicted §2.3).
 2. **Per-slice layers**, for every slice: `http` > `usecases` > `core`, with `schemas` importable only by `http` and `usecases`.
-3. **Purity (forbidden):** no `*.core` module and no `domain` module may import `fastapi`, `pydantic`, `sqlite3`, `httpx`, `portalocker`, `os`, `pathlib`, `subprocess`, `socket`, `time`, `random`, `secrets`, `uuid`, `beancount` or `app.platform.adapters`. Pydantic stays at the edges (EP-06). `ledger.core` may import `app.ledger.beancount_port`'s pure parser facade only.
-4. **Single Beancount gateway and the load rule** (stated once here; ADR-0043 and ADR-0010 point to it): full loads (`load_file`, `load_string`, the `_parse_recursive` replica) are invoked only from `ledger/overlay.py` and the reconciliation job, both under the heavy-load semaphore. Parser-only calls (`parse_file`, `parse_string`) are invoked only via `beancount_port`. Only `beancount_port` imports `beancount`. The AST test checks call sites of the port's wrappers.
+3. **Purity (forbidden):** no `*.core` module and no `domain` module may import `fastapi`, `pydantic`, `sqlite3`, `httpx`, `portalocker`, `os`, `pathlib`, `subprocess`, `socket`, `time`, `random`, `secrets`, `uuid`, `beancount` or `app.platform.adapters`. Pydantic stays at the edges (EP-06). In the engine, `ledger.core` may import `ledger_engine.ledger.beancount_port`'s pure parser facade only.
+4. **Single Beancount gateway and the load rule** (stated once here; ADR-0043 and ADR-0010 point to it): full loads (`load_file`, `load_string`, the `_parse_recursive` replica) are invoked only from `ledger/overlay.py` and the reconciliation job, both under the heavy-load semaphore. Parser-only calls (`parse_file`, `parse_string`) are invoked only via `beancount_port`. Only `beancount_port` imports `beancount` (`scripts/check_engine_boundary.py`, S0035, with the main sidecar's ban and the rest of §2.0's boundary). The AST test of the call sites of the port's wrappers arrives with the port (BL-0002).
 5. **Slice independence:** slices do not import each other, except these declared edges, each with an ADR reference in the contract file:
    - `investments → importing.usecases` (the holdings reconciliation reuses the matcher and the report shape, ADR-0032);
    - `ai → <slice>.capabilities` (declarations only);
@@ -243,7 +258,8 @@ The core is stateless. **These are all the stateful parts of the backend, and no
 
 | State | Lives in | Bound | Notes |
 |---|---|---|---|
-| Heavy-load semaphore | process (the only process-wide state, ADR-0041) | 1–2 slots, configurable | Priority goes to the workspace being opened (review:23 §3.7) |
+| Heavy-load semaphore | the engine process (ADR-0054 decision 4; the only process-wide state, ADR-0041) | 1–2 slots, configurable | Priority goes to the workspace being opened (review:23 §3.7) |
+| Engine client (`EngineClient`) | `UserContainer` (one engine serves the user container, ADR-0054) | one engine process, one request in flight, the last 200 stderr lines, at most 3 stop times | `close()` with the container; registered in `platform/state_registry.py` (S0035) |
 | Per-workspace write limiter (`anyio.CapacityLimiter(1)`) + RLock depth | `UserContainer`, keyed by canonical root (review:23 §3.9) | one per root | ADR-0011 |
 | Job queue (price fetch, rebuilds) | `UserContainer` | configurable | Jobs hold a container reference |
 | Conversation store | `UserContainer`, keyed by (ws, thread) | TTL + LRU | ADR-0033 |
@@ -403,16 +419,16 @@ Hand-written TanStack Query hooks live in `features/*/queries.ts`. They are thin
 
 ## 5. Tauri shell boundary and sidecar
 
-> **Amended by ADR-0054:** the shell spawns and supervises the **main sidecar** only; the main sidecar spawns and supervises the **ledger engine** (§2.0). Both are signed and covered by the orphan rules. Spike S1 also showed that a onedir tree ships as `bundle.resources`, not `externalBin`, and that the Linux updater handles AppImage, `.deb` and `.rpm`; the packaging is python-build-standalone, not PyInstaller, and Linux ships AppImage and `.deb` (ADR-0056); this section is rewritten in the first shell slice.
+**Two levels of supervision (ADR-0054).** The shell spawns and supervises the **main sidecar** only. The main sidecar spawns and supervises the **ledger engine** through `EngineClient` (§2.0, S0035): handshake, per-request timeouts, restart with backoff, a bound after which it reports the engine unavailable. Both processes are signed and covered by the orphan rules below; the engine also exits by itself when its stdin closes or (POSIX) its parent changes. Packaging both Python trees into the bundle is BL-0083. The rest of this section is rewritten in the first shell slice (spike S1: a onedir tree ships as `bundle.resources`, not `externalBin`; python-build-standalone, not PyInstaller; Linux ships AppImage and `.deb`, ADR-0056).
 
 **Identifier and platforms (owner, 2026-10-24; ADR-0007):** the Tauri identifier is `com.finzytrack.desktop` (permanent; it fixes `app_local_data_dir` and how updates find the app), product name "Finzytrack". Builds: Apple-silicon macOS (ad-hoc signed, not notarized), Windows 10/11 x64 (unsigned; the SmartScreen warning is documented), Linux x64 (Ubuntu 22.04 or newer; AppImage and `.deb`, both updated by the updater, ADR-0056). Intel Macs are not built. **Minimum macOS 14 (Sonoma); WebKit baseline Safari 17** (ADR-0007 amendment, owner 2026-10-25).
 
 **Packaging** (ADR-0056; S0012). `shell/sidecar/build_sidecar.py` builds `build/sidecar/python/`: the python-build-standalone runtime pinned in `shell/sidecar/pbs.lock.json` (hash-checked, extracted with tarfile's `data` filter), with the main sidecar's locked runtime closure and its own wheel installed, trimmed, compiled to unchecked-hash bytecode, with no symlinks left (the resource copy follows them), and on macOS every Mach-O ad-hoc signed inside-out. `shell/package_app.py` builds the frontend and runs `tauri build` with `tauri.packaged.conf.json`, an override that may only set `bundle` (the tree ships as `bundle.resources` at `sidecar/`, never `externalBin`; ad-hoc signing identity `-`; NSIS per-user install), which `scripts/tests/test_shell_config.py` checks merged. **`--smoke-test`** (`shell/src-tauri/src/smoke.rs`, the spec): exit 0 with one `FT_SMOKE_OK` line only when the main window's page finished loading and the package's own interpreter, run with `-I`, is 3.13 with its prefix and the `app` package inside the resource directory; otherwise `FT_SMOKE_FAIL` and exit 1. `.github/workflows/packaged.yml` runs it on the three platforms, on the installed package where the format allows, and again with the runtime moved away, which must fail.
 
 **Rust side** (`shell/src-tauri/`, Tauri 2.12):
-- **Sidecar supervisor.** It spawns the backend built with python-build-standalone (ADR-0056; the engine process of ADR-0054 beside it; every binary signed: ad-hoc on macOS until an Apple Developer ID exists) with arguments `--app-local-data … --app-cache … --port 0 --shell-token-env FT_SHELL_TOKEN [--workspace PATH]`. The backend binds a free loopback port and prints one handshake line (`FT_READY {"port":…, "version":…}`) on stdout. A test-only `--frozen-clock <ISO instant with offset>` makes the composition root wire `FrozenClock` instead of the system clock; the acceptance harness uses it (S0030). Until the API edge arrives (L1-07, L10-09) `app.main` serves no routes and answers 501. The shell then waits for `GET /api/boot`, opens the window and injects the port and token through an initialization script.
+- **Sidecar supervisor.** It spawns the backend built with python-build-standalone (ADR-0056; the main sidecar starts the ledger engine itself, §2.0; every binary signed: ad-hoc on macOS until an Apple Developer ID exists) with arguments `--app-local-data … --app-cache … --port 0 --shell-token-env FT_SHELL_TOKEN [--workspace PATH]`. The backend binds a free loopback port and prints one handshake line (`FT_READY {"port":…, "version":…}`) on stdout. A test-only `--frozen-clock <ISO instant with offset>` makes the composition root wire `FrozenClock` instead of the system clock; the acceptance harness uses it (S0030). Until the API edge arrives (L1-07, L10-09) `app.main` serves no routes and answers 501. The shell then waits for `GET /api/boot`, opens the window and injects the port and token through an initialization script.
   - Exit: graceful `POST /api/app/quiesce`, then terminate.
-  - Orphans: the shell kills the process group on POSIX and uses a Job Object on Windows.
+  - Orphans: the shell kills the process group on POSIX and uses a Job Object on Windows. The ledger engine stays in the main sidecar's process group and job, so both reach it; it also has its own watchdog (§2.0).
   - Crash: restart with backoff; after three crashes the shell shows a "backend stopped" screen with diagnostics. This is the sidecar statechart in §7.
 - **Plugins:** `dialog` (pick folder/file), `opener` (reveal), `single-instance` (forwards the path of a second launch), `updater`, `process` (relaunch), `log`. **No `fs` plugin, and no `shell:allow-execute` for the webview.** The Tauri capability file grants the webview only the dialog, opener, updater and process permissions it needs.
 - File associations for `.beancount` and `.bean` at alternate rank (ADR-0007). OS recents come from the registry. Close requests are forwarded to the web UI's unsaved guard.
@@ -744,15 +760,15 @@ The versions below are the newest stable releases published on or before **2026-
 | Java (TLC) | Temurin 21 LTS | TLA+ tools 1.7.4 |
 | python-build-standalone | **release 20261009** (CPython 3.13.16, `install_only_stripped`; hashes in `shell/sidecar/pbs.lock.json`) | the packaged runtime of both Python processes (ADR-0056, replacing PyInstaller) |
 
-**Backend libraries**
+**Backend libraries** (two environments, ADR-0054: `engine/uv.lock` for the ledger engine, `backend/uv.lock` for the main sidecar; each library joins its environment with the slice that first imports it)
 
 | Library | Pin | Notes |
 |---|---|---|
-| beancount | **3.2.0** (ADR-0004; 3.2.3 exists) | wrapped by `ledger.beancount_port` |
-| beanquery | 0.2.0 | BQL steps, statement allowlist (L11-07) |
+| beancount | **3.2.0** (ADR-0004; 3.2.3 exists) | engine only; wrapped by `ledger.beancount_port`; its dependencies click 8.5.0, python-dateutil 2.9.0.post0, regex 2026.9.29, six 1.17.0, as in `scripts/oracle` |
+| beanquery | 0.2.0 | engine only; BQL steps, statement allowlist (L11-07). Joins the engine with the first BQL slice: its TatSu-LTS dependency's licence is with the owner (BL-0081) |
 | fastapi | 0.143.0 | Starlette is resolved by the lock |
 | uvicorn | 0.54.0 | |
-| pydantic | 2.14.0 | edges only (EP-06) |
+| pydantic | 2.14.0 | edges only (EP-06); in the engine since S0035, for the protocol's message models (pydantic-core 2.50.0 via the lock) |
 | pydantic-ai-slim[openai,anthropic] | 2.55.0 | Vercel adapter `sdk_version=7`; requires pydantic ≥2.12, anthropic ≥1.12.1, openai ≥3.26 |
 | anthropic | 1.13.0 | **2.3.0 is the latest but under 14 days old**; the lock checks compatibility with pydantic-ai |
 | openai | 3.27.0 | |
@@ -769,7 +785,7 @@ The versions below are the newest stable releases published on or before **2026-
 | scikit-learn | 1.9.1 | categorizer (with numpy 2.5.x and scipy 1.18.1 via the lock) |
 | rapidfuzz | 3.14.6 | matcher text similarity |
 | ruamel.yaml | 0.19.1 | round-trip YAML for settings and rules |
-| jsonschema | 4.26.0 | recipe-schema validation, if the validator keeps a JSON-Schema stage |
+| jsonschema | 4.26.0 | recipe-schema validation, if the validator keeps a JSON-Schema stage; a dev dependency of both environments since S0035 (protocol contract tests) |
 | httpx | 0.28.1 | Http port |
 
 **Backend dev and verification tools**
@@ -829,7 +845,7 @@ The versions below are the newest stable releases published on or before **2026-
 
 **Fallback if S13 fails (stay on Vue).** The earlier Vue pins stay valid as the fallback stack: vue 3.5.43, vue-router 5.4.0, @tanstack/vue-query 5.104.1, @tanstack/vue-table 9.2.8, @tanstack/vue-virtual 3.13.40, reka-ui 2.11.0 via shadcn-vue 2.8.2, @lucide/vue 1.55.0, vue-sonner 2.0.9, @xstate/vue 5.0.1, vue-echarts 8.3.2, ai / @ai-sdk/vue 7.0.136 / 4.0.136; dev: vue-tsc 3.3.13, @vitejs/plugin-vue 6.0.10, @vue/test-utils 2.5.1, eslint-plugin-vue 10.11.1, eslint-plugin-vuejs-accessibility 2.6.1. The framework-neutral rows above are shared.
 
-**Licence checks (T1) (owner, 2026-10-24; ADR-0042).** A `THIRD_PARTY_NOTICES` file at the repo root is generated from the lockfiles, and T1 fails on a dependency whose licence is not on the allowlist: pip-licenses 5.5.5 (Python), license-checker-rseidelsohn 5.0.1 (JS), `cargo metadata` judged by the same allowlist (Rust; cargo-about 0.9.2 collects the licence texts at bundling; ADR-0042 amendment). The owner's own code is declared GPL-2.0-or-later; Beancount is GPL-2.0-only, and the bundle question goes to legal advice before v0.4.0.
+**Licence checks (T1) (owner, 2026-10-24; ADR-0042).** A `THIRD_PARTY_NOTICES` file at the repo root is generated from the lockfiles, and T1 fails on a dependency whose licence is not on the allowlist: pip-licenses 5.5.5 (Python), license-checker-rseidelsohn 5.0.1 (JS), `cargo metadata` judged by the same allowlist (Rust; cargo-about 0.9.2 collects the licence texts at bundling; ADR-0042 amendment). Two lists (ADR-0054 decision 5; S0035): the ledger engine is judged by `[engine]` in `licences.allow.toml` (GPL-2.0-compatible licences, plus Beancount's reviewed dependencies `regex` and `python-dateutil`, which warn while pending legal advice); everything else by the shared list. Where pip-licenses reports a trove-classifier name, `[mapping]` gives the reviewed SPDX id for one exact version (BL-0050). The owner's own code is declared GPL-2.0-or-later; Beancount is GPL-2.0-only, and the bundle question goes to legal advice before v0.4.0.
 
 ---
 
@@ -848,13 +864,19 @@ The versions below are the newest stable releases published on or before **2026-
     workspace-manifest.schema.json  app-manifest.schema.json   generated from the Pydantic models
     error-codes.json                              generated from the registry (also inside openapi.json)
     mirror-ddl.sql  mirror-views.md               generated snapshot of the DDL + r_* views (with column comments)
-  backend/
+    engine-protocol.schema.json                   generated from the engine's message models (S0035; §2.0)
+  engine/                                       the ledger engine (ADR-0054), its own environment (S0035)
+    pyproject.toml  uv.lock  .python-version  pyrightconfig.json  ruff.toml  CLAUDE.md
+    src/ledger_engine/…                         §2.2 (the engine's tree)
+    typings/beancount/                          local strict stubs for the Beancount surface we use (with beancount_port)
+    tests/  protocol, schema and process tests · architecture/ (the environment's boundary checks)
+  backend/                                      the main sidecar
     pyproject.toml  uv.lock  .python-version  .importlinter  pyrightconfig.json  ruff.toml
     src/app/…                                   §2.2
-    typings/beancount/                          local strict stubs for the Beancount surface we use
     tests/  unit/ (mirrors src) · properties/ · models/ (RuleBasedStateMachine) · contract/ (API,
             error codes, streams) · corpus/ (D1, D2 equivalence) · goldens/ · architecture/ (AST bans,
-            globals, route scope, tla mapping)
+            globals, route scope, tla mapping) · platform/ (incl. the engine client against the real
+            engine and the protocol contract test, S0035)
     scripts/                                    backend-internal tools (cwd = backend/): export_openapi.py,
                                                 gen_demo.py (writes the demo ledger or a 5k/54k corpus into an
                                                 output folder with generated-for.json; anchor from --anchor or
@@ -871,7 +893,8 @@ The versions below are the newest stable releases published on or before **2026-
     src-tauri/  Cargo.toml  Cargo.lock  rust-toolchain.toml  tauri.conf.json  tauri.packaged.conf.json  capabilities/
                 src/main.rs  src/smoke.rs  icons/   (S0010, S0012; src/sidecar.rs arrives with the sidecar supervisor)
     sidecar/    build_sidecar.py + pbs.lock.json: the python-build-standalone build of both Python processes
-                (ADR-0056, ADR-0054; S0012), output in build/sidecar/
+                (ADR-0056, ADR-0054; S0012; today the main sidecar's tree only, the engine's is BL-0083),
+                output in build/sidecar/
     package_app.py  smoke_packaged.py           the packaged build for this platform and its smoke check (S0012)
   formal/
     tla/        WriteProtocol.tla  WriteProtocol.cfg  WriteProtocol_small.cfg  MAPPING.md (generated)  tools.lock
@@ -879,7 +902,7 @@ The versions below are the newest stable releases published on or before **2026-
                                                 anonymized exports (owner-reviewed, privacy gate), old-workspace fixtures,
                                                 vectors/ (the Beancount domain vectors, S0024)
   scripts/                                      repo-wide tools (run from root): check_invariants.py, check_capabilities.py,
-                                                privacy_scan.py, check_deferrals.py (S0033), mutants.py (self-mutation before hand-off, ADR-0057), concept_counters.py, gen_diagrams.py, oracle/ (the
+                                                privacy_scan.py, check_deferrals.py (S0033), check_engine_boundary.py (S0035), mutants.py (self-mutation before hand-off, ADR-0057), concept_counters.py, gen_diagrams.py, oracle/ (the
                                                 differential-oracle harness launching the legacy worktree on
                                                 ledger COPIES only; it refuses the owner's live
                                                 v0.3 data folder; owner, 2026-10-24): launch_legacy.py,

@@ -1,0 +1,28 @@
+# Format and lint for engine/ (ARCHITECTURE.md §10), the same rules as backend/ruff.toml. Run from engine/ or from
+# the repo root with --config engine/ruff.toml.
+target-version = "py313"
+line-length = 120
+
+[lint]
+select = ["E", "W", "F", "I", "UP", "B", "BLE", "DTZ", "S", "TRY", "TID", "PT", "SIM", "RUF", "PGH", "T20"]
+
+[lint.per-file-ignores]
+# pytest asserts; the pattern matches from the repo root and from engine/
+"**/tests/**" = ["S101"]
+
+[lint.flake8-tidy-imports.banned-api]
+"datetime.date.today".msg = "INV-07: there is no UTC or system 'today'"
+"datetime.datetime.now".msg = "INV-07, EP-10: the engine reads no clock; time comes in the request"
+"datetime.datetime.utcnow".msg = "INV-07, EP-10: the engine reads no clock; time comes in the request"
+"time.sleep".msg = "EP-28: no sleeps; wait on a condition"
+"time.time".msg = "INV-07, EP-10: the engine reads no clock; time comes in the request"
+"time.time_ns".msg = "INV-07, EP-10: the engine reads no clock; time comes in the request"
+"time.localtime".msg = "INV-07, EP-10: the engine reads no clock; time comes in the request"
+"time.gmtime".msg = "INV-07, EP-10: the engine reads no clock; time comes in the request"
+"time.strftime".msg = "INV-07, EP-10: the engine reads no clock; time comes in the request"
+"time.ctime".msg = "INV-07, EP-10: the engine reads no clock; time comes in the request"
+"pickle".msg = "ADR-0054 decision 2: no pickles cross the protocol"
+"multiprocessing.shared_memory".msg = "ADR-0054 decision 2: no shared memory crosses the protocol"
+
+[lint.isort]
+known-first-party = ["ledger_engine"]

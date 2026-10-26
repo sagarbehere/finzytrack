@@ -2,13 +2,18 @@
 """T1 licence check (owner decision, review:F §2 item 9): bundled dependencies use allowed licences, and
 THIRD_PARTY_NOTICES lists every one of them.
 
-Sources, once each package exists: the backend venv (pip-licenses 5.5.5), frontend/node_modules
+Sources, once each package exists: the backend and engine venvs (pip-licenses 5.5.5), frontend/node_modules
 (license-checker-rseidelsohn 5.0.1) and shell/src-tauri (`cargo metadata`: the crates reached from the shell
 through normal dependencies, on every target; cargo-about collects the licence texts at bundling). Only what is
 bundled counts: for the backend, the runtime closure of its lockfile (`uv export --no-dev`), never the dev
 tools installed beside it; a runtime package the venv does not report fails closed. A package that exists but
 whose tool is missing fails closed. Licences listed under [pending_legal_advice] pass with a
 warning until the owner's legal advice settles them.
+Two lists (ADR-0054 decision 5): the ledger engine is a GPL-2.0-only program and is judged by `[engine]` (GPL-2.0-
+compatible licences, plus the reviewed Beancount dependencies in `[engine.reviewed]`, each passing with a warning
+only while its licence is the reviewed expression); everything else by the shared list. pip-licenses reports
+trove-classifier names for some packages; `[mapping.<package>]` gives the reviewed SPDX id for one exact version
+(BL-0050).
 Usage: python3 scripts/check_licences.py [--write-notices]
 """
 
@@ -20,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,31 +49,34 @@ def runtime_names(requirements: str) -> set[str]:
     return names
 
 
-def bundled(installed: list[tuple[str, str, str]], runtime: set[str]) -> list[tuple[str, str, str]]:
+def bundled(
+    installed: list[tuple[str, str, str]], runtime: set[str], project: str = "backend"
+) -> list[tuple[str, str, str]]:
     """The installed packages that are bundled. A runtime package missing from the venv fails closed."""
     by_name = {norm(n): (n, v, lic) for n, v, lic in installed}
     missing = sorted(runtime - by_name.keys())
     if missing:
-        raise SystemExit(f"check-licences: runtime packages not installed in backend/.venv: {', '.join(missing)}")
+        raise SystemExit(f"check-licences: runtime packages not installed in {project}/.venv: {', '.join(missing)}")
     return [by_name[n] for n in sorted(runtime)]
 
 
-def python_deps() -> list[tuple[str, str, str]] | None:
-    if not (ROOT / "backend/pyproject.toml").exists():
+def python_deps(project: str = "backend") -> list[tuple[str, str, str]] | None:
+    """The bundled packages of one Python process: `backend` (the main sidecar) or `engine` (ADR-0054)."""
+    if not (ROOT / project / "pyproject.toml").exists():
         return None
-    tool = ROOT / "backend/.venv/bin/pip-licenses"
+    tool = ROOT / project / ".venv/bin/pip-licenses"
     if not tool.exists():
-        raise SystemExit("check-licences: backend exists but backend/.venv/bin/pip-licenses is missing")
+        raise SystemExit(f"check-licences: {project} exists but {project}/.venv/bin/pip-licenses is missing")
     uv = shutil.which("uv")
     if uv is None:
-        raise SystemExit("check-licences: backend exists but uv is not on PATH")
+        raise SystemExit(f"check-licences: {project} exists but uv is not on PATH")
     export = subprocess.run(
-        [uv, "export", "--frozen", "--no-dev", "--no-emit-project", "--no-hashes", "--directory", str(ROOT / "backend")],
+        [uv, "export", "--frozen", "--no-dev", "--no-emit-project", "--no-hashes", "--directory", str(ROOT / project)],
         capture_output=True, text=True, check=True,
     )
     out = subprocess.run([str(tool), "--format=json", "--with-system", "--from=mixed"], capture_output=True, text=True, check=True)
     installed = [(d["Name"], d["Version"], d["License"]) for d in json.loads(out.stdout)]
-    return bundled(installed, runtime_names(export.stdout))
+    return bundled(installed, runtime_names(export.stdout), project)
 
 
 def rust_from_metadata(meta: dict) -> list[tuple[str, str, str]]:
@@ -197,12 +206,84 @@ def judge(expression: str, allowed: set[str], pending: set[str]) -> int:
     return value if pos == len(tokens) else REFUSED
 
 
+@dataclass(frozen=True)
+class Policy:
+    """How one group is judged: allowed and pending licences, and reviewed packages (normalized name -> the exact
+    licence expression that was reviewed; such a package passes with a warning, pending legal advice)."""
+
+    allowed: frozenset[str]
+    pending: frozenset[str]
+    reviewed: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Reviewed:
+    """A reviewed SPDX id for one exact version of a package whose tool-reported licence is not SPDX (BL-0050)."""
+
+    version: str
+    spdx: str
+    source: str
+
+
+@dataclass(frozen=True)
+class Config:
+    allowed: frozenset[str]
+    pending: frozenset[str]
+    engine: Policy
+    mapping: dict[str, Reviewed]
+
+
+ENGINE_GROUP = "Python (ledger engine)"
+
+
+def load_config(path: Path) -> Config:
+    """licences.allow.toml. A malformed `[mapping]` entry (no version, SPDX id or source) stops the check."""
+    with path.open("rb") as fh:
+        cfg = tomllib.load(fh)
+    engine = cfg.get("engine", {})
+    mapping: dict[str, Reviewed] = {}
+    for name, entry in cfg.get("mapping", {}).items():
+        if not all(isinstance(entry.get(k), str) and entry[k].strip() for k in ("version", "spdx", "source")):
+            raise SystemExit(f"check-licences: [mapping.{name}] needs version, spdx and source (where it was read)")
+        mapping[norm(name)] = Reviewed(entry["version"], entry["spdx"], entry["source"])
+    return Config(
+        allowed=frozenset(cfg["allowed"]),
+        pending=frozenset(cfg.get("pending_legal_advice", {})),
+        engine=Policy(frozenset(engine.get("allowed", [])), frozenset(),
+                      {norm(n): e for n, e in engine.get("reviewed", {}).items()}),
+        mapping=mapping,
+    )
+
+
+def apply_mapping(
+    deps: list[tuple[str, str, str]], mapping: dict[str, Reviewed]
+) -> tuple[list[tuple[str, str, str]], list[str]]:
+    """Replace a reported licence by its reviewed SPDX id when the mapping is for this exact version; a mapping
+    for another version is a problem (the licence may have changed), and the reported licence stays."""
+    out, problems = [], []
+    for name, version, lic in deps:
+        entry = mapping.get(norm(name))
+        if entry is None:
+            out.append((name, version, lic))
+        elif entry.version != version:
+            problems.append(f"{name} {version}: the reviewed licence mapping is for version {entry.version}; "
+                            "read the licence again and update [mapping] in licences.allow.toml")
+            out.append((name, version, lic))
+        else:
+            out.append((name, version, entry.spdx))
+    return out, problems
+
+
 def evaluate(
-    groups: dict[str, list[tuple[str, str, str]] | None], allowed: set[str], pending: set[str]
+    groups: dict[str, list[tuple[str, str, str]] | None], allowed: set[str], pending: set[str],
+    overrides: dict[str, Policy] | None = None,
 ) -> tuple[list[str], list[str], str]:
-    """(problems, warnings, notices text), each dependency judged by `judge`."""
+    """(problems, warnings, notices text), each dependency judged by `judge` under its group's policy: the shared
+    `allowed`/`pending`, or the group's entry in `overrides`."""
     problems, warnings, lines = [], [], [HEADER]
+    shared = Policy(frozenset(allowed), frozenset(pending))
     for title, deps in groups.items():
+        policy = (overrides or {}).get(title, shared)
         lines.append(f"\n== {title} ==\n")
         if deps is None:
             lines.append("(package not present yet)\n")
@@ -210,25 +291,35 @@ def evaluate(
         if not deps:
             lines.append("(no bundled dependencies)\n")
         for name, version, lic in sorted(deps):
-            verdict = judge(lic, allowed, pending)
-            if verdict == ALLOWED:
-                pass
-            elif verdict == PENDING:
-                warnings.append(f"{name} {version}: {lic} (pending legal advice)")
+            if policy.reviewed.get(norm(name)) == lic:
+                warnings.append(f"{name} {version}: {lic} (reviewed dependency of Beancount, pending legal advice)")
             else:
-                problems.append(f"{name} {version}: licence {lic!r} is not on the allowlist")
+                verdict = judge(lic, set(policy.allowed), set(policy.pending))
+                if verdict == PENDING:
+                    warnings.append(f"{name} {version}: {lic} (pending legal advice)")
+                elif verdict == REFUSED:
+                    where = " of the ledger engine (ADR-0054)" if policy is not shared else ""
+                    problems.append(f"{name} {version}: licence {lic!r} is not on the allowlist{where}")
             lines.append(f"{name} {version}  {lic}\n")
     return problems, warnings, "".join(lines)
 
 
 def main(argv: list[str]) -> int:
-    with (ROOT / "licences.allow.toml").open("rb") as fh:
-        cfg = tomllib.load(fh)
-    allowed, pending = set(cfg["allowed"]), set(cfg.get("pending_legal_advice", {}))
+    cfg = load_config(ROOT / "licences.allow.toml")
+    mapping_problems: list[str] = []
+
+    def mapped(deps: list[tuple[str, str, str]] | None) -> list[tuple[str, str, str]] | None:
+        if deps is None:
+            return None
+        out, problems = apply_mapping(deps, cfg.mapping)
+        mapping_problems.extend(problems)
+        return out
+
     groups = {"Python runtime (python-build-standalone)": runtime_deps(),
-              "Python (backend sidecar)": python_deps(), "JavaScript (frontend)": js_deps(),
-              "Rust (desktop shell)": rust_deps()}
-    problems, warnings, text = evaluate(groups, allowed, pending)
+              "Python (backend sidecar)": mapped(python_deps("backend")), ENGINE_GROUP: mapped(python_deps("engine")),
+              "JavaScript (frontend)": js_deps(), "Rust (desktop shell)": rust_deps()}
+    problems, warnings, text = evaluate(groups, set(cfg.allowed), set(cfg.pending), {ENGINE_GROUP: cfg.engine})
+    problems = mapping_problems + problems
     if "--write-notices" in argv:
         NOTICES.write_text(text, encoding="utf-8")
     elif not NOTICES.exists() or NOTICES.read_text(encoding="utf-8") != text:

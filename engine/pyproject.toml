@@ -1,0 +1,39 @@
+# The ledger engine (ADR-0054): Beancount, beanquery and our ledger code, in its own process and environment.
+# Our source is GPL-2.0-or-later; the combined program is GPL-2.0-only (Beancount). It imports nothing from backend/.
+# Pins: ARCHITECTURE.md §10 (EP-24); Beancount 3.2.0 on Python 3.13 (ADR-0004), as scripts/oracle pins it.
+[project]
+name = "finzytrack-engine"
+version = "0.4.0.dev0"
+requires-python = "==3.13.*"
+license = "GPL-2.0-or-later"
+# beanquery 0.2.0 (ARCHITECTURE.md §10) joins with the first BQL slice: its TatSu-LTS dependency's licence is
+# with the owner (design/inbox/20261026-beanquery-tatsu-licence.md, BL-0081).
+dependencies = [
+  "beancount==3.2.0",
+  "pydantic==2.14.0",
+]
+
+[dependency-groups]
+dev = [
+  "jsonschema==4.26.0",
+  "pip-licenses==5.5.5",
+  "pyright==1.1.414",
+  "pytest==9.1.1",
+  "ruff==0.17.0",
+]
+
+[build-system]
+requires = ["uv_build==0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+exclude-newer = "14 days"
+
+[tool.uv.build-backend]
+module-name = "ledger_engine"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-markers", "-p", "no:cacheprovider"]
+xfail_strict = true
+empty_parameter_set_mark = "fail_at_collect"

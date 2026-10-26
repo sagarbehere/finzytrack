@@ -1,9 +1,11 @@
-# Licence allowlist for bundled third-party dependencies (T1 licence check; ADR on licensing).
+# Licence allowlist for bundled third-party dependencies (T1 licence check, scripts/check_licences.py; ADR-0042).
 # SPDX identifiers. A dependency whose licence is not listed fails CI until it is added here with a reason.
-# ADR-0054 splits the backend into a ledger engine (GPL-2.0-only program) and a main sidecar (GPLv3);
-# this single list becomes two per-process lists with the first engine slice (BL-0041).
-# PROVISIONAL: the owner gets legal advice before v0.4.0 on bundling GPL-2.0-only Beancount next to
-# Apache-2.0 components (review:F §2 item 9). Entries marked "pending legal advice" may change.
+# PROVISIONAL: the owner gets legal advice before v0.4.0 on the bundle question (review:F §2 item 9; ADR-0042,
+# ADR-0054). Entries marked "pending legal advice" may change.
+#
+# Two lists, one per kind of program (ADR-0054 decision 5):
+# - the shared list below judges the main sidecar (GPLv3), the frontend and the shell;
+# - [engine] judges the ledger engine, a GPL-2.0-only program because it holds Beancount.
 
 allowed = [
   "MIT", "MIT-0", "ISC", "BSD-2-Clause", "BSD-3-Clause", "0BSD", "Zlib", "Unlicense", "CC0-1.0",
@@ -14,3 +16,31 @@ allowed = [
 [pending_legal_advice]
 "Apache-2.0" = "echarts, the openai SDK, several Rust crates; the FSF considers Apache-2.0 incompatible with GPL-2.0"
 "Apache-2.0 WITH LLVM-exception" = "Rust toolchain-adjacent crates"
+
+[engine]
+# GPL-2.0-compatible licences only (the FSF's licence list): the shared list without LGPL-3.0-or-later (GPLv3-only
+# compatible) and without anything pending. Apache-2.0 is not here: the FSF considers it incompatible with GPL-2.0.
+allowed = [
+  "MIT", "MIT-0", "ISC", "BSD-2-Clause", "BSD-3-Clause", "0BSD", "Zlib", "Unlicense", "CC0-1.0",
+  "PSF-2.0", "Python-2.0", "MPL-2.0", "LGPL-2.1-or-later",
+  "GPL-2.0-only", "GPL-2.0-or-later", "Unicode-3.0", "Unicode-DFS-2016", "BSL-1.0",
+]
+
+[engine.reviewed]
+# ADR-0054 decision 5: Beancount's own required dependencies, an explicit reviewed list, pending legal advice.
+# Each passes with a warning only while its licence is exactly the reviewed expression; a change is refused.
+# Beancount 3.2.0 requires both (its METADATA: Requires-Dist regex, python-dateutil).
+"regex" = "Apache-2.0 AND CNRI-Python"
+"python-dateutil" = "Apache-2.0 AND BSD-3-Clause"
+
+# Reviewed SPDX ids for packages whose reported licence is a trove-classifier name (BL-0050). One exact version
+# each: an upgrade is refused until the licence is read again.
+[mapping.six]
+version = "1.17.0"
+spdx = "MIT"
+source = "six-1.17.0.dist-info/LICENSE (MIT text); METADATA License: MIT; read 2026-10-26 (S0035)"
+
+[mapping.python-dateutil]
+version = "2.9.0.post0"
+spdx = "Apache-2.0 AND BSD-3-Clause"
+source = "python_dateutil-2.9.0.post0.dist-info/LICENSE: Apache-2.0 for contributions after 2017-12-01, and 'the above BSD License applies to all code' (3-clause text); read 2026-10-26 (S0035)"

@@ -23,6 +23,9 @@ SRC = Path(__file__).resolve().parents[2] / "src"
 IMMUTABLE_CALLS = frozenset({"re.compile", "NewType", "TypeVar", "ParamSpec", "TypeVarTuple"})
 # Immutable only when every element is: `tuple([[]])` holds a list.
 CONTAINER_CALLS = frozenset({"frozenset", "tuple"})
+# Frozen, slotted records of this tree, immutable only when every argument is (S0035: the registry's own entries,
+# `StateEntry`, a frozen dataclass of strings; before its first entry the registry was `()`).
+RECORD_CALLS = frozenset({"StateEntry"})
 # In a class body, a per-instance default is not class state.
 CLASS_CALLS = frozenset({"field", "dataclasses.field"})
 # Memoizing decorators by their last name part, wherever imported from (functools, cachetools, ...).
@@ -56,6 +59,8 @@ def immutable(value: ast.expr) -> bool:
             return True
         if name in CONTAINER_CALLS:
             return all(elements_immutable(a) for a in value.args) and not value.keywords
+        if name in RECORD_CALLS:
+            return all(immutable(a) for a in value.args) and all(immutable(k.value) for k in value.keywords)
         return False
     if isinstance(value, ast.BinOp | ast.UnaryOp):
         return all(immutable(v) for v in ast.iter_child_nodes(value) if isinstance(v, ast.expr))
@@ -292,6 +297,11 @@ def test_bad_registry_entries_fail(entries: tuple[StateEntry, ...], problem: str
         "import cachetools\n@cachetools.cached(cache={})\ndef f(x):\n    return x\n",  # privacy-scan: allow email
         "_t = tuple([[]])\n",
         "_s = frozenset([frozenset(), []])\n",
+        # S0035: a registry entry is a record of constants; one holding a mutable value or an unknown call is state.
+        "_r = (StateEntry('m', 'n', 'UserContainer', [], 'x'),)\n",
+        "_r = (StateEntry('m', 'n', 'UserContainer', '1', eviction={}),)\n",
+        "_r = (StateEntry('m', make(), 'UserContainer', '1', 'x'),)\n",
+        "_r = Entry('m', 'n', 'UserContainer', '1', 'x')\n",
         "_x = ({},)[0]\n",
     ],
 )
@@ -316,6 +326,7 @@ def test_planted_state_is_found(source: str) -> None:
         "class A:\n    limit = 3\n",
         "def f():\n    local = {}\n    return local\n",
         "SECONDS = 60 * 60\n",
+        "REGISTRY = (StateEntry('m', 'n', 'UserContainer', 'one ' 'process', eviction='close()'),)\n",
     ],
 )
 def test_immutable_values_pass(source: str) -> None:
