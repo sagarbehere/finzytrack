@@ -150,8 +150,10 @@ def by_type(value: object, roots: Roots) -> Json:
         return "<value type=bool>"
     if isinstance(value, int | float):
         return "<number>"
-    if isinstance(value, bytes | bytearray):
-        return f"<bytes len={len(value)}>"
+    if isinstance(value, bytes):
+        return f"<bytes len={bytes.__len__(value)}>"
+    if isinstance(value, bytearray):
+        return f"<bytes len={bytearray.__len__(value)}>"
     if isinstance(value, PurePath):
         return _path(value, roots)
     if isinstance(value, BaseException):

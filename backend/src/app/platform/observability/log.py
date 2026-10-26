@@ -70,20 +70,37 @@ def valid_session_id(text: str) -> bool:
 
 def log_file(app_local_data: Path, workspace: Path | None) -> Path | LogRefusal:
     """The log file's path, with its folder made; refused when it would lie outside the app-local-data folder (a
-    `logs` link elsewhere, a linked file) or inside the workspace folder (INV-27). Never relative to the cwd."""
+    `logs` link elsewhere, a linked file) or inside the workspace folder (INV-27). Never relative to the cwd.
+
+    Folders are compared by identity (device and inode), not by spelling, so another case on a case-insensitive file
+    system or a link to the same folder is the same folder. Nothing is created before the decision (S0039 verifier
+    F1, F2)."""
     logs = app_local_data / "logs"
     try:
-        logs.mkdir(exist_ok=True)
         base = app_local_data.resolve(strict=True)
         real = (logs / FILE_NAME).resolve()
-        ws = workspace.resolve(strict=True) if workspace is not None else None
+        if not _inside(real, base):
+            return LogRefusal("the log folder leads outside the app's data folder")
+        if workspace is not None and _inside(real, workspace):
+            return LogRefusal("the log file would be inside the workspace folder")
+        logs.mkdir(exist_ok=True)
     except OSError:
         return LogRefusal("the log folder cannot be made in the app's data folder")
-    if not real.is_relative_to(base):
-        return LogRefusal("the log folder leads outside the app's data folder")
-    if ws is not None and real.is_relative_to(ws):
-        return LogRefusal("the log file would be inside the workspace folder")
     return base / "logs" / FILE_NAME
+
+
+def _inside(path: Path, folder: Path) -> bool:
+    """Whether `folder` is `path` or one of its existing ancestors, judged by file identity. `path` is resolved, so
+    its ancestors are real folders; a `folder` that cannot be read raises (the caller refuses)."""
+    target = folder.stat()
+    for p in (path, *path.parents):
+        try:
+            st = p.stat()
+        except FileNotFoundError:
+            continue
+        if (st.st_dev, st.st_ino) == (target.st_dev, target.st_ino):
+            return True
+    return False
 
 
 @contextmanager

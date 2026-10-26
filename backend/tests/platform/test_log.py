@@ -166,3 +166,63 @@ def test_session_ids() -> None:
         assert valid_session_id(good), good
     for bad in ("", "short", "x" * 65, "has space1", "a:b:c:d:e", "näive-id1", "abc/def/gh", "line\nbreak1"):
         assert not valid_session_id(bad), bad
+
+
+# -- S0039 verifier round 1: the startup check judges folders by identity, and decides before it creates ---------
+
+
+def case_insensitive(folder: Path) -> bool:
+    probe = folder / "CaseProbe"
+    probe.mkdir()
+    try:
+        return (folder / "caseprobe").exists()
+    finally:
+        probe.rmdir()
+
+
+def test_a_workspace_named_in_another_case_is_still_the_workspace(tmp_path: Path) -> None:
+    """F1: on a case-insensitive file system (APFS, NTFS) `LEDGER` and `Ledger` are one folder."""
+    if not case_insensitive(tmp_path):
+        pytest.skip("this file system tells the two names apart, so they are two folders")
+    ws = tmp_path / "Ledger"
+    app = ws / "appdata"
+    app.mkdir(parents=True)
+    assert isinstance(log_file(app, tmp_path / "LEDGER"), LogRefusal)
+
+
+def test_a_workspace_reached_through_a_link_is_still_the_workspace(tmp_path: Path) -> None:
+    app = tmp_path / "app"
+    app.mkdir()
+    link = tmp_path / "ws-link"
+    link.symlink_to(app, target_is_directory=True)
+    assert isinstance(log_file(app, link), LogRefusal)
+
+
+def test_a_logs_link_into_the_workspace_is_refused(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "logs").symlink_to(ws, target_is_directory=True)
+    assert isinstance(log_file(app, ws), LogRefusal)
+    assert list(ws.iterdir()) == []
+
+
+def test_an_app_folder_named_in_another_case_is_still_inside(tmp_path: Path) -> None:
+    """The outside check is by identity too: a `logs` link to the app folder's own subfolder, named in another case,
+    is inside (refusing it would be safe, but the rule is about where the file is, not how it is spelled)."""
+    if not case_insensitive(tmp_path):
+        pytest.skip("this file system tells the two names apart")
+    app = tmp_path / "App"
+    (app / "real-logs").mkdir(parents=True)
+    (app / "logs").symlink_to(tmp_path / "APP" / "real-logs", target_is_directory=True)
+    assert log_file(app, None) == app.resolve() / "logs" / "finzytrack.jsonl"
+
+
+def test_a_refused_start_creates_nothing(tmp_path: Path) -> None:
+    """F2: refused because the app folder lies inside the workspace; no `logs` folder is left in the workspace."""
+    ws = tmp_path / "ws"
+    app = ws / "appdata"
+    app.mkdir(parents=True)
+    assert isinstance(log_file(app, ws), LogRefusal)
+    assert not (app / "logs").exists()

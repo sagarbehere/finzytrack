@@ -10,6 +10,7 @@ from the code.
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import sys
@@ -38,7 +39,7 @@ from app.platform.observability import (
     Roots,
     bound_context,
 )
-from app.platform.observability.events import ENGINE_CLOSED, ENGINE_START_FAILED, ENGINE_STDERR
+from app.platform.observability.events import ENGINE_CLOSED, ENGINE_READY, ENGINE_START_FAILED, ENGINE_STDERR
 
 AT = datetime(2026, 4, 1, 4, 30, 1, 234000, tzinfo=UTC)
 
@@ -524,6 +525,56 @@ def test_a_line_that_cannot_be_written_is_dropped_without_printing_the_record(
     assert_no_leak(printed + err)
     assert "Logging error" not in err
     assert err.count("a log line could not be written") == 1
+
+
+class BadLen(bytes):
+    """A `bytes` whose `len` raises with a payee in its message."""
+
+    @override
+    def __len__(self) -> int:
+        fail(PAYEE)
+
+
+def test_a_value_that_breaks_its_redaction_drops_its_line_and_prints_nothing(
+    logs: Logs, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """S0039 verifier F3: a value the redaction cannot measure or render drops its line; the stdlib's error dump
+    (the raw record) never reaches stderr, and the next line is written as usual."""
+    logs.log(ENGINE_STDERR, line=UntrustedText(12345))  # type: ignore[arg-type] (not text: its length raises)
+    logs.log(ENGINE_READY, pid=10**5000)  # an id the JSON encoder refuses (more digits than Python prints)
+    logs.log(ENGINE_STDERR, line=BadLen(b"x"))
+    logs.log(ENGINE_CLOSED)
+    events = [line["event"] for line in logs.lines()]
+    assert "engine.ready" not in events
+    assert events[-1] == "engine.closed"
+    assert events.count("engine.stderr") <= 1  # BadLen is measured by `bytes`' own length, or dropped
+    printed, err = capfd.readouterr()
+    assert_no_leak(printed + err)
+    assert "Logging error" not in err
+    assert "Traceback" not in err
+
+
+def test_a_foreign_record_with_stack_info_and_a_cached_traceback_leaks_neither(captured: Logs) -> None:
+    """S0039 verifier F3 (extra case): a library's own handler formatted the record first, caching `exc_text`, and
+    the record carries `stack_info`; neither text reaches the file."""
+    lib = logging.getLogger("thirdparty.stacky")
+    sink = io.StringIO()
+    own = logging.StreamHandler(sink)
+    lib.addHandler(own)
+    try:
+        try:
+            fail(f"row {PAYEE} {MONEY}")
+        except ValueError:
+            lib.error("failed for %s", ACCOUNT, exc_info=True, stack_info=True)
+    finally:
+        lib.removeHandler(own)
+    assert PAYEE in sink.getvalue()  # the library's handler did see it: the case is real
+    text = captured.text()
+    assert_no_leak(text)
+    assert "Stack (most recent call last)" not in text
+    assert "Traceback" not in text
+    assert str(Path.home()) not in text
+    assert is_exception(captured.last()["exception"])
 
 
 def test_a_closed_log_writes_nothing_and_prints_nothing(tmp_path: Path, capfd: pytest.CaptureFixture[str]) -> None:
