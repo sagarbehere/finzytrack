@@ -35,4 +35,11 @@ REGISTRY: tuple[StateEntry, ...] = (
         "close() when the user container closes; a stopped engine is restarted by the next request, bounded by "
         "RestartPolicy",
     ),
+    StateEntry(
+        "app.platform.engine_boot",
+        "EngineBoot",
+        "UserContainer",  # S0038: the engine's first start, with the EngineClient it reports on
+        "one EngineState value (starting, ready with its handshake facts and pid, or down with its failure)",
+        "replaced once when the first start ends; dropped with the user container",
+    ),
 )

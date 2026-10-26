@@ -7,7 +7,8 @@ One run per Playwright worker (`frontend/e2e/harness/`), started with the backen
 
 It creates a fresh temp root, generates a fresh demo workspace into it (`backend/scripts/gen_demo.py`, anchored at
 the frozen local date), starts an OpenAI-compatible LLM stub and the main sidecar (`python -m app.main`) on
-OS-assigned loopback ports with the sidecar's folders inside the root and its clock frozen, then prints one line,
+OS-assigned loopback ports with the sidecar's folders inside the root and its clock frozen, waits until the
+sidecar's own ledger engine (from `engine/.venv`, S0038) has started, then prints one line,
 `FT_HARNESS_READY {json}`, and waits. When its stdin closes (the worker finished or died) or it gets SIGTERM, it
 stops the processes it started and removes the root (`--keep` leaves the root for debugging).
 
@@ -18,7 +19,10 @@ The checks remove whole classes of risk (EP-30) rather than modelling paths:
   case-insensitively: `copies.refuse_dir`).
 - Ports: the run never picks a port. The sidecar gets `--port 0`; only the port in its own child's handshake is
   used, and the owner's port (8001), privileged ports and nonsense are refused.
-- Processes: only the `Popen` handles this run created are ever signalled.
+- Processes: only the `Popen` handles this run created are ever signalled. The engine is the sidecar's child: the
+  sidecar closes it when stopped (SIGTERM), and it also ends on its own when the sidecar is gone.
+- Engine: a run whose sidecar reports `engine.start_failed`, exits, or reports no engine verdict in time is
+  refused; the verdict is read from the sidecar's stderr events (`app.platform.adapters.stderr_log`).
 Exit status: 0 after a clean stop, 2 when refused or when a step failed.
 """
 
@@ -37,6 +41,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -47,6 +52,9 @@ from zoneinfo import ZoneInfo
 
 REPO = Path(__file__).resolve().parents[2]
 BACKEND = REPO / "backend"
+ENGINE_VENV = REPO / "engine" / ".venv"
+# Above the engine client's longest start (RestartPolicy.longest_start: 8 s backoff + 15 s handshake).
+ENGINE_TIMEOUT_S = 60.0
 sys.path.insert(0, str(REPO / "scripts" / "oracle"))
 
 import copies  # noqa: E402  (the shared copy guards, stdlib only)
@@ -225,6 +233,50 @@ def backend_python() -> Path:
 def require_backend_python() -> None:
     if not backend_python().is_file():
         raise Refused(f"{backend_python()} is missing; run `uv sync --locked` in backend/ first")
+    engine = ENGINE_VENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    if not engine.is_file():
+        raise Refused(f"{engine} is missing; run `uv sync --locked` in engine/ first")
+
+
+def engine_state(log_text: str) -> tuple[str, int | str] | None:
+    """The sidecar's first engine verdict in its stderr events: ("ready", pid) or ("failed", reason); None while
+    there is none. Only whole lines count (the last one may still be being written)."""
+    for line in log_text.splitlines(keepends=True):
+        if not line.endswith("\n"):
+            break
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if event.get("event") == "engine.start_failed":
+            return "failed", f"{event.get('kind')}: {event.get('detail')}"
+        if event.get("event") == "engine.ready":
+            pid = event.get("pid")
+            if type(pid) is int and pid > 0:
+                return "ready", pid
+            return None
+    return None
+
+
+def wait_for_engine(log: Path, proc: subprocess.Popen[Any], timeout: float = ENGINE_TIMEOUT_S) -> int:
+    """The pid of the sidecar's engine once it reported ready; Refused when it failed, the sidecar exited, or no
+    verdict came within *timeout*."""
+    end = time.monotonic() + timeout
+    tick = threading.Event()
+    while True:
+        state = engine_state(log.read_text(encoding="utf-8", errors="replace"))
+        if state is not None:
+            kind, value = state
+            if kind == "ready" and isinstance(value, int):
+                return value
+            raise Refused(f"the sidecar's engine did not start: {value}")
+        if proc.poll() is not None:
+            raise Refused(f"the sidecar exited (code {proc.returncode}) before its engine started")
+        if time.monotonic() >= end:
+            raise Refused(f"the sidecar's engine gave no verdict within {timeout:.0f} s")
+        tick.wait(0.05)
 
 
 def backend_argv(root: TempRoot, dirs: Dirs, frozen: datetime) -> list[str]:
@@ -233,7 +285,7 @@ def backend_argv(root: TempRoot, dirs: Dirs, frozen: datetime) -> list[str]:
             "--app-local-data", str(root.check_own(dirs.app_local_data)),
             "--app-cache", str(root.check_own(dirs.app_cache)),
             "--workspace", str(root.check_own(dirs.workspace)),
-            "--port", "0", "--frozen-clock", frozen.isoformat()]
+            "--port", "0", "--frozen-clock", frozen.isoformat(), "--engine-venv", str(ENGINE_VENV)]
 
 
 def child_env(root: TempRoot, dirs: Dirs, tz: str) -> dict[str, str]:
@@ -489,6 +541,7 @@ def main(argv: list[str] | None = None) -> int:
             proc = kids.spawn(backend_argv(root, dirs, frozen), cwd=root.path, env=env, stdin=subprocess.DEVNULL,
                               stdout=subprocess.PIPE, stderr=log, text=True)
         port, version = read_handshake(proc, timeout=30)
+        wait_for_engine(root.path / "sidecar.log", proc)
         probe(port)
         print(READY + json.dumps({
             "backend": f"http://{LOOPBACK}:{port}", "llm": f"http://{LOOPBACK}:{stub.port}/v1",

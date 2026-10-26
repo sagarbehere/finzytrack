@@ -9,7 +9,7 @@
 
 ## 1. Where we are (updated 2026-10-26)
 
-**Milestone M1a, Read core and workspace-format core (since 2026-10-26).** M0 closed on 2026-10-26 (owner: "Agreed, close M0 on this run plus the fix"; record `design/journal/M0-exit.md`). In M1a so far: the ledger engine as its own process (S0035), beanquery in the engine (S0037); in progress: the engine in the product (BL-0083). Nothing runs as an app yet beyond an empty window.
+**Milestone M1a, Read core and workspace-format core (since 2026-10-26).** M0 closed on 2026-10-26 (owner: "Agreed, close M0 on this run plus the fix"; record `design/journal/M0-exit.md`). In M1a so far: the ledger engine as its own process (S0035), beanquery in the engine (S0037), the engine in the product: started at boot by the sidecar, in the packaged build beside it, in the acceptance harness (S0038). Nothing runs as an app yet beyond an empty window.
 
 Done in M0:
 - `next` from an empty tree; T0 and T1 gates (privacy scan, staged-file guard, invariant, capability, generated-artifact diff and licence checks); `design/` seeded; agents, skills and guard hooks (S0000). Their remaining parts are listed under "Left" below.

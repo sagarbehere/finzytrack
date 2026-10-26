@@ -1,10 +1,16 @@
 """The ledger-engine client: the `EnginePort` adapter that runs the engine as a child process (ADR-0054 decision 4;
 ARCHITECTURE.md §2.0, §5).
 
-- **Spawn.** `EngineCommand` names the interpreter and environment. The engine runs isolated (`python -I`), told
-  the client's pid (`--parent-pid`) for its parent-death watchdog, with the client's environment minus `FT_*`
+- **Spawn.** `EngineCommand` names the interpreter and environment: `for_venv` in development and tests,
+  `for_packaged` in the bundle (S0038), where one interpreter serves both processes with two separate
+  site-packages (ADR-0056): the engine runs `python -I -S -B -c <bootstrap> <engine site>`, so the interpreter's own
+  site-packages, which hold the main sidecar, are never on the engine's path, and the bootstrap adds only the
+  engine's site (ADR-0054 decision 5: neither closure reaches the other process). The engine runs isolated (`-I`),
+  told the client's pid (`--parent-pid`) for its parent-death watchdog, with the client's environment minus `FT_*`
   (the shell token and our own settings) and `PYTHON*` (interpreter overrides). On POSIX it stays in the client's
-  process group, so the shell's group kill reaches it; on Windows the Job Object does (§5).
+  process group, so the shell's group kill reaches it; on Windows it opens no console window (`CREATE_NO_WINDOW`),
+  stays in the sidecar's job (the shell's Job Object arrives with M2's sidecar supervisor), and ends on stdin EOF
+  when the sidecar is gone.
 - **Handshake.** Every start sends `handshake` first; another protocol version is `incompatible` and is never
   retried (until `reset`).
 - **Requests** are serialized, one in flight. The caller's timeout bounds the wait for its reply; a start the call
@@ -23,6 +29,9 @@ ARCHITECTURE.md §2.0, §5).
   passes or `reset()` (the user's "try again").
 - **Shutdown.** `close()` closes the engine's stdin (it finishes the request in hand and exits), then terminates and
   finally kills it if it does not exit in time.
+- **Stderr.** Each line the engine writes to stderr is kept in a bounded tail and handed to `on_stderr` if given
+  (the composition root forwards it to the log, S0038). A callback that raises is dropped for the rest of that
+  engine's run; the tail goes on.
 - **Bounded state** (INV-10, INV-11): one engine process, one request in flight, the last `STDERR_LINES` lines of
   the engine's stderr (of the running engine, else of the last one that stopped: the only diagnosis of a crash),
   at most `max_crashes` stop times. The client is owned by the user container
@@ -61,6 +70,30 @@ from app.platform.engine_protocol import (
 STDERR_LINES = 200
 STDERR_LINE_BYTES = 64 * 1024
 DROPPED_ENV_PREFIXES = ("FT_", "PYTHON")
+# The packaged layout (ADR-0056; `shell/sidecar/build_sidecar.py` builds it): `<sidecar>/python` is the interpreter's
+# prefix, and the engine's own site-packages sit beside it at `<sidecar>/engine/site-packages`.
+ENGINE_SITE_PARTS = ("engine", "site-packages")
+# The packaged bootstrap: `-S` left the interpreter's own site-packages out; this adds the engine's site (the first
+# argument after the code), processing its .pth files, and nothing else.
+PACKAGED_PATH_SETUP = "import site, sys; site.addsitedir(sys.argv.pop(1))"
+PACKAGED_RUN = "import runpy; runpy.run_module('ledger_engine', run_name='__main__', alter_sys=True)"
+CREATE_NO_WINDOW = 0x08000000  # Windows process creation flag: a console program opens no window
+
+
+def packaged_engine_site(prefix: Path) -> Path:
+    """The engine's site-packages in the bundle, from the bundled interpreter's prefix (`sys.prefix`)."""
+    return prefix.parent.joinpath(*ENGINE_SITE_PARTS)
+
+
+def packaged_argv(python: Path, site: Path, code: str) -> tuple[str, ...]:
+    """`python` without its own site-packages (`-S`), isolated and writing no bytecode (the bundle is read-only),
+    running `code` after the path setup has added `site`."""
+    return (str(python), "-I", "-S", "-B", "-c", f"{PACKAGED_PATH_SETUP}; {code}", str(site))
+
+
+def creation_flags(os_name: str) -> int:
+    """Process creation flags for the engine: no console window on Windows."""
+    return CREATE_NO_WINDOW if os_name == "nt" else 0
 
 
 def next_request_id(previous: int) -> int:
@@ -83,9 +116,17 @@ class EngineCommand:
 
     @classmethod
     def for_venv(cls, venv: Path, *, test_ops: bool = False, environ: Mapping[str, str] | None = None) -> EngineCommand:
-        """The engine installed in a virtual environment (development; the packaged layout arrives with BL-0083)."""
+        """The engine installed in a virtual environment (development and tests)."""
         python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         argv = (str(python), "-I", "-m", "ledger_engine", *(("--test-ops",) if test_ops else ()))
+        return cls(argv=argv, env=engine_env(os.environ if environ is None else environ))
+
+    @classmethod
+    def for_packaged(
+        cls, python: Path, site: Path, *, test_ops: bool = False, environ: Mapping[str, str] | None = None
+    ) -> EngineCommand:
+        """The engine in the bundle: the shared interpreter `python` with only the engine's `site` (S0038)."""
+        argv = (*packaged_argv(python, site, PACKAGED_RUN), *(("--test-ops",) if test_ops else ()))
         return cls(argv=argv, env=engine_env(os.environ if environ is None else environ))
 
 
@@ -149,12 +190,18 @@ def _pump_lines(pipe: IO[bytes], replies: queue.Queue[bytes | None]) -> None:
         replies.put(line)
 
 
-def _pump_stderr(pipe: IO[bytes], tail: deque[str]) -> None:
+def _pump_stderr(pipe: IO[bytes], tail: deque[str], sink: Callable[[str], None] | None) -> None:
     while True:
         line = pipe.readline(STDERR_LINE_BYTES)
         if not line:
             return
-        tail.append(line.decode("utf-8", errors="replace").rstrip("\n"))
+        text = line.decode("utf-8", errors="replace").rstrip("\n")
+        tail.append(text)
+        if sink is not None:
+            try:
+                sink(text)
+            except Exception:  # noqa: BLE001 (a broken log sink must not stop the tail or the engine)
+                sink = None
 
 
 class EngineClient:
@@ -167,8 +214,10 @@ class EngineClient:
         *,
         monotonic: Callable[[], float] = time.monotonic,
         pause: Callable[[float], None] = _real_pause,
+        on_stderr: Callable[[str], None] | None = None,
     ) -> None:
         self._command = command
+        self._on_stderr = on_stderr
         self._policy = policy or RestartPolicy()
         self._monotonic = monotonic
         self._pause = pause
@@ -226,7 +275,7 @@ class EngineClient:
             return self._info
 
     def stderr_tail(self) -> str:
-        """The last lines the engine wrote to stderr (its log until structured logging arrives): of the running
+        """The last lines the engine wrote to stderr: of the running
         engine, else of the last one that stopped (S0035 independent verifier F4)."""
         run = self._run
         return "\n".join(list(run.stderr if run is not None else self._last_stderr))
@@ -331,7 +380,13 @@ class EngineClient:
         env = dict(self._command.env) if self._command.env is not None else None
         try:
             proc = subprocess.Popen(  # noqa: S603 (argv from EngineCommand, built by the composition root)
-                argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, close_fds=True
+                argv,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                close_fds=True,
+                creationflags=creation_flags(os.name),
             )
         except OSError as e:
             self._stops.append(self._monotonic())
@@ -341,8 +396,13 @@ class EngineClient:
         self._info = None
         if proc.stdout is None or proc.stderr is None:  # pragma: no cover (pipes were requested)
             return EngineFailure("start_failed", self._stopped("crashed", "the engine has no output pipes").detail)
-        for target, args in ((_pump_lines, (proc.stdout, run.replies)), (_pump_stderr, (proc.stderr, run.stderr))):
-            thread = threading.Thread(target=target, args=args, name=f"engine-{target.__name__}", daemon=True)
+        pumps = (
+            threading.Thread(target=_pump_lines, args=(proc.stdout, run.replies), name="engine-replies", daemon=True),
+            threading.Thread(
+                target=_pump_stderr, args=(proc.stderr, run.stderr, self._on_stderr), name="engine-stderr", daemon=True
+            ),
+        )
+        for thread in pumps:
             thread.start()
             run.threads.append(thread)
         handshake = self._encode("handshake", {})

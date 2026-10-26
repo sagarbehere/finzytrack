@@ -102,6 +102,31 @@ class PlaywrightCacheTest(unittest.TestCase):
         self.assertIn("if: steps.pw-cache.outputs.cache-hit == 'true'", hit)
 
 
+class PackagedSmokeTest(unittest.TestCase):
+    """Each OS of the packaged run proves the smoke test refuses a package without its engine (S0038; EP-29), as it
+    already does for one without its interpreter: the engine runs from `sidecar/engine`, beside `sidecar/python`."""
+
+    def setUp(self) -> None:
+        block = jobs((REPO / ".github/workflows/packaged.yml").read_text())["package"]
+        self.steps = {m.group(1): s for s in re.split(r"(?m)^(?=      - )", block)
+                      if (m := re.search(r"name: (macOS|Windows|Linux) ", s))}
+
+    def test_every_os_runs_the_smoke_test_once_more_without_the_engine(self) -> None:
+        self.assertEqual(sorted(self.steps), ["Linux", "Windows", "macOS"])
+        for os_name, step in self.steps.items():
+            with self.subTest(os=os_name):
+                self.assertRegex(step, r'mv "(?:[^"]*/sidecar/engine|\$engine_dir)" ')
+                self.assertEqual(step.count('--expect-fail "the bundled engine'), 1)
+                self.assertEqual(step.count('--expect-fail "cannot start the bundled interpreter"'), 1)
+                # the engine-less run comes after the full run and before the interpreter is moved away
+                full = re.search(r"smoke_packaged\.py \"\$\w+\"\n", step)
+                assert full is not None
+                engine_away = step.index('--expect-fail "the bundled engine')
+                python_away = step.index("sidecar/python")
+                self.assertLess(full.start(), engine_away)
+                self.assertLess(engine_away, python_away)
+
+
 class ActionPinTest(unittest.TestCase):
     def test_a_trailing_comment_does_not_hide_a_uses_line(self) -> None:  # S0036 verifier F2
         text = "      - uses: actions/checkout@main  # x\n"

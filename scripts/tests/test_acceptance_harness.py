@@ -15,6 +15,8 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -28,6 +30,22 @@ import guards  # noqa: E402
 import launcher as harness  # noqa: E402
 
 BACKEND_PY = REPO / "backend" / ".venv" / "bin" / "python"
+
+
+def pid_alive(pid: int) -> bool:
+    """Signal 0 only probes; the pid is the one the run's own sidecar reported."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def gone(pid: int, timeout: float = 20.0) -> bool:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end and pid_alive(pid):
+        threading.Event().wait(0.05)
+    return not pid_alive(pid)
 
 
 class EnvMixin(unittest.TestCase):
@@ -404,6 +422,72 @@ class LlmStubTest(unittest.TestCase):
         self.assertEqual(self.call("GET", "/v1/embeddings")[0], 404)
 
 
+def event_line(event: str, **fields: object) -> str:
+    return json.dumps({"ts": "2026-04-01T04:30:00.000Z", "level": "info", "event": event, "source": "backend",
+                       **fields}) + "\n"
+
+
+class EngineTest(EnvMixin):
+    """The harness starts a real engine per worker (S0038; BL-0083): the sidecar gets the repo's engine venv, and a
+    run whose engine did not start is refused, not handed to a worker."""
+
+    def test_the_sidecar_gets_the_repos_engine_venv(self) -> None:
+        root = harness.TempRoot(parent=self.base)
+        try:
+            argv = harness.backend_argv(root, harness.Dirs.make(root), datetime(2026, 4, 1, 4, 30, tzinfo=UTC))
+            self.assertEqual(argv.count("--engine-venv"), 1)
+            self.assertEqual(Path(argv[argv.index("--engine-venv") + 1]), REPO / "engine" / ".venv")
+        finally:
+            root.remove()
+
+    def test_engine_state_reads_the_first_engine_verdict(self) -> None:
+        ready = event_line("engine.ready", pid=4242, protocol=1, beancount_version="3.2.0")
+        failed = event_line("engine.start_failed", kind="start_failed", detail="no python")
+        self.assertEqual(harness.engine_state("not json\n" + ready), ("ready", 4242))
+        self.assertEqual(harness.engine_state(failed + ready), ("failed", "start_failed: no python"))
+        self.assertIsNone(harness.engine_state(event_line("engine.stderr", line="hello")))
+        self.assertIsNone(harness.engine_state(""))
+        self.assertIsNone(harness.engine_state(ready[:-10]))  # a line still being written
+
+    def test_an_engine_ready_line_without_a_real_pid_is_not_ready(self) -> None:
+        for pid in ("4242", None, True, 0, -1):
+            with self.subTest(pid=pid):
+                self.assertIsNone(harness.engine_state(event_line("engine.ready", pid=pid)))
+
+    def wait(self, text: str, alive: bool = True, timeout: float = 0.3) -> int:
+        log = self.base / "sidecar.log"
+        log.write_text(text)
+        proc = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()" if alive else "pass"],  # noqa: S603
+                                stdin=subprocess.PIPE)
+        try:
+            if not alive:
+                proc.wait(timeout=10)
+            return harness.wait_for_engine(log, proc, timeout=timeout)
+        finally:
+            if proc.stdin is not None:
+                proc.stdin.close()
+            proc.wait(timeout=10)
+
+    def test_wait_for_engine_returns_the_engine_pid(self) -> None:
+        self.assertEqual(self.wait(event_line("engine.ready", pid=4242)), 4242)
+
+    def test_wait_for_engine_refuses_a_failed_engine_no_verdict_and_a_dead_sidecar(self) -> None:
+        cases = {
+            "failed": (event_line("engine.start_failed", kind="start_failed", detail="x"), True),
+            "no verdict in time": (event_line("engine.stderr", line="still starting"), True),
+        }
+        for name, (text, alive) in cases.items():
+            with self.subTest(case=name), self.assertRaises(harness.Refused):
+                self.wait(text, alive=alive)
+
+    def test_a_sidecar_that_exited_is_refused_at_once_not_after_the_timeout(self) -> None:
+        began = time.monotonic()
+        with self.assertRaises(harness.Refused) as caught:
+            self.wait("", alive=False, timeout=30.0)
+        self.assertIn("exited", str(caught.exception))
+        self.assertLess(time.monotonic() - began, 10.0)
+
+
 @unittest.skipUnless(BACKEND_PY.is_file(), "needs the backend venv (cd backend && uv sync --locked)")
 class EndToEndTest(EnvMixin):
     def test_a_run_starts_isolated_and_leaves_nothing_behind(self) -> None:
@@ -441,9 +525,15 @@ class EndToEndTest(EnvMixin):
             conn.request("GET", "/v1/models")
             self.assertEqual(conn.getresponse().status, 200)
             conn.close()
+            engine = harness.engine_state((root / "sidecar.log").read_text())
+            assert engine is not None and engine[0] == "ready", engine
+            engine_pid = engine[1]
+            assert isinstance(engine_pid, int)
+            self.assertTrue(pid_alive(engine_pid), "the run's engine is not running")
             proc.stdin.close()  # the worker is done
             self.assertEqual(proc.wait(timeout=30), 0, proc.stderr.read() if proc.stderr else "")
             self.assertFalse(root.exists())
+            self.assertTrue(gone(engine_pid), "the run's engine outlived the run")
             with self.assertRaises(OSError):
                 http.client.HTTPConnection("127.0.0.1", port, timeout=2).request("GET", "/")
         finally:

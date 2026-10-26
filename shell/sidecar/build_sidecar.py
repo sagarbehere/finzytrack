@@ -1,13 +1,19 @@
 """Build the python-build-standalone tree the packaged app ships as `bundle.resources` (ADR-0056).
 
 Output: `build/sidecar/python/`, a relocatable CPython (pinned in `pbs.lock.json`) with the main sidecar's
-package and its locked runtime dependencies installed (ADR-0054; the engine process joins with BL-0041).
+package and its locked runtime dependencies installed in its own site-packages, and `build/sidecar/engine/
+site-packages/`, the ledger engine's package and its locked runtime closure (ADR-0054, ADR-0056; S0038). One
+interpreter runs both processes; the engine runs it with `-S` and only its own site (`app.platform.adapters.
+engine_client.EngineCommand.for_packaged`), so the engine's GPL-2.0-only closure and the main sidecar's packages never
+share a process (ADR-0054 decision 5). The build checks the finished tree: each site-packages holds exactly its own
+locked closure, and the package's own self-check (`python -I -B -m app.selfcheck`) shows a real handshake and ping
+with the packaged engine and neither side seeing the other's packages.
 
     python3 shell/sidecar/build_sidecar.py [--target TRIPLE]
 
 Fails closed: an archive whose SHA-256 differs from the pin is refused, also from the download cache; archive
 members that would land outside the tree, links and device files are refused by tarfile's `data` filter;
-an unknown target is refused. The finished tree holds no symlinks, because the Tauri resource copy follows
+an unknown target is refused; a tree that fails the separation or the self-check is refused. The finished tree holds no symlinks, because the Tauri resource copy follows
 them (EP-30: the class is removed, not checked case by case). On macOS every Mach-O is ad-hoc signed,
 deepest path first. Stdlib only; runs on the build machine of each target, from the repo root.
 """
@@ -19,6 +25,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +38,15 @@ ROOT = Path(__file__).resolve().parents[2]
 LOCK = Path(__file__).with_name("pbs.lock.json")
 OUT = ROOT / "build/sidecar"
 CACHE = ROOT / "build/downloads"
+# The packaged layout inside OUT; the main sidecar finds the engine at `<prefix>/../engine/site-packages`
+# (`app.platform.adapters.engine_client.packaged_engine_site`; a meta-test keeps the two equal).
+PYTHON_DIR = "python"
+ENGINE_SITE = Path("engine/site-packages")
+MAIN_DISTRIBUTION = "finzytrack-backend"
+ENGINE_DISTRIBUTION = "finzytrack-engine"
+# Top-level names that must never be importable on the other side (beside the exact closure check).
+ENGINE_MODULES = ("beancount", "beanquery", "ledger_engine")
+MAIN_MODULES = ("app",)
 
 # Parts of the runtime a sidecar never uses (GUI toolkits, the bundled pip, headers, the stdlib's own test
 # suite). Paths are relative to `python/`; a missing path is fine (layouts differ by OS).
@@ -139,29 +155,149 @@ def run(cmd: list[str], **kw) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, check=True, text=True, **kw)
 
 
-def install_sidecar(py: Path) -> None:
-    """The main sidecar's locked runtime closure (hash-checked), then its own wheel, into the runtime."""
+def export_closure(project: Path) -> str:
+    """The project's locked runtime closure (no dev dependencies, not the project itself), with hashes."""
+    return run(["uv", "export", "--directory", str(project), "--frozen", "--no-dev", "--no-emit-project",
+                "--no-header", "--format", "requirements-txt"], capture_output=True).stdout
+
+
+def install_project(project: Path, install: list[str]) -> None:
+    """`project`'s locked runtime closure (hash-checked), then its own wheel, with the `install` command."""
     with tempfile.TemporaryDirectory() as tmp:
         req = Path(tmp) / "runtime.txt"
-        exported = run(["uv", "export", "--directory", str(ROOT / "backend"), "--frozen", "--no-dev",
-                        "--no-emit-project", "--no-header", "--format", "requirements-txt"],
-                       capture_output=True).stdout
+        exported = export_closure(project)
         req.write_text(exported, encoding="utf-8")
-        common = ["uv", "pip", "install", "--python", str(py), "--break-system-packages", "--no-deps"]
-        if any(line.strip() and not line.lstrip().startswith("#") for line in exported.splitlines()):
-            run([*common, "--require-hashes", "-r", str(req)])
-        run(["uv", "build", "--wheel", "--out-dir", tmp, str(ROOT / "backend")], capture_output=True)
+        if closure_names(exported):
+            run([*install, "--require-hashes", "-r", str(req)])
+        run(["uv", "build", "--wheel", "--out-dir", tmp, str(project)], capture_output=True)
         wheels = list(Path(tmp).glob("*.whl"))
         if len(wheels) != 1:
-            raise BuildError(f"expected one sidecar wheel, found {len(wheels)}")
-        run([*common, str(wheels[0])])
+            raise BuildError(f"expected one wheel of {project.name}, found {len(wheels)}")
+        run([*install, str(wheels[0])])
 
 
-def compile_bytecode(py: Path, python: Path) -> None:
-    # The installed bundle is read-only and runs with -B, so every module is compiled now; unchecked-hash
-    # bytecode is used whatever the file times are after the installer copied it.
+def install_sidecar(py: Path) -> None:
+    """The main sidecar into the interpreter's own site-packages."""
+    install_project(ROOT / "backend",
+                    ["uv", "pip", "install", "--python", str(py), "--break-system-packages", "--no-deps"])
+
+
+def install_engine(py: Path, site: Path) -> None:
+    """The engine into its own site-packages, never into the interpreter (`py` only selects the wheels' tags).
+    Console scripts are removed: their shebangs name this build's interpreter, and only the client runs the engine."""
+    site.mkdir(parents=True, exist_ok=True)
+    install_project(ROOT / "engine",
+                    ["uv", "pip", "install", "--python", str(py), "--target", str(site), "--no-deps"])
+    scripts = site / "bin"
+    if scripts.is_dir():
+        shutil.rmtree(scripts)
+
+
+def normalized(name: str) -> str:
+    """A distribution name as PEP 503 compares it."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def closure_names(exported: str) -> set[str]:
+    """The distributions named by an exported requirements file (`name==version ... \\` lines)."""
+    found = (re.match(r"([A-Za-z0-9][A-Za-z0-9._-]*)==", line.strip()) for line in exported.splitlines())
+    return {normalized(m.group(1)) for m in found if m}
+
+
+def distributions(site: Path) -> set[str]:
+    """The distributions installed in `site`, by their `.dist-info` folders."""
+    return {normalized(p.name.removesuffix(".dist-info").rsplit("-", 1)[0]) for p in site.glob("*.dist-info")}
+
+
+def check_separation(main_site: Path, engine_site: Path, main_expected: set[str],
+                     engine_expected: set[str]) -> list[str]:
+    """Each site-packages holds exactly its own locked closure, and neither holds the other's top-level packages
+    (ADR-0054 decision 5). Returns the problems; none means the two sides are apart."""
+    problems = []
+    for name, site, expected in (("main sidecar", main_site, main_expected), ("engine", engine_site, engine_expected)):
+        have = distributions(site)
+        if extra := sorted(have - {normalized(n) for n in expected}):
+            problems.append(f"{name} site-packages holds unlocked distributions: {', '.join(extra)}")
+        if missing := sorted({normalized(n) for n in expected} - have):
+            problems.append(f"{name} site-packages lacks locked distributions: {', '.join(missing)}")
+    for name, site, foreign in (("main sidecar", main_site, ENGINE_MODULES), ("engine", engine_site, MAIN_MODULES)):
+        if found := sorted(m for m in foreign if (site / m).exists() or (site / f"{m}.py").exists()):
+            problems.append(f"{name} site-packages holds the other side's packages: {', '.join(found)}")
+    return problems
+
+
+def _inside(path: str, folder: Path) -> bool:
+    try:
+        return Path(path).resolve().is_relative_to(folder.resolve())
+    except (OSError, ValueError):
+        return False
+
+
+def judge_selfcheck(report: object, tree: Path) -> list[str]:
+    """The problems in `app.selfcheck`'s report (the same facts the packaged `--smoke-test` judges)."""
+    if not isinstance(report, dict):
+        return ["the self-check report is not an object"]
+    problems = []
+    if report.get("error") is not None:
+        problems.append(f"the engine failed: {report.get('error')}")
+    handshake = report.get("handshake")
+    if not (isinstance(handshake, dict) and isinstance(handshake.get("beancount_version"), str)
+            and handshake["beancount_version"]):
+        problems.append("no handshake with a Beancount version")
+    if report.get("pong") is not True:
+        problems.append("no pong")
+    engine_site = report.get("site")
+    if not (isinstance(engine_site, str) and _inside(engine_site, tree)):
+        problems.append("the engine site is not inside the tree")
+        return problems
+    finds = report.get("main_finds")
+    if not (isinstance(finds, dict) and set(ENGINE_MODULES) <= set(finds) and not any(finds.values())):
+        problems.append(f"the main side finds engine packages: {finds}")
+    if report.get("engine_finds_app") is not False:
+        problems.append("the engine side finds the main sidecar's package (or did not report)")
+    main_sites = report.get("main_sites")
+    engine_path = report.get("engine_path")
+    main_path = report.get("main_path")
+    if not (isinstance(main_sites, list) and main_sites and isinstance(engine_path, list)
+            and isinstance(main_path, list)):
+        problems.append("the report lacks a path")
+        return problems
+    for entry in engine_path:
+        if any(_inside(str(entry), Path(str(s))) for s in main_sites):
+            problems.append(f"the engine's path holds the main sidecar's site-packages: {entry}")
+    for entry in main_path:
+        if _inside(str(entry), Path(engine_site)):
+            problems.append(f"the main side's path holds the engine site: {entry}")
+    return problems
+
+
+def selfcheck(py: Path) -> object:
+    out = run([str(py), "-I", "-B", "-m", "app.selfcheck"], capture_output=True)
+    try:
+        return json.loads(out.stdout)
+    except json.JSONDecodeError as e:
+        raise BuildError(f"the self-check printed no JSON report: {e}") from e
+
+
+def main_site_packages(python: Path, layout: str) -> Path:
+    return python / ("Lib/site-packages" if layout == "windows" else "lib/python3.13/site-packages")
+
+
+def verify(out: Path, python: Path, py: Path, layout: str) -> None:
+    """Refuse a tree whose two sides are not apart, or whose engine does not answer."""
+    problems = check_separation(main_site_packages(python, layout), out / ENGINE_SITE,
+                                closure_names(export_closure(ROOT / "backend")) | {MAIN_DISTRIBUTION},
+                                closure_names(export_closure(ROOT / "engine")) | {ENGINE_DISTRIBUTION})
+    problems += judge_selfcheck(selfcheck(py), out)
+    if problems:
+        raise BuildError("the packaged tree failed its checks:\n  " + "\n  ".join(problems))
+
+
+def compile_bytecode(py: Path, tree: Path) -> None:
+    # The installed bundle is read-only and runs with -B, so every module (both sides) is compiled now;
+    # unchecked-hash bytecode is used whatever the file times are after the installer copied it.
     run([str(py), "-I", "-B", "-m", "compileall", "-q", "-j0", "--invalidation-mode", "unchecked-hash",
-         str(python)], capture_output=True)
+         str(tree)], capture_output=True)
 
 
 def macho_files(tree: Path) -> list[Path]:
@@ -199,18 +335,20 @@ def build(target: str, out: Path = OUT, cache: Path = CACHE) -> Path:
         shutil.rmtree(out)
     out.mkdir(parents=True)
     extract(archive, out)
-    python = out / "python"
+    python = out / PYTHON_DIR
     py = interpreter(python, layout)
     if not py.is_file():
         raise BuildError(f"{py.relative_to(out)} missing after extraction")
     install_sidecar(py)
+    install_engine(py, out / ENGINE_SITE)
     trim(python, layout)
-    compile_bytecode(py, python)
+    compile_bytecode(py, out)
     links = remove_symlinks(out)
     signed = adhoc_sign(out) if target.endswith("apple-darwin") else 0
+    verify(out, python, py, layout)
     print(f"sidecar tree: {out.relative_to(ROOT) if out.is_relative_to(ROOT) else out} "
           f"(Python {lock['python']}, PBS {lock['release']}, {target}); "
-          f"{links} symlinks removed; {signed} Mach-O files ad-hoc signed")
+          f"{links} symlinks removed; {signed} Mach-O files ad-hoc signed; engine site apart and answering")
     return out
 
 

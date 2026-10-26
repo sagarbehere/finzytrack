@@ -18,7 +18,8 @@
   died while the engine was starting is caught), even mid-request and with stdin still open. A parent that is pid 1
   (a main sidecar running as a container's first process) cannot be told apart from re-parenting, so then only
   stdin EOF applies (S0035 independent verifier F6).
-  On Windows the main sidecar's Job Object (ARCHITECTURE.md §5) ends the engine with its parent.
+  On Windows the engine ends on stdin EOF when the sidecar is gone (its pipe closes), and the shell's Job Object
+  (ARCHITECTURE.md §5) covers the sidecar and the engine.
 - **No resident ledger (INV-10).** The engine holds no ledger between requests; today it has no ledger operations
   at all. The overlay load and the heavy-load semaphore arrive with their slices (WS-WRITE, BL-0003).
 - `--test-ops` adds ops for the process tests (`test.stall`, `test.noise`, `test.fail`, `test.read_stdin`). They
