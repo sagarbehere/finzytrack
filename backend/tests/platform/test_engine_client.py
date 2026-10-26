@@ -23,7 +23,7 @@ import pytest
 from app.platform.adapters.engine_client import EngineClient, EngineCommand, next_request_id
 from app.platform.engine import EngineFailure, EngineInfo, EnginePort, EngineRefusal, Pong
 from app.platform.engine_protocol import MAX_ID
-from app.platform.engine_supervision import Closed, Crashed, Idle, Ready, RestartPolicy, Unavailable
+from app.platform.engine_supervision import Busy, Closed, Crashed, Idle, Ready, RestartPolicy, Unavailable
 from app.platform.observability import Event
 
 REPO = Path(__file__).resolve().parents[3]
@@ -805,3 +805,52 @@ def test_an_exception_while_waiting_for_a_reply_stops_the_engine_and_leaves_the_
         assert isinstance(c.start(), EngineInfo)  # usable: a new engine starts
     finally:
         c.close()
+
+
+def test_the_state_is_readable_at_once_while_a_request_is_in_flight(fake_time: FakeTime) -> None:
+    """S0040 verifier F1: `state` is what /health and /api/boot will read, so it never waits behind a call in flight
+    (that wait can be `longest_start` plus the call's timeout), and it shows the passing state `Busy`."""
+    c = EngineClient(stand_in(STALLS), monotonic=fake_time.monotonic, pause=fake_time.pause)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        t, out = in_thread(lambda: c.call("anything", {}, timeout=DEADLINE))
+        assert wait_until(lambda: "marker: request read" in c.stderr_tail())
+        began = time.monotonic()
+        state = c.state
+        info, pid = c.info, c.pid
+        assert time.monotonic() - began < 1.0, "a read of the state waited for the call in flight"
+        assert isinstance(state, Busy)
+        assert info == state.info
+        assert pid == state.pid
+        assert t.is_alive(), "the call ended before the state was read: the test proves nothing then"
+        assert pid is not None
+        kill(pid)  # end the call at once: the stand-in never answers
+        t.join(DEADLINE)
+        assert len(out) == 1
+    finally:
+        c.close()
+
+
+def test_an_engine_that_died_after_its_last_request_is_logged_as_a_stop_at_close(fake_time: FakeTime) -> None:
+    """S0040 verifier F2 (brief: every start and stop is logged): close() notices the dead engine and logs the stop
+    before the close."""
+    events = Events()
+    c = EngineClient(stand_in(STALLS), monotonic=fake_time.monotonic, pause=fake_time.pause, log=events)
+    assert isinstance(c.start(), EngineInfo)
+    pid = c.pid
+    assert pid is not None
+    kill(pid)
+    assert stopped(pid)
+    c.close()
+    assert events.names == ["engine.ready", "engine.stopped", "engine.closed"]
+    assert events.seen[1][1]["kind"] == "crashed"
+    assert isinstance(c.state, Closed)
+
+
+def test_closing_a_running_engine_logs_no_stop() -> None:
+    """The must-not-pass beside F2's test: a live engine closed is a close, not a stop."""
+    events = Events()
+    c = EngineClient(stand_in(STALLS), log=events)
+    assert isinstance(c.start(), EngineInfo)
+    c.close()
+    assert events.names == ["engine.ready", "engine.closed"]

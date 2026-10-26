@@ -5,9 +5,9 @@ ARCHITECTURE.md §2.0, §5, §7).
   (`app.platform.engine_supervision`): when to start the engine, the backoff before a restart, the bound after
   which it is `unavailable`, `incompatible`, `closed`, and what is logged. This client is its shell: it observes the
   process, feeds each observation to `transition` as an event, and carries out the effects (spawn, handshake,
-  pause, kill, shut down, log, fail the caller). `state` is the table's current state. An exception that reaches
-  a public call while a start, a backoff or a request is under way is fed in as `Interrupted` before it goes on,
-  so the table always rests in a state the next call can use.
+  pause, kill, shut down, log, fail the caller). `state` is the table's current state, a read that never waits for
+  a call in flight. An exception that reaches a public call while a start, a backoff or a request is under way is
+  fed in as `Interrupted` before it goes on, so the table always rests in a state the next call can use.
 - **Spawn.** `EngineCommand` names the interpreter and environment: `for_venv` in development and tests,
   `for_packaged` in the bundle (S0038), where one interpreter serves both processes with two separate
   site-packages (ADR-0056): the engine runs `python -I -S -B -c <bootstrap> <engine site>`, so the interpreter's own
@@ -282,27 +282,29 @@ class EngineClient:
 
     def close(self) -> None:
         with self._call():
+            self._notice_exit()  # an engine that died since the last request is a stop, logged before the close
             self._drive(Close())
 
     # -- diagnostics ------------------------------------------------------------------------------------------
 
     @property
     def state(self) -> SupervisionState:
-        """The supervision table's current state (S0040): what the future /health and /api/boot report."""
-        with self._lock:
-            return self._state
+        """The supervision table's current state (S0040): what the future /health and /api/boot report. A read never
+        waits for the call lock: each transition publishes its new state as one reference, so a reader sees the last
+        published state, a passing one (`Busy`, `Starting`, `Handshaking`, `Restarting`) included. `Ready` and `Busy`
+        carry the pid and the handshake's facts, so one read of `state` is a consistent view (S0040 verifier F1)."""
+        return self._state
 
     @property
     def pid(self) -> int | None:
-        """The running engine's process id, if one is running."""
-        with self._lock:
-            return self._run.proc.pid if self._run is not None else None
+        """The running engine's process id, if one is running (a read that never waits, like `state`)."""
+        run = self._run
+        return run.proc.pid if run is not None else None
 
     @property
     def info(self) -> EngineInfo | None:
-        with self._lock:
-            state = self._state
-            return state.info if isinstance(state, (Ready, Busy)) else None
+        state = self._state
+        return state.info if isinstance(state, (Ready, Busy)) else None
 
     def stderr_tail(self) -> str:
         """The last lines the engine wrote to stderr: of the running
@@ -342,7 +344,7 @@ class EngineClient:
     def _feed(self, event: SupervisionEvent) -> EngineFailure | Spawn | Handshake | Pause | None:
         """One transition: its effects carried out in order; returns the caller's failure or the follow-up."""
         step = transition(self._policy, self._state, event)
-        self._state = step.state
+        self._state = step.state  # published as one reference: `state` reads it without the lock
         out: EngineFailure | Spawn | Handshake | Pause | None = None
         for effect in step.effects:
             out = self._effect(effect) or out
@@ -376,10 +378,14 @@ class EngineClient:
                 self._pause(seconds)
                 return BackoffElapsed()
 
-    def _ensure_running(self) -> tuple[_Running, EngineInfo] | EngineFailure:
+    def _notice_exit(self) -> None:
+        """An engine found dead while `Ready` (it stopped since the last request) is fed in as `Exited`: a stop."""
         run = self._run
         if isinstance(self._state, Ready) and run is not None and run.proc.poll() is not None:
-            self._drive(Exited(self._exit_detail(run), self._monotonic()))  # it stopped since the last request
+            self._drive(Exited(self._exit_detail(run), self._monotonic()))
+
+    def _ensure_running(self) -> tuple[_Running, EngineInfo] | EngineFailure:
+        self._notice_exit()
         failure = self._drive(Request(self._monotonic()))
         if failure is not None:
             return failure
