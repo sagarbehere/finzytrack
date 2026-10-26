@@ -1,16 +1,20 @@
-"""Each git hook's checks, pinned (S0033, seeded-defect run 1 E03, E04).
+r"""Each git hook's checks, pinned (S0033, seeded-defect run 1 E03, E04; verifier F1).
 
 A hook that silently loses a check passes every other test: the checks it runs still work, they are just no longer
-run. So each hook's code is pinned here, line by line, except its messages (`echo` lines) and comments: every
-`run` line (label and command), every line that gates, loops over or skips checks, every variable a check reads, and
-the lines that decide the exit status. Adding, removing or changing a check means changing the pinned list in the
-same commit, where review sees it.
+run. So each hook's code is pinned here, line by line: every line but blank lines and whole-line comments, messages
+(`echo` lines) included, since a message line is code too (`echo ... \` swallows the next line, `echo x; exit` ends
+the hook). Adding, removing or changing a line means changing the pinned list in the same commit, where review sees it.
+Leaving comments and blank lines out is safe because no line may continue onto the next (a trailing `\`, comments
+included), no quote may stay open across a line, there is no here-document, and the hook is printable ASCII, so
+every line starts where bash starts a command and a line starting with `#` is a comment to bash too.
 
 The pinned code itself must keep its shape, so a loosening cannot land by editing the hook and the pin together:
 each check is wrapped in `run`, no check is chained with `;`, no failure is discarded (`|| true`, `; true`, `|| :`)
-outside a variable assignment, nothing exits early (`exit 0`, `return`, `trap`, `set +e`, `alias`), only the `run`
-function is defined (exactly as pinned), there is no here-document (`<<` can turn lines into text; the here-string
-`<<<` is allowed), `fail=0` is set once before the first check, and pre-commit and pre-push end with `exit "$fail"`.
+outside a variable assignment, nothing exits early (`exit 0`, `return`, `trap`, `set +e`, `alias`, `kill`, `eval`,
+`source`, `exec` but pre-merge-commit's), `exit` only takes `1` or `"$fail"`, `fail` is only set to `0` or `1`, only
+the `run` function is defined (exactly as pinned), there is no here-document (`<<` can turn lines into text; the
+here-string `<<<` is allowed), `fail=0` is set once before the first check, and pre-commit and pre-push end with
+`exit "$fail"`.
 """
 
 from __future__ import annotations
@@ -51,6 +55,7 @@ PINNED: dict[str, list[str]] = {
         'run "ruff format" backend/.venv/bin/ruff format --check --config backend/ruff.toml $py_files',
         'run "ruff lint" backend/.venv/bin/ruff check --config backend/ruff.toml $py_files',
         'else',
+        'echo "pre-commit: backend/.venv/bin/ruff missing; run \'uv sync\' in backend/" >&2; fail=1',
         'fi',
         'fi',
         'fe_files="$(printf \'%s\\n\' "$staged" | grep -E \'^frontend/.*\\.(ts|tsx|vue|js|mjs|css|json)$\' || '
@@ -63,10 +68,12 @@ PINNED: dict[str, list[str]] = {
         '[[ -n "$lint" ]] && run "eslint" bash -c "cd frontend && node_modules/.bin/eslint --max-warnings 0 '
         '$(echo $lint)"',
         'else',
+        'echo "pre-commit: frontend tools missing; run \'pnpm install\' in frontend/" >&2; fail=1',
         'fi',
         'fi',
         'elapsed=$(( $(date +%s) - start ))',
         'if (( elapsed > 30 )); then',
+        'echo "pre-commit: took ${elapsed}s, over the 30 s T0 budget (only the owner raises it)." >&2',
         'fi',
         'exit "$fail"',
     ],
@@ -78,11 +85,14 @@ PINNED: dict[str, list[str]] = {
         'remote_name="${1:-}"',
         'remote_url="${2:-}"',
         'if [[ "$(git config --bool finzytrack.allowPush || echo false)" != "true" ]]; then',
+        'echo "pre-push: refused. Pushing is off in this clone until the owner reviews and runs" >&2',
+        'echo "          git config finzytrack.allowPush true      (remote: ${remote_name} ${remote_url})" >&2',
         'exit 1',
         'fi',
         'refs="$(cat)"',
         'if ! ranges="$(printf \'%s\\n\' "$refs" | python3 scripts/check_push.py "$remote_name" '
         '"$remote_url")"; then',
+        'echo "pre-push: refused before the checks ran; commit (or remove) what is not pushed, then push HEAD" >&2',
         'exit 1',
         'fi',
         'head_at_start="$(git rev-parse HEAD)"',
@@ -148,12 +158,18 @@ PINNED: dict[str, list[str]] = {
         'export GIT_NO_REPLACE_OBJECTS=1',
         'cd "$(git rev-parse --show-toplevel)"',
         'if ! python3 scripts/privacy_scan.py --message "$1" --quiet; then',
+        'echo "commit-msg: FAILED: privacy scan of the commit message" >&2',
         'exit 1',
         'fi',
     ],
 }
 RUN_DEFINITION = {"pre-commit": PRE_COMMIT_RUN, "pre-push": PRE_PUSH_RUN}
 
+QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"|\'[^\']*\'')
+EXEC_PRE_COMMIT = 'exec "$(dirname "$0")/pre-commit" "$@"'
+NOT_PLAIN = re.compile(r"[^\x20-\x7e\n\t]")
+# a signal to the hook's own shell, or text run as code
+ENDS_OR_EVALS = re.compile(r"\b(?:kill|eval|source)\b|(?:^|[;&|]\s*)\.\s")
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # A line that calls a check: it must be a `run` line, or the `if ! <check>; then ... exit 1` of a gate that stops the
 # hook (check_push.py in pre-push, the message scan in commit-msg), or a tool-presence test `if [[ -x ... ]]`.
@@ -163,13 +179,14 @@ FUNCTION = re.compile(r"^(?:function\s+)?[A-Za-z_][A-Za-z0-9_-]*\s*\(\s*\)")
 
 
 def code_lines(text: str) -> list[str]:
-    """The hook's lines, stripped, without blank lines and whole-line comments."""
-    return [s for s in (line.strip() for line in text.splitlines()) if s and not s.startswith("#")]
+    """The hook's lines as bash splits them (at newlines only), without surrounding spaces and tabs, blank lines and
+    whole-line comments."""
+    return [s for s in (line.strip(" \t") for line in text.split("\n")) if s and not s.startswith("#")]
 
 
 def unquoted(line: str) -> str:
     """The line with quoted text and trailing comments removed (a `;` inside `bash -c "..."` is the command's)."""
-    line = re.sub(r'"(?:[^"\\]|\\.)*"|\'[^\']*\'', '""', line)
+    line = QUOTED.sub('""', line)
     return re.sub(r"\s#.*$", "", line)
 
 
@@ -178,12 +195,23 @@ def problems(name: str, text: str, pin: list[str] | None = None) -> list[str]:
     expected = PINNED[name] if pin is None else pin
     out: list[str] = []
     lines = code_lines(text)
-    pinned = [s for s in lines if not s.startswith("echo ")]
-    if pinned != expected:
-        missing = [s for s in expected if s not in pinned]
-        extra = [s for s in pinned if s not in expected]
+    if lines != expected:
+        missing = [s for s in expected if s not in lines]
+        extra = [s for s in lines if s not in expected]
         out.append(f"{name}: the code differs from the pinned lines (missing {missing}, unexpected {extra}, or the "
                    "order changed); update PINNED in this test in the same change if that is intended")
+    # Leaving out blank lines and whole-line comments is safe only while every line starts where bash starts a
+    # command: no line continues onto the next (a `\` at its end, comments included), no quote stays open across
+    # a line, no here-document (below), and lines split where bash splits them (no CR, form feed or other control
+    # or non-ASCII character, which Python's line splitting or strip() reads differently).
+    if NOT_PLAIN.search(text):
+        out.append(f"{name}: a character other than printable ASCII, tab or newline")
+    for raw in text.split("\n"):
+        if raw.rstrip(" \t").endswith("\\"):
+            out.append(f"{name}: {raw.strip()!r} continues onto the next line")
+    for s in lines:
+        if re.search(r"[\"']", QUOTED.sub("", s)):
+            out.append(f"{name}: {s!r} leaves a quote open, so a string can span lines")
     if "set -euo pipefail" not in lines:
         out.append(f"{name}: `set -euo pipefail` is missing")
     if name in RUN_DEFINITION:
@@ -191,7 +219,7 @@ def problems(name: str, text: str, pin: list[str] | None = None) -> list[str]:
             out.append(f"{name}: the `run` function differs from the pinned definition")
         if lines[-1] != 'exit "$fail"':
             out.append(f'{name}: the last line must be `exit "$fail"`')
-        fails = [i for i, s in enumerate(lines) if re.search(r"(?<![\w$])fail=0\b", unquoted(s))]
+        fails = [i for i, s in enumerate(lines) if re.search(r"(?<![\w$-])fail=0\b", s)]
         first_run = next((i for i, s in enumerate(lines) if s.startswith("run ") or " run " in s), len(lines))
         if len(fails) != 1 or fails[0] > first_run:
             out.append(f"{name}: `fail=0` must be set once, before the first check")
@@ -211,6 +239,17 @@ def problems(name: str, text: str, pin: list[str] | None = None) -> list[str]:
             out.append(f"{name}: {s!r} runs a check outside `run`")
         if words and words[0] == "run" and ";" in bare:
             out.append(f"{name}: {s!r} chains a second command after a check")
+        # S0033 verifier F1: the hook only ever exits with 1 or "$fail", and `fail` is only ever set to 0 or 1
+        for m in re.finditer(r"\bexit\b(\s+\S+)?", bare):
+            arg = (m.group(1) or "").strip()
+            if not (arg == "1" or (arg == '""' and s == 'exit "$fail"')):
+                out.append(f"{name}: {s!r} exits with a status other than 1 or \"$fail\"")
+        if ENDS_OR_EVALS.search(bare) or (re.search(r"\bexec\b", bare) and s != EXEC_PRE_COMMIT):
+            out.append(f"{name}: {s!r} can end the hook or run text as code")
+        for m in re.finditer(r"(?<!\w)fail(?!\w)", s):
+            ok = re.match(r"=[01](?=$|[;\s])", s[m.end():])
+            if not ok and not (s == 'exit "$fail"' and s[m.start() - 1] == "$"):
+                out.append(f"{name}: {s!r} uses `fail` other than as `fail=0`, `fail=1` or `exit \"$fail\"`")
     return out
 
 
@@ -259,6 +298,23 @@ class HookChecksArePinned(unittest.TestCase):
                 '--message "$1" --quiet; then', '--message "$1" --quiet || true; then')),
             "pre-merge-commit no longer runs pre-commit": ("pre-merge-commit", merge.replace(
                 'exec "$(dirname "$0")/pre-commit" "$@"', "exit 0")),
+            # S0033 verifier F1: message lines are code too
+            "an echo line continues into a check": ("pre-push", pre_push.replace(
+                inv, 'echo "pre-push: invariants" >&2 \\\n' + inv)),
+            "fail=1 dropped from a tool-missing branch": ("pre-commit", pre_commit.replace(
+                "run 'uv sync' in backend/\" >&2; fail=1", "run 'uv sync' in backend/\" >&2")),
+            "fail reset inside quotes": ("pre-push", pre_push.replace(
+                '\nexit "$fail"', '\necho "done $((fail=0))"\nexit "$fail"')),
+            "an echo then a bare exit": ("pre-push", pre_push.replace("fail=0\n", "fail=0\necho start; exit\n")),
+            "an echo then exec": ("pre-push", pre_push.replace("fail=0\n", "fail=0\necho start && exec true\n")),
+            "fail=00": ("pre-push", pre_push.replace('\nexit "$fail"', '\necho done; fail=00\nexit "$fail"')),
+            "an echo then kill": ("pre-push", pre_push.replace("fail=0\n", "fail=0\necho start; " + "kill -9 $$\n")),
+            "a string spanning lines hides a check": ("pre-push", pre_push.replace(
+                inv, 'echo "pre-push: next\n' + inv + '"\n')),
+            # Python splits lines at a form feed, bash does not: `: <FF> exit` would read as two lines to the pin
+            "a form feed splits a line for the pin but not for bash": ("pre-push", pre_push.replace(
+                inv, ": \f" + inv)),
+            "a carriage return inside a pinned line": ("pre-push", pre_push.replace(inv, inv.replace(".py", ".py\r"))),
         }
         for label, (name, text) in cases.items():
             with self.subTest(label):
@@ -270,13 +326,23 @@ class HookChecksArePinned(unittest.TestCase):
                   "early exit 0", "fail reset before the end", "last line exits 0", "run never fails",
                   "run redefined later", "checks hidden in a here-document", "a check in an unused function",
                   "set -e dropped", "set +e added", "an exit trap", "commit-msg scan or-true",
-                  "pre-merge-commit no longer runs pre-commit", "a check through bash -c outside run")
+                  "pre-merge-commit no longer runs pre-commit", "a check through bash -c outside run",
+                  "an echo line continues into a check", "fail reset inside quotes", "an echo then a bare exit",
+                  "an echo then exec", "fail=00", "an echo then kill", "a string spanning lines hides a check",
+                  "a form feed splits a line for the pin but not for bash", "a carriage return inside a pinned line",
+                  "a comment line ends in a backslash", "fail set to a variable", "fail decremented",
+                  "fail reset in spaced arithmetic")
         cases["a check through bash -c outside run"] = ("pre-push", pre_push.replace(
             inv, 'bash -c "python3 scripts/check_invariants.py || true"\n'))
+        cases["a comment line ends in a backslash"] = ("pre-push", pre_push.replace(inv, "# note \\\n" + inv))
+        cases["fail set to a variable"] = ("pre-push", pre_push.replace('\nexit "$fail"', '\nfail=$ok\nexit "$fail"'))
+        cases["fail reset in spaced arithmetic"] = ("pre-push", pre_push.replace(
+            '\nexit "$fail"', '\necho "done $(( fail=0 ))"\nexit "$fail"'))
+        cases["fail decremented"] = ("pre-push", pre_push.replace('\nexit "$fail"', '\n((fail-=1))\nexit "$fail"'))
         for label in shaped:
             name, text = cases[label]
             with self.subTest(f"{label}, pin updated"):
-                pin = [s for s in code_lines(text) if not s.startswith("echo ")]
+                pin = code_lines(text)
                 self.assertNotEqual(problems(name, text, pin), [])
 
 

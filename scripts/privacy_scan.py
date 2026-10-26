@@ -17,7 +17,8 @@ Rules (design/process/PROCESS.md, "Privacy gate"):
                 right after one (`Acct #: ...`, `A/C No. ...`; S0033)
   upi-handle    a UPI address `<name>@<handle>` with a known UPI handle (`@okaxis`, `@ybl`, ...), not an email (S0033)
   statement-excerpt three or more statement lines (date, text, amount in columns) within six lines, in Markdown and
-                text files and commit and tag messages (S0033)
+                text files and commit and tag messages (S0033); Beancount's own shapes (an ISO-dated line with an
+                account name, a commodity code after the amount, or a commodity code alone as its text) do not count
   pan           Indian PAN (five letters, four digits, one letter)
   iban          IBAN with a valid mod-97 checksum
   email         any address outside the reserved example/test domains
@@ -106,9 +107,10 @@ UPI_PLACEHOLDERS = {"name", "user", "username", "yourname", "example", "test", "
                     "handle", "payee", "merchant"}
 # S0033 (A06): 6-10 digits, plain or in groups split by spaces or dashes (not date-shaped), right after an account
 # word and an optional "No", "Number", "#" or ":" (the line-wide account context above takes 9 or more digits;
-# shorter ones only here, where they cannot be anything else).
+# shorter ones only here, where they cannot be anything else). Sentence punctuation may follow the number; a decimal
+# or digit group may not (`account 1234567.89` is an amount; S0033 verifier F3).
 ACCOUNT_NEAR = re.compile(r"(?i)(?<![a-z0-9])(?:a/c|acct|acc|account|ac(?=\s*no\b))\b\.?"
-                          r"(?:\s*(?:no|num(?:ber)?)\b\.?)?\s*(?:[#:\-]\s*)*(\d{2,10}(?:[ \-]\d{2,8}){0,3})(?![\d.,]|[a-z])")
+                          r"(?:\s*(?:no|num(?:ber)?)\b\.?)?\s*(?:[#:\-]\s*)*(\d{2,10}(?:[ \-]\d{2,8}){0,3})(?!\d|[.,]\d|[a-z])")
 DATE_SHAPED = re.compile(r"\d{4}[ \-]\d{1,2}[ \-]\d{1,2}|\d{1,2}[ \-]\d{1,2}[ \-]\d{4}")
 # S0033 (A05): a statement excerpt in prose: three or more lines within six that each read date, text, amount, with
 # column gaps (two spaces, a tab, `|`, `,` or `;`) between them, in Markdown and text files and in commit and tag
@@ -119,8 +121,22 @@ _DATE = (r"(?:\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{4}-\d{2}-\d{2}"
          r"|\d{1,2}[ -](?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[ ,-]*\d{2,4})")
 _GAP = r"(?:\s*[|,;\t]\s*|\s{2,})"
 _BEANCOUNT = r"(?:\*|!|txn\b|open\b|close\b|balance\b|price\b|pad\b|note\b|document\b|event\b|custom\b|commodity\b|query\b|\")"
-STATEMENT_LINE = re.compile(rf"(?i)^[\s|>]*{_DATE}{_GAP}(?!{_BEANCOUNT})(?=[^\n]*[a-z])[^\n]{{2,}}?{_GAP}"
-                            r"[-+]?(?:\d{1,3}(?:,\d{2,3})+|\d+)\.\d{2}\b")
+STATEMENT_LINE = re.compile(rf"(?i)^[\s|>]*(?P<date>{_DATE}){_GAP}(?!{_BEANCOUNT})(?=[^\n]*[a-z])"
+                            rf"(?P<text>[^\n]{{2,}}?){_GAP}"
+                            r"[-+]?(?:\d{1,3}(?:,\d{2,3})+|\d+)\.\d{2}\b(?P<after>[^\n]*)")
+# S0033 verifier F4: Beancount's own shapes in specs (bean-query register output, balance histories, price tables)
+# are not statements. A line with an ISO date (the only date Beancount writes) does not count when its text holds an
+# account name under one of the five standard roots, or its amount is followed by a commodity code (`45.20 USD`; a
+# `Dr`/`Cr` marker is a statement's), or its text is a commodity code alone and no `Dr`/`Cr` follows (`| INFY |`, a
+# price table). Case matters: statement narrations are upper case (`EXPENSES:FOOD`, `UPI:SWIGGY` still count).
+# Stated limit: an ISO-dated statement whose amounts carry a currency code, or whose narration is one upper-case
+# word, is read as Beancount; the other date forms are never excused.
+ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+BEAN_ACCOUNT = re.compile(r"(?<![\w:])(?:Assets|Liabilities|Equity|Income|Expenses)(?::[A-Z0-9][A-Za-z0-9-]*)+(?![\w:])")
+_COMMODITY = r"[A-Z](?:[A-Z0-9'._-]{0,22}[A-Z0-9])?"
+COMMODITY_AFTER = re.compile(rf"^[ \t]+(?!(?i:cr|dr)\b){_COMMODITY}(?![\w'.-])")
+COMMODITY_ALONE = re.compile(rf"[\s|,;]*{_COMMODITY}[\s|,;]*")
+DR_CR = re.compile(r"(?i)\b(?:cr|dr)\b")
 STATEMENT_MIN_LINES, STATEMENT_WINDOW = 3, 6
 LIVE_DATA_NAME = re.compile(r"(?i)finzytrack[_-]?data\b")  # the owner's live data folder, by name  privacy-scan: allow live-data-path
 SECRETS: list[tuple[str, re.Pattern[str]]] = [
@@ -309,12 +325,25 @@ def statement_scope(path: str) -> bool:
     return path.endswith(" message") or os.path.splitext(path)[1].lower() in STATEMENT_SUFFIXES
 
 
+def statement_line(line: str) -> bool:
+    """Date, text, amount in columns, and not one of Beancount's own shapes (the comment above BEAN_ACCOUNT)."""
+    m = STATEMENT_LINE.search(line)
+    if not m:
+        return False
+    if not ISO_DATE.fullmatch(m.group("date")):
+        return True
+    text, after = m.group("text"), m.group("after")
+    if BEAN_ACCOUNT.search(text) or COMMODITY_AFTER.match(after):
+        return False
+    return not (COMMODITY_ALONE.fullmatch(text) and not DR_CR.search(after))
+
+
 def statement_excerpts(path: str, text: str) -> list[Finding]:
     """One finding per run of STATEMENT_MIN_LINES statement lines within STATEMENT_WINDOW lines; a line carrying
     `privacy-scan: allow statement-excerpt` does not count."""
     if not statement_scope(path):
         return []
-    hits = [n for n, line in enumerate(text.splitlines(), start=1) if STATEMENT_LINE.search(line)
+    hits = [n for n, line in enumerate(text.splitlines(), start=1) if statement_line(line)
             and "statement-excerpt" not in {r.strip() for m in ALLOW_MARK.finditer(line) for r in m.group(1).split(",")}]
     out: list[Finding] = []
     k, need = 0, STATEMENT_MIN_LINES - 1

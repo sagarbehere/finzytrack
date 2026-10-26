@@ -193,6 +193,15 @@ class BacklogAtMilestoneExit(unittest.TestCase):
         backlog = "| ID | Milestone | Status |\n|---|---|---|\n\ntext\n| L1-06 | M0 | open |\n"
         self.assertEqual(self.errors(backlog, "M0"), [])  # a headerless row is not under an ID table
 
+    def test_an_id_on_two_rows_is_refused(self) -> None:  # S0033 verifier F2
+        twice = ITEMS.format(m1="M6") + "| BL-0001 | Corpus | WS-WRITE | M6 | done | x |\n"
+        self.assertTrue(any("BL-0001" in e and "more than one row" in e for e in self.errors(twice, None)))
+        other = "\n| ID | Item | Area | Milestone | Status | Ref |\n|---|---|---|---|---|---|\n" \
+                "| BL-0001 | Corpus again | WS-QA | M9 | open | x |\n"
+        self.assertTrue(any("BL-0001" in e for e in self.errors(ITEMS.format(m1="M6") + other, None)))
+        self.assertEqual(self.errors(ITEMS.format(m1="M6") + "| BL-0002 | Other | WS-QA | M6 | done | x |\n", None),
+                         [])
+
     def test_the_real_backlog_has_a_valid_shape(self) -> None:
         text = (Path(__file__).resolve().parents[2] / "design/backlog.md").read_text(encoding="utf-8")
         self.assertEqual(self.errors(text, None), [])

@@ -11,8 +11,10 @@ Usage: python3 scripts/check_deferrals.py --range BASE..TIP | TIP     (the pre-p
   - is gone (rows are never deleted; `removed` keeps the record), or the whole file is gone,
 unless the item's row at TIP carries a citation it did not carry at BASE: an `ADR-nnnn` whose file exists in
 `design/decisions/` at TIP, or an owner quote written `owner: "<words>"`. A deleted row cannot carry one, so it is
-always refused. A fixme test's `due` must equal its row's milestone (scripts/check_invariants.py, S0029), so moving a
-fixme later needs this row move and is refused here.
+always refused. An ID on more than one row at TIP is refused, cited or not (S0033 verifier F2: a reader keeping
+the first row and one keeping the last would disagree, so a done row could hide an open duplicate). A fixme test's
+`due` must equal its row's milestone (scripts/check_invariants.py, S0029), so moving a fixme later needs this row
+move and is refused here.
 
 Only BASE and TIP are compared: a move undone inside the range passes. A bare TIP (no base: a push with no remote
 `next` below the v0.4 floor) has nothing to compare and passes. Stated limit: whether the cited ADR or quote says what
@@ -28,7 +30,7 @@ import sys
 from collections.abc import Callable
 
 import git_range
-from check_invariants import MILESTONES, due_milestone, table_rows
+from check_invariants import MILESTONES, due_milestone, duplicate_ids, table_rows
 
 BACKLOG = "design/backlog.md"
 OPEN = ("open", "in-progress")
@@ -58,8 +60,13 @@ def problems(base: str | None, tip: str | None, adr_exists: Callable[[str], bool
         return []
     if tip is None:
         return [f"{BACKLOG} is gone, with {len(base_rows)} open item(s); rows are never deleted"]
-    tip_rows = {r.get("ID", ""): r for r in reversed(table_rows(tip))}
-    out: list[str] = []
+    tip_table = table_rows(tip)
+    # an ID on two rows would let one row be read and the other hide (S0033 verifier F2); never compare such a tip
+    out = [f"{bid}: the ID is on more than one row of {BACKLOG}; an item has exactly one"
+           for bid in duplicate_ids(tip_table)]
+    if out:
+        return out
+    tip_rows = {r.get("ID", ""): r for r in tip_table}
     for r in base_rows:
         bid, was = r.get("ID", ""), f"{r.get('Status')} at {r.get('Milestone')}"
         now = tip_rows.get(bid)

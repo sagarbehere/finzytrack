@@ -20,9 +20,10 @@ Rules:
   - `pending`: the backlog item exists in design/backlog.md and is not marked done; with
     FT_MILESTONE_EXIT=<Mx> set (a milestone-exit run), a pending invariant due by Mx or earlier fails;
   - backlog items (every row of a design/backlog.md table whose header starts with `ID` and has `Milestone` and
-    `Status` columns): the status is one of STATUSES, and an open or in-progress item names a milestone; in a
-    milestone-exit run, an open or in-progress item due by Mx or earlier fails (a bare `M1` counts as due by
-    `M1a` until it is split, ADR-0046). Review findings are closed by slices, not by the passage of time (S0023);
+    `Status` columns): each ID is on one row only (S0033), the status is one of STATUSES, and an open or
+    in-progress item names a milestone; in a milestone-exit run, an open or in-progress item due by Mx or earlier
+    fails (a bare `M1` counts as due by `M1a` until it is split, ADR-0046). Review findings are closed by slices,
+    not by the passage of time (S0023);
   - fixme markers in the test trees (S0029): each names an open or in-progress backlog row with the same
     milestone (so the row keeps a milestone-exit run red), and a milestone-exit run fails on a fixme due by it.
 Exit 0 = ok, 1 = problems.
@@ -135,9 +136,20 @@ def due_milestone(cell: str) -> str | None:
     return "M1a" if m.group(1) == "M1" else m.group(1)
 
 
+def duplicate_ids(rows: list[dict[str, str]]) -> list[str]:
+    """IDs on more than one row (S0033 verifier F2): readers that keep the first row and readers that keep the last
+    would disagree, so a done row could hide an open duplicate."""
+    seen: dict[str, int] = {}
+    for r in rows:
+        seen[r.get("ID", "")] = seen.get(r.get("ID", ""), 0) + 1
+    return [bid for bid, n in seen.items() if n > 1]
+
+
 def check_backlog(backlog: str, milestone_exit: str | None) -> list[str]:
     errors: list[str] = []
-    for row in table_rows(backlog, errors):
+    rows = table_rows(backlog, errors)
+    errors += [f"backlog {bid!r}: the ID is on more than one row; an item has exactly one" for bid in duplicate_ids(rows)]
+    for row in rows:
         bid, status, cell = row.get("ID", ""), row.get("Status", ""), row.get("Milestone", "")
         if status not in STATUSES:
             errors.append(f"backlog {bid}: status {status!r} is not one of {sorted(STATUSES)}")

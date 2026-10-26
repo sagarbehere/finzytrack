@@ -73,6 +73,15 @@ class Refused(unittest.TestCase):
         self.assertTrue(problems([row("BL-0001", "M6"), row("BL-0002", "M6")],
                                  [row("BL-0001", "M9"), row("BL-0002", "M6", ref="`ADR-0058`")]))
 
+    def test_an_id_on_two_rows_at_the_tip(self) -> None:  # S0033 verifier F2
+        # a done row first and an open duplicate at a later milestone: whichever row a reader keeps, refused
+        self.assertTrue(problems([row("L4-03", "M6")], [row("L4-03", "M6", "done"), row("L4-03", "M12")]))
+        self.assertTrue(problems([row("L4-03", "M6")], [row("L4-03", "M12"), row("L4-03", "M6", "done")]))
+        self.assertTrue(any("more than one row" in p for p in problems(
+            [row("L4-03", "M6")], [row("L4-03", "M6"), row("L4-03", "M6")])))
+        self.assertTrue(problems([row("L4-03", "M6")], [row("L4-03", "M6"), row("BL-0002", "M6", "done"),
+                                                       row("BL-0002", "M6", "done")]))
+
     def test_every_deferred_item_is_named(self) -> None:
         found = problems([row("BL-0001", "M6"), row("BL-0002", "M6")], [row("BL-0001", "M9"), row("BL-0002", "M9")])
         self.assertEqual(len(found), 2)

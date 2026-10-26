@@ -202,14 +202,21 @@ class SeededMissesS0033(unittest.TestCase):
         for text in (j("Seen in the wild: `Acct #: ", "7392", "0481", "` on an export."),  # plant A06
                      j("A/C No. ", "1234", "567"), j("account number: ", "9988", "7766"), j("acc ", "7654", "321"),
                      j("ACCOUNT NO-", "4821", "3756"), j("acct#", "583920"), j("Account ", "58392", "01746"),
-                     j("Acct No: ", "7392", " 0481"), j("a/c ", "7392", "-0481"), j("account no ", "739-204", "-81")):
+                     j("Acct No: ", "7392", " 0481"), j("a/c ", "7392", "-0481"), j("account no ", "739-204", "-81"),
+                     # S0033 verifier F3: sentence punctuation after the number
+                     j("Account no. ", "7392", "0481", "."), j("Acct #: ", "7392", "0481", ", branch Pune"),
+                     j("A/C No. ", "7392", "0481", "."), j("acct ", "7392", "0481", ";"), j("(acct ", "7392", "0481", ")"),
+                     j("account ", "7392", "0481", ". Next"),
+                     # ten digits after the words the line-wide account context does not know (`acc`, `ac no`)
+                     j("acc ", "76543", "21098"), j("ac no ", "76543", "21098")):
             with self.subTest(text=text):
                 self.assertIn("account-number", rules(text))
 
     def test_numbers_that_are_not_next_to_an_account_word(self) -> None:
         for text in ("account 2026", "accounts: 12345", "account_id 1234567", "Acct 2026-03-01", "account 1234567.89",
                      "sha ac35103371ab9f", "transaction 1234567", "card 1234567", "account 111111", "accounting 7654321",
-                     "3 accounts, 1234567 rows", "account 2026 03 01", "acct 12 34"):
+                     "3 accounts, 1234567 rows", "account 2026 03 01", "acct 12 34", "account 1234567,89",
+                     "account 1234567.5", "account 1,234,567.00"):
             with self.subTest(text=text):
                 self.assertNotIn("account-number", rules(text))
 
@@ -231,6 +238,58 @@ class SeededMissesS0033(unittest.TestCase):
                            ("notes.md", self.EXCERPT.replace("Cr\n", "Cr\n\n\n").replace("42,000.00 Dr\n", "42,000.00 Dr\n\n"))):
             with self.subTest(path=path):
                 self.assertEqual(rules_in(path, text).count("statement-excerpt"), 1)
+
+    def test_the_six_line_window(self) -> None:  # S0033 verifier F5: "three or more within six lines"
+        line = "    {:02d} Mar 2026  RENT TO SOMEONE   42,000.00 Dr"
+        def text(*at: int) -> str:
+            return "\n".join(line.format(n) if n in at else "" for n in range(1, max(at) + 1)) + "\n"
+        self.assertEqual(rules_in("notes.md", text(1, 3, 6)).count("statement-excerpt"), 1)  # six lines
+        self.assertNotIn("statement-excerpt", rules_in("notes.md", text(1, 4, 7)))  # seven lines
+        self.assertNotIn("statement-excerpt", rules_in("notes.md", text(1, 4, 8)))
+        # a long excerpt is one finding; a second one more than six lines on is another
+        self.assertEqual(rules_in("notes.md", text(1, 2, 3, 4, 5, 6, 7, 8)).count("statement-excerpt"), 1)
+        self.assertEqual(rules_in("notes.md", text(1, 2, 3, 9, 10, 11)).count("statement-excerpt"), 2)
+        # the second needs three lines of its own: 1-3, then 9 and 10 alone are not one
+        self.assertEqual(rules_in("notes.md", text(1, 2, 3, 9, 10)).count("statement-excerpt"), 1)
+
+    def test_beancount_shaped_lines_are_not_statement_lines(self) -> None:  # S0033 verifier F4
+        register = ("```\ndate        account                  position\n"
+                    "2026-03-01  Expenses:Food:Groceries  45.20 USD\n2026-03-02  Expenses:Transport       12.00 USD\n"
+                    "2026-03-05  Expenses:Food:Dining     30.50 USD\n```\n")
+        prices = ("| date | commodity | price |\n|---|---|---|\n| 2026-03-01 | INFY | 1520.35 |\n"
+                  "| 2026-03-02 | INFY | 1525.10 |\n| 2026-03-03 | RELIANCE.NS | 2519.80 |\n")
+        balances = ("2026-01-31  Assets:Bank:Checking  1000.00 USD\n2026-02-28  Assets:Bank:Checking  1250.00 USD\n"
+                    "2026-03-31  Liabilities:CreditCard  -1100.00 USD\n")
+        priced = ("| 2026-03-01 | Corner Store | 140.00 INR |\n| 2026-03-02 | Fuel Station | 2,300.50 INR |\n"
+                  "| 2026-03-03 | Pharmacy | 89.90 INR |\n")
+        narrated = ("2026-03-01  Coffee  Expenses:Food  4.50 USD\n2026-03-02  Tea  Expenses:Food  2.50 USD\n"
+                    "2026-03-03  Cake  Expenses:Food  3.50 USD\n")
+        accounts = ("| date | account | amount |\n|---|---|---|\n| 2026-03-01 | Expenses:Food:Groceries | 45.20 |\n"
+                    "| 2026-03-02 | Income:Salary | -900.00 |\n| 2026-03-03 | Assets:Bank:Checking | 1,020.25 |\n")
+        for name, text in (("register", register), ("prices", prices), ("balances", balances), ("priced", priced),
+                           ("narrated", narrated), ("accounts without a commodity", accounts)):
+            with self.subTest(name):
+                self.assertNotIn("statement-excerpt", rules_in("design/specs/x.md", text))
+
+    def test_statement_lines_that_only_look_beancount_shaped_still_count(self) -> None:
+        for name, text in (
+                ("a word after the amount", "2026-03-01  RENT TO SOMEONE  42,000.00 Debit\n"
+                 "2026-03-02  SALARY ACME  1,84,250.00 Credit\n2026-03-03  SCHOOL FEES  18,600.00 debit\n"),
+                ("Dr and Cr after the amount", "2026-03-01  RENT TO SOMEONE  42,000.00 DR\n"
+                 "2026-03-02  SALARY ACME  1,84,250.00 CR\n2026-03-03  SCHOOL FEES  18,600.00 Dr\n"),
+                ("a one-word narration with Dr or Cr", "| 2026-03-01 | SALARY | 184250.00 Cr |\n"
+                 "| 2026-03-02 | RENT | 42000.00 Dr |\n| 2026-03-03 | INTEREST | 120.00 CR |\n"),
+                ("upper-case account words", "2026-03-01  EXPENSES:FOOD  45.20\n2026-03-02  INCOME:SALARY  900.00\n"
+                 "2026-03-03  UPI:SWIGGY  12.00\n"),
+                ("a ticker-shaped word on a non-ISO date", "| 01/03/2026 | RENT | 42000.00 |\n"
+                 "| 02/03/2026 | FUEL | 2300.50 |\n| 03/03/2026 | ATM | 500.00 |\n"),
+                ("a currency code on a non-ISO date", "01 Mar 2026  RENT TO SOMEONE  42,000.00 INR\n"
+                 "02 Mar 2026  FUEL STATION  2,300.50 INR\n03 Mar 2026  PHARMACY  89.90 INR\n"),
+                ("an account name on a non-ISO date", "01/03/2026  Expenses:Food  45.20\n"
+                 "02/03/2026  Expenses:Food  12.00\n03/03/2026  Expenses:Food  30.50\n")):
+            with self.subTest(name):
+                self.assertEqual(rules_in("notes.md", text).count("statement-excerpt"), 1)
+        self.assertEqual(rules_in("notes.md", self.EXCERPT).count("statement-excerpt"), 1)  # plant A05
 
     def test_what_is_not_a_statement_excerpt(self) -> None:
         two = "\n".join(self.EXCERPT.splitlines()[:4]) + "\n"
