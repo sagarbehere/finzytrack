@@ -23,11 +23,11 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0005](ADR-0005-portalocker-3-2-0-pinned.md) | portalocker 3.2.0 is pinned on purpose | Accepted; amended by ADR-0062 | 2026-10-24 | stack, data safety |
 | [ADR-0006](ADR-0006-frontend-framework-react-pending-s13.md) | Frontend framework: React, conditional on spike S13 | Superseded by ADR-0053 | 2026-10-24 | frontend, stack |
 | [ADR-0007](ADR-0007-tauri-2-desktop-shell.md) | Tauri 2 desktop shell with a Python sidecar | Accepted | 2026-10-24 | desktop, release |
-| [ADR-0008](ADR-0008-write-safety-contract.md) | Every ledger write passes the write-safety contract | Accepted | 2026-10-24 | write path, data safety |
+| [ADR-0008](ADR-0008-write-safety-contract.md) | Every ledger write passes the write-safety contract | Accepted; amended by ADR-0064 | 2026-10-24 | write path, data safety |
 | [ADR-0009](ADR-0009-fava-style-source-splicing.md) | Fava-style source splicing; mutators are edit producers | Accepted | 2026-10-24 | write path |
-| [ADR-0010](ADR-0010-overlay-load-with-load-policy.md) | Validate candidate text with an overlay load (D2), behind a LoadPolicy | Accepted | 2026-10-24 | write path, ledger |
+| [ADR-0010](ADR-0010-overlay-load-with-load-policy.md) | Validate candidate text with an overlay load (D2), behind a LoadPolicy | Accepted; amended by ADR-0064 | 2026-10-24 | write path, ledger |
 | [ADR-0011](ADR-0011-no-resident-ledger.md) | No resident ledger; bounded memory and serialized writes | Accepted; amended by ADR-0064 | 2026-10-24 | backend, performance, memory |
-| [ADR-0012](ADR-0012-write-intent-journal-and-recovery.md) | Write-intent journal and one recovery spec | Accepted; amended by ADR-0063 | 2026-10-24 | write path, data safety, lifecycle |
+| [ADR-0012](ADR-0012-write-intent-journal-and-recovery.md) | Write-intent journal and one recovery spec | Accepted; amended by ADR-0063, ADR-0064 | 2026-10-24 | write path, data safety, lifecycle |
 | [ADR-0013](ADR-0013-atomic-swap-replace.md) | Replace by atomic swap; the external-editor race is accepted with detection | Accepted | 2026-10-24 | write path, data safety |
 | [ADR-0014](ADR-0014-mutator-promotion-and-clearance.md) | Mutator promotion, clearance by kind of edit, and the old app as oracle | Accepted | 2026-10-24 | write path, process |
 | [ADR-0015](ADR-0015-mirror-rebuildable-cache-atomic-publish.md) | The mirror is a rebuildable cache, published atomically | Accepted | 2026-10-24 | mirror, data safety |
@@ -78,7 +78,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0060](ADR-0060-github-ci-runs-manually-before-releases.md) | GitHub CI runs manually, before each release; the local hooks are the per-push gates | Accepted | 2026-10-25 | process, CI |
 | [ADR-0061](ADR-0061-macos-first-cross-platform-later.md) | macOS first; Linux and Windows ported in M11, except the write path's Windows semantics from M1b on | Accepted; amended by ADR-0062 | 2026-10-26 | process, platforms, release |
 | [ADR-0062](ADR-0062-single-instance-no-legacy-coexistence.md) | One running Finzytrack at a time: no ledger shared with a running legacy app, a single v0.4 instance | Accepted | 2026-10-27 | workspaces, lifecycle, data safety, desktop |
-| [ADR-0063](ADR-0063-one-open-workspace-no-shared-files.md) | One open workspace at a time, and every unfinished save recovered before any workspace opens | Accepted | 2026-10-27 | workspaces, API, lifecycle, data safety, hosting |
+| [ADR-0063](ADR-0063-one-open-workspace-no-shared-files.md) | One open workspace at a time, and every unfinished save recovered before any workspace opens | Accepted; amended by ADR-0064 | 2026-10-27 | workspaces, API, lifecycle, data safety, hosting |
 | [ADR-0064](ADR-0064-one-engine-one-job-at-a-time.md) | One engine, one job at a time | Accepted | 2026-10-27 | engine, scheduling, write path, performance |
 
 ## Template
