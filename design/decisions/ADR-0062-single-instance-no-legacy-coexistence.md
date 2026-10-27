@@ -57,3 +57,6 @@ Owner, 2026-10-27, in session, answering the S0044 verifier's question Q3 (a led
 - A retired install's ledgers may be opened in place or as an external reference; its lock is no longer tried. Running the old app again afterwards is unsupported (decision 1: one running Finzytrack at a time).
 - The action is reversible (un-retire), shows which ledgers it frees, and is logged. Built with legacy adoption (BL-0101, M3).
 
+## Amendment (2026-10-27): a leftover sidecar after Quit now (ADR-0064)
+
+Agent, within decision 3 (engine-scheduler spec §15, quick check 9 F3). A sidecar stuck in the kernel on a dead disk keeps the app-instance lock until the disk answers, also after the shell's "Quit now". A relaunch is still refused (decision 3 unchanged). When the new shell's single-instance check found no other Finzytrack window, the holder can only be such a leftover, so the shell shows "Finzytrack is still closing from last time. Try again in a moment." instead of "Finzytrack is already running."; headless mode keeps "Finzytrack is already running."
