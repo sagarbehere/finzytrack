@@ -11,7 +11,7 @@ This record drops coexistence of v0.4 with a running legacy app on a shared ledg
 
 ## Context
 
-ADR-0020 let v0.4 and a running v0.2.x/v0.3 app write the same ledger file (Share), guarded by taking the legacy app's write lock, `<legacy root>/data/.write.lock`, with the legacy primitive (ADR-0005), waiting at least 30 s for it, and showing a banner while a legacy app ran. Designing the engine scheduler (`design/inbox/20261026-engine-concurrency-and-cancel.md`, `design/specs/engine-scheduler.md` draft 2) showed what that costs: every verify, save, R4 step and recovery takes the legacy lock first and may wait tens of seconds on the old app's re-export; a TLA+ case (F14) lets the old app write over a half-applied v0.4 save before recovery runs; and the model needs a legacy actor with its own liveness property.
+ADR-0020 let v0.4 and a running v0.2.x/v0.3 app write the same ledger file (Share), guarded by taking the legacy app's write lock, `<legacy root>/data/.write.lock`, with the legacy primitive (ADR-0005), waiting at least 30 s for it, and showing a banner while a legacy app ran. Designing the engine scheduler (`design/inbox/answered/20261026-engine-concurrency-and-cancel.md`, `design/specs/engine-scheduler.md` draft 2) showed what that costs: every verify, save, R4 step and recovery takes the legacy lock first and may wait tens of seconds on the old app's re-export; a TLA+ case (F14) lets the old app write over a half-applied v0.4 save before recovery runs; and the model needs a legacy actor with its own liveness property.
 
 The guard also protects little. The legacy app holds its lock only while it saves (`portalocker.lock(fp, LOCK_EX)` around parse, write and export in its `write_lock.py`, at v0.2.2 and v0.3.0), and its damage happens when it writes: it re-renders whole files, drops comments, copies glob-included entries into the root and persists plugin entries (ADR-0020's own reason for rejecting read-only mode). Example: you add a transaction in v0.4 with a comment above it; the old app, still open on the same file, then saves a price; it writes the whole file again from what it parsed, and your comment is gone. No lock order prevents that.
 
@@ -48,7 +48,7 @@ The guard also protects little. The legacy app holds its lock only while it save
 
 ## References
 
-`design/inbox/20261026-engine-concurrency-and-cancel.md`; `design/specs/engine-scheduler.md` §5.4, §5.6, §11; review:23 §4.5, §4.6; ADR-0005, ADR-0007, ADR-0012, ADR-0013, ADR-0017, ADR-0020, ADR-0043, ADR-0061; INV-24, INV-26, INV-30; CAP-LEGACY-ADOPT, CAP-LEGACY-COEXIST, CAP-SHELL-OPEN; BL-0026, BL-0073, BL-0100; journal `design/journal/S0044-single-instance-policy.md`.
+`design/inbox/answered/20261026-engine-concurrency-and-cancel.md`; `design/specs/engine-scheduler.md` §5.4, §5.6, §11; review:23 §4.5, §4.6; ADR-0005, ADR-0007, ADR-0012, ADR-0013, ADR-0017, ADR-0020, ADR-0043, ADR-0061; INV-24, INV-26, INV-30; CAP-LEGACY-ADOPT, CAP-LEGACY-COEXIST, CAP-SHELL-OPEN; BL-0026, BL-0073, BL-0100; journal `design/journal/S0044-single-instance-policy.md`.
 
 ## Amendment (2026-10-27): retiring a legacy install
 

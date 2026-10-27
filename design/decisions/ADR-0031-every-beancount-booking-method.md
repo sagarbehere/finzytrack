@@ -41,3 +41,8 @@ The scope reset (ADR-0030) writes a sale as a lot reduction (`-5 VTI {}`) and le
 ## References
 
 review:19 §5, §4 Q-A; review:16 §4 (amended); ADR-0022, ADR-0024, ADR-0030, ADR-0048; INV-02, INV-03; CAP-INV-BOOKING-METHODS, CAP-SET-BOOKING-DEFAULT.
+
+## Amendment (2026-10-27): wording matches Beancount
+
+Owner: "Also, regarding the inbox questions: Yes to correcting the wording in the ADR sentences, Replace the line with the accurate list re: inv-24, defer the privacy list for now, and if it still matters, I'd pick the "slots are engine processes, queue lives in the sidecar" design and reword INV-28 and INV-31 and add INV-32 as proposed." (2026-10-27, in session), answering `design/inbox/answered/20261025-adr-wording-price-and-booking.md` (option 1).
+- The table row "STRICT (default), STRICT_WITH_SIZE: requires the lots to be named" now reads: STRICT: a reduction must match one lot unambiguously (`{}` books when only one lot matches); STRICT_WITH_SIZE: as STRICT, and an exact-size lot wins. The decision itself, every booking method Beancount books is supported, is unchanged.

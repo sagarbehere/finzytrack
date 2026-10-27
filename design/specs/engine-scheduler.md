@@ -16,7 +16,7 @@
   - what the user sees;
   - how a rare failure is replayed from the log.
 
-  It answers the area review's F1/F2 (2026-10-26) and applies the owner's decisions of 2026-10-26 and 2026-10-27 (`design/inbox/20261026-engine-concurrency-and-cancel.md`; the answers to reviews 2 and 3; ADR-0062; the one-workspace ADR).
+  It answers the area review's F1/F2 (2026-10-26) and applies the owner's decisions of 2026-10-26 and 2026-10-27 (`design/inbox/answered/20261026-engine-concurrency-and-cancel.md`; the answers to reviews 2 and 3; ADR-0062; the one-workspace ADR).
 - **What exists:** none of this yet. Today there is one `EngineClient` per user container, one request in flight, and a caller's time limit that counts as a crash (S0035, S0040, S0042). Every part carries its phase:
   - **[A]**: M1a, the scheduler slice, before the read core;
   - **[B]**: M1a, with the mirror build;

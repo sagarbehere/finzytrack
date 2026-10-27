@@ -17,3 +17,6 @@
 Option 1: both ADRs already say "do what Beancount does"; the fix only makes their descriptions match it, so nobody builds from the wrong sentence.
 
 ## Answer (owner, verbatim, with date)
+Owner: "Also, regarding the inbox questions: Yes to correcting the wording in the ADR sentences, Replace the line with the accurate list re: inv-24, defer the privacy list for now, and if it still matters, I'd pick the "slots are engine processes, queue lives in the sidecar" design and reword INV-28 and INV-31 and add INV-32 as proposed." (2026-10-27, in session)
+
+Applied: option 1, as amendment sections in ADR-0024 and ADR-0031 (2026-10-27).

@@ -497,9 +497,10 @@ class EngineTest(EnvMixin):
         self.assertLess(time.monotonic() - began, 10.0)
 
 
-@unittest.skipUnless(BACKEND_PY.is_file(), "needs the backend venv (cd backend && uv sync --locked)")
 class EndToEndTest(EnvMixin):
     def test_a_run_starts_isolated_and_leaves_nothing_behind(self) -> None:
+        # An INV-24 enforcement file never switches a test off: a missing backend venv fails, it does not skip.
+        self.assertTrue(BACKEND_PY.is_file(), "needs the backend venv (cd backend && uv sync --locked)")
         proc = subprocess.Popen(  # noqa: S603 (fixed argv: the harness under test)
             [sys.executable, str(REPO / "scripts/acceptance/launcher.py"), "--tz", "America/Los_Angeles"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,

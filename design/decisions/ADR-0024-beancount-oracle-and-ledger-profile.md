@@ -36,3 +36,8 @@ v0.3 had six balance checks with three tolerance models, an account-name validat
 ## References
 
 review:11 L3-04, L3-09, L3-12, L3-14, L3-17, §2, Q7; review:25 §2.3, §2.6; review:F §3.10 (E-01 option b); ADR-0023, ADR-0025; INV-02, INV-03; EP-03.
+
+## Amendment (2026-10-27): wording matches Beancount
+
+Owner: "Also, regarding the inbox questions: Yes to correcting the wording in the ADR sentences, Replace the line with the accurate list re: inv-24, defer the privacy list for now, and if it still matters, I'd pick the "slots are engine processes, queue lives in the sidecar" design and reword INV-28 and INV-31 and add INV-32 as proposed." (2026-10-27, in session), answering `design/inbox/answered/20261025-adr-wording-price-and-booking.md` (option 1).
+- The parenthetical "same-day duplicates resolved (last by id)" in the `PriceIndex` decision now reads: same-day duplicates resolved as Beancount's price map does (the vectors in `corpora/vectors/` pin the rule). The decision itself, Beancount's price map as the oracle, is unchanged.

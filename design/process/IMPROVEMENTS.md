@@ -318,10 +318,10 @@ Format:
 - Why: the spec's value is that what it claims is tested is tested; rules about the table's shape cost upkeep and catch no false claim (a missing failure is still caught by the pair rule).
 - Expected effect: the same 28 rows pass with the same counts; a spec edit that only changes formatting no longer fails the push.
 - Observed effect: pending.
-- Status: kept (loosening, owner-approved). Owner approval, 2026-10-26, in session, on the whole triage of the area review (recorded in `design/inbox/20261026-engine-concurrency-and-cancel.md`): "I agree with all your recommendations." and "The rest of the recommendations can be implemented".
+- Status: kept (loosening, owner-approved). Owner approval, 2026-10-26, in session, on the whole triage of the area review (recorded in `design/inbox/answered/20261026-engine-concurrency-and-cancel.md`): "I agree with all your recommendations." and "The rest of the recommendations can be implemented".
 
 ## IMP-0033: INV-26 drops the shared-ledger exception; its three-OS interleaving test narrows to a detection test (2026-10-27)
-- Trigger: owner decision, 2026-10-27, in session (ADR-0062), from the engine-scheduler design work (`design/inbox/20261026-engine-concurrency-and-cancel.md`); journal `design/journal/S0044-single-instance-policy.md`.
+- Trigger: owner decision, 2026-10-27, in session (ADR-0062), from the engine-scheduler design work (`design/inbox/answered/20261026-engine-concurrency-and-cancel.md`); journal `design/journal/S0044-single-instance-policy.md`.
 - What changed: `design/INVARIANTS.md` INV-26: rule (no write under a legacy root with no exception, `.write.lock` included; legacy ledgers only by Copy; a held legacy lock refuses the copy or save, never waited for), why, and the enforcement list (the lock-interleaving test against the packaged v0.2.2 build on three OSes becomes the legacy-lock detection test). Status unchanged: pending (BL-0026, by M3).
 - PROCESS.md section: none (invariant content).
 - Why: Share workspaces are removed, so nothing interleaves with a legacy app any more; what remains to check is that v0.4 writes nothing there and sees a held lock.
@@ -349,3 +349,23 @@ Format:
 - Observed effect: pending.
 - Status: kept (owner-approved).
 - Owner approval: "I agreed with all your recommendations." and "Yes, I agree with the keep the files as they are now way out." (2026-10-27, in session). Relayed by the orchestrator. The added clause "or which is that journal's workspace moved or copied" was shown to the owner before landing: "Yes, the wording is OK" (2026-10-27, in session).
+
+## IMP-0036: INV-24's "Enforced by" lists the checks that exist (2026-10-27)
+- Trigger: owner answer, 2026-10-27, in session, on `design/inbox/answered/20261025-inv-24-enforced-by-harness.md` (option 1).
+- What changed: `design/INVARIANTS.md` INV-24's "Enforced by" line: "Planned: the acceptance harness port and data-dir checks; the local-tier path guard." replaced by the list of the S0030 checks that exist and run, each named once, and what is not covered yet (BL-0071). The rule is unchanged. Listing `scripts/tests/test_acceptance_harness.py` made it an enforcement file, so its end-to-end test's `skipUnless` (no backend venv) became a failing assertion (`check_invariants.py`: an enforcement file never switches a test off; CI syncs the backend before the meta-tests, `ci.yml`).
+- PROCESS.md section: none (invariant content).
+- Why: the line called built checks "planned".
+- Expected effect: the invariant's list matches the checks.
+- Observed effect: n/a (documentation).
+- Status: kept (owner-approved).
+- Owner approval: "Replace the line with the accurate list re: inv-24" (2026-10-27, in session).
+
+## IMP-0037: golden specs before a formal model, and the model before code (2026-10-27)
+- Trigger: four review rounds of the engine-scheduler design (drafts 1-3) each found 3-6 Highs, mostly in mechanisms the previous round had added; owner decision, 2026-10-27, in session.
+- What changed: PROCESS.md §3 "Golden specs (designs checked by a formal model)": a spec is golden when one full independent review finds no High and no Medium; a High or Medium in a round goes to the owner as a pattern before the next round; each mechanism is tied to the requirement it serves, and a feature that keeps drawing Highs is offered for forbidding or dropping; the model is built only from the golden spec and run by the owner; model findings → spec change → targeted review → affected configurations re-run; implementation when the model is green.
+- PROCESS.md section: §3.
+- Why: review loops on a moving spec kept finding Highs in the mechanisms the last fix added; a model built from a spec still under review checks the wrong design (the owner, 2026-10-27, on running the model on draft 3 while draft 4 was planned).
+- Expected effect: the single-engine scheduler (draft 5) reaches golden in one or two rounds; the model's run checks the design that is built.
+- Observed effect: pending (the draft 5 review).
+- Status: kept (tightening, owner-approved).
+- Owner approval: "Let's come up with a draft that stands all scrutiny.. it then becomes the golden specification. We'll then produce the model from that, the run it, make any needed changes and run the whole loop again. Once the model is green, we start the implementation." and "The one tweak I'd make is that instead of "no Highs" I'd say, "No Highs or Mediums"." (2026-10-27, in session).

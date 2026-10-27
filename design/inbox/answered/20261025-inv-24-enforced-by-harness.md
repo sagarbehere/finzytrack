@@ -23,3 +23,6 @@ I first edited the line myself; the verifier pointed out that this is your decis
 Option 1. It replaces "planned" with what is actually built, names each check once, and says plainly what is not covered yet.
 
 ## Answer (owner, verbatim, with date)
+Owner: "Also, regarding the inbox questions: Yes to correcting the wording in the ADR sentences, Replace the line with the accurate list re: inv-24, defer the privacy list for now, and if it still matters, I'd pick the "slots are engine processes, queue lives in the sidecar" design and reword INV-28 and INV-31 and add INV-32 as proposed." (2026-10-27, in session)
+
+Applied: option 1 in `design/INVARIANTS.md` INV-24, with an approval note (IMP-0036, 2026-10-27).
