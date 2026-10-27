@@ -379,3 +379,13 @@ Format:
 - Observed effect: pending (the model run on draft 5).
 - Status: kept (loosening, owner-approved).
 - Owner approval: "Let's do B. That still enables us to get to a watertight spec and implementation, right? Just that instead of uncovering issues by review, we will uncover them through a formal model checker? And we'll also get an insight into how long that model checking takes?" (2026-10-27, in session).
+
+## IMP-0039: the model is built alongside the spec, from the first draft (2026-10-27)
+- Trigger: the owner, after reviews 5-9 of the engine-scheduler draft 5: "Would it have been better to get to the TLA+ model and refine that, rather than so many rounds of writing the English spec?" Most findings of those rounds were ordering, crash and liveness cases a model checker finds mechanically; about half were outside what a model expresses (OS behaviour, contradictions with ADRs, user-facing text); a model built only at the end carries the risk of a wrong translation from English.
+- What changed: PROCESS.md §3 "Golden specs": each draft of a spec checked by a model comes with its model, a two-way mapping table and seeded mutants per property; review rounds read both; golden means a clean review and a green model on the same draft.
+- PROCESS.md section: §3.
+- Why: ordering and liveness gaps should be found by the checker in minutes, not by reading over several rounds; reviewers then spend their time on what the model cannot see and on the mapping's fidelity.
+- Expected effect: the next model-checked spec (the read core's mirror publish, migrations) reaches golden in fewer review rounds.
+- Observed effect: pending.
+- Status: kept (tightening, owner-approved).
+- Owner approval: "Yes, add it so that model building and checking happens alongside the English spec" (2026-10-27, in session).
