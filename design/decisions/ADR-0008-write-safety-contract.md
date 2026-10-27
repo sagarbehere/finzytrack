@@ -2,7 +2,7 @@
 
 This record defines the contract that every ledger write must pass before any byte reaches disk.
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended by ADR-0064 (2026-10-27): a refusal caused by another program's change says so and does not enter `RECOVERING`; an R4 that fails to run three times can be acknowledged by the user.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** write path, data safety
@@ -46,6 +46,14 @@ Owner: "I accept your recommendations for 24, 25 and 26. We can skip Q27" (owner
 - **Very large single-file ledgers:** a bounded cache of the parsed edited file is built in M1b and measured; only if it still misses the target does the owner revisit the number for that case.
 - **The 5 s target at 54k entries includes the mirror update**: it is measured until everything on screen reflects the change.
 - Spike S4 equivalence work carries over: the overlay takes bytes (CRLF inside strings), handles encrypted includes, and the D1 corpus gains the column-0 continuation-line case.
+
+
+## Amendment (2026-10-27): refusals caused by another program, and an R4 that cannot run (ADR-0064)
+
+Owner, on the second golden review of the engine-scheduler spec (review 6): "I agree with the four simpler policies and two decisions that you proposed." (2026-10-27, in session, relayed by the orchestrator). Decisions D1 and D2 of that proposal:
+- **D1, superseded:** "A refusal says 'Your ledger is unchanged' only when the disk equals the pre-image; otherwise the workspace enters `RECOVERING`." **Instead:** "Your ledger is unchanged" is still said only after the targets were hashed again and equal the pre-image. A refusal because another program changed a file says so ("Your ledger changed after this preview, so Finzytrack did not save your change.") and offers **Review**; reads keep working and the workspace does not enter `RECOVERING`. Only an unfinished save of Finzytrack's own (its journal still open after a failed rollback or an engine death) pauses writes, with **Reopen**, which recovers it (ADR-0012 amendment of 2026-10-27; `design/specs/engine-scheduler.md` §6.4, §6.6, §11).
+- **D2, added to the 2026-10-25 amendment's R4 rule:** when the same re-check has failed to run three times (its engine crashed or could not start; a count, not a time; a user's Cancel does not count), it counts as "could not check": the user is shown the backup and offered **Resume saving** with a confirmation, as for a mismatch. The gate is lifted only by that explicit action; nothing lifts it by itself (spec §6.7).
+- **Unchanged:** every step of the contract, fail-closed (INV-22), and "no write ever lands on an unverified state" except by the user's explicit Resume saving after a failed or impossible check.
 
 ## References
 

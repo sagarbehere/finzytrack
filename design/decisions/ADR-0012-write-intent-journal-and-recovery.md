@@ -2,7 +2,7 @@
 
 This record makes multi-file writes crash-safe and defines the single recovery procedure for writes and lifecycle runs.
 
-- **Status:** Accepted. Amended by ADR-0063 (2026-10-27): recovery runs before any workspace opens, for every journal in the app; a journal names each file by its canonical path, created files included.
+- **Status:** Accepted. Amended by ADR-0063 (2026-10-27): recovery runs before any workspace opens, for every journal in the app; a journal names each file by its canonical path, created files included. Amended by ADR-0064 (2026-10-27): a failed rollback pauses writes with Reopen instead of `RECOVERING`; F-6's locked snapshot reads are replaced; temps cut off mid-write never block.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** write path, data safety, lifecycle
@@ -51,6 +51,15 @@ Owner, approving the recovery rule: "Yes, write both into the hand-off and give 
 - **The journal records, per file, also its canonical path**, resolved once when the journal is written, and the save writes exactly those paths (agent). A file the save creates is recorded with pre state "absent"; recovery removes it only if it holds the post bytes. Recovery writes a recorded path only while it still resolves to that same canonical path; otherwise the journal is not recovered.
 - **A journal that cannot be recovered** (a file unreachable or no longer at its recorded path, foreign bytes, a live writer's lock) stays and blocks the open of every workspace whose ledger set uses a file it names, its own included, also when its folder is reached by Locate or "Open folder…" (`RECOVERY_BLOCKED`, INV-32). A journal whose file list cannot be read blocks every open and copy. The way out of this ADR's stopped state, and of an unreachable or unreadable journal, is the deliberate action "Keep the files as they are now": it drops the journal, writes nothing to the ledger files, lists the files it releases (with both versions for foreign bytes) and is logged (owner: "Yes, I agree with the keep the files as they are now way out.", 2026-10-27, relayed by the orchestrator). Forget keeps the journal (agent).
 - **Unchanged:** the per-file rule, the fsync order, in-process rollback, the order with lifecycle run records, the notice (it now names the workspace whose save was undone), Q29 and Q30 (recovery runs only in the open path, with the journal's file locks taken without waiting; a held lock means a live writer, so that journal stays).
+
+
+## Amendment (2026-10-27): one engine, one job at a time (ADR-0064)
+
+Owner, on the second golden review of the engine-scheduler spec (review 6): "I agree with the four simpler policies and two decisions that you proposed." (2026-10-27, in session, relayed by the orchestrator). Details marked "(agent)" are ADR-0064's.
+- **Superseded:** "If rollback fails, the workspace enters `RECOVERING` (writes blocked) with a notice." **Instead:** the journal stays open, the workspace's engine jobs are refused with `WRITES_PAUSED {unfinished_save}`, reads continue from the published mirror, and the user is offered **Reopen**, a switch to the same workspace whose recover-all (ADR-0063) undoes the save. The same holds after an engine death with an open journal (Q30's "ask the user to reopen"). A read-back mismatch takes the same path.
+- **Superseded (agent, ADR-0064 decision 9):** S5 gap F-6's "the WARMING rebuild and snapshot reads take the locks". With one engine job at a time no save of ours runs beside a load; loads read without locks, re-check the fingerprint after the load (under the locks for a publish), and refuse while a journal is open.
+- **Temps** (owner, review 6 P1): a save's temp counts as a displaced outside save only when its file already holds the post bytes; otherwise recovery deletes it, whatever it holds. Recovery and rollback write their restore temps under their own names and delete them without a check. A journal is written as `.part` and renamed `.open`; recovery deletes a `.part` (no replace happens before the rename).
+- **Unchanged:** the per-file rule, the fsync order, in-process rollback itself, the order with lifecycle run records, Q29 and Q30.
 
 ## References
 
