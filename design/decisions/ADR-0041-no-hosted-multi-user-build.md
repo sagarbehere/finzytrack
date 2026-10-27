@@ -36,8 +36,8 @@ A hosted service on a cheap, memory-limited server may come later. The per-user 
 ## Amendment (2026-10-27): one open workspace per user container (ADR-0063)
 
 Owner: "1. Yes to forbidding two workspaces sharing a file. If it'll help we can simplify further: No sharing anywhere, no multiple instances of Finzytrack anywhere. Period. Finzytrack is just about one instance, working with one workspace at a time." (2026-10-27, in session; the full quote is in ADR-0063). Details marked "(agent)" are ADR-0063's.
-- In hosted mode "one workspace at a time" holds per user (agent): each `UserContainer` has at most one open workspace, and a switch closes that user's open workspace only. The overlap check runs within one user's registry; different users' workspaces live under separate user roots that the hosted `LoadPolicy` confines.
-- **Removed from the deferred list:** "sharing a workspace between users". It is excluded by ADR-0063 ("No sharing anywhere"); a future plan for it needs an ADR that supersedes ADR-0063.
+- In hosted mode "one workspace at a time" holds per user (agent): each `UserContainer` has at most one open workspace, and a switch closes that user's open workspace only. Territories (ADR-0063 decision 2) are compared within one user's registry; different users' workspaces live under separate user roots that the hosted `LoadPolicy` confines.
+- **Removed from the deferred list:** "sharing a workspace between users". It is excluded by ADR-0063 ("No sharing anywhere"; the owner confirmed this reading, 2026-10-27: "confirming the three decisions the agent wrote in ADR-0063"); a future plan for it needs an ADR that supersedes ADR-0063.
 - Multi-worker coordination stays deferred; whatever it becomes must keep each user's open workspace served by one process at a time.
 - **Unchanged:** "don't foreclose, don't build", the seams and guards, INV-11's containers, the isolation matrix (a sibling workspace is registered, not open).
 

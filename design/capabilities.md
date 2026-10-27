@@ -24,7 +24,7 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | CAP-WS-PALETTE | Command palette (⌘/Ctrl-K) with "Switch workspace" over the recents | new | planned | M2 | yes |
 | CAP-WS-CREATE | New workspace: Blank (currency + starter accounts) or "from settings of <workspace>" (copies… | new | planned | M3 | yes |
 | CAP-WS-ADOPT | Open an existing folder or `.beancount` as a workspace | new | planned | M2 | yes |
-| CAP-WS-NO-SHARED-FILES | No file in two workspaces: registering, adopting, creating or opening a workspace whose ledger set… | new | planned | M2 | yes |
+| CAP-WS-NO-SHARED-FILES | No file in two workspaces, by territory: every file a workspace uses or a save may create (root… | new | planned | M2 | yes |
 | CAP-WS-PORTABLE | One folder layout that is safe to sync, version and tar: no secrets, caches, absolute paths or… | new | planned | M3 | yes |
 | CAP-WS-PORTABILITY-CHECK | "Portable ✓" or a per-file issue list, in Settings and as a switcher badge (same check as the… | new | planned | M3 | yes |
 | CAP-WS-EXPORT | Export a locked, consistent `.tar.zst` of the ledger set and `.finzytrack/` with file list and… | new | planned | M3 | no |

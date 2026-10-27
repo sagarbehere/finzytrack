@@ -39,3 +39,13 @@ The other workspace invariants were checked and need no change: INV-25 (forget s
 Option 1. INV-28's sentence is now wrong, and the two rules you decided today carry data safety: the scheduler will stop guarding against shared files because of INV-32. An invariant makes CI demand their tests before M2 can exit.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-10-27, in session (relayed by the orchestrator): "I agree with the territory rule and am confirming the three decisions the agent wrote in ADR-0063. Also, regarding the inbox questions: [...] reword INV-28 and INV-31 and add INV-32 as proposed." (The omitted part answers other inbox files.)
+
+Follow-up question, asked by the orchestrator: "INV-28's approved text says a request is served only if its workspace is 'the one open in this instance'; INV-31's approved text already says '(in hosted mode, a user container)'. May INV-28 say the same?" Owner, 2026-10-27, in session (relayed by the orchestrator): "Yes INV-28 should say the same."
+
+Applied in S0045 (IMP-0034):
+- INV-28 and INV-31 as proposed in option 1. INV-28's rule also gained "(in hosted mode, in this user container)" after "the one open in this instance", per the follow-up answer.
+- INV-32 with its proposed purpose, why and status. Its rule and enforcement now state the territory rule the owner agreed to, instead of the file-by-file overlap proposed above:
+  - the rule's overlap sentence (a file in both, documents folders, globs, "plus device and inode") became: each workspace owns a territory (its folder, plus an external reference's ledger folder tree); every file it uses or a save may create lies inside it; territories are never equal, overlapping or nested (compared by `path_key`);
+  - in the enforcement list, the "overlap corpus" became a "territory corpus" (outside paths and meeting territories);
+  - the hard-link case moved from the corpus to a stated limit (S0045 verifier F2).

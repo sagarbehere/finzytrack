@@ -176,9 +176,9 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 - **Status:** pending (BL-0027, by M3)
 
 ### INV-28: Workspace-addressed
-- **Rule:** Every workspace-scoped request names its workspace in the path. There is no server-side "active workspace", and a request, response or write can never act on a workspace other than the one named. `{ws}` resolves only in the caller's registry.
-- **Why:** A shared "active ledger" pointer caused wrong-ledger writes (review:10 I6, review:15 L10-01); two tabs must not retarget each other.
-- **Enforced by:** planned: a route-scope test; a two-tab acceptance flow; a middleware test; a `meta.workspace_id` client assertion; the isolation-matrix IDOR row.
+- **Rule:** Every workspace-scoped request names its workspace in the path, and is served only when that workspace is the one open in this instance (in hosted mode, in this user container) (ADR-0063); a request naming any other registered workspace is refused with `WORKSPACE_NOT_OPEN` and changes nothing. No request finds its target from server-side state, and a request, response or write can never act on a workspace other than the one named. `{ws}` resolves only in the caller's registry. *(Amended with the owner's approval, 2026-10-27, ADR-0063: "reword INV-28 and INV-31 and add INV-32 as proposed"; INV-28's hosted wording: "Yes INV-28 should say the same.")*
+- **Why:** A shared "active ledger" pointer caused wrong-ledger writes (review:10 I6, review:15 L10-01); two tabs must not retarget each other: a switch in one tab makes the other tab's requests fail, never land in another workspace.
+- **Enforced by:** planned: a route-scope test; a two-tab acceptance flow; a middleware test; a `meta.workspace_id` client assertion; the isolation-matrix IDOR row; a switch test: after A→B, a request naming A, a save included, is refused with `WORKSPACE_NOT_OPEN` and leaves A's and B's files and the registry byte-identical.
 - **Status:** pending (BL-0028, by M2)
 
 ### INV-29: Validate before recording
@@ -193,8 +193,14 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 - **Enforced by:** planned: an open/close ×N byte-identity test; a duplicate-lineage test; a secret-pattern scan of `.finzytrack/`; a layout test.
 - **Status:** pending (BL-0030, by M2)
 
-### INV-31: Only the active workspace is touched
-- **Rule:** Closing a workspace's last reference releases its caches and handles. Cache bounds are configurable limits, global across workspaces and generous on desktop, never fixed development targets.
+### INV-31: One open workspace, and only it is touched
+- **Rule:** An instance (in hosted mode, a user container) has at most one open workspace; only the open workspace accepts requests or runs jobs. Opening another is a switch: it assesses the target first, then quiesces and closes the current workspace, losing and half-applying nothing (ADR-0063). Closing a workspace releases its caches and handles. Cache bounds are configurable limits, global across workspaces and generous on desktop, never fixed development targets. *(Amended with the owner's approval, 2026-10-27, ADR-0063: "reword INV-28 and INV-31 and add INV-32 as proposed"; INV-28's hosted wording: "Yes INV-28 should say the same.")*
 - **Why:** INV-10 at workspace granularity; memory-frugal hosting (review:23).
-- **Enforced by:** planned: a memory regression check A→B→A ×20 at 54k against the baseline (flat RSS); the cache-registry test.
+- **Enforced by:** planned: a memory regression check A→B→A ×20 at 54k against the baseline (flat RSS); the cache-registry test; the switch test (at no moment do two workspaces accept requests or run jobs; after A→B no container, cache or handle of A remains); a quiesce test: a save confirmed in A before the switch completes in A, or is refused with A unchanged.
 - **Status:** pending (BL-0031, by M2)
+
+### INV-32: No file in two workspaces
+- **Rule:** Each registered workspace owns a territory: its workspace folder and, for an external-ledger reference, its ledger's folder tree. Every file the workspace uses or a save may create (the root, its includes, every glob's matches and fixed folder part, the price sidecar, the documents folder) lies inside its own territory, and the territories of registered workspaces are never equal, overlapping or nested, compared by the write path's canonical identity (`path_key`). Registering, adopting, creating or opening a workspace that breaks either rule is refused with the path named, and a ledger set that later reaches outside its territory is refused when it is computed (ADR-0063). *(Added with the owner's approval, 2026-10-27, ADR-0063: "reword INV-28 and INV-31 and add INV-32 as proposed"; the territory rule replaces the proposal's file-by-file overlap: "I agree with the territory rule".)*
+- **Why:** One workspace's half-finished save must never be read or overwritten from another; the write path and the scheduler rely on each file having one owner (ADR-0063).
+- **Enforced by:** planned: a territory corpus (an include, a glob, the price sidecar, a documents folder and a routed file outside the territory, also reached through a symlink, a case variant or a Unicode-normalization variant; equal, overlapping and nested territories; an external reference into another workspace's folder) refused at register, adopt and open, with nothing recorded (create and the test copy join with their mutators in M3); a ledger set grown outside its territory by an outside edit refused at the next open and at the rebuild, the rebuild not published; a workspace with an unresolved journal cannot be forgotten. Stated limit: a hard link between two territories is not detected.
+- **Status:** pending (BL-0103, by M2)

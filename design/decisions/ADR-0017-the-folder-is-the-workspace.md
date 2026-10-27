@@ -37,12 +37,12 @@ The owner wants to switch ledgers seamlessly, and wants a set of books to be a s
 - A raw tar or sync of the folder is supported; a validated Export/Import adds a file list and hashes. (The Export/Import *archive* capability is deferred past v0.4.0, ADR-0043; the raw folder still travels.)
 - Opening a workspace never writes the folder (INV-30).
 
-## Amendment (2026-10-27): no file in two workspaces (ADR-0063)
+## Amendment (2026-10-27): no file in two workspaces: territories (ADR-0063)
 
 Owner: "1. Yes to forbidding two workspaces sharing a file. If it'll help we can simplify further: No sharing anywhere, no multiple instances of Finzytrack anywhere. Period. Finzytrack is just about one instance, working with one workspace at a time." (2026-10-27, in session; the full quote is in ADR-0063). Details marked "(agent)" are ADR-0063's.
-- **Superseded:** "a ledger root belongs to at most one workspace per machine (registry deduplicated by canonical root path)". **Instead:** no file of a ledger set belongs to two registered workspaces. Two sets overlap when a file is in both, a file of one lies in a documents folder of the other, their documents folders are the same or nested, or a glob include of one matches a file of the other; "the same file" is the write path's canonical identity (`path_key` and `canonical_path`, defined in the engine-scheduler spec), plus device and inode for files that exist (agent). Registering, adopting, creating or opening an overlapping workspace is refused with the shared file named (ADR-0019 amendment).
-- **The external-ledger reference stays**, bound by that rule: one external ledger cannot be referenced by two workspaces, nor by a reference and an in-place workspace.
-- Each registry row keeps a machine-local record of its workspace's last known set, which the check compares against (agent; INV-04: working state, never in the folder).
+- **Superseded:** "a ledger root belongs to at most one workspace per machine (registry deduplicated by canonical root path)". **Instead:** each registered workspace owns a territory: its workspace folder and, for an external-ledger reference, its ledger's folder tree. Every file of its ledger set, and every file a save may create, lies inside its own territory; the territories of registered workspaces are never equal, overlapping or nested. Both are judged by the write path's canonical identity (`path_key`, defined in the engine-scheduler spec). Registering, adopting, creating or opening a workspace that breaks either rule is refused with the path named (ADR-0019 amendment; INV-32). The owner agreed to the territory rule: "I agree with the territory rule" (2026-10-27, in session, relayed by the orchestrator).
+- **The external-ledger reference stays**, bound by that rule: its ledger's folder tree joins its territory, so one external ledger folder cannot be referenced by two workspaces, nor by a reference and an in-place workspace.
+- The territories are derived from what a registry row already holds (its folder and, for an external reference, its ledger's path); nothing about files is recorded (agent).
 - **Unchanged:** the rest of this ADR.
 
 ## References
