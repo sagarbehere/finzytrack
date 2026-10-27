@@ -26,7 +26,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0008](ADR-0008-write-safety-contract.md) | Every ledger write passes the write-safety contract | Accepted | 2026-10-24 | write path, data safety |
 | [ADR-0009](ADR-0009-fava-style-source-splicing.md) | Fava-style source splicing; mutators are edit producers | Accepted | 2026-10-24 | write path |
 | [ADR-0010](ADR-0010-overlay-load-with-load-policy.md) | Validate candidate text with an overlay load (D2), behind a LoadPolicy | Accepted | 2026-10-24 | write path, ledger |
-| [ADR-0011](ADR-0011-no-resident-ledger.md) | No resident ledger; bounded memory and serialized writes | Accepted | 2026-10-24 | backend, performance, memory |
+| [ADR-0011](ADR-0011-no-resident-ledger.md) | No resident ledger; bounded memory and serialized writes | Accepted; amended by ADR-0064 | 2026-10-24 | backend, performance, memory |
 | [ADR-0012](ADR-0012-write-intent-journal-and-recovery.md) | Write-intent journal and one recovery spec | Accepted; amended by ADR-0063 | 2026-10-24 | write path, data safety, lifecycle |
 | [ADR-0013](ADR-0013-atomic-swap-replace.md) | Replace by atomic swap; the external-editor race is accepted with detection | Accepted | 2026-10-24 | write path, data safety |
 | [ADR-0014](ADR-0014-mutator-promotion-and-clearance.md) | Mutator promotion, clearance by kind of edit, and the old app as oracle | Accepted | 2026-10-24 | write path, process |
@@ -69,7 +69,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0051](ADR-0051-working-principles-from-the-review.md) | Working principles carried over from the review | Accepted | 2026-10-24 | process, engineering |
 | [ADR-0052](ADR-0052-default-currency-lives-in-the-ledger.md) | The default currency lives in the ledger; the tool setting is only an override | Accepted | 2026-10-24 | workspaces, settings, ledger |
 | [ADR-0053](ADR-0053-frontend-framework-is-vue.md) | The frontend framework is Vue 3 (spike S13 outcome) | Accepted | 2026-10-25 | frontend, stack |
-| [ADR-0054](ADR-0054-beancount-in-its-own-engine-process.md) | Beancount runs in its own ledger-engine process; the main sidecar never imports it | Accepted | 2026-10-25 | architecture, licence, backend |
+| [ADR-0054](ADR-0054-beancount-in-its-own-engine-process.md) | Beancount runs in its own ledger-engine process; the main sidecar never imports it | Accepted; amended by ADR-0064 | 2026-10-25 | architecture, licence, backend |
 | [ADR-0055](ADR-0055-mirror-legacy-postings-columns.md) | The mirror keeps the documented v0.2.2 `postings` columns, computed by the mirror | Accepted | 2026-10-25 | mirror, compatibility |
 | [ADR-0056](ADR-0056-python-build-standalone-and-linux-packages.md) | Sidecar packaging uses python-build-standalone; Linux ships AppImage and .deb | Accepted | 2026-10-25 | packaging, desktop |
 | [ADR-0057](ADR-0057-pilot-result.md) | The pilot's result: hand-off checks, re-verification, and a first slice count | Accepted | 2026-10-25 | process |
@@ -79,6 +79,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0061](ADR-0061-macos-first-cross-platform-later.md) | macOS first; Linux and Windows ported in M11, except the write path's Windows semantics from M1b on | Accepted; amended by ADR-0062 | 2026-10-26 | process, platforms, release |
 | [ADR-0062](ADR-0062-single-instance-no-legacy-coexistence.md) | One running Finzytrack at a time: no ledger shared with a running legacy app, a single v0.4 instance | Accepted | 2026-10-27 | workspaces, lifecycle, data safety, desktop |
 | [ADR-0063](ADR-0063-one-open-workspace-no-shared-files.md) | One open workspace at a time, and every unfinished save recovered before any workspace opens | Accepted | 2026-10-27 | workspaces, API, lifecycle, data safety, hosting |
+| [ADR-0064](ADR-0064-one-engine-one-job-at-a-time.md) | One engine, one job at a time | Accepted | 2026-10-27 | engine, scheduling, write path, performance |
 
 ## Template
 

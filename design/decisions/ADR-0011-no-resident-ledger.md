@@ -2,7 +2,7 @@
 
 This record decides how the backend holds ledger data in memory and how it serializes writes and heavy work.
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended by ADR-0064 (2026-10-27): the heavy-load semaphore and the per-workspace write limiter are replaced by one engine doing one job at a time.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** backend, performance, memory
@@ -39,3 +39,11 @@ A parsed ledger retains about 15 MB (demo) and about 152 MB (54k transactions), 
 ## References
 
 review:D1 §10; review:10 D3, D4, D6, D7; review:18 §3; review:25 §2.5; ADR-0015, ADR-0016, ADR-0046; INV-10, INV-11, INV-20, INV-31.
+
+## Amendment (2026-10-27): one engine, one job at a time (ADR-0064)
+
+Owner: "if we are not most of the way there, or if we can't asses that with confidence, then I agree that we go back to one engine doing one job at a time and massively simplify everything." (2026-10-27, in session; the full record is ADR-0064.)
+- **Superseded:** "a process-wide heavy-load semaphore (1–2 slots, configurable) caps peak memory". **Instead:** one engine process runs one job at a time, so one load at a time bounds memory (ADR-0064 decisions 1 and 6). The engine's queue lives in the main sidecar's `UserContainer` (INV-11).
+- **Superseded (agent, a direct consequence):** the per-workspace `anyio.CapacityLimiter(1)` for writes. The queue runs every engine job, saves included, one at a time, and only one workspace is open (ADR-0063), so the limiter has nothing left to serialize. The ledger-set file locks stay; they exclude an orphaned engine of a crashed session (ADR-0012 Q29, ADR-0063).
+- **Unchanged:** no resident parsed ledger; reads never load the ledger; planning parses only the edited files; BQL is a transient load; the async edge only awaits (blocking work runs on worker threads, now behind the engine queue); every other cache is bounded.
+

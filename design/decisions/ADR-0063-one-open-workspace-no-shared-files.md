@@ -56,7 +56,7 @@ Two attempts to prevent sharing failed review. A file-by-file check missed files
 - **Honest limits** (agent):
   - A journal's canonical paths are those of this machine; the same network share mounted at two places has two identities, so while such a journal cannot be recovered, a workspace reaching its file through the other mount is not blocked and may read the half-applied file. Once the journal is recovered, that workspace's next open sees the change through the fingerprint check.
   - The rule sees only this app root's journals, so a second installation, another `--app-root` or another OS account stays unsupported (ADR-0062); to each other they are outside editors.
-  - Files a plugin reads by itself are not in the ledger set (scheduler spec §5.8), so a journal naming one does not block a workspace whose plugin reads it.
+  - Files a plugin reads by itself are not in the ledger set (scheduler spec §15), so a journal naming one does not block a workspace whose plugin reads it.
   - A copy of the files made outside Finzytrack (no manifest, or a folder copied before Finzytrack ever opened it) is not recognised as the journal's workspace, so it opens on whatever bytes it holds.
   - An unreachable journal folder makes each open try it again; the try uses the switcher's cheap probe (ADR-0019), so it does not wait on an offline share.
 
