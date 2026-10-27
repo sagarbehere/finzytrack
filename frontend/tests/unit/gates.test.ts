@@ -174,8 +174,9 @@ describe('[EP-22] the knip config', () => {
         'eslint.boundaries.js',
         'e2e/**/*.selftest.ts',
         'e2e/harness/selftest/playwright.config.ts',
+        'scripts/**/*.mjs', // S0046: Node build tooling (the API type generator) and its dependencies
       ],
-      project: ['src/**/*.{ts,vue}', 'tests/**/*.ts', 'e2e/**/*.ts'],
+      project: ['src/**/*.{ts,vue}', 'tests/**/*.ts', 'e2e/**/*.ts', 'scripts/**/*.mjs'],
       ignoreDependencies: ['license-checker-rseidelsohn', '@tauri-apps/cli'],
     })
   })

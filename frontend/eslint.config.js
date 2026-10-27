@@ -86,8 +86,13 @@ export default tseslint.config(
     },
   },
   {
-    files: ['**/*.js'],
+    files: ['**/*.js', '**/*.mjs'],
     ...tseslint.configs.disableTypeChecked,
+  },
+  {
+    // Build tooling run by Node (frontend/CLAUDE.md: frontend/scripts/, .mjs; S0046: the API type generator).
+    files: ['scripts/**/*.mjs'],
+    languageOptions: { globals: globals.node },
   },
   // INV-12: the layer map (eslint.boundaries.js).
   ...boundaries,

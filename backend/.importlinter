@@ -15,9 +15,9 @@ name = Kernel layers (ARCHITECTURE.md §2.4 rule 1)
 type = layers
 layers =
     app.main
-    (app.api)
+    app.api
     (app.boot)
-    (app.workspaces)
+    app.workspaces
     (app.mirror)
     app.platform
     app.domain

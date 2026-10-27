@@ -7,6 +7,6 @@ Pointers only. Package map, dependency rules and pins: `design/ARCHITECTURE.md` 
 - The engine tests here (`tests/platform/test_engine_client.py`) spawn the real engine from `engine/.venv`: run `uv sync --locked` in `engine/` too.
 - Gates: `uv sync --locked`, then from `backend/`: `ruff format --check`, `ruff check`, `pyright` (strict), `lint-imports`, `deptry src`, `pytest`.
 - Money is `Decimal` and dates are civil dates (INV-06, INV-07). Errors use the one taxonomy (ARCHITECTURE.md §6).
-- The OpenAPI spec is exported offline and the TypeScript client regenerated in the same commit (ARCHITECTURE.md §4.1); there is no "restart the backend and regenerate" step.
+- The OpenAPI spec is exported offline and the TypeScript client regenerated in the same commit (ARCHITECTURE.md §4.1); there is no "restart the backend and regenerate" step. From the repo root: `backend/.venv/bin/python -I backend/scripts/export_openapi.py`, then `node frontend/scripts/gen-api-types.mjs`; `scripts/check_generated.py` refuses a commit without both.
 - Backend-internal scripts go in `backend/scripts/` and run with cwd = `backend/`.
 - A test written before its capability exists carries `@pytest.mark.fixme(id=…, due=…, reason=…)` (a strict xfail that may fail only with `PlannedMissing`, S0032) and reaches planned modules through `tests/integrity/planned.py`, so once the module exists any failure is red; `id` is an open backlog row due by `due` (`scripts/check_invariants.py`, S0029). The landing slice removes the marker, imports normally and closes the row.

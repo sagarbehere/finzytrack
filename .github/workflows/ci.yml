@@ -56,13 +56,13 @@ jobs:
         run: python3 scripts/check_capabilities.py
       - name: Engine environment (the generated protocol schema and the licence check read it; S0035)
         run: uv sync --locked --directory engine
-      - name: Generated artifacts (INV-19)
-        run: python3 scripts/check_generated.py --all
       - uses: actions/setup-node@v4
         with:
           node-version: "24.21.0"
-      - name: Frontend environment (the licence check reads its production tree)
+      - name: Frontend environment (the API types are generated with it, S0046; the licence check reads its production tree)
         run: npm install -g pnpm@12.12.0 && pnpm --dir frontend install --frozen-lockfile
+      - name: Generated artifacts (INV-19)
+        run: python3 scripts/check_generated.py --all
       - name: Rust toolchain from shell/src-tauri/rust-toolchain.toml (the licence check runs cargo metadata)
         run: cd shell/src-tauri && rustup show active-toolchain || rustup toolchain install
       - name: Licences and THIRD_PARTY_NOTICES

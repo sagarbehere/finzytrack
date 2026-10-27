@@ -25,7 +25,8 @@ ROOT = Path(__file__).resolve().parents[1]
 ENGINE_PYTHON = ROOT / ("engine/.venv/Scripts/python.exe" if os.name == "nt" else "engine/.venv/bin/python")
 # The backend's own environment: the statechart references are generated from tables only it can import (S0040).
 BACKEND_PYTHON = ROOT / ("backend/.venv/Scripts/python.exe" if os.name == "nt" else "backend/.venv/bin/python")
-# generated path -> (command printing the expected content, source paths)
+# generated path -> (command printing the expected content, source paths; a source ending in "/" is a folder and stands
+# for every path under it)
 GENERATORS: dict[str, tuple[list[str], list[str]]] = {
     "design/capabilities.md": (
         [sys.executable, "scripts/gen_capabilities.py", "--stdout"],
@@ -51,6 +52,17 @@ GENERATORS: dict[str, tuple[list[str], list[str]]] = {
     "design/generated/statecharts/engine-supervision.md": (
         [str(BACKEND_PYTHON), "-I", "backend/scripts/gen_statecharts.py", "--stdout"],
         ["backend/src/app/platform/engine_supervision.py", "backend/scripts/gen_statecharts.py"],
+    ),
+    # The API contract, exported offline from the app (ADR-0038, S0046): any module of the app can change a schema,
+    # a route or an error code, so the whole package is its source.
+    "contracts/openapi.json": (
+        [str(BACKEND_PYTHON), "-I", "backend/scripts/export_openapi.py", "--stdout"],
+        ["backend/src/app/", "backend/scripts/export_openapi.py", "backend/pyproject.toml", "backend/uv.lock"],
+    ),
+    # Its TypeScript types (openapi-typescript), generated from the contract in the same commit (ADR-0038, S0046).
+    "frontend/src/api/generated/openapi.ts": (
+        ["node", "frontend/scripts/gen-api-types.mjs", "--stdout"],
+        ["contracts/openapi.json", "frontend/scripts/gen-api-types.mjs", "frontend/package.json", "frontend/pnpm-lock.yaml"],
     ),
 }
 MARK = "GENERATED"
@@ -101,10 +113,19 @@ def check_one(path: str, staged: bool) -> list[str]:
     try:
         fresh = expected(path)
     except GeneratorFailed as e:
-        return [*problems, f"{path}: the generator could not run ({e}); for the engine or the backend, run `uv sync --locked` in engine/ or backend/"]
+        return [*problems, f"{path}: the generator could not run ({e}); for the engine or the backend, run `uv sync --locked` in engine/ or backend/; for the frontend, `pnpm install --frozen-lockfile` in frontend/"]
     if have != fresh:
         problems.append(f"{path}: out of date or hand-edited; regenerate it ({' '.join(GENERATORS[path][0][1:])})")
     return problems
+
+
+def triggered(staged: set[str], path: str, sources: list[str]) -> bool:
+    """Whether a staged change can change `path`: the output itself, a source file, or a path under a source folder."""
+    if path in staged:
+        return True
+    files = {s for s in sources if not s.endswith("/")}
+    folders = tuple(s for s in sources if s.endswith("/"))
+    return bool(staged & files) or any(p.startswith(folders) for p in staged if folders)
 
 
 def staged_paths() -> set[str]:
@@ -128,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.staged:
         staged = staged_paths()
         for path, (_, sources) in GENERATORS.items():
-            if path in staged or staged.intersection(sources):
+            if triggered(staged, path, sources):
                 problems += check_one(path, staged=True)
     else:
         for path in GENERATORS:

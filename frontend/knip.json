@@ -5,8 +5,9 @@
     "e2e/**/*.spec.ts",
     "eslint.boundaries.js",
     "e2e/**/*.selftest.ts",
-    "e2e/harness/selftest/playwright.config.ts"
+    "e2e/harness/selftest/playwright.config.ts",
+    "scripts/**/*.mjs"
   ],
-  "project": ["src/**/*.{ts,vue}", "tests/**/*.ts", "e2e/**/*.ts"],
+  "project": ["src/**/*.{ts,vue}", "tests/**/*.ts", "e2e/**/*.ts", "scripts/**/*.mjs"],
   "ignoreDependencies": ["license-checker-rseidelsohn", "@tauri-apps/cli"]
 }

@@ -17,8 +17,9 @@ the launch's `--session-id` (the shell's), or one made here. A log path that lea
 or into the workspace is refused: the process exits with code 2 before the handshake. On exit, also on SIGTERM, the
 engine is closed before the process ends.
 
-Until the API edge exists (FastAPI and uvicorn, `/api/boot`: L1-07, L10-09, M2) the server has no routes and
-answers every request with 501; that slice replaces `bind` and `serve` and keeps the args and the handshake.
+The API edge is built (`app.api.create_app`, S0046) but not served yet: until BL-0105 the server has no routes and
+answers every request with 501; that slice replaces `bind` and `serve` with uvicorn and keeps the args and the
+handshake.
 """
 
 from __future__ import annotations
@@ -167,7 +168,7 @@ def open_log(args: Args, app_version: str) -> EventLog | LogRefusal:
 
 
 class _NoRoutes(BaseHTTPRequestHandler):
-    """No handler methods, so every request is answered 501 by the base class (no routes before L10-09)."""
+    """No handler methods, so every request is answered 501 by the base class (no routes before BL-0105)."""
 
     @override
     def log_message(self, format: str, *args: Any) -> None:

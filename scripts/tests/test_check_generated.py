@@ -144,5 +144,74 @@ class Statecharts(unittest.TestCase):
         self.assertIn("backend/.venv", cmd[0])  # the table imports the backend package
 
 
+class ApiContract(unittest.TestCase):
+    """The OpenAPI contract and its TypeScript types are generated offline, in the same commit (ADR-0038, S0046)."""
+
+    SPEC = "contracts/openapi.json"
+    TYPES = "frontend/src/api/generated/openapi.ts"
+
+    def test_the_spec_is_exported_by_the_backend_with_its_whole_package_as_source(self) -> None:
+        cmd, sources = cg.GENERATORS[self.SPEC]
+        self.assertIn("backend/.venv", cmd[0])  # the export imports the app
+        self.assertIn("backend/scripts/export_openapi.py", cmd)
+        self.assertIn("--stdout", cmd)
+        # any module of the app can change a schema, a route or an error code (ARCHITECTURE.md §4.1)
+        self.assertIn("backend/src/app/", sources)
+        self.assertIn("backend/uv.lock", sources)  # a FastAPI or pydantic upgrade can change the output
+        self.assertIn("backend/scripts/export_openapi.py", sources)
+
+    def test_the_types_are_generated_from_the_spec_by_openapi_typescript(self) -> None:
+        cmd, sources = cg.GENERATORS[self.TYPES]
+        self.assertIn("frontend/scripts/gen-api-types.mjs", cmd)
+        self.assertIn("--stdout", cmd)
+        self.assertIn(self.SPEC, sources)
+        self.assertIn("frontend/scripts/gen-api-types.mjs", sources)
+        self.assertIn("frontend/pnpm-lock.yaml", sources)  # an openapi-typescript upgrade can change the output
+
+
+class StagedSources(unittest.TestCase):
+    """`--staged`: a generator's output is checked when the output or one of its sources is staged. A source that
+    ends in `/` stands for every path under it (S0046: the contract's source is the whole backend package)."""
+
+    def test_a_folder_source_matches_every_path_under_it(self) -> None:
+        self.assertTrue(cg.triggered({"backend/src/app/api/health.py"}, "out.json", ["backend/src/app/"]))
+        self.assertTrue(cg.triggered({"backend/src/app/x/y/z.py"}, "out.json", ["backend/src/app/"]))
+
+    def test_a_folder_source_does_not_match_outside_it(self) -> None:
+        # must not pass: a sibling with the same prefix, the folder's parent, an unrelated file
+        self.assertFalse(cg.triggered({"backend/src/application.py"}, "out.json", ["backend/src/app/"]))
+        self.assertFalse(cg.triggered({"backend/src/app"}, "out.json", ["backend/src/app/"]))
+        self.assertFalse(cg.triggered({"README.md"}, "out.json", ["backend/src/app/"]))
+
+    def test_a_file_source_matches_only_itself(self) -> None:
+        self.assertTrue(cg.triggered({"a/b.py"}, "out.json", ["a/b.py"]))
+        self.assertFalse(cg.triggered({"a/b.pyc"}, "out.json", ["a/b.py"]))
+        self.assertFalse(cg.triggered({"a/b.py/c"}, "out.json", ["a/b.py"]))
+
+    def test_the_output_itself_staged_triggers(self) -> None:
+        self.assertTrue(cg.triggered({"out.json"}, "out.json", []))
+        self.assertFalse(cg.triggered(set(), "out.json", ["backend/src/app/"]))
+
+    def test_a_staged_source_with_a_stale_output_fails_the_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(cg, "ROOT", Path(tmp)), \
+                mock.patch.object(cg, "GENERATORS", {"out.md": (["gen"], ["backend/src/app/"])}), \
+                mock.patch.object(cg, "expected", lambda path: GOOD), \
+                mock.patch.object(cg, "staged_paths", lambda: {"backend/src/app/api/routes.py"}), \
+                mock.patch.object(cg, "current", lambda path, staged: GOOD + "stale\n"):
+            self.assertEqual(cg.main(["--staged"]), 1)
+
+    def test_a_staged_source_with_a_fresh_output_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(cg, "ROOT", Path(tmp)), \
+                mock.patch.object(cg, "GENERATORS", {"out.md": (["gen"], ["backend/src/app/"])}), \
+                mock.patch.object(cg, "expected", lambda path: GOOD), \
+                mock.patch.object(cg, "staged_paths", lambda: {"backend/src/app/api/routes.py"}), \
+                mock.patch.object(cg, "current", lambda path, staged: GOOD), \
+                mock.patch.object(cg, "check_one", wraps=cg.check_one) as checked:
+            self.assertEqual(cg.main(["--staged"]), 0)
+            checked.assert_called_once_with("out.md", staged=True)  # it was checked, not skipped
+
+
 if __name__ == "__main__":
     unittest.main()

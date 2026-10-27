@@ -134,6 +134,20 @@ ENGINE_UNAVAILABLE = Event(
 ENGINE_STDERR = Event("engine.stderr", "info", "platform", (Field("line", Kind.DEBUG_DETAIL),), source="engine")
 ENGINE_CLOSED = Event("engine.closed", "info", "platform", ())
 
+# -- The API edge (S0046; ARCHITECTURE.md §6.3) ------------------------------------------------------------------------
+
+API_INTERNAL_ERROR = Event(
+    "api.internal_error",
+    "error",
+    "api",
+    (
+        Field("exception_type", Kind.ID),  # the exception's class name
+        Field("exception", Kind.DEBUG_DETAIL),  # its text and traceback: free text that can carry ledger data
+    ),
+)
+"""A request ended in `INTERNAL`: an exception nothing expected, or a malformed `DomainError`. The line carries the
+request's id as `correlation_id`, which the error envelope shows to the user (§6.6)."""
+
 # -- Lines the log writes for what is not a registered event -------------------------------------------------------
 
 LIB_RECORD = Event(
@@ -160,6 +174,7 @@ EVENTS = (
     ENGINE_UNAVAILABLE,
     ENGINE_STDERR,
     ENGINE_CLOSED,
+    API_INTERNAL_ERROR,
     LIB_RECORD,
     UNCAUGHT,
     UNREGISTERED,

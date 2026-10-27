@@ -6,6 +6,9 @@ version = "0.4.0.dev0"
 requires-python = "==3.13.*"
 license = "GPL-2.0-or-later"
 dependencies = [
+    "fastapi==0.143.0",
+    "pydantic==2.14.0",
+    "starlette==1.8.0",
     "structlog==26.1.0",
 ]
 
@@ -13,6 +16,7 @@ dependencies = [
 dev = [
   "coverage==7.16.2",
   "deptry==0.25.1",
+  "httpx==0.28.1",
   "hypothesis==6.168.4",
   "import-linter==2.15",
   "jsonschema==4.26.0",
@@ -39,6 +43,7 @@ addopts = ["--strict-markers", "-p", "no:cacheprovider"]
 markers = [
   "inv(id): the invariant a test enforces (design/INVARIANTS.md; scripts/check_invariants.py)",
   "cap(id): the capability a test covers (design/capabilities.toml)",
+  "error_code(code): the error registry code a test triggers through the API (ARCHITECTURE.md §6.7; tests/api/test_error_registry.py)",
   "fixme(id, due, reason): written before its capability exists; runs as a strict xfail; id names an open backlog row due by `due` (scripts/check_invariants.py, S0029)",
 ]
 xfail_strict = true
