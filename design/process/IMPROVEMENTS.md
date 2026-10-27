@@ -369,3 +369,13 @@ Format:
 - Observed effect: pending (the draft 5 review).
 - Status: kept (tightening, owner-approved).
 - Owner approval: "Let's come up with a draft that stands all scrutiny.. it then becomes the golden specification. We'll then produce the model from that, the run it, make any needed changes and run the whole loop again. Once the model is green, we start the implementation." and "The one tweak I'd make is that instead of "no Highs" I'd say, "No Highs or Mediums"." (2026-10-27, in session).
+
+## IMP-0038: the owner may end a golden-review loop early and hand the edge cases to the model (2026-10-27)
+- Trigger: three full reviews of the engine-scheduler draft 5 (reviews 5-7): Highs 1, 1, 0 and Mediums 8, 8, 7; from review 6 on, no way found to lose or tear ledger bytes; the Mediums left were about what the user is told and who may cancel what. The orchestrator offered A (fix, one more full review) or B (fix, targeted review of the changed sections, then the convergence audit and the model).
+- What changed: PROCESS.md §3 "Golden specs" step 1: the owner may end the loop early when the data-safety core has held over several full rounds and the findings left are edge cases the model checks or the slice's tests pin; the findings are still fixed and a targeted review covers the changed sections.
+- PROCESS.md section: §3.
+- Why: each fresh full review of a ~390-line spec found a new tail of edge cases at a rate that did not fall towards zero; the model explores every ordering inside its world, and the slice's stateful test runs the same properties against the code.
+- Expected effect: the scheduler reaches the model after one targeted review; the model's findings, not more reading, find the remaining ordering and liveness edges.
+- Observed effect: pending (the model run on draft 5).
+- Status: kept (loosening, owner-approved).
+- Owner approval: "Let's do B. That still enables us to get to a watertight spec and implementation, right? Just that instead of uncovering issues by review, we will uncover them through a formal model checker? And we'll also get an insight into how long that model checking takes?" (2026-10-27, in session).
