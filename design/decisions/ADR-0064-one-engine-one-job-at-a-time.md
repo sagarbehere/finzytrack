@@ -56,6 +56,17 @@ What makes a save slow is the work inside it (spike S4, 54k entries, p95, owner'
 - Updated with this ADR: ADR-0054, ADR-0011, ADR-0010, ADR-0063, ADR-0008 and ADR-0012 (amendment sections), ARCHITECTURE §2.0, §2.4 (the load rule), §2.5, §9 and §12, `design/specs/failure-modes.md` (row E4's prevention, a pointer for rows E2, E3, E5 and E7, and rows M7 and S7 brought in line with the quit of spec §9.3), ARCHITECTURE §9.8 (the update refuses with Reopen on an in-session `.open` journal), BL-0091 (its questions answered), the roadmap.
 - **Left for the convergence audit** (roadmap M1a step 2): the "heavy-load semaphore" or "gate" wording in ADR-0010 (the load rule), ADR-0041 (the one process-wide state), ADR-0043 (release gate item 7), ENGINEERING.md's async rule, ARCHITECTURE §8.3's writer actors (the S5 model's "per-root limiter"), the BQL capability row, the docstrings of `app.platform.state_registry` and `ledger_engine.protocol.server`, ARCHITECTURE §2.2's `WorkspaceLimiter` in the `platform` row, ARCHITECTURE §9.2 step 5 (reconciliation "in the background, or synchronously during the rollout stages"), and whether the error code `BUSY_HEAVY_LOAD` keeps its name.
 
+
+## Amendment (2026-10-27): fixes found by the model
+
+Owner, on the process (PROCESS.md §3 "Golden specs"): "We'll then produce the model from that, the run it, make any needed changes and run the whole loop again." The TLA+ model of `design/specs/engine-jobs.md` (`formal/tla/engine-scheduler/`) and its independent review found these spec issues; the spec now states each fix (agent, applying that process; a targeted review of the changed sections and the affected model configurations follow):
+- **F1:** the outcome check after an engine death (§6.6) and the next start (§8.1, §9.3) read a save's record only after a `durable_sync` of its directory, so "saved" or "unfinished" is never told from a rename a power loss could take back.
+- **F2:** the in-engine rollback (§6.4) first applies recovery's checks, the temp rule included, so it never deletes an outside save a swap had just displaced.
+- **F3:** a swap-back is synced at once.
+- **F4:** a switch or boot that shows its failed or blocked screen frees the queue for app-scoped jobs (§3).
+- **O1:** R4's confirm checks the fingerprint once more after the parse; moved → superseded, never a false mismatch (§6.7).
+- From the model review: the manifest rename that collides after the commit point has a stated outcome (§8.2 step 7); one quit note per job (§9.3); §13 states the liveness properties as the model must encode them, the file-system assumptions, and `AppScopedWaitsForRecovery`; the engine is spawned when a job needs one (§5.5, convergence audit C29).
+
 ## References
 
 `design/specs/engine-jobs.md` (draft 5; `engine-scheduler.md` until S0047); `design/inbox/answered/20261026-engine-concurrency-and-cancel.md`; the owner's private archive `m1a/scheduler-design/` (drafts 1-4, reviews 2-4) and `m1a/area-review-engine/` (F1, F2); spike S4; ADR-0008, ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0015, ADR-0054, ADR-0062, ADR-0063; INV-01, INV-10, INV-11, INV-20, INV-22, INV-28, INV-31, INV-32; BL-0082, BL-0091; S0035, S0040, S0042.
