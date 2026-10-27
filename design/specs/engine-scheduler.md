@@ -1,1106 +1,1137 @@
 # Engine scheduler: concurrency, admission, liveness and cancel
 
-> **DRAFT 3 (2026-10-27), not yet adopted.** History:
-> - **Draft 1** (d68ce933) was checked by design review 2 and a first TLA+ model.
-> - **Draft 2** (2b770660) was checked by design review 3 (review:m1a/scheduler-design/review-3, F1–F15, O1–O14) and by a second TLA+ model (review:m1a/scheduler-design/tla/v2, H1–H5, M1–M7, L1–L2, overflow).
+> **DRAFT 4 (2026-10-27), not yet adopted.** History:
+> - **Draft 1** (d68ce933) was checked by design review 2 and the first TLA+ model.
+> - **Draft 2** (2b770660) was checked by review 3 and the second model.
+> - **Draft 3** (a83dd793) was checked by review 4 (review:m1a/scheduler-design/review-4, H1–H5, M1–M7, L1–L3, O1–O10) and modelled as written (review:m1a/scheduler-design/tla/v3).
 >
-> This draft folds in both checks, the owner's three answers of 2026-10-27, and the owner's single-instance policy of the same day (the single-instance ADR, S0044, `design/decisions/ADR-0062-single-instance-no-legacy-coexistence.md` in the working tree). It is the version that the long model run checks (§11, §12). A later slice commits it with the amendments of §14. Until then, the accepted ADRs win where they differ.
+> This draft folds in review 4 and the v3 model's notes, and applies the owner's decision of 2026-10-27: **one Finzytrack instance, one open workspace at a time, no file in two workspaces** (the one-workspace ADR, S0045; the single-instance ADR, ADR-0062). It is the version the long model run checks (§11, §12). A later slice commits it with the amendments of §14. Until then the accepted ADRs win.
 
 ## Orientation
-- **What this is:** how the main sidecar runs ledger-engine work:
-  - which jobs exist, which may run together, and in which order;
-  - how many engine processes run, and how much memory they may use;
+- **What this is:** how the main sidecar runs ledger-engine work for the one open workspace, and how it switches workspaces. It covers:
+  - which jobs exist, which run together, and in what order;
+  - how many engine processes may run, and with how much memory;
   - how a slow job is told from a sick engine;
-  - what Cancel does and what the user sees;
+  - what Cancel does;
+  - what the user sees;
   - how a rare failure is replayed from the log.
 
-  It answers the area review's F1 and F2 (2026-10-26) and applies the owner's decisions of 2026-10-26 (`design/inbox/20261026-engine-concurrency-and-cancel.md`), the owner's six answers to review 2, the owner's three answers to review 3, and the single-instance policy.
-- **What exists:** none of this yet. Today there is one `EngineClient` per user container, one request in flight, and a caller's time limit that counts as a crash (S0035, S0040, S0042). Every part below carries the phase that builds it:
-  - **[A]** M1a, the scheduler slice, before the read core;
-  - **[B]** M1a, with the mirror build;
-  - **[C]** M1b, with the write contract and BL-0091;
-  - **[M2]** with BL-0092, BL-0093, BL-0094 and BL-0100 (the app-instance lock);
-  - **[M11]** the Linux and Windows sessions (ADR-0061);
-  - **[Hosted]** deferred (ADR-0041).
+  It answers the area review's F1/F2 (2026-10-26) and applies the owner's decisions of 2026-10-26 and 2026-10-27 (`design/inbox/20261026-engine-concurrency-and-cancel.md`; the answers to reviews 2 and 3; ADR-0062; the one-workspace ADR).
+- **What exists:** none of this yet. Today there is one `EngineClient` per user container, one request in flight, and a caller's time limit that counts as a crash (S0035, S0040, S0042). Every part carries its phase:
+  - **[A]**: M1a, the scheduler slice, before the read core;
+  - **[B]**: M1a, with the mirror build;
+  - **[C]**: M1b, with the write contract and BL-0091;
+  - **[M2]**: with BL-0092, BL-0093, BL-0094, BL-0100;
+  - **[M3]**: legacy adoption;
+  - **[M11]**: Linux and Windows sessions;
+  - **[Hosted]**: deferred.
+
+  §1.2 says which [A] parts are stable enough to build now.
 - **Entry points (planned):**
-  - `app.platform.engine_pool`: process-wide pool, budget, pressure, stop history; pure table `engine_pool.table`.
-  - `app.platform.engine_process`: one engine's statechart.
-  - `app.platform.adapters.engine_client`: one process's shell.
-  - `app.platform.job_queue`: per-user lanes and queues; pure `next_dispatch`.
-  - `app.platform.liveness`: the pure tick judge.
-  - `app.platform.measurements`: the pure learning rule of §1.1.
-  - Ports: `app.platform.ports.memory_pressure`, `process_probe`, `clock`, and `FileSystem` (gains `canonical_path` and `durable_sync`).
-  - `app.platform.observability.decisions`: the decision log and the flight recorder.
-  - Engine side: `ledger_engine.protocol` (protocol v2) and `ledger_engine.ledger.snapshot` (verified reads, conditional publish, the closed record, the journal index).
-  - Models: `formal/tla/EngineScheduler.tla` and `formal/tla/Admission.tla` (§11).
-- **Decisions it applies:**
-  - ADR-0054: two processes; decision 4 amended here.
-  - ADR-0041: one process-wide entry.
-  - ADR-0008: the contract and its R4 amendment.
-  - ADR-0010: the overlay load; guardrail 3.
-  - ADR-0011: no resident ledger; write serialization.
-  - ADR-0012: journal and recovery; Q29, Q30, F-1..F-8.
-  - ADR-0013: atomic swap.
-  - ADR-0015: atomic publish; WARMING.
-  - ADR-0017: the registry.
-  - ADR-0019: phases.
-  - ADR-0061: platforms.
-  - The single-instance ADR (S0044): no ledger shared with a running legacy app; legacy lock detected, never waited for; one v0.4 instance per app root.
-  - The owner's decision 2, as amended by the owner's answer 6.
-- **Invariants:** INV-01, INV-10, INV-11, INV-22, INV-26 (as amended by the single-instance ADR), INV-27, INV-30, INV-31 (exception in §5.7, owner-approved 2026-10-27).
+  - `app.platform.engine_pool` (pool, budget, pressure, stop history; pure `engine_pool.table`);
+  - `app.platform.engine_process` (one engine's statechart);
+  - `app.platform.adapters.engine_client`;
+  - `app.platform.job_queue` (pure `next_dispatch`);
+  - `app.platform.liveness` (pure tick judge);
+  - `app.platform.measurements` (pure learning rule);
+  - `app.workspaces.switch` (pure switch table, §4.10);
+  - the ports `memory_pressure`, `process_probe`, `clock` and `FileSystem` (adds `canonical_path`, `path_key`, `durable_sync`);
+  - `app.platform.observability.decisions` (decision log and flight recorder);
+  - on the engine side, `ledger_engine.protocol` (v2) and `ledger_engine.ledger.snapshot`;
+  - the models `formal/tla/EngineScheduler.tla` and `formal/tla/Admission.tla`.
+- **Decisions it applies:** ADR-0054 (d4 amended), ADR-0041, ADR-0008, ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0015, ADR-0017, ADR-0019, ADR-0061, ADR-0062 (and its amendment: a retired legacy install), the one-workspace ADR (S0045), and owner decision 2 as amended by answer 6.
+- **Invariants:** INV-01, INV-10, INV-11, INV-22, INV-26 (as amended by ADR-0062), INV-27, INV-29, INV-30, INV-31. INV-30 and INV-31 are now **without** the cross-workspace exception draft 3 proposed (§13).
 - **Traps:**
-  - A heartbeat proves nothing: liveness is judged from outside the engine (§8).
-  - The lane does not keep the mirror correct; per-file locks on canonical paths, the content fingerprint and the app-wide journal index do (§5).
-  - `realpath` is not one spelling per file on macOS (case, Unicode normalization); only `canonical_path` is (§1).
-  - On macOS `fsync` does not reach the disk; only `F_FULLFSYNC` does (§5.4).
+  - A heartbeat proves nothing (§8).
+  - The lane does not keep the mirror correct; per-file locks on path keys, the content fingerprint and the journal check do (§5).
+  - `realpath` and `F_GETPATH` are not one key per file (case, normalization, absent vs created), so only `path_key` is (§1).
+  - On macOS `fsync` does not reach the disk; `F_FULLFSYNC` does (§5.4).
   - An engine that ran user code is never reused (H1).
-  - `Popen.poll()` reports a killed child as exit 0 after our own reap, so the pool is the only reaper (§6.1).
+  - The pool is the only reaper, and drains a group before the reap (§6.1).
   - `python -I` ignores `PYTHONHASHSEED` (§6.1).
   - "Usual" has one definition (§1.1).
-- **Main tests (planned):** per phase in §12; the TLA+ models and their runner (§11, §12 [A]); the replay test (§9.3).
+  - A switch is a pure table, not a sequence of awaits (§4.10).
+- **Main tests (planned):** §12; the models and their runner; the replay test (§9.3).
 
 ## In two minutes
 
 Today Finzytrack sends the ledger engine one request at a time, and the only way to stop one is a time limit that counts as a crash. That does not work for what is coming: loading a 54,000-entry ledger takes about 2 seconds of full CPU, and several such jobs will want to run at once.
 
 **What changes:**
-- **Up to 2 engine processes** run ledger jobs at once (a setting). Each job that runs your ledger's code gets a **fresh engine process** that ends with the job: about 0.1 s and 34 MB on your Mac. One ledger's plugin can never leak into another ledger's job.
-- **A queue in the main sidecar** decides what runs next:
-  - jobs you are waiting for go first, and background checks last, but never starve;
-  - a large job waiting for memory is not overtaken for ever by smaller ones, and it never blocks work of a higher class that fits;
-  - jobs that would load the same ledger for the same question share one load.
-- **Two jobs that change the same workspace never run at the same time.** Reads run beside the rebuilding of your views. A read that overlaps a save waits for it, and is used only if the files did not change while it read; otherwise it is quietly redone. The check after a save never waits behind the next save.
-- **Shared files are safe:** two workspaces that include the same file lock it as one file, however its name is spelled. If a save in one workspace is cut off in a shared file, the other workspace waits and the cut-off save is repaired, even when only the other workspace is open (you approved this exception, 2026-10-27).
-- **Saves reach the disk:** each durable step uses the Mac's true flush (`F_FULLFSYNC`), about 5 ms each, about 40 ms per save (you approved, 2026-10-27).
-- **Memory:** ledger work may use up to a quarter of your RAM (a setting). Finzytrack learns what each kind of job **usually** needs for each ledger from the jobs themselves ("usual" is defined once, §1.1), so startup is not slower. A job never measured runs alone. At memory-pressure "warning", one job at a time; at "critical", nothing new unless you press **Run anyway** for a job you started, and Run anyway also runs whatever that job waits for.
-- **Cancel** stops a read at once. A save can be cancelled until it starts writing files; after that, Cancel shows "Finishing your change…" and the save completes.
-- **A slow job is not a crash.** The sidecar watches the engine from outside: CPU of the engine and its children, bytes sent, disk page-ins. Only an engine that shows none of these, while the computer is awake and has CPU to spare, counts as hung. Nothing is cut off by a guessed time limit, not even the engine's start.
-  - Background jobs at about 10× their usual CPU, or making no progress for much longer than usual, stop automatically and are logged. A first run is stopped only by hand.
-- **The check after a save (R4)** loads your ledger with Beancount's own loader and compares. Only a real difference between the two loaders pauses saving. A plugin that gives different answers each time shows a notice. Engines run with a fixed hash seed, so plugins that loop over sets give the same answer every time.
-- **One Finzytrack at a time.** v0.4 runs as a single instance (the app-instance lock, M2) and never shares a ledger with a running old Finzytrack (Copy adoption only). If the old app is saving a ledger, v0.4 refuses the save with "Quit the old Finzytrack first" and never waits for it.
-- **Crash loops are bounded:** one bad ledger adds at most one stop to the engine's crash count until it changes, and is not retried after failing twice.
-- **Rare failures can be replayed:** every scheduling decision and what it was based on is logged without ledger content.
+- **One Finzytrack, one open workspace, no shared files.** Finzytrack runs as one instance (ADR-0062) and works on one workspace at a time. A ledger file can belong to only one workspace: registering or opening a workspace whose files overlap another's is refused.
+- **Switching workspaces** finishes what must finish (your confirmed saves) and stops everything else. Then it closes the old workspace and opens the new one, showing "Just a moment… switching workspaces." If something must wait, it says what, and you can switch anyway. A switch cut off by a crash is completed at the next start. Nothing ever runs for a workspace that is not open.
+- **Up to 2 engine processes** run jobs at once (a setting). Each job that runs your ledger's code gets a **fresh process** that ends with it: about 0.1 s and 34 MB on your Mac.
+- **A queue in the main sidecar** decides what runs next. Jobs you are waiting for go first, and background checks last, but those never starve. A large job waiting for memory is not overtaken for ever, and never blocks work of a higher class that fits. Identical queries share one load.
+- **Two jobs that change the workspace never run at once.** Reads run beside the rebuilding of your views. A read that overlaps a save waits for it, and is used only if the files did not change while it read. The check after a save never waits behind the next save.
+- **Saves reach the disk:** each durable step uses the Mac's true flush, about 40 ms per one-file save (you approved, 2026-10-27).
+- **Memory:** ledger work may use up to a quarter of your RAM (a setting). Finzytrack learns what each kind of job **usually** needs from the jobs themselves (§1.1). A job never measured runs alone. At memory-pressure "warning", one job runs at a time. At "critical", nothing new starts unless you press **Run anyway**, which also runs what that job waits for.
+- **Cancel** stops a read at once. A save can be cancelled until it starts writing; after that, "Finishing your change…".
+- **A slow job is not a crash.** The engine is watched from outside: CPU of the engine and its children, bytes sent, disk page-ins. No guessed time limit applies, not even at start. Background jobs at about 10× their usual CPU, or with no progress for much longer than usual, stop and are logged. A first run is stopped only by hand.
+- **The check after a save (R4)** reloads with Beancount's own loader. Only a real loader difference pauses saving; a plugin that answers differently each time shows a notice.
+- **The old Finzytrack:** if it is saving, a save or copy is refused with "Quit the old Finzytrack first", never waited for.
+- **Crash loops are bounded.** Rare failures can be replayed from content-free decision logs.
 
 **What it costs:**
-- about 0.1 s per job for the fresh process;
+- about 0.1 s per job;
 - about 40 ms per save for true flushes;
-- a little more memory while two jobs run;
-- about 6 KB of log per job;
-- a fair amount of design, mostly built later (each part is marked).
+- a little memory while two jobs run;
+- about 15 KB of log per job (about 2 weeks kept);
+- design, mostly built later.
 
 **What stays imperfect:**
-- Programs that save your ledger without our locks (an editor, a sync client, an old Finzytrack pointed at a v0.4 folder) are detected, not excluded (ADR-0013).
-- Two Finzytrack instances, installations or OS accounts writing one ledger are unsupported (the single-instance ADR).
+- Programs that save your ledger without our locks are detected, not excluded (ADR-0013).
 - A process stuck on a dead network disk keeps its slot and locks until it ends.
 - Files a plugin reads by itself are invisible (§5.8).
 
 ## 1. Terms
 
-- **Job:** one unit of engine work for one workspace (none for cheap jobs), with:
-  - a kind (§3), a priority and its requesters;
-  - a state: `queued → admitted → running → ended(outcome)`.
+- **Job:** one unit of engine work, for the open workspace (or for none, for cheap jobs). It has a kind (§3), a priority, its requesters, and a state: `queued → admitted → running → ended(outcome)`.
 - **Heavy job:** runs user code (plugins, `insert_pythonpath`) or loads the whole ledger; needs a fresh engine (§6.1).
 - **Large job:** a job whose usual peak (§1.1), or whose estimate when unmeasured, exceeds the interpreter baseline by more than `cheap_margin` (32 MB).
   - Every heavy job is large.
-  - The parser-only `plan` is large but not heavy (spike S4: 306 MB for a 20 MB file).
-  - Large jobs go through memory admission (§7.3).
-- **Cheap job:** neither heavy nor large: static facts, or parsing a small text given in the request.
-- **Lane:** per workspace. **Exclusive** jobs (`rebuild`, `commit`, `create`, `recover`) run one at a time per workspace; **shared** jobs (reads, `r4`) beside each other.
-- **Engine:** one engine process, the leader of its own process group (§6.3).
-- **Slot:** permission to have one engine. `max_engines` (2) bounds all engines.
-- **Canonical path** [B] (review 3 F2): the one spelling of a file that every lock key, fingerprint entry, journal-index entry, the registry's deduplication (ADR-0017) and the demo check (INV-25) use. `FileSystem.canonical_path(p)`:
-  - **macOS:** `fcntl(fd, F_GETPATH)` on the file opened read-only with symlinks resolved, which returns the volume's stored case and Unicode normalization.
-    - Spike A: `realpath` gave three different keys for one inode (case variants, NFC vs NFD), and a second spelling's lock was acquired while the first was held.
-    - For an absent path: `F_GETPATH` of the nearest existing ancestor, then the remaining components as written, normalized to NFD, and case-folded when `pathconf(ancestor, _PC_CASE_SENSITIVE)` is 0.
-  - **Windows:** `GetFinalPathNameByHandleW(FILE_NAME_NORMALIZED)`, with the same rule for absent paths, case-folded unless the directory is flagged case-sensitive.
-  - **Linux:** `os.path.realpath`; a case-folding ext4 directory (`chattr +F`, read via `FS_IOC_GETFLAGS`) is treated like macOS.
-  - A corpus test covers case, NFC/NFD, a symlink, a symlinked directory and an absent path on each OS.
-- **stat fingerprint:** ADR-0015's extended fingerprint over canonical paths:
-  - the root;
-  - `(path, mtime, size)` of every glob-expanded include;
-  - each glob's match-list hash;
-  - expected-but-absent paths;
-  - documents-root listing hashes;
-  - `(path, mtime, size)` of every plugin source file recorded by the last load.
-- **content fingerprint:** the same set with each file's SHA-256 in place of `(mtime, size)`, plus the **code inputs**: `(canonical path, sha256)` of every Python source the load imported from outside the engine's bundled site-packages (in practice the plugin modules reached through `pythonpath`/`insert_pythonpath`), recorded from `sys.modules` after the load (review 2 F3).
-  - Engines never read a `__pycache__` in the user's folder (§6.1, review 3 O10), so the hashed source is what ran.
-  - About 10 ms at 54k (spike S4) plus the plugin files.
-  - The mirror's meta stores both fingerprints. `ledger_version` = (generation id, hash of the content fingerprint).
-- **Journal index** [B] (review 3 F4; TLA v2 H2): an app-wide directory, `app_local_data/engine/journals/<sha256(canonical path)>/<ws key>-<session>-<job>`, one empty entry per file a journal covers. It answers "is a journal open over this file, from any workspace?" with one directory read per file (§5.4 step 5).
-- **Commit point:** the moment in a `commit` or `create` after which the sidecar never ends the engine by its own choice, except for a confirmed hang or a stall after a protocol violation (§5.4).
-- **Closed record:** the file a save's journal becomes at journal close (§5.4). It proves the save landed, holds the R4 still owed, and gates the next write.
+  - The parser-only `plan` and R4's `confirm` are large but not heavy.
+  - Large jobs go through admission (§7.3).
+- **Cheap job:** neither heavy nor large.
+- **Open workspace:** the one workspace whose `WorkspaceContainer` exists, phase `READY`, `WARMING` or `RECOVERING` (the one-workspace ADR). During a switch (§4.10) the old one is `CLOSING` and the new one `OPENING`. They are never both open: property `AtMostOneOpenWorkspace`.
+- **Lane:** the open workspace's ordering.
+  - **Exclusive** jobs (`rebuild`, `commit`, `create`, `recover`) run one at a time.
+  - **Shared** jobs (reads, `r4`) may run beside each other.
+- **Engine:** one engine process, the leader of its own process group. **Slot:** permission to have one engine; `max_engines` (2) bounds all engines.
+- **Canonical path and path key** [B] (review 3 F2; review 4 H1). Spike K showed why both are needed: under draft 3's rule an absent `Prices.beancount` and the same file after a save created it had different keys, and so did NFC names.
+  - `FileSystem.canonical_path(p)` is the stored spelling, used to open files and in messages.
+  - `FileSystem.path_key(p)` is the one identity used by every lock file, fingerprint entry, the registry's deduplication and overlap check (ADR-0017, the one-workspace ADR), the demo check (INV-25) and the digests' file names (§5.5). **A key never depends on whether the file exists yet.**
+  - `path_key(p)` is the canonical spelling of the deepest existing ancestor, joined with the remaining components as written, then every component folded by its volume's rule:
+    - **macOS** (APFS, HFS+): NFD always, plus `str.casefold()` when `pathconf(_PC_CASE_SENSITIVE)` is 0.
+    - **Windows:** ordinal upper-case folding unless the directory is flagged case-sensitive.
+    - **Linux:** none, except in a case-folding directory (`FS_IOC_GETFLAGS`, `FS_CASEFOLD_FL`) or on a folding mount (vfat, exfat, cifs `nocase`, ntfs3). A folding mount is found once per mount, by `stat` of an existing name against its case-swapped spelling (review 4 O10).
+  - The ancestor's spelling comes from:
+    - macOS: `F_GETPATH` on a descriptor opened with `O_EVTONLY` (no read access, no download of a cloud placeholder);
+    - Windows: `GetFinalPathNameByHandleW(FILE_NAME_NORMALIZED)`;
+    - Linux: `realpath`.
+  - Where Python's fold differs from a volume's, two names can only fold into one key (APFS treats `straße`/`strasse` as one). That means more exclusion, never less.
+  - A corpus test per OS covers: case, NFC/NFD, a symlink, a symlinked directory, an absent path, and that **the key of an absent path equals the key of the same file after it is created under any spelling**.
+- **stat fingerprint:** ADR-0015's extended fingerprint, keyed by path key: the root; `(path, mtime, size)` of every glob-expanded include; each glob's match-list hash; expected-but-absent paths; documents-root listing hashes; plugin source files' `(path, mtime, size)`.
+- **content fingerprint:** the same set with each file's SHA-256 in place of `(mtime, size)`, plus the **code inputs**: `(path key, sha256)` of every Python source the load imported from outside the engine's bundled site-packages (review 2 F3).
+  - Engines never read a `__pycache__` in the user's folder (§6.1).
+  - About 10 ms at 54k.
+  - The mirror's meta stores both fingerprints; `ledger_version` = (generation id, content-fingerprint hash).
+- **Workspace file set:** the path keys of a workspace's last verified set, plus those of any of its journals. The registry keeps it for the overlap check (§4.10).
+- **Commit point:** after it, the sidecar ends a `commit` or `create` engine only for a confirmed hang or a stall after a protocol violation (§5.4).
+- **Closed record:** the file a save's journal becomes at journal close. It proves the save landed, holds the R4 still owed, and gates the next write (§5.4).
 - **Head:** the queued large job whose only obstacle is admission (§4.7).
 - **On-time tick:** a watcher tick that ran on schedule, with the machine awake and the sidecar keeping up with the engine's output (§8.2).
-- **Healthy run:** outcome `answered`, and verified for a read (§5.2); not cancelled, preempted, stopped or ended.
-- **Settings:** configuration in the INV-10 style, each with an allowed range (§8.7).
+- **Healthy run:** outcome `answered` (and verified, for a read); not cancelled, preempted, stopped or ended.
+- **Settings:** configuration values in the INV-10 sense, each with a range (§8.7).
 
-### 1.1 What "usual" means
+### 1.1 What "usual" means [A]
 
 The owner asked: "What is 'usual' and how is that measured and known?" This is the only definition. Every rule and message saying "usual", "much longer than usual" or "far over its usual CPU time" means this.
 
-**Usual is what healthy runs of the same kind of job, for the same workspace, on this computer, have recently needed.** It is kept per (workspace, job kind) as four numbers. Each number is stored with the ledger size it was measured at (review 3 O11).
+**Usual is what healthy runs of the same kind of job, for the same workspace, on this computer, have recently needed.** It is kept per (workspace, job kind) as four numbers, each stored with the ledger size it was measured at.
 
 | Number | Measured how | Used for |
 |---|---|---|
-| **usual CPU time** | the CPU seconds of the engine's whole process group: the monotone accumulator of §8.2 at the end, plus the leader's final `wait4` increase. Exact, and the same quantity the running rules see (review 3 F11). | the runaway stop for background jobs (§8.5); the "much longer than usual" flag (§9.1) |
-| **usual peak memory** | the finished process's peak: macOS lifetime physical footprint, Linux `ru_maxrss`, Windows peak job commit (§6.1) | memory admission (§7.3) |
-| **usual reply size** | bytes of the final reply | the decoding share of the estimate (§7.2) |
-| **usual longest quiet stretch** | the longest run of on-time ticks in a healthy run with no CPU, no bytes and no page-ins; and, separately, with bytes but no progress | the minimum tick counts for "hung" and "stalled" (§8.3, §8.4) |
+| **usual CPU time** | the group-CPU accumulator of §8.2 at the job's end. This is the same quantity the running rules see. It may exceed the true CPU by at most 2× when children are reaped by their own parents; it never misses CPU (review 4 M1). | runaway stop (§8.5); "much longer than usual" (§9.1) |
+| **usual peak memory** | the finished process's peak: macOS lifetime physical footprint, Linux `ru_maxrss`, Windows peak job commit (§6.1) | admission (§7.3) |
+| **usual reply size** | bytes of the final reply | the estimate's decoding share (§7.2) |
+| **usual longest quiet stretch** | the longest run of on-time ticks in a healthy run with no CPU, no bytes and no page-ins; and separately, the longest with bytes but no progress | the minimum tick counts for "hung" and "stalled" (§8.3, §8.4) |
 
-**How it is learned** (pure function `measurements.update`, a logged decision table, §9.3):
-- **Only from healthy runs.** A cancelled, stopped or ended run teaches nothing about time. A memory death raises the usual peak (never lowers the estimate below what killed it).
-- **Decaying high-water mark, per run, not per day.** After a healthy run, both values are scaled to the current ledger size, then `usual ← max(this run, 0.9 × usual)`. Growth is followed at once; one heavy outlier fades over about 20 runs, making rules more lenient meanwhile, never stricter.
-- **Scaled by ledger size.** When the ledger grew since a value was measured, it is scaled up in proportion, never down. This answers the owner's "6 months later" question without measuring at startup.
-- **R4 borrows its usual values** from the step-3 load of the save it checks: the same bytes and plugins (review 2 F2).
+**How it is learned** (`measurements.update`, a pure, logged table, §9.3):
+- **Only healthy runs** teach time. A memory death raises the usual peak.
+- **Decaying high-water mark, per run.** Both values are scaled to the current size, then `usual ← max(this run, 0.9 × usual)`. Growth is followed at once; an outlier fades over about 20 runs and is lenient meanwhile.
+- **Size scaling.** Values scale up in proportion to the ledger's growth, never down. Nothing is measured at startup.
+- **R4 borrows** its values from the step-3 load of the save it checks.
 
-**Unmeasured** (no usual):
+**Unmeasured:**
 - a first run;
-- after the plugin code changed (another plugin-set hash);
-- a missing, unreadable or other-schema measurements file (review 2 O17).
+- after the plugin code changed;
+- a missing, unreadable or other-schema file.
 
-An unmeasured job runs alone, is never stopped automatically, and is never flagged (owner decision 4).
+An unmeasured job runs alone, and is never stopped automatically or flagged (owner decision 4).
 
-**Provisional** (review 3 F9): after an app update, a record measured with the previous engine build counts as follows:
-- memory admission uses its peak × `provisional_margin` (1.5);
-- runaway, stall and "much longer" treat the job as unmeasured;
-- the first healthy run replaces it.
-
-So an update does not make every first job run alone.
+**Provisional** (review 3 F9): after an app update, a record from the previous engine build counts for admission at × `provisional_margin` (1.5). Runaway, stall and "much longer" treat the job as unmeasured. `hang_ticks` uses the provisional quiet stretch × `provisional_margin` (review 4 O7). The first healthy run replaces the record.
 
 **Honest limits:**
-- **Per computer:** a new laptop starts unmeasured.
-- **Size scaling is proportional:** right for Beancount's load (spike S4); a plugin's cost may grow faster.
-- **Plugins that read their own files** change cost unseen; the next healthy run corrects it.
-- **About 10× is coarse on purpose:** it catches a loop, not a 3× slowdown.
-- **CPU time is not wall time:** a busy or sleeping machine is not "slow". A network wait uses no CPU, so the stall rule, not the runaway rule, catches it.
+- It is per computer.
+- Scaling is proportional, which is right for Beancount's load but not always for a plugin.
+- Plugins that read their own files change cost unseen.
+- 10× catches a loop, not a 3× slowdown.
+- CPU time is not wall time: a network wait is caught by the stall rule, not by the runaway rule.
 
-`Normal`, `Warn` and `Critical` (code font) mean only the OS pressure levels (§7.4). "Normal OS priority" means an unchanged `nice` value.
+`Normal`, `Warn`, `Critical` (in code font) are only the OS pressure levels (§7.4).
+
+### 1.2 Phase [A]: what can be built now, and how stable it is
+
+The owner lets [A] be built before the read core only if no open finding or model change can alter it. Each [A] part, with its status after review 4 and the v3 model notes:
+
+| [A] part | Sections | Open findings or model changes that could still alter its interface or behaviour |
+|---|---|---|
+| Engine pool: slots, the pool table, stop history, backoff, `Unavailable`, `single_engine`, at most one stop per (workspace, fingerprint) | §2, §8.7 | **None open.** Review 4 has no pool finding. The pool properties (`PoolNoHeavyWhileUnavailable`, `OneLedgerCannotTripPool`, `OwnKillNotAStop`) passed in the v2 and v3 runs. Residual risk: only a failure in the long run, which would show as a named property. |
+| Fresh engines: spawn flags, environment, bytecode directory, start cost | §6.1–§6.2 | **None open.** Review 4 M3 (bytecode directory) and O4 (environment) are folded in here. |
+| Reaper and drain; process groups; Job Objects; end classification | §4.6, §6.1, §6.3, §6.4 | **None open.** Review 4 M5 (drain before the reap) is folded in. The kill-on-close Windows details are [C] for the write path, and their interface (`EngineGone`) does not change. |
+| Per-engine statechart | §8.7 | **Interface stable; the commit-point rows are provisional until [C].** The states `Running(past_commit_point)` and `Draining(discard)` and the events `Gate`/`Proceed` are defined now and unused in [A]. A [C] finding about the commit point could change those rows only, never the [A] rows (start, run, reply, drain, end). Build [A] with the [C] rows present and table-tested, but not reachable. |
+| Protocol v2 envelope: `progress` (with `children_cpu_ms`), `gate`/`proceed`, one final reply, `decision` objects, domain outcomes as results | §8.1, §9.3 | **Envelope stable.** Per-operation `result` and `decision.inputs` fields are added by the slices that add those operations. The rule: an added optional field does not bump the version; a changed meaning does. |
+| `JobQueue` and `next_dispatch`: classes, inheritance, count-based aging, preemption, merging, bounds, busy, head-of-line reservation, the Run-anyway chain | §2, §4.2–§4.5, §4.7 | **Stable**, with one stated hook: lane rules ([B]) and the R4 gate ([C]) enter only through a `dispatchable(job, lane_view)` predicate that [A] defines and leaves permissive. Simplified by the one-workspace policy (no cross-workspace fairness, §13). `Admission.tla` checked the reservation (v2). |
+| Admission, the pressure port, measurements ("usual") | §1.1, §7 | **None open.** Review 4 M1 changed what the CPU number measures; that is folded in. |
+| Liveness judge: on-time ticks, hung, stalled, runaway, page-ins, the sidecar-behind rule, the group-CPU accumulator, stall after a violation regardless of CPU | §8.2–§8.5 | **None open.** M1 and M4 are folded in. The judge's numbers are covered by tests, not by the model (§11.7). Residual risk: a calibration change to defaults (settings), not to the interface. |
+| Cancel for reads, `RequesterLeft`, quiesce for reads | §4.4, §4.6, §4.8 | **None open.** |
+| Replay of decisions: decision log, checkpoints, flight recorder, replay test | §9.3 | **Stable.** Review 4 M7 is folded in. Engine-side decision objects for later operations are additive. |
+| The switch table (§4.10) | §4.10 | **Not [A].** It is [B] (engine jobs and lanes) and [M2] (UI). |
 
 ## 2. Components and where they live
 
+**[A] stability:** see §1.2. Nothing here depends on an open finding.
+
 | Part | Lives in | Holds | Bound |
 |---|---|---|---|
-| `EnginePool` [A] | process-wide: the **one** `process` entry of `platform/state_registry.py`, replacing the heavy-load semaphore (ADR-0041, ADR-0054 d4, amended §14) | engine processes, memory budget, pressure, stop history, pool table state | `max_engines` engines; `max_crashes` stop times; one pressure value |
-| `JobQueue` [A]; lanes [B] | `UserContainer` (INV-11) | per workspace: queued jobs, running set, lane state, the R4 gate (re-read from the closed records before every wait, §5.5), poison counters, the fingerprints of its last `max_crashes` counted stops (§8.7), recent outcomes | §3.1 bounds; outcomes: last 16 per workspace |
-| `Measurements` [A] | `UserContainer`; `app_local_data/engine/measurements.json` (never the workspace folder: INV-27, INV-30; under the user's root in hosted mode) | §1.1's record per (workspace, kind), with engine build, plugin-set hash and sizes | one record per (registered workspace, kind); removed when the workspace is forgotten |
-| `DecisionLog`, `FlightRecorder` [A] | `UserContainer` | §9.3 | recorder: last 4,096 events or 1 MiB |
-| `MemoryPressurePort` [A] | platform port (EP-07) | nothing | — |
-| `ProcessProbe` [A] | platform port; adapter on `psutil` (BSD-3-Clause, pinned EP-24, main sidecar's licence list) plus `proc_listpids(PROC_PGRP_ONLY)` on macOS (0.09 ms per call, review 3 spike D) | nothing | — |
-| `Clock` port [A] | platform port | `monotonic()`, `monotonic_with_sleep()` (§8.2) | — |
-| `FileSystem` port additions [B, C] | platform port, both processes | `canonical_path` (§1), `durable_sync` (§5.4) | — |
+| `EnginePool` [A] | process-wide: the one `process` entry of `platform/state_registry.py` (ADR-0041, ADR-0054 d4) | engines, budget, pressure, stop history, pool table state | `max_engines`; `max_crashes` stop times |
+| `JobQueue` [A]; lanes [B] | `UserContainer` (INV-11); holds the **open workspace's** queue and lane | queued jobs, running set, lane state, the R4 gate (re-read from the closed records before each wait), poison counters, the last `max_crashes` stop fingerprints, recent outcomes | §3.1 bounds; outcomes: last 16 |
+| `WorkspaceSwitch` [B] | `UserContainer` | the switch table's state (§4.10) | one switch in progress, one queued target |
+| `Measurements` [A] | `UserContainer`; persisted in `app_local_data/engine/measurements.json` | §1.1 per (workspace, kind) | one record per (registered workspace, kind); removed when the workspace is forgotten |
+| `DecisionLog`, `FlightRecorder` [A] | `UserContainer` | §9.3 | recorder: 4,096 events or 1 MiB |
+| `MemoryPressurePort`, `ProcessProbe`, `Clock` [A] | platform ports (EP-07). `ProcessProbe`: `psutil` (BSD-3, pinned) plus `proc_listpids(PROC_PGRP_ONLY)` on macOS. | — | — |
+| `FileSystem` additions [B, C] | platform port, both processes | `canonical_path`, `path_key`, `durable_sync` | — |
 
-The pool pulls work. When a slot and memory are free, it asks each user's `JobQueue` for its best dispatchable job (§4.7) and takes the best across users, round-robin among equal classes ([Hosted] fairness seam). The pool never sees ledger semantics; the queue never sees processes. Each running engine has its `EngineClient`, owned by the pool for that engine's life.
+The pool pulls work. With a free slot and memory, it asks the user's `JobQueue` for its best dispatchable job (§4.7). Across users, round-robin applies among equal classes; this is the [Hosted] fairness seam. With one open workspace per user there is no fairness across workspaces.
+
+Each running engine has its `EngineClient`, owned by the pool.
 
 **Superseded:**
-- ADR-0011's per-workspace `anyio.CapacityLimiter(1)` becomes the exclusive lane [B], keeping its FIFO guarantee.
-- ARCHITECTURE §2.5's "optional BQL entries cache" row is dropped (area review F8).
+- ADR-0011's per-workspace limiter becomes the open workspace's exclusive lane [B], keeping FIFO.
+- §2.5's "optional BQL entries cache" row is dropped.
 
-**Moves into the engine:** lock, fingerprint and journal code. `portalocker` 3.2.0 joins the engine's environment and licence list for the ledger-set locks and the legacy-lock detection of the single-instance ADR.
+**Moves into the engine:** lock, fingerprint and journal code. `portalocker` 3.2.0 joins the engine's environment for the ledger-set locks and ADR-0062's legacy-lock try.
 
 ## 3. Job kinds
 
-**Reconciliation** here means R4 (ADR-0010 guardrail 3). Statement reconciliation (ADR-0028) reads the mirror; it is no engine job.
+**[A] stability:** `query`, `snapshot` and `cheap` are [A]; their rows are stable. The other kinds are [B]/[C].
+
+**Reconciliation** here means R4 (ADR-0010 guardrail 3).
 
 ### 3.1 Scheduling attributes
 
-| Kind | Phase | Heavy / large | Lane | Priority (§4.2) | Preemptible | Cancellable: when, by whom | Merge (§4.4) | Queue bound per workspace |
-|---|---|---|---|---|---|---|---|---|
-| `rebuild` (WARMING or stale mirror; COLD first build; after an outside edit; local date differs from the generation's build date, either direction) | B | heavy | exclusive | P1 if viewed; not run otherwise (ADR-0015) | no | any time, by the system: workspace closed or switched away, quit | newest only: 1 queued + 1 running | 1 (never busy) |
-| `commit` (confirm: the legacy-lock try, locks, gate, step-3 load, journal, swaps, read-back, journal close into the closed record, mirror build, publish) | C | heavy | exclusive | P1 user save, import, AI confirm; P3 background writers (price fetch) | no | **before the commit point** only: the user, quit (owner decision 3) | never | 4 queued |
-| `create` (new workspace, demo seeding, Copy adoption, a lifecycle migration writing ledger files) | C | heavy | exclusive; the only writer in `COLD` (§4.1 rule 5) | P1 | no | before its commit point, as `commit` | never | 1 |
-| `r4` (guardrail 3 after a save or create) | C | heavy | shared; ordered right after the save it checks; waits only for a *running* exclusive job of its workspace (§4.1 rule 2) | P3; a waiting save lends it its class while queued | only while no save waits on it, at most `preempt_max` times | any time: the user (Cancel on "Checking your last change…", M2), quit, the system (superseded). Cancel leaves saving paused, with **Run check now**; queued saves are refused (§4.9) | one per save | 1 |
-| `plan` (contract step 1: read and parser-parse the edited files; no plugins) | C | large, not heavy: may use a clean engine and leaves it clean | shared; after earlier exclusive jobs (rule 7) | as its preview | no | as its preview | runs as the first part of its preview, same engine | as preview |
-| `preview` (steps 2–3: semantic diff, overlay load of the candidate) | C | heavy | shared; after earlier exclusive jobs (rule 7) | P1 | no | any time: the user, requester leaving, a newer preview of the same edit session, quit | newest only per edit session | 4 |
-| `query` (user or AI BQL; recipe `bql` steps) | A | heavy | shared | P1 if a requester waits on screen; P2 otherwise | P2 only, by P0/P1 heavy jobs | any time: each requester (ends when none remains), workspace closed, quit | queued `query` jobs of the same (workspace, `ledger_version`, `LoadPolicy`) into one batch of ≤ 16 statements | 4 batches |
-| `snapshot` (other full loads: the copy's "loads the same" check, export-style reads, vector runs) | A | heavy | shared | P1 or P3, as the caller says | if P3 | any time: requester, quit | as `query` when a pure function of the load | 4 |
-| `cheap` (static facts; parse a small text) | A | neither | none | P1; never preempts | no | any time: requester | identical requests merge | 16 |
-| `recover` (journal recovery: on open; in session after an engine died past its commit point; for another workspace's journal over a shared file) | on open: C; in session: C (BL-0091) | neither | exclusive (of the journal's workspace) | P0 | no | never, except quit (journal left for the next open) | one per journal | 1 |
+All jobs belong to the open workspace (or to none); no job runs for a workspace that is not open (property `NoJobOfClosedWorkspace`).
 
-- **Global bound:** 64 queued jobs per user.
-- **Frequent facts** come in the handshake (static) or from the mirror's meta (ledger-derived), not as cheap jobs (EP-30).
-- **A timer-refreshed `bql` step** with an unchanged `ledger_version` is answered from the recipe memo (ADR-0029 keys on `ledger_version`) and starts no job (review 3 O9).
-- **A `create`** leaves a closed record like a save, so R4 checks adoption and migration writes (review 3 O13). A lifecycle run's own record is recovered after the write journal (ADR-0012's order).
+| Kind | Phase | Heavy / large | Lane | Priority (§4.2) | Preemptible | Cancellable: when, by whom | Merge | Queue bound |
+|---|---|---|---|---|---|---|---|---|
+| `rebuild`: WARMING, stale, COLD first build, after an outside edit; local date differs from the build date (either direction); a save that did not publish; a re-plan's stale mirror (§5.4 2a) | B | heavy | exclusive | P1; inherits a waiting save's class | no | any time, by the system: switch, quit | newest only: 1 queued + 1 running | 1 (never busy) |
+| `commit`: the legacy try, locks, gate, step-3 load, journal, swaps, read-back, journal close, mirror build, publish | C | heavy | exclusive | P1 for a user save, import or AI confirm; P3 for a background writer of the open workspace (price fetch) | no | **before the commit point**: the user, a switch (§4.10), quit (owner decision 3) | never | 4 |
+| `create`: new workspace, demo seeding, Copy adoption, a lifecycle migration writing ledger files. Runs as part of opening the new workspace (§4.10). | C | heavy | exclusive | P1 | no | before its commit point | never | 1 |
+| `r4` | C | heavy (its step 2), then a clean `confirm` engine when needed (§5.5) | shared; ordered right after its save; waits only for a *running* exclusive job | P3; a waiting save lends it its class | only while no save waits on it, at most `preempt_max` times | any time: the user ("Checking your last change…", M2), a switch, quit, the system (superseded). Its closed record stays; saving is paused; **Run check now**. | one per save | 1 |
+| `plan` (contract step 1, parser only) | C | large, not heavy | shared; after earlier exclusive jobs | as its preview | no | as its preview | the first part of its preview | as preview |
+| `preview` (steps 2–3) | C | heavy | shared; after earlier exclusive jobs | P1 | no | any time: user, requester left, a newer preview of the same session, switch, quit | newest only per edit session | 4 |
+| `query`: user or AI BQL; recipe `bql` steps | A | heavy | shared | P1 if a requester waits on screen; P2 otherwise | P2 only, by P0/P1 heavy jobs | any time: each requester, switch, quit | queued queries of the same (`ledger_version`, `LoadPolicy`) merge into one batch of ≤ 16 | 4 batches |
+| `snapshot`: the copy's "loads the same" check, export-style reads, vector runs | A | heavy | shared | P1 or P3 | if P3 | any time | as `query` when the job is a pure function of the load | 4 |
+| `cheap` | A | neither | none | P1; never preempts | no | any time | identical requests | 16 |
+| `recover`: journal recovery of the workspace being opened (§4.10), or in session after an engine died past its commit point | C | neither | exclusive | P0 | no | never, except "Switch anyway" or Quit anyway; its journal stays for the next open | one per journal | 1 |
+
+**Notes:**
+- **Bounds:** at most 64 queued jobs per user.
+- **Frequent facts** come from the handshake or the mirror's meta.
+- **Timer-refreshed `bql`** (review 4 O9): no surface refreshes a `bql` step on a timer. Recipes re-run when `ledger_version` changes (ADR-0037's invalidation). A timer refresh, if ever added, needs an INV-10-bounded result cache first; draft 3's memo claim is withdrawn.
+- **A `create`** leaves a closed record, so R4 checks adoption and migration writes. A lifecycle run's record is recovered after the write journal (ADR-0012).
 
 ### 3.2 Failure outcomes per kind
 
-"Stop" = counted in the pool's stop history, subject to §8.7's one-per-(workspace, fingerprint) rule. "Poison" = counted in the workspace's poison counter for (kind, fingerprint). Every row is logged (§9.2) and is a decision (§9.3). §4.9 covers queued jobs.
+- **"Stop"**: counted in the pool's stop history (§8.7's one-per-(workspace, fingerprint) rule).
+- **"Poison"**: counted per (kind, fingerprint).
+- Every row is logged (§9.2) and is a decision (§9.3).
 
-| Kind | Cancel | Engine crash | OS memory kill | Out-of-memory error (`MemoryError`; common on Windows) | Hang (§8.3) | Stalled / runaway (§8.4–8.5; background only) |
+| Kind | Cancel | Engine crash | OS memory kill | `MemoryError` | Hang | Stalled / runaway (background only) |
 |---|---|---|---|---|---|---|
-| `rebuild` | ended; build file left for GC; no stop | stop + poison; retried once; second fault: stays WARMING with the message | poison; one engine (§7.5); retried once alone | as memory kill | ended; stop + poison; retried once | n/a (P1 only) |
-| `commit`/`create` before the commit point | ended; locks released by the OS; disk byte-identical, no journal | stop + poison; disk unchanged; not retried | poison; one engine; not retried | as memory kill | ended; stop + poison; not retried | P3 writers only: stopped and logged; "not saved, unchanged" |
-| `commit`/`create` after the commit point | not ended: "Finishing your change…" | stop; outcome resolved from disk (§5.7) | as crash; then one engine | engine replies `engine.out_of_memory` and exits; resolved (§5.7) | ended only for a confirmed hang; then as crash. A protocol violation: read and discard, wait; a stall after it ends the engine (§5.4 step 5) | never stopped (except the stall after a violation) |
-| `r4` | ended; closed record stays; saving paused, Run check now; queued saves refused | stop + poison; retried once; then saving paused (INV-22), Try again; queued saves refused | poison; one engine; retried once alone; then as crash | as memory kill | ended; as crash | stopped; saving paused until **Run check now** runs it at P1 with no automatic stop |
-| `plan`, `preview` | ended | stop + poison; reported; Try again | poison; one engine; reported | as memory kill | ended; stop + poison; reported | n/a (P1) |
-| `query`, `snapshot` | ended when no requester remains | stop + poison; retried once (idempotent); then reported | poison; one engine; retried once alone; then reported | as memory kill | ended; stop + poison; retried once | P3 `snapshot`: stopped, reported |
+| `rebuild` | ended; build file left for GC | stop + poison; retried once; then stays WARMING with the message | poison; one engine; retried once, alone | as memory kill | ended; stop + poison; retried once | n/a |
+| `commit`/`create` before the commit point | ended; disk byte-identical, no journal | stop + poison; disk unchanged; not retried | poison; one engine; not retried | as memory kill | ended; stop + poison | P3 writers: stopped, "not saved, unchanged" |
+| `commit`/`create` after the commit point | not ended: "Finishing your change…" | stop; resolved from disk (§5.7) | as crash; then one engine | `engine.out_of_memory`, exit; resolved | ended only for a confirmed hang | never, except the stall after a violation (§5.4) |
+| `r4` | ended; record stays; saving paused; queued saves refused | stop + poison; retried once; then saving paused (INV-22), Try again; queued saves refused | poison; one engine; retried once, alone | as memory kill | ended; as crash | stopped; saving paused until **Run check now** (no automatic stop; also clears the `r4` poison of that fingerprint, review 4 O6) |
+| `plan`, `preview` | ended | stop + poison; reported | poison; one engine; reported | as memory kill | ended; reported | n/a |
+| `query`, `snapshot` | ended when no requester remains | stop + poison; retried once; then reported | poison; one engine; retried once, alone | as memory kill | ended; retried once | P3 `snapshot`: stopped |
 | `cheap` | ended | stop; retried once | as crash | as crash | ended; stop | n/a |
-| `recover` | n/a | stop; retried once (idempotent: re-classifies from disk); then the workspace stays `RECOVERING`, writes blocked: "Your last change may or may not be saved. Reopen the workspace." | as crash | as crash | ended; as crash | n/a |
+| `recover` | n/a | stop; retried once (idempotent); then `RECOVERING`, writes blocked: "Your last change may or may not be saved. Reopen the workspace." | as crash | as crash | ended; as crash | n/a |
 
-"Retried once" = once per (job, fingerprint), only while the pool is not `Unavailable` and the key not poisoned, after the pool's backoff (§8.7).
+"Retried once" means once per (job, fingerprint), outside `Unavailable` or poison, after the backoff.
 
 ## 4. The scheduler
 
 ### 4.1 Lanes [B]
 
-Per workspace:
-1. **At most one exclusive job runs** (property `OneExclusivePerWorkspace`, within one session; across a sidecar crash, the locks carry safety, §5.8).
-2. **Shared jobs and exclusive ones.** A shared job is not dispatched while a `commit`, `create` or `recover` of its workspace is running or queued ahead of it (it would almost always end `snapshot_moved`). **Except `r4`**, which waits only for a *running* exclusive job, never for a queued one. It is ordered as if enqueued right after the save it checks (review 3 F1; TLA v2 H1; property `R4NeverBehindItsGatedWrite`; seeded `r4_behind_queued_write`).
-   - Shared jobs **may** run beside a `rebuild`, which changes no ledger file (review 2 F8).
-   - A running shared job is not stopped when an exclusive one starts; its verification decides (§5.2).
-3. **The R4 gate.** An exclusive writer waits until the R4 of the previous save has cleared its closed record (§5.5). It does not wait for other running shared jobs.
-4. **Previews and the mirror.** A `preview` is dispatched only when the published mirror's content fingerprint is the one it plans on (its baseline errors come from that mirror, H2). It waits for a running or queued `rebuild`.
-5. **No writes without a baseline.** While `WARMING` or `COLD`, a `commit` is refused at once (`WORKSPACE_NOT_READY {phase}`), never queued. A `create` is the only writer in `COLD`:
-   - its gate compares only the disk;
-   - its baseline errors are empty for a new ledger, and the load of the pre-image for adoption and migration (one extra load, ADR-0008 amendment);
-   - it publishes the first generation (property `NoCommitWithoutBaseline`).
-6. **Recovery first.** While `RECOVERING` (also `RECOVERING {owner_ws}`, a journal of another workspace over a file of this one, §5.7), or with an unresolved engine death past a commit point, only `recover` is dispatched for it.
-   - Reads wait too. This avoids wasted loads; it is not needed for safety, since the verify sees the journal (TLA v2: the seed `query_during_recovery` cannot fail).
-   - No rebuild is queued, and the focus check queues none (TLA F9).
-   - The block is shown (property `NoWriteAfterUnresolvedDeath`).
-7. **Order after earlier saves.** A `plan` or `preview` is ordered after every exclusive job of its workspace enqueued before it (property `PreviewAfterEarlierSaves`; review 2 F9).
+For the open workspace:
+1. **At most one exclusive job runs** (`OneExclusivePerWorkspace`, per session).
+2. **Shared jobs and saves.**
+   - A shared job is not dispatched while a `commit`, `create` or `recover` is running or queued ahead of it.
+   - **Except `r4`**, which waits only for a *running* exclusive job and is ordered right after the save it checks (review 3 F1; TLA v2 H1; `R4NeverBehindItsGatedWrite`).
+   - Shared jobs may run beside a `rebuild`.
+   - A running shared job is not stopped when an exclusive job starts.
+3. **Writers wait for R4.** An exclusive writer waits until the previous save's R4 has cleared its closed record (§5.5).
+4. **Previews wait for a current mirror.** A `preview` is dispatched only when the published mirror's content fingerprint is the one it plans on; it waits for a running or queued `rebuild`.
+5. **No writes without a baseline.**
+   - While `WARMING` or `COLD`, a `commit` is refused at once (`WORKSPACE_NOT_READY {phase}`).
+   - A `create` is the only writer in `COLD`. Its gate compares only the disk. Its baseline errors are empty for a new ledger, and are the pre-image's load for adoption and migration. It publishes the first generation (`NoCommitWithoutBaseline`).
+6. **Recovery first.** While `RECOVERING`, or with an unresolved engine death past a commit point, only `recover` is dispatched. Reads wait too (to avoid wasted loads, not for safety). No rebuild is queued, and the block is shown (`NoWriteAfterUnresolvedDeath`).
+7. **Plans after earlier saves.** A `plan` or `preview` is ordered after every exclusive job enqueued before it (`PreviewAfterEarlierSaves`).
 
-The lane is a rule of order and resources, not of correctness: the §5 properties hold with it removed (§11). Before [B] the scheduler refuses every exclusive kind (none exists in [A]).
+The lane is an ordering rule, not a correctness rule. Before [B], the scheduler refuses every exclusive kind.
 
-### 4.2 Priority, inheritance and aging [A]; through lanes [B]; through the R4 gate [C]
+### 4.2 Priority, inheritance and aging [A]
 
-Classes, highest first:
-- **P0:** recovery.
-- **P1:** something the user waits for on screen in the viewed workspace: a save, plan or preview, query, the viewed rebuild, cheap jobs.
-- **P2:** interactive work nobody is watching (a hidden dashboard, an AI tool call).
-- **P3:** background (R4, background writers, prefetch).
+**[A] stability:** stable (§1.2).
 
-Rules:
-- **Order:** by effective class, then FIFO.
-  - Exclusive jobs of one workspace keep FIFO among themselves whatever their class (ADR-0011's guarantee).
-  - An `r4` sits right after its save (rule 2).
-- **Inheritance:** a queued job that another waits for (rules 3, 4, 7; the reservation of §4.7; Run anyway, §7.3) is ordered at the higher class, transitively, recomputed at each event (a pure function). It changes the order of **queued** jobs only. A running job's OS priority is fixed at start (§10): an unprivileged parent cannot raise a child it lowered (review 2 F14; spike s5: EACCES).
-  - A head does not inherit from a job that may pass it (§4.7).
-- **Aging by count:** each time a queued job is passed by a job enqueued after it, its `passed` counter rises. At `aging_passes` (8) it moves up one class and the counter resets. No clock.
-  - Bound, as a pure-table test obligation: a queued job is dispatched within `aging_passes × 4` passes once admission allows it (review 3 O12).
+**Classes:**
+- **P0** recovery;
+- **P1** what the user waits for on screen;
+- **P2** interactive work nobody watches;
+- **P3** background (R4, background writers, prefetch).
+
+**Order:** by effective class, then FIFO. Exclusive jobs keep FIFO among themselves whatever their class, with one exception: a re-planned save sits directly behind the rebuild its re-plan waits for (§5.4 2a; review 4 H4). An `r4` sits right after its save.
+
+**Inheritance:** a queued job that another waits for (lane rules 3, 4 and 7, the reservation, Run anyway, a re-plan's rebuild) is ordered at the higher class, transitively.
+- It reorders queued jobs only: a running job's OS priority is fixed at start (§10; spike s5: EACCES).
+- A head does not inherit from a job that may pass it.
+
+**Aging by count:** each pass by a later job raises the job's `passed` counter. At `aging_passes` (8) the job moves up one class. Test obligation: a queued job is dispatched within `aging_passes × 4` passes once admission allows it.
 
 ### 4.3 Preemption [A]
 
-A queued P0 or P1 **heavy** job that cannot be dispatched (no slot, or admission refuses it) may preempt **one** preemptible running job. Cheap jobs never preempt.
-
-Preemptible: read-only and preempted fewer than `preempt_max` (2) times:
-- `query` at P2;
-- `snapshot` at P3;
-- `r4` while no save waits on it.
-
-Preemption is our own end, with reason `preempt`; it is not a stop. The job goes back to the front of its class with its requesters and merge key. Under `Critical` (§7.4), preemptible P3 jobs are preempted even when nothing waits.
+A queued P0 or P1 **heavy** job that cannot be dispatched may preempt one preemptible running job: `query` at P2, `snapshot` at P3, or `r4` while no save waits on it, each preempted fewer than `preempt_max` (2) times.
+- Cheap jobs never preempt.
+- Preemption is our end (`preempt`), not a stop; the job is requeued at the front of its class.
+- Under `Critical`, preemptible P3 jobs are preempted even when nothing waits.
 
 ### 4.4 Merging and newest-only [A] queries, [B] rebuilds
 
-- **Merging only among queued jobs.** A running engine's load is never shared with a later arrival; that would make the ledger resident (INV-10, ADR-0011). A batch is fixed at dispatch.
-- **Requesters.** A merged job has a requester set; it ends only when the set is empty.
-- **Per-statement outcomes.** Each statement gets its own result or refusal (`engine.result_too_large`, area review F6).
-- **Rebuild, newest only:**
-  - one queued per workspace;
-  - a trigger while one is queued is absorbed;
-  - a trigger while one runs keeps one queued rerun;
-  - when the stat fingerprint moved but the content fingerprint equals the mirror's (a sync client re-downloaded an unchanged file), the mirror's stat fingerprint is re-stamped instead (review 2 O11).
-- **Preview, newest only per edit session:** a new preview replaces the queued one and cancels a running one.
+- **Merging only among queued jobs:** a batch is fixed at dispatch, so no ledger is resident (INV-10).
+- **Requesters:** a job ends when its requester set is empty.
+- **Per-statement results or refusals** (`engine.result_too_large`).
+- **Rebuild: newest only.** A stat change with unchanged content re-stamps the mirror's stat fingerprint instead of rebuilding.
+- **Preview: newest per edit session.**
 
 ### 4.5 Queue bounds and "busy" [A]
 
-Over a §3.1 bound or the global 64: refused at once with `BUSY_HEAVY_LOAD` (ARCHITECTURE §6.1, `Unavailable`, retryable; no `retry_after_ms`), nothing queued.
-- Merged kinds (`rebuild`, `r4`, `recover`) are never busy.
-- The frontend never retries `BUSY_HEAVY_LOAD` or `LEDGER_CHANGING` by itself; the user's Try again does.
-- A busy refusal changes no table state; it is logged as a count (§9.3), with one `engine.queue.busy` per workspace and kind until the queue drains.
+Over a bound: `BUSY_HEAVY_LOAD` (`Unavailable`, no `retry_after_ms`), and nothing is queued.
+- Merged kinds are never busy.
+- The frontend never retries `BUSY_HEAVY_LOAD` or `LEDGER_CHANGING` by itself.
+- A busy refusal is logged as a count (§9.3).
 
 ### 4.6 What "running" means [A]
 
-- **The job ends**, and its **lane** is released, at the engine's final reply or at confirmed death.
-- **The slot and memory reservation** are released only when the engine **and its process group** are gone (TLA F3; `EnginesBounded`):
-  - POSIX: the leader reaped and `killpg(pgid, 0)` fails with **`ESRCH`**. `EPERM` means members remain (a zombie leader, or a member owned by someone else), and `0` means a member lives (review 3 spike E).
-  - Windows: the Job Object's active process count is 0.
-- **Draining** (review 3 F8; TLA v2 M2):
-  - After its final reply the engine ends with `os._exit(code)`: no `atexit`, no joining of plugin threads.
-  - If, after the leader's reap, `killpg(pgid, 0)` still succeeds, the pool records reason `drain` and sends `killpg(pgid, SIGKILL)` once. `drain` is our own end, never a stop, and the job stays `answered` (property `AnsweredJobNotAStop`).
-  - A leader that has replied but does not exit is judged by the hang rule (§8.3). If ended, the reason is `drain`, the outcome stays `answered`, and it is not a stop.
-  - Liveness property `SlotEventuallyFreed`.
-- **A kill sent is never an end** (`RunningUntilAnsweredOrDead`; seeded `lane_on_kill_sent`, `lane_on_requester_left`).
-- **The HTTP handler is not the job.** A disconnect is `RequesterLeft`: it cancels a read with no requester left, never a save (H2).
-- **Outcomes after a crash.** A save's outcome is kept in recent outcomes, and durably as the closed record or its `.done` successor (§5.5), so a reloaded window can learn it even after a sidecar crash (BL-0092).
-- **Cost:** an engine that cannot be ended (uninterruptible sleep on a dead network disk) keeps its slot, lane and **locks** until it ends; every verify and save over its files waits; the user sees "cannot be stopped" (§9.1). A descendant that left the group (`setsid`) keeps any inherited lock while it lives (spike s3); lock steps wait for it like any other.
+**[A] stability:** stable (§1.2).
+
+- **The job and its lane** end at the final reply, or at confirmed death.
+- **The slot and memory reservation** end only when the engine and its process group are gone (TLA F3; `EnginesBounded`):
+  - POSIX: the leader is reaped and `killpg(pgid, 0)` fails with `ESRCH`;
+  - Windows: the Job Object's active count is 0.
+- **Draining** (review 3 F8; review 4 M5):
+  - After its final reply, the engine ends with `os._exit(code)`.
+  - **Before the leader's reap**, while the leader is still a zombie that pins the group number: if `killpg(pgid, 0)` succeeds (a member lives), the pool records `drain` and sends `killpg(pgid, SIGKILL)`, then waits until `killpg(pgid, 0)` gives `EPERM` (only zombies left).
+  - Then the pool reaps. **No signal is ever sent to that group number after the reap** (spike M), so a reused number can never reach another program.
+  - `drain` is our end, never a stop; the job stays `answered` (`AnsweredJobNotAStop`).
+  - A leader that replied but does not exit is judged by the hang rule; ended with `drain`; not a stop. Property: `SlotEventuallyFreed`.
+- **A kill sent is never an end** (`RunningUntilAnsweredOrDead`).
+- **The HTTP handler is not the job.** `RequesterLeft` cancels a read with no requester left, never a save.
+- **Outcomes outlive a crash.** A save's outcome is in recent outcomes, and durably in its closed record, `.done`, `.mismatch` or `.resolved` journal (§5.5, §5.7; review 4 O8). A reloaded window learns it even after a sidecar crash.
+- **Cost:** an engine that cannot be ended keeps its slot, lane and locks. The workspace's verifies and saves wait, and "cannot be stopped" is shown. A `setsid` descendant keeps inherited locks while it lives.
 
 ### 4.7 Dispatch, as a pure function, with head-of-line reservation [A]
 
-`next_dispatch(pool_view, queues) -> Dispatch | Preempt | Wait(reason)`:
-- `pool_view` holds free slots, budget headroom, pressure, `single_engine`, `Unavailable`/`Incompatible`, and the Run-anyway chain (§7.3).
+**[A] stability:** stable; lane and R4-gate rules enter through `dispatchable(job, lane_view)` (§1.2).
+
+`next_dispatch(pool_view, queue) -> Dispatch | Preempt | Wait(reason)`.
 
 A candidate is **dispatchable** when:
-- its lane rules allow it (§4.1);
-- the pool is not `Unavailable` (heavy and large) and not `Incompatible` (all);
-- its key is not poisoned;
-- the backoff has passed (§8.7);
+- `dispatchable(job, lane_view)` holds (lane rules, §4.1; the switch state, §4.10);
+- the pool is not `Unavailable` (for heavy and large jobs) and not `Incompatible`;
+- the key is not poisoned;
+- the backoff has passed;
 - admission allows it (§7.3).
 
 **Reservation** (review 2 F1; review 3 F9; TLA v2 M7):
-- **The head** is the queued large job of the highest effective class (then FIFO), across all queues, whose only obstacle is admission (pressure, budget, or "unmeasured runs alone").
+- **The head** is the queued large job of the highest class, then FIFO, whose only obstacle is admission.
 - **While a head exists:**
-  - no other large job **of the same or a lower class** is dispatched, except one that preempts on the head's behalf;
-  - a large job of a **higher** class may be dispatched when admission allows it, and each such dispatch counts as a pass for the head's aging;
-  - a cheap job may be dispatched into a free slot at `Normal`, but not at `Warn`, where a running cheap job would be the head's only obstacle.
-- **When the running large jobs end**, the head is admitted: it is alone, and admitted at `Normal` or `Warn`.
-- **The head is chosen afresh at each event.** A Run-anyway job becomes the head even over a head of the same class (TLA v2 overflow).
-- **Evidence:**
-  - Spike s6: without reservation, an 800 MB rebuild was still queued after 2,000 steps; with it, it ran at step 22.
-  - `Admission.tla`: the reservation is starvation-free (`NoStarvationUnderAdmission`), and the higher-class rule removes the inversion that draft 2 had (`NoClassInversion`; seeded `pass_head`).
+  - no other large job of the same or a lower class is dispatched, except one that preempts on the head's behalf;
+  - a higher-class large job may be dispatched when admitted, and that counts as a pass for the head's aging;
+  - a cheap job may run at `Normal`, not at `Warn`.
+- **When the running large jobs end**, the head runs alone.
+- **The head is re-chosen at each event.** A Run-anyway job is head even over a same-class head.
+- **Evidence:** spike s6 (without the reservation, starvation; with it, the job ran at step 22); `Admission.tla` (`NoStarvationUnderAdmission`, `NoClassInversion`).
 
-**`Wait(reason)`** carries what the user sees: `queued`, `waiting_for_memory`, `waiting_to_run_alone`, `backoff`.
+`Wait(reason)` is one of: `queued`, `waiting_for_memory`, `waiting_to_run_alone`, `backoff`, `switching`.
 
-**Re-run on every event:** enqueue, end, cancel, requester left, pressure change, tick, Run anyway, settings change. `next_dispatch` is an EP-17 pure table with exhaustive tests and random walks; its inputs and outputs are logged (§9.3).
+It re-runs on every event, as an EP-17 pure table, and is logged (§9.3).
 
-### 4.8 Quit and quiesce [A] reads; [C] saves (review 2 F13; TLA F15)
+### 4.8 Quit and quiesce [A] reads; [C] saves
 
-`POST /api/app/quiesce` (failure-modes M7):
+`POST /api/app/quiesce`:
 1. Stop dispatching.
 2. End queued jobs (§4.9). A queued `recover` is left for the next open.
-3. End running reads, plans, previews, rebuilds and R4s. An R4's closed record stays.
-4. End saves before their commit point ("not saved, unchanged"; the unsaved guard W7 asked first).
-5. Wait for saves past their commit point and a running `recover` ("Finishing your last change…").
-   - No time limit. After `quit_patience` on-time ticks (10) with no phase change, the shell offers **Quit anyway**: "Finzytrack will finish or undo this change the next time it opens. Your ledger stays safe." The journal makes this true.
-   - An OS logout or shutdown that cannot wait is the same.
-   - Properties: `QuiesceTerminates`; `OutcomeTruthful` after Quit anyway (seeded `quitanyway_says_saved`).
+3. End running reads, plans, previews, rebuilds and R4s (records stay).
+4. End saves before their commit point ("not saved, unchanged"; W7's guard asked first).
+5. Wait for saves past their commit point, and for a running `recover`: "Finishing your last change…".
+   - After `quit_patience` on-time ticks (10) with no phase change: **Quit anyway**, with "Finzytrack will finish or undo this change the next time it opens. Your ledger stays safe."
+   - Properties: `QuiesceTerminates`; `OutcomeTruthful`.
 
-**Before an app update** (ADR-0007, review 3 F15), quiesce first runs every owed R4 at P1, so an update does not supersede them; an R4 that cannot finish leaves its record, and the update proceeds with it superseded at the next start (`engine_changed`, logged).
+**Before an app update** (ADR-0007; review 4 L2), quiesce runs in two parts:
+1. If the open workspace has an owed R4, that R4 runs at P1 under the Run-anyway exemption (§7.3), with Cancel; nothing else is dispatched.
+2. Steps 1–5 above.
+
+An R4 the user cancels keeps its record, and the update proceeds; at the next start that R4 is superseded (`engine_changed`, logged). Owed R4s of workspaces that are not open stay for their next open; nothing runs for them now.
 
 ### 4.9 Queued and running jobs on each event [A]; save rows [C]
 
 | Event | Queued jobs | Running jobs |
 |---|---|---|
-| pool `Unavailable` | P1 and P2 heavy and large jobs end with E1's message and Try again. P3 stay queued. A `rebuild` stays queued (WARMING plus E1's message). Closed records stay (saving paused). `recover` stays queued and is admitted (not heavy). | not affected |
-| pool `Incompatible` | all end with E6's message; journals and closed records stay on disk | none can exist |
-| workspace poisoned for a key | its jobs of that key end "poisoned" | — |
-| writes blocked (foreign bytes at recovery, recovery failed twice, an R4 that cannot run or was cancelled, an R4 mismatch) | queued saves refused at once with `WRITES_BLOCKED` and the block's message (TLA F7; `QueuedWriteLeavesQueue`). A save's gate never re-arms a cancelled R4; **Run check now** does (TLA v2 L2). | — |
-| a journal of another workspace covers a file of this one | this workspace's reads and writes wait, `RECOVERING {owner_ws}`; that journal's `recover` runs (§5.7) | its verify ends `orphan_journal {owner_ws}` |
-| the legacy app holds its lock on this ledger (single-instance ADR) | — | the save or copy refuses at its first step: "The old Finzytrack app is saving this ledger. Quit the old Finzytrack first, then try again." Nothing written, not a stop, not poison. |
-| workspace closed or switched away | jobs end `cancelled`, except `recover` and saves past the commit point; closed records stay | reads ended; saves before the commit point continue unless cancelled (closing is not a cancel) |
-| workspace forgotten (ADR-0019) | refused while a journal of it is open, a closed record of it exists, or a save is past its commit point; otherwise jobs end `cancelled`, and its measurements, `.done` records and caches are removed | as closed |
-| sidecar exit or crash | lost; HTTP requests fail; journals, closed records and high-water marks are on disk | engines end with their group (§6.3); a save past its commit point is resolved at the next open (§5.7) |
+| pool `Unavailable` | P1 and P2 heavy and large jobs end with E1's message. P3 jobs stay queued. A `rebuild` stays (WARMING plus E1). Closed records stay. `recover` stays and is admitted. | not affected |
+| pool `Incompatible` | all end with E6's message | none can exist |
+| a key is poisoned | its jobs end "poisoned" | — |
+| writes blocked: foreign bytes at recovery, recovery failed twice, an R4 that cannot run or was cancelled, a mismatch or undecided R4 | queued saves refused at once with `WRITES_BLOCKED` and the block's message. A save never re-arms a cancelled R4; **Run check now** does. | — |
+| a legacy lock (ADR-0062) held, or any try outcome other than free or absent | — | the save or copy refuses at step 0: "The old Finzytrack app is saving. Quit the old Finzytrack first, then try again." Nothing is written; not a stop, not poison. |
+| a switch starts (§4.10) | §4.10 step 2 | §4.10 step 2 |
+| a workspace is forgotten (ADR-0019) | only a workspace that is not open can be forgotten. It is refused while that workspace has an open journal or a closed record ("Open it once to finish its last change"); otherwise its measurements, `.done` records and caches are removed. | — |
+| sidecar exit or crash | lost; journals, records and high-water marks are on disk | engines end with their group; a save past its commit point is resolved at the next open, and a switch cut off midway is completed (§4.10) |
 | quiesce | §4.8 | §4.8 |
-| `max_engines` or `memory_share` changed | re-evaluated at the event | never ended; the pool drains to the new bound |
-| pressure rises to `Critical` | stay queued, `waiting_for_memory` | preemptible P3 preempted |
-| pressure falls to `Warn` or `Normal` | re-evaluated at the event | — |
+| `max_engines` or `memory_share` changed | re-evaluated | never ended |
+| pressure rises to `Critical` / falls | stay queued, `waiting_for_memory` / re-evaluated | preemptible P3 preempted / — |
+| machine sleep and wake (review 4 O1) | — | the ticks spanning the sleep are late and judge nothing |
+| disk full during a save (review 4 O1) | — | before the commit point: refused, unchanged. After it: ADR-0012's in-process rollback; if that cannot complete, as an engine death (§5.7). |
+
+### 4.10 The workspace switch [B] engine side; [C] save rows; [M2] UI
+
+The owner, 2026-10-27: "Switching between workspaces should work well, without issues. The switch should do whatever book-keeping that is needed. Fine to tell the user something like, 'Just a moment.. switching workspaces.' or similar, if the switch takes time."
+
+A switch is a pure table, `workspace_switch.transition(state, event) -> (state, effects)` (EP-17). Its inputs and outputs are logged (§9.3), and the frontend's switch machine (ARCHITECTURE §7) models only the UI over it. Opening at start (no old workspace) is the same table, entered at `Opening`. It produces the same effects as before: INV-29 records the open only at `READY`/`WARMING`, and INV-30 holds (opening never writes the folder except recovery on open).
+
+**States:**
+- `Open(A)`;
+- `Draining(A → B, waiting_for)`;
+- `Closing(A → B)`;
+- `Opening(B, step)`, where step ∈ {`assess`, `overlap`, `recover`, `r4`, `warm`};
+- `Open(B)`;
+- `OpenFailed(B, phase)`;
+- `Opening(B)` after a crash (from the persisted switch marker).
+
+**Events:**
+- `SwitchRequested(B)`, `Cancel`, `SwitchAnyway`;
+- `JobEnded(job, outcome)`, `PastPointEnded`, `AllEnded`, `Closed`;
+- `Assessed(phase)`, `OverlapChecked(ok | overlap{ws})`, `RecoveryEnded(outcome)`, `R4Ended(outcome)`, `RebuildPublished`, `RebuildFailed`;
+- `Tick(no_progress_ticks)`;
+- `Restarted(marker)`.
+
+**Sequence:**
+1. **`SwitchRequested(B)`** in `Open(A)`. The frontend's leave guard has run (unsaved edits; W7).
+   - The sidecar writes a **switch marker** `{from: A, to: B, step}` to `app_local_data` (atomic replace, `durable_sync`) and enters `Draining`.
+   - A's `JobQueue` stops accepting jobs. New requests for A get `WORKSPACE_NOT_READY {phase: CLOSING}`; new requests for B wait for B.
+   - The user sees "Just a moment… switching workspaces."
+2. **Draining A**, in this order:
+   - **Ended at once (our end; not stops):**
+     - queued and running reads, plans, previews and `snapshot`s, with requesters told `cancelled {switch}`;
+     - queued and running `rebuild`s (the build file is left for GC);
+     - a queued or running `r4`, whose closed record **stays**: A's next open runs it before A's writes.
+   - **Allowed to finish:** saves the user confirmed. Queued saves of A are dispatched in FIFO, together with the R4 each depends on, because a confirmed change is the user's work. The user sees "Finishing your changes before switching… (n left)".
+   - **A running `recover`** finishes.
+   - **Nothing new** is dispatched for A except these saves, their R4s and that recovery.
+   - **Exits for the user:** after `quit_patience` on-time ticks with no phase change of what is being waited for, **Switch anyway** appears (Quit-anyway style), with the text "Finzytrack will finish or undo the unfinished change the next time you open *A*. Your ledger stays safe."
+     - Pressing it ends saves before their commit point ("not saved, unchanged", listed) and ends engines past the commit point, or a `recover` (reason `switch`; the journal covers them; A's next open resolves them, §5.7).
+     - **Cancel** (only while nothing has been ended by Switch anyway) returns to `Open(A)`, with the queue accepting again.
+   - **`AllEnded`:** no engine of A remains (each group confirmed gone, §4.6), so no lock of A is held. The switch moves to `Closing`.
+   - Property `NoJobOfClosedWorkspace`: after `Closing`, no engine runs a job of A.
+3. **Closing A:**
+   - drop A's `WorkspaceContainer` (caches, handles, mirror reader pins; INV-31);
+   - write `measurements.json`;
+   - log `workspace.closed`;
+   - keep A's journals, closed records and generation files on disk;
+   - the marker's step becomes `opening` (synced).
+
+   No job of A remains, and none will run until A is opened again.
+4. **Opening B:**
+   1. `assess` (ADR-0019 `assess_workspace`): `WS_CONFIG_INVALID`, `LEDGER_UNAVAILABLE`, `NEWER_WORKSPACE`, `UPGRADE_PENDING` end in `OpenFailed(B, phase)`, with its dialog.
+   2. `overlap` (the one-workspace ADR): B's file set, its last verified set plus any journal of B, must not share a path key with any other registered workspace's file set (the registry's records plus a listing of each workspace's journal directory, usually empty).
+      - An overlap ends `OpenFailed(B, overlap{ws})`: "This ledger uses a file that belongs to workspace *X*. A file can belong to only one workspace." The actions are **Go back to A** and **Choose another workspace**.
+      - Registration does the same check.
+      - When B's set grows during the session (a glob matches a new file, an include is added), the verify that sees it repeats the check for the new keys. On overlap, saves are refused (`WORKSPACE_OVERLAP`), and reads go on from the last mirror.
+   3. `recover`: B's journals (ADR-0012 recovery on open; §5.7). It waits for the locks: an orphaned engine of a crashed session may still hold them for 0.25 s.
+   4. `r4`: an owed R4 from B's closed record. It is re-armed, or superseded if B's disk moved since or the engine build changed (§5.5). Writes wait for it; reads do not.
+   5. `warm`: the stat check. If the mirror is stale or absent, the workspace becomes `WARMING`/`COLD` and its rebuild is queued.
+   6. Then `Open(B)`, with INV-29 recording the open. The marker is removed (synced).
+
+   The user sees "Just a moment… switching workspaces." until `assess` and `overlap` pass, then B's own phase: "Checking your last change…" while recovering, or the WARMING banner.
+5. **`OpenFailed(B, phase)`:** no workspace is open.
+   - **Go back to A** is a new switch to A, which opens quickly: A's mirror is on disk.
+   - **Retry**, **Locate**, **Upgrade** follow ADR-0019's dialogs.
+6. **A new `SwitchRequested(C)` during a switch:**
+   - in `Draining`, it retargets (newest only);
+   - in `Closing` or `Opening`, it is queued and runs after `Open(B)` or `OpenFailed`.
+7. **A sidecar crash midway** (`Restarted(marker)`): at the next start the marker names the step.
+   - **`draining` or `closing`:** A was never closed cleanly, but no engine of A survives the sidecar (§6.3). The start opens **B** (the user's last request): A's journals and records wait for A's next open, which is safe because no file is shared and nothing runs for A.
+   - **`opening`:** the open of B restarts from `assess`.
+   - The marker is removed at `Open` or `OpenFailed`.
+   - The workspace list marks every workspace with an open journal or closed record: "Has an unfinished change. Open it to finish."
+
+**Properties:**
+- `AtMostOneOpenWorkspace`;
+- `NoJobOfClosedWorkspace`;
+- `SwitchEnds` (liveness: a switch request ends in `Open(·)` or `OpenFailed(·)`);
+- `OutcomeTruthful` across switches (a save ended by Switch anyway is resolved at A's next open);
+- `NoFileInTwoWorkspaces` (an open passes `overlap`).
+
+### Why the per-workspace journal check now suffices (the app-wide journal index is removed)
+
+Draft 3 needed an app-wide index because two workspaces could share a file. A journal in workspace A's directory could then cover a file of B, and B's verify had to see it. Under the one-workspace ADR this cannot happen:
+- Every journal is written by a save of the workspace that owns its directory, over that workspace's set and the files the save creates (§5.4 step 1).
+- No file is in two workspaces' sets; registration, open and a growing set are all checked.
+- Only the open workspace runs jobs, and an orphan of a crashed session is a job of the workspace it was opened for.
+
+So "a journal is open over a file of this set" equals "this workspace's journal directory has an `.open` journal". The overlap check's listing of other workspaces' journal directories covers the one remaining case: a save of another workspace that created a file which this workspace's glob later matches. That check is made at open, not at every verify. A file created after the open by an outside program is an outside edit (ADR-0013).
 
 ## 5. Consistency [B] unless marked
 
 ### 5.1 The two fingerprints
 
-- The **stat fingerprint** decides freshness cheaply: the focus check (ARCHITECTURE §9.1) and opening.
-- The **content fingerprint** decides correctness: every verify, publish condition and save gate.
-- A stat fingerprint can miss a same-size save within one mtime tick; a content fingerprint cannot.
-- Plugin code is in both, so a fixed plugin makes the mirror stale and resets poison (review 2 F3).
-- Every path in both is a canonical path (§1).
+- **The stat fingerprint** decides freshness.
+- **The content fingerprint** decides correctness: verify, publish condition, gate.
+- Plugin code is in both.
+- All paths are path keys.
 
 ### 5.2 Verified snapshot reads (H3; ADR-0012 F-6)
 
-Every job that loads the ledger from disk returns a result only if the bytes it parsed were, at one instant, the whole ledger set with no write in progress over any of its files.
+A job that loads the ledger returns a result only if the bytes it parsed were, at one instant, the whole set with no write in progress.
 
-1. **Read.** The engine reads each file once, as bytes, records `(canonical path, size, sha256)`, and parses those bytes (spike S4). It records glob match lists, absent includes, the documents-root listing hashes at the start, and the plugin files after the load. It runs **without locks**.
-   - **Cloud placeholders** (iCloud "Optimize Mac Storage", online-only Dropbox or OneDrive files) block the read while they download. `reading_files` reports `done` as bytes read, so a read making progress is never stalled, and one that makes none is (§8.4, review 3 F12).
-2. **Verify, under the locks** (`waiting_for_lock` while waiting, §8.1):
-   - **The ledger-set locks:** one lock file per canonical path of every file of the set, at `app_local_data/locks/<sha256(canonical path)>`, each taken once (duplicates removed), sorted by canonical path (review 2 F11, review 3 F2; ADR-0012 Q29).
-     - Two workspaces sharing a file therefore exclude each other on it, however it is spelled (property `NoTwoWritersMidCommit`; seeded `lock_key_alias`).
-     - Lock files are never deleted while a Finzytrack process may run: unlinking a held lock file would let two processes lock two inodes of one name.
-   - **The set may change under the locks** (review 3 F3; TLA v2 H3): globs are re-expanded and every path re-resolved to its canonical path under the locks.
-     - If the set grew or a spelling changed, each new lock is tried **without blocking** (`LOCK_NB`).
-     - If all are free, the verify continues. If any is held, it releases every lock and starts step 2 again with the new set, in canonical order. That restart counts as one `snapshot_moved {cause: set_changed}`, bounded by `snapshot_retries`.
-     - A blocking wait is only ever for a lock that sorts after every lock held (property: TLC deadlock freedom; seeded `relock_out_of_order`, `lock_unsorted`).
-   - It reads the **journal index** for every file of the set: no journal may be open over any of them, from any workspace or session (review 3 F4). The index directory is durably synced (§5.4) before a check relies on "no journal" (F-8).
-   - It recomputes the content fingerprint of the same set (absent paths, documents listings) and compares it with what was parsed. The re-hash reads only files the unlocked read had already brought local; a file that became a placeholder in between ends `snapshot_moved {cause: evicted}`.
-   - Equal, and no journal: **verified at instant T**. Otherwise: `snapshot_moved {cause}` or `orphan_journal {owner_ws, session, job}`.
-3. **Release.** A publishing job publishes first (§5.3).
+1. **Read without locks.** Each file is read once as bytes, recording `(path key, size, sha256)`. Glob matches, absent includes, documents listings and plugin files are recorded too. For a cloud placeholder, `reading_files` reports `done` as bytes read (§8.4).
+2. **Verify under the locks** (phase `waiting_for_lock` while waiting):
+   - **Ledger-set locks:** one lock file per path key at `app_local_data/locks/<sha256(path key)>`, each taken once, sorted by path key. Lock files are never deleted while a Finzytrack process may run.
+   - **The set may grow under the locks:** globs are re-expanded and paths re-keyed.
+     - New locks are tried with `LOCK_NB`.
+     - If any is held, all locks are released and step 2 restarts in order (`snapshot_moved {set_changed}`, bounded by `snapshot_retries`).
+     - A blocking wait is only for a lock that sorts after every lock already held.
+     - A new member is overlap-checked (§4.10 step 4.2).
+   - **No `.open` journal** in this workspace's journal directory. The directory is `durable_sync`ed before a check relies on "no journal" (F-8; a clean directory costs nothing, spike I).
+   - **Content fingerprint recomputed** and compared. Re-hashing reads only files the unlocked read brought local; an evicted placeholder ends `snapshot_moved {evicted}`.
+   - Result: **verified at instant T**, or `snapshot_moved {cause}`, or `orphan_journal {session, job}`.
+3. **Release the locks.** A publishing job publishes first.
 
-The locks are held a few milliseconds (about 10 ms at 54k), never across user code. F-6's purpose (never build from a half-applied save) is kept: a lock-respecting writer holds the locks for its whole save, so the verify waits for it, or sees no journal and its finished bytes.
+The locks are held for milliseconds, never across user code.
 
 **Outcomes:**
-- **`snapshot_moved` by one of our own exclusive jobs** of any workspace sharing the file, during the read: re-queued behind it; the retry counter does not move.
-- **`snapshot_moved` by an outside writer:** re-queued at most `snapshot_retries` (3) times in a row, then `LEDGER_CHANGING` (§9.1). A rebuild then ends in WARMING with that message and is retried at the next focus check or Try again (condition-based).
-- **`orphan_journal`:** the verifier holds the locks, so no live lock-respecting writer owns that journal. The workspace goes `RECOVERING` (or `RECOVERING {owner_ws}`), and §4.1 rule 6 applies (§5.7).
+- **Moved by our own exclusive job:** requeued behind it; the retry counter does not move.
+- **Moved by an outside writer:** up to `snapshot_retries` (3), then `LEDGER_CHANGING`.
+- **Orphan journal:** `RECOVERING` (§4.1 rule 6; §5.7).
 
 **Guarantee:**
-- Against every lock-respecting writer (our saves in any workspace, an orphaned engine of a crashed sidecar session), a verified result is a committed state (`VerifiedReadsAreSnapshots`).
-- Against a program that ignores our locks, only "the disk equalled what was parsed at instant T" (ADR-0013's accepted race).
+- against our saves and an orphaned engine of a crashed session (the only lock-respecting writers left): a committed state (`VerifiedReadsAreSnapshots`);
+- against lock-ignoring programs: only "the disk equalled what was parsed at instant T".
 
-### 5.3 Conditional publish and generation ids (H2)
+### 5.3 Conditional publish and generation ids
 
-A generation is published only by the engine that built it, inside a lock hold (§5.2 step 2, or its save's), and only when:
-- the disk's content fingerprint under those locks equals the build's, and no journal is open over any file of the set (`PublishOnlyCurrent`);
-- its id is greater than the current published id.
+A generation is published by the engine that built it, under its lock hold, only when:
+- the disk's content fingerprint equals the build's;
+- no journal is open;
+- its id is greater than the current one.
 
-**Ids are allocated at publish, under the locks:** `id = 1 + max(current published id, the high-water id in app_local_data/engine/generations/<ws key>, the highest id among the files present)`. The high-water is written (atomic replace, `durable_sync`) before the pointer swap.
-- Id order is therefore the order of the verified instants, so the newest state wins whatever order the builds finished in (`GenerationsMonotonic`, `PublishedNotOlder`).
-- Keeping the high-water outside the cache survives a cache purge (seeded `hw_in_cache`).
+**Ids at publish:**
+- `id = 1 + max(current, high-water in app_local_data/engine/generations/<ws key>, highest file present)`.
+- The high-water mark is `durable_sync`ed before the pointer swap.
+- Properties: `PublishOnlyCurrent`, `GenerationsMonotonic`, `PublishedNotOlder`; seeds `hw_in_cache` and `id_at_dispatch`.
 
-**Mechanics:**
-- A build writes `build-<job id>.db`.
-- Publish writes `ledger_version` and both fingerprints into its meta, renames it `gen-<id>.db`, and swaps the pointer (a symlink; a pointer file on Windows).
-- A build that fails the condition is dropped (`mirror.publish.refused_stale`), and one rebuild is queued.
-- GC deletes `build-*` files of ended jobs; published generations keep ADR-0015's grace period.
+**Mechanics:** `build-<job>.db` is built, then renamed `gen-<id>.db`, then the pointer is swapped. A stale build is dropped and one rebuild is queued. GC removes the `build-*` files of ended jobs.
 
-**Why not compare-and-swap on the base generation (H2's option):** it would accept a build whose disk moved after the read, and refuse a newer save's build after an older-state rebuild. Seeded `id_at_dispatch` breaks `GenerationsMonotonic`.
+### 5.4 The write path [C]
 
-### 5.4 The write path with the scheduler [C]
+A `commit` runs in one fresh engine.
 
-A `commit` runs ARCHITECTURE §9.2 step 4 in one fresh engine:
-
-0. **Legacy-lock detection** (the single-instance ADR). If a known legacy install's config names a file of this workspace's set, the engine tries that install's `data/.write.lock` **once, without waiting** (`LOCK_EX | LOCK_NB`, portalocker 3.2.0's primitive and range). It opens the lock file read-only and only if it exists; it never creates it.
-   - **Held:** the save ends at once, unchanged (§4.9 row): no wait, no Cancel needed, not a stop.
-   - **Free:** it is held until the save ends, then released.
-   - A `create` that copies a legacy ledger (Copy adoption) does the same before reading.
-   - Because this is a single non-blocking try, taken before the set locks, it cannot deadlock or delay anything. It is the only way v0.4 touches a legacy lock.
-1. **Locks.** Take the ledger-set locks (§5.2) over the union of the plan's pre set, its post set (files it will create) and the set's absent paths, in canonical order with the non-blocking relock rule (review 3 F3). A wait shows `waiting_for_lock`, with **Cancel**. It waits only for our own other jobs or an orphan of a crashed session, so it is bounded by those jobs' own rules.
+0. **Legacy-lock detection** (ADR-0062; INV-26 as amended; review 4 H3).
+   - **Which locks:** when the config of any known, not-retired legacy install names a file of this workspace's set (or, for a Copy, of the set being copied), the engine collects the `data/.write.lock` of **every** such install and removes duplicates by path key (two installs may share one data folder; spike J: trying one file twice in one engine gives `free`, then `held`).
+   - **How:** each is tried **once, without waiting** (`LOCK_EX | LOCK_NB`, portalocker 3.2.0's primitive and range), in path-key order, before any ledger-set lock. A lock file is opened read-only, only if it exists, and never created.
+   - **Free:** held until the save, or the copy's reads, end.
+   - **Absent:** go on. For a Copy, after the reads the file must still be absent and the sources' content fingerprint unchanged; otherwise the copy is discarded and refused.
+   - **Held, or any other outcome** (cannot open, an error other than "already locked", a volume that cannot lock): refused at once, nothing written; not a stop, not poison (INV-22).
+   - **Never contended by ourselves:** only the open workspace's one exclusive job runs step 0 at a time (lane rule 1). An orphaned engine of a crashed session may hold the lock for up to 0.25 s after a relaunch; one refusal then, and Try again works.
+   - **Retired installs** (ADR-0062 amendment, M3) are not tried.
+   - This is the only way v0.4 touches a legacy lock.
+1. **Locks** over the union of the plan's pre set, its post set (files it will create) and the absent paths, in path-key order with §5.2's non-blocking relock. A wait shows `waiting_for_lock` with **Cancel**. It waits only for an orphan of a crashed session.
 2. **Gate, under the locks:**
    - the disk's content fingerprint equals the plan's;
-   - the published mirror's content fingerprint equals the plan's (H2);
-   - the journal index shows **no journal open over any file of the set**, from any workspace or session (TLA F6; review 3 F4);
-   - **no closed record and no `.mismatch` record exists for this workspace** (TLA F1, F2; review 3 O7; `R4BeforeNextCommit`);
-   - for a `create`, the disk half only (§4.1 rule 5).
+   - the mirror's equals the plan's;
+   - no `.open` journal of this workspace;
+   - no closed and no `.mismatch` record of this workspace;
+   - no overlap flag;
+   - for a `create`, the disk half only.
 
    On failure:
-   - a journal → `RECOVERING` (§5.7);
-   - a closed record → wait for its R4 (re-armed if not running, §5.5);
+   - a journal → `RECOVERING`;
+   - a closed record → wait for its R4;
    - `.mismatch` → `WRITES_BLOCKED`;
    - a stale mirror → `WORKSPACE_NOT_READY {WARMING}`;
-   - a moved disk → step 2a (`GateOnCurrentMirror`).
+   - a moved disk → 2a.
 
-   **2a. Our own earlier saves are not outside changes** (review 2 F9, review 3 F14, TLA v2 M5):
-   - **Which changes are ours.** The disk moved, and every file that differs between the plan's fingerprint and the disk's was changed by a save of **this installation**: the file's post hash appears in a closed or `.done` record of any workspace, including saves resolved "saved" by recovery.
-   - **End and requeue.** The job ends its engine before the commit point (our end, reason `replan`, not a stop), releases the locks, and is re-enqueued at the **front** of its workspace's exclusive lane with a re-planned plan (property `CleanEngineForUserCode`: no second user-code load in one engine).
-   - **Re-plan.** The re-plan runs the mutator against the current mirror, re-resolving every `TransactionId` (ADR-0026). If the mirror is not at the disk's fingerprint, it waits for the queued rebuild (rule 4's ordering). Same intended change (same targeted entries and canonical texts) → proceed; otherwise `PLAN_OUTDATED`.
-   - **Bounds.** At most `snapshot_retries` re-plans. Only a change not made by us gives `LEDGER_EXTERNALLY_CHANGED` (`OwnCommitsNeverExternal`; seeded `no_replan`).
-3. **Load.** Re-run step 3 (the save's one full load) and compare error keys. Its CPU and peak (phases `parsing`..`validating`) become the R4 baseline (§1.1).
-4. **The commit point, agreed by both sides.** The engine sends `gate {id, point: "commit"}` and waits on its input. In one step of its table, the sidecar:
-   - ends the engine if a cancel is pending (cancelled, disk unchanged);
-   - otherwise marks the job **past the commit point**, then sends `proceed`.
+   **2a. Our own earlier saves are not outside changes** (review 2 F9; review 3 F14; TLA v2 M5; review 4 H4, O3):
+   - **Ours:** every file that differs between the plan's fingerprint and the disk's has as its current hash the post hash of a closed, `.done` or `.resolved`-saved record of **this workspace** that is newer than the plan's baseline generation. So an outside revert to an earlier v0.4 state is not taken for ours.
+   - **End and requeue:** the job ends its engine before the commit point (`replan`, not a stop) and releases the locks.
+   - **Re-plan against the published mirror**, re-resolving `TransactionId`s (ADR-0026).
+     - When that mirror's content fingerprint is not the disk's (the earlier save was `saved_nopub`, or an outside edit happened too), the sidecar enqueues a `rebuild` (absorbed into a queued one) and places the re-planned save **directly behind it**. That rebuild inherits the save's class. This is the one exception to FIFO among exclusive jobs.
+     - The re-plan runs after that rebuild publishes. A rebuild that ends without publishing ends the save with its outcome (`LEDGER_CHANGING`, poisoned, `WORKSPACE_NOT_READY`), never a silent wait.
+   - **Same intended change** (same targeted entries and canonical texts) → proceed; otherwise `PLAN_OUTDATED`.
+   - **At most `snapshot_retries` re-plans**, then `LEDGER_CHANGING`.
+   - Properties: `OwnCommitsNeverExternal`, `ReplanProgresses`; seeds `no_replan`, `replan_ahead_of_rebuild`.
+3. **Load** (step 3): its CPU and peak become the R4 baseline.
+4. **The commit point.** The engine sends `gate`. The sidecar, in one table step, either ends the engine (a cancel is pending) or marks the job past the commit point and then sends `proceed` (`NoKillAfterCommitPoint`, `CancelBeforeCommitLeavesDiskUnchanged`). From the commit point to its final reply, the engine ignores `SIGTERM`.
+5. **Write, in one durable order** (every sync is `FileSystem.durable_sync`; review 3 F6, owner answer (a); review 4 H2's ordering, L3):
+   1. backups, and their directory;
+   2. the journal `journal-<session>-<job>.open`, which holds every field of the future closed record (post content fingerprint, adopted digest, parse digest, engine build, R4 baseline), and its directory;
+   3. the replaces (temp file, swap with the displaced-hash check, directory), children first and the root last;
+   4. read-back;
+   5. **journal close:** a pure rename into `journal-<session>-<job>.closed`, the handle closed first (Windows), then the directory.
 
-   The engine opens the journal only after `proceed` (`NoKillAfterCommitPoint`, `CancelBeforeCommitLeavesDiskUnchanged`; seeded `one_sided_gate`, `cancel_after_point`). From the commit point to its final reply, the engine ignores `SIGTERM` (failure-modes E7, review 3 F15). It still dies by `SIGKILL` and with its parent (§6.3); the journal covers that.
-5. **Write** (ADR-0008, ADR-0012, ADR-0013, F-1..F-8):
-   - **Durability** (review 3 F6; owner answer (a), 2026-10-27). Every sync is `FileSystem.durable_sync`:
-     - macOS: `fcntl(fd, F_FULLFSYNC)`, falling back to `fsync` only where the volume refuses it, logged once per volume;
-     - Linux: `fsync`;
-     - Windows: `FlushFileBuffers`, and `MoveFileExW(MOVEFILE_WRITE_THROUGH)` for renames.
+   The save has landed exactly when the closed record exists.
+   - A full disk before the journal is durable is an in-process abort: "not saved, unchanged".
+   - **`durable_sync`:** macOS `F_FULLFSYNC` (falls back to `fsync` only where refused, logged once per volume); Linux `fsync`; Windows `FlushFileBuffers` plus `MOVEFILE_WRITE_THROUGH`.
+   - **Cost:** about 9 syncs for a one-file save (backup and directory, journal and directory, temp file, replace directory, close directory, high-water file and directory at publish), about 40 ms on the owner's Mac (spike I: about 4.5 ms per sync), plus about 3 per further file. A directory sync with nothing to flush costs nothing.
+   - **No user code after the commit point.**
+   - **A protocol violation after the commit point** (review 3 F5; review 4 M4):
+     - The sidecar keeps reading and **discarding** the engine's output, and waits for it to exit.
+     - Discarded bytes are not liveness.
+     - **`stall_ticks` on-time ticks with `phase`, `done` and `total` frozen at the violation end the engine (`stalled_after_violation`), whatever its CPU.** A protocol-broken engine that keeps computing is not finishing its save, and the journal makes the end safe. The outcome is resolved from disk.
+6. **Publish under the same locks**, release, reply. `saved_nopub` queues a rebuild.
 
-     Spike H: directory `fsync` 0.00 ms median against `F_FULLFSYNC` 4.78 ms (max 8.2 ms); macOS `fsync` does not flush the drive cache. About 8 syncs per single-file save, so about 40 ms.
+Write serialization is the lane plus the per-file locks (Q29).
 
-     S5's durability assumption (`AckedCommitNeverRolledBack`) is now this port's contract.
-   - **Journal open.** The journal names its writer as `(ws key, session id, job id)` (H5). It holds every field of the future closed record (all known after step 3): post content fingerprint, adopted digest, parse digest (§5.5), engine build id, R4 baseline (review 3 O6).
-     - Before the journal is written, its **journal index** entries are created, one per covered file, and the index directories durably synced.
-   - **Journal close** is a pure rename of `journal-<session>-<job>.open` into `journal-<session>-<job>.closed`, the **closed record**, with the journal's handle closed first (required on Windows), then a `durable_sync` of the directory.
-     - The index entries are removed after the record exists (synced again).
-     - The save has landed exactly when the record exists (§5.7).
-   - **No user code after the commit point** (plugins ran in step 3). A hang after it is our bug or the OS's, and only the hang rule ends it.
-   - **A protocol violation after the commit point** (review 3 F5; TLA v2 H5):
-     - The engine is not ended at once. The sidecar keeps **reading and discarding** its output (so it never blocks on a full pipe) and waits for its exit.
-     - Discarded bytes are not liveness: the hang rule judges on CPU and page-ins alone.
-     - A stall with `phase` frozen at the violation **ends** it (reason `stalled_after_violation`, the only end past the commit point besides `hang`), and the outcome is resolved from disk (§5.7).
-     - Seeded: `stop_reading_after_violation` (deadlock), `kill_on_violation_past`.
-6. **Publish and reply.** Build the mirror from the in-memory result, publish under the same locks (§5.3), release, then reply with `usage` and the old→new TransactionId map. A save that cannot publish (`saved_nopub`) queues a rebuild.
+### 5.5 The R4 check [C]
 
-Write serialization (ADR-0011) is the exclusive lane plus per-file locks (Q29), not INV-26 (design review L1).
+**The gate is the closed record on disk.**
+- Recovery that resolves "saved" re-arms R4.
+- The in-memory gate is a cache, re-read from disk before every wait and at every open (TLA v2 M1).
+- R4 renames the record `.done` on `pass`, `superseded` or `nondeterministic`; the last 16 are kept.
+- On `mismatch` or `undecided` it renames it `.mismatch {kind}`, which blocks saving until the user acknowledges (then `.done`).
 
-### 5.5 The R4 check [C] (review 2 F2; review 3 F7; TLA F1, F2, F10; TLA v2 M1, M3, M4; owner answer 4)
-
-**The gate is the closed record on disk**, so it holds across quit, crash and recovery:
-- Every save or create that landed has a record.
-- Recovery resolving "saved" re-arms R4 from it.
-- Every write gate refuses while a record of the workspace exists.
-- The in-memory gate in `JobQueue` is only a cache. Before a save waits on it, and at each restart, it is **re-read from disk**. If the record is gone (an orphaned R4 of the previous session finished it), the gate clears (TLA v2 M1; seeded `quit` config with `FIX_R4_REFRESH` off deadlocks).
-- R4 removes the record under its locks when it ends `pass`, `superseded` or `nondeterministic`; it is renamed `.done`, and the last 16 per workspace are kept, so a reloaded window can still learn a recent save's outcome.
-- A `mismatch` renames it `.mismatch`, which blocks saving until the user acknowledges the backup notice (then it becomes `.done`).
-
-**Digests** (review 3 F7):
-- **adopted digest:** SHA-256 over the canonical encoding of the result: entries in Beancount's sort order with ties broken by canonical text, the error keys, and the options plugins can read.
-- **parse digest:** the same encoding of the `_parse_recursive` stage (entries, errors and options before booking).
-- Engines run with `PYTHONHASHSEED=0` (§6.1). Review 3 spike F: a 9-line set-iterating plugin gave 5 digests in 5 processes, and one with the seed fixed.
+**Digests** (review 3 F7; review 4 M2):
+- The **adopted digest** is the SHA-256 of the canonical encoding: entries in Beancount's order with ties broken by canonical text, the error keys, and the options plugins can read.
+- The **parse digest** is the same encoding over `_parse_recursive`'s output.
+- File names in entries' `meta`, in errors and in options (`filename`, `include`) are encoded as **path keys**, so two spellings never differ.
+- Engines run with `PYTHONHASHSEED=0`.
 
 **Steps:**
-1. **Under the locks:** the disk's content fingerprint equals the record's post fingerprint, and the journal index shows no journal over the set; release. If the fingerprint differs: `superseded`.
-2. **Without locks:** Beancount's own uncached load, `beancount.loader._uncached_load_file(abs_path, log_timings, extra_validations, encoding)`: all three extra positional arguments and an absolute path (review 3 O4). Never `load_file` with the cache disabled, which deletes `.<root>.picklecache` in the user's folder (spike S4; design review M5).
-3. **Digest** and compare with the adopted digest.
-4. **Under the locks again:** re-check the **whole** content fingerprint (globs, absent paths, documents listings; review 3 O3) and the journal index. Then:
-   - **Equal digest, unchanged fingerprint:** `pass`. A torn read cannot reproduce the adopted digest, so no lock was needed across the load.
-   - **Fingerprint moved:** `superseded` (logged), never a mismatch (`R4NoFalseMismatch`; seeded `r4_no_recheck`).
-   - **Digest differs, fingerprint unchanged:** **confirm, without running user code**, in the same engine, which ran user code once (step 2) and runs none here (`CleanEngineForUserCode`; TLA v2 M3; seeded `r4_load_locked` fails `OnlySavesLockAcrossUserCode`). Still holding the locks, it runs Beancount's own `_parse_recursive` on the disk and the overlay replica on the same bytes (parser only; a few hundred ms at 54k), and compares their parse digests with each other and with the record's:
-     - **overlay parse ≠ Beancount parse:** a real loader difference (the overlay replicates only `_parse_recursive`, ADR-0010). Outcome **`mismatch`**:
-       - saving blocked, backup shown (ADR-0008);
-       - `engine.r4.mismatch` at error;
-       - the `load_file` result published (ADR-0010 guardrail 3 "adopts"; review 2 O8).
-     - **both equal each other and the record's parse digest:** the difference arose in booking, plugins or validation, which are Beancount's own code over equal input, so a plugin is not deterministic (dates, network, or a drifting input that may since have returned; TLA v2 M4). Outcome **`nondeterministic`**:
-       - `engine.r4.nondeterministic` at warning;
-       - the `load_file` result published;
-       - the notice of §9.1;
-       - saving **not** blocked (owner answer 4).
-     - **both equal each other but not the record's:** the parse input moved in a way the fingerprint missed. R4 starts again from step 1 once; if it recurs, saving is blocked as for `mismatch`, with "could not decide" (INV-22).
-     - No case is undefined (`R4OutcomeDefined`).
+1. **Under the locks:** the content fingerprint equals the record's post fingerprint, and there is no `.open` journal (an open one gives `orphan_journal`, then `RECOVERING`, and the record stays; review 4 O2). Release. A differing fingerprint gives `superseded`.
+2. **Without locks:** `beancount.loader._uncached_load_file(abs_path, log_timings, extra_validations, encoding)`. An audit hook on `open` counts the bytes read, so a cloud placeholder stalls rather than waiting silently (review 4 O5).
+3. **Digest**, compared with the adopted digest.
+4. **Under the locks:** re-check the whole content fingerprint and the journal directory. Then:
+   - **equal digest, unchanged fingerprint:** `pass`;
+   - **fingerprint moved:** `superseded` (`R4NoFalseMismatch`);
+   - **digest differs, fingerprint unchanged:** **confirm in a fresh, clean engine** (review 4 M2). The R4 engine ends (our end, `confirm`, not a stop). A clean engine (large, not heavy; no user code) takes the slot as part of the same R4 job, takes the locks, re-checks the fingerprint and the journal directory, runs Beancount's `_parse_recursive` on the disk and the overlay replica on the same bytes, and compares the parse digests. No plugin thread or patch can run under the locks or reach the parser (`CleanEngineForUserCode`, `OnlySavesLockAcrossUserCode`). Cost: one engine start (about 0.05 s), on a rare path.
+     - **overlay ≠ Beancount:** `mismatch`. Saving is blocked, the backup shown, `engine.r4.mismatch` logged at error, and the `load_file` result published (ADR-0010).
+     - **both equal each other and the record:** `nondeterministic`. A notice is shown, the `load_file` result published, and saving is **not** blocked (owner answer 4).
+     - **both equal each other but not the record:** the fingerprint missed a change. R4 is **re-queued once as a new R4 job** (fresh engines). If the same result recurs, the outcome is **`undecided`** (INV-22): `.mismatch {undecided}`, saving blocked, "Finzytrack could not double-check your last change. Saving is paused. Your backup is here.", with **Show backup**, **Run check now** and **Copy diagnostics**. Acknowledging renames it `.done`. That is the exit; it cannot recur without a new save.
+     - `R4OutcomeDefined`.
 
-**Rules around it:**
-- **Superseded** means the disk moved after the save (an outside editor or sync client, or an old Finzytrack pointed at the folder, which is unsupported and caught as an outside edit) or, at the next start, the engine build changed (`engine_changed`). One guardrail-3 sample is lost, not a safety check of that save (its gate passed); the outside change sends the workspace to WARMING, whose rebuild replaces the adopted mirror (ADR-0008 amendment, TLA F10).
-- **At the next open:** the fingerprint differs from the record's → superseded; the engine build differs → superseded `engine_changed`; otherwise R4 runs before writes.
-- **Priority:** P3 at normal OS priority, never niced (§10); a queued save lends it its class; ordered right after its save (§4.1 rule 2).
-- **Never unmeasured** (§1.1): an R4 that loops is stopped by §8.5 at P3, or flagged with Cancel when a save waits.
-- **Failure:** an R4 that cannot complete (two crashes, a runaway, a user Cancel) leaves its record; saving stays paused (INV-22); queued saves are refused (§4.9). **Run check now** runs it at P1 with no automatic stop.
-- **Synchronous R4 during rollout** (ADR-0010) runs inside the save's job before the reply, with the same steps.
-- **Locks:** with the parse-only confirm, **no job holds the locks across user code except a save** (steps 1–6, any class), renamed `OnlySavesLockAcrossUserCode` (review 3 O8; was `NoBackgroundLockAcrossUserCode`).
+**Rules:**
+- **Superseded:** the disk moved after the save (an outside edit), or the engine build changed (at open). One guardrail-3 sample is lost; the outside change sends the workspace to WARMING.
+- **At open** (§4.10 step 4.4): superseded or re-armed.
+- **Priority:** P3 at normal OS priority, ordered right after its save.
+- **Never unmeasured.**
+- **Failure** (two crashes, runaway, Cancel): the record stays, saving is paused (INV-22), queued saves are refused. **Run check now** runs R4 at P1 with no automatic stop and clears its poison.
+- **A file-creating save ends R4 `pass`**, because the created file's path key is the same before and after (review 4 H1; seed `created_file_alias` must fail `R4NeverSupersededByItsOwnSave`).
+- **Synchronous R4 during rollout** runs inside the save's job.
+- **No job holds the locks across user code except a save** (`OnlySavesLockAcrossUserCode`).
 
 ### 5.6 Outside writers, the legacy app, other instances
 
-- **Outside editors and sync clients** take no locks. They are detected:
-  - by the focus check (WARMING and a rebuild);
-  - by verification (`snapshot_moved`);
-  - by the gate (`LEDGER_EXTERNALLY_CHANGED`);
-  - by the swap's displaced-file hash (ADR-0013).
+- **Outside editors and sync clients:** detected by the focus check, the verify, the gate and the swap hash (ADR-0013); never excluded.
+- **The legacy app** (ADR-0062): Copy only. The lock is detected once at step 0 and the save or copy refused; v0.4 never waits. An old app pointed at a v0.4 folder is unsupported and caught as an outside edit. A retired install (ADR-0062 amendment) is not tried.
+- **A second v0.4 instance** on the same app root is refused at start (BL-0100, M2). Other installations, app roots and OS accounts are unsupported; each is an outside editor to the other. ADR-0012 Q30 stays as a defence: a journal in this workspace's directory with a session that is neither this one nor an earlier one of this installation refuses writes and asks the user to reopen.
+- **Orphaned engines of a crashed sidecar** are the only other lock-respecting writer. They hold locks until their watchdog ends their group (0.25 s POSIX; at once on Windows).
+- **Two workspaces** never share a file (the one-workspace ADR, §4.10).
 
-  Never excluded.
-- **The legacy v0.3 app** (the single-instance ADR):
-  - v0.4 never shares a ledger with it: Copy adoption only.
-  - A held legacy lock is detected by one non-blocking try (§5.4 step 0), and the save or copy is refused; v0.4 never waits for it.
-  - Verifies, R4 and recovery do not take the legacy lock.
-  - An old app pointed at a v0.4 folder after the fact is unsupported; its rewrites are caught as outside edits.
-- **A second v0.4 instance** on the same app root is refused at start by the app-instance lock (single-instance ADR, BL-0100, M2). Two installations, two `--app-root`s or two OS accounts writing one ledger are unsupported (owner answer 5; "if the user does that, it's on them"); each is an outside editor to the other.
-  - ADR-0012 Q30 stays as a defence: a journal whose `(ws, session)` is not ours and is not from an earlier session of this installation refuses writes and asks the user to reopen.
-  - Review 2's candidate root-file lock (BL-0091) is no longer needed for v0.4.0.
-- **Orphaned engines of a crashed sidecar** are the one other lock-respecting writer left. They hold their locks until their watchdog ends their group (0.25 s on POSIX; at once on Windows), and the next session's verifies and saves wait for those locks.
+### 5.7 Recovery and the outcome of a save whose engine died [C]
 
-### 5.7 Recovery and the outcome of a save whose engine died [C] (TLA F4, F8, F12, F15; TLA v2 L1; review 3 F4, O5)
+When a save's engine ends past its commit point without a final reply, the outcome is **resolved** (BL-0091; `OutcomeTruthful`) by a `recover` of the open workspace. Such a recover runs in two cases: in session, or as step 4.3 of the next open (after a crash, Quit anyway or Switch anyway). It is P0 and admitted at any pressure (owner answer 3).
 
-When a save's engine ends past its commit point without its final reply (a crash, OS kill, hang or stall end, `MemoryError`, or the sidecar's own death), the outcome is **resolved, never left unknown** (BL-0091; `OutcomeTruthful`).
+- **Locks first, then read** (TLA v2 L1). It waits for the locks, which on Windows may lag after the engine's end. Only after taking them does it read the journal directory and records (`RecoveryNeverClobbersForeignBytes`). On-open recovery waits too; ADR-0012's skip is amended.
+- **`resolve(journal state, records, disk hashes, plan pre/post hashes)`**, a pure function that runs in the engine and returns its inputs and output (§9.3):
+  - **`.open` journal:** every file pre or post → restore pre, root first: **not saved, put back**. Other bytes → **blocked**: writes off, both versions shown (`BlockedOnlyOnForeignBytes`).
+  - **This job's closed record:** **saved**; R4 re-armed.
+  - **Neither:** **not saved**, plus "changed by another program" if the disk differs from the pre-image.
+- **Recovery's durable order** mirrors the save's (review 4 H2, ordering part):
+  1. restored files and their directories synced;
+  2. the journal renamed `journal-<session>-<job>.resolved {outcome}`, and its directory synced.
 
-The lane stays held until death is confirmed (§4.6). Then a `recover` job of **the journal's workspace** runs (P0, exclusive, admitted at any pressure, owner answer 3):
-- **Locks first, then read** (TLA v2 L1; review 3 O5). It takes the locks over the journal's files, waiting: on Windows a lock may lag `TerminateJobObject` (design review M6), so it is waited for, never read as a live writer. Only **after acquiring them** does it read the journal directory, the journal index and the closed records; a live writer may have closed its journal meanwhile (seeded `recover_journal_early`, `RecoveryNeverClobbersForeignBytes`).
-  - ADR-0012's on-open recovery skipped when the locks were held. Here on-open and in-session recovery both wait, showing "Checking your last change…" (TLA F15).
-- **`resolve(journal, closed record, disk hashes, plan pre/post hashes)`**, a pure function:
-  - **journal open:** ADR-0012's rule. Every file pre or post → restore pre (root first, F-5): **not saved, put back**. Any other bytes → **blocked**, writes off, both versions shown (`BlockedOnlyOnForeignBytes`).
-  - **no journal, this job's closed record present:** **saved**; R4 re-armed from the record.
-  - **no journal, no record:** **not saved**; if the disk differs from the pre-image, add "your ledger was changed by another program" (TLA F4).
-- **Whose journal:**
-  - this session's → recover now;
-  - an earlier session of this installation (same ws key, older session) → recovery on open, or now if found in session;
-  - **another workspace's** journal over a file this workspace shares → `recover` runs **as that workspace's job, even when that workspace is not open**. This is the owner-approved exception to INV-31 (owner answer (b), 2026-10-27), limited to repairing that interrupted save: it reads that workspace's journal and backups, restores or confirms its files, and touches nothing else. Meanwhile this workspace shows `RECOVERING {owner_ws}`.
-  - anything else → Q30 (§5.6).
-- **A recovery that itself dies** is retried once (idempotent), then the workspace stays visibly blocked: "Your last change may or may not be saved. Reopen the workspace." (`RunningWriteEndsOrBlocks`; TLA F8). The retry is for the user, not for safety: the model shows a dropped retry cannot break a property (seed `recover_no_retry` dropped).
-- **Then the mirror:** saved → publish if not yet, else nothing; not saved → the published mirror is still the pre state.
-- **Order with lifecycle runs:** the write journal first, then the lifecycle run record (ADR-0012).
+  In-process rollback uses the same order. A recovery cut before step 2 restores again (idempotent). The `.resolved` file keeps a "not saved" outcome durable for a reloaded window (review 4 O8); the last 16 are kept.
+- **Whose journal:** this workspace's directory only.
+  - This session → recover now.
+  - An earlier session of this installation → recover at open, or now.
+  - Anything else → Q30 (§5.6).
+- **A recovery that dies** is retried once, then the workspace is visibly blocked, with Reopen (`RunningWriteEndsOrBlocks`).
+- **Then the mirror:** saved → publish if not yet published; not saved → the mirror is still the pre state.
+- **Order with lifecycle runs:** the write journal first, then the lifecycle record (ADR-0012).
 
-Before [C] there are no writes; failure-modes E1–E3 keep saying so.
+Nothing is recovered for a workspace that is not open. Its journal waits for its next open, which is safe because no file is shared and nothing runs for it. The workspace list shows "Has an unfinished change" (§4.10 step 7).
 
 ### 5.8 What is not watertight, and what it costs
 
-- **Lock-ignoring writers** are only detected (§5.6). ADR-0013's window remains where swap is unavailable.
-- **Other instances, installations and OS accounts** writing one ledger are unsupported (§5.6). The instance lock refuses a second process on the same app root only from M2 (BL-0100); before that, nothing starts a second sidecar except a developer.
-- **An unkillable process** keeps its slot, lane and locks (§4.6).
-- **A first background run** has no usual value; a runaway or stalled first run holds its slot until a person cancels it (owner decision 4). Until the job list exists (BL-0092, M2), that means quitting.
-- **Machine saturation:** with no idle CPU, a frozen engine is not judged hung until load drops. `stopped` (`SIGSTOP`) is judged even then.
-- **Long `Critical` pressure:** only recovery and Run anyway start (§7.3); ledger work waits visibly (owner answer 6).
-- **Files a plugin reads by itself** are invisible: they do not make the mirror stale or reset poison. User docs say so; **Rebuild now** in Settings forces a rebuild. Plugin code is tracked.
-- **Two loads of one ledger** may run its plugins at once; a plugin with side effects must tolerate that (user docs).
-- **Compressed memory:** handled by recording the macOS lifetime footprint (§6.1).
-- **Orphans after a sidecar crash** are invisible to the next session's slot count and admission for up to 0.25 s (POSIX); safety holds through the locks. `EnginesBounded` and `OneExclusivePerWorkspace` are per session (TLA F13).
-- **A plugin input that drifts between R4's load and the save's** can make R4 report `nondeterministic` for a deterministic ledger whose inputs changed; it never reports a false `mismatch` (`R4NoFalseMismatch`).
+- **Lock-ignoring writers** are detected, not excluded.
+- **Other instances, installations and OS accounts:** unsupported. The instance lock exists only from M2.
+- **An unkillable process** keeps its slot, lane and locks.
+- **A first background run** has no bound; before M2 only quitting stops it.
+- **On a saturated machine** a frozen engine is not judged hung until load drops (`stopped` is judged even then).
+- **Long `Critical` pressure:** only recovery and Run anyway start.
+- **Files a plugin reads itself** are invisible; **Rebuild now** exists for them.
+- **Two loads of one ledger** may run its plugins at once (user docs).
+- **Orphans** are invisible to the next session's count for up to 0.25 s.
+- **A plugin input that drifts** between R4's load and the save's gives `nondeterministic`, never a false `mismatch`.
+- **A workspace whose save was cut off and that is not reopened** keeps its journal until it is opened. Its folder stays as the crash left it, with each file whole (atomic swap): pre or post bytes, mixed only across files. Outside tools see that mixed state until then. The list marks it.
 
 ## 6. Engines [A]
 
-### 6.1 A fresh process per heavy job (owner decision 5; H1); the pool as the only reaper
+**[A] stability:** stable (§1.2); review 4 M3, M5 and O4 are folded in.
 
-- **At most one heavy job per engine,** then exit. Cheap jobs and a `plan` may come first, never after (`CleanEngineForUserCode`). Reason: Beancount imports plugins with `importlib.import_module` and restores `sys.path`, not `sys.modules` (H1).
-- **A clean engine that ran only cheap jobs** ends after `idle_ticks` (5) on-time ticks with no job, or at once when its slot is needed.
-- **Spawn flags** (review 3 F7, O10). The engine is spawned with `-s -S -B -P -X pycache_prefix=<an engine-private empty directory>` instead of `-I` (`-I` ignores `PYTHONHASHSEED`; checked), in an environment the pool builds from scratch:
-  - no inherited `FT_*` or `PYTHON*`;
-  - plus `PYTHONHASHSEED=0`.
+### 6.1 A fresh process per heavy job; the pool as the only reaper
 
-  A plugin iterating a set then gives the same order in every engine, and a `__pycache__` in the user's folder is never read or written. The packaged bootstrap (S0038) keeps its explicit path setup.
-- **The pool is the only reaper.** It never calls `Popen.wait` or `Popen.poll`; after our own `wait4`, the standard library reports `returncode == 0` for a `SIGKILL`ed child (review 2 F7, spike s2). On POSIX:
-  1. `os.waitid(P_PID, pid, WEXITED | WNOWAIT)`, leaving a readable zombie; on macOS, `proc_pid_rusage(pid, RUSAGE_INFO_V4)` for `ri_lifetime_max_phys_footprint` (counts compressed pages);
-  2. `os.wait4(pid, 0)` for the status, CPU and `ru_maxrss`;
-  3. the drain check of §4.6.
+- **At most one heavy job per engine.** Cheap jobs, a `plan` or a `confirm` may come first, never after (`CleanEngineForUserCode`). A clean engine that ran only cheap work ends after `idle_ticks` (5).
+- **Spawn:**
+  - **Flags:** `-s -S -B -P -X pycache_prefix=<the engine's bytecode directory>`. That directory is private to the engine build (`app_local_data/engine/bytecode/<build>/`, or inside the packaged install), filled once per build with the bytecode of the engine's own standard library, site-packages and code, and read-only afterwards. User plugin modules are always compiled from the hashed source; a `__pycache__` in the user's folder is never read or written. Spike N (review 4): an empty prefix cost 0.24 s per start against 0.05 s; a filled one costs nothing.
+  - **Environment:** the user's environment minus `FT_*` and `PYTHON*`, plus `PYTHONHASHSEED=0` (review 4 O4). Plugins keep `PATH`, `HOME`, `LANG` and `TZ`.
+- **The pool is the only reaper:**
+  1. `os.waitid(P_PID, pid, WEXITED | WNOWAIT)`, leaving a readable zombie. On macOS, `proc_pid_rusage(pid, RUSAGE_INFO_V4)` for the lifetime footprint.
+  2. **Drain while the leader is a zombie** (§4.6): if `killpg(pgid, 0)` succeeds, record `drain`, send `killpg(pgid, SIGKILL)`, and wait for `EPERM`.
+  3. `os.wait4(pid, 0)` for the status, CPU and `ru_maxrss`. The slot is freed at `ESRCH`. **No group signal after the reap.**
 
-  On Windows, the Job Object's accounting gives the peak job commit and the total CPU.
-- **Spare engine:** off by default on macOS and Linux (spike s5: start 0.08–0.09 s even at 2× oversubscription). Windows is decided from the BL-0087 measurement [M1b], confirmed [M11].
+  `Popen.wait`/`poll` are never used. On Windows, the Job Object's accounting.
+- **Spare engine:** off by default on macOS and Linux; Windows decided at [M1b]/[M11].
 
 ### 6.2 Start cost
 
-`python … -c "import beancount.loader, beanquery"`: 0.07–0.10 s and 34 MB warm, 0.42 s cold, on the owner's Mac; review 2 measured 0.08–0.09 s under load.
-- That is about 5 % of a 2 s load at 54k.
-- At demo size it is small in absolute terms against the 1 s target.
-- Windows is unmeasured [M1b, M11].
+With the spawn flags and a filled bytecode directory: 0.05–0.10 s and 34 MB warm, 0.42 s cold, on the owner's Mac. That is about 5 % of a 2 s load at 54k. Windows: [M1b], [M11].
 
 ### 6.3 Process groups and Job Objects
 
-- **POSIX:**
-  - Each engine leads its own process group (`process_group=0`); our end is `killpg(pgid, SIGKILL)`.
-  - The parent-death watchdog (0.25 s, spike S1) ends its whole group (`killpg(0, SIGKILL)`). No `PR_SET_PDEATHSIG`: it fires when the spawning *thread* ends.
-  - Linux engines start at `oom_score_adj` +500.
-  - A `setsid` child leaves the group (§4.6).
-- **Windows** ([C] write path, ADR-0061 d6; M11 otherwise): each engine runs in its own Job Object, nested in the shell's, with kill-on-close and no breakaway; our end is `TerminateJobObject(job, EXIT_OUR_KILL)`.
-- **A save past its commit point when the sidecar dies** (decides failure-modes E5): the engine is ended with its group on every OS; the journal makes it a crash mid-write; the next open recovers it and says which §5.7 outcome happened. No engine outlives the sidecar.
+- **POSIX:** each engine leads its own group. Our end is `killpg(pgid, SIGKILL)` (before the reap only). The watchdog (0.25 s) ends its whole group. There is no `PR_SET_PDEATHSIG`. Linux engines start at `oom_score_adj` +500.
+- **Windows** ([C] for the write path): a Job Object nested in the shell's, with kill-on-close and no breakaway; `TerminateJobObject`.
+- **A save past its commit point when the sidecar dies:** the engine ends with its group on every OS, and the next open recovers it (failure-modes E5).
 
 ### 6.4 How an engine ended
 
-The sidecar records the end reason **before** the signal. Reasons:
-- `cancel`, `preempt`, `superseded`, `replan`;
-- `hang`, `stalled`, `stalled_after_violation`, `runaway`;
-- `quit`, `idle`, `drain`.
-
-**A recorded reason wins over any exit status** (TLA F11; seeded `reason_after_kill`).
+The reason is recorded **before** the signal, and **a recorded reason wins** over any exit status. Reasons: `cancel`, `preempt`, `superseded`, `replan`, `confirm`, `switch`, `hang`, `stalled`, `stalled_after_violation`, `runaway`, `quit`, `idle`, `drain`.
 
 | Observation | Classified as | Stop? |
 |---|---|---|
-| final reply, then exit 0 (or ended with reason `drain`) | `answered` | no |
-| ended by us, reason recorded | that reason | only `hang` and `stalled_after_violation` |
-| `SIGKILL` (POSIX), no reason of ours | `killed_by_system`; on Linux corroborated by the cgroup's `memory.events` `oom_kill` | no; poison and one engine (§7.5) |
-| exit `EXIT_OUT_OF_MEMORY` after `engine.out_of_memory`; Windows `0xC0000017` | `out_of_memory` | no; poison and one engine |
-| a protocol violation before the commit point | `violation`, ended | yes |
-| a protocol violation after the commit point | read and discard, wait (§5.4 step 5); `crashed` if the exit is abnormal | as `crashed` |
-| any other exit or signal mid-job | `crashed` | yes |
-| handshake refused, or the starting engine judged hung by §8.3 (no handshake bytes, no CPU, no page-ins over `hang_ticks`). There is no handshake time limit (review 3 F11). | `start_failed` | yes |
-| another protocol version | `incompatible` | no (pool `Incompatible`) |
+| final reply, then exit 0, or ended with `drain` | `answered` | no |
+| ended by us, reason recorded | that reason | only `hang`, `stalled_after_violation` |
+| `SIGKILL`, no reason of ours | `killed_by_system` | no; poison, one engine |
+| `EXIT_OUT_OF_MEMORY`, or Windows `0xC0000017` | `out_of_memory` | no; poison, one engine |
+| protocol violation before the commit point | `violation` | yes |
+| protocol violation after the commit point | read and discard, wait (§5.4) | as `crashed` if the exit is abnormal |
+| any other exit or signal | `crashed` | yes |
+| handshake refused, or the starting engine judged hung (no handshake time limit) | `start_failed` | yes |
+| another protocol version | `incompatible` | no |
 
 ### 6.5 Out-of-memory errors inside the engine
 
-Windows fails allocations at the commit limit instead of killing (`MemoryError`, or a native `STATUS_NO_MEMORY`); on macOS and Linux this happens under a hard limit. The engine catches `MemoryError` at the job's top level, drops its references, writes a **pre-encoded** `engine.out_of_memory` reply and exits with `EXIT_OUT_OF_MEMORY`. After the commit point, the outcome is resolved (§5.7), after ADR-0012's in-process rollback if it can run.
+The engine catches `MemoryError` at the job's top level, writes a pre-encoded `engine.out_of_memory` reply and exits `EXIT_OUT_OF_MEMORY`. After the commit point the outcome is resolved (§5.7).
 
 ## 7. Admission and memory [A]
 
-### 7.1 Budget (owner decision 2)
+**[A] stability:** stable (§1.2).
 
-`budget = memory_share × total`, with `memory_share` = 0.25 (a setting).
-- `total` is physical RAM (macOS `hw.memsize`, Linux `MemTotal`, Windows `ullTotalPhys`), lowered to a container limit (cgroup v2 `memory.max`, v1 `memory.limit_in_bytes`, or a Windows job limit).
-- The budget covers engines and the sidecar's decoding of their replies.
-- No CPU formula, no startup computation (owner decision 1; design review M1).
+### 7.1 Budget
+
+`budget = memory_share (0.25) × total`:
+- `total` is physical RAM, or the container limit if lower;
+- the budget covers engines and reply decoding;
+- there is no CPU formula.
 
 ### 7.2 Estimates
 
-`E = usual_peak(W,k) × max(1, size_now / size_at) × (provisional_margin if provisional) + usual_reply(W,k) × decode_factor`.
-- `decode_factor` = 8 until BL-0082 measures it.
-- A cheap job's estimate is the measured interpreter baseline (about 34 MB).
-- An unmeasured large job runs alone. Spike S4's ratios are not used as a guess.
-- The reaped peak is the job's absolute peak, the interpreter included; a memory kill teaches the estimate.
+`E = usual_peak × max(1, size_now / size_at) × (provisional_margin if provisional) + usual_reply × decode_factor (8 until BL-0082 measures it)`.
+- An unmeasured large job runs alone.
+- A cheap job's estimate is the interpreter baseline.
 
-### 7.3 Admission rule (owner decision 2, amended by the owner's answer 6; answers 1 and 3)
+### 7.3 Admission rule (owner decision 2 as amended by answer 6; answers 1 and 3)
 
 | Pressure | Large job | Cheap job | `recover` |
 |---|---|---|---|
-| `Normal` (or `Unknown`, §7.4) | admitted if no large job runs, or all running large jobs and this one are measured or provisional and `Σ E(running) + E(this) ≤ budget`; on Windows also `E(this) ≤ ullAvailPageFile` | admitted (not while a head exists at `Warn`, §4.7) | admitted |
-| `Warn` | admitted only if **no other job of any kind runs** (owner answer 6) | as a large job | admitted |
-| `Critical` | not admitted, except the Run-anyway chain (below) | not admitted | admitted (owner answer 3: loads no ledger; refusing it would leave a half-applied save with writes blocked) |
+| `Normal` / `Unknown` | alone, or all measured or provisional and `Σ E ≤ budget` (on Windows also `E ≤ ullAvailPageFile`) | admitted (not while a head exists at `Warn`) | admitted |
+| `Warn` | only if no other job of any kind runs | as large | admitted |
+| `Critical` | only the Run-anyway chain | no | admitted |
 
-- **Alone means admitted.** A job alone is always admitted at `Normal` or `Warn`, even if `E > budget`.
-- **Running jobs are never stopped by admission** (`MemoryAdmission`; seeded `admit_under_pressure`, `admit_at_warn`).
-- **Run anyway** (owner answer 1; review 3 F10; TLA v2 M6):
-  - It is offered on a job the user started (P1, never a background job) while it waits for memory.
-  - Pressing it makes the chosen job the head (§4.7), and **applies to every job it waits for**, transitively: saves ahead of it in its lane, the R4 of the previous save, the rebuild a preview waits for. These run first, one at a time, at any pressure, each as soon as no other large job runs.
-  - The chain counts as the one Run-anyway job (at most one chain at a time).
-  - The exemption ends when the chosen job ends or is cancelled.
-  - It is a logged decision (§9.3); property `RunAnywayProgresses`.
-- **The amendment, stated:** decision 2 ("no new job while the OS reports memory pressure") is amended by the owner's answer 6 to "one job at a time at warning, nothing new at critical", plus Run anyway (answer 1) and recovery (answer 3). Cheap jobs follow the rule (review 2 F5).
+**Rules:**
+- A job alone is admitted at `Normal` or `Warn`.
+- Running jobs are never stopped by admission (`MemoryAdmission`).
+- **Run anyway** (review 3 F10; TLA v2 M6):
+  - It applies to a P1 job the user started and to **everything it waits for**: saves ahead in the lane, the previous save's R4, a preview's rebuild, a re-plan's rebuild.
+  - These run one at a time, at any pressure, as the one chain.
+  - The chain ends when the chosen job ends or is cancelled.
+  - It is logged; property `RunAnywayProgresses`.
+- The amendment to decision 2 is the owner's (answer 6).
 
-### 7.4 The pressure signal per OS (`MemoryPressurePort.level() -> Normal | Warn | Critical | Unknown`)
-
-Read at every dispatch decision and on each watcher tick while jobs run (2.15 µs for the macOS sysctl, spike s1).
+### 7.4 The pressure signal per OS
 
 | OS | Source | Warn | Critical |
 |---|---|---|---|
-| **macOS** [A] | `sysctlbyname("kern.memorystatus_vm_pressure_level")`: 1, 2, 4; the kernel's own judgement | 2 | 4 |
-| **Linux** [M11; CI from A] | the cgroup's `memory.pressure` (PSI) when limited, else `/proc/pressure/memory`; fallback `MemAvailable` or `memory.max − memory.current` | PSI `some avg10` ≥ 10 %; fallback available < 10 % | PSI `full avg10` ≥ 5 %; fallback < 5 % |
-| **Windows** [M11] | `CreateMemoryResourceNotification(LowMemoryResourceNotification)`, `GlobalMemoryStatusEx` | `dwMemoryLoad` ≥ 90 % | the notification is signalled, or `ullAvailPageFile` is below the smallest measured estimate |
+| macOS [A] | `kern.memorystatus_vm_pressure_level` | 2 | 4 |
+| Linux [M11] | PSI (cgroup, then system); fallback `MemAvailable` | `some avg10` ≥ 10 % | `full avg10` ≥ 5 % |
+| Windows [M11] | `CreateMemoryResourceNotification`, `GlobalMemoryStatusEx` | load ≥ 90 % | notification, or commit below the smallest estimate |
 
-Thresholds are settings. **Unknown** (no readable signal): admission uses the budget only, and `engine.pressure.unknown` is logged once. The cost, stated: Finzytrack can then start a job into a machine already short of memory.
+`Unknown`: budget only, logged once.
 
 ### 7.5 After a memory death
 
-After `killed_by_system` or `out_of_memory`:
-- the pool runs **one large engine at a time** (`single_engine`) until `single_engine_recover` (20) consecutive healthy large jobs have ended at `Normal`, or the next app start;
-- the usual peak becomes at least the peak at death;
-- the poison counter moves (§8.7).
+`single_engine` holds until 20 consecutive healthy large jobs end at `Normal`, or until the next start. The usual peak is raised, and the poison counter moves.
 
 ### 7.6 Containers and hosting
 
-- **Containers:** the budget is lowered to the container limit, and PSI is read from the container's cgroup.
-- **[Hosted]:**
-  - the pool and budget stay ADR-0041's single process-wide entry;
-  - jobs carry their user, and cross-user round-robin becomes fairness and quotas (deferred);
-  - measurements, generation high-water marks, lock files, the journal index and closed records live under each user's root;
-  - R4 follows ADR-0041's hosted design.
+- **Containers:** the budget and PSI come from the cgroup.
+- **[Hosted]:** the single pool stays; jobs carry their user; per-user fairness is deferred; files live under each user's root.
 
-## 8. Liveness and progress
+## 8. Liveness and progress [A]
 
-### 8.1 Protocol v2 [A]
+**[A] stability:** stable (§1.2); review 4 M1 and M4 are folded in.
 
-`PROTOCOL_VERSION` becomes 2; a v1 peer is `incompatible`. S0035's envelope rules stay. What changes:
-- **Per request:** zero or more `progress` messages, at most one `gate` (saves and creates), then **exactly one** final reply.
-  - **`progress`:** `{"v":2,"id":N,"op":op,"progress":{"seq":k,"phase":P,"cpu_ms":c,"peak_rss_bytes":m,"done":d,"total":t}}`.
-    - `phase` is one of: `starting`, `reading_files`, `parsing`, `booking`, `plugins`, `validating`, `querying`, `waiting_for_lock`, `verifying`, `building_mirror`, `publishing`, `committing`, `serializing`, `recovering`.
-    - Sent at each phase change and at least every `beat` (1 s).
-    - `done` and `total` count progress; for `reading_files`, `done` is bytes read.
-    - **`waiting_for_lock` is the only declared wait** (review 3 F12).
-  - **`gate`** is answered by `proceed`, or the engine is ended (§5.4).
-  - **Final replies** carry `usage {cpu_ms, peak_rss_bytes}`.
-- **Domain outcomes are results:** `snapshot_moved {cause}`, `orphan_journal {owner_ws, session, job}`, `superseded`, `nondeterministic`, `mismatch`, `plan_outdated`, `legacy_lock_held`, `result_too_large` (area review F7). `error` keeps protocol and internal faults and `engine.out_of_memory`.
-- **The output channel** has a lock, so no two messages interleave inside a line.
-- **The request** carries `job {id, kind, ws_key, attempt}` and no time limit. `EnginePort.call(…, timeout)` becomes `submit(job) -> JobHandle` (`status()`, `cancel()`, `outcome()`).
+### 8.1 Protocol v2
 
-### 8.2 The watcher and on-time ticks [A]
+`PROTOCOL_VERSION` = 2. Per request: zero or more `progress` messages, at most one `gate` (saves, creates), then exactly one final reply.
 
-A watcher on the scheduler thread's event queue (§9.3) ticks every `tick` (1 s) per running engine. The schedule is the previous actual wake plus `tick`.
+- **`progress`:** `{seq, phase, cpu_ms, children_cpu_ms, peak_rss_bytes, done, total}`.
+  - `children_cpu_ms` is the leader's `getrusage(RUSAGE_CHILDREN)` (review 4 M1).
+  - Phases: `starting`, `reading_files`, `parsing`, `booking`, `plugins`, `validating`, `querying`, `waiting_for_lock`, `verifying`, `building_mirror`, `publishing`, `committing`, `serializing`, `recovering`, `confirming`.
+  - `waiting_for_lock` is the only declared wait.
+  - For `reading_files`, `done` counts bytes.
+- **`gate`/`proceed`** (§5.4).
+- **Final reply:** `usage`, and a `decision` object (§9.3).
+- **Domain outcomes are results:** `snapshot_moved {cause}`, `orphan_journal {session, job}`, `superseded`, `nondeterministic`, `mismatch`, `undecided`, `plan_outdated`, `legacy_lock_refused {outcome}`, `overlap {ws}`, `result_too_large`.
+- **The output channel is locked per line.**
+- **The request** carries `job {id, kind, ws_key, attempt}` and no time limit; `EnginePort.submit(job) -> JobHandle`.
+- **Versioning:** an added optional field does not bump the version.
 
-A tick is **on time** when all of these hold:
-- it woke within `tick/2` of its schedule on `Clock.monotonic()`;
-- `Clock.monotonic_with_sleep()` advanced by no more than `tick + tick/2` (no machine sleep inside it);
-- the sidecar kept up: it is **not** on time when unread bytes wait in the pipe (`FIONREAD` > 0 on POSIX, `PeekNamedPipe` on Windows) and the reader read nothing since the last tick (review 3 F5; spike C: a blocked writer showed 65,535 bytes waiting and 0.000 s CPU for ever).
+### 8.2 The watcher and on-time ticks
 
-Clocks:
-- macOS `CLOCK_MONOTONIC`: verified, it ran 235,414 s ahead of `time.monotonic` (spike s1).
-- Linux `CLOCK_BOOTTIME`.
-- Windows `QueryInterruptTime` against `QueryUnbiasedInterruptTime` (verify, M11).
+Ticks run on the scheduler thread's queue, every `tick` (1 s); the next schedule is the previous wake plus `tick`.
 
-Late ticks count for nothing. **App Nap:** the shell holds an `NSProcessInfo` activity while jobs run. The [A] slice verifies that the sidecar's ticks stay on time with the window hidden; if not, the sidecar takes the activity itself (review 3 O14).
+**A tick is on time when:**
+- it woke within `tick/2` of its schedule (`Clock.monotonic`);
+- `Clock.monotonic_with_sleep` advanced at most `1.5 × tick`;
+- **and the sidecar kept up**: no unread bytes in the pipe (`FIONREAD` or `PeekNamedPipe`) while the reader read nothing (spike C).
 
-Each tick samples, **from outside** (`ProcessProbe`):
-- **group CPU:** a monotone accumulator over the engine's process group (review 3 F11). For each member seen in both samples, add its increase (`user + system + children_user + children_system`); for a new member, add its whole total; a member that disappeared adds nothing more. Spike D: a naive sum fell by 1.29 s when an orphaned grandchild exited. Members are listed by `proc_listpids(PROC_PGRP_ONLY)` (macOS), `/proc` (Linux), the Job Object (Windows).
-- the group's RSS and **page-ins** (macOS `pageins`, Linux `majflt`, Windows the job's page-fault count);
-- each member's process status;
-- the system's idle CPU over the tick;
-- bytes the reader read since the last tick. After a violation past the commit point, discarded bytes do not count.
+Clocks: macOS `CLOCK_MONOTONIC` (verified); Linux `CLOCK_BOOTTIME`; Windows `QueryInterruptTime` (verify). App Nap: the shell holds an activity, and [A] verifies that the sidecar's ticks stay on time with the window hidden.
 
-These feed `liveness.judge(state, sample) -> state, verdict`, a pure, logged table (§9.3).
+**Samples, taken from outside:**
+- **Group CPU, a monotone accumulator with two parts that only grow** (review 4 M1):
+  - live members, keyed by (pid, start time): the increase of their own `user + system` (clamped at 0); a new member adds its whole total;
+  - reaped descendants: the increase of the leader's `children_cpu_ms`, plus, on Linux, the increase of each non-leader member's `cutime + cstime`.
+  - A child sampled alive and later reaped is counted twice, so the measure may exceed true CPU by at most 2×; it never misses a reaped child and never falls. Spike L (review 4): outside sampling alone saw 0.31 s of 7.85 s spent in 40 ms subprocesses.
+  - Windows: the Job Object's total user and kernel time.
+- RSS and page-ins (per member: macOS `pageins`, Linux `majflt`, Windows the job's page faults);
+- process status;
+- system idle CPU;
+- bytes the reader read (discarded bytes after a violation do not count).
 
-### 8.3 Hung [A]
+These feed `liveness.judge`, a pure table that is logged.
 
-An engine is **hung** after `hang_ticks` consecutive on-time ticks in each of which:
-- no bytes arrived;
-- the group's CPU advanced less than 1 % of the tick;
-- the system had at least half a core idle;
-- the group's **page-ins did not advance**, so it is not waiting on swap-ins. This holds at every pressure level (review 3 F11; draft 2 required `Normal` pressure, so a hang was never ended on a Mac sitting at "warning").
+### 8.3 Hung
 
-A `stopped` status (SIGSTOP, a debugger) counts as a hang tick even on a busy machine. Linux `D` (uninterruptible disk wait) never counts; the job shows "waiting for a disk". The same rule judges a starting engine (no handshake limit, §6.4) and a draining leader (§4.6). The verdict is an end with reason `hang`, a stop (except while draining, where the reason is `drain`).
+Hung means `hang_ticks` consecutive on-time ticks, each with:
+- no bytes;
+- group CPU under 1 % of the tick;
+- at least half a core idle;
+- no page-ins.
 
-`hang_ticks = max(10, 3 × the usual longest quiet stretch)` (§1.1). This is a count of observations of a condition no healthy run builds up, not a time budget:
-- C code holding the GIL still uses CPU;
-- a blocking read or a sleeping plugin keeps the progress thread speaking;
-- a swap-in shows page-ins.
+A `stopped` process counts even on a busy machine; Linux `D` never counts. The same rule applies to a starting engine and to a draining leader. The verdict is the end `hang`, a stop (`drain` while draining).
 
-Review 2's spike s4: a GIL-holding regex used 0.13–1.0 s of CPU per tick and was never counted.
+`hang_ticks = max(10, 3 × usual quiet stretch)` (provisional: × `provisional_margin`). This counts observations of a condition healthy runs never show; it is not a time budget (spike s4).
 
 ### 8.4 Stalled
 
-**Stalled:** progress bytes arrive, but for `stall_ticks` consecutive on-time ticks:
-- the group CPU advanced less than 1 % of the tick;
-- `phase`, `done` and `total` did not change;
-- the phase is not `waiting_for_lock`.
+Stalled means progress bytes arrive but, for `stall_ticks` consecutive on-time ticks, group CPU stays under 1 % and `phase`, `done` and `total` do not change, in a phase other than `waiting_for_lock`. Examples: a plugin blocked on the network; a cloud placeholder that never downloads.
 
-Examples: a plugin blocked on the network; a cloud placeholder that never downloads (`reading_files` with `done` flat; message "Waiting for a ledger file to download from your cloud storage…"). `stall_ticks = max(30, 3 × the usual longest stalled stretch)`.
-- **Interactive (P0–P2):** a status, "No progress for a while", with **Cancel**; never stopped.
-- **Background (P3):** stopped (`stalled`, not a stop, counted in poison), at warning. Never an unmeasured job, never a save past its commit point (owner answer 2).
-- **After a violation past the commit point:** a stall with `phase` frozen ends the engine (`stalled_after_violation`, §5.4 step 5).
+`stall_ticks = max(30, 3 × usual stalled stretch)`.
+- **Interactive:** a status with Cancel.
+- **Background:** stopped (`stalled`, poison), never when unmeasured, never past the commit point (owner answer 2).
+- **After a violation past the commit point:** `stall_ticks` with the phase frozen, **whatever the CPU**, end the engine (`stalled_after_violation`, §5.4).
 
-### 8.5 Runaway (owner decision 4) [A]
+### 8.5 Runaway (owner decision 4)
 
-A **background** job is stopped (`runaway`, not a stop, poison, warning) when the group CPU exceeds `max(runaway_factor × B, B + runaway_floor)`:
-- `B` is the usual CPU (§1.1), size-scaled;
-- `runaway_factor` = 10;
-- `runaway_floor` = 10 s.
-
-The floor makes the factor larger than "about 10×" for jobs under about 1.1 s of CPU (review 2 O15; §13). Unmeasured and provisional jobs have no bound. Interactive jobs past the bound are flagged "much longer than usual", with Cancel.
+Background job stopped when group CPU > `max(10 × B, B + 10 s)`, where B is the usual CPU (§1.1). Unmeasured and provisional jobs: no bound. Interactive jobs past it are flagged "much longer than usual".
 
 ### 8.6 Learning
 
-After each run, `measurements.update(record, run)` (pure, logged, §9.3) applies §1.1. The file is written atomically, at most once per job. An unreadable file is treated as unmeasured.
+`measurements.update` runs after each run; the file is written atomically; an unreadable file reads as unmeasured.
 
-### 8.7 Supervision: one table per engine, one for the pool, poison per workspace [A]
+### 8.7 Supervision: per engine, pool, poison
 
-S0040's statechart is split (H6; seeded `stops_per_engine`).
+**Per engine** (`engine_process`):
+- **States:** `Spawning → Handshaking → Clean → Running(job, phase, past_commit_point) → Draining(normal | discard) → Gone`, plus `Ending(reason)`.
+- **Events:** `Spawned`, `SpawnFailed`, `HandshakeOk`, `HandshakeForeign`, `Dispatch`, `Progress`, `Gate`, `Proceed`, `Reply`, `Verdict`, `Cancel`, `End(reason)`, `OutputEnded`, `ZombieSeen`, `GroupDrained`, `Reaped`, `GroupGone`, `Violated`.
+- Past the commit point, `End` is emitted only for `hang` and `stalled_after_violation`.
+- The [C] rows are provisional until [C] (§1.2).
 
-**Per engine** (`app.platform.engine_process`):
-- **States:** `Spawning → Handshaking → Clean → Running(job, phase, past_commit_point) → Draining(normal | discard) → Gone(classification)`, plus `Ending(reason)`.
-- **Events:** `Spawned`, `SpawnFailed`, `HandshakeOk`, `HandshakeForeign`, `Dispatch`, `Progress`, `Gate`, `Proceed`, `Reply`, `Verdict(hang|stalled|runaway)`, `Cancel`, `End(reason)`, `OutputEnded`, `Reaped(status, usage)`, `GroupGone`, `Violated`.
-- `Clean` accepts cheap jobs, a `plan`, and one heavy job.
-- `Draining` holds the slot until `GroupGone`.
-- Past the commit point, `End` is emitted only for `hang` and `stalled_after_violation` (`NoKillAfterCommitPoint`). `Violated` past the commit point leads to `Draining(discard)`.
-- EP-17 tests apply; the reference is generated (`design/generated/statecharts/engine-process.md`).
+**Pool:**
+- backoff (0.5, 2, 8 s);
+- `max_crashes` (3) stops in `window` (300 s) make it `Unavailable` until a stop leaves the window, or Try again;
+- the window runs on `monotonic_with_sleep`.
 
-**Pool** (`engine_pool.table`):
-- **State:** engines by state, the stop times, `single_engine` with its healthy count, `unavailable`, `incompatible`.
-- **Events:** `EngineGone(classification, ws, fingerprint, now)`, `Request(now)`, `PressureChanged`, `RunAnyway`, `Reset`, `Close`.
-- **S0040's rules, at pool level:**
-  - backoff `delays` (0.5, 2, 8 s);
-  - `max_crashes` (3) stops within `window` (300 s) make the pool `Unavailable` (§4.9), until a stop leaves the window or the user presses Try again;
-  - window and backoff run on `monotonic_with_sleep()`.
-- `PoolNoHeavyWhileUnavailable`, `OwnKillNotAStop`.
+**One ledger cannot trip the pool:**
+- a fault counts only if it is a start failure, a cheap job's fault, or the first at that workspace's content fingerprint;
+- the last `max_crashes` fingerprints are kept;
+- a pre-fingerprint fault is keyed by the stat fingerprint.
 
-**One ledger cannot trip the pool** (TLA F5; review 3 O1, O2):
-- A fault enters the stop history only when it is a start failure, a cheap job's fault, or the first counted fault of its workspace at that content fingerprint.
-- The workspace keeps the fingerprints of its last `max_crashes` counted stops, so a ledger toggling between two bad states does not add a stop per toggle.
-- These are cleared by Try again.
-- A fault before the job knows its content fingerprint (a crash mid-read) is keyed by the stat fingerprint taken at dispatch.
-- Properties `OneLedgerCannotTripPool`, `BoundedFaultLoop`.
+Properties: `OneLedgerCannotTripPool`, `BoundedFaultLoop`, `PoolNoHeavyWhileUnavailable`, `OwnKillNotAStop`.
 
-**Poison** (in `JobQueue`):
-- A counter per (workspace, kind, fingerprint) of consecutive faulted ends: crash, hang, violation, memory death, runaway, stalled.
-- At `poison_limit` (2) that key is refused until the fingerprint changes (a plugin fix included) or Try again; a healthy end resets it.
-- Kept per kind (§13).
+**Poison:** per (workspace, kind, fingerprint); at 2, the key is refused until the fingerprint changes or Try again.
 
-**Settings** (app-level `settings.yaml`, applied at the next event, logged as an input, §9.3; outside its range: refused, `settings.refused`):
+**Settings** (app-level, logged as inputs; refused outside their range):
 
-| Setting | Default | Range | § |
-|---|---|---|---|
-| `max_engines` | 2 | 1–8 | 1 |
-| `memory_share` | 0.25 | 0.05–0.9 | 7.1 |
-| `decay` | 0.9 per run | 0.5–0.99 | 1.1 |
-| `provisional_margin` | 1.5 | 1–4 | 1.1 |
-| `runaway_factor`, `runaway_floor` | 10; 10 s | 2–100; 1–600 s | 8.5 |
-| `beat`, `tick` | 1 s, 1 s | 0.25–5 s, `beat ≤ tick` | 8.1–8.2 |
-| `hang_ticks`, `stall_ticks` floors | 10, 30 | 3–600, 10–3600 | 8.3–8.4 |
-| `quit_patience` | 10 | 3–600 | 4.8 |
-| `idle_ticks` | 5 | 1–600 | 6.1 |
-| `checkpoint_ticks` | 60 | 10–3600 | 9.3 |
-| `max_crashes`, `window`, `delays` | 3; 300 s; (0.5, 2, 8) s | 2–10; 60–3600 s; each 0–60 s | 8.7 |
-| `poison_limit` | 2 | 1–5 | 8.7 |
-| `single_engine_recover` | 20 | 1–1000 | 7.5 |
-| `snapshot_retries` | 3 | 1–10 | 5.2 |
-| `aging_passes`, `preempt_max` | 8, 2 | 1–100, 0–10 | 4.2–4.3 |
-| `cheap_margin` | 32 MB | 0–1024 MB | 1 |
-| queue bounds | §3.1; 64 per user | 1–1024 | 4.5 |
-| pressure thresholds | §7.4 | 1–99 % | 7.4 |
+| Setting | Default | Range |
+|---|---|---|
+| `max_engines` | 2 | 1–8 |
+| `memory_share` | 0.25 | 0.05–0.9 |
+| `decay` | 0.9 | 0.5–0.99 |
+| `provisional_margin` | 1.5 | 1–4 |
+| `runaway_factor`, `runaway_floor` | 10; 10 s | 2–100; 1–600 s |
+| `beat`, `tick` | 1 s, 1 s | 0.25–5 s, `beat ≤ tick` |
+| `hang_ticks`, `stall_ticks` floors | 10, 30 | 3–600, 10–3600 |
+| `quit_patience` (also the switch's) | 10 | 3–600 |
+| `idle_ticks` | 5 | 1–600 |
+| `checkpoint_ticks` | 60 | 10–3600 |
+| `max_crashes`, `window`, `delays` | 3; 300 s; (0.5, 2, 8) s | 2–10; 60–3600 s; 0–60 s |
+| `poison_limit` | 2 | 1–5 |
+| `single_engine_recover` | 20 | 1–1000 |
+| `snapshot_retries` | 3 | 1–10 |
+| `aging_passes`, `preempt_max` | 8, 2 | 1–100, 0–10 |
+| `cheap_margin` | 32 MB | 0–1024 MB |
+| queue bounds | §3.1; 64 | 1–1024 |
+| pressure thresholds | §7.4 | 1–99 % |
 
 ## 9. What the user sees, the log, and replay
 
-### 9.1 Messages [M2 UI, BL-0092; outcomes and codes from A/B/C]
-
-Every message follows EP-27. Job state comes back in API responses as a tagged union; `GET /api/w/{ws}/jobs` and `POST …/jobs/{id}:cancel` [M2]. "Usual" is §1.1's.
+### 9.1 Messages [M2 UI; outcomes and codes from A/B/C]
 
 | Situation | Message | Actions |
 |---|---|---|
-| queued | "Waiting for other ledger work to finish…" | Cancel (if cancellable) |
+| switching | "Just a moment… switching workspaces." | — |
+| switching, finishing saves | "Finishing your changes before switching… (n left)"; after `quit_patience`, **Switch anyway** with "Finzytrack will finish or undo the unfinished change the next time you open *A*. Your ledger stays safe." | Cancel (before Switch anyway), Switch anyway |
+| open refused: overlap | "This ledger uses a file that belongs to workspace *X*. A file can belong to only one workspace." | Go back, Choose another workspace |
+| set grew into another workspace's file | "This ledger now uses a file that belongs to workspace *X*. Saving is off until that changes." | Copy diagnostics |
+| workspace with an unfinished change (list) | "Has an unfinished change. Open it to finish." | Open |
+| queued | "Waiting for other ledger work to finish…" | Cancel |
 | waiting to run alone | "Waiting for other ledger work to finish, so this can run on its own…" | Cancel |
-| waiting for memory | "Waiting for memory. Your computer is low on memory. Closing other apps helps." | Cancel; **Run anyway** (jobs you started) |
+| waiting for memory | "Waiting for memory. Your computer is low on memory. Closing other apps helps." | Cancel; **Run anyway** |
 | running, per phase | "Reading your ledger files…", "Checking your ledger…", "Running your query…", "Saving…", "Updating your views…", "Checking your last change…" | Cancel where allowed |
 | `waiting_for_lock` | "Waiting for other ledger work on these files to finish…" | Cancel |
-| file downloading (stalled `reading_files`) | "Waiting for a ledger file to download from your cloud storage…" | Cancel |
-| the old app is saving (legacy lock held) | "The old Finzytrack app is saving this ledger. Quit the old Finzytrack first, then try again." | Try again |
+| downloading | "Waiting for a ledger file to download from your cloud storage…" | Cancel |
+| legacy lock refused | "The old Finzytrack app is saving. Quit the old Finzytrack first, then try again." | Try again |
 | much longer than usual | "This is taking much longer than usual for this ledger." | Cancel |
 | no progress | "No progress for a while. It may be waiting for something." | Cancel |
-| waiting for a disk / cannot be ended | "Finzytrack is waiting for a disk and cannot stop this yet. It will continue when the disk answers." | Copy diagnostics |
+| cannot be ended | "Finzytrack is waiting for a disk and cannot stop this yet. It will continue when the disk answers." | Copy diagnostics |
 | Cancel past the commit point | "Finishing your change…", then "Your change is saved." | Undo where available |
-| save cancelled before the commit point | "Your change was not saved. Your ledger is unchanged." | — |
-| plan outdated by an earlier save | "Your earlier change moved this entry. Review it again." | Review |
+| save cancelled | "Your change was not saved. Your ledger is unchanged." | — |
+| plan outdated | "Your earlier change moved this entry. Review it again." | Review |
 | busy | "Finzytrack is busy with other ledger work. Please try again in a moment." | Try again |
 | crash on a read | "The ledger engine stopped while working on this. Your ledger files are safe." | Try again, Copy diagnostics |
 | memory death | "Your computer ran out of memory while Finzytrack worked on this. Your ledger files are safe. Close other apps and try again." | Try again |
 | hang | "The ledger engine stopped responding and was restarted. Your ledger files are safe." | Try again |
-| save resolved after an engine death | "Your change was saved." / "Your change was not saved. Your ledger is unchanged." / "Your change was not saved, and your ledger was changed by another program." / "Finzytrack could not finish your change and put your files back as they were." / "A ledger file was changed by another program while Finzytrack was saving. Saving is off until you review it." | — / — / Review files / — / Review files |
-| another workspace's interrupted save covers a shared file | "A change in workspace *A* was interrupted in a file this workspace shares. Finzytrack is repairing it." | — |
-| recovery failed twice | "Your last change may or may not be saved. Reopen the workspace to check." | Reopen, Copy diagnostics |
+| save resolved after an engine death | "Your change was saved." / "…not saved. Your ledger is unchanged." / "…not saved, and your ledger was changed by another program." / "Finzytrack could not finish your change and put your files back as they were." / "A ledger file was changed by another program while Finzytrack was saving. Saving is off until you review it." | — / — / Review / — / Review |
+| recovery failed twice | "Your last change may or may not be saved. Reopen the workspace to check." | Reopen |
 | poisoned | "Finzytrack stopped trying: the ledger engine failed twice on this ledger. Your files are safe. Change the ledger or try again." | Try again, Copy diagnostics |
 | pool unavailable | failure-modes E1's message | Try again, Copy diagnostics |
 | ledger keeps changing | "Another program is changing your ledger. Finzytrack will update when it stops." | Try again |
 | R4 stopped, cancelled or failed | "Finzytrack could not double-check your last change. Saving is paused until the check runs." | Run check now |
-| R4 mismatch, or could not decide | "Finzytrack's check of your last change found a difference. Saving is paused. Your backup is here." | Show backup, Copy diagnostics |
+| R4 mismatch | "Finzytrack's check of your last change found a difference. Saving is paused. Your backup is here." | Show backup, Copy diagnostics |
+| R4 undecided | "Finzytrack could not double-check your last change. Saving is paused. Your backup is here." | Show backup, Run check now, Copy diagnostics |
 | R4 nondeterministic | "Your ledger's plugins give a different result each time they run. Finzytrack updated your views from a fresh load." | Learn more |
-| quit during a save | "Finishing your last change…"; after `quit_patience`, **Quit anyway** with "Finzytrack will finish or undo this change the next time it opens. Your ledger stays safe." | Wait, Quit anyway |
+| quit during a save | "Finishing your last change…"; then **Quit anyway** | Wait, Quit anyway |
 
-### 9.2 Log events (§6A; safe kinds only)
+### 9.2 Log events (safe kinds only)
+
+Grouped by area; every field is a safe kind (§6A).
 
 **Jobs**
-- `engine.job.ended` (info): kind, outcome, `duration_ms`, `queued_ms`, `admission_wait_ms`, `cpu_ms`, `peak_bytes`, attempt, `ws`.
-- `engine.job.cancelled` (info: reason), `engine.job.preempted` (info), `engine.job.flagged` (info).
+- `engine.job.ended` (info: kind, outcome, `duration_ms`, `queued_ms`, `admission_wait_ms`, `cpu_ms`, `peak_bytes`, attempt, `ws`);
+- `engine.job.cancelled` (info: reason), `engine.job.preempted` (info), `engine.job.flagged` (info);
 - `engine.job.runaway_stopped`, `engine.job.stalled_stopped` (warning).
 
 **Engines and the pool**
-- `engine.stopped` (warning: `crashed`, `hang`, `protocol_violation`, `stalled_after_violation`, `start_failed`).
-- `engine.drained` (debug: leftover group members ended).
-- `engine.killed_by_system`, `engine.out_of_memory` (warning).
-- `engine.pool.single_engine` (warning), `…_ended` (info).
-- `engine.unavailable` (error), `engine.unkillable` (error), `engine.workspace.poisoned` (error).
+- `engine.stopped` (warning: `crashed`, `hang`, `protocol_violation`, `stalled_after_violation`, `start_failed`);
+- `engine.drained` (debug);
+- `engine.confirm.started` (debug);
+- `engine.killed_by_system`, `engine.out_of_memory` (warning);
+- `engine.pool.single_engine` (warning) and `…_ended` (info);
+- `engine.unavailable`, `engine.unkillable`, `engine.workspace.poisoned` (error).
 
-**Admission and queues**
-- `engine.admission.waiting` (info), `engine.admission.run_anyway` (info).
-- `engine.pressure.changed` (info), `engine.pressure.unknown` (info, once).
+**Admission and queue**
+- `engine.admission.waiting` and `engine.admission.run_anyway` (info);
+- `engine.pressure.changed` (info) and `engine.pressure.unknown` (info, once);
 - `engine.queue.busy` (info, once per drain).
 
 **Locks, reads and the mirror**
-- `engine.lock.waiting` (info, once per wait: job kind, count of locks), `engine.lock.acquired` (debug: `waited_ms`), `engine.lock.relocked` (debug: set changed).
-- `engine.legacy_lock.held` (info: the save or copy refused).
-- `engine.snapshot.moved` (debug; info when retries run out).
-- `mirror.publish.refused_stale` (info), `mirror.generation.published` (info).
+- `engine.lock.waiting` (info: job kind, lock count), `engine.lock.acquired` (debug: `waited_ms`), `engine.lock.relocked` (debug);
+- `engine.legacy_lock.refused` (info: outcome);
+- `engine.snapshot.moved` (debug; info when retries run out);
+- `mirror.publish.refused_stale`, `mirror.generation.published` (info).
 
 **R4**
-- `engine.r4.passed` (debug), `engine.r4.superseded` (info: `disk_moved` | `engine_changed`), `engine.r4.mismatch` (error), `engine.r4.nondeterministic` (warning), `engine.r4.undecided` (error).
+- `engine.r4.passed` (debug);
+- `engine.r4.superseded` (info: `disk_moved` | `engine_changed`);
+- `engine.r4.mismatch` and `engine.r4.undecided` (error);
+- `engine.r4.nondeterministic` (warning).
 
-**Saves, quit, durability and settings**
-- `engine.commit.finishing` (info), `engine.commit.resolved` (warning: resolution, `owner_ws` when another workspace's), `engine.quiesce.quit_anyway` (warning).
-- `fs.durable_sync.fallback` (warning, once per volume).
+**Saves, quiesce and the switch**
+- `engine.commit.finishing` (info);
+- `engine.commit.resolved` (warning: resolution);
+- `engine.quiesce.quit_anyway` (warning);
+- `workspace.switch.started` (info: from, to), `workspace.switch.waiting` (info: what, count), `workspace.switch.anyway` (warning: ended counts), `workspace.switch.ended` (info: outcome, `duration_ms`);
+- `workspace.closed`, `workspace.opened` (info: phase);
+- `workspace.overlap_refused` (warning: other `ws`).
+
+**Durability and settings**
+- `fs.durable_sync.fallback` (warning, once per volume);
 - `settings.refused` (warning).
 
-### 9.3 Replayable decisions (requirement; owner, 2026-10-26: "Yes, add it to the scheduler spec as a requirement. Let's make sure this logging system design is documented and implemented")
+**Removed from draft 3** (cross-workspace): `engine.commit.resolved`'s `owner_ws` field and the shared-file repair notice.
 
-**Goal:** rebuild, from a user's log, every decision Finzytrack made and why, with no ledger content in the log.
+### 9.3 Replayable decisions (requirement; owner, 2026-10-26)
 
-**R1. Decisions are pure, on one thread** [A] (review 3 F13).
+**Goal:** rebuild every decision from a user's log, with no ledger content in it.
 
-The tables:
-- `next_dispatch` with admission (§4.7, §7.3);
-- the pool table and the per-engine statechart (§8.7);
-- `liveness.judge` (§8.2–8.5);
-- `measurements.update` and the estimate (§1.1, §7.2);
-- `resolve` (§5.7) [C].
+**R1. Pure tables, one thread** [A]:
+- **Sidecar tables:** `next_dispatch` (with admission), the pool table, the per-engine statechart, `liveness.judge`, `measurements.update` and the estimate, and `workspace_switch` [B].
+- Each is `(state, event) -> (state, effects)`, with no clock, random value, environment or global; clocks arrive as values.
+- They run on **one scheduler thread** from one queue. `seq` is assigned when an event is taken, and its `sched.input` line is written before the table runs.
+- Only ordered collections are used; replay is tested under three hash seeds.
+- Each table has a `table_version`.
+- **Engine-side decisions are inputs** (review 4 M7). `resolve`, the gate's branch, 2a's per-file verdicts, the verify outcome and relock count, R4's three digests and outcome, the overlap result and the legacy-lock outcome are pure functions **in the engine**. Every `gate` message and final reply carries `decision {table, inputs, output}`, with content-free inputs (hashes, counts, which check failed), and the sidecar logs it as a `sched.input` (table `engine.<name>`, with the engine module's `table_version`) before acting. The replay runs the same functions.
+- **The sidecar's own disk reads are events:** `RecordsRead {closed, mismatch, resolved}`, `FocusChecked {stat_fingerprint}`, `MarkerRead {switch marker}`, `OverlapRead {sets}`, `ForgetChecked {journal, record}`.
 
-Each is a pure `(state, event) -> (state, effects)`: no clock, random number, environment or global; clocks arrive as event values (`monotonic_ms`, `with_sleep_ms`).
+**R2. Logged lines, content-free** (S0039 redaction unchanged):
+- `sched.input`: the draft-3 fields, plus `children_cpu_ms` and the decision object's fields.
+- `sched.settings`: every §8.7 value, at start and on each change.
+- `sched.decision`: effects and `state_digest`.
+- `sched.checkpoint`: tables, measurements and settings; at start, every 1,000 inputs, and first in each rotated file.
+- **Ticks are run-length encoded.** A run is consecutive ticks of one engine with the same class and no verdict or effect. Its line (class, count, CPU at the end) is written when the run ends, and as a partial line every `checkpoint_ticks`. A tick that changes a verdict or causes an effect ends the run and is logged on its own line before its effects (review 4 M7). The classifier is part of `liveness.judge`; raw samples go to the flight recorder only.
+- A state-preserving refusal is logged as a count; a `seq` gap is reported.
 
-How they run:
-- All tables run on **one scheduler thread** that takes events from one queue. `seq` is assigned when an event is taken, and its `sched.input` line is written before the table runs.
-- No table iterates an unordered collection (every collection a decision depends on is insertion-ordered or sorted). The replay test runs under three `PYTHONHASHSEED` values.
-- Each table has a `table_version` (a hash of its module, generated at build).
+**R3. Replay test** [A]: every scenario test is a recording and replays with no divergence and no unexplained input, under three hash seeds. This includes a write-path scenario (gate refusal, 2a, recovery) [C] and a switch scenario [B]. A Hypothesis walk checks `replay(record(walk)) == walk`.
 
-**R2. Every input and output is logged, content-free** [A], through S0039's registry and default-deny redaction, unchanged.
+**R4. Flight recorder** [A]: a ring of 4,096 events or 1 MiB, dumped on error events and on `hang`, `stalled`, `runaway` and `unkillable`.
 
-- **`sched.input`** (info). Fields:
-  - `seq`, `table`, `event`, `ws`, `job`, `kind`, `class`, `attempt`, `reason`;
-  - counts;
-  - `monotonic_ms`, `with_sleep_ms`, `cpu_ms`, `pageins`, `peak_bytes`, `budget_bytes`, `estimate_bytes`, `avail_commit_bytes` (Windows);
-  - `usual_cpu_ms`, `usual_peak_bytes`, `usual_quiet_ticks`, `size_ratio`, `provisional`;
-  - `pressure`, `fingerprint` (a hex hash, `id` kind), `engine_build`, `plugin_set`, `table_version`.
+**R5. User-log replay tool** [M2, BL-0093].
 
-  Never ledger text, paths outside the app dirs, account names or amounts.
-- **`sched.settings`** (info): every §8.7 value, at session start and on each change.
-- **`sched.decision`** (info): `seq` of its input, effects as enums with ids, `state_digest` (SHA-256 of the canonical state encoding).
-- **`sched.checkpoint`** (info): full table states, measurement records and settings. Written at session start, every 1,000 inputs, and as the first line of each rotated file.
-- **Ticks are run-length encoded:** the judge depends only on each tick's class and the cumulative CPU. A run is also written every `checkpoint_ticks` (60) ticks as a partial line, so a crash loses at most that many ticks.
-- **Inputs that change no state** and emit only a refusal (busy) are logged as counts.
-- **A gap in `seq`** is reported by the replay, which resumes at the next checkpoint.
+**R6. Data-dependent reproduction** [M2+, BL-0060, BL-0093]: by a consented, anonymized copy, compared by its fingerprints when byte-identical, by structure otherwise.
 
-**R3. Replay test in CI** [A]: `scheduler_replay(log) -> divergences` feeds checkpoints and inputs to the tables of the same `table_version` and compares effects and `state_digest`.
-- Every scheduler scenario test is also a recording.
-- A Hypothesis walk asserts `replay(record(walk)) == walk`.
-- It runs under three hash seeds.
-- A table changed without its version, and a gap, must both be reported.
+**R7. Limits:** decisions are replayed given inputs as observed. Real thread and signal timing is covered by TLA+ and property tests; OS behaviour is not replayed; non-deterministic plugins are not reproduced.
 
-**R4. Flight recorder** [A]: a ring of finer, non-decision events (raw tick samples, message sizes and timings, queue snapshots, lock-wait starts and ends), the last 4,096 events or 1 MiB, registered in `state_registry`.
-- **Dumped** through the same redaction (`sched.flight`, with a `dump_id`) on an error event of §9.2, and on `engine.stopped {hang}`, `engine.job.stalled_stopped`, `engine.job.runaway_stopped` and `engine.unkillable` (review 3 F13). Cleared after a dump.
-- **Placed in [A]:** the liveness rules are new there, and their rare false positives are what it is for; it is about a hundred lines on S0039's sink.
+**Volume** (review 4 M7, measured on a sample line):
+- an input line is about 870 bytes and a decision line about 320;
+- a heavy job is about 25 lines, about 15 KB;
+- a heavy day (about 200 jobs) is about 3 MB;
+- 10 MB × 5 rotation keeps about 2 weeks. BL-0093 decides whether `sched.*` gets its own rotation.
 
-**R5. User-log replay tool** [M2, BL-0093]: `scripts/replay_scheduler_log.py` on a Report a problem bundle; the bundle includes decision lines and flight dumps by default.
-
-**R6. Data-dependent reproduction** [M2+, BL-0060, BL-0093]: a consented, anonymized copy. `fingerprint`, `engine_build` and `plugin_set` confirm a *byte-identical* copy; an anonymized copy is compared by content-free structure (counts, size buckets, §6A.4).
-
-**R7. Limits:**
-- Replay reproduces decisions given the inputs *as observed*, not real thread or signal timing (covered by TLA+ and property tests) and not what the OS did.
-- Non-deterministic plugins can make a reproduced load differ.
-- A decision taken outside the listed tables shows up as an unexplained input.
-
-**Volume:**
-- **Per job:** a heavy job is about 25 lines at about 250 bytes, about 6 KB.
-- **Per day:** a heavy day (one open, 50 saves with their R4s, 100 query batches) is about 200 jobs, about 1.2 MB, plus checkpoints.
-- **Retention:** 10 MB × 5 rotation keeps about 6 weeks.
-- **Timer-refreshed dashboards** cost nothing while `ledger_version` is unchanged (recipe memo, §3.1).
-
-**ARCHITECTURE §6A changes** (the [A] slice applies them):
-- §6A.1: a paragraph on decision lines.
-- New §6A.7 "Replayable decisions": R1–R7, events, the run-length rule, checkpoints, the recorder and its triggers, volume.
-- §6A.5: `sched.*` at info.
-- §6A.6: the replay test and a `sched.*` redaction-corpus case.
-- §6A.4 [M2]: bundling.
-- §2.5: the recorder row.
-
-ADR-0039 is amended to name the decision log as part of the logging design.
+**ARCHITECTURE §6A changes** ([A] slice): §6A.1, a new §6A.7 (R1–R7, events, run rule, checkpoints, recorder, volume), §6A.5, §6A.6, §6A.4 [M2], §2.5. ADR-0039 is amended.
 
 ## 10. Cross-platform behaviour (ADR-0061)
 
 | Concern | macOS (first) | Linux | Windows |
 |---|---|---|---|
-| Our end of an engine | `killpg(SIGKILL)` | same | `TerminateJobObject` |
-| End with the sidecar | watchdog, then `killpg(0)` | same | Job Object kill-on-close |
-| Confirmed gone | reaped and `killpg(pgid, 0)` = `ESRCH` (`EPERM` = members remain) | same | job active count 0 |
-| Durable sync | `F_FULLFSYNC` (≈5 ms, spike H) | `fsync` | `FlushFileBuffers`, `MOVEFILE_WRITE_THROUGH` |
-| Canonical path | `F_GETPATH` (+ absent-path rule) | `realpath` (+ case-folding dirs) | `GetFinalPathNameByHandleW` |
-| OS memory response | jetsam `SIGKILL` (compression and swap first in most cases) | OOM killer; `oom_score_adj` +500 | allocation fails |
-| Pressure | memorystatus sysctl | PSI / `MemAvailable` | low-memory notification, commit |
-| Per-job peak and CPU | `waitid(WNOWAIT)` + footprint, `wait4` | `wait4` (kB) | job accounting |
-| Group CPU, page-ins | `proc_listpids(PROC_PGRP_ONLY)` + psutil, `pageins` | `/proc`, `majflt` | Job Object |
+| Our end of an engine | group signal `SIGKILL`, only before the reap | same | `TerminateJobObject` |
+| End with the sidecar | watchdog, then a group signal to its own group | same | Job Object kill-on-close |
+| Confirmed gone | reaped, and the group probe gives `ESRCH` (`EPERM` = only zombies or foreign members) | same | job active count 0 |
+| Durable sync | `F_FULLFSYNC` (about 4.5 ms; spike I) | `fsync` | `FlushFileBuffers`, `MOVEFILE_WRITE_THROUGH` |
+| Canonical path and path key | `F_GETPATH` via `O_EVTONLY`; NFD plus casefold per volume | `realpath`; folding directories and mounts | `GetFinalPathNameByHandleW`; ordinal folding |
+| OS memory response | jetsam `SIGKILL`, after compression and swap in most cases | OOM killer; `oom_score_adj` +500 | allocation fails |
+| Pressure | memorystatus sysctl | PSI, or `MemAvailable` | low-memory notification, commit |
+| Per-job peak and CPU | `waitid(WNOWAIT)` and footprint, then `wait4` | `wait4` (kB) | job accounting |
+| Group CPU | live members (psutil, `proc_listpids`) plus the leader's `RUSAGE_CHILDREN` | live members plus `cutime/cstime` | Job Object total |
+| Page-ins | `pageins` | `majflt` | job page faults |
 | Sidecar behind on the pipe | `FIONREAD` (verified) | `FIONREAD` | `PeekNamedPipe` |
 | Sleep-counting clock | `CLOCK_MONOTONIC` (verified) | `CLOCK_BOOTTIME` | `QueryInterruptTime` (verify) |
 | Ticks delayed by the OS | App Nap; the shell (or the sidecar) holds an activity | — | — |
-| Lock released after our end | at group end | same | may lag `TerminateJobObject` (verify): waited for |
-| Legacy-lock detection | portalocker 3.2.0 `flock` | same | portalocker 3.2.0 `msvcrt.locking`, first 64 KiB (single-instance ADR) |
-| Start cost | 0.07–0.10 s, 34 MB | expected similar | BL-0087 [M1b], M11 |
-| Background OS priority | `nice +10` only for P3 jobs nothing can wait on (prefetch, P3 `snapshot`, vector runs); R4 and background writers at normal priority. `PRIO_DARWIN_BG` is settable and clearable (spike s5); whether clearing restores full speed is measured in [A] before use. | `nice +10`, same jobs | `BELOW_NORMAL_PRIORITY_CLASS`, same jobs |
+| Bytecode | an engine-private prefix, filled once per build | same | same |
+| Lock released after our end | at the end of the group | same | may lag; waited for |
+| Legacy-lock try | portalocker 3.2.0 `flock` | same | portalocker 3.2.0 `msvcrt.locking`, first 64 KiB |
+| Start cost | 0.05–0.10 s, 34 MB | expected similar | BL-0087 [M1b], [M11] |
+| Background OS priority | `nice +10` only for P3 jobs nothing can wait on; R4 and background writers at normal priority | same | `BELOW_NORMAL_PRIORITY_CLASS`, same jobs |
 
-The write-path parts (§5.4, §5.5, §5.7, the Job Object, `durable_sync`, `canonical_path`, the lock lag) are designed against Windows now and tested on the Windows runner from M1b (ADR-0061 d6, BL-0087). The lock lag is tested with a fake lock port reporting "held" for N attempts, plus one real smoke run. The rest is ported in M11; Linux T1 runs the pure tables and the Linux adapters from [A].
+The write-path parts are designed for Windows now and tested from M1b (BL-0087): `durable_sync`, `path_key`, the Job Object, and the lock lag (via a fake port).
 
-## 11. The TLA+ models for draft 3
+## 11. The TLA+ models for draft 4
 
-### 11.1 What the models are
+### 11.1 The models and the deltas to apply
 
-Two modules, both derived from the second TLA+ check (review:m1a/scheduler-design/tla/v2):
-- **`EngineScheduler.tla`**: the main model, `EngineScheduler2.tla` of tla/v2 with every `FIX_*` of v2 made the only behaviour, the policy cuts of §11.8, and the draft-3 deltas below.
-- **`Admission.tla`**: `next_dispatch` over abstract job sizes and classes, as in tla/v2.
+The models are:
+- `formal/tla/EngineScheduler.tla`, which is tla/v3's `EngineScheduler.tla` with the deltas below;
+- `formal/tla/Admission.tla`, as in v2/v3, plus delta D10.
 
-Draft 3 and the models agree. §11.6 lists the abstractions and why none bears on safety or liveness.
-
-**Draft-3 deltas to apply to `EngineScheduler2.tla`** (the slice, or the agent preparing the long run, applies them before running):
-1. **R4's confirm** follows §5.5 (parse-only): `mismatch` iff the loaders differ at the parse stage (`LOADER_DIFF`); `nondeterministic` if both equal each other and the record; "restart once, then block as undecided" if both equal each other but not the record.
-   - This replaces v2's `FIX_R4_CONFIRM_PASS` branch, which reached `pass` when a drifting plugin input had returned; draft 3 calls that `nondeterministic`.
-   - Both are non-blocking and clear the record, so the safety and liveness properties are unaffected; `R4OutcomeDefined` and `R4NoFalseMismatch` stay.
-2. **The legacy lock** becomes a guarded refusal: a nondeterministic environment flag `LegacyHeld(w)` that, when set, makes a save's or create's first step end `legacy_lock_held` with the disk unchanged. There is no legacy actor (§11.8).
-3. **The R4 gate** is re-read from disk before every wait (`FIX_R4_REFRESH` as the only behaviour).
-4. **Draft 1's 15 seeded bugs** are ported into `EngineScheduler.tla` where v2 lacks them (§11.5), so one module holds every seed. The draft-1 "Fixed" module (`tla/spec/EngineScheduler.tla`) is retired: its second-instance and legacy actors are cut by the policy, and its R4 and lane rules are superseded.
+**Draft 4 and the models agree** once these deltas are applied (the slice, or the agent preparing the long run, applies them):
+- **D1. One open workspace and the switch** (§4.10).
+  - Two workspaces with **disjoint** files: ws1 = {2, 3} plus a glob that may match file 1; ws2 = {4}.
+  - An `open` variable (one workspace, or none during a switch) and the switch actions:
+    - `SwitchRequest(w)`, `SwitchDrain` (ends reads, rebuilds and R4s of the old workspace; lets its queued saves and their R4s run);
+    - `SwitchAnyway` (ends saves past their commit point and recovers, reason `switch`);
+    - `SwitchClose` (enabled when no engine of the old workspace remains);
+    - `SwitchOpen` (overlap check, on-open recovery, R4 from the record, WARMING).
+  - The switch marker is a persisted variable, and `Restart` resumes from it.
+  - Dispatch requires `job.w = open`.
+  - Properties: `AtMostOneOpenWorkspace`, `NoJobOfClosedWorkspace`, `SwitchEnds` (liveness).
+  - Seeds: `switch_open_before_close`, `switch_close_while_saving`, `switch_skips_recovery`, `switch_accepts_new_jobs`.
+- **D2. No journal index.** v3's index semantics and `ForeignRecovering` are removed; the journal check is `JOpen(w)` over the workspace's own journals. The **overlap** config gives ws2 = {2, 4}; `SwitchOpen` must refuse it (`OpenFailed`). Seed `overlap_allowed` (the open admits it) must fail `PublishedIsCommittedState` or `VerifiedReadsAreSnapshots` with a crash past the commit point in ws1. It replaces v2/v3's `journal_check_per_ws`. Property `NoFileInTwoWorkspaces`.
+- **D3. Rebuild FIFO and the re-plan's rebuild** (review 4 delta 6, single workspace).
+  - `cq` holds rebuilds, and R4 tokens placed right after their save.
+  - A re-plan with a stale mirror enqueues a rebuild directly ahead of the save and waits for its publish; a failed rebuild ends the save.
+  - Property `ReplanProgresses`; seed `replan_ahead_of_rebuild` (`DEADLOCK` or `TEMPORAL`).
+  - "Ours" requires a record newer than the plan's base (review 4 O3).
+- **D4. Stall after a violation regardless of CPU** (delta 8): `Kill(stallv)` stays enabled after `Violate` past the commit point. Seed `stall_needs_low_cpu` (stall only when an environment flag `cpuIdle` holds) must fail `RunningWriteEndsOrBlocks` (`TEMPORAL`).
+- **D5. Confirm in a fresh engine; re-queued R4; undecided** (delta 9; review 4 M2).
+  - The confirm takes the R4 job's slot in a new, clean process record.
+  - A `FINGERPRINT_GAP` environment flag makes the "equal but not the record" branch reachable: a re-queued R4, then `undecided` → `.mismatch`, with blocking.
+  - An `Acknowledge` user action clears it.
+  - Seed `confirm_in_used_engine` must fail `CleanEngineForUserCode`.
+- **D6. Path keys.** One key per file whether present or not. Seed `created_file_alias` (file 1's key before `CreateFile` differs from after) must fail `R4NeverSupersededByItsOwnSave` or `OwnCommitsNeverExternal`. Seed `lock_key_alias` keeps target `NoTwoWritersMidCommit` in an orphan config.
+- **D7. The legacy lock** (review 4 H3).
+  - One `LegacyHolder` flag per lock file, with `OldAppHold`/`OldAppRelease` environment actions on Copy sources only; `OldAppSave` writes a Copy source while it holds the lock.
+  - A save or create tries each distinct lock file once.
+  - Properties: `NoFalseLegacyRefusal` (a refusal only when an outside holder exists, or an error flag is set) and `CopyIsSnapshotOfSource` (a completed Copy equals a source state).
+  - Seeds: `legacy_tried_twice` (the same file twice in one engine) must fail `NoFalseLegacyRefusal`; `copy_no_recheck` must fail `CopyIsSnapshotOfSource`.
+- **D8. Recovery's durable order.** `.resolved` is a journal state: recovery restores, then renames to `.resolved`, and a crash between the two re-runs the recovery. With no power loss in the model, the order matters only for crashes, which the model checks. Power loss is §11.7's.
+- **D9. `B_verify_no_locks` reachable.** v3 notes it cannot fail under ADR-0062 (its counterexample needed the legacy two-file write). Draft 4 adds an environment with an orphaned engine of a crashed session mid-commit over two files, beside a verify of the new session. If TLC still cannot violate it, the seed is dropped, and the spec states that the verify's locks are needed only against orphans, so its lane rule 2 makes the locks belt-and-braces in one session.
+- **D10. `Admission.tla`** loses multi-workspace fairness: one queue per user. `A_M_warn_no_cheap` (v3: cannot fail) is dropped; the Warn rule for cheap jobs is a pure-table test.
+- **D11. Kept as in v3:** the parse-only confirm outcomes, R4Refresh, the `.mismatch` refusal through the dispatch block (equivalent to the gate's refusal for every property), `single_engine` lasting the session (it only restricts concurrency), the draft-1 seeds, and the policy cuts of ADR-0062.
 
 ### 11.2 Scope
 
 | | In the model |
 |---|---|
-| **Actors** | one sidecar (the single instance), with crash, restart, quiesce and Quit anyway; up to 3 engine process records over 2 slots, a fresh process per heavy job; orphaned engines of a crashed session and their watchdog; the user (cancel a save, cancel R4, Run check now, Run anyway, Quit anyway); a lock-ignoring editor; a sync client creating a file that a glob then matches; a drifting plugin input (`PluginDrift`); OS memory pressure `Normal`/`Warn`/`Critical`; a cache purge; the legacy lock as a held-or-free flag (refusal only) |
-| **World** | files 1–3 as version tags (`ABS` = absent); lock keys 1–4 (4 = a seeded alias); workspace 1 = {2, 3} plus a glob that may match file 1; workspace 2 = {1, 2}, so file 2 is shared; one commit writes all its targets |
-| **Jobs** | `commit`, `create`, `rebuild`, `query`, `preview`, `r4`, `recover` |
-| **Mechanisms** | per-file lock keys and canonical order; the non-blocking relock with a restart bound; the app-wide journal index (checked by verify, gate, publish, R4 and recovery); verified snapshot reads; conditional publish with the id allocated at publish and the high-water mark outside the cache; the gate's checks (disk, mirror, journal index, closed and `.mismatch` records, legacy refusal); the commit point agreed by both sides; journal close into the closed record; R4 split (check, lock-free load, digest, check, parse-only confirm) with the R4 exemption and refresh; reads beside a rebuild; previews after earlier saves; `create` in `COLD`; re-plan by end-and-requeue with per-file "own" judged from durable records of all workspaces; a violation past the commit point (read and discard, stall end); draining with `drain` ends; recovery retried once, reading journals only after its locks, including another workspace's journal; quiesce and Quit anyway; pressure levels with the Run-anyway chain; poison per kind; pool stops capped per (workspace, fingerprint); `single_engine` |
-| **Admission.tla** | the deterministic `next_dispatch` over sizes {small 1, large 2, unmeasured alone}, a budget of 2, 2 slots, classes P0–P3, refreshing query streams: the reservation, higher-class passing counted for aging, no cheap job at `Warn` while a head exists, Run anyway as the head |
-| **Abstracted** | bytes as version tags; hang, stall and runaway as budgeted nondeterministic ends at any step (`Kill(hang)`, `Kill(stallv)`); priorities and aging only in `Admission.tla` (the main model uses strong fairness per job kind); memory arithmetic only in `Admission.tla` (main model: pressure flag and single-engine); no power loss (S5's domain; its durability assumption is `durable_sync`'s contract, §5.4); no cheap jobs or spare engine; no `plan` separate from its preview; canonical-path computation abstracted to "one key per file", with the seeded alias as the counter-case |
+| **Actors** | one sidecar (crash, restart from the switch marker, quiesce, Quit anyway); up to 3 engine records over 2 slots; orphaned engines and their watchdog; the user (cancel save, cancel R4, Run check now, Run anyway, Quit anyway, `SwitchRequest`, `SwitchAnyway`, switch `Cancel`, `Acknowledge`); a lock-ignoring editor; a sync client creating a file a glob matches; `PluginDrift`; `FINGERPRINT_GAP`; pressure N/W/C; cache purge; the old app as a lock holder that may write Copy sources |
+| **World** | files 1–4 as version tags (`ABS` = absent); ws1 = {2, 3} plus glob {1}; ws2 = {4} (overlap config: {2, 4}); lock keys 1–5 (5 = seeded alias); Copy source files S1, S2 (D7 configs only) |
+| **Jobs** | `commit`, `create` (with Copy), `rebuild`, `query`, `preview`, `r4` (and its confirm), `recover` |
+| **Mechanisms** | one open workspace and the switch; overlap refusal at open; per-file path-key locks in order; non-blocking relock; per-workspace journal check; verified reads; conditional publish; ids at publish; high-water mark outside the cache; the gate's checks; the agreed commit point; the closed record; journal states `.open`, `.closed`, `.done`, `.mismatch`, `.resolved`; R4 split, exempt and refreshed; fresh-engine confirm; undecided; reads beside a rebuild; previews after saves; `create` in COLD; re-plan by end-and-requeue behind its rebuild; violation read-and-discard; stall end regardless of CPU; drain; recovery retried once, locks first; quiesce; the Run-anyway chain; poison per kind; pool stops capped per (ws, fp); the legacy try once per lock file, with the Copy re-check |
+| **Admission.tla** | `next_dispatch` over sizes and classes: reservation, higher-class passing, aging, Run anyway as head |
+| **Abstracted** | bytes as tags; one commit writes all its targets; hang/stall/runaway as budgeted nondeterministic ends; priorities and memory arithmetic only in `Admission.tla`; no power loss; no cheap jobs, spare engine or separate `plan`; path keys as one key per file; R4's queue position only as "after its save" (the gate, not the position, enforces `R4BeforeNextCommit`; the exemption enforces its progress) |
 
-### 11.3 Safety properties (invariants, plus TLC's deadlock check in every safety config)
+### 11.3 Safety properties (invariants, plus TLC's deadlock check)
 
-**Lanes, engines and admission**
-- `OneExclusivePerWorkspace` (per session); `RunningUntilAnsweredOrDead`; `EnginesBounded` (per session).
-- `MemoryAdmission`; `PoolNoHeavyWhileUnavailable`; `OneLedgerCannotTripPool`; `OwnKillNotAStop`; `AnsweredJobNotAStop`.
+**Workspaces:** `AtMostOneOpenWorkspace`, `NoJobOfClosedWorkspace`, `NoFileInTwoWorkspaces`.
 
-**The mirror and reads**
-- `PublishOnlyCurrent`; `GenerationsMonotonic`; `PublishedIsCommittedState` (per workspace, with a shared file); `PublishedNotOlder`; `VerifiedReadsAreSnapshots`.
+**Lanes and resources:** `OneExclusivePerWorkspace`, `RunningUntilAnsweredOrDead`, `EnginesBounded`, `MemoryAdmission`, `PoolNoHeavyWhileUnavailable`, `OneLedgerCannotTripPool`, `OwnKillNotAStop`, `AnsweredJobNotAStop`.
 
-**Saves**
-- `GateOnCurrentMirror`; `NoCommitWithoutBaseline`; `PreviewAfterEarlierSaves`; `OwnCommitsNeverExternal`.
-- `NoKillAfterCommitPoint`; `CancelBeforeCommitLeavesDiskUnchanged`; `NoWriteAfterUnresolvedDeath`; `NoTwoWritersMidCommit` (two workspaces sharing a file, and orphans of a crashed session).
-- `CleanEngineForUserCode`; `OnlySavesLockAcrossUserCode` (v2's `NoBackgroundLockAcrossUserCode`, renamed).
+**The mirror and reads:** `PublishOnlyCurrent`, `GenerationsMonotonic`, `PublishedIsCommittedState`, `PublishedNotOlder`, `VerifiedReadsAreSnapshots`.
 
-**R4**
-- `R4BeforeNextCommit`; `R4NeverBehindItsGatedWrite`; `R4NoFalseMismatch`; `R4OutcomeDefined`.
+**Saves:** `GateOnCurrentMirror`, `NoCommitWithoutBaseline`, `PreviewAfterEarlierSaves`, `OwnCommitsNeverExternal`, `NoKillAfterCommitPoint`, `CancelBeforeCommitLeavesDiskUnchanged`, `NoWriteAfterUnresolvedDeath`, `NoTwoWritersMidCommit` (orphans), `CleanEngineForUserCode`, `OnlySavesLockAcrossUserCode`.
 
-**Outcomes and recovery**
-- `OutcomeTruthful`; `AckedCommitNeverRolledBack` (given `durable_sync`); `RecoveryNeverClobbersForeignBytes`; `BlockedOnlyOnForeignBytes`.
+**R4:** `R4BeforeNextCommit`, `R4NeverBehindItsGatedWrite`, `R4NoFalseMismatch`, `R4OutcomeDefined`, `R4NeverSupersededByItsOwnSave`.
 
-**In `Admission.tla`:** `NoClassInversion`.
+**Outcomes and recovery:** `OutcomeTruthful` (across switches and restarts), `AckedCommitNeverRolledBack`, `RecoveryNeverClobbersForeignBytes`, `BlockedOnlyOnForeignBytes`, `NoSpuriousBlock` (review 4 H5, single-workspace part: `blk` only after a mismatch or undecided R4, an R4 that cannot run, a recovery that died twice, or foreign bytes).
+
+**Legacy:** `NoFalseLegacyRefusal`, `CopyIsSnapshotOfSource`.
+
+**`Admission.tla`:** `NoClassInversion`.
 
 ### 11.4 Liveness properties
 
-The main model uses `LeanFairSpec` and its variants (`NormalFairSpec`, `QuitFairSpec`): weak fairness per process, strong fairness per job kind, and fairness of the environment's progress.
-- `QueuedWriteLeavesQueue`; `RunningWriteEndsOrBlocks`; `QueriesEnd`; `PreviewsEnd`.
-- `RecoveryResolves`; `MirrorEventuallyCurrent`; `R4EventuallyRuns`.
-- `QuiesceTerminates`; `SlotEventuallyFreed`; `RunAnywayProgresses`.
+`QueuedWriteLeavesQueue`, `RunningWriteEndsOrBlocks`, `QueriesEnd`, `PreviewsEnd`, `RecoveryResolves`, `MirrorEventuallyCurrent`, `R4EventuallyRuns`, `QuiesceTerminates`, `SlotEventuallyFreed`, `RunAnywayProgresses`, `ReplanProgresses`, `SwitchEnds`, `EveryWaitHasAnExit` (approximated: deadlock check plus this set; also a pure-table test). In `Admission.tla`: `NoStarvationUnderAdmission`.
 
-In `Admission.tla`: `NoStarvationUnderAdmission`.
+### 11.5 Seeded bugs (each must fail its target)
 
-### 11.5 Seeded bugs (each must fail its target; configs `B_*` and `A_*`)
-
-**From the second check** (`EngineScheduler2.tla`):
+**Carried from v3:**
 
 | Seed | Must fail |
 |---|---|
-| `r4_behind_queued_write` | `R4NeverBehindItsGatedWrite` (and `TEMPORAL` in its liveness config) |
+| `r4_behind_queued_write` | `R4NeverBehindItsGatedWrite` / TEMPORAL |
 | `r4_load_locked` | `OnlySavesLockAcrossUserCode` |
 | `r4_no_recheck` | `R4NoFalseMismatch` |
-| `journal_check_per_ws` | `PublishedIsCommittedState` |
-| `relock_out_of_order` | deadlock |
-| `lock_unsorted` | deadlock |
-| `stop_reading_after_violation` | deadlock |
+| `relock_out_of_order`, `lock_unsorted` | DEADLOCK |
+| `stop_reading_after_violation` | DEADLOCK |
 | `kill_on_violation_past` | `NoKillAfterCommitPoint` |
 | `preview_before_saves` | `PreviewAfterEarlierSaves` |
 | `admit_at_warn` | `MemoryAdmission` |
@@ -1108,297 +1139,320 @@ In `Admission.tla`: `NoStarvationUnderAdmission`.
 | `no_replan` | `OwnCommitsNeverExternal` |
 | `quitanyway_says_saved` | `OutcomeTruthful` |
 | `recover_journal_early` | `RecoveryNeverClobbersForeignBytes` |
-| `lock_key_alias` | `NoTwoWritersMidCommit` (its corrected environment re-run is pending) |
-| `pass_head` (`Admission.tla`) | `TEMPORAL` |
-| `s6_noreserve` (`Admission.tla`) | `TEMPORAL` |
+| `lock_key_alias` | `NoTwoWritersMidCommit`, orphan config |
+| `pass_head`, `s6_noreserve` | TEMPORAL (`Admission.tla`) |
+| draft 1's `lane_on_kill_sent` | `RunningUntilAnsweredOrDead` |
+| draft 1's `unconditional_publish` | `PublishOnlyCurrent` |
+| draft 1's `id_at_dispatch` | `GenerationsMonotonic` |
+| draft 1's `one_sided_gate` | `CancelBeforeCommitLeavesDiskUnchanged` |
+| draft 1's `stops_per_engine` | `PoolNoHeavyWhileUnavailable` |
+| draft 1's `verify_no_locks` | `VerifiedReadsAreSnapshots` (D9 environment, or dropped) |
+| draft 1's `gate_no_mirror` | `GateOnCurrentMirror` |
+| draft 1's `r4_not_persisted` | `R4BeforeNextCommit` |
+| draft 1's `hw_in_cache` | `GenerationsMonotonic` |
+| draft 1's `cancel_after_point` | `NoKillAfterCommitPoint` |
+| draft 1's `lane_on_requester_left` | `OneExclusivePerWorkspace` |
+| draft 1's `verify_no_journal_check` | `VerifiedReadsAreSnapshots` |
+| draft 1's `dispatch_while_unresolved` | `NoWriteAfterUnresolvedDeath` |
+| draft 1's `reason_after_kill` | `OwnKillNotAStop` |
+| draft 1's `admit_under_pressure` | `MemoryAdmission` |
 
-**Ported from draft 1:**
+**New in draft 4:**
 
 | Seed | Must fail |
 |---|---|
-| `lane_on_kill_sent` | `RunningUntilAnsweredOrDead` |
-| `unconditional_publish` | `PublishOnlyCurrent` |
-| `id_at_dispatch` | `GenerationsMonotonic` |
-| `one_sided_gate` | `CancelBeforeCommitLeavesDiskUnchanged` |
-| `stops_per_engine` | `PoolNoHeavyWhileUnavailable` |
-| `verify_no_locks` | `VerifiedReadsAreSnapshots` |
-| `gate_no_mirror` | `GateOnCurrentMirror` |
-| `r4_not_persisted` | `R4BeforeNextCommit` |
-| `hw_in_cache` | `GenerationsMonotonic` |
-| `cancel_after_point` | `NoKillAfterCommitPoint` |
-| `lane_on_requester_left` | `OneExclusivePerWorkspace` |
-| `verify_no_journal_check` | `VerifiedReadsAreSnapshots` |
-| `dispatch_while_unresolved` | `NoWriteAfterUnresolvedDeath` |
-| `reason_after_kill` | `OwnKillNotAStop` |
-| `admit_under_pressure` | `MemoryAdmission` |
+| `overlap_allowed` | `PublishedIsCommittedState` / `VerifiedReadsAreSnapshots` |
+| `replan_ahead_of_rebuild` | DEADLOCK / TEMPORAL |
+| `stall_needs_low_cpu` | TEMPORAL |
+| `confirm_in_used_engine` | `CleanEngineForUserCode` |
+| `created_file_alias` | `R4NeverSupersededByItsOwnSave` |
+| `legacy_tried_twice` | `NoFalseLegacyRefusal` |
+| `copy_no_recheck` | `CopyIsSnapshotOfSource` |
+| `switch_open_before_close` | `AtMostOneOpenWorkspace` |
+| `switch_close_while_saving` | `NoJobOfClosedWorkspace` or `NoTwoWritersMidCommit` |
+| `switch_skips_recovery` | `NoWriteAfterUnresolvedDeath` or `PublishedIsCommittedState` |
+| `switch_accepts_new_jobs` | `NoJobOfClosedWorkspace` |
 
-**Dropped as unable to fail** (by the second check): `query_during_recovery` (rule 6 avoids waste, it is not needed for safety) and `recover_no_retry` (the retry is for the user, not for safety).
+**Dropped:**
+- `journal_check_per_ws`, replaced by `overlap_allowed`;
+- review 4's `index_after_journal`, `index_never_cleared` and `xws_block_forever` (moot: no index, no cross-workspace wait);
+- `query_during_recovery`, `recover_no_retry` and `A_M_warn_no_cheap` (they cannot fail);
+- `twows*` configs, replaced by `F_switch` and `F_overlap`.
 
-**Leave-one-out configs** (`M_*`) remove each fix in turn and must fail as listed in `configs.txt`.
+The leave-one-out `M_*` configs remove each fix in turn.
 
 ### 11.6 Abstractions, and why none bears on safety or liveness
 
-- **Priorities, aging and memory arithmetic are in `Admission.tla` only.** The main model replaces them by strong fairness per kind, which is exactly what `NoStarvationUnderAdmission` and the aging bound (pure-table test) establish. Safety in the main model holds for every dispatch order, and admission is checked separately as a deterministic function.
-- **One commit writes all its targets:** the per-file write order, backups and fsync order are S5's model (`WriteProtocol.tla`), which composes underneath.
-- **Hang, stall and runaway are nondeterministic budgeted ends at any step:** safety must hold whenever they fire (it does), and when they do not fire is the judge's tested behaviour, not the protocol's.
-- **Canonical paths as "one key per file":** the computation is the `FileSystem` port's corpus test, and the seeded alias shows what breaks without it.
-- **No power loss:** S5 checks it under the durability assumption that `durable_sync` now makes true on macOS.
+- **Priorities and memory arithmetic** live only in `Admission.tla`, which checks them deterministically. The main model's safety holds for every dispatch order, and its strong fairness per kind is what `NoStarvationUnderAdmission` establishes.
+- **One commit writes all its targets.** The per-file order is S5's.
+- **Hang, stall and runaway** are nondeterministic ends that may fire at any step. Safety must hold whenever they fire, and when they fire is the judge's tested behaviour.
+- **Path keys** are "one key per file" in the model; the computation is the corpus test, and the seeded aliases show what breaks without it.
+- **R4's queue position** is "after its save". The gate enforces `R4BeforeNextCommit`, and the exemption enforces `R4EventuallyRuns`. Its exact position among P3 jobs is a pure-table test.
+- **`.mismatch` refusal through the dispatch block** is equivalent to the gate's refusal for every property.
+- **No power loss** in this model (below).
 
 ### 11.7 What the models cannot show, and where it is covered
 
 | Not shown | Covered by |
 |---|---|
-| aging's bound in the main model | pure-table test (§4.2's bound) |
-| merging, preemption limits, cheap jobs, the spare engine, `plan` before `preview` | pure-table tests |
-| the liveness judge's numbers (page-ins, group CPU, ticks) | `liveness.judge` tests with recorded samples; spike s4, C, D workloads |
-| replay (§9.3) | the replay test |
-| Beancount semantics; the parse-stage claim of §5.5 (a loader difference shows in `_parse_recursive`) | the corpus and ADR-0010's equivalence suite |
-| power loss and fsync order | S5, plus `durable_sync`'s adapter test |
-| how a canonical path is computed | the `FileSystem` corpus test |
-| globs, absent paths, documents roots, same-size saves in one mtime tick | snapshot tests (§12 [B]) |
-| the Windows lock lag | fake lock port |
-| unkillable processes (assumed to end) | stated cost (§4.6) |
-| larger worlds (1–2 saves, 1–2 queries, 1–2 faults) | `XL` configs, weekly |
-| unsupported setups (second instance, other installations, a running legacy app writing) | removed by policy (§11.8) |
+| power loss across the journal, backups, replaces, the closed record, the `.resolved` rename and the high-water mark. S5 predates the closed record and `.resolved`, so this draft does not claim S5 covers them. | §12 [C] fault injection and simulated power loss at every durable step; S5 extended with the closed record and `.resolved` in [C] (BL-0091) |
+| aging's bound; merging; preemption limits; cheap jobs; spare engine; `plan` | pure-table tests |
+| the liveness judge's numbers; the accumulator's 2× bound | `liveness.judge` tests (spikes s4, C, D, L) |
+| the drain's order relative to the reap; no group signal after the reap | §12 [A] fake process port |
+| replay | the replay test |
+| Beancount semantics; the parse-stage claim | the corpus; ADR-0010's suite |
+| `path_key` computation | the corpus test per OS |
+| globs, documents roots, same-size saves | snapshot tests |
+| Windows lock lag | fake port |
+| unkillable processes (assumed to end) | stated cost |
+| larger worlds | `XL` weekly |
+| unsupported setups | removed by policy |
 
-### 11.8 Removed by the single-instance policy (the single-instance ADR, S0044)
+### 11.8 Removed by policy (ADR-0062; the one-workspace ADR)
 
-| Removed | Was |
-|---|---|
-| the legacy-app actor (`LegacyWant`, `LegacyLock`, `LegacyWrite`, `LegacyUnlock`), `NeedsL`, `FIX_LEGACY_BY_FILE`, `HAS_LEGACY`, `LEGACY_TWO_FILES` | a running v0.3 app writing a shared ledger under its lock |
-| `NoSilentLostUpdateLocked`, `LegacyWriterProgress` | its safety and liveness |
-| `_twowslegacy` configs; the legacy part of `_violation`, `F2_large_one` and `F2_large_two` (those configs stay, without it, as `F_violation`, `F_large_one`, `F_large_two`) | its environments |
-| TLA v2 H4 (the legacy app writing through a file shared with a workspace that did not take its lock) | moot: no ledger is shared with a running legacy app |
-| TLA F14 (the legacy app writing over a half-applied save before recovery) | moot |
-| the draft-1 model's second-instance actor (`S2*`), `Fixed_second`, `Fixed_legacy`, `Live_fixed_legacy`, `Fixed_large` | a second v0.4 instance on the same app-local-data |
+| Removed | Was | By |
+|---|---|---|
+| legacy actor, `NeedsL`, `NoSilentLostUpdateLocked`, `LegacyWriterProgress`, `_twowslegacy`, TLA v2 H4, TLA F14 | a running legacy app writing a shared ledger | ADR-0062 (draft 3) |
+| second-instance actor, `Fixed_second`, `Fixed_legacy` | a second v0.4 instance | ADR-0062 (draft 3) |
+| the journal index (`jidx`), `ForeignRecovering`, cross-workspace recovery, `RECOVERING {owner_ws}`, `F_twows`/`LF_twows` with two workspaces sharing file 2, `journal_check_per_ws` | two workspaces sharing a file, several open | the one-workspace ADR (draft 4) |
 
-What stays: orphaned engines after a sidecar crash, two workspaces sharing a file, lock-ignoring editors and sync clients, crash recovery.
+What stays: orphaned engines after a sidecar crash, lock-ignoring editors and sync clients, the glob matching a newly created file within one workspace, crash recovery, and the legacy lock as an outside holder that is detected only.
 
 ## 12. Test obligations per phase
 
-**[A] the scheduler slice, before the read core** (amends ADR-0054 d4, ADR-0041, ADR-0039, ARCHITECTURE §2.0/§2.5/§6A/§7, failure-modes E1–E7, M1, M7):
-
-- **The TLA+ models and their runner are a test obligation of [A].** Commit under `formal/tla/`:
-  - `EngineScheduler.tla` and `Admission.tla` (§11.1, with the deltas applied);
+**[A]** amends ADR-0054 d4, ADR-0041 and ADR-0039, ARCHITECTURE §2.0, §2.5, §6A and §7, and failure-modes E1–E7, M1 and M7. Its tests:
+- **The models and their runner.** Commit under `formal/tla/`:
+  - `EngineScheduler.tla` and `Admission.tla` with the §11.1 deltas;
   - `gen_cfgs.py` and `gen_admission.py`;
-  - `configs.txt`: each config with its model, its **expected outcome** (`PASS`, `VIOLATE:<property>`, `DEADLOCK`, `TEMPORAL`) and its size;
-  - `run_all.sh` / `run_all.py`: parallel and resumable, skipping finished configs whose model and config hashes are unchanged; writes `results/RESULTS.md`, ending in `ALL AS EXPECTED` or the surprises;
-  - `HOW_TO_RUN.md`;
-  - `MAPPING.md` (action → section → code function);
-  - `fetch_tools.sh` and `tools.lock` pinning `tla2tools.jar` 1.7.4 (SHA-256 `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`, reports TLC 2.19) and Java 21 (Temurin LTS).
-
-  Config names are tla/v2's without the `2` (`F2_r4` → `F_r4`, `B2_*` → `B_*`, `M2_*` → `M_*`, `LF2_*` → `LF_*`). Runs, by the times measured on the owner's M4 Pro with 3 workers (TLA v2; re-measured by the runner after the policy cuts, which shrink the legacy-bearing configs):
-  - **T1 (each under about 3 min; the set in about 10 min):** every `A_*` of `Admission.tla` except the `A_large_*`; every seeded-bug `B_*` and leave-one-out `M_*` safety config (seconds each); `F_glob`, `F_linger`, `F_r4nondet` (≤ 8 s); `F_cold` (96 s); `F_r4` (102 s); `F_violation` (140 s); `F_recover` (170 s); `F_replan` (180 s); `LF_r4nondet` (42 s).
-  - **T2 (minutes to about 40 min each):** `F_quit` (11 min); `F_pressure` (33 min); `F_beside` (36 min); `A_large_draft` and `A_large_fixed` (85 s, 303 s); the `M`-sized liveness configs (`LF_runanyway`, `LF_stuckcrit`, `LF_quitanyway`, and the seeds' liveness configs).
-  - **Weekly and at each milestone exit (hours, possibly over a day):** `F_twows` (it passed 33.0M distinct states in 44 min and was still growing), `F_large_one`, `F_large_two`, and the `L`/`XL` liveness configs (`LF_glob`, `LF_linger`, `LF_cold`, `LF_recover`, `LF_stuckwarn`, `LF_violation`, `LF_r4`, `LF_quit`, `LF_replan`, `LF_pressure`, `LF_beside`, `LF_twows`).
-  - A run that changes size class moves list by its measured time.
-
-  Every action carries `@tla_action` in code once its code exists; the mapping test accepts actions of unbuilt phases listed in `MAPPING.md` with their phase.
-- **Left to pure-table tests** (§11.7): the aging bound, merging, preemption limits, cheap jobs, the liveness judge's numbers, `EveryWaitHasAnExit` (every state that can last unboundedly has an enabled user action, or is a save past its commit point).
-- **Tables:** exhaustive (state × event) tests and random walks for the per-engine and pool tables; generated references diff-checked.
-- **`next_dispatch`:**
-  - the §4.2 aging bound;
-  - preemption limits;
-  - merging with requesters;
-  - spike s6's workload (a large job behind refreshing small ones is dispatched);
-  - a P1 large job passes a P3 head when admissible, and the P3 head runs within the aging bound;
-  - no cheap job at `Warn` while a head exists;
-  - the Run-anyway chain runs a save's R4 and the save at `Critical`.
-- **Protocol v2:** schema, contract tests, one final reply per request, no interleaving inside a line, a v1 peer is `incompatible`, and `legacy_lock_held` as a result.
+  - `configs.txt`, with each config's expected outcome and size;
+  - `run_all.sh`/`run_all.py`: parallel, resumable, signal-safe, and writing `results/RESULTS.md`, which ends with `ALL AS EXPECTED` or a list of surprises;
+  - `HOW_TO_RUN.md`, `MAPPING.md` and `fetch_tools.sh`;
+  - `tools.lock`: tla2tools 1.7.4, SHA-256 `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`, Java 21.
+- **Runs**, using v3's measured sizes (configs named as in v3; new configs are sized by the runner's first run and placed by measured time):
+  - **T1** (each under about 3 min; about 10 min in total): `A_*` except `A_large_*`; every `B_*` and safety `M_*`; `F_glob`, `F_linger`, `F_r4nondet`, `F_cold`, `F_r4`, `F_violation`, `F_recover`, `F_replan`, `LF_r4nondet`; the new `F_overlap` and `F_legacy` (expected S).
+  - **T2** (up to about 40 min): `F_quit`, `F_pressure`, `F_beside`, `A_large_*`, M-sized liveness; the new `F_switch` and `LF_switch` (expected M).
+  - **Weekly and at each milestone exit:** `F_large_one`/`two`, and the L/XL liveness configs.
+  - **Before draft 4 becomes the design of record:** the T1 and T2 sets green, and `F_switch` finished at least once.
+- **Pure-table tests:** the aging bound, merging, preemption limits, cheap jobs, the Warn rule for cheap jobs, `EveryWaitHasAnExit`, R4's queue position.
+- **Tables:** exhaustive (state × event) tests and random walks for the per-engine table (its [C] rows included and unreachable in [A]) and the pool table.
+- **`next_dispatch`:** aging; preemption; merging with requesters; spike s6's workload; a P1 job passes a P3 head; no cheap job at Warn while a head exists; the Run-anyway chain.
+- **Protocol v2:** schema; one final reply; `children_cpu_ms`; `decision` objects; an added optional field needs no version bump.
 - **Engines:**
-  - fresh per heavy job: H1's `plug.py` as a test;
-  - spawn flags: two engines give the same digest for a set-iterating plugin; no `__pycache__` written or read in a ledger folder.
+  - H1's `plug.py`;
+  - the same digest from two engines for a set-iterating plugin;
+  - no `__pycache__` in the ledger folder;
+  - **start cost with the spawn flags within 20 % of a start without them**, and the bytecode directory filled once per build (review 4 M3).
 - **Reaping and draining:**
   - the pool alone reaps;
-  - a `SIGKILL`ed child is never `answered` (the `Popen.poll` trap);
-  - the peak minus the interpreter baseline is within 5 % of a ≥ 200 MB allocation;
+  - a `SIGKILL`ed child is never `answered`;
+  - the peak minus the baseline is within 5 % of a ≥ 200 MB allocation;
   - the macOS footprint is read from the zombie;
-  - a plugin with a non-daemon sleeping thread and a detached subprocess: the job is `answered`, no stop is counted, the slot is freed after `drain`;
-  - `EPERM` with a zombie leader is not "gone".
-- **End classification:** our reason wins over any exit status; only `hang`, `stalled_after_violation`, `violation`, crashes and start failures are stops, at most one per (workspace, fingerprint), with the last `max_crashes` fingerprints kept; a pre-fingerprint crash is keyed by the stat fingerprint.
+  - a non-daemon thread plus a detached subprocess gives `answered`, no stop, and the slot freed;
+  - **a fake process port records that no group signal is sent after the reap** (review 4 M5);
+  - `EPERM` is not "gone".
+- **End classification:** a recorded reason wins; the stop rules; stop fingerprints.
 - **Liveness judge:**
-  - a `SIGSTOP`ped engine is hung, also on a busy machine;
+  - a SIGSTOPped engine is hung;
   - a GIL-holding regex is not;
-  - a sleeping plugin is stalled;
-  - an engine waiting on a CPU-bound child is not hung (group CPU), and the accumulator never decreases when a grandchild exits;
-  - a hang at sustained `Warn` without page-ins is judged hung;
-  - a full pipe that the sidecar does not read makes ticks not on time;
-  - a stuck handshake is judged by the hang rule;
-  - sleep and late wakes do not count;
-  - a cloud-placeholder read with flat `done` stalls.
-- **Stall and runaway:** background stopped; unmeasured and provisional never stopped; interactive flagged; the floor.
-- **Admission:** the three pressure levels; recovery at `Critical`; single-engine mode ends after 20 healthy jobs; `Unknown`; provisional estimates after an update.
-- **Usual:** decay with size-scaled values, invalidation on plugin change, provisional after an engine change, an unreadable file.
-- **Pressure port:** macOS sysctl; Linux and Windows from fixtures.
+  - a sleeping plugin stalls;
+  - an engine waiting on a CPU-bound child is not hung, and the accumulator never falls;
+  - **a plugin running 200 subprocesses of 40 ms each: the accumulator is within 1× to 2× of the reaped total, and a background loop in it is stopped by the runaway rule** (review 4 M1);
+  - a hang at Warn without page-ins is judged;
+  - a full pipe makes ticks late;
+  - the handshake is judged by the hang rule;
+  - sleep is not counted;
+  - a placeholder that never downloads stalls;
+  - **a violation past the commit point followed by a busy loop ends after `stall_ticks`** (unit; [C] end to end).
+- **Admission:** the three levels; recovery at Critical; `single_engine` recovery; `Unknown`; provisional estimates.
+- **Usual:** the decay, invalidation, the provisional rule, the provisional `hang_ticks`, an unreadable file.
+- **Pressure port:** the macOS sysctl; Linux and Windows from fixtures.
 - **Process groups:** a cancel ends children; the sidecar's death ends the group; `oom_score_adj`.
-- **Settings:** ranges refused and logged.
-- **Replay:** every scenario test replays with no divergence under three hash seeds; the Hypothesis walk; a version change and a gap are reported; a partial run line survives a simulated crash; `sched.*` in the redaction corpus.
-- **Flight recorder:** bounded; dumped on the listed triggers; redacted.
+- **Settings:** values out of range are refused.
+- **Replay:** every scenario test replays under three hash seeds; the Hypothesis walk; a version change and a gap are reported; the partial run line; tick runs split at verdicts; `sched.*` in the redaction corpus.
+- **Flight recorder:** bounded, dumped on its triggers, redacted.
 - **App Nap:** the sidecar's ticks stay on time with the window hidden.
-- **failure-modes.md:** E1–E7 (E3; E5 by §6.3; E7 by §5.4 step 4), M1, M7, and the known-gaps list.
+- **failure-modes.md:** rows E1–E7, M1, M7, and the known gaps.
 
-**[B] with the mirror build:**
-- **`canonical_path` corpus** per OS: case, NFC/NFD, symlink, symlinked directory, absent path; the registry deduplicates by it.
-- **Lanes:**
-  - exclusive jobs exclude each other;
-  - shared jobs run beside shared ones and beside a rebuild;
-  - a preview waits for a rebuild and for earlier saves;
-  - a read waits for a running or earlier-queued save;
-  - **a save confirmed while another runs commits after the first save's R4, and a query behind it ends** (review 3 F1);
-  - saves are refused in WARMING and COLD;
-  - reads wait while `RECOVERING`, with no rebuild loop.
-- **Verified snapshot:**
-  - an outside save gives `snapshot_moved`, and three give `LEDGER_CHANGING`;
-  - a same-size, same-mtime save and a changed plugin file are caught;
-  - a journal (also another workspace's, through the index) gives `orphan_journal` with its owner;
-  - two workspaces sharing an include under two spellings exclude each other;
-  - a newly matched glob file sorting before a held lock causes a release and restart, never a deadlock;
-  - an evicted placeholder gives `snapshot_moved {evicted}`;
-  - lock files are never deleted.
-- **Conditional publish:** a stale build is dropped; out-of-order rebuilds publish the newer; ids are monotonic across a restart and a cache purge; an unchanged-content stat change re-stamps.
-- **GC** of `build-*` files.
-- **ADR-0015's 38,800-reads test** with two engines building.
+**[B]:**
+- **`path_key` corpus** per OS, including absent-equals-created, folding mounts, and `O_EVTONLY`.
+- **Overlap refused** at register and at open; a set that grows into another workspace's file during the session refuses saves.
+- **The switch** (§4.10):
+  - every state × event of `workspace_switch`;
+  - a switch with reads, a rebuild and an R4 running ends them, and the R4's record stays;
+  - queued confirmed saves finish first;
+  - Switch anyway after `quit_patience`;
+  - Cancel returns to A;
+  - retargeting;
+  - B's overlap refusal with Go back to A;
+  - a crash at each marker step completes at the next start;
+  - A's closed record runs its R4 at A's next open;
+  - no engine of A runs after Close;
+  - the replay of a switch scenario.
+- **Lanes:** rule 2's exemption (a save confirmed while another runs commits after the first save's R4); reads beside a rebuild; previews after saves; COLD and WARMING refusals; RECOVERING.
+- **Verified snapshot:** outside saves; `LEDGER_CHANGING`; same-size saves; plugin changes; an orphan journal; a newly matched glob file sorting before a held lock (release and restart); an evicted placeholder; lock files never deleted.
+- **Conditional publish, GC, and ADR-0015's 38,800-reads test with two engines building.**
 
-**[C] M1b, with the write contract and BL-0091:**
-- **Legacy-lock detection** (single-instance ADR): a held legacy lock refuses the save and the copy at step 0 without waiting, and writes nothing; a free one is held and released; the lock file is never created.
-- **The commit gate:**
-  - a cancel before `proceed` leaves the disk byte-identical (fault injection at every step);
-  - after `proceed`, "Finishing…" and the save lands;
-  - a property-based race of cancel against the gate;
-  - `SIGTERM` is ignored past the commit point.
-- **The gate's checks** each refuse on their own (disk, mirror, journal index, closed record, `.mismatch`).
-- **Re-plan:** the end-and-requeue proceeds on the same intent, ends `PLAN_OUTDATED` on a moved entry, and treats a save resolved by recovery, and another workspace's save over a shared file, as ours.
-- **`create`** in COLD, with the adoption and migration baselines and its closed record.
-- **The closed record and the journal index:** close is one rename; saved iff a record exists; R4 re-armed after recovery and a restart; the in-memory gate re-read clears after an orphaned R4 finished; index entries exist before the journal and are gone after the record.
-- **`durable_sync`:** the macOS adapter issues `F_FULLFSYNC` (T2 test), and the fallback is logged; the Windows write-through.
+**[C]:**
+- **Legacy-lock detection** (review 4 H3):
+  - a held lock refuses without waiting and writes nothing;
+  - a free one is held and released;
+  - an open error or a lock error refuses;
+  - a lock file that appears, or a source that changes, during a Copy read refuses;
+  - two installs sharing one data folder are tried once (free gives `free`);
+  - a retired install is not tried;
+  - the lock file is never created.
+- **The gate:** the commit point (fault injection, the property race, `SIGTERM` ignored); each check refuses on its own.
+- **Re-plan:**
+  - proceeds on the same intent;
+  - gives `PLAN_OUTDATED` on a moved entry;
+  - a `saved_nopub` earlier save queues the rebuild, the save runs directly behind it, and it proceeds;
+  - a failing rebuild ends the save with its outcome;
+  - an outside revert to an earlier v0.4 state is not taken for ours;
+  - retries out give `LEDGER_CHANGING`.
+- **`create`** in COLD, with its record; Copy with the legacy rules.
+- **The closed record:** close is a rename; saved iff the record exists; R4 re-armed after recovery, a restart and a switch; the in-memory gate re-read.
+- **Durable order and power loss** (review 4 H2, ordering part): fault injection at every durable step of a save (backups, journal, each replace, close) and of a recovery (restores, the `.resolved` rename), plus a simulated power loss that keeps only synced state at each step. Every case ends with §5.7's outcome and no workspace left in `RECOVERING`; a recovery cut before its rename restores again.
+- **`durable_sync`:** the macOS adapter issues `F_FULLFSYNC` (T2); the fallback is logged; Windows write-through.
 - **R4:**
-  - pass without locks across the load;
-  - superseded by an outside save;
-  - parse-only confirm: `mismatch` on a seeded overlay difference, `nondeterministic` on a seeded drifting plugin, "undecided" blocks;
-  - no user code under the locks;
-  - Cancel R4 refuses queued saves; Run check now;
-  - `.picklecache` is never touched;
+  - pass without locks;
+  - superseded;
+  - **a file-creating save (also an NFC-named file) ends `pass` and publishes** (review 4 H1);
+  - the confirm runs in a fresh engine: a plugin thread still running, or a plugin that patches `beancount.parser`, changes neither the verdict nor runs under the locks;
+  - mismatch, nondeterministic, undecided and its acknowledgement;
+  - Cancel R4; Run check now clears poison;
+  - `.picklecache` untouched;
   - `engine_changed`;
-  - normal OS priority;
-  - an update's quiesce runs owed R4s.
-- **Fault injection** (BL-0091): the engine ended and `SIGSTOP`ped at each step after `proceed`, giving the right `resolve` outcome; an editor save between gate and journal; recovery waits for locks and reads journals after them; recovery of another workspace's journal while only the sharing workspace is open (the INV-31 exception) touches only that save's files.
-- **Edge cases:** a recovery that dies is retried once, then blocks; queued saves are refused on a block; a violation past the commit point is read, discarded and the engine waited for, and a stall after it ends the engine; quit after `quit_patience` offers Quit anyway, and the next open resolves.
-- **Windows runner** (BL-0087): the Job Object end; the lock lag (fake port and one real smoke run); `STATUS_NO_MEMORY`; `canonical_path`; `durable_sync`; start cost.
+  - a cloud placeholder stalls R4's load;
+  - the update's quiesce runs the owed R4.
+- **Fault injection** (BL-0091): ends and SIGSTOPs after `proceed`; an editor save between the gate and the journal; recovery locks first; Q30.
+- **Edge cases:** a recovery that dies is retried once then blocks; queued saves are refused on a block; violation read-and-discard; Quit anyway; Switch anyway with a save past its commit point, resolved at A's next open.
+- **Windows runner** (BL-0087): Job Objects, the lock lag, `STATUS_NO_MEMORY`, `path_key`, `durable_sync`, start cost.
 
-**[M2]:**
-- BL-0092: machines and messages with model-based tests;
-- job-list routes;
-- BL-0094;
-- BL-0093: the replay tool and bundling;
-- BL-0100: the app-instance lock refuses a second sidecar on the same app root.
+**[M2]:** BL-0092 (the UI states, including the switch's "Just a moment…" and Switch anyway); the job list; BL-0094; BL-0093; BL-0100.
 
-**[M11]:** Linux and Windows adapters on real machines; the Windows sleep clock; the spare-engine default.
+**[M3]:** Copy adoption and retired installs (BL-0101).
+
+**[M11]:** the Linux and Windows adapters; the Windows clock; the spare engine.
 
 ## 13. Where this departs from the reviews, and why
 
-**Kept from drafts 1 and 2** (unchanged reasons, briefly):
-- safety rests on locks and content, not on the lane;
-- verify under the locks with content hashes;
-- locks held only for the verify;
+**Kept from drafts 1–3:**
+- safety rests on locks and content;
+- verify under the locks with content hashes, holding them only for the verify;
 - ids at publish;
-- the commit point agreed by both sides;
+- the agreed commit point;
 - liveness judged from outside;
 - exact peaks from the reaped process;
-- no cheap lane beyond the cap;
-- poison per kind with the pool capped per (workspace, fingerprint).
+- no cheap lane;
+- poison per kind with the pool capped per (workspace, fingerprint) (review 2 F6 not adopted; evidence: the first TLA check's counterexample, confirmed by v2 and v3);
+- the parse-only confirm's `nondeterministic` instead of `pass` (TLA v2 M4).
 
-That last item departs from review 2 F6. Evidence: the first TLA+ check's 17-step counterexample to across-kinds poison (run `Minus_fix_poison_per_fp`, `OneLedgerCannotTripPool` violated). The second check kept per-kind poison and passed.
+**The one-workspace policy** (the one-workspace ADR, S0045; owner, 2026-10-27: "No sharing anywhere, no multiple instances of Finzytrack anywhere. Period. Finzytrack is just about one instance, working with one workspace at a time.") removed:
+- **The app-wide journal index** and its durable order, stale-entry cleaning, Windows write-through test and directory-creation syncs. The per-workspace journal check suffices because no journal can cover a file of another workspace's set (§4.10, end).
+- **Cross-workspace recovery**, `RECOVERING {owner_ws}`, the shared-file repair notice, and **the INV-31 and INV-30 exceptions**. The owner's approval of the INV-31 exception (answer (b), 2026-10-27) is **moot**: nothing ever runs for a workspace that is not open, so no exception is needed and none is requested.
+- **Re-plan triggers from another workspace's saves** (2a's "of any workspace").
+- **Lanes across workspaces and multi-workspace fairness:** one queue per user, for the open workspace only.
+- **Background jobs for workspaces that are not open:** owed R4s and recoveries wait for the workspace's next open; an update's quiesce runs only the open workspace's R4.
+- **The model's two-workspaces-sharing-a-file environment** (`F_twows`, `LF_twows`, `journal_check_per_ws`), replaced by the switch and the overlap refusal.
 
-**Review 3: adopted** F1–F15 and O1–O14, with these choices:
-- **F7, the "confirm" outcome when both parse digests equal the record:** `nondeterministic`, not `pass` (TLA v2 M4 proposed `pass`). With a parse-only confirm, the confirm cannot see that a drifting plugin input has returned, because that would need user code under the locks. Both outcomes are non-blocking and clear the record, so neither safety nor liveness changes. The notice is shown once for that save, which is honest: the plugin's result did change between the two loads. The model delta (§11.1 item 1) aligns the model.
-- **F7, the case "both parse digests equal each other but not the record":** review 3 called it impossible to reach undecided. Draft 3 restarts R4 once and then blocks as "could not decide" (INV-22), because it can arise only from a fingerprint gap, and a fail-open there would hide that gap.
-- **O9 (a timer-refreshed BQL step):** solved by the existing recipe memo, which keys on `ledger_version` (ADR-0029), instead of a new result cache. No new cache, so no new INV-10 bound.
-- **F14 together with TLA v2 M5:** "own" is judged per file from this installation's durable closed and `.done` records of every workspace, not from the session's recent-outcomes chain, which a recovery or a sidecar restart loses.
+**Review 4 findings made moot, with the reason:**
+- **H1 (cross-workspace part):** another workspace's glob missing a save's lock or index entry cannot happen without shared files. **Not moot, and adopted:** the `path_key` split for a created file within one workspace (R4 superseded, 2a's lookup).
+- **H2 (index part):** stale index entries and the index's order have no index to apply to. **Adopted:** the durable order of backups, journal, replaces and close, and recovery's restore-then-`.resolved` order.
+- **H3 (two of our own engines contending):** only one exclusive job of the one open workspace runs step 0 at a time. **Adopted:** ADR-0062's every-install try with deduplication by path key, its fail-closed outcomes, the Copy re-check, the message, and retired installs.
+- **H4 (cross-workspace trigger):** moot. **Adopted:** the single-workspace part, where the rebuild is enqueued ahead of the re-planned save (an earlier `saved_nopub`, or an outside edit beside our own save).
+- **H5:** entirely moot. Nothing waits on another workspace's repair. `NoSpuriousBlock` is kept for the single workspace.
+- **M6 (deltas 5 and 7, `F_twows`):** moot. **Adopted:** deltas 6, 8 and 9 (D3–D5), the power-loss note, and the cannot-show rows.
+- **L1:** moot: no INV-30 or INV-31 exception.
+- **L2 (closed workspaces):** moot. **Adopted:** the two-part update quiesce for the open workspace.
+- **L3 (index syncs):** moot. The remaining count was recomputed: about 9 syncs, about 40 ms.
+- **Review 4's two owner questions:** moot (both concerned cross-workspace repair).
 
-**TLA v2: adopted** H1–H3, H5, M1–M7, L1–L2 and the overflow. **H4: not adopted, moot**: the single-instance ADR removes the shared-ledger case it needs.
+**Review 4: adopted as proposed** M1, M2, M3, M4, M5 and M7, and O1–O8 and O10.
 
-**The single-instance policy (the single-instance ADR, S0044; owner, 2026-10-27: "Drop the coexistence policy; I approve the needed changes to INV-26 and ADR-0020") removed:**
-- the legacy-lock waits in verify, save, R4 and recovery;
-- the `waiting_for_lock (legacy)` status and Cancel;
-- ADR-0005's "at least 30 s" question (owner answer (c), now moot);
-- the legacy app as a lock-respecting writer, and TLA F14's stated limit;
-- review 3 F2's legacy-lock deduplication;
-- review 2's root-file lock candidate for BL-0091;
-- the second-instance arguments for the closed record. The record stays, for restarts and orphans.
+**Review 4: changed:**
+- **O9:** the timer-refresh claim is withdrawn; there is no timer refresh, and a future one needs a bounded cache first.
+- **O1 ("workspace opened" row):** became §4.10.
 
-In the models it removed the legacy and second-instance actors, `NoSilentLostUpdateLocked`, `LegacyWriterProgress`, the `_twowslegacy` configs, H4, and the draft-1 baseline's `Fixed_second` and `Fixed_legacy` (§11.8).
-
-It replaced all of this with one non-blocking try at the save's or copy's first step (§5.4 step 0), which refuses and never waits. Simplified as a result:
-- `OnlySavesLockAcrossUserCode` needs no legacy clause;
-- lock waits are only for our own jobs and orphans;
-- R4 needs no legacy case among its superseded triggers;
-- Q30 stays as a defence only.
+**The v3 model's notes:**
+- **Unreachable undecided branch:** made reachable by `FINGERPRINT_GAP` (D5).
+- **`B_verify_no_locks`:** given an orphan environment, or dropped with a stated reason (D9).
+- **R4's queue position:** stated as an abstraction (§11.6).
+- **"Even when not open":** gone by policy.
 
 **Departures from the owner's numbers:**
-- The runaway floor makes the effective factor larger than "about 10×" for jobs under about 1.1 s of CPU.
-- Decision 2 is amended by the owner's answer 6 (a change by the owner, not a departure).
-- The INV-31 exception is the owner's (answer (b)).
+- the runaway floor (for jobs under about 1.1 s of CPU);
+- decision 2, amended by the owner's answer 6.
 
 ## 14. What changes elsewhere (in the slices that build each phase)
 
-- **ADR-0054 d4** [A]: the pool owns the engines (fresh per heavy job, at most `max_engines`) and admission; per-user `JobQueue`s own lanes and order; 34 MB per engine; protocol v2.
-- **ADR-0041** [A]: the only process-wide entry is the engine pool.
-- **ADR-0039** [A]: the decision log, checkpoints and the flight recorder are part of the logging design.
-- **ADR-0011** [B]: the limiter becomes the lane; the semaphore becomes the pool; the BQL entries cache is withdrawn.
-- **ADR-0015** [B]: ids at publish with the high-water outside the cache; both fingerprints and plugin code in meta; re-stamp; date-change triggers in both directions.
-- **ADR-0017** [B]: the registry deduplicates by `canonical_path`.
-- **ADR-0019** [B, C]: the `COLD` phase and `create`; reads blocked in `RECOVERING` and `RECOVERING {owner_ws}`; forgetting a workspace is refused while its journal, a closed record or a save past its commit point exists, and removes its records, measurements and caches.
-- **ADR-0008** [C]: R4 completes before the next write or is superseded (disk moved, engine changed); the gate's checks of the journal index and the closed and `.mismatch` records; the parse-only confirm and `nondeterministic` (owner answer 4); the create baseline's extra load.
-- **ADR-0010** [C]: guardrail 3 publishes the `load_file` result on a mismatch; a nondeterministic plugin does not block; the parse-stage claim that the overlay replicates only `_parse_recursive`, used by the confirm.
+- **The one-workspace ADR (S0045)** decides the policy itself: one open workspace, no file in two workspaces, the overlap refusal at register and open. This spec relies on it and does not decide it.
+- **ADR-0054 d4** [A]: the pool owns the engines and admission; the `JobQueue` holds the open workspace's lane; 34 MB per engine; protocol v2.
+- **ADR-0041** [A]: the only process-wide entry is the pool.
+- **ADR-0039** [A]: the decision log, checkpoints and flight recorder.
+- **ADR-0011** [B]: the limiter becomes the open workspace's lane; the BQL cache is withdrawn.
+- **ADR-0015** [B]: ids at publish, with the high-water mark outside the cache; both fingerprints and plugin code in meta; re-stamp; date triggers.
+- **ADR-0017** [B]: the registry deduplicates by `path_key`, and keeps each workspace's file set for the overlap check.
+- **ADR-0019** [B, C]:
+  - the open table becomes `workspace_switch` (§4.10), with `CLOSING`/`OPENING`, the switch marker, the overlap phase and COLD;
+  - `create`;
+  - reads blocked in `RECOVERING`;
+  - forgetting a workspace is refused while it has an open journal or a closed record;
+  - the workspace list flags unfinished changes.
+- **ADR-0008** [C]: R4 completes or is superseded; the gate's checks; the fresh-engine parse-only confirm; `nondeterministic`; `undecided` (`.mismatch {undecided}`, with its exit); the create baseline.
+- **ADR-0010** [C]: a mismatch publishes `load_file`; a nondeterministic plugin does not block; the parse-stage claim.
 - **ADR-0012** [B, C]:
-  - F-6 restated (locks held only for the verify);
-  - **`durable_sync`** for every sync (owner answer (a));
-  - the **app-wide journal index** keyed by canonical path, checked by verify, gate, publish, R4 and recovery;
+  - F-6 restated;
+  - `durable_sync`;
+  - the durable order of a save and of a recovery (`.resolved`);
   - journal close as a rename into the closed record;
-  - the journal names `(ws, session, job)`;
-  - recovery on open **waits** for the locks and **reads journals after taking them**;
+  - `(ws, session, job)` naming;
+  - on-open recovery waits for the locks and reads after taking them;
   - in-session recovery, retried once;
-  - recovery of another workspace's journal;
-  - Q29 restated as per-file locks on canonical paths in canonical order with the non-blocking relock;
-  - Q30 as a defence only.
-- **ADR-0007** [C]: an update's quiesce runs owed R4s first.
-- **ADR-0005 and ADR-0020** [C]: by the single-instance ADR (S0044; amendments in its slice): legacy-lock detection only, never waited for; Copy only. This spec relies on them and does not amend them itself.
-- **INV-26**: amended by the single-instance ADR (owner-approved); this spec's §5.4 step 0 is its runtime check.
-- **INV-31**: **amend** with the owner-approved exception (answer (b), 2026-10-27): "a `recover` job may repair an interrupted save of a workspace that is not open, when that save covers a file shared with the open workspace; it touches only that save's files."
+  - Q29 as per-file locks on path keys with the non-blocking relock;
+  - Q30 as a defence.
+
+  Draft 3's journal index is **not** added.
+- **ADR-0007** [C]: the update's quiesce runs the open workspace's owed R4 first.
+- **ADR-0062** (already accepted, with its amendment): §5.4 step 0 is its runtime check; retired installs are not tried. No amendment by this spec.
+- **INV-26:** as amended by ADR-0062.
+- **INV-30 and INV-31:** **no amendment.** Draft 3's proposed INV-31 exception is withdrawn, with the owner's approval moot (§13).
 - **ARCHITECTURE:**
-  - §2.0 (protocol v2, supervision, spawn flags);
-  - §2.5 (the pool as the process entry; `JobQueue`, `Measurements`, `DecisionLog`, `FlightRecorder`; `EngineClient` per engine; the BQL cache row removed);
-  - §2.x the `FileSystem` port (`canonical_path`, `durable_sync`);
-  - §5 (engine process groups and Job Objects; the shell's group kill no longer reaches engines);
-  - §6.1 (new codes `WRITES_BLOCKED`, `PLAN_OUTDATED`, `LEDGER_CHANGING`, `RECOVERING {owner_ws}`, `LEGACY_LOCK_HELD`, with their classes and statuses; `BUSY_HEAVY_LOAD` without `retry_after_ms`);
-  - §6A (§9.3's list);
-  - §7 (two statecharts plus the liveness judge);
-  - §8.3 (`EngineScheduler.tla` and `Admission.tla` beside `WriteProtocol.tla`; "requests behind the per-root limiter" becomes the lane and the pool; no legacy actor or second instance);
-  - §9.1, §9.2 (the commit point, the gate's checks, the closed record, the R4 gate, the legacy-lock try), §9.6 (COLD, `create`).
-- **failure-modes.md** [A]: E1–E7 (E5 by §6.3, E7 by §5.4 step 4), M1 (engines in their own groups), M7 (Quit anyway), and the known-gaps list.
-- **glossary.md:** heavy, large, cheap, lane, slot, head, canonical path, journal index, closed record, commit point, usual, on-time tick.
-- **capabilities.md/.toml:** cancel, job status, Run anyway, Run check now.
-- **state_registry** [A]: the `process` entry; `EngineBoot` removed; the flight recorder.
+  - §2.0 (protocol v2, supervision, spawn flags, bytecode directory);
+  - §2.5 (the pool; `JobQueue` for the open workspace; `WorkspaceSwitch`, `Measurements`, `DecisionLog`, `FlightRecorder`; `EngineClient` per engine; the BQL cache row removed);
+  - the `FileSystem` port (`canonical_path`, `path_key`, `durable_sync`);
+  - §5 (engine groups and Job Objects);
+  - §6.1 (codes: `WRITES_BLOCKED`, `PLAN_OUTDATED`, `LEDGER_CHANGING`, `LEGACY_LOCK_REFUSED`, `WORKSPACE_OVERLAP`, `WORKSPACE_NOT_READY {CLOSING|OPENING}`; `BUSY_HEAVY_LOAD` without `retry_after_ms`);
+  - §6A (§9.3);
+  - §7 (the per-engine and pool statecharts, the liveness judge, and the backend `workspace_switch` table under the FE switch machine);
+  - §8.3 (the models; no legacy actor, second instance or shared files);
+  - §9.1, §9.2 (the commit point, the gate, the closed record, the R4 gate, the legacy try);
+  - §9.6 (the switch sequence of §4.10).
+- **failure-modes.md** [A]: E1–E7 (E5, E7), M1, M7, and the known gaps. A switch cut off by a crash is resolved by the marker.
+- **glossary.md:** heavy, large, cheap, lane, slot, head, open workspace, switch, path key, canonical path, closed record, commit point, usual, on-time tick.
+- **capabilities.md/.toml:** cancel, job status, Run anyway, Run check now, switch.
+- **state_registry** [A]: the `process` entry; `EngineBoot` removed; the flight recorder; `WorkspaceSwitch` [B].
 - **Licence lists** [A]: `portalocker` 3.2.0 in the engine's, `psutil` in the main sidecar's.
 - **User docs** [M2]:
-  - one Finzytrack at a time;
-  - quit the old app before saving a ledger it names;
+  - one Finzytrack, one workspace at a time, no file in two workspaces;
+  - quit the old app;
   - files a plugin reads itself;
-  - plugins run twice at once;
+  - plugins may run twice at once;
   - Rebuild now;
-  - cloud placeholders.
+  - cloud placeholders;
+  - a workspace with an unfinished change.
 - **Backlog:**
-  - BL-0091: §5.7's resolve, the journal index, recovery across workspaces; the root-file lock dropped;
+  - BL-0091: §5.7, the durable orders, S5 extended with the closed record and `.resolved`; no index;
   - BL-0082: `decode_factor`;
-  - BL-0087: Windows start cost, `durable_sync`, `canonical_path`;
-  - BL-0093: §9.3 R5–R6;
-  - BL-0100 (S0044): the app-instance lock.
+  - BL-0087: Windows start cost, `durable_sync`, `path_key`;
+  - BL-0093: §9.3 R5–R6, and whether `sched.*` gets its own rotation;
+  - BL-0100: the app-instance lock;
+  - BL-0101: retired installs.
 
 ## 15. Owner questions
 
-None open. The owner's answers of 2026-10-27:
-- (a) **True flush:** use the true flush for every durable step (§5.4).
-- (b) **Repair across workspaces:** an interrupted save in a shared file may be repaired while only the other workspace is open, as an exception to INV-31 (§5.7, §14).
-- (c) **The save's legacy-lock wait:** now moot under the single-instance policy, which detects the legacy lock and never waits for it (§5.4 step 0).
+None open:
+- Review 4's two questions (repairing another workspace's interrupted save) are moot under the one-workspace decision.
+- The owner's answers of 2026-10-27 stand: (a) true flush; (c) no legacy-lock wait, now ADR-0062.
+- Answer (b), the INV-31 exception, is moot and withdrawn (§13).
 
 "What is usual?" is answered in §1.1, and replayable decisions are in §9.3.
