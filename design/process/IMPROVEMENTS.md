@@ -348,4 +348,4 @@ Format:
 - Expected effect: M2 cannot exit without BL-0103's recovery tests.
 - Observed effect: pending.
 - Status: kept (owner-approved).
-- Owner approval: "I agreed with all your recommendations." and "Yes, I agree with the keep the files as they are now way out." (2026-10-27, in session). Relayed by the orchestrator.
+- Owner approval: "I agreed with all your recommendations." and "Yes, I agree with the keep the files as they are now way out." (2026-10-27, in session). Relayed by the orchestrator. The added clause "or which is that journal's workspace moved or copied" was shown to the owner before landing: "Yes, the wording is OK" (2026-10-27, in session).

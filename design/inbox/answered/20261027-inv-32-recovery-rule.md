@@ -43,3 +43,4 @@ Applied in S0045 fix round 3 (IMP-0035):
 - INV-30's exception sentence exactly as in option 1.
 - INV-32 as in option 1, with two changes: "every other workspace" became "every workspace" (the first answer); and the "Enforced by" item "a workspace with an unresolved journal can be neither forgotten nor located elsewhere" became "a folder whose files an unresolved journal names, or which is that journal's workspace moved or copied, is blocked at every open, Open folder and Locate included; "Keep the files as they are now" resolves it, writing nothing to the ledger files; forget keeps the journal" (the second answer: forget is no longer refused, and the "Locate waits" addition became the same check every open goes through). Nothing else changed.
 
+The added clause "or which is that journal's workspace moved or copied" was shown to the owner before landing: "Yes, the wording is OK" (2026-10-27, in session).
