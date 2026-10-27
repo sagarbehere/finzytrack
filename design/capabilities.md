@@ -4,7 +4,7 @@
 
 Every user-visible capability of Finzytrack, with its status: `planned`, `partial`, `built`, `cut` (absent on purpose) or `deferred` (not in v0.4.0). This page is the index; each row's full description, what changes in v0.4, where it lived in v0.3, its doc page, backlog items, ADRs, code and tests are in `design/capabilities.toml` (search for the ID). Edit the `.toml`, then run `python3 scripts/gen_capabilities.py`. Rules: `design/process/PROCESS.md` ("Project memory").
 
-**Totals:** cut 15, deferred 13, partial 1, planned 311; 340 rows; release-blocking 307.
+**Totals:** cut 16, deferred 12, partial 1, planned 312; 341 rows; release-blocking 308.
 
 ## Setup and workspaces
 
@@ -24,6 +24,7 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | CAP-WS-PALETTE | Command palette (⌘/Ctrl-K) with "Switch workspace" over the recents | new | planned | M2 | yes |
 | CAP-WS-CREATE | New workspace: Blank (currency + starter accounts) or "from settings of <workspace>" (copies… | new | planned | M3 | yes |
 | CAP-WS-ADOPT | Open an existing folder or `.beancount` as a workspace | new | planned | M2 | yes |
+| CAP-WS-NO-SHARED-FILES | No file in two workspaces: registering, adopting, creating or opening a workspace whose ledger set… | new | planned | M2 | yes |
 | CAP-WS-PORTABLE | One folder layout that is safe to sync, version and tar: no secrets, caches, absolute paths or… | new | planned | M3 | yes |
 | CAP-WS-PORTABILITY-CHECK | "Portable ✓" or a per-file issue list, in Settings and as a switcher badge (same check as the… | new | planned | M3 | yes |
 | CAP-WS-EXPORT | Export a locked, consistent `.tar.zst` of the ledger set and `.finzytrack/` with file list and… | new | planned | M3 | no |
@@ -46,6 +47,7 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | CAP-SHELL-RECENTS | OS "Open Recent" menu / jump list from the registry | new | planned | M2 | yes |
 | CAP-LEGACY-ADOPT | Bring in a v0.2/v0.3 install: detect it, classify each ledger, copy settings, rules and dashboards | new | planned | M3 | yes |
 | CAP-LEGACY-COEXIST | Share a ledger with a running legacy app: take every legacy lock, banner when a legacy app runs… | new | cut | M3 | n/a |
+| CAP-WS-MULTIWINDOW | Several native windows on different workspaces | cut | cut | M2 | n/a |
 
 ## Accounts
 
@@ -459,7 +461,6 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | ID | Capability | v0.4 | Status | Milestone | Blocks release |
 |---|---|---|---|---|---|
 | CAP-LEGACY-REIMPORT | Re-import settings from the legacy install later, with a per-file diff | deferred | deferred | — | no |
-| CAP-WS-MULTIWINDOW | Several native windows on different workspaces | deferred | deferred | — | no |
 | CAP-WS-LIBRARY | App-level user library of dashboards/rules referenced by workspaces | deferred | deferred | — | no |
 | CAP-HOSTED-WORKSPACES | Hosted multi-user workspaces | deferred | deferred | — | no |
 | CAP-FISCAL-YEAR | Fiscal year (start month and day) for presets, budgets, dashboards | deferred | deferred | — | no |

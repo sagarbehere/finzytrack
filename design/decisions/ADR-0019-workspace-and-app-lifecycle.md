@@ -35,6 +35,14 @@ v0.3 had no model of the install: seven mechanisms derived the same facts, the s
 - Boot, workspace open, lifecycle run and sidecar are statecharts with exhaustive tests (ARCHITECTURE §7).
 - The version-independent restore format (ADR-0012) lets any later version restore an earlier run.
 
+## Amendment (2026-10-27): the shared-file phase; the switch (ADR-0063)
+
+Owner: "1. Yes to forbidding two workspaces sharing a file. If it'll help we can simplify further: No sharing anywhere, no multiple instances of Finzytrack anywhere. Period. Finzytrack is just about one instance, working with one workspace at a time." (2026-10-27, in session; the full quote is in ADR-0063). Details marked "(agent)" are ADR-0063's.
+- `assess_workspace` gains the phase **`LEDGER_SHARED {path, other_workspace}`**: the workspace's ledger set overlaps another registered workspace's (ADR-0017 amendment). It is refused like the other failed phases, records nothing (INV-29) and offers Stay. `plan_create_workspace`, `plan_adopt_workspace` and the test copy refuse with the same code (agent: the names).
+- The same check runs at each rebuild of the open workspace after an outside edit: a rebuild that finds an overlap is not published, and saves are refused until the overlap is gone (agent).
+- Opening a workspace while another is open is a switch (ADR-0018 amendment, ADR-0063 decision 1): assess the target, quiesce and close the current one, then the normal open path. A failed open after the close offers Back to the previous workspace.
+- **Unchanged:** the rest of this ADR.
+
 ## References
 
-review:15 §1–§4; review:23 §4.1–§4.3; review:25 §7, §9.7; ADR-0012, ADR-0017, ADR-0022, ADR-0041; INV-16, INV-17, INV-29, INV-30; CAP-DATA-BOOT, CAP-DATA-NEWER-REFUSE, CAP-WS-CREATE, CAP-WS-UNAVAILABLE.
+review:15 §1–§4; review:23 §4.1–§4.3; review:25 §7, §9.7; ADR-0012, ADR-0017, ADR-0022, ADR-0041; INV-16, INV-17, INV-29, INV-30; CAP-DATA-BOOT, CAP-DATA-NEWER-REFUSE, CAP-WS-CREATE, CAP-WS-UNAVAILABLE; ADR-0063.

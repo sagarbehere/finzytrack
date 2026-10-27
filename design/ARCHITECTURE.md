@@ -15,7 +15,7 @@ This file is the target system picture of the v0.4.0 rebuild: components, packag
 - greenfield app on `next`, old app as differential oracle (ADR-0002, ADR-0014);
 - write-safety contract, splicing, overlay load, no resident ledger, write-intent journal, atomic-swap replace (ADR-0008 to ADR-0013);
 - the mirror as an atomically published cache; SQLite only (ADR-0015, ADR-0016);
-- portable workspace folders, workspace-addressed API, lifecycle, legacy adoption (ADR-0017 to ADR-0021);
+- portable workspace folders, workspace-addressed API, lifecycle, legacy adoption (ADR-0017 to ADR-0021); one open workspace at a time, and no file in two workspaces (ADR-0063);
 - Tauri 2 shell with a Python sidecar, identifier `com.finzytrack.desktop`, Apple-silicon macOS (ad-hoc signed), Windows x64, Linux x64 (ADR-0007);
 - React frontend, pending S13 (ADR-0006);
 - licence GPL-2.0-or-later for the owner's code, notices and licence checks (ADR-0042);
@@ -132,11 +132,13 @@ backend/src/app/
     reader.py    typed reads returning domain DTOs
     query.py     QueryRunner: the one hardened runner for user SQL (L5-07), dsum, price_asof,
                  steps schema (ADR-0029)
-  workspaces/    KERNEL. The workspace format and the open/switch machinery (ADR-0017 to ADR-0021).
+  workspaces/    KERNEL. The workspace format and the open/switch machinery (ADR-0017 to ADR-0021, ADR-0063).
     format/      manifest models, per-file markers, assess_workspace, assess_portability,
                  resolve_open_target, safe export/import plans (pure; extractable as one package)
-    registry.py  the registry (registry key vs lineage id, dedupe by canonical root)
-    containers.py  UserContainer / WorkspaceContainer (composition; ref-counted; never hold a ledger)
+    registry.py  the registry (registry key vs lineage id; each row's record of its ledger set;
+                 no file in two workspaces, by path_key, ADR-0063)
+    containers.py  UserContainer / WorkspaceContainer (composition; ref-counted; never hold a ledger;
+                 at most one open WorkspaceContainer per UserContainer, ADR-0063)
     legacy.py    legacy detection, classification, adoption plan (Copy only), legacy-lock detection (ADR-0020, ADR-0062)
   boot/          assess_app, app-level transitions, the lifecycle executor (plan -> consent ->
                  backup -> apply -> record), the migration framework, content packs, demo workspace
@@ -213,7 +215,7 @@ Each slice has the same internal layout, so an agent finds things by convention:
 | `platform` | Ports, concurrency primitives, registries, observability, plans, error registry | Protocols: `Clock`, `Ids`, `Rng`, `FileSystem`, `Locks`, `Http`, `Imap`, `Llm`, `EnginePort`, `SecretResolver`; `WorkspaceLimiter`, `Registry[T]`, `PlanStore`, `log_context`, `timed`, `ErrorCode` | `domain`, stdlib; `platform.adapters` alone may import portalocker, httpx, pydantic_ai, imaplib, ssl |
 | `ledger` (engine) | Read and write the ledger set through Beancount; the write-safety contract | `overlay.load`, `parse_files`, `grammar.parse_account(text, profile)`, `grammar.tolerance(...)` (the Beancount grammar and tolerance behind `beancount_port`; INV-02 unchanged), `LoadPolicy`, `Edit`, `EditPlan`, `IntendedChange`, `contract.prepare(plan) -> Prepared \| Refused`, `writer.commit(prepared, acks) -> Committed \| Refused`, `ErrorKey`, `CanonicalEntryKey` | the engine's own packages and its environment; `beancount_port` alone imports `beancount` (§2.0) |
 | `mirror` | Build and publish (in the engine), read the SQLite projection and run hardened user SQL (main sidecar) | engine: `build_generation(load_result) -> Generation`, `publish(gen)`; main: `Reader` (typed reads), `QueryRunner.run_user_sql(UserSql, params)`, `ledger_version()` | main: `domain`, `platform`; stdlib `sqlite3` |
-| `workspaces` | Workspace format, registry, open/switch, containers, legacy adoption | `format.assess_workspace`, `format.assess_portability`, `format.resolve_open_target`, `Registry`, `open_workspace(key) -> Opened \| NotReady(phase)`, `WorkspaceContainer`, `UserContainer` | `domain`, `platform`, `ledger`, `mirror`; `format/` imports only `domain` + pydantic (extractable, ADR-0017) |
+| `workspaces` | Workspace format, registry, open/switch, containers, legacy adoption | `format.assess_workspace`, `format.assess_portability`, `format.resolve_open_target`, `Registry`, `open_workspace(key) -> Opened \| NotReady(phase)` (a switch when another workspace is open: assess, quiesce and close it, then open; ADR-0063), `WorkspaceContainer`, `UserContainer` | `domain`, `platform`, `ledger`, `mirror`; `format/` imports only `domain` + pydantic (extractable, ADR-0017) |
 | `boot` | App-level assessment and lifecycle runs; migrations; content packs; demo | `assess_app(probe) -> AppPhase`, `LifecyclePlan`, `execute(plan, consent)`, `Migration` registry, `ContentPack` | kernel packages; `content` |
 | `content` | Shipped read-only content and the demo/corpus generator | `packs.load(id, version)`, `demo.generate(anchor_date, size, fragments)` (built S0027: `Fragment`, `Size` demo/5k/54k, `default_fragments()`) | `domain`, `ledger.core` (printer-free text builders) |
 | feature slices | One capability each (§2.2) | `<slice>.usecases` functions, `<slice>.capabilities`, `<slice>.registry` | kernel packages; other slices only through the declared edges (§2.4) |
@@ -273,7 +275,7 @@ The core is stateless. **These are all the stateful parts of the backend, and no
 | Categorizer model handle | `WorkspaceContainer`; persisted per `ledger_version` in the cache dir | 1 per ws | L4-13 |
 | Optional BQL entries cache | `WorkspaceContainer` | short TTL, off in hosted mode | ADR-0011 |
 | Import sessions | disk, `local/<key>/import-sessions/` | N days | ADR-0027 |
-| Workspace containers | `UserContainer`, ref-counted | at most 1 idle container kept warm on desktop | review:23 §3.8 |
+| Workspace containers | `UserContainer`, ref-counted | at most one open; no idle container kept warm (ADR-0063 supersedes review:23 §3.8's warm container) | a switch releases the current one before the target opens (ADR-0063) |
 
 **App-level files** (`workspaces.json`, `settings.yaml`, `.app.json`) are written under one app-level lock with atomic replace (review:F B-2.18). A second process on the same app root is refused at start: the process serving the API holds an app-instance lock for its life, and a second one exits with "Finzytrack is already running." (ADR-0062, BL-0100).
 
@@ -405,7 +407,7 @@ Hand-written TanStack Query hooks live in `features/*/queries.ts`. They are thin
 |---|---|---|
 | `/api/boot` | app | `GET` → `{app: {phase, version, plan?}, last_workspace?: {...}}` (ADR-0019); answers before ready |
 | `/api/app/…` | app | settings, AI provider, update channel, `quiesce` (before an update), `client-log` (§6A.2), `report:preview` / `report:save` (§6A.4), `diagnostics` (§6.6), packs |
-| `/api/workspaces/…` | app (registry) | list, `{key}/open`, `create:plan` / `create:apply`, `adopt:plan`, `import:plan`, forget, `legacy/probe` |
+| `/api/workspaces/…` | app (registry) | list, `{key}/open` (the switch, ADR-0063), `create:plan` / `create:apply`, `adopt:plan`, `import:plan`, forget, `legacy/probe` |
 | `/api/w/{ws}/…` | workspace | `version`, `profile`, `accounts`, `accounts/balances?from&to`, `transactions?…&cursor`, `transactions/{id}:preview`, `import/sessions/{id}/…`, `recipes:run`, `dashboards/…`, `rules/…`, `prices/…`, `investments/holdings?as_of`, `documents/…`, `plans/{id}:confirm`, `chat` (SSE) |
 
 - **Writes follow plans as data (EP-08).** A mutating capability exposes `…:preview`, which returns a `WritePlan {plan_id, preview_hash, diff, new_error_keys, warnings}` (INV-16), and the shared `POST /api/w/{ws}/plans/{plan_id}:confirm {preview_hash, acknowledged_error_keys}`. A non-destructive insert may combine the two in one call when nothing needs acknowledgement. **AI proposals are plans of the same type in the same `PlanStore`**, confirmed through the same endpoint (ADR-0033: the approval names a server-side id plus a preview hash), so the UI and the AI share one write model.
@@ -457,7 +459,7 @@ The taxonomy lives in `app.domain.errors`, and the code registry in `app.platfor
 |---|---|---|---|
 | `Invalid`: validation, with located issues (JSON path / field) | 422 | `VALIDATION_FAILED`, `RECIPE_INVALID`, `ACCOUNT_NAME_INVALID`, `AMOUNT_UNPARSEABLE` | inline field errors (`Field` / `useFieldErrors`), else a toast |
 | `NotFound` | 404 | `WORKSPACE_UNKNOWN`, `TRANSACTION_NOT_FOUND`, `PLAN_EXPIRED` | toast |
-| `Conflict`: state moved underneath | 409 | `LEDGER_EXTERNALLY_CHANGED` (the contract's fingerprint check), `PREVIEW_STALE`, `WORKSPACE_NOT_READY {phase}`, `SYNC_CONFLICT_WRITES_BLOCKED`, `WRITE_IN_PROGRESS` | modal with reload / re-plan |
+| `Conflict`: state moved underneath | 409 | `LEDGER_EXTERNALLY_CHANGED` (the contract's fingerprint check), `PREVIEW_STALE`, `WORKSPACE_NOT_READY {phase}`, `WORKSPACE_NOT_OPEN {open_workspace, switching}` (a registered workspace that is not the open one, ADR-0063), `LEDGER_SHARED {path, other_workspace}` (its ledger set overlaps another workspace's, ADR-0063), `SYNC_CONFLICT_WRITES_BLOCKED`, `WRITE_IN_PROGRESS` | modal with reload / re-plan |
 | `ContractRefused`: the write contract refused (semantic diff mismatch, a step failed closed, a new error not acknowledged) | 409 (needs acknowledgement) / 422 (refused) | `ACK_REQUIRED {error_keys}`, `WRITE_REFUSED_UNINTENDED_CHANGE`, `WRITE_REFUSED_CHECK_FAILED`, `ENCRYPTED_FILE_NOT_EDITABLE` | modal; always says "your ledger is unchanged" |
 | `Forbidden`: permission and confinement (ADR-0040, ADR-0041) | 403 | `PATH_OUTSIDE_WORKSPACE`, `LOAD_POLICY_REFUSED`, `LAN_PATH_DISABLED`, `AI_DISABLED_IN_WORKSPACE`, `UNPROMOTED_MUTATOR_ON_REAL_LEDGER` | modal |
 | `Unavailable`: a dependency is down or busy | 503 | `LLM_UNAVAILABLE`, `IMAP_UNAVAILABLE`, `PRICE_SOURCE_UNAVAILABLE`, `NETWORK_UNAVAILABLE`, `BUSY_HEAVY_LOAD`, `SECRET_MISSING` | toast with **Retry** (`retryable: true`, `retry_after_ms`) |
@@ -600,7 +602,7 @@ Frontend workflows are **XState v5** machines with model-based tests: `@xstate/g
 | Machine | Where | States (outline) | Events (outline) |
 |---|---|---|---|
 | **Boot** (app) | BE table `boot.core.app_phases`; FE `app/machines/boot` | BE: `RECOVERING`, `APP_CONFIG_INVALID`, `NEWER_APP_STATE`, `APP_UPGRADE_PENDING`, `NO_WORKSPACE`, `APP_READY` (ADR-0019). FE: `waitingForBackend` → `fetchingBoot` → {`welcome`, `welcomeWithProblem`, `appUpgrade`, `recovering`, `configInvalid`, `newerAppState`, `openingLast`} → `ready`; `backendLost` | `BOOT_RESULT(phase)`, `RETRY`, `CONSENT_UPGRADE`, `RESTORE_BACKUP`, `OPEN_LAST_OK/FAILED`, `SIDECAR_LOST` |
-| **Workspace open / switch** | BE `workspaces.format.assess_workspace` + open table; FE `features/workspaces/machines/switch` | BE: `RECOVERING`, `WS_CONFIG_INVALID`, `LEDGER_UNAVAILABLE`, `NEWER_WORKSPACE`, `UPGRADE_PENDING`, `READY` (+`WARMING`), with sub-flags `syncConflict`, `secretsMissing`. FE: `idle` → `guardingLeave` → `settlingMutations` → `opening` → {`navigating`, `dialog.<phase>`} → `idle`; `cancelled` | `SWITCH(to)`, `LEAVE_OK/CANCEL`, `MUTATIONS_SETTLED/TIMEOUT`, `OPEN_RESULT(phase)`, `RETRY`, `LOCATE(path)`, `STAY`, `FORGET`, `UPGRADE`, `REBUILD_PUBLISHED` |
+| **Workspace open / switch** | BE `workspaces.format.assess_workspace` + open table; FE `features/workspaces/machines/switch` | BE: `RECOVERING`, `WS_CONFIG_INVALID`, `LEDGER_UNAVAILABLE`, `LEDGER_SHARED`, `NEWER_WORKSPACE`, `UPGRADE_PENDING`, `READY` (+`WARMING`), with sub-flags `syncConflict`, `secretsMissing`; the switch (ADR-0063): assess the target, quiesce and close the current workspace, open the target. FE: `idle` → `guardingLeave` → `settlingMutations` → `assessingTarget` → `closingCurrent` ("Just a moment… switching workspaces.") → `opening` → {`navigating`, `dialog.<phase>`} → `idle`; `cancelled` (Stay, until the current workspace has shut); `closedElsewhere` (another tab switched) | `SWITCH(to)`, `LEAVE_OK/CANCEL`, `MUTATIONS_SETTLED/TIMEOUT`, `ASSESS_RESULT(phase)`, `CLOSED`, `STAY`, `BACK`, `NOT_OPEN(open_workspace)`, `OPEN_RESULT(phase)`, `RETRY`, `LOCATE(path)`, `STAY`, `FORGET`, `UPGRADE`, `REBUILD_PUBLISHED` |
 | **Import session** | BE `importing.core.session` (authoritative, persisted); FE `features/importing/machines/session` | BE: `created` → `read` → `reviewing` ↔ `revalidating` (ledger_version changed) → `committing` → {`committed`, `commitRefused`}; `discarded`, `expired`. FE: `selectingSource`, `mappingColumns`, `parsing`, `reviewing`, `confirming`, `committing`, `done`, `error` | `UPLOAD`, `MAPPING_SET`, `PARSED`, `EDIT_DRAFT`, `LEDGER_CHANGED`, `REVALIDATED`, `COMMIT`, `COMMIT_OK/REFUSED`, `DISCARD`, `EXPIRE` |
 | **Edit buffer and save** (transactions grid, settings sections, rule and dashboard editors) | FE `features/transactions/machines/editBuffer` (generic over the item type) | `clean`, `dirty`, `saving` (with `dirtyWhileSaving` and per-op inverse patches), `conflict` (externally changed), `saveFailed`, `discarding` | `EDIT(op)`, `UNDO`, `REDO`, `SAVE`, `SAVE_OK(ids)`, `SAVE_FAILED(err)`, `CONFLICT`, `RELOAD`, `DISCARD`, `QUERY_CHANGE` (guarded: dirty → ask) |
 | **AI proposal** | BE `ai.core.proposal` over the `PlanStore` plan; FE `features/assistant/machines/proposal` (the card) | BE: `drafted` → `previewed(hash)` → {`confirmed` → `committing` → {`committed` → `undone`?, `refused`}, `rejected`, `expired`, `stale`}. FE: `shown`, `confirming`, `committed`, `refused`, `stale`, `expired` | `PREVIEW`, `CONFIRM(hash)`, `REJECT`, `HASH_MISMATCH`, `TTL`, `COMMIT_OK/REFUSED`, `UNDO` |
@@ -673,7 +675,7 @@ Toolchain: TLA+ tools `tla2tools.jar` **1.7.4** (latest stable; 1.8.0 was still 
 
 ### 9.1 Read (dashboards, lists, balances)
 1. The view's query hook calls `GET /api/w/{ws}/…`, with the key from `keys.gen.ts` and `signal`.
-2. `api` resolves `{ws}` in the caller's registry to a `WorkspaceContainer`. An unknown key returns `WORKSPACE_UNKNOWN`; a not-ready one returns `WORKSPACE_NOT_READY {phase}` (INV-28).
+2. `api` resolves `{ws}` in the caller's registry to a `WorkspaceContainer`. An unknown key returns `WORKSPACE_UNKNOWN`; a registered workspace that is not the open one returns `WORKSPACE_NOT_OPEN` (ADR-0063); a not-ready one returns `WORKSPACE_NOT_READY {phase}` (INV-28).
 3. The use case reads through `mirror.reader`, or `QueryRunner` for user SQL, on a worker thread. **No ledger load** (INV-10, ADR-0011).
 4. The envelope carries `meta.ledger_version`. When a response shows a newer version, the client invalidates `['ws', ws, 'ledger']` once.
 5. The focus-time version check (`GET …/version`, ADR-0037) catches edits made in Fava or an editor. A stale mirror sends the workspace to `WARMING`: reads continue from the previous generation, writes are refused, and the rebuild runs under the heavy-load gate (ADR-0015).
@@ -721,11 +723,13 @@ The investment "one upload, one confirm" sync is the same pipeline, run with the
 4. The user confirms → `POST …/plans/{id}:confirm` (**not** through the chat message array, which the client controls): the preview is recomputed, the hash compared, the plan used once, and the server's stored change committed (ADR-0033). An undo plan is offered.
 
 ### 9.6 Workspace open / switch
-Per review:23 §3.3, driven by the switch machine (§7):
+Per review:23 §3.3 and ADR-0063 (one open workspace at a time), driven by the switch machine (§7). The jobs, their order and the waits of step 3 are the engine-scheduler spec's.
 1. The leave guard runs; pending mutations settle.
-2. `POST /api/workspaces/{B}/open` → recovery (journals) → a cheap probe → `assess_workspace` (pure).
-3. On `READY`/`WARMING` only, the registry records the open (INV-29). Opening never writes the folder (INV-30).
-4. The frontend navigates to `/w/B/…`. Nothing needs invalidating, because the keys change.
+2. `POST /api/workspaces/{B}/open` → a cheap probe → `assess_workspace` (pure, read-only), with the overlap check against every other registry row's recorded ledger set (`LEDGER_SHARED`, ADR-0063). A phase that needs the user is shown with Stay; A stays open and nothing is recorded (INV-29).
+3. A is quiesced: new requests naming A get `WORKSPACE_NOT_OPEN`; reads, previews, rebuilds and queued background jobs end; a confirmed save and a running recovery finish; owed R4 checks and queued recoveries run or stay recorded for A's next open. The UI shows "Just a moment… switching workspaces." Stay cancels until A has shut.
+4. A closes: its container, caches and handles are released (INV-31); its folder is not written (INV-30).
+5. B opens: recovery (journals) → `assess_workspace` again → on `READY`/`WARMING` only, the registry records the open and refreshes B's ledger-set record (INV-29). Opening never writes the folder (INV-30). A failure here offers Back to A.
+6. The frontend navigates to `/w/B/…`. Nothing needs invalidating, because the keys change. Another tab still on `/w/A/…` gets `WORKSPACE_NOT_OPEN` on its next request and offers to switch back.
 
 ### 9.7 Boot and upgrade
 1. The shell spawns the sidecar with the roots and port 0 → handshake → `boot.assess_app(probe)`.

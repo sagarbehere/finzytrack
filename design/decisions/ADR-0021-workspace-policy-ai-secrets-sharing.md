@@ -34,6 +34,14 @@ A user may keep personal and business books in separate workspaces. A business l
 - Per-workspace secret scoping is a row in the isolation matrix on desktop too.
 - Finzytrack AI mode is deferred (ADR-0034, ADR-0043); bring-your-own providers and local models stay.
 
+## Amendment (2026-10-27): "Copy to workspace…" across a switch (ADR-0063)
+
+Owner: "1. Yes to forbidding two workspaces sharing a file. If it'll help we can simplify further: No sharing anywhere, no multiple instances of Finzytrack anywhere. Period. Finzytrack is just about one instance, working with one workspace at a time." (2026-10-27, in session; the full quote is in ADR-0063). Details marked "(agent)" are ADR-0063's.
+- **Superseded:** "Copy to workspace…" writing into a target workspace that is not open. **Instead** (agent): the item is held in the user container, the switch to the target runs, and the target asks "Add <item> from <source>?" and runs its own validator; accounts missing in the target are reported, never fixed (INV-15). Nothing writes a workspace that is not open.
+- "New workspace → start from the settings of another workspace" reads the source's tool state without opening it, and writes only the new folder (unchanged in effect).
+- The deferred live library (CAP-WS-LIBRARY) stays deferred; building it needs an ADR that revisits ADR-0063 ("no sharing anywhere").
+- **Unchanged:** the rest of this ADR, including copy-based sharing of settings and shipped items shared read-only by `pack:` reference.
+
 ## References
 
-review:23 §1.3, §2, §2a, §7.3 Q1–Q2; review:13 §5 Q2; review:18 M-3; ADR-0017, ADR-0033, ADR-0034; INV-13, INV-15, INV-27; CAP-WS-ALLOW-AI, CAP-WS-SECRETS, CAP-WS-COPY-ITEM, CAP-WS-LIBRARY.
+review:23 §1.3, §2, §2a, §7.3 Q1–Q2; review:13 §5 Q2; review:18 M-3; ADR-0017, ADR-0033, ADR-0034; INV-13, INV-15, INV-27; CAP-WS-ALLOW-AI, CAP-WS-SECRETS, CAP-WS-COPY-ITEM, CAP-WS-LIBRARY; ADR-0063.

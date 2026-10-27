@@ -31,6 +31,14 @@ v0.3 keeps one server-side "current ledger". Switching it in one browser tab sil
 - A route-scope test checks that every route declares `app` or `workspace` scope (`x-ft-scope`).
 - Query keys are workspace-scoped and generated (ADR-0037, ADR-0038).
 
+## Amendment (2026-10-27): one open workspace at a time (ADR-0063)
+
+Owner: "1. Yes to forbidding two workspaces sharing a file. If it'll help we can simplify further: No sharing anywhere, no multiple instances of Finzytrack anywhere. Period. Finzytrack is just about one instance, working with one workspace at a time." (2026-10-27, in session; the full quote is in ADR-0063). Details marked "(agent)" are ADR-0063's.
+- **Superseded:** "Several native windows on different workspaces are architecturally allowed; the UI is deferred (CAP-WS-MULTIWINDOW). Browser tabs already work." **Instead:** an instance has at most one open workspace; several windows or tabs may show it; CAP-WS-MULTIWINDOW is cut.
+- **Superseded:** "Switching is the frontend moving from `/w/A/…` to `/w/B/…` after the backend has opened and validated B." **Instead:** the switch assesses B read-only first (A stays open if B needs the user), then quiesces and closes A, then opens B; at no moment are both open (ADR-0063 decision 1).
+- **New code** (agent): a request whose `{ws}` is registered but not open, also while a switch is closing it, gets `409 WORKSPACE_NOT_OPEN {open_workspace, switching}`, changes nothing and is never redirected. `WORKSPACE_UNKNOWN` and `WORKSPACE_NOT_READY {phase}` are unchanged.
+- **Unchanged:** every workspace-scoped request names its workspace; no request finds its target from server-side state; "a write started in A always completes in A"; the rejected alternatives. The open workspace is a gate, not a target: a request naming A is never served by B. INV-28's wording ("no server-side active workspace") is the owner's to amend (`design/inbox/20261027-workspace-invariants-one-open-no-shared-files.md`).
+
 ## References
 
-review:23 §3.2–§3.10; review:10 I6; review:15 L10-01; ADR-0037, ADR-0038; INV-28, INV-29; CAP-WS-SWITCH, CAP-WS-MULTIWINDOW.
+review:23 §3.2–§3.10; review:10 I6; review:15 L10-01; ADR-0037, ADR-0038; INV-28, INV-29; CAP-WS-SWITCH, CAP-WS-MULTIWINDOW; ADR-0063.
