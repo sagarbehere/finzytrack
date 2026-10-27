@@ -115,7 +115,7 @@ Each entry: what is built, the exit beyond §3.2, and the dogfood rule. Detail p
 
 ### M2: Shell, boot, opening a ledger, read-only (L)
 - **May start after M1a**, in parallel with M1b (nothing here writes a ledger).
-- **Built:** boot assessment and the workspace open and switch machinery (registry, containers, workspace-addressed API, legacy-root probe); the frontend foundations (generated API client, Vue Query with workspace-scoped keys, scoped storage, the logger, `ShellPort`, `src/domain` money and dates, the shadcn-vue primitives and the app components such as confirm, dialogs, unsaved guard, fields, safe markdown); the real sidecar supervisor and shell plugins; the Boot, Workspace-switch and Sidecar statecharts.
+- **Built:** boot assessment and the workspace open and switch machinery (registry, containers, workspace-addressed API, legacy-root probe, one v0.4 instance per app root (BL-0100, ADR-0062)); the frontend foundations (generated API client, Vue Query with workspace-scoped keys, scoped storage, the logger, `ShellPort`, `src/domain` money and dates, the shadcn-vue primitives and the app components such as confirm, dialogs, unsaved guard, fields, safe markdown); the real sidecar supervisor and shell plugins; the Boot, Workspace-switch and Sidecar statecharts.
 - **Exit:** the route-scope test for every route; the globals registry lists every stateful part; axe clean; security red team on safe markdown, CSP, path-taking endpoints and the LAN guard.
 - **Dogfood:** **read-only.** You may open your real ledgers; opening never writes a ledger file (INV-30). A ledger your old install uses can only be brought in by Copy (ADR-0062), which arrives in M3; until then, open a copy of it that you made yourself.
 

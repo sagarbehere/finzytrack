@@ -29,8 +29,23 @@
 - Population: "every doc that states the old policy". Inventory built by grep over `design/` (journals excluded), `backend/`, `engine/`, `scripts/`, `frontend/src` and `shell/` (build output excluded) for `Share`, `coexist`, `write.lock`, `legacy lock`, `legacy-lock`, `banner`, `interleaving`, `CAP-LEGACY-COEXIST`, `portalocker`, `running legacy`, `legacy guard`, `second instance`, `two installations`, `both apps`. Counts: 16 files outside journals stated the old policy or depended on it: `ARCHITECTURE.md`, `ENGINEERING.md`, `INVARIANTS.md`, `backlog.md`, `capabilities.toml` (and its generated `.md`), `glossary.md`, `specs/roadmap.md`, `specs/failure-modes.md`, `specs/write-path/intent-table.toml` (and its generated `.md`), ADR-0005, ADR-0020, ADR-0043, ADR-0061, and `specs/engine-scheduler.md`. In: 15 brought in line (the ADRs by amendment sections, their original text kept, append-only). Out: 1, `specs/engine-scheduler.md` (draft 3, sections listed above). Checked and left as they are: ADR-0014 and roadmap M10 ("never both apps writing", still true), the ADR index titles of ADR-0005 and ADR-0020 (titles are append-only), the cut row's own capability text (kept for the record), and the code (`backend/.importlinter` and `backend/tests/architecture/test_contracts.py` name portalocker only as an import rule, unchanged).
 
 ## Verifier
+- Round 1, head 5b0d6e4d: PASS WITH FINDINGS (report in the owner's private archive, `m1a/s0044-verifier/`). The portalocker 3.2.0 facts and the legacy tag pins were confirmed with repros. Docs-only slice: one round (ADR-0058).
+- F1 Medium: failure-modes and ARCHITECTURE §8.3 named a second installation as the case ADR-0012 Q30 and the ledger-set locks cover; they cannot see it (own app-local data). Fixed: the same-app-root case the instance lock misses is an orphaned engine still committing after a relaunch, covered by the ledger-set locks; a second installation is an outside editor, detected only.
+- F2 Medium: only held, free and absent were defined, so an error could fail open. Fixed: any outcome other than free or absent refuses (INV-22) in INV-26, ADR-0062, ADR-0005 and ADR-0020 amendments, the intent table and ARCHITECTURE §9.2; the detection test (INV-26, BL-0026) must cover it.
+- F3 Low: "absent" is true only at the check; the old app's first save can start during the copy read. Fixed: after a read that found it absent, the file must still be absent and the sources' fingerprint unchanged, else the copy is discarded and refused; the detection test covers it; a save is covered by ADR-0013.
+- F4 Low: failure-modes row M5 quoted the old §2.5 sentence. Fixed: a relaunch beside an orphaned sidecar exits with "Finzytrack is already running." once BL-0100 lands, until BL-0073.
+- F5 Low: the texts said one install's lock. Fixed: every legacy install whose config names the files, in INV-26, ADR-0062, the amendments, the intent table and ARCHITECTURE.
+- Q1: Tauri's single-instance plugin keys on the app identifier, not the app root. Fixed in ADR-0062 decision 3, ARCHITECTURE §5 and BL-0100: a forwarded launch with another `--app-root` makes the running window say "Finzytrack is already running with another data folder." and nothing else (agent).
+- Q2: ADR-0062 now quotes the proposal the owner approved, and marks every detail beyond it as agent decisions.
+- Q3 (owner question, not decided here): ADR-0062 Consequences notes that a ledger a legacy `config.yaml` names can never be opened in place while that config exists; a way out is pending the owner's decision.
+- Minor: roadmap M2 Built now names BL-0100.
 
 ## Golden changes
 - none
 
 ## Retro
+- What the verifier found: two Medium gaps in a decision text (an undefined error outcome that could fail open; a wrong claim about what covers a second installation), three Low precision gaps, and one wrong assumption about the Tauri plugin's key. All are facts I could have checked: I defined the detection by its happy outcomes, not by every outcome, and I did not read the plugin's documentation.
+- What a cheaper gate could have found: none of the findings; they are reasoning gaps in prose. One gate false positive: `scripts/check_invariants.py` reads the word "closed" anywhere on a backlog row as a closed status, so "fail closed" on BL-0026 failed the check (worked around by rewording; worth a backlog note if it recurs).
+- Where time went: the inventory of old-policy statements and checking the portalocker and legacy facts at the source (which found ADR-0005's Windows error).
+- Orientation gaps: orient did not list the external-ledger reference (ADR-0017) as a path back to Share; found by reading ADR-0020 against the roadmap.
+- Process cost: implementer 2 passes, verifier 1 round.
