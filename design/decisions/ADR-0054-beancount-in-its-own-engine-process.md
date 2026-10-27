@@ -61,6 +61,6 @@ ADR-0002, ADR-0007, ADR-0010, ADR-0015, ADR-0042; INV-02, INV-10; review:spikes/
 
 Owner: "if we are not most of the way there, or if we can't asses that with confidence, then I agree that we go back to one engine doing one job at a time and massively simplify everything." (2026-10-27, in session; the full record and the other quotes are in ADR-0064.)
 - **Superseded in decision 4:** "owns the heavy-load semaphore". **Instead:** at most one engine process exists, and it runs one job at a time; the queue lives in the main sidecar (`UserContainer`), where a job the user waits for goes ahead of background work. One load at a time bounds memory; there is no semaphore, no slot count and no admission.
-- **Also in decision 4:** "restart with backoff" stays (S0040's bounded restart); a Cancel ends the job's engine and is not a stop; no job has a time limit. An engine that ran user code (plugins) is ended after its job, and the next job gets a fresh one (ADR-0064 decision 8).
+- **Also in decision 4:** "restart with backoff" stays (S0040's bounded restart); a Cancel ends the job's engine and is not a stop; no job has a time limit. An engine that ran user code (plugins) is ended after its job, and the next job gets a fresh one (the owner's 2026-10-26 decision 5, kept on ADR-0064's Unchanged line).
 - **Unchanged:** decisions 1-3, 5 and 6; "one engine serves the user container"; the engine keeps no resident ledger (INV-10).
 

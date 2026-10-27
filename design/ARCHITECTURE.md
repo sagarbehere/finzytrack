@@ -747,7 +747,7 @@ Per review:23 §3.3 and ADR-0063 (one open workspace at a time), driven by the s
 
 ### 9.8 Update
 1. The updater machine checks the signed GitHub Releases manifest (stable channel; the beta channel is deferred to after v0.4.0, owner, 2026-10-24; ADR-0043).
-2. Download and signature verification → `POST /api/app/quiesce` (refuses new writes, waits for in-flight commits and open journals) → install → relaunch. **Install never proceeds while a write journal is open**.
+2. Download and signature verification → `POST /api/app/quiesce` (refuses new writes, lets a running save finish, with Quit anyway as in a quit; engine-scheduler spec §9.3) → install → relaunch. **Install never proceeds while a write journal is open**: an in-session `.open` journal (a failed rollback or an engine death) does not finish by waiting, so the update is refused at once with "Finzytrack has an unfinished change to undo first." and **Reopen** (which recovers it), never a wait without an exit; a blocking journal of another workspace refuses it the same way, with that journal's Retry and "Keep the files as they are now" (INV-32). A `.closed` record (an owed R4) does not stop the install: after the update, its R4 publishes the new build's real load (engine-scheduler spec §6.7).
 3. The new version boots through §9.7. **An update never runs migrations silently** (ADR-0007). Rollback means installing the previous version and using "restore pre-upgrade backup"; nothing downgrades automatically.
 
 ---
