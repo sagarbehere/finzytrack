@@ -181,3 +181,28 @@ def test_a_workspace_route_that_takes_no_workspace_parameter_is_served_when_open
     assert r.status_code == 200
     assert body(r)["meta"]["workspace_id"] == "personal"
     assert calls == ["plain"]
+
+
+@pytest.mark.inv("INV-28")
+@pytest.mark.parametrize(
+    "send",
+    [
+        pytest.param({"content": b"{not json", "headers": {"content-type": "application/json"}}, id="malformed JSON"),
+        pytest.param({"json": {"n": "abc"}}, id="an invalid field"),
+        pytest.param({}, id="no body"),
+    ],
+)
+def test_the_gate_answers_before_the_body_is_read(send: dict[str, Any]) -> None:
+    """Precedence (verifier F4): a request naming a workspace that is not open is `WORKSPACE_NOT_OPEN` whatever its
+    body; the body is read only for an admitted request (ARCHITECTURE.md §4.2)."""
+    r, calls, _ = _ask(NotOpen(open_workspace=BUSINESS, switching=True), "POST", "/api/w/personal/body", **send)
+    assert (r.status_code, body(r)["error"]["code"]) == (409, "WORKSPACE_NOT_OPEN")
+    assert calls == []
+
+
+@pytest.mark.error_code("VALIDATION_FAILED")
+def test_an_admitted_request_with_a_malformed_body_is_validation_failed() -> None:
+    malformed = {"content": b"{not json", "headers": {"content-type": "application/json"}}
+    r, calls, _ = _ask(Open(PERSONAL), "POST", "/api/w/personal/body", **malformed)
+    assert (r.status_code, body(r)["error"]["code"]) == (422, "VALIDATION_FAILED")
+    assert calls == []

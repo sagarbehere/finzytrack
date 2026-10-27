@@ -13,16 +13,16 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 import pytest
-from fastapi import APIRouter, Depends, Request
-from starlette.routing import Mount
+from fastapi import APIRouter, Depends, Request, WebSocket
+from starlette.responses import PlainTextResponse
 
 from app.api import create_app, export_openapi
 from app.api.envelope import Envelope, ok
 from app.api.health import health_router
 from app.api.routes import RouteScopeError, declare, product_routers, route_scope_problems
-from app.api.workspace import open_workspace, workspace_router
-from app.workspaces.access import Unknown, WorkspaceKey
-from tests.api.support import Counted, FakeContainer, FixedAccess, probe_router
+from app.api.workspace import GatedRoute, open_workspace, workspace_router
+from app.workspaces.access import NotOpen, Unknown, WorkspaceKey
+from tests.api.support import Counted, FakeContainer, FixedAccess, client, probe_router
 
 
 def _build(*routers: APIRouter) -> Any:
@@ -87,7 +87,7 @@ def _ws_route(path: str, extra: dict[str, Any] | None, *, gated: bool = True, me
         pytest.param(lambda: _app_route("/api/app/x", declare("ledger")), "workspace path", id="an app path as ledger"),
         pytest.param(lambda: _app_route("/api/app/x", declare("config")), "workspace path", id="an app path as config"),
         pytest.param(
-            lambda: _ws_route("/x", declare("ledger"), gated=False), "open_workspace", id="a workspace route ungated"
+            lambda: _ws_route("/x", declare("ledger"), gated=False), "GatedRoute", id="a workspace route ungated"
         ),
         pytest.param(lambda: _app_route("/api/w/x", declare("app")), "/api/w/", id="an app path under /api/w/"),
         pytest.param(
@@ -138,19 +138,82 @@ def test_an_app_route_that_reaches_the_gate_through_another_dependency_is_refuse
 
 
 @pytest.mark.inv("INV-28")
-def test_a_workspace_route_gated_through_another_dependency_passes() -> None:
+def test_a_workspace_route_that_is_gated_only_through_a_dependency_is_refused() -> None:
+    """The gate must run before anything else of the route (verifier F1): a dependency is not enough."""
     r = _router("/api/w/{ws}")
     r.add_api_route("/x", _nested_handler, methods=["GET"], openapi_extra=declare("ledger"))
-    _build(r)
+    with pytest.raises(RouteScopeError, match="GatedRoute"):
+        _build(r)
 
 
 @pytest.mark.inv("INV-28")
-def test_a_route_that_is_not_an_api_route_is_refused() -> None:
+def test_a_dependency_listed_before_the_gate_cannot_be_built() -> None:
+    """Verifier F1 (attack A5): a router-level dependency before `open_workspace` would run on a refused request."""
+    effects: list[str] = []
+
+    async def write_something() -> None:
+        effects.append("wrote")
+
+    r = APIRouter(prefix="/api/w/{ws}", dependencies=[Depends(write_something), Depends(open_workspace)])
+    r.add_api_route("/x", _handler, methods=["POST"], openapi_extra=declare("ledger", writes="ledger"))
+    with pytest.raises(RouteScopeError, match="GatedRoute"):
+        _build(r)
+    assert effects == []
+
+
+@pytest.mark.inv("INV-28")
+def test_on_a_workspace_router_no_dependency_runs_for_a_refused_request() -> None:
+    """The same dependency on a `workspace_router()` route: the gate refuses first and the dependency never runs."""
+    effects: list[str] = []
+
+    async def write_something() -> None:
+        effects.append("wrote")
+
+    r = workspace_router()
+    r.add_api_route(
+        "/x",
+        _handler,
+        methods=["POST"],
+        openapi_extra=declare("ledger", writes="ledger"),
+        dependencies=[Depends(write_something)],
+    )
+    container = FakeContainer(FixedAccess(NotOpen(open_workspace=WorkspaceKey("b"), switching=False)))
+    app = create_app(lambda: container, routers=(health_router(), r))
+    resp = client(app).request("POST", "/api/w/a/x")
+    assert resp.status_code == 409
+    assert effects == []
+
+
+def _mounted() -> APIRouter:
+    r = APIRouter()
+    r.mount("/static", app=PlainTextResponse("x"))
+    return r
+
+
+def _plain_route() -> APIRouter:
+    async def plain(request: Request) -> PlainTextResponse:
+        return PlainTextResponse("x")
+
+    r = APIRouter()
+    r.add_route("/api/plain", plain)
+    return r
+
+
+def _websocket() -> APIRouter:
+    async def sock(websocket: WebSocket) -> None:
+        await websocket.close()
+
+    r = APIRouter()
+    r.add_api_websocket_route("/api/w/{ws}/sock", sock)
+    return r
+
+
+@pytest.mark.inv("INV-28")
+@pytest.mark.parametrize("router", [_mounted, _plain_route, _websocket], ids=["mount", "plain route", "websocket"])
+def test_a_route_that_is_not_an_api_route_refuses_to_build_the_app(router: Any) -> None:
     """A mount, a plain Starlette route or a websocket is outside the envelope and the declarations."""
-    container = FakeContainer(FixedAccess(Unknown()))
-    app = create_app(lambda: container)
-    app.router.routes.append(Mount("/static", routes=[]))
-    assert any("not an API route" in p for p in route_scope_problems(app))
+    with pytest.raises(RouteScopeError, match="not an API route"):
+        _build(router())
 
 
 def test_the_contract_carries_both_extensions_on_every_operation() -> None:
@@ -164,3 +227,16 @@ def test_declare_refuses_a_write_from_an_app_scope_that_is_not_config() -> None:
     """App-scoped routes write app config at most (ARCHITECTURE.md §4.2); a ledger write needs a workspace."""
     with pytest.raises(ValueError, match="ledger"):
         declare("app", writes="ledger")
+
+
+@pytest.mark.inv("INV-28")
+def test_a_gated_route_outside_the_workspace_prefix_is_refused() -> None:
+    """A `GatedRoute` is a workspace route; on an app path, or with another prefix in front, it is refused."""
+    r = _router("/api/app", route_class=GatedRoute)
+    r.add_api_route("/x", _handler, methods=["GET"], openapi_extra=declare("app"))
+    with pytest.raises(RouteScopeError, match="app route"):
+        _build(r)
+    outer = _router("/v2")
+    outer.include_router(_ws_route("/x", declare("ledger")))
+    with pytest.raises(RouteScopeError):
+        _build(outer)

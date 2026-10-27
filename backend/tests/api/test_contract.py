@@ -23,9 +23,12 @@ from typing import Any
 
 import pytest
 
-from app.api import export_openapi
+from app.api import create_app, export_openapi
 from app.api.contract import contract_problems, render
+from app.api.health import health_router
 from app.platform.errors import specs
+from app.workspaces.access import Unknown
+from tests.api.support import FakeContainer, FixedAccess, probe_router
 
 BACKEND = Path(__file__).resolve().parents[2]
 
@@ -92,6 +95,21 @@ def test_the_export_script_writes_a_good_contract(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(script, "OUT", tmp_path / "openapi.json")
     assert script.main([]) == 0
     assert (tmp_path / "openapi.json").read_text(encoding="utf-8") == render(export_openapi())
+
+
+def test_a_workspace_router_contract_declares_the_key_on_every_route() -> None:
+    """Every route of `workspace_router()` declares `{ws}`, also one whose handler does not take it (the router's
+    `open_workspace` dependency declares it)."""
+    container = FakeContainer(FixedAccess(Unknown()))
+    doc = create_app(lambda: container, routers=(health_router(), probe_router([]))).openapi()
+    assert contract_problems(doc) == []
+
+
+def test_an_undeclared_path_parameter_is_refused() -> None:
+    container = FakeContainer(FixedAccess(Unknown()))
+    doc = create_app(lambda: container, routers=(health_router(), probe_router([]))).openapi()
+    doc["paths"]["/api/w/{ws}/plain"]["post"]["parameters"] = []
+    assert any("{ws}" in p for p in contract_problems(doc))
 
 
 def test_the_product_contract_passes_its_own_rules() -> None:
@@ -161,6 +179,17 @@ def _plant_unwrapped_success(doc: dict[str, Any]) -> None:
     }
 
 
+def _plant_bare_error_status(doc: dict[str, Any]) -> None:
+    """A declared error status (here 409) whose answer is not the error envelope (verifier F3)."""
+    _first_op(doc)["responses"]["409"] = {
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HealthData"}}}
+    }
+
+
+def _plant_schemaless_error_status(doc: dict[str, Any]) -> None:
+    _first_op(doc)["responses"]["422"] = {"description": "no schema"}
+
+
 type Plant = Callable[[dict[str, Any]], None]
 
 
@@ -176,6 +205,8 @@ type Plant = Callable[[dict[str, Any]], None]
         pytest.param(_plant_no_error_envelope, "default", id="an operation without the error envelope"),
         pytest.param(_plant_bare_success, "envelope", id="a success answer outside the envelope"),
         pytest.param(_plant_unwrapped_success, "envelope", id="a success answer naming the bare data schema"),
+        pytest.param(_plant_bare_error_status, "409", id="a declared error status outside the envelope"),
+        pytest.param(_plant_schemaless_error_status, "422", id="a declared error status without a schema"),
     ],
 )
 def test_a_contract_that_breaks_a_rule_is_refused(plant: Plant, problem: str) -> None:

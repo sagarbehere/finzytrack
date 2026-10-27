@@ -39,6 +39,7 @@ def create_app(container_factory: ContainerFactory, routers: Sequence[APIRouter]
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        redirect_slashes=False,  # `/health/` is ROUTE_NOT_FOUND in the envelope, not a redirect (verifier F5)
         separate_input_output_schemas=False,  # one schema per model (ADR-0038 amendment)
         telemetry=no_telemetry(),
     )

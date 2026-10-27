@@ -17,6 +17,7 @@ import httpx
 from fastapi import APIRouter, Depends, FastAPI, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from starlette.exceptions import HTTPException
 
 from app.api import create_app
 from app.api.envelope import Envelope, ok
@@ -90,6 +91,11 @@ def probe_router(calls: list[str]) -> APIRouter:
         calls.append(f"save {ws}")
         return ok(request, Probe(ws=ws))
 
+    @router.post("/body", openapi_extra=declare("ledger", writes="ledger"))
+    async def with_body(request: Request, payload: Counted) -> Envelope[Counted]:
+        calls.append("body")
+        return ok(request, payload)
+
     @router.post("/plain", openapi_extra=declare("ledger", writes="ledger"))
     async def plain(request: Request) -> Envelope[Counted]:
         """Takes no workspace parameter: the router's gate must still run."""
@@ -117,6 +123,14 @@ def failing_router(raise_this: Callable[[], BaseException] | None = None) -> API
     @router.get("/count", openapi_extra=declare("app"))
     async def count(request: Request, n: Annotated[int, Query()]) -> Envelope[Counted]:
         return ok(request, Counted(n=n))
+
+    @router.get("/odd", openapi_extra=declare("app"))
+    async def odd(request: Request, n: Annotated[int, Query(alias="a/b~c")]) -> Envelope[Counted]:
+        return ok(request, Counted(n=n))
+
+    @router.get("/unauthorized", openapi_extra=declare("app"))
+    async def unauthorized() -> Envelope[Counted]:
+        raise HTTPException(401)
 
     @router.get("/stream", openapi_extra=declare("app"), response_class=StreamingResponse)
     async def stream() -> StreamingResponse:

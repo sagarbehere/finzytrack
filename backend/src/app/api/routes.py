@@ -4,9 +4,10 @@
 
 - every route is an API route (a mount or a plain route would bypass the envelope and the declarations);
 - it declares `x-ft-scope` (`app`, `config` or `ledger`) and `x-ft-writes` (`ledger`, `config` or `none`);
-- a path under `/api/w/{ws}/` is a workspace route: scope `config` or `ledger`, behind the gate `open_workspace`;
-- any other path is an app route: scope `app`, not under `/api/w/`, no `{ws}`, not behind the gate, never writing a
-  ledger;
+- a path under `/api/w/{ws}/` is a workspace route: scope `config` or `ledger`, a `GatedRoute` (from
+  `workspace_router()`), so the gate runs before the body is read and before any dependency;
+- any other path is an app route: scope `app`, not under `/api/w/`, no `{ws}`, neither a `GatedRoute` nor depending on
+  `open_workspace`, never writing a ledger;
 - a GET or HEAD writes nothing.
 
 `create_app` runs it and refuses to build an app that breaks it, so a misdeclared route is never served or exported.
@@ -20,7 +21,7 @@ from fastapi.routing import APIRoute, RouteContext, iter_route_contexts
 
 from app.api.health import health_router
 from app.api.scope import SCOPES, WRITES, declare
-from app.api.workspace import PREFIX, open_workspace
+from app.api.workspace import PREFIX, GatedRoute, open_workspace
 
 __all__ = ["RouteScopeError", "declare", "product_routers", "route_scope_problems"]
 
@@ -64,12 +65,13 @@ def _problems(ctx: RouteContext) -> list[str]:
         out.append(f"{where}: x-ft-writes must be ledger, config or none, not {writes!r}")
     workspace_path = path == PREFIX or path.startswith(PREFIX + "/")
     dependant: Dependant | None = ctx.dependant
-    gated = dependant is not None and _gated(dependant)
+    gate_first = isinstance(ctx.original_route, GatedRoute)
+    gated = gate_first or (dependant is not None and _gated(dependant))
     if workspace_path:
         if scope == "app":
             out.append(f"{where}: a workspace path must be declared config or ledger")
-        if not gated:
-            out.append(f"{where}: a workspace route must depend on open_workspace (use workspace_router())")
+        if not gate_first:
+            out.append(f"{where}: a workspace route must be a GatedRoute (workspace_router()): the gate runs first")
     else:
         if scope in ("config", "ledger"):
             out.append(f"{where}: only a workspace path ({PREFIX}/…) may be declared {scope}")

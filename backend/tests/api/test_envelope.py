@@ -10,6 +10,10 @@ the contract declares for it, so the generated TypeScript types describe what th
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -17,10 +21,13 @@ from fastapi import FastAPI
 from jsonschema import Draft202012Validator
 
 from app.api import create_app, export_openapi
+from app.api import errors as errors_module
 from app.api.errors import status_for
 from app.api.health import health_router
 from app.domain.errors import Conflict, DomainError, ErrorClass, NotFound
+from app.platform.clock import FrozenClock
 from app.platform.errors import ErrorCode, WorkspaceNotReadyDetails, spec_for
+from app.platform.observability import EventLog, LogContext, Roots
 from app.platform.observability.events import API_INTERNAL_ERROR
 from app.workspaces.access import Unknown
 from tests.api.support import (
@@ -29,6 +36,7 @@ from tests.api.support import (
     Boom,
     FakeContainer,
     FixedAccess,
+    SequentialIds,
     body,
     client,
     failing_router,
@@ -246,3 +254,98 @@ def test_fastapi_telemetry_is_off_whatever_the_environment_says(monkeypatch: pyt
     config = app._telemetry  # pyright: ignore[reportPrivateUsage] (FastAPI keeps the resolved config private)
     off = ("tracing", "metrics", "logs", "operation_spans", "auto_configure")
     assert {k: config.get(k) for k in off} == dict.fromkeys(off, False)
+
+
+@pytest.mark.error_code("VALIDATION_FAILED")
+def test_a_validation_issue_never_echoes_the_value_sent() -> None:
+    """§6.5 and §6A.3: the value sent may be ledger text; the issue names the rule, never the value (verifier F7)."""
+    app, _ = _app()
+    r = client(app).get("/api/test/count", params={"n": LEDGER_TEXT})
+    assert r.status_code == 422
+    assert LEDGER_TEXT not in r.text
+    assert "Groceries" not in r.text
+
+
+def test_a_validation_issue_location_is_an_escaped_json_pointer() -> None:
+    """RFC 6901: `~` is written `~0` and `/` is written `~1` inside one reference token (verifier F7)."""
+    app, _ = _app()
+    r = client(app).get("/api/test/odd", params={"a/b~c": "x"})
+    assert r.status_code == 422
+    assert [i["path"] for i in body(r)["error"]["issues"]] == ["/query/a~1b~0c"]
+
+
+@pytest.mark.error_code("ROUTE_NOT_FOUND")
+@pytest.mark.parametrize("path", ["/health/", "/api/test/count/"])
+def test_a_trailing_slash_is_route_not_found_not_a_redirect(path: str) -> None:
+    """Every answer is in the envelope (ADR-0038): no 307 to another address (verifier F5)."""
+    app, _ = _app()
+    r = client(app).request("GET", path, follow_redirects=False)
+    assert r.status_code == 404
+    assert body(r)["error"]["code"] == "ROUTE_NOT_FOUND"
+
+
+def test_an_http_exception_that_is_not_a_routing_refusal_is_internal() -> None:
+    """Only the router's 404 and 405 are `ROUTE_NOT_FOUND`; any other HTTP exception is not ours (verifier F2)."""
+    app, container = _app()
+    r = client(app).get("/api/test/unauthorized")
+    assert (r.status_code, body(r)["error"]["code"]) == (500, "INTERNAL")
+    assert [event for event, _ in container.log.lines] == [API_INTERNAL_ERROR]
+
+
+@dataclass
+class _LoggingContainer:
+    workspaces: FixedAccess
+    log: EventLog
+    app_version: str = "9.9.9-test"
+    ids: SequentialIds = field(default_factory=SequentialIds)
+
+
+def test_the_internal_error_log_line_carries_the_correlation_id_the_answer_shows(tmp_path: Path) -> None:
+    """§6.6: the user copies the correlation id from the answer and finds the log line by it (verifier F2)."""
+    log = EventLog(
+        tmp_path / "finzytrack.jsonl",
+        context=LogContext(session_id="session-12345678", app_version="9.9.9-test"),
+        clock=FrozenClock(datetime(2026, 1, 1, tzinfo=UTC)),
+        roots=Roots(tmp_path, tmp_path),
+    )
+    try:
+        container = _LoggingContainer(FixedAccess(Unknown()), log)
+        app = create_app(lambda: container, routers=(health_router(), failing_router()))
+        r = client(app).get("/api/test/boom")
+    finally:
+        log.close()
+    lines = [json.loads(x) for x in (tmp_path / "finzytrack.jsonl").read_text(encoding="utf-8").splitlines()]
+    internal = [line for line in lines if line.get("event") == "api.internal_error"]
+    assert [line["correlation_id"] for line in internal] == [body(r)["error"]["correlation_id"]]
+    assert LEDGER_TEXT not in (tmp_path / "finzytrack.jsonl").read_text(encoding="utf-8")
+
+
+class _BrokenIds:
+    def new_id(self) -> str:
+        raise RuntimeError(LEDGER_TEXT)
+
+
+def test_an_ids_failure_is_internal_in_the_envelope_and_is_not_swallowed() -> None:
+    """Verifier F6: before the request has an id, the answer still is the envelope (request id `unassigned`)."""
+    container = FakeContainer(FixedAccess(Unknown()))
+    container.ids = _BrokenIds()  # pyright: ignore[reportAttributeAccessIssue] (a broken port on purpose)
+    app = create_app(lambda: container, routers=(health_router(),))
+    r = client(app, raise_app_exceptions=False).get("/health")
+    assert (r.status_code, body(r)["error"]["code"], body(r)["meta"]["request_id"]) == (500, "INTERNAL", "unassigned")
+    assert LEDGER_TEXT not in r.text
+    with pytest.raises(RuntimeError):
+        client(app).get("/health")
+
+
+def test_a_log_binding_failure_is_internal_in_the_envelope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verifier F6: binding the request id to the log is inside the catch-all."""
+
+    def broken(**_: object) -> Any:
+        raise RuntimeError(LEDGER_TEXT)
+
+    monkeypatch.setattr(errors_module, "bound_context", broken)
+    app, container = _app()
+    r = client(app).get("/health")
+    assert (r.status_code, body(r)["error"]["code"]) == (500, "INTERNAL")
+    assert body(r)["meta"]["request_id"] == "req-1"
+    assert [event for event, _ in container.log.lines] == [API_INTERNAL_ERROR]

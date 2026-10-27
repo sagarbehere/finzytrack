@@ -12,6 +12,7 @@ The contract carries the registry as a union of one error shape per code, keyed 
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import functools
 import traceback
@@ -202,11 +203,11 @@ class Edge:
             return
         try:
             container = self.container_factory()
+            ctx = RequestContext(request_id=container.ids.new_id(), container=container)
         except Exception:  # §6.3's catch-all: answered in the envelope, then re-raised for the server's log
             response = _response(_registry(ErrorCode.INTERNAL), UNASSIGNED, None, None)
             await response(scope, receive, send)
             raise
-        ctx = RequestContext(request_id=container.ids.new_id(), container=container)
         scope.setdefault("state", {})[STATE_KEY] = ctx
         progress = _Progress()
 
@@ -215,8 +216,9 @@ class Edge:
                 progress.started = True
             await send(message)
 
-        with bound_context(correlation_id=ctx.request_id):
+        with contextlib.ExitStack() as binding:
             try:
+                binding.enter_context(bound_context(correlation_id=ctx.request_id))
                 await self.app(scope, receive, tracked)
             except Exception as exc:  # §6.3's catch-all: logged with the request id, answered as INTERNAL
                 response = _internal(ctx, exc)

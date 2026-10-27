@@ -4,13 +4,15 @@
 returns its OpenAPI document; no server starts. `render` writes it as `contracts/openapi.json` does: sorted keys, two
 spaces, the GENERATED header as the first key (`scripts/check_generated.py`). `contract_problems` holds a document to
 the rules the generated client relies on: every operation declares its scope and writes; every operation answers
-errors with the envelope (`default`) and success inside it (`{data, meta}`); every field of a response is required;
-no FastAPI default error schema and no separate input and output schemas.
+errors with the error envelope (`default` and every other non-2xx answer it declares) and success inside
+`{data, meta}`; every field of a response is required;
+every path parameter is declared; no FastAPI default error schema and no separate input and output schemas.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 from typing import Any, cast
 
@@ -23,6 +25,7 @@ HEADER = (
 )
 ERROR_ENVELOPE = "#/components/schemas/ErrorEnvelope"
 FORBIDDEN_SCHEMAS = ("HTTPValidationError", "ValidationError")
+PATH_PARAM = re.compile(r"\{([^}]+)\}")
 
 
 class ExportServesNoRequest(RuntimeError):
@@ -59,15 +62,24 @@ def contract_problems(doc: dict[str, Any]) -> list[str]:
         for method, op in item.items():
             where = f"{method.upper()} {path}"
             out.extend(f"{where}: no {key}" for key in ("x-ft-scope", "x-ft-writes") if key not in op)
+            declared = {p.get("name") for p in op.get("parameters", []) if p.get("in") == "path"}
+            out.extend(
+                f"{where}: path parameter {{{name}}} is not declared (the client builds the address from it)"
+                for name in PATH_PARAM.findall(path)
+                if name not in declared
+            )
             responses: dict[str, Any] = op.get("responses", {})
-            if _ref(responses.get("default")) != ERROR_ENVELOPE:
-                out.append(f"{where}: its default answer must be the error envelope")
+            if "default" not in responses:
+                out.append(f"{where}: no default answer; it must be the error envelope")
             for status, answer in responses.items():
                 ref = _ref(answer)
                 if ref is not None:
                     roots.append(ref)
-                if status.startswith("2") and not _is_envelope(schemas, ref):
-                    out.append(f"{where}: its {status} answer is not in the envelope {{data, meta}}")
+                if status.startswith("2"):
+                    if not _is_envelope(schemas, ref):
+                        out.append(f"{where}: its {status} answer is not in the envelope {{data, meta}}")
+                elif ref != ERROR_ENVELOPE:
+                    out.append(f"{where}: its {status} answer must be the error envelope")
     out.extend(_optional_fields(schemas, roots))
     return out
 
