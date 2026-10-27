@@ -35,3 +35,11 @@ INV-31 needs no change: recovery runs only while no workspace is open (at start,
 Option 1. The rule protects your ledgers after a crash and the scheduler relies on it, so it should be an invariant with tests CI demands. The INV-30 sentence only says out loud what ADR-0063 already does; it adds no new kind of write.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-10-27, in session (relayed by the orchestrator): "I agreed with all your recommendations." The orchestrator's recommendations were option 1 with one change, "every other workspace" becomes "every workspace" in INV-32's rule (the journal's own workspace is blocked too), and acceptance of the implementer's two additions (recovery writes a recorded path only while it still resolves to itself; Locate waits for recovery).
+
+On the S0045 verifier's round-3 finding F-1 (an unresolved journal had no way out), owner, 2026-10-27, in session (relayed by the orchestrator): "Yes, I agree with the keep the files as they are now way out." The proposal: a deliberate "Keep the files as they are now" action drops the unfinished save's journal and leaves the files untouched (logged, listing the files it releases); forget is no longer refused and keeps the journal in `local/`; any open or registration, "Open folder…" and Locate included, goes through the same check.
+
+Applied in S0045 fix round 3 (IMP-0035):
+- INV-30's exception sentence exactly as in option 1.
+- INV-32 as in option 1, with two changes: "every other workspace" became "every workspace" (the first answer); and the "Enforced by" item "a workspace with an unresolved journal can be neither forgotten nor located elsewhere" became "a folder whose files an unresolved journal names, or which is that journal's workspace moved or copied, is blocked at every open, Open folder and Locate included; "Keep the files as they are now" resolves it, writing nothing to the ledger files; forget keeps the journal" (the second answer: forget is no longer refused, and the "Locate waits" addition became the same check every open goes through). Nothing else changed.
+

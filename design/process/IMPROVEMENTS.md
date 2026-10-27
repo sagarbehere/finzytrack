@@ -339,3 +339,13 @@ Format:
 - Observed effect: pending.
 - Status: kept (tightenings, owner-approved).
 - Owner approval: "reword INV-28 and INV-31 and add INV-32 as proposed" (2026-10-27, in session); for INV-28's hosted wording, "Yes INV-28 should say the same." (2026-10-27, in session). Relayed by the orchestrator. The "add INV-32" part approved a file-by-file overlap text that was never applied.
+
+## IMP-0035: INV-32 added (every unfinished save is recovered before any workspace opens); INV-30's exception says where recovery writes (2026-10-27)
+- Trigger: owner answers, 2026-10-27, in session, on `design/inbox/answered/20261027-inv-32-recovery-rule.md` and on the S0045 verifier's round-3 finding F-1; journal `design/journal/S0045-one-workspace-at-a-time.md`.
+- What changed: `design/INVARIANTS.md` INV-32 new, pending (BL-0103, by M2): the inbox's option 1 with "every other workspace" changed to "every workspace", and the "Enforced by" item on forget and Locate rewritten for the "Keep the files as they are now" way out (forget keeps the journal; every open, Open folder and Locate included, goes through the same check). INV-30: the stated-exception sentence replaced by option 1's text.
+- PROCESS.md section: none (invariant content).
+- Why: the scheduler design stops guarding against shared files because of ADR-0063 decision 2, so the rule carries data safety; INV-30's "recovery on open" could be read as covering only the workspace being opened.
+- Expected effect: M2 cannot exit without BL-0103's recovery tests.
+- Observed effect: pending.
+- Status: kept (owner-approved).
+- Owner approval: "I agreed with all your recommendations." and "Yes, I agree with the keep the files as they are now way out." (2026-10-27, in session). Relayed by the orchestrator.
