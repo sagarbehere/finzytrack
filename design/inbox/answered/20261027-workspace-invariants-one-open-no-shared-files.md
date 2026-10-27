@@ -45,7 +45,4 @@ Follow-up question, asked by the orchestrator: "INV-28's approved text says a re
 
 Applied in S0045 (IMP-0034):
 - INV-28 and INV-31 as proposed in option 1. INV-28's rule also gained "(in hosted mode, in this user container)" after "the one open in this instance", per the follow-up answer.
-- INV-32 with its proposed purpose, why and status. Its rule and enforcement now state the territory rule the owner agreed to, instead of the file-by-file overlap proposed above:
-  - the rule's overlap sentence (a file in both, documents folders, globs, "plus device and inode") became: each workspace owns a territory (its folder, plus an external reference's ledger folder tree); every file it uses or a save may create lies inside it; territories are never equal, overlapping or nested (compared by `path_key`);
-  - in the enforcement list, the "overlap corpus" became a "territory corpus" (outside paths and meeting territories);
-  - the hard-link case moved from the corpus to a stated limit (S0045 verifier F2).
+- INV-32 is not applied. Fix round 1 applied a territory text in place of the file-by-file overlap proposed above; the S0045 verifier's round 2 found that text was wording the owner had not seen (F-A), and the territory rule itself unsound (F-W). The owner then approved the recovery rule ("Yes, write both into the hand-off and give me the prompt", 2026-10-27, in session, relayed by the orchestrator; ADR-0063 decision 2), and fix round 2 removed the territory INV-32. The recovery rule's INV-32 text is proposed in `design/inbox/20261027-inv-32-recovery-rule.md`; the ID stays reserved for it.

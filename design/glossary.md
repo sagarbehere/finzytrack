@@ -16,7 +16,7 @@ Terms are grouped by area and sorted inside each group. Where a term is decided 
 - **Error key.** The identity of a ledger error that survives line shifts: error type + canonical entry key + message without locations (ADR-0008).
 - **Import key (`import-key`).** The one app-written identity key: a space-separated set of `v<N>:<kind>:<ref>` elements on every anchor posting of an imported line. It makes re-import idempotent (ADR-0026).
 - **Ledger.** The user's Beancount books: a root `.beancount` file and every file it includes. The ledger holds the facts; Finzytrack never keeps a second copy of them as truth.
-- **Ledger set.** The root, its glob-expanded includes, the price sidecar and the documents folder: everything the write contract and the fingerprint consider (ADR-0017). It lies inside its workspace's territory, so a file belongs to one workspace only (ADR-0063, INV-32).
+- **Ledger set.** The root, its glob-expanded includes, the price sidecar and the documents folder: everything the write contract and the fingerprint consider (ADR-0017).
 - **Ledger Profile.** The backend-served summary of ledger facts the UI needs: root names, currencies and their roles, tolerance options, display precision, the unknown account, the metadata vocabulary, the ledger version (ADR-0024).
 - **Lot.** A batch of a holding acquired at one cost and date (optionally with a label). Beancount tracks lots; Finzytrack reads them from Beancount's booked inventory as of a date and never computes them itself (ADR-0030, ADR-0031). `lots` is also a v0.2.2 mirror table name kept for compatibility (ADR-0048).
 - **Metadata vocabulary.** The documented keys a user may add (for example `asset-class`, `exposure`, `account_number`, `income-type`). Recognised, never required (ADR-0026).
@@ -45,7 +45,7 @@ Terms are grouped by area and sorted inside each group. Where a term is decided 
 - **Plan / WritePlan.** The data form of a change: what will be written, with hashes and new error keys, created by a preview and executed only by a confirm (EP-08, ADR-0038).
 - **Splicing.** Editing only the exact line span of an entry in its source file, so everything outside it is untouched (ADR-0009).
 - **Swap-based replace.** Replacing a file by an atomic swap and hashing the displaced file, so an outside save at the same moment is detected and kept (ADR-0013).
-- **Write-intent journal.** A machine-local record, written before a multi-file write, of each file's pre hash, intended post hash and backup, used for crash recovery (ADR-0012).
+- **Write-intent journal.** A machine-local record, written before a multi-file write, of each file's canonical path, pre hash (or "absent" for a created file), intended post hash and backup, used for crash recovery. Every journal in the app is recovered before any workspace opens (ADR-0012, ADR-0063).
 
 ## Workspaces, mirror and lifecycle
 
@@ -53,18 +53,17 @@ Terms are grouped by area and sorted inside each group. Where a term is decided 
 - **Copy (adoption).** The one way to bring a legacy ledger into v0.4: a portable copy, so the old app and v0.4 never write the same file (ADR-0020). Share, where both apps wrote one file, was removed (ADR-0062).
 - **Single instance.** One running v0.4 per app root: a second process exits with "Finzytrack is already running." (ADR-0062).
 - **Open workspace.** The one workspace an instance (in hosted mode, a user container) works with: it alone accepts requests and runs jobs. A request naming another registered workspace gets `WORKSPACE_NOT_OPEN` (ADR-0063).
-- **Territory.** The folders a workspace owns: its workspace folder and, for an external-ledger reference, its ledger's folder tree. Every file the workspace uses or a save may create lies inside it (else `LEDGER_OUTSIDE_FOLDER`), and two registered workspaces' territories are never equal, overlapping or nested (else `FOLDER_IN_OTHER_WORKSPACE`) (ADR-0063, INV-32).
 - **Demo workspace.** The generated, disposable demo, a workspace of `kind: demo` replaced on each release (ADR-0022).
-- **External-ledger reference.** A workspace whose ledger stays in its original folder; the absolute path lives only in the machine-local registry, and the workspace is badged not portable (ADR-0017). Its ledger's folder tree joins its territory (ADR-0063).
+- **External-ledger reference.** A workspace whose ledger stays in its original folder; the absolute path lives only in the machine-local registry, and the workspace is badged not portable (ADR-0017).
 - **Legacy install / legacy worktree.** A v0.2.x or v0.3 install (`config/` + `data/`) that v0.4 reads but does not change (INV-26). The legacy worktree is the read-only checkout of the `legacy-final` tag next to the repo.
 - **Lineage id / registry key.** The lineage id travels with a workspace folder and identifies "this set of books"; the registry key is the machine-local id of one registry row, which keys caches and URLs (ADR-0017).
 - **Lifecycle run.** A planned, consented, backed-up sequence of file writes (create, adopt, migrate), recorded with apply-then-record (ADR-0019).
 - **Mirror.** The SQLite projection of the ledger in the cache dir. It is a rebuildable cache, published atomically as generations; outside tools may read it (ADR-0015).
 - **`r_*` views.** The versioned, documented SQL surface of the mirror for user queries (INV-05).
-- **Phase (boot / workspace).** The state an assessment returns, for example `NO_WORKSPACE`, `RECOVERING`, `LEDGER_UNAVAILABLE`, `LEDGER_OUTSIDE_FOLDER`, `WARMING`, `READY` (ADR-0019).
+- **Phase (boot / workspace).** The state an assessment returns, for example `NO_WORKSPACE`, `RECOVERING`, `LEDGER_UNAVAILABLE`, `WARMING`, `READY` (ADR-0019).
 - **Portable.** A workspace whose folder contains everything needed to open it elsewhere, with no absolute paths or secret values; checked by `assess_portability` (ADR-0017, INV-27).
 - **Reconciliation.** Comparing a statement (bank) or a positions statement (broker) with the ledger and explaining the whole difference (ADR-0028, ADR-0032). "D2 reconciliation" is a different thing: the background `load_file` check after a write (ADR-0010).
-- **Switch (workspace).** Opening another workspace: the target is assessed first, then the open workspace is quiesced and shut, then the target opens; the user may see "Just a moment… switching workspaces." (ADR-0063).
+- **Switch (workspace).** Opening another workspace: the target is assessed first, then the open workspace is quiesced and shut, every unfinished save is recovered, then the target opens; the user may see "Just a moment… switching workspaces." (ADR-0063).
 - **Workspace.** A folder with a `.finzytrack/` subfolder plus its ledger set: the unit a user opens, switches and moves (ADR-0017), one at a time (ADR-0063).
 
 ## Import and categorization

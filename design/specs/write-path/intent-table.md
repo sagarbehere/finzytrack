@@ -73,11 +73,11 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the new files equal the starter template with `option "operating_currency"` set to the chosen currency; nothing else exists before
 - **Metadata written:** —
 - **May ask to acknowledge:** —
-- **Refused when:** a ledger file already exists at the path (INV-29: never created implicitly, never overwritten); the new workspace folder is equal to, inside or contains another registered workspace's territory, for example a folder inside its documents folder (`FOLDER_IN_OTHER_WORKSPACE`, ADR-0063, INV-32)
+- **Refused when:** a ledger file already exists at the path (INV-29: never created implicitly, never overwritten)
 - **v0.3 oracle expectation:** M28 (if the legacy starter template carries machinery keys); the v0.3 wizard also writes `option "operating_currency"` (ADR-0052), so the currency is not a divergence
 - **Status:** draft
 - **Milestone:** M3
-- **ADRs:** ADR-0008; ADR-0052; ADR-0019; ADR-0063
+- **ADRs:** ADR-0008; ADR-0052; ADR-0019
 
 ### `ws.seed-demo`
 
@@ -825,7 +825,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** every file of the source ledger set copied into the new folder, marked `test_copy: true`, with every include resolving inside the copy; the copy loads to the same entries and errors as the source (checked before the workspace is recorded); the source set is only read
 - **Metadata written:** —
 - **May ask to acknowledge:** —
-- **Refused when:** the destination exists or lies inside a non-copy workspace's file set; an include that resolves outside the source folder, or an absolute include (it would keep a real-ledger file in the copy's set); the copy does not load the same as the source; the destination folder meets another registered workspace's territory (`FOLDER_IN_OTHER_WORKSPACE`, ADR-0063, INV-32)
+- **Refused when:** the destination exists or lies inside a non-copy workspace's file set; an include that resolves outside the source folder, or an absolute include (it would keep a real-ledger file in the copy's set); the copy does not load the same as the source; a source file is named by a write journal that could not be recovered: it may hold a half-applied save (`RECOVERY_BLOCKED`, ADR-0063)
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** draft
 - **Milestone:** M3
@@ -841,7 +841,7 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Intended change:** the legacy ledger set copied into the new workspace and its documents into `<folder>/documents/` (Copy, the only mode, ADR-0020, ADR-0062); an `option "documents"` naming a legacy path is the one line rewritten, to the copied folder; sources read while holding the legacy lock of every legacy install whose config names them, each taken by one non-blocking try; a lock file absent at the try must still be absent, and the sources unchanged, after the read (ADR-0062); the copy loads the same as the source; the legacy files are only read
 - **Metadata written:** —
 - **May ask to acknowledge:** —
-- **Refused when:** any write under the legacy root (INV-26); the destination exists; an include that resolves outside the legacy root's folder; a legacy lock is held, or its try fails in any other way (fail closed): "Quit the old Finzytrack first", never waited for (ADR-0062); a lock file absent at the try appeared, or a source changed, during the read; the copy does not load the same as the source; the destination folder meets another registered workspace's territory (`FOLDER_IN_OTHER_WORKSPACE`, ADR-0063, INV-32)
+- **Refused when:** any write under the legacy root (INV-26); the destination exists; an include that resolves outside the legacy root's folder; a legacy lock is held, or its try fails in any other way (fail closed): "Quit the old Finzytrack first", never waited for (ADR-0062); a lock file absent at the try appeared, or a source changed, during the read; the copy does not load the same as the source; a source file is named by a write journal that could not be recovered, for example a retired legacy ledger opened in place whose save was cut off (`RECOVERY_BLOCKED`, ADR-0063)
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** draft
 - **Milestone:** M3

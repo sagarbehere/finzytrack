@@ -2,7 +2,7 @@
 
 This record decides the AI scope per workspace, how secrets are scoped, and how settings are shared between workspaces.
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended by ADR-0063 (2026-10-27): "Copy to workspace…" is carried across a switch.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** workspaces, AI, secrets
@@ -38,7 +38,7 @@ A user may keep personal and business books in separate workspaces. A business l
 
 Owner: "1. Yes to forbidding two workspaces sharing a file. If it'll help we can simplify further: No sharing anywhere, no multiple instances of Finzytrack anywhere. Period. Finzytrack is just about one instance, working with one workspace at a time." (2026-10-27, in session; the full quote is in ADR-0063). Details marked "(agent)" are ADR-0063's.
 - **Superseded:** "Copy to workspace…" writing into a target workspace that is not open. **Instead** (agent): the item is held in the user container, the switch to the target runs, and the target asks "Add <item> from <source>?" and runs its own validator; accounts missing in the target are reported, never fixed (INV-15). Nothing writes a workspace that is not open.
-- "New workspace → start from the settings of another workspace" reads the source's tool state without opening it, and writes only the new folder (unchanged in effect).
+- "New workspace → start from the settings of another workspace" reads the source's tool state without opening it, and writes only the new folder (unchanged in effect); it is refused while an unfinished save that could not be undone names a file it would read (ADR-0063 decision 2).
 - The deferred live library (CAP-WS-LIBRARY) stays deferred; building it needs an ADR that revisits ADR-0063 ("no sharing anywhere").
 - **Unchanged:** the rest of this ADR, including copy-based sharing of settings and shipped items shared read-only by `pack:` reference.
 

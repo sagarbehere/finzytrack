@@ -9,7 +9,7 @@ The owner-owned rules of Finzytrack. Every invariant has an ID, the rule, a "why
 
 **Changing this file.** Adding or tightening an invariant: an agent proposes it with evidence; the owner approves it in a batch of escalations. Weakening or removing one always needs the owner. Every change gets an ADR and an entry in `design/process/IMPROVEMENTS.md`.
 
-Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2), with the workspace invariants and amendments of review:23 §7.2; the workspace invariants are numbered INV-28–31 (owner, 2026-10-24; ADR-0003). The amended texts of INV-04, INV-11 and INV-17 replace the originals (review:F §3.5).
+Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2), with the workspace invariants and amendments of review:23 §7.2; the workspace invariants are numbered INV-28–31 (owner, 2026-10-24; ADR-0003). The amended texts of INV-04, INV-11 and INV-17 replace the originals (review:F §3.5). INV-32 is reserved for the recovery rule of ADR-0063, proposed to the owner in `design/inbox/20261027-inv-32-recovery-rule.md` and not yet applied.
 
 ---
 
@@ -198,9 +198,3 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 - **Why:** INV-10 at workspace granularity; memory-frugal hosting (review:23).
 - **Enforced by:** planned: a memory regression check A→B→A ×20 at 54k against the baseline (flat RSS); the cache-registry test; the switch test (at no moment do two workspaces accept requests or run jobs; after A→B no container, cache or handle of A remains); a quiesce test: a save confirmed in A before the switch completes in A, or is refused with A unchanged.
 - **Status:** pending (BL-0031, by M2)
-
-### INV-32: No file in two workspaces
-- **Rule:** Each registered workspace owns a territory: its workspace folder and, for an external-ledger reference, its ledger's folder tree. Every file the workspace uses or a save may create (the root, its includes, every glob's matches and fixed folder part, the price sidecar, the documents folder) lies inside its own territory, and the territories of registered workspaces are never equal, overlapping or nested, compared by the write path's canonical identity (`path_key`). Registering, adopting, creating or opening a workspace that breaks either rule is refused with the path named, and a ledger set that later reaches outside its territory is refused when it is computed (ADR-0063). *(Added with the owner's approval, 2026-10-27, ADR-0063: "reword INV-28 and INV-31 and add INV-32 as proposed"; the territory rule replaces the proposal's file-by-file overlap: "I agree with the territory rule".)*
-- **Why:** One workspace's half-finished save must never be read or overwritten from another; the write path and the scheduler rely on each file having one owner (ADR-0063).
-- **Enforced by:** planned: a territory corpus (an include, a glob, the price sidecar, a documents folder and a routed file outside the territory, also reached through a symlink, a case variant or a Unicode-normalization variant; equal, overlapping and nested territories; an external reference into another workspace's folder) refused at register, adopt and open, with nothing recorded (create and the test copy join with their mutators in M3); a ledger set grown outside its territory by an outside edit refused at the next open and at the rebuild, the rebuild not published; a workspace with an unresolved journal cannot be forgotten. Stated limit: a hard link between two territories is not detected.
-- **Status:** pending (BL-0103, by M2)

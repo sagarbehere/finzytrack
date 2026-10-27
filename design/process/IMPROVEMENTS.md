@@ -330,12 +330,12 @@ Format:
 - Status: kept (a weakening and a tightening together, owner-approved).
 - Owner approval: "Drop the coexistence policy; I approve the needed changes to INV-26 and ADR-0020. The rest of the pending work you have identified should be done." (2026-10-27, in session)
 
-## IMP-0034: INV-28 and INV-31 reworded for one open workspace; INV-32 added: no file in two workspaces, by territory (2026-10-27)
-- Trigger: owner decision, 2026-10-27, in session (ADR-0063), after the fourth review of the engine-scheduler design; the S0045 verifier's round 1 (F1-F3) replaced the proposed file-by-file overlap with the territory rule; journal `design/journal/S0045-one-workspace-at-a-time.md`.
-- What changed: `design/INVARIANTS.md` INV-28: rule (served only when the named workspace is the open one, in hosted mode in its user container; any other registered workspace refused with `WORKSPACE_NOT_OPEN`), why, and enforcement (a switch test). INV-31: title, rule (one open workspace per instance or user container; the switch) and enforcement (the switch and quiesce tests). INV-32 new: the territory rule, pending (BL-0103, by M2).
+## IMP-0034: INV-28 and INV-31 reworded for one open workspace (2026-10-27)
+- Trigger: owner decision, 2026-10-27, in session (ADR-0063), after the fourth review of the engine-scheduler design; journal `design/journal/S0045-one-workspace-at-a-time.md`.
+- What changed: `design/INVARIANTS.md` INV-28: rule (served only when the named workspace is the open one, in hosted mode in its user container; any other registered workspace refused with `WORKSPACE_NOT_OPEN`), why, and enforcement (a switch test). INV-31: title, rule (one open workspace per instance or user container; the switch) and enforcement (the switch and quiesce tests). INV-32 is not applied: S0045's fix round 1 applied a territory text the owner had not seen, and fix round 2 removed it (verifier round 2, F-A, F-W); the recovery rule's text is proposed in `design/inbox/20261027-inv-32-recovery-rule.md`, and INV-32 stays reserved for it.
 - PROCESS.md section: none (invariant content).
-- Why: INV-28's "no server-side active workspace" was contradicted by the one open workspace; the scheduler drops its protections for shared files and relies on INV-32 instead.
-- Expected effect: M2 cannot exit without the switch and territory tests (BL-0028, BL-0031, BL-0102, BL-0103).
+- Why: INV-28's "no server-side active workspace" was contradicted by the one open workspace.
+- Expected effect: M2 cannot exit without the switch tests (BL-0028, BL-0031, BL-0102).
 - Observed effect: pending.
 - Status: kept (tightenings, owner-approved).
-- Owner approval: "reword INV-28 and INV-31 and add INV-32 as proposed" and "I agree with the territory rule" (2026-10-27, in session); for INV-28's hosted wording, "Yes INV-28 should say the same." (2026-10-27, in session). Relayed by the orchestrator.
+- Owner approval: "reword INV-28 and INV-31 and add INV-32 as proposed" (2026-10-27, in session); for INV-28's hosted wording, "Yes INV-28 should say the same." (2026-10-27, in session). Relayed by the orchestrator. The "add INV-32" part approved a file-by-file overlap text that was never applied.

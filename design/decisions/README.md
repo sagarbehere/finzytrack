@@ -20,23 +20,23 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0002](ADR-0002-greenfield-rebuild-on-next.md) | Greenfield rebuild on `next`; v0.3.0 is a tag only | Accepted | 2026-10-24 | repository, release |
 | [ADR-0003](ADR-0003-workspace-invariant-numbering.md) | Workspace invariants are numbered INV-28–31 | Accepted | 2026-10-24 | process, invariants |
 | [ADR-0004](ADR-0004-python-3-13-and-beancount-3-2-0.md) | Python 3.13 and Beancount 3.2.0 are pinned for v0.4.0 | Accepted | 2026-10-24 | stack |
-| [ADR-0005](ADR-0005-portalocker-3-2-0-pinned.md) | portalocker 3.2.0 is pinned on purpose | Accepted | 2026-10-24 | stack, data safety |
+| [ADR-0005](ADR-0005-portalocker-3-2-0-pinned.md) | portalocker 3.2.0 is pinned on purpose | Accepted; amended by ADR-0062 | 2026-10-24 | stack, data safety |
 | [ADR-0006](ADR-0006-frontend-framework-react-pending-s13.md) | Frontend framework: React, conditional on spike S13 | Superseded by ADR-0053 | 2026-10-24 | frontend, stack |
 | [ADR-0007](ADR-0007-tauri-2-desktop-shell.md) | Tauri 2 desktop shell with a Python sidecar | Accepted | 2026-10-24 | desktop, release |
 | [ADR-0008](ADR-0008-write-safety-contract.md) | Every ledger write passes the write-safety contract | Accepted | 2026-10-24 | write path, data safety |
 | [ADR-0009](ADR-0009-fava-style-source-splicing.md) | Fava-style source splicing; mutators are edit producers | Accepted | 2026-10-24 | write path |
 | [ADR-0010](ADR-0010-overlay-load-with-load-policy.md) | Validate candidate text with an overlay load (D2), behind a LoadPolicy | Accepted | 2026-10-24 | write path, ledger |
 | [ADR-0011](ADR-0011-no-resident-ledger.md) | No resident ledger; bounded memory and serialized writes | Accepted | 2026-10-24 | backend, performance, memory |
-| [ADR-0012](ADR-0012-write-intent-journal-and-recovery.md) | Write-intent journal and one recovery spec | Accepted | 2026-10-24 | write path, data safety, lifecycle |
+| [ADR-0012](ADR-0012-write-intent-journal-and-recovery.md) | Write-intent journal and one recovery spec | Accepted; amended by ADR-0063 | 2026-10-24 | write path, data safety, lifecycle |
 | [ADR-0013](ADR-0013-atomic-swap-replace.md) | Replace by atomic swap; the external-editor race is accepted with detection | Accepted | 2026-10-24 | write path, data safety |
 | [ADR-0014](ADR-0014-mutator-promotion-and-clearance.md) | Mutator promotion, clearance by kind of edit, and the old app as oracle | Accepted | 2026-10-24 | write path, process |
 | [ADR-0015](ADR-0015-mirror-rebuildable-cache-atomic-publish.md) | The mirror is a rebuildable cache, published atomically | Accepted | 2026-10-24 | mirror, data safety |
 | [ADR-0016](ADR-0016-sqlite-only-query-engine.md) | SQLite is the only query engine, behind one hardened QueryRunner | Accepted | 2026-10-24 | mirror, recipes, security |
 | [ADR-0017](ADR-0017-the-folder-is-the-workspace.md) | The folder is the workspace; state placement | Accepted | 2026-10-24 | workspaces, state placement |
-| [ADR-0018](ADR-0018-workspace-addressed-api.md) | The API is workspace-addressed; there is no server-side active workspace | Accepted | 2026-10-24 | API, workspaces |
-| [ADR-0019](ADR-0019-workspace-and-app-lifecycle.md) | App and workspace lifecycle: assess, plan, never write newer | Accepted | 2026-10-24 | lifecycle, migrations |
-| [ADR-0020](ADR-0020-legacy-adoption-copy-by-default.md) | Legacy adoption: Copy by default, Share gated; the legacy install keeps working | Accepted | 2026-10-24 | workspaces, lifecycle, data safety |
-| [ADR-0021](ADR-0021-workspace-policy-ai-secrets-sharing.md) | Workspace policy: AI on by default, scoped secrets, copy-based sharing | Accepted | 2026-10-24 | workspaces, AI, secrets |
+| [ADR-0018](ADR-0018-workspace-addressed-api.md) | The API is workspace-addressed; there is no server-side active workspace | Accepted; amended by ADR-0063 | 2026-10-24 | API, workspaces |
+| [ADR-0019](ADR-0019-workspace-and-app-lifecycle.md) | App and workspace lifecycle: assess, plan, never write newer | Accepted; amended by ADR-0063 | 2026-10-24 | lifecycle, migrations |
+| [ADR-0020](ADR-0020-legacy-adoption-copy-by-default.md) | Legacy adoption: Copy by default, Share gated; the legacy install keeps working | Accepted; amended by ADR-0062 | 2026-10-24 | workspaces, lifecycle, data safety |
+| [ADR-0021](ADR-0021-workspace-policy-ai-secrets-sharing.md) | Workspace policy: AI on by default, scoped secrets, copy-based sharing | Accepted; amended by ADR-0063 | 2026-10-24 | workspaces, AI, secrets |
 | [ADR-0022](ADR-0022-demo-workspace.md) | The demo is a generated, disposable workspace, replaced on release | Accepted | 2026-10-24 | content, lifecycle |
 | [ADR-0023](ADR-0023-money-dates-and-number-formatting.md) | Money, dates and number formatting | Accepted | 2026-10-24 | domain kernel |
 | [ADR-0024](ADR-0024-beancount-oracle-and-ledger-profile.md) | Beancount is the oracle; one Ledger Profile serves ledger facts | Accepted | 2026-10-24 | domain kernel, ledger |
@@ -56,11 +56,11 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0038](ADR-0038-api-contract-and-code-generation.md) | API contract: one envelope, plans and confirm, offline OpenAPI, openapi-typescript | Accepted | 2026-10-24 | API, codegen |
 | [ADR-0039](ADR-0039-errors-logging-and-diagnostics.md) | Errors, logging and diagnostics | Accepted | 2026-10-24 | backend, frontend, observability, privacy |
 | [ADR-0040](ADR-0040-security-foundations.md) | Security foundations are part of the shell from the first build | Accepted | 2026-10-24 | security, privacy |
-| [ADR-0041](ADR-0041-no-hosted-multi-user-build.md) | Hosted multi-user mode: don't foreclose, don't build | Accepted | 2026-10-24 | architecture, hosting |
+| [ADR-0041](ADR-0041-no-hosted-multi-user-build.md) | Hosted multi-user mode: don't foreclose, don't build | Accepted; amended by ADR-0063 | 2026-10-24 | architecture, hosting |
 | [ADR-0042](ADR-0042-licence.md) | Licence: owner code GPL-2.0-or-later; notices and licence checks; legal advice before v0.4.0 | Accepted | 2026-10-24 | legal, release |
-| [ADR-0043](ADR-0043-release-scope-and-release-gate.md) | Release scope: exactly four capabilities are deferred; the release gate | Accepted | 2026-10-24 | release, scope |
+| [ADR-0043](ADR-0043-release-scope-and-release-gate.md) | Release scope: exactly four capabilities are deferred; the release gate | Accepted; amended by ADR-0062 | 2026-10-24 | release, scope |
 | [ADR-0044](ADR-0044-process-lanes-and-review-cadences.md) | Process lanes and review cadences | Accepted | 2026-10-24 | process |
-| [ADR-0045](ADR-0045-local-agents-deterministic-ci-direct-commits.md) | Agents run locally; CI runs deterministic gates only; direct commits on `next` | Accepted | 2026-10-24 | process, CI, repository |
+| [ADR-0045](ADR-0045-local-agents-deterministic-ci-direct-commits.md) | Agents run locally; CI runs deterministic gates only; direct commits on `next` | Accepted; amended by ADR-0058 | 2026-10-24 | process, CI, repository |
 | [ADR-0046](ADR-0046-g1-checkpoint-and-pilot.md) | The G1 go/no-go checkpoint, the pilot, and the M1a/M1b split | Accepted | 2026-10-24 | process, planning |
 | [ADR-0047](ADR-0047-product-defaults.md) | Product defaults for v0.4.0 | Accepted | 2026-10-24 | product |
 | [ADR-0048](ADR-0048-v0-2-2-names-kept-through-0-4-x.md) | v0.2.2 mirror tables and compute functions keep their names through 0.4.x | Accepted; the `lots` part awaits the owner's re-confirmation | 2026-10-24 | mirror, recipes, compatibility |
@@ -76,9 +76,9 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0058](ADR-0058-process-overhead-trim.md) | Verification scaled to risk, process checks built on evidence, shorter journals | Accepted | 2026-10-25 | process |
 | [ADR-0059](ADR-0059-encrypted-ledgers-not-read-in-v0-4-0.md) | Encrypted ledger files are not read in v0.4.0 | Accepted | 2026-10-25 | ledger loading, scope |
 | [ADR-0060](ADR-0060-github-ci-runs-manually-before-releases.md) | GitHub CI runs manually, before each release; the local hooks are the per-push gates | Accepted | 2026-10-25 | process, CI |
-| [ADR-0061](ADR-0061-macos-first-cross-platform-later.md) | macOS first; Linux and Windows ported in M11, except the write path's Windows semantics from M1b on | Accepted | 2026-10-26 | process, platforms, release |
+| [ADR-0061](ADR-0061-macos-first-cross-platform-later.md) | macOS first; Linux and Windows ported in M11, except the write path's Windows semantics from M1b on | Accepted; amended by ADR-0062 | 2026-10-26 | process, platforms, release |
 | [ADR-0062](ADR-0062-single-instance-no-legacy-coexistence.md) | One running Finzytrack at a time: no ledger shared with a running legacy app, a single v0.4 instance | Accepted | 2026-10-27 | workspaces, lifecycle, data safety, desktop |
-| [ADR-0063](ADR-0063-one-open-workspace-no-shared-files.md) | One open workspace at a time, and no file in two workspaces | Accepted | 2026-10-27 | workspaces, API, lifecycle, data safety, hosting |
+| [ADR-0063](ADR-0063-one-open-workspace-no-shared-files.md) | One open workspace at a time, and every unfinished save recovered before any workspace opens | Accepted | 2026-10-27 | workspaces, API, lifecycle, data safety, hosting |
 
 ## Template
 

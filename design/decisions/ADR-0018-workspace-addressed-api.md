@@ -2,7 +2,7 @@
 
 This record decides how requests name the workspace they act on.
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended by ADR-0063 (2026-10-27): one open workspace at a time; opening another is a switch; a request for a registered workspace that is not open gets `WORKSPACE_NOT_OPEN`. The title's "no server-side active workspace" now means no request finds its target from server-side state.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** API, workspaces
