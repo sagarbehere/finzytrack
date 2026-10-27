@@ -77,6 +77,7 @@ This folder holds the architecture decision records of Finzytrack v0.4: why the 
 | [ADR-0059](ADR-0059-encrypted-ledgers-not-read-in-v0-4-0.md) | Encrypted ledger files are not read in v0.4.0 | Accepted | 2026-10-25 | ledger loading, scope |
 | [ADR-0060](ADR-0060-github-ci-runs-manually-before-releases.md) | GitHub CI runs manually, before each release; the local hooks are the per-push gates | Accepted | 2026-10-25 | process, CI |
 | [ADR-0061](ADR-0061-macos-first-cross-platform-later.md) | macOS first; Linux and Windows ported in M11, except the write path's Windows semantics from M1b on | Accepted | 2026-10-26 | process, platforms, release |
+| [ADR-0062](ADR-0062-single-instance-no-legacy-coexistence.md) | One running Finzytrack at a time: no ledger shared with a running legacy app, a single v0.4 instance | Accepted | 2026-10-27 | workspaces, lifecycle, data safety, desktop |
 
 ## Template
 

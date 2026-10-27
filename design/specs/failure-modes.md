@@ -99,4 +99,4 @@ Each open point the earlier verifiers and journals left for this spec, with what
 
 ## What this spec does not cover
 
-Power loss and a full disk are not process failures; they are the write protocol's (ADR-0008 step 5's fsync order and the TLA+ model's `PowerLoss` action, ARCHITECTURE §8.3; BL-0091) and the log's (S0039: a line that cannot be written is dropped with one notice). A second running instance is ADR-0012 Q30 and the app-level lock (ARCHITECTURE §2.5). Outside services (LLM, prices, IMAP) failing are typed "unavailable" errors (ARCHITECTURE §6.1), not processes of ours.
+Power loss and a full disk are not process failures; they are the write protocol's (ADR-0008 step 5's fsync order and the TLA+ model's `PowerLoss` action, ARCHITECTURE §8.3; BL-0091) and the log's (S0039: a line that cannot be written is dropped with one notice). A second running instance is refused at start by the app-instance lock (ADR-0062, BL-0100; ARCHITECTURE §2.5), with ADR-0012 Q30 as the defence when that lock cannot reach it (a second installation). Outside services (LLM, prices, IMAP) failing are typed "unavailable" errors (ARCHITECTURE §6.1), not processes of ours.

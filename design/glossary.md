@@ -50,7 +50,8 @@ Terms are grouped by area and sorted inside each group. Where a term is decided 
 ## Workspaces, mirror and lifecycle
 
 - **App root / app-level state.** v0.4's own machine-local folders from its Tauri identifier: registry, app settings, secrets, per-workspace local state, locks, logs (ADR-0017).
-- **Copy / Share (adoption).** The two ways to bring a legacy ledger into v0.4: Copy (default) makes a portable copy; Share lets both apps write one file, gated (ADR-0020).
+- **Copy (adoption).** The one way to bring a legacy ledger into v0.4: a portable copy, so the old app and v0.4 never write the same file (ADR-0020). Share, where both apps wrote one file, was removed (ADR-0062).
+- **Single instance.** One running v0.4 per app root: a second process exits with "Finzytrack is already running." (ADR-0062).
 - **Demo workspace.** The generated, disposable demo, a workspace of `kind: demo` replaced on each release (ADR-0022).
 - **External-ledger reference.** A workspace whose ledger stays in its original folder; the absolute path lives only in the machine-local registry, and the workspace is badged not portable (ADR-0017).
 - **Legacy install / legacy worktree.** A v0.2.x or v0.3 install (`config/` + `data/`) that v0.4 reads but does not change (INV-26). The legacy worktree is the read-only checkout of the `legacy-final` tag next to the repo.

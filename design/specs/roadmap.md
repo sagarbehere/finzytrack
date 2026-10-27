@@ -74,7 +74,7 @@ Next: the rest of **M1a**, then **M1b** (write contract), then **G1**, your go/n
 - **R2a. Clearance by kind of edit** (ADR-0014): Add 50 writes / 1 week; Change or delete one entry 100 / 2 weeks; Many entries or files 30 / 2 weeks including crash tests; twice both numbers for a mutator with no old-app comparison. You sign one clearance page per milestone.
 - **R3. Git under the book of record** while dogfooding; you review the diff of every write.
 - **R4. Reconciliation before the next write** while dogfooding (a real Beancount load compared with the overlay load). Since ADR-0008's 2026-10-25 amendment it runs right after the reply and completes before the next write to that workspace is accepted; any mismatch blocks writes and stops dogfooding of that mutator.
-- **R5. Never both apps writing one ledger.** v0.3 has no external-edit check and rewrites whole files. Share-mode adoption stays off for the book of record until every mutator you use is promoted.
+- **R5. Never both apps writing one ledger.** v0.3 has no external-edit check and rewrites whole files. v0.4 has no Share mode (ADR-0062): your legacy ledger comes in by Copy, and the old app keeps its own file.
 - **R6. Agents never touch real data or your running app** (INV-24). Copies of real ledgers live outside the repo and run only in the local tier, which prints counts and case IDs only.
 - **R7. Downgrade note.** If v0.2/v0.3 rewrites a ledger v0.4 edited, comments and splices are lost.
 
@@ -117,14 +117,14 @@ Each entry: what is built, the exit beyond §3.2, and the dogfood rule. Detail p
 - **May start after M1a**, in parallel with M1b (nothing here writes a ledger).
 - **Built:** boot assessment and the workspace open and switch machinery (registry, containers, workspace-addressed API, legacy-root probe); the frontend foundations (generated API client, Vue Query with workspace-scoped keys, scoped storage, the logger, `ShellPort`, `src/domain` money and dates, the shadcn-vue primitives and the app components such as confirm, dialogs, unsaved guard, fields, safe markdown); the real sidecar supervisor and shell plugins; the Boot, Workspace-switch and Sidecar statecharts.
 - **Exit:** the route-scope test for every route; the globals registry lists every stateful part; axe clean; security red team on safe markdown, CSP, path-taking endpoints and the LAN guard.
-- **Dogfood:** **read-only.** You may open your real ledgers; opening never writes a ledger file (INV-30). Prefer "keep my folder untouched" so nothing appears next to the legacy ledger.
+- **Dogfood:** **read-only.** You may open your real ledgers; opening never writes a ledger file (INV-30). A ledger your old install uses can only be brought in by Copy (ADR-0062), which arrives in M3; until then, open a copy of it that you made yourself.
 
 ### M3: Workspace lifecycle and legacy adoption (L)
 - **Needs G1** (it creates ledger files through the contract).
-- **Built:** the lifecycle executor and migration framework (plan, consent, backup, apply, record; never write newer, INV-17); content packs; demo workspace replacement (INV-25); legacy detection and **adoption by Copy** (Share gated) with the coexistence guard (ADR-0020); Bring-in, secrets, the trust prompt; test copies; the first mutators `create_ledger_set` and `seed_demo`.
+- **Built:** the lifecycle executor and migration framework (plan, consent, backup, apply, record; never write newer, INV-17); content packs; demo workspace replacement (INV-25); legacy detection and **adoption by Copy**, the only mode, refused while the old app holds its lock (ADR-0020, ADR-0062); one v0.4 instance per app root is enforced earlier, in M2 (BL-0100); Bring-in, secrets, the trust prompt; test copies; the first mutators `create_ledger_set` and `seed_demo`.
 - **Also an exit item:** the concrete recipe schema v3, settled here so M7's engine work can start early.
-- **Exit:** adoption leaves the old install byte-identical, run twice and interrupted; every migration idempotent and dry-runnable; a newer workspace refused with "restore backup of run X"; lock interleaving against the packaged v0.2.2 build (INV-26); data-safety and security red teams.
-- **Dogfood:** read-only on the book of record; you may adopt your real install **by Copy** after the adoption corpus passes on a copy of it. Share mode stays off (R5).
+- **Exit:** adoption leaves the old install byte-identical, run twice and interrupted; every migration idempotent and dry-runnable; a newer workspace refused with "restore backup of run X"; the legacy-lock detection test (INV-26); data-safety and security red teams.
+- **Dogfood:** read-only on the book of record; you may adopt your real install **by Copy** after the adoption corpus passes on a copy of it (R5).
 
 ### M4: Accounts (L)
 - **Built:** the full Ledger Profile; period balances as the kernel measures M7 reuses; account statements with running balances; open, edit, close, reopen; balance assertions with pad pairing; `move_postings` and rename, merge, delete (ADR-0049), crash-atomic across files through the journal; account documents; money formatting per commodity.

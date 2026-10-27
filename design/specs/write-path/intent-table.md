@@ -838,14 +838,14 @@ What each ledger-writing mutator may change. Column meanings and rules: [README.
 - **Old endpoint:** n/a
 - **Edits:** new_file; option_line
 - **Files:** the new workspace folder only (INV-26: nothing under the legacy root is written)
-- **Intended change:** the legacy ledger set copied into the new workspace and its documents into `<folder>/documents/` (Copy, the default, ADR-0020); an `option "documents"` naming a legacy path is the one line rewritten, to the copied folder; sources read while holding every legacy lock; the copy loads the same as the source; the legacy files are only read
+- **Intended change:** the legacy ledger set copied into the new workspace and its documents into `<folder>/documents/` (Copy, the only mode, ADR-0020, ADR-0062); an `option "documents"` naming a legacy path is the one line rewritten, to the copied folder; sources read while holding the install's legacy lock, taken by one non-blocking try (ADR-0062); the copy loads the same as the source; the legacy files are only read
 - **Metadata written:** —
 - **May ask to acknowledge:** —
-- **Refused when:** any write under the legacy root (INV-26); the destination exists; an include that resolves outside the legacy root's folder; a legacy lock cannot be taken; the copy does not load the same as the source
+- **Refused when:** any write under the legacy root (INV-26); the destination exists; an include that resolves outside the legacy root's folder; the legacy lock is held: "Quit the old Finzytrack first", never waited for (ADR-0062); the copy does not load the same as the source
 - **v0.3 oracle expectation:** none: no old endpoint
 - **Status:** draft
 - **Milestone:** M3
-- **ADRs:** ADR-0020; ADR-0017
+- **ADRs:** ADR-0020; ADR-0017; ADR-0062
 
 ### `ws.refresh-demo`
 

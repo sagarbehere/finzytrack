@@ -319,3 +319,13 @@ Format:
 - Expected effect: the same 28 rows pass with the same counts; a spec edit that only changes formatting no longer fails the push.
 - Observed effect: pending.
 - Status: kept (loosening, owner-approved). Owner approval, 2026-10-26, in session, on the whole triage of the area review (recorded in `design/inbox/20261026-engine-concurrency-and-cancel.md`): "I agree with all your recommendations." and "The rest of the recommendations can be implemented".
+
+## IMP-0033: INV-26 drops the shared-ledger exception; its three-OS interleaving test narrows to a detection test (2026-10-27)
+- Trigger: owner decision, 2026-10-27, in session (ADR-0062), from the engine-scheduler design work (`design/inbox/20261026-engine-concurrency-and-cancel.md`); journal `design/journal/S0044-single-instance-policy.md`.
+- What changed: `design/INVARIANTS.md` INV-26: rule (no write under a legacy root with no exception, `.write.lock` included; legacy ledgers only by Copy; a held legacy lock refuses the copy or save, never waited for), why, and the enforcement list (the lock-interleaving test against the packaged v0.2.2 build on three OSes becomes the legacy-lock detection test). Status unchanged: pending (BL-0026, by M3).
+- PROCESS.md section: none (invariant content).
+- Why: Share workspaces are removed, so nothing interleaves with a legacy app any more; what remains to check is that v0.4 writes nothing there and sees a held lock.
+- Expected effect: the scheduler loses the legacy-lock waits (draft 3); BL-0026 builds a smaller test.
+- Observed effect: pending.
+- Status: kept (a weakening and a tightening together, owner-approved).
+- Owner approval: "Drop the coexistence policy; I approve the needed changes to INV-26 and ADR-0020. The rest of the pending work you have identified should be done." (2026-10-27, in session)

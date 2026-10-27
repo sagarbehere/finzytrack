@@ -4,7 +4,7 @@
 
 Every user-visible capability of Finzytrack, with its status: `planned`, `partial`, `built`, `cut` (absent on purpose) or `deferred` (not in v0.4.0). This page is the index; each row's full description, what changes in v0.4, where it lived in v0.3, its doc page, backlog items, ADRs, code and tests are in `design/capabilities.toml` (search for the ID). Edit the `.toml`, then run `python3 scripts/gen_capabilities.py`. Rules: `design/process/PROCESS.md` ("Project memory").
 
-**Totals:** cut 14, deferred 13, partial 1, planned 312; 340 rows; release-blocking 308.
+**Totals:** cut 15, deferred 13, partial 1, planned 311; 340 rows; release-blocking 307.
 
 ## Setup and workspaces
 
@@ -45,7 +45,7 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | CAP-SHELL-OPEN | File association (alternate handler), single-instance forward, drag-and-drop a ledger, CLI… | new | planned | M2 | yes |
 | CAP-SHELL-RECENTS | OS "Open Recent" menu / jump list from the registry | new | planned | M2 | yes |
 | CAP-LEGACY-ADOPT | Bring in a v0.2/v0.3 install: detect it, classify each ledger, copy settings, rules and dashboards | new | planned | M3 | yes |
-| CAP-LEGACY-COEXIST | Share a ledger with a running legacy app: take every legacy lock, banner when a legacy app runs… | new | planned | M3 | yes |
+| CAP-LEGACY-COEXIST | Share a ledger with a running legacy app: take every legacy lock, banner when a legacy app runs… | new | cut | M3 | n/a |
 
 ## Accounts
 

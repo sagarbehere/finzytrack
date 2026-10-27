@@ -164,9 +164,9 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 - **Status:** pending (BL-0025, by M3)
 
 ### INV-26: A legacy install keeps working
-- **Rule:** v0.4 never writes under a legacy root **except** the shared ledger set (root, includes, sidecar), its documents folder and `.write.lock`. A shared ledger is written only while holding every recorded legacy lock, with the same primitive the legacy app uses.
-- **Why:** The owner runs v0.2/v0.3 alongside v0.4; the old app must keep working (review:23).
-- **Enforced by:** planned: the adoption corpus test (legacy config, mirror, backups, import sessions and every non-shared ledger byte-identical after adopt and after a v0.4 session); a lock-interleaving test on all three OSes against the packaged v0.2.2 build.
+- **Rule:** v0.4 never writes under a legacy root: it creates, changes and removes nothing there, `.write.lock` included. A legacy ledger comes into v0.4 only by Copy, never shared. Before Copy reads a legacy ledger set, and before a save to a workspace whose ledger files a legacy install's config names, v0.4 tries that install's write lock once, without waiting, with the primitive the legacy app uses; while it is held, the copy or save is refused ("Quit the old Finzytrack first") and nothing is written. *(Amended with the owner's approval, 2026-10-27, ADR-0062: "I approve the needed changes to INV-26 and ADR-0020". The shared-ledger exception and the rule to write a shared ledger only under every legacy lock are gone with Share.)*
+- **Why:** The owner, and users upgrading, may keep a v0.2/v0.3 install working on its own data while they move to v0.4 (review:23); the old app rewrites whole files, so v0.4 never shares a ledger with it (ADR-0062).
+- **Enforced by:** planned: the adoption corpus test (legacy config, mirror, backups, import sessions and every legacy ledger file, also one outside the root, byte-identical after adopt and after a v0.4 session, and no file created under the root); the legacy-lock detection test (a lock held from another process the way the legacy app holds it, portalocker 3.2.0 `LOCK_EX`, is reported held and a free one free, neither waits; macOS in the unit tests, Linux and Windows in the manual CI run). *(Enforcement list amended with the owner's approval, 2026-10-27, ADR-0062: the lock-interleaving test against the packaged v0.2.2 build narrows to the detection test.)*
 - **Status:** pending (BL-0026, by M3)
 
 ### INV-27: The folder is the workspace, and it is never hostage

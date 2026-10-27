@@ -2,7 +2,7 @@
 
 This record decides how v0.4 brings in a v0.2.x or v0.3 install, and how it coexists with a legacy app on a shared ledger.
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended by ADR-0062 (2026-10-27): Share, the coexistence guard and the running-legacy-app banner are removed; Copy is the only mode.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** workspaces, lifecycle, data safety
@@ -36,6 +36,14 @@ Users jump from v0.2.x to v0.4.0, and the owner keeps running the old app alongs
 - An adoption corpus test checks that `config/`, `data/ledger.db*`, backups, sessions and non-shared ledgers are byte-identical after adoption and a v0.4 session; a lock-interleaving test runs against the packaged v0.2.2 build on three OSes.
 - A copied workspace is portable, so it can later move to hosted mode by Export/Import.
 
+## Amendment (2026-10-27): Share and the coexistence guard removed (ADR-0062)
+
+Owner: "Drop the coexistence policy; I approve the needed changes to INV-26 and ADR-0020. The rest of the pending work you have identified should be done." (2026-10-27, in session).
+- **Removed:** the **Share (advanced)** choice; the **coexistence guard on Share workspaces** (the ≥ 30 s legacy-lock waits, the running-legacy-app banner, the after-rewrite multiset report); "the legacy guard attaches to whichever path is taken"; the lock-interleaving test against the packaged v0.2.2 build in Consequences.
+- **Copy is the only mode.** A path the legacy-root probe matches is offered Copy only: neither an in-place `.finzytrack/` nor an external-ledger reference (ADR-0017), which was Share's form.
+- **Copy's read under the legacy lock** becomes one non-blocking try of the install's `data/.write.lock` with the legacy primitive: held means the copy is refused with "Quit the old Finzytrack first" and nothing is written; free means v0.4 holds it while it reads the sources. v0.4 opens the lock file read-only, only if it exists, and never creates it, so nothing under the legacy root is written (INV-26 as amended).
+- **Unchanged:** the rest of this ADR: v0.4's own app root, the read-only detection and the every-open probe, the plan, tool state copied, no legacy ledger file written, entries without a legacy `id`, the downgrade note, the adoption corpus test, and the rejection of read-only mode while a legacy app runs.
+
 ## References
 
-review:23 §4.5, §4.6, §7.3 Q5; review:21 §3 step 7; review:F steering 3; ADR-0005, ADR-0007, ADR-0017, ADR-0027; INV-26; CAP-LEGACY-ADOPT, CAP-LEGACY-COEXIST, CAP-LEGACY-REIMPORT.
+review:23 §4.5, §4.6, §7.3 Q5; review:21 §3 step 7; review:F steering 3; ADR-0005, ADR-0007, ADR-0017, ADR-0027, ADR-0062; INV-26; CAP-LEGACY-ADOPT, CAP-LEGACY-COEXIST, CAP-LEGACY-REIMPORT.

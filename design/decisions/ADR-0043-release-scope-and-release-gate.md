@@ -2,7 +2,7 @@
 
 This record decides what v0.4.0 may ship without, and the gate that must hold before release.
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended by ADR-0062 (2026-10-27): Share mode is cut, so it is no longer a release-blocking item.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** release, scope
@@ -40,6 +40,11 @@ Without a mark, any one of about 65 new features could hold the release. The fin
 ## Consequences
 
 - INV-27's export round-trip test needs the export/import archive; until it exists, INV-27 is enforced by the raw-folder round trip and the layout tests.
+
+## Amendment (2026-10-27): Share mode cut (ADR-0062)
+
+Owner: "Drop the coexistence policy; I approve the needed changes to INV-26 and ADR-0020. The rest of the pending work you have identified should be done." (2026-10-27, in session).
+- **Share mode** leaves the list "Release-blocking despite being proposed for deferral": ADR-0062 removes it, and its capability row CAP-LEGACY-COEXIST is `cut`. Copy adoption (CAP-LEGACY-ADOPT) stays release-blocking. The four deferred capabilities and the release gate are unchanged; the gate's "upgrade matrix from v0.2.2" is adoption by Copy.
 
 ## References
 

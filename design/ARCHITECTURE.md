@@ -48,7 +48,7 @@ flowchart LR
     gh["GitHub Releases\n(signed update manifest)"]
   end
   tools["Outside tools\nFava, editors, git, sync clients,\nSQLite viewers (read-only)"]
-  legacy["Finzytrack 0.2 / 0.3\n(legacy install, may share a ledger)"]
+  legacy["Finzytrack 0.2 / 0.3\n(legacy install: read only,\nadopted by Copy, ADR-0062)"]
 
   user --> shell
   shell -- "spawns, handshake,\nkills on exit" --> side
@@ -62,7 +62,7 @@ flowchart LR
   shell --> gh
   tools -. "edit ledger files;\nread mirror read-only" .-> wsf
   tools -. "open current.db" .-> cache
-  legacy -. "shared ledger only\n(Share mode, INV-26)" .-> wsf
+  side -. "reads only: probe and Copy\n(INV-26)" .-> legacy
 ```
 
 Boundaries that matter:
@@ -125,7 +125,8 @@ backend/src/app/
     engine_protocol.py  the protocol codec: encode requests, decode replies strictly (pure) (S0035)
     engine_supervision.py  the engine's supervision statechart: RestartPolicy and the pure transition table (S0040)
     adapters/    the only place that does real I/O: real fs (atomic replace, fsync_dir), portalocker
-                 locks (incl. legacy locks), httpx, imaplib+TLS, Pydantic AI gateway, .env resolver,
+                 locks (incl. the legacy-lock detection, ADR-0062), httpx, imaplib+TLS,
+                 Pydantic AI gateway, .env resolver,
                  engine_client (spawns and supervises the ledger engine, S0035)
   mirror/        KERNEL, the read half (the build half is in the engine, below).
     reader.py    typed reads returning domain DTOs
@@ -136,7 +137,7 @@ backend/src/app/
                  resolve_open_target, safe export/import plans (pure; extractable as one package)
     registry.py  the registry (registry key vs lineage id, dedupe by canonical root)
     containers.py  UserContainer / WorkspaceContainer (composition; ref-counted; never hold a ledger)
-    legacy.py    legacy detection, classification, adoption plan, coexistence guard (ADR-0020)
+    legacy.py    legacy detection, classification, adoption plan (Copy only), legacy-lock detection (ADR-0020, ADR-0062)
   boot/          assess_app, app-level transitions, the lifecycle executor (plan -> consent ->
                  backup -> apply -> record), the migration framework, content packs, demo workspace
   content/       shipped, read-only content packs: widget library, seed dashboards, rule templates,
@@ -212,7 +213,7 @@ Each slice has the same internal layout, so an agent finds things by convention:
 | `platform` | Ports, concurrency primitives, registries, observability, plans, error registry | Protocols: `Clock`, `Ids`, `Rng`, `FileSystem`, `Locks`, `Http`, `Imap`, `Llm`, `EnginePort`, `SecretResolver`; `WorkspaceLimiter`, `Registry[T]`, `PlanStore`, `log_context`, `timed`, `ErrorCode` | `domain`, stdlib; `platform.adapters` alone may import portalocker, httpx, pydantic_ai, imaplib, ssl |
 | `ledger` (engine) | Read and write the ledger set through Beancount; the write-safety contract | `overlay.load`, `parse_files`, `grammar.parse_account(text, profile)`, `grammar.tolerance(...)` (the Beancount grammar and tolerance behind `beancount_port`; INV-02 unchanged), `LoadPolicy`, `Edit`, `EditPlan`, `IntendedChange`, `contract.prepare(plan) -> Prepared \| Refused`, `writer.commit(prepared, acks) -> Committed \| Refused`, `ErrorKey`, `CanonicalEntryKey` | the engine's own packages and its environment; `beancount_port` alone imports `beancount` (§2.0) |
 | `mirror` | Build and publish (in the engine), read the SQLite projection and run hardened user SQL (main sidecar) | engine: `build_generation(load_result) -> Generation`, `publish(gen)`; main: `Reader` (typed reads), `QueryRunner.run_user_sql(UserSql, params)`, `ledger_version()` | main: `domain`, `platform`; stdlib `sqlite3` |
-| `workspaces` | Workspace format, registry, open/switch, containers, legacy coexistence | `format.assess_workspace`, `format.assess_portability`, `format.resolve_open_target`, `Registry`, `open_workspace(key) -> Opened \| NotReady(phase)`, `WorkspaceContainer`, `UserContainer` | `domain`, `platform`, `ledger`, `mirror`; `format/` imports only `domain` + pydantic (extractable, ADR-0017) |
+| `workspaces` | Workspace format, registry, open/switch, containers, legacy adoption | `format.assess_workspace`, `format.assess_portability`, `format.resolve_open_target`, `Registry`, `open_workspace(key) -> Opened \| NotReady(phase)`, `WorkspaceContainer`, `UserContainer` | `domain`, `platform`, `ledger`, `mirror`; `format/` imports only `domain` + pydantic (extractable, ADR-0017) |
 | `boot` | App-level assessment and lifecycle runs; migrations; content packs; demo | `assess_app(probe) -> AppPhase`, `LifecyclePlan`, `execute(plan, consent)`, `Migration` registry, `ContentPack` | kernel packages; `content` |
 | `content` | Shipped read-only content and the demo/corpus generator | `packs.load(id, version)`, `demo.generate(anchor_date, size, fragments)` (built S0027: `Fragment`, `Size` demo/5k/54k, `default_fragments()`) | `domain`, `ledger.core` (printer-free text builders) |
 | feature slices | One capability each (§2.2) | `<slice>.usecases` functions, `<slice>.capabilities`, `<slice>.registry` | kernel packages; other slices only through the declared edges (§2.4) |
@@ -225,13 +226,13 @@ Each slice has the same internal layout, so an agent finds things by convention:
 | Port | Real adapter | Test adapter | Notes |
 |---|---|---|---|
 | `FileSystem` | `platform.adapters.fs` (read, `atomic_replace` = temp + fsync + `os.replace` + `fsync_dir`, stat, list, `newline=""`) | in-memory FS with crash injection at every call | Confined: takes `WorkspacePath` / `AppPath` only (§2.6) |
-| `Locks` | portalocker 3.x semantics (`flock` / `LockFileEx`), per canonical file plus legacy `.write.lock` (ADR-0020) | in-process fake with an interleaving scheduler | The primitive is pinned in ADR-0005 |
+| `Locks` | portalocker 3.2.0 semantics (`flock` on POSIX; `msvcrt.locking` for exclusive locks on Windows), per canonical file; a one-shot non-blocking try of a legacy `.write.lock`, never waited for; the app-instance lock (ADR-0062) | in-process fake with an interleaving scheduler | The primitive is pinned in ADR-0005 |
 | Ledger store | `ledger.overlay` + `ledger.writer` over `FileSystem` and `Locks`, in the engine | the same code over the fake FS | Not a separate port inside the engine: it *is* the kernel; its I/O goes through `FileSystem` |
 | `EnginePort` (main sidecar) | `platform.adapters.engine_client.EngineClient` (spawn, handshake, timeouts, bounded restarts; S0035; driven by the statechart `platform.engine_supervision`, S0040) | a fake `EnginePort` | The only way the main sidecar reaches the ledger engine (§2.0); results are tagged unions (EP-13) |
 | Mirror | `mirror.publish` / `mirror.reader` over SQLite files in the cache dir | the same over a temp dir | Generation files behind a symlink or pointer file |
 | `Clock` | `zoneinfo`-aware system clock | `FrozenClock` | `today(tz)` derives from it (INV-07) |
 | `Ids`, `Rng` | uuid7 (`uuid-utils`), `secrets` | seeded sequences | Every id in the core is injected (EP-10) |
-| `Http` | httpx with timeouts, used by price sources and the legacy-app probe | recorded-response replayer | Price sources build requests as data (EP-08) |
+| `Http` | httpx with timeouts, used by price sources | recorded-response replayer | Price sources build requests as data (EP-08) |
 | `Imap` | imaplib with `ssl.create_default_context()` (M-4) | fake mailbox | — |
 | `Llm` | Pydantic AI agents with per-server model profiles | OpenAI-compatible stub server (acceptance) and a FunctionModel (unit) | `ModelCaps` per model (L6-08, ADR-0034) |
 | `SecretResolver` | per-workspace `secrets/<key>.env`; app `secrets/app.env` | dict | Rules see only their workspace's scope (ADR-0021) |
@@ -274,7 +275,7 @@ The core is stateless. **These are all the stateful parts of the backend, and no
 | Import sessions | disk, `local/<key>/import-sessions/` | N days | ADR-0027 |
 | Workspace containers | `UserContainer`, ref-counted | at most 1 idle container kept warm on desktop | review:23 §3.8 |
 
-**App-level files** (`workspaces.json`, `settings.yaml`, `.app.json`) are written under one app-level lock with atomic replace; a second process on the same app root is refused or serialized (review:F B-2.18).
+**App-level files** (`workspaces.json`, `settings.yaml`, `.app.json`) are written under one app-level lock with atomic replace (review:F B-2.18). A second process on the same app root is refused at start: the process serving the API holds an app-instance lock for its life, and a second one exits with "Finzytrack is already running." (ADR-0062, BL-0100).
 
 Execution rule: every `async def` handler only `await`s. Sync work runs on a worker thread, behind the workspace limiter (writes) or the heavy-load gate (full loads), via `anyio.to_thread.run_sync`. An AST test enforces it (review:L1 §1.5).
 
@@ -434,7 +435,7 @@ Hand-written TanStack Query hooks live in `features/*/queries.ts`. They are thin
   - Exit: graceful `POST /api/app/quiesce`, then terminate.
   - Orphans: the shell kills the process group on POSIX and uses a Job Object on Windows. The ledger engine stays in the main sidecar's process group and job, so both reach it; it also has its own watchdog and ends on stdin EOF (§2.0). The sidecar closes the engine itself on SIGTERM (S0038).
   - Crash: restart with backoff; after three crashes the shell shows a "backend stopped" screen with diagnostics. This is the sidecar statechart in §7. The failure modes this supervisor must handle (crash, hang, slow, killed for memory, parent gone, fails to start, told to stop, for the sidecar, the webview and the shell itself), with what the user sees and the test each needs, are rows M1–M7, W1–W7 and S1–S7 of [`specs/failure-modes.md`](specs/failure-modes.md); built with BL-0095, BL-0096 and BL-0073.
-- **Plugins:** `dialog` (pick folder/file), `opener` (reveal), `single-instance` (forwards the path of a second launch), `updater`, `process` (relaunch), `log`. **No `fs` plugin, and no `shell:allow-execute` for the webview.** The Tauri capability file grants the webview only the dialog, opener, updater and process permissions it needs.
+- **Plugins:** `dialog` (pick folder/file), `opener` (reveal), `single-instance` (forwards the path of a second launch to the running window; one instance per app root, ADR-0062), `updater`, `process` (relaunch), `log`. **No `fs` plugin, and no `shell:allow-execute` for the webview.** The Tauri capability file grants the webview only the dialog, opener, updater and process permissions it needs.
 - File associations for `.beancount` and `.bean` at alternate rank (ADR-0007). OS recents come from the registry. Close requests are forwarded to the web UI's unsaved guard.
 - **CSP** in `tauri.conf.json`: `default-src 'self'; script-src 'self' 'sha256-<pre-paint>'; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*; img-src 'self' data:; object-src 'none'`, with Tauri's script-src rewriting off (`dangerousDisableAssetCspModification: ["script-src"]`; ADR-0040 amendment, spike S2). The same CSP is set as an HTTP header for browser and headless use (INV-09, ADR-0040).
 
@@ -627,7 +628,7 @@ Model-based coverage is a T1 gate: for each FE machine, the generated paths must
 
 - **System under test:** `ledger.contract` + `ledger.writer` + `mirror.publish` + `workspaces` open/recover, over the in-memory `FileSystem` with crash injection, a fake `Locks` and a `FrozenClock`.
 - **Reference model:** per file, the expected bytes, and per ledger, the expected multiset of canonical entry keys; plus "last published generation corresponds to fingerprint F".
-- **Rules:** `insert/replace/delete/move_postings` with random valid intents; `external_edit(file)` (bytes changed by an outside tool, with or without a lock); `legacy_write` (a full-file re-render that takes the legacy lock); `crash_at(k)` (the FS raises at the k-th call from now, then the process "restarts"); `restart_and_recover`; `read_mirror`.
+- **Rules:** `insert/replace/delete/move_postings` with random valid intents; `external_edit(file)` (bytes changed by an outside tool, with or without a lock); `legacy_write` (a full-file re-render that takes the legacy lock; to v0.4 it is an outside edit, and a save refuses while the lock is held, ADR-0062); `crash_at(k)` (the FS raises at the k-th call from now, then the process "restarts"); `restart_and_recover`; `read_mirror`.
 - **Invariants after every step:**
   - each ledger file equals either the reference's old or new bytes, never partial;
   - no committed write is lost unless an external edit was reported (`LEDGER_EXTERNALLY_CHANGED`);
@@ -640,8 +641,8 @@ Model-based coverage is a T1 gate: for each FE machine, the generated paths must
 ### 8.3 TLA+ spec scope (`formal/tla/WriteProtocol.tla`)
 
 **Modelled:**
-- **Actors:** N v0.4 writers (requests behind the per-root limiter, possibly two processes: a second instance or a headless one); one legacy app holding `data/.write.lock` around parse → write → export; one lock-ignoring external editor; a SyncClient actor (replaces and conflict copies); recovery interleaving with a live writer; nested lifecycle run + write journal; mirror readers; crash/restart and power loss.
-- **The write lock:** per-file locks acquired in canonical order, after every recorded legacy lock (ADR-0020), with timeouts.
+- **Actors:** N v0.4 writers (requests behind the per-root limiter, possibly two processes: a second instance, which the app-instance lock refuses at start (ADR-0062) and which the model keeps as the case that lock cannot reach, such as a second installation); one legacy app holding `data/.write.lock` around parse → write → export, which v0.4 never waits for (a save refuses while it is held, ADR-0062); one lock-ignoring external editor; a SyncClient actor (replaces and conflict copies); recovery interleaving with a live writer; nested lifecycle run + write journal; mirror readers; crash/restart and power loss.
+- **The write lock:** per-file locks acquired in canonical order, after a single non-blocking try of each recorded legacy lock (ADR-0062), with timeouts.
 - **The commit sequence:** fingerprint check under the locks → write-intent journal → per file: backup, temp, fsync, rename, fsync dir (children first, root last) → read-back → journal close → mirror build → generation publish.
 - **Mirror publish:** generation build, pointer/symlink swap, reader pinning, GC of unpinned generations, the stale-WAL rule (never publish next to a leftover `-wal`).
 - **The external-edit fingerprint:** stat + hash of the full extended fingerprint set under the lock (ADR-0015).
@@ -682,7 +683,7 @@ Toolchain: TLA+ tools `tla2tools.jar` **1.7.4** (latest stable; 1.8.0 was still 
 2. **Plan (pure):** the shell finds the target spans through the mirror (file, line, `TransactionId`), refusing when the target's `entry_hash` differs from the request's (ADR-0026), reads only those files, and parses them with the parser only (`ledger.parse_files`). The slice core returns an `EditPlan {edits, intent: IntendedChange}`. A transaction edit merges the request against the parsed source entry and never takes a router-built `Transaction` (ADR-0009).
 3. **`ledger.contract.prepare`:** `apply_edits` (pure, bottom-up, span hashes checked) → step 2 semantic diff of old vs new parser output for the edited files → step 3 **overlay load** `overlay.load(root, overlay=candidates, policy)` under the heavy-load gate → error keys compared with the baseline in the mirror's `ledger_errors`. The result is `Prepared` or `Refused`. The `WritePlan` (texts, hashes, fingerprint, new error keys; never entries) goes into the `PlanStore`, and the preview returns.
 4. **Confirm:** `POST …/plans/{id}:confirm {preview_hash, acks}` → the workspace limiter → `writer.commit`:
-   1. acquire the legacy locks, then the per-file locks;
+   1. try each recorded legacy lock once, without waiting (held: refuse with "Quit the old Finzytrack first", nothing written; ADR-0062), then acquire the per-file locks;
    2. full extended fingerprint equal to the plan's; on mismatch, `LEDGER_EXTERNALLY_CHANGED` and re-plan, re-resolving every `TransactionId` through a fresh mirror, never through cached positions (ADR-0026);
    3. re-run step 3 on the candidate, which is the commit's one full load (ADR-0011);
    4. open the write-intent journal;
@@ -781,7 +782,7 @@ The versions below are the newest stable releases published on or before **2026-
 | anthropic | 1.13.0 | **2.3.0 is the latest but under 14 days old**; the lock checks compatibility with pydantic-ai |
 | openai | 3.27.0 | |
 | anyio | 4.15.1 | limiter, `to_thread` |
-| portalocker | **3.2.0 (pinned on purpose; 4.4.0 exists)** | ADR-0005: Share workspaces (ADR-0020) require the same lock primitive and byte range as the legacy apps, which use 3.2.0. Upgrading needs an ADR and the interleaving test |
+| portalocker | **3.2.0 (pinned on purpose; 4.4.0 exists)** | ADR-0005, ADR-0062: detecting a held legacy lock needs the same lock primitive and byte range as the legacy apps, which pin 3.2.0. Upgrading needs an ADR and INV-26's detection test |
 | structlog | 26.1.0 | EP-15 |
 | uuid-utils | 0.17.1 | uuid7 ids (the 1.x line is under 14 days old) |
 | python-dateutil | 2.9.0.post0 | 3.0.0 is under 14 days old |
@@ -982,7 +983,7 @@ The agent-level choices within the decided stack (vertical slices with per-slice
 Resolved (were questions in the review's architecture draft):
 1. Invariant ID collision → ADR-0003 (INV-28–31).
 2. Python and Beancount versions → ADR-0004.
-3. portalocker stays at 3.2.0 → ADR-0005.
+3. portalocker stays at 3.2.0 → ADR-0005 (since ADR-0062 only to detect a held legacy lock).
 4. Multi-file commits not crash-atomic → the write-intent journal, ADR-0012.
 5. Lock-ignoring external editors → accepted with detection by atomic swap, ADR-0013.
 6. Two loads for two-phase writes (preview, then confirm) → accepted, ADR-0011.
@@ -991,6 +992,7 @@ Resolved (were questions in the review's architecture draft):
 9. v0.2.2 names keep working → ADR-0048.
 10. Finzytrack AI mode is out of v0.4.0; the `Llm` port needs no cloud adapter → ADR-0034, ADR-0043.
 11. The owner keeps using v0.3.0 until v0.4.0; the oracle uses copies only → ADR-0002, ADR-0014.
+12. No ledger is shared with a running legacy app (Share removed, Copy only); one v0.4 instance per app root → ADR-0062.
 
 Open:
 - **`lots`:** under ADR-0048 the v0.2.2 `lots` table keeps working; the owner is asked to re-confirm (ADR-0048).

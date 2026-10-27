@@ -2,7 +2,7 @@
 
 This record sets the platform order for v0.4 development: build, test and dogfood on macOS, keep the cheap cross-platform signals, and port to Linux and Windows in dedicated sessions in M11, except for the write path, whose Windows behaviour is designed in and checked at every exit from M1b on.
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended by ADR-0062 (2026-10-27): INV-26's three-OS lock-interleaving test narrows to the legacy-lock detection test.
 - **Date:** 2026-10-26
 - **Deciders:** owner: "I agree, also with the exception as you have described it." (2026-10-26, in session), answering the agent's recommendation on the owner's proposal: "Would it make sense to 1) Defer Linux and Windows builds for now (since we don't have ready access to those operating systems) 2) Still do the deveolpment in a way that would theoretically work on those operating systems 3) Focus on MacOS development for now 4) Later, once v0.4.0 works on MacOS, we spend some dedicated sessions on making sure they work in Linux and Windows (by then, I'll have computers running those operating systems and maybe we could run claude code on those and make sure it works on both those operating systems). What do you think?"
 - **Area:** process, platforms, release
@@ -33,6 +33,11 @@ The owner develops and dogfoods on macOS and has no Linux or Windows machine at 
 - Roadmap §3.2 states the platform rule for exits; the M1b exit and every later exit include the Windows run of the engine's write-contract tests; M11 includes the cross-platform sessions before its dogfood window.
 - Platform-only failures become `fixme` tests due M11 with backlog rows; safety tests are never deferred.
 - The release gate (ADR-0043), ADR-0013's three-OS swap test and INV-26's three-OS lock test are unchanged.
+
+## Amendment (2026-10-27): INV-26's three-OS test is the detection test (ADR-0062)
+
+Owner: "Drop the coexistence policy; I approve the needed changes to INV-26 and ADR-0020. The rest of the pending work you have identified should be done." (2026-10-27, in session).
+- Where this ADR names **INV-26's lock-interleaving test on all three OSes** (Amends, decision 4, Consequences), read **INV-26's legacy-lock detection test**: v0.4 no longer interleaves writes with a legacy app; it tries the legacy lock once without waiting and refuses while it is held (ADR-0062). The detection test runs in the unit tests on macOS and on Linux and Windows in the manual CI run, and stays **never deferred**, like every INV-tagged test.
 
 ## References
 
