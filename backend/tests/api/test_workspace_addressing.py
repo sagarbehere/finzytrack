@@ -12,7 +12,7 @@ switching}`, changes nothing, never redirected). INV-28's planned "middleware te
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 import httpx
 import pytest
@@ -91,7 +91,7 @@ def test_a_registered_workspace_that_is_not_open_is_409_and_changes_nothing(
 
 @pytest.mark.inv("INV-28")
 @pytest.mark.error_code("WORKSPACE_NOT_READY")
-@pytest.mark.parametrize("phase", ["WARMING", "RECOVERING"])
+@pytest.mark.parametrize("phase", ["WARMING"])
 @pytest.mark.parametrize("method", ["GET", "POST"])
 def test_the_open_workspace_while_it_is_not_ready_is_409_with_its_phase(phase: str, method: str) -> None:
     path = "/api/w/personal/probe" if method == "GET" else "/api/w/personal/save"
@@ -101,6 +101,14 @@ def test_the_open_workspace_while_it_is_not_ready_is_409_with_its_phase(phase: s
     assert (error["code"], error["class"], error["details"]) == ("WORKSPACE_NOT_READY", "conflict", {"phase": phase})
     assert error["retryable"] is True
     assert calls == []
+
+
+@pytest.mark.inv("INV-28")
+@pytest.mark.error_code("WORKSPACE_NOT_READY")
+def test_the_open_workspace_is_never_recovering() -> None:
+    """ADR-0063 decision 2: every unfinished save is recovered before any workspace opens, and a failed in-session
+    rollback pauses writes (`WRITES_PAUSED`), so the open workspace is never `RECOVERING` (S0047, audit C2)."""
+    assert get_args(NotReadyPhase.__value__) == ("WARMING",)
 
 
 @pytest.mark.inv("INV-28")

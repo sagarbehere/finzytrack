@@ -2,7 +2,7 @@
 
 PROCESS.md §3 "Golden specs": the model comes with a two-way mapping table and a seeded mutant per property.
 These tests do not run TLC (formal/tla/engine-scheduler/run_all.sh does); they check that the names line up:
-- every property and every mutant that design/specs/engine-scheduler.md §13 names exists in the model and
+- every property and every mutant that design/specs/engine-jobs.md §13 names exists in the model and
   in the configuration table, so a spec change that renames or adds one fails here until the model follows;
 - every property the configurations check has at least one mutant that must break it;
 - MAPPING.md lists exactly the actions of the model's Next relation;
@@ -20,7 +20,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 DIR = REPO / "formal/tla/engine-scheduler"
-SPEC = REPO / "design/specs/engine-scheduler.md"
+SPEC = REPO / "design/specs/engine-jobs.md"
 HELPERS = {"JobIdsBounded", "QuitAnywayAlwaysEnabled"}  # model sanity, and a conjunct of EngineCanAlwaysBeFreed
 
 

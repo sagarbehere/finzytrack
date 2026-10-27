@@ -1,6 +1,6 @@
 # How to run the engine-scheduler model checks
 
-The TLA+ model of `design/specs/engine-scheduler.md` §13 (draft 5). It runs as a plain shell script with
+The TLA+ model of `design/specs/engine-jobs.md` §13 (draft 5). It runs as a plain shell script with
 Java; no AI is involved. MAPPING.md says what the model checks and how it maps to the spec.
 
 ## Before the first run

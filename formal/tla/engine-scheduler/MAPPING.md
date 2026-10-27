@@ -1,6 +1,6 @@
 # EngineScheduler.tla and the engine-scheduler spec, both ways
 
-- **Spec:** `design/specs/engine-scheduler.md`, draft 5 at d8ca7823 (its §13 lists what the model must check). Built only from that text and the ADRs and invariants it cites for meaning; the private `tla/v3/` model (a superseded two-engine design) was used for TLA+ idioms and runner shape only.
+- **Spec:** `design/specs/engine-jobs.md` (named `engine-scheduler.md` at d8ca7823; renamed in S0047), draft 5 at d8ca7823 (its §13 lists what the model must check). Built only from that text and the ADRs and invariants it cites for meaning; the private `tla/v3/` model (a superseded two-engine design) was used for TLA+ idioms and runner shape only.
 - **Model:** `EngineScheduler.tla` (one module). Configurations come from `gen_cfgs.py` (`cfg/*.cfg`, `configs.txt`); `run_all.sh` runs them (HOW_TO_RUN.md).
 - **State of the model:** every small configuration passes; every seeded mutant is caught by the property it targets; four spec issues found (§5 below), each modelled as a fix that is on by default, with a finding configuration that shows the violation without it.
 - `scripts/tests/test_tla_engine_scheduler.py` keeps this file honest: every action in `Next` has a row in §2 and every row names an action; every property and mutant §13 names exists in the model and in `gen_cfgs.py`; every property has at least one mutant.
@@ -234,7 +234,7 @@
 | Restore temps under a power loss | `fs.rt` keeps its content; recovery deletes restore temps without a check either way, and the loss this allows is §15's accepted limit (recorded in `gh.acc`) |
 | One folder per workspace; journals, backups and the note durable when their step says so | the order of their syncs is modelled per step; rename+sync of `.resolved`, `.mismatch`, `.done` and the note are one step each, as the spec states them durable |
 | Legacy-lock detection (§6.1 step 2) | not in §13's world; ADR-0062's detection tests (§14 "Legacy lock") |
-| `max_queued`, `BUSY_HEAVY_LOAD` | bounded by the model's counters instead; §14 queue tests |
+| `max_queued`, `ENGINE_QUEUE_FULL` (named `BUSY_HEAVY_LOAD` at d8ca7823) | bounded by the model's counters instead; §14 queue tests |
 | Backoff delays, the 300 s window, the display delay | untimed: `WindowExpire` and `AdviceTimer` are fair environment steps; no property depends on durations |
 | Protocol violations (§5.3 rows) | not in §13's world; §14 engine tests; a violation past the commit point behaves like a crash at the exit, which `EngineCrash` covers |
 | Phase texts, "Still working…" | only the quit advice is state (`ses.advice`); §14 UI tests |

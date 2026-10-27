@@ -2,7 +2,7 @@
 
 This record decides the stance on a future hosted, multi-user version.
 
-- **Status:** Accepted. Amended by ADR-0063 (2026-10-27): one open workspace per user container; sharing a workspace between users excluded.
+- **Status:** Accepted. Amended by ADR-0063 (2026-10-27): one open workspace per user container; sharing a workspace between users excluded. Amended by ADR-0064 (2026-10-27, applied in S0047): no process-wide state; the re-check (R4) runs in hosted mode too.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** architecture, hosting
@@ -44,3 +44,10 @@ Owner: "1. Yes to forbidding two workspaces sharing a file. If it'll help we can
 ## References
 
 review:18 §0–§5; review:23 §5; review:15 §2 (hosted provisioning cut); ADR-0010, ADR-0016, ADR-0017; INV-10, INV-11, INV-27, INV-28; CAP-HOSTED-WORKSPACES; ADR-0063.
+
+## Amendment (2026-10-27): no process-wide state, and R4 in every mode (ADR-0064)
+
+Owner, on ADR-0064: "we go back to one engine doing one job at a time and massively simplify everything" (2026-10-27, in session; the full record is ADR-0064). Applied in S0047 (convergence audit C18).
+- **Superseded:** "no module-level mutable state outside an allowlist, whose only process-wide entry is the heavy-load semaphore". **Instead:** there is no process-wide state at all. ADR-0064 replaced the semaphore with one engine doing one job at a time, behind a queue that hangs off `UserContainer` (INV-11, as amended on 2026-10-27); the state registry refuses a process-wide entry (`backend/tests/architecture/test_globals.py`).
+- **Superseded:** "the D2 background reconciliation is off in hosted mode". **Instead:** the re-check (R4) runs right after "saved" in every mode, hosted included, and is never switched off; it gates only the next save of that workspace (ADR-0008 and ADR-0010 amendments, ADR-0064 decision 7).
+- **Unchanged:** every other seam and guard of this record.

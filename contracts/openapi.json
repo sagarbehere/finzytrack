@@ -223,10 +223,7 @@
         "type": "object"
       },
       "NotReadyPhase": {
-        "enum": [
-          "WARMING",
-          "RECOVERING"
-        ],
+        "const": "WARMING",
         "type": "string"
       },
       "RouteNotFoundError": {

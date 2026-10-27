@@ -31,9 +31,10 @@ from app.domain.errors import (
     Unavailable,
 )
 
-type NotReadyPhase = Literal["WARMING", "RECOVERING"]
+type NotReadyPhase = Literal["WARMING"]
 """Why the open workspace cannot serve a request yet (ADR-0019: the open workspace's phases short of serving; a
-workspace in a failed phase is never open, INV-29)."""
+workspace in a failed phase is never open, INV-29). Never `RECOVERING`: every unfinished save is recovered before
+any workspace opens, and a failed in-session rollback pauses writes instead (ADR-0063 decision 2, ADR-0064; S0047)."""
 
 CODE = re.compile(r"[A-Z][A-Z0-9]*(_[A-Z0-9]+)*")
 

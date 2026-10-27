@@ -32,7 +32,7 @@ Several principles are the *engineering means* of an invariant. When that holds,
 | Architecture tests | `backend/tests/architecture/` (AST bans, globals/state registry, route scope, TLA mapping, error codes, events) | T1 |
 | Generation diff | `.githooks/pre-commit` + CI regeneration, then `git diff --exit-code` | T0 + T1 |
 | Concept counters, duplication | `scripts/concept_counters.py`, jscpd | T1 |
-| Models | Hypothesis state machine, XState model-based paths, TLC small config | T1; large configs T2 |
+| Models | Hypothesis state machine, XState model-based paths, the TLA+ model's small tier | T1; the TLA+ model's medium and large tiers: the owner (ARCHITECTURE §8.3) |
 | Mutation | mutmut, Stryker | T2, weekly and before each clearance (`PROCESS.md` (gates)) |
 | Packaged build | `.github/workflows/packaged.yml`: the app packaged on three OSes, installed where the format allows, `--smoke-test` passing and failing with the bundled runtime removed (`shell/package_app.py`, `shell/smoke_packaged.py`) | T2 (started by hand before each release, ADR-0060) |
 
@@ -326,14 +326,14 @@ const editBuffer = setup({...}).createMachine({ initial: 'clean', states: { clea
 
 **Enforcement.** The T1 bounded run (fixed example budget and seed database committed), the T2 long run, and a mutation score floor on `app/ledger` (ADR-0043, gate item 7).
 
-### EP-19 A small TLA+ spec of the concurrency and crash protocol
-**Rule.** `formal/tla/WriteProtocol.tla` models the locks, the atomic write sequence, the write-intent journal, mirror generation publishing, the legacy-app lock and the external-edit fingerprint (ARCHITECTURE §8.3). Each spec action maps to exactly one code function, marked `@tla_action`. A change to the protocol changes the spec in the same slice.
+### EP-19 A TLA+ model of the engine jobs and the write protocol
+**Rule.** One model, `formal/tla/engine-scheduler/EngineScheduler.tla`, checks the design of `design/specs/engine-jobs.md` §13: the queue and Cancel, the save's locks, backups, journal, swap, read-back, rollback and recovery, the switch, boot, quit and update, under crashes, power loss and an outside editor (ARCHITECTURE §8.3; it replaced the planned `WriteProtocol.tla` in S0047). It comes with a two-way mapping to the spec and a seeded mutant per property (PROCESS.md §3). Each engine and app action of the model maps to exactly one code function, marked `@tla_action`. A change to the design changes the spec and the model in the same slice.
 **Why.** Lock ordering, crash windows and cross-process interleavings are where reasoning fails and tests rarely reach. The spec work already surfaced a gap (multi-file commit atomicity), closed by the write-intent journal (ADR-0012).
 
-**Enforcement.** TLC on the small config in T1 and the large config in T2, plus the mapping test (spec actions ↔ markers, both directions).
+**Enforcement.** `scripts/tests/test_tla_engine_scheduler.py` at every push (the model's names in step with the spec); TLC on the small tier in T1, the medium and large tiers on the owner's machine after an independent review of the model; the code mapping test (model actions ↔ markers, both directions) with the engine-jobs slice (BL-0109).
 
 ### EP-20 Diagrams are generated from models and code
-**Rule.** Package diagrams come from the import-linter contracts plus the real import graph; statechart diagrams from XState machines and backend tables; the API reference from OpenAPI; the mirror docs from the DDL; the TLA+ mapping from the markers. Nobody hand-draws an architecture diagram that claims to describe the code.
+**Rule.** Package diagrams come from the import-linter contracts plus the real import graph; statechart diagrams from XState machines and backend tables; the API reference from OpenAPI; the mirror docs from the DDL; the TLA+ model's code mapping from the markers. Nobody hand-draws an architecture diagram that claims to describe the code.
 **Why.** Hand-drawn diagrams drift silently, as the 2026-05 dev-docs did.
 
 **Enforcement.** `scripts/gen_diagrams.py` in T1 with a generation diff on `design/generated/`; the doc auditor flags hand-written diagrams that describe code structure.
@@ -401,7 +401,7 @@ def run_user_sql(sql: UserSql, params: Params, limits: QueryLimits) -> Frame: ..
 **Enforcement.** `[tool.uv] exclude-newer = "14 days"`, pnpm `minimumReleaseAge: 20160`; Cargo has no such setting, so `Cargo.lock` is resolved to versions published at least 14 days earlier and `scripts/check_cargo_age.py` checks every entry against its adoption commit, with the dates kept in `shell/src-tauri/Cargo.lock.dates` (entries new since the remote branch re-read from crates.io in the pre-push hook, all of them in the manual T2 run; S0013, ADR-0060); a CI check that the lockfiles are unchanged by a fresh resolve, and a Renovate-style dependency report in T2 (report only, never auto-merge).
 
 ### EP-25 The async edge only awaits
-**Rule.** An `async def` handler only awaits. Blocking work (Beancount loads, file writes, SQLite, scikit-learn) runs in worker threads behind the workspace limiter or the heavy-load gate.
+**Rule.** An `async def` handler only awaits. Blocking work in the main sidecar (file reads and writes, SQLite, scikit-learn) runs in worker threads; ledger work (Beancount loads, BQL, saves) goes through the engine job queue, which runs one engine job at a time (ADR-0054, ADR-0064).
 **Why.** L1-02: one write froze the whole server. This is the engineering means of INV-20.
 
 **Enforcement.** The AST test from review:L1 §1.5 (no sync call into `usecases` from an `async def` without `to_thread`), plus the `/health` latency test during a 54k write (backend-core acceptance).

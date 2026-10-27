@@ -171,9 +171,10 @@ def modules() -> dict[str, str]:
 
 
 def unregistered(found: list[Found], registry: tuple[StateEntry, ...]) -> list[Found]:
-    # Only process-wide entries are module-level names; container-owned parts live on container attributes.
-    allowed = {(e.module, e.name) for e in registry if e.owner == "process"}
-    return [f for f in found if (f.module, f.name) not in allowed]
+    """Every module-level or class-level state the scan found: container-owned parts live on container attributes,
+    and no entry may be process-wide (ADR-0064, S0047), so a registry entry never makes a module-level name state."""
+    del registry  # kept in the signature: the registry decides nothing here since no entry is process-wide
+    return list(found)
 
 
 @pytest.mark.inv("INV-11")
@@ -189,9 +190,9 @@ def defined_names(source: str) -> set[str]:
 
 
 def registry_problems(registry: tuple[StateEntry, ...], sources: dict[str, str]) -> list[str]:
-    """ARCHITECTURE.md §2.5 and ADR-0041: every entry has an owner, a bound and an eviction; a process-wide entry
-    names a stateful module-level name (the scan finds it), and there is at most one (the heavy-load gate); a
-    container-owned entry names the class or factory that holds it; no entry is listed twice."""
+    """ARCHITECTURE.md §2.5: every entry has a container as its owner, a bound and an eviction, and names the class
+    or factory that holds the state; no entry is listed twice. No entry is process-wide: ADR-0064 retired the
+    heavy-load semaphore, the one process-wide entry ADR-0041 allowed (INV-11; S0047)."""
     out: list[str] = []
     seen: set[tuple[str, str]] = set()
     for e in registry:
@@ -199,19 +200,18 @@ def registry_problems(registry: tuple[StateEntry, ...], sources: dict[str, str])
         if (e.module, e.name) in seen:
             out.append(f"{key}: listed twice")
         seen.add((e.module, e.name))
-        if e.owner not in ("process", "UserContainer", "WorkspaceContainer"):
-            out.append(f"{key}: unknown owner {e.owner!r}")
+        owner = str(e.owner)  # widened: the registry is data, and a bad entry must be reported, not assumed away
+        if owner == "process":
+            out.append(f"{key}: a process-wide entry (ADR-0064: no process-wide state; INV-11)")
+        elif owner not in ("UserContainer", "WorkspaceContainer"):
+            out.append(f"{key}: unknown owner {owner!r}")
         if not e.bound.strip() or not e.eviction.strip():
             out.append(f"{key}: bound and eviction are required")
         source = sources.get(e.module)
         if source is None:
             out.append(f"{key}: stale entry (no such module)")
-        elif e.owner == "process" and not any(f.name == e.name for f in scan(source, e.module)):
-            out.append(f"{key}: stale entry (no such stateful name)")
-        elif e.owner != "process" and e.name not in defined_names(source):
+        elif e.name not in defined_names(source):
             out.append(f"{key}: stale entry (no such class or name)")
-    if sum(e.owner == "process" for e in registry) > 1:
-        out.append("more than one process-wide entry (ADR-0041: the heavy-load gate is the only one)")
     return out
 
 
@@ -220,41 +220,52 @@ def test_every_registry_entry_exists_and_declares_its_bounds() -> None:
     assert registry_problems(REGISTRY, modules()) == []
 
 
-GATES = {"app.platform.gates": "_sem = make_semaphore()\n", "app.platform.plans": "class PlanStore:\n    pass\n"}
+SOURCES = {"app.platform.plans": "class PlanStore:\n    pass\n", "app.platform.jobs": "class JobQueue:\n    pass\n"}
 
 
 @pytest.mark.inv("INV-11")
 def test_good_registry_entries_pass() -> None:
     entries = (
-        StateEntry("app.platform.gates", "_sem", "process", "2 slots", "none (fixed size)"),
         StateEntry("app.platform.plans", "PlanStore", "UserContainer", "200 plans", "TTL 1 h, then LRU"),
+        StateEntry(
+            "app.platform.jobs", "JobQueue", "WorkspaceContainer", "max_queued jobs", "a job leaves when it ends"
+        ),
     )
-    assert registry_problems(entries, GATES) == []
+    assert registry_problems(entries, SOURCES) == []
 
 
 @pytest.mark.inv("INV-11")
 @pytest.mark.parametrize(
     ("entries", "problem"),
     [
-        ((StateEntry("app.platform.gates", "_sem", "process", "", "none"),), "bound and eviction"),
-        ((StateEntry("app.platform.gates", "_sem", "process", "2 slots", " "),), "bound and eviction"),
-        ((StateEntry("app.platform.gone", "_sem", "process", "2 slots", "none"),), "no such module"),
-        ((StateEntry("app.platform.gates", "_renamed", "process", "2 slots", "none"),), "no such stateful name"),
+        ((StateEntry("app.platform.plans", "PlanStore", "UserContainer", "", "LRU"),), "bound and eviction"),
+        ((StateEntry("app.platform.plans", "PlanStore", "UserContainer", "200 plans", " "),), "bound and eviction"),
+        ((StateEntry("app.platform.gone", "PlanStore", "UserContainer", "200 plans", "LRU"),), "no such module"),
         ((StateEntry("app.platform.plans", "Gone", "UserContainer", "1", "LRU"),), "no such class"),
-        ((StateEntry("app.platform.gates", "_sem", "Global", "2", "none"),), "unknown owner"),  # type: ignore[arg-type]
-        ((StateEntry("app.platform.gates", "_sem", "process", "2", "none"),) * 2, "listed twice"),
-        (
-            (
-                StateEntry("app.platform.gates", "_sem", "process", "2", "none"),
-                StateEntry("app.platform.gates2", "_x", "process", "1", "none"),
-            ),
-            "more than one process-wide",
-        ),
+        ((StateEntry("app.platform.plans", "PlanStore", "Global", "1", "LRU"),), "unknown owner"),  # type: ignore[arg-type]
+        ((StateEntry("app.platform.plans", "PlanStore", "UserContainer", "1", "LRU"),) * 2, "listed twice"),
+        ((StateEntry("app.platform.jobs", "JobQueue", "process", "1", "none"),), "process-wide"),  # type: ignore[arg-type]
     ],
 )
 def test_bad_registry_entries_fail(entries: tuple[StateEntry, ...], problem: str) -> None:
-    sources = {**GATES, "app.platform.gates2": "_x = make()\n"}
-    assert any(problem in p for p in registry_problems(entries, sources)), registry_problems(entries, sources)
+    assert any(problem in p for p in registry_problems(entries, SOURCES)), registry_problems(entries, SOURCES)
+
+
+# S0047 (convergence audit C1): ADR-0064 retired the heavy-load semaphore, the one process-wide entry ADR-0041 allowed;
+# the engine job queue hangs off `UserContainer` (INV-11), so no registry entry may be process-wide, and naming a
+# module-level name in one does not make that name allowed state.
+@pytest.mark.inv("INV-11")
+def test_a_process_wide_entry_is_refused() -> None:
+    entry = StateEntry("app.platform.jobs", "_queue", "process", "100 jobs", "none")  # type: ignore[arg-type]
+    problems = registry_problems((entry,), {"app.platform.jobs": "_queue = make_queue()\n"})
+    assert any("process-wide" in p for p in problems), problems
+
+
+@pytest.mark.inv("INV-11")
+def test_a_module_level_name_is_state_even_when_an_entry_names_it() -> None:
+    found = scan("_queue = make_queue()\n", "app.platform.jobs")
+    entry = StateEntry("app.platform.jobs", "_queue", "process", "100 jobs", "none")  # type: ignore[arg-type]
+    assert [f.name for f in unregistered(found, (entry,))] == ["_queue"]
 
 
 @pytest.mark.inv("INV-11")
@@ -339,13 +350,6 @@ def test_planted_state_is_found(source: str) -> None:
 )
 def test_immutable_values_pass(source: str) -> None:
     assert scan(source, "app.planted") == [], source
-
-
-@pytest.mark.inv("INV-11")
-def test_a_registered_name_passes_and_an_unregistered_one_does_not() -> None:
-    found = scan("_sem = make_semaphore()\n_other = []\n", "app.platform.gates")
-    entry = StateEntry("app.platform.gates", "_sem", "process", "2 slots", "none (fixed size)")
-    assert [f.name for f in unregistered(found, (entry,))] == ["_other"]
 
 
 def test_the_record_calls_are_frozen_slotted_dataclasses() -> None:

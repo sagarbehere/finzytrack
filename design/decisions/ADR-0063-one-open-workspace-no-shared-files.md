@@ -117,3 +117,9 @@ Review 4 of the engine-scheduler design (owner's private archive, `m1a/scheduler
 
 Owner, approving the first golden review's recommendations for the engine-scheduler spec: "I agree with all the recommendations. Proceed on that basis." (2026-10-27, in session, relayed by the orchestrator).
 - **Superseded on the Unchanged line:** "ADR-0011's per-workspace write limiter". One engine runs one job at a time (ADR-0064), so the limiter has nothing left to serialize; tool-state files keep their own per-file lock. The rest of the line, and of this record, is unchanged.
+
+## Amendment (2026-10-27): the hosting paragraph without limiters (S0047)
+
+Agent, a direct consequence of the amendment above and of INV-11 as amended (owner: "Yes, I agree with both", 2026-10-27, in session). Convergence audit C20.
+- **Superseded in the hosting paragraph of the Decision:** "the limiters, job queue and containers stay where INV-11 puts them". **Instead:** "the engine job queue and the containers stay where INV-11 puts them"; ADR-0064 retired the limiters.
+- **Superseded in decision 1's refusal rule:** "the open workspace while it warms or recovers is still `409 WORKSPACE_NOT_READY {phase}`". **Instead:** only while it warms (`WARMING`). Decision 2 recovers every unfinished save before any workspace opens, and a failed rollback in the session pauses writes with `WRITES_PAUSED` (ADR-0064), so the open workspace is never `RECOVERING`; the API's phase type says so since S0047 (convergence audit C2).

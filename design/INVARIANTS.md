@@ -74,9 +74,9 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 - **Status:** pending (BL-0010, by M1a)
 
 ### INV-11: Services hang off containers
-- **Rule:** Services hang off `UserContainer` or `WorkspaceContainer`; limiters, the job queue and the AI chat store hang off `UserContainer`. There is no module-level mutable state outside the allowlist. *(Amended by review:23 §7.2.)*
+- **Rule:** Services hang off `UserContainer` or `WorkspaceContainer`; the engine job queue and the AI chat store hang off `UserContainer`. There is no module-level mutable state outside the allowlist. *(Amended by review:23 §7.2. Amended on 2026-10-27 with the owner's approval, "Yes, I agree with both" (S0047): the rule's list names only what ADR-0064 kept, the engine job queue, and the registry has no process-wide entry; IMPROVEMENTS.md.)*
 - **Why:** Module globals leak state between users and workspaces (review:18).
-- **Enforced by:** `backend/tests/architecture/test_globals.py` (no module-level or class-level value outside a short immutable allowlist, no module-level expression, `global`/`nonlocal` or memoizing decorator, unless registered; stated limit: an alias of stdlib state such as `os.environ` passes), `backend/src/app/platform/state_registry.py` (the registry: process-wide names, at most one, and container-owned parts, each with owner, bound and eviction). Planned: the isolation matrix with a workspace axis for the containers' rule (L11-08, M2).
+- **Enforced by:** `backend/tests/architecture/test_globals.py` (no module-level or class-level value outside a short immutable allowlist, no module-level expression, `global`/`nonlocal` or memoizing decorator, unless registered; stated limit: an alias of stdlib state such as `os.environ` passes), `backend/src/app/platform/state_registry.py` (the registry: container-owned parts only, each with owner, bound and eviction; a process-wide entry is refused, ADR-0064). Planned: the isolation matrix with a workspace axis for the containers' rule (L11-08, M2).
 - **Status:** enforced
 
 ### INV-12: Layering

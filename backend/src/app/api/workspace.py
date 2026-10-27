@@ -7,7 +7,7 @@ open one; otherwise the request is refused before anything of the route runs, so
 - not registered: `404 WORKSPACE_UNKNOWN`;
 - registered but not open, or a switch is closing it: `409 WORKSPACE_NOT_OPEN {open_workspace, switching}`, never
   redirected to the open workspace;
-- open but warming or recovering: `409 WORKSPACE_NOT_READY {phase}`.
+- open but still warming: `409 WORKSPACE_NOT_READY {phase}` (never recovering: ADR-0063 decision 2).
 
 A gate that answers "open" for another key than the one named is a bug; the request fails closed as `INTERNAL`.
 

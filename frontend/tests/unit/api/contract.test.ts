@@ -56,7 +56,7 @@ describe('[S0046] the generated API types', () => {
       switching: boolean
     }>()
     expectTypeOf<Extract<ApiError, { code: 'WORKSPACE_NOT_READY' }>['details']>().toEqualTypeOf<{
-      phase: 'WARMING' | 'RECOVERING'
+      phase: 'WARMING'
     }>()
     expectTypeOf<Extract<ApiError, { code: 'WORKSPACE_UNKNOWN' }>['details']>().toEqualTypeOf<null>()
   })

@@ -2,7 +2,7 @@
 
 This record decides that the ledger engine runs one job at a time in one process, behind a queue in the main sidecar where work the user waits for goes first, and that parallel engines are dropped.
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended on 2026-10-27 (S0047): the parse cache, the queue-full code's name, the spec's name; its list for the convergence audit is done.
 - **Date:** 2026-10-27
 - **Deciders:** owner. After the orchestrator said parallel engines were not close to verified and would not make a single save faster: "if we are not most of the way there, or if we can't asses that with confidence, then I agree that we go back to one engine doing one job at a time and massively simplify everything." and "My main intent in pushing for parallel work was something you said that a write could take up to 10s on a big ledger. That is too long for a personal finance application." Then, approving the hand-off that carried this design and the recovery rule: "Yes, write both into the hand-off" (2026-10-27, in session, relayed by the orchestrator). The design those words approved is listed in decisions 1 to 7, as the orchestrator stated it; what this ADR adds beyond it is marked "(agent)". After the first golden review of the spec (review 5), the owner approved its recommendations: "I agree with all the recommendations. Proceed on that basis." (2026-10-27, in session, relayed by the orchestrator); they are marked "(owner, review 5)".
 - **Area:** engine, scheduling, write path, performance
@@ -50,7 +50,7 @@ What makes a save slow is the work inside it (spike S4, 54k entries, p95, owner'
 
 ## Consequences
 
-- `design/specs/engine-scheduler.md` draft 5 is the design of record once golden (PROCESS.md §3 "Golden specs"); then the convergence audit, the TLA+ model from the golden spec, and the scheduler slice.
+- `design/specs/engine-jobs.md` (the engine-scheduler spec until S0047) draft 5 is the design of record once golden (PROCESS.md §3 "Golden specs"); then the convergence audit, the TLA+ model from the golden spec, and the scheduler slice.
 - The scheduler slice changes built code (spec §5.5): `EngineClient` loses its timeouts and gains Cancel and retire; the engine command drops `-I`; the protocol gains progress, `gate`/`proceed`, `committed` and decision objects.
 - Speed is measured, not assumed: BL-0082 extends S4 to the real write path with R4 off the "saved" path and the garbage collector paused during loads. A user action right after a save may wait for that save's R4 (about 2 s at 54k), and a BQL query waits behind a running save or rebuild.
 - Updated with this ADR: ADR-0054, ADR-0011, ADR-0010, ADR-0063, ADR-0008 and ADR-0012 (amendment sections), ARCHITECTURE §2.0, §2.4 (the load rule), §2.5, §9 and §12, `design/specs/failure-modes.md` (row E4's prevention, a pointer for rows E2, E3, E5 and E7, and rows M7 and S7 brought in line with the quit of spec §9.3), ARCHITECTURE §9.8 (the update refuses with Reopen on an in-session `.open` journal), BL-0091 (its questions answered), the roadmap.
@@ -58,4 +58,11 @@ What makes a save slow is the work inside it (spike S4, 54k entries, p95, owner'
 
 ## References
 
-`design/specs/engine-scheduler.md` (draft 5); `design/inbox/answered/20261026-engine-concurrency-and-cancel.md`; the owner's private archive `m1a/scheduler-design/` (drafts 1-4, reviews 2-4) and `m1a/area-review-engine/` (F1, F2); spike S4; ADR-0008, ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0015, ADR-0054, ADR-0062, ADR-0063; INV-01, INV-10, INV-11, INV-20, INV-22, INV-28, INV-31, INV-32; BL-0082, BL-0091; S0035, S0040, S0042.
+`design/specs/engine-jobs.md` (draft 5; `engine-scheduler.md` until S0047); `design/inbox/answered/20261026-engine-concurrency-and-cancel.md`; the owner's private archive `m1a/scheduler-design/` (drafts 1-4, reviews 2-4) and `m1a/area-review-engine/` (F1, F2); spike S4; ADR-0008, ADR-0010, ADR-0011, ADR-0012, ADR-0013, ADR-0015, ADR-0054, ADR-0062, ADR-0063; INV-01, INV-10, INV-11, INV-20, INV-22, INV-28, INV-31, INV-32; BL-0082, BL-0091; S0035, S0040, S0042.
+
+## Amendment (2026-10-27): after the convergence audit (S0047)
+
+- **The parse cache** (owner: "Yes, I agree with both", 2026-10-27, in session). The Context's "a later performance project, measured first (BL-0082)" now reads: the save at 54k is measured in M1b first (BL-0112, with BL-0082's harness), and a bounded cache of the edited file's parse, on disk in a safe format and never Beancount's pickle cache, is built only if that measurement misses 5 s (ADR-0008 amendment of 2026-10-27, the parse cache). The roadmap and the spec's §15 say the same.
+- **The spec's name** (owner: "Yes", 2026-10-27, to the rename): `design/specs/engine-scheduler.md` is `design/specs/engine-jobs.md`, "Engine jobs and saves"; "the scheduler slice" is the engine-jobs slice (BL-0109). This record's title stays; the model's folder `formal/tla/engine-scheduler/` keeps its name until its review ends (BL-0111).
+- **The queue-full code** (agent; the question this record left open): `BUSY_HEAVY_LOAD` is renamed `ENGINE_QUEUE_FULL`. It refuses a request beyond the queue's `max_queued` (spec §3, §11); "heavy load" named the retired semaphore, and the code was not built yet, so renaming it now costs nothing and later would break the contract.
+- **"Left for the convergence audit"** (Consequences): done. The audit of 2026-10-27 checked every item on that list and more (its findings C1-C30); S0047 fixed them (`design/journal/S0047-convergence-fixes.md`), and `scripts/check_retired_terms.py` now refuses the abandoned designs' terms in the current-state documents.

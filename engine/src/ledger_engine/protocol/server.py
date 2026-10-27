@@ -21,7 +21,8 @@
   On Windows the engine ends on stdin EOF when the sidecar is gone (its pipe closes), and the shell's Job Object
   (ARCHITECTURE.md §5) covers the sidecar and the engine.
 - **No resident ledger (INV-10).** The engine holds no ledger between requests; today it has no ledger operations
-  at all. The overlay load and the heavy-load semaphore arrive with their slices (WS-WRITE, BL-0003).
+  at all. The overlay load arrives with its slice (WS-WRITE, BL-0003); the main sidecar's engine job queue runs one
+  job at a time (ADR-0064, BL-0109).
 - `--test-ops` adds ops for the process tests (`test.stall`, `test.noise`, `test.fail`, `test.read_stdin`). They
   are not part of the protocol schema and the main sidecar never passes the flag outside tests.
 """

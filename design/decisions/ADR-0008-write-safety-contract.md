@@ -2,7 +2,7 @@
 
 This record defines the contract that every ledger write must pass before any byte reaches disk.
 
-- **Status:** Accepted. Amended by ADR-0064 (2026-10-27): a refusal caused by another program's change says so and does not enter `RECOVERING`; an R4 that fails to run three times can be acknowledged by the user.
+- **Status:** Accepted. Amended by ADR-0064 (2026-10-27): a refusal caused by another program's change says so and does not enter `RECOVERING`; an R4 that fails to run three times can be acknowledged by the user. Amended on 2026-10-27 (S0047): the bounded parse cache is built only if the measured save misses the 5 s target.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** write path, data safety
@@ -51,10 +51,16 @@ Owner: "I accept your recommendations for 24, 25 and 26. We can skip Q27" (owner
 ## Amendment (2026-10-27): refusals caused by another program, and an R4 that cannot run (ADR-0064)
 
 Owner, on the second golden review of the engine-scheduler spec (review 6): "I agree with the four simpler policies and two decisions that you proposed." (2026-10-27, in session, relayed by the orchestrator). Decisions D1 and D2 of that proposal:
-- **D1, superseded:** "A refusal says 'Your ledger is unchanged' only when the disk equals the pre-image; otherwise the workspace enters `RECOVERING`." **Instead:** "Your ledger is unchanged" is still said only after the targets were hashed again and equal the pre-image. A refusal because another program changed a file says so ("Your ledger changed after this preview, so Finzytrack did not save your change.") and offers **Review**; reads keep working and the workspace does not enter `RECOVERING`. Only an unfinished save of Finzytrack's own (its journal still open after a failed rollback or an engine death) pauses writes, with **Reopen**, which recovers it (ADR-0012 amendment of 2026-10-27; `design/specs/engine-scheduler.md` §6.4, §6.6, §11).
+- **D1, superseded:** "A refusal says 'Your ledger is unchanged' only when the disk equals the pre-image; otherwise the workspace enters `RECOVERING`." **Instead:** "Your ledger is unchanged" is still said only after the targets were hashed again and equal the pre-image. A refusal because another program changed a file says so ("Your ledger changed after this preview, so Finzytrack did not save your change.") and offers **Review**; reads keep working and the workspace does not enter `RECOVERING`. Only an unfinished save of Finzytrack's own (its journal still open after a failed rollback or an engine death) pauses writes, with **Reopen**, which recovers it (ADR-0012 amendment of 2026-10-27; `design/specs/engine-jobs.md` §6.4, §6.6, §11).
 - **D2, added to the 2026-10-25 amendment's R4 rule:** when the same re-check has failed to run three times (its engine crashed or could not start; a count, not a time; a user's Cancel does not count), it counts as "could not check": the user is shown the backup and offered **Resume saving** with a confirmation, as for a mismatch. The gate is lifted only by that explicit action; nothing lifts it by itself (spec §6.7).
 - **Unchanged:** every step of the contract, fail-closed (INV-22), and "no write ever lands on an unverified state" except by the user's explicit Resume saving after a failed or impossible check.
 
 ## References
 
 review:D1 §3, §12.1, §12.2, §12.9, §12.10; review:10 I2, I3, I9, I10, I11; ADR-0009, ADR-0010, ADR-0011, ADR-0012, ADR-0013; INV-01, INV-22; CAP-DATA-WRITE-GATE.
+
+## Amendment (2026-10-27): the parse cache only if the measured save needs it (S0047)
+
+Owner: "Yes, I agree with both" (2026-10-27, in session; the second of the two was this item, after the convergence audit's C27 found the roadmap saying "built and measured in M1b" while ADR-0064 called it a later performance project).
+- **Superseded in the 2026-10-25 amendment:** "a bounded cache of the parsed edited file is built in M1b and measured". **Instead:** the save at 54k entries is measured first, in M1b, on the real write path (BL-0112, with BL-0082's S4 harness; R4 after the reply and the garbage collector paused, as that amendment says). A bounded cache of the edited file's parse is built only if that measurement misses the 5 s target. If it is built, it lives on disk in a safe format of our own (never Beancount's pickle cache, which stays off, L1-09), is bounded like every cache (INV-10), and survives the fresh engine each job gets (ADR-0064 decision 5), since an engine keeps nothing between jobs. Only if the save still misses 5 s with it does the owner revisit the number for that case.
+- **Unchanged:** the 5 s and 1 s targets, the R4 order, and every step of the contract.

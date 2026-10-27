@@ -92,8 +92,8 @@ export interface components {
             /** Workspace Id */
             workspace_id: string | null;
         };
-        /** @enum {string} */
-        NotReadyPhase: "WARMING" | "RECOVERING";
+        /** @constant */
+        NotReadyPhase: "WARMING";
         /** RouteNotFoundError */
         RouteNotFoundError: {
             /**

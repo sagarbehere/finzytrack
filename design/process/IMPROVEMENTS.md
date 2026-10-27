@@ -389,3 +389,32 @@ Format:
 - Observed effect: pending.
 - Status: kept (tightening, owner-approved).
 - Owner approval: "Yes, add it so that model building and checking happens alongside the English spec" (2026-10-27, in session).
+
+## IMP-0040: INV-11 names only the engine job queue and the AI chat store; the state registry refuses a process-wide entry (2026-10-27)
+- Trigger: the convergence audit of 2026-10-27 (C1, C21): INV-11's rule still said "limiters, the job queue and the AI chat store hang off `UserContainer`", and the registry check still allowed one process-wide entry for the heavy-load semaphore, both retired by ADR-0064.
+- What changed: invariant and test. `design/INVARIANTS.md` INV-11: "Services hang off `UserContainer` or `WorkspaceContainer`; the engine job queue and the AI chat store hang off `UserContainer`."; its "Enforced by" says the registry holds container-owned parts only. `backend/tests/architecture/test_globals.py`: a `process` entry is refused, and naming a module-level name in an entry no longer makes it allowed state (two new must-not-pass tests); `backend/src/app/platform/state_registry.py`: `Owner` has no `process`. ADR-0041 amendment.
+- PROCESS.md section: none (INVARIANTS.md; ADR-0041, ADR-0064).
+- Why: the rule and its check should not describe, or leave room for, the process-wide state the converged design removed.
+- Expected effect: a future slice cannot add process-wide state by registering it.
+- Observed effect: pending.
+- Status: kept (invariant reworded and its check tightened, owner-approved).
+- Owner approval: "Yes, I agree with both" (2026-10-27, in session; the first of the two was this INV-11 rewording; S0047).
+
+## IMP-0041: the retired-terms check (2026-10-27)
+- Trigger: the convergence audit of 2026-10-27 had 31 findings (C1-C30) where current-state documents still described abandoned designs (ARCHITECTURE.md §0); the roadmap's M1a step 2 asked for a check after the fixes.
+- What changed: gate. `scripts/check_retired_terms.py` refuses the abandoned designs' terms (and the spec's old name, `engine-scheduler.md`) in ARCHITECTURE.md, INVARIANTS.md, ENGINEERING.md, glossary.md, `design/specs/**/*.md`, the capability rows that are not cut and the backlog's live rows and prose, with the audit's exceptions and a per-line allowlist that must name a reason and goes stale when its line changes. Meta-tests in `scripts/tests/test_check_retired_terms.py`, one must-not-pass test per rule; the check runs over the real repository inside the meta-tests, so at every push and every Stop (no hook file changed). A second list (`AFTER_ENGINE_JOBS`) waits for the engine-jobs slice (BL-0109).
+- PROCESS.md section: §6 (the pre-push row).
+- Why: the old designs came back in three rounds of edits before the audit; a word list catches the copy-paste case cheaply, while meaning (for example whether a workspace can be `RECOVERING`) stays with the verifier.
+- Expected effect: no retired term reaches a current-state document again; false positives are handled by the allowlist with a reason, and counted at the next reflection.
+- Observed effect: pending.
+- Status: kept (tightening, agent-approved; S0047).
+
+## IMP-0042: a model's long runs come only after an independent review of the model (2026-10-27)
+- Trigger: owner request. The engine-jobs TLA+ model (84c8b8c9) ran for hours on the owner's machine before anyone had checked that it matched the spec. The owner asked: "Wouldn't it have been better to first write the model, have it reviewed independently against the spec, and THEN run the model?" (2026-10-27, in session).
+- What changed: PROCESS.md §3 "Golden specs", the model paragraph: the order is the small tier, then an independent review of the model against the spec (fidelity both ways, vacuity, the findings), then the owner's long runs. ARCHITECTURE.md §8.3 and EP-19 say the same; BL-0110 tracks it for the engine-jobs model.
+- PROCESS.md section: §3.
+- Why: a long run of a model that does not say what the spec says, or whose properties are vacuous, costs hours and proves nothing; the review is minutes of reading.
+- Expected effect: no long run on an unreviewed model; the review's findings reach the spec before the hours are spent.
+- Observed effect: pending.
+- Status: kept (tightening, agent-approved; S0047).
+
