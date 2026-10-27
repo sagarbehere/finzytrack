@@ -23,6 +23,18 @@ This file is the target system picture of the v0.4.0 rebuild: components, packag
 - v0.2.2 table and function names keep working through 0.4.x (ADR-0048);
 - Finzytrack AI mode deferred; bring-your-own providers and local models stay (ADR-0034, ADR-0043).
 
+## 0. The converged design (2026-10-27)
+
+Between 2026-10-26 and 2026-10-27 the design grew (parallel engines, Share workspaces, shared files between workspaces) and was then simplified by the owner. This section states where it converged. Anything in `design/` that contradicts it is stale, unless it is history (journals, the "rejected alternatives" of an ADR).
+
+- **One running Finzytrack at a time** (ADR-0062): a single v0.4 instance per app root; no ledger shared with a running legacy app; legacy ledgers come in by Copy; a held legacy lock is only detected and refuses. Owner: "no two instances of Finzytrack should be running at the same time; if the user does that, it's on them."
+- **One open workspace at a time** (ADR-0063 decision 1, INV-28, INV-31): opening another is a switch that assesses the target, then quiesces and closes the current one; a request for a workspace that is not open is refused (`WORKSPACE_NOT_OPEN`). Owner: "Finzytrack is just about one instance, working with one workspace at a time."
+- **Every unfinished save is recovered before any workspace opens** (ADR-0063 decision 2, INV-32): journals name files by canonical path; a journal that cannot be recovered blocks only the workspaces that use its files, with "Keep the files as they are now" as the way out. Two workspaces sharing a file is not supported, and harmless. Owner: "Yes, write both into the hand-off and give me the prompt" (the recovery rule replacing the territory rule).
+- **One engine doing one job at a time** (ADR-0064, `design/specs/engine-scheduler.md`): a FIFO queue in the sidecar where a job the user waits for goes ahead of background work; Cancel ends that job's engine and is not a crash; a crash is noticed by the process exiting, with S0040's bounded restart; no automatic killing of slow jobs ("Still working…" with Cancel); one load at a time bounds memory. Owner: "we go back to one engine doing one job at a time and massively simplify everything."
+- **"Saved" after commit and read-back; the re-check (R4) runs right after and gates only the next save**, in every mode, never switched off (ADR-0008 amendment, ADR-0010 amendment, ADR-0064).
+
+**Abandoned, so stale wherever it is stated as current:** Share workspaces and the legacy-lock waits; an engine pool, slots, admission, lanes, memory-pressure levels, Run anyway, learned "usual" values, automatic runaway or stall stops; the heavy-load semaphore and the per-workspace write limiter; territories, `LEDGER_SHARED`, `LEDGER_OUTSIDE_FOLDER`, `FOLDER_IN_OTHER_WORKSPACE`, the cross-workspace journal index and recovery of another workspace's journal from an open one; several open workspaces, several native windows, a warm idle container.
+
 ---
 
 ## 1. The system in one picture
