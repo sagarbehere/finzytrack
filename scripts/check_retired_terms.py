@@ -100,11 +100,11 @@ ACTIVE: tuple[Term, ...] = (
     Term("kept warm", r"\bkept warm\b"),
     code("WRITE_IN_PROGRESS"),
     Term("phase C", r"\bphase C\b", case=True),
-    # The spec "Engine jobs and saves" was the engine-scheduler spec until S0047 (owner: "Yes", 2026-10-27). The
-    # model's folder `formal/tla/engine-scheduler/` keeps its name until its review ends (BL-0111), and the spec's
-    # own component, "the scheduler thread", is not retired.
+    # The spec "Engine jobs and saves" was the engine-scheduler spec until S0047 (owner: "Yes", 2026-10-27), and the
+    # model's folder followed it to `formal/tla/engine-jobs/` (BL-0111), so the old folder name is retired too; the
+    # spec's own component, "the scheduler thread", is not retired.
     Term("engine-scheduler.md", r"\bengine-scheduler\.md\b"),
-    Term("engine scheduler", r"(?<![/\w-])engine[- ]scheduler(?![/\w-])(?!\.md)"),
+    Term("engine scheduler", r"(?<![\w-])engine[- ]scheduler(?![\w-])(?!\.md)"),
     Term("scheduler spec or slice", r"\bscheduler(?:'s)?\s+(?:spec|slice|design)\b"),
 )
 

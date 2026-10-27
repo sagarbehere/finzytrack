@@ -639,7 +639,7 @@ Model-based coverage is a T1 gate: for each FE machine, the generated paths must
 |---|---|---|
 | D1 corpus + Hypothesis property tests (review:D1 §6) | apply/inverse, contract steps 2 and 6 per edit | T1 (small), T2 (full) |
 | **Hypothesis `RuleBasedStateMachine`** (`backend/tests/models/test_write_core_model.py`) | the write core against a reference model under edits, external edits, crashes and restarts | T1 (bounded examples), T2 (long runs) |
-| **TLA+ model** (`formal/tla/engine-scheduler/`, §8.3) | the engine-jobs design (queue, Cancel, saves, rollback, recovery, switch, boot, quit and update) under all interleavings, crashes and power loss | small tier: agents and T1; medium and large tiers: the owner, with `run_all.sh` |
+| **TLA+ model** (`formal/tla/engine-jobs/`, §8.3) | the engine-jobs design (queue, Cancel, saves, rollback, recovery, switch, boot, quit and update) under all interleavings, crashes and power loss | small tier: agents and T1; medium and large tiers: the owner, with `run_all.sh` |
 | Statechart tables / XState models (§7) | lifecycle and workflow correctness | T1 |
 
 ### 8.2 The Hypothesis stateful model
@@ -656,11 +656,11 @@ Model-based coverage is a T1 gate: for each FE machine, the generated paths must
   - a refused write leaves the disk byte-identical;
   - backups exist for every replaced file.
 
-### 8.3 The TLA+ model (`formal/tla/engine-scheduler/`)
+### 8.3 The TLA+ model (`formal/tla/engine-jobs/`)
 
-One model checks the engine-jobs design: `formal/tla/engine-scheduler/EngineScheduler.tla`, built from `design/specs/engine-jobs.md` §13 (draft 5), with `MAPPING.md` (spec section or property ↔ model action or invariant, both ways) and at least one seeded mutant per property (PROCESS.md §3 "Golden specs"). §13 lists its world, actors and properties; they are not repeated here. Besides the queue, Cancel, the switch, boot, quit and update, it holds the whole write protocol: backups, the write-intent journal, the swap and exclusive create, read-back, rollback and recovery, under engine and app crashes, power loss, an outside editor writing at any moment and an orphaned engine holding its locks.
+One model checks the engine-jobs design: `formal/tla/engine-jobs/EngineJobs.tla`, built from `design/specs/engine-jobs.md` §13 (draft 5 with the model's findings and model review 1, 1cf1fb4c), with `MAPPING.md` (spec section or property ↔ model action or invariant, both ways) and at least one seeded mutant per property (PROCESS.md §3 "Golden specs"). §13 lists its world, actors and properties; they are not repeated here. Besides the queue, Cancel, the switch, boot, quit and update, it holds the whole write protocol: backups, the write-intent journal, the swap and exclusive create, read-back, rollback and recovery, under engine and app crashes, power loss, an outside editor writing at any moment and an orphaned engine holding its locks.
 
-- **Who runs what.** `run_all.sh --tier S` (the small configurations and every mutant, minutes) is what an agent or the manual T1 run may run. The medium and large tiers run on the owner's machine only, as a plain script outside any agent session (`HOW_TO_RUN.md`), and only after an independent review of the model against the spec (PROCESS.md §3). `scripts/tests/test_tla_engine_scheduler.py` keeps the model's names in step with §13 at every push.
+- **Who runs what.** `run_all.sh --tier S` (the small configurations and every mutant, minutes) is what an agent or the manual T1 run may run. The medium and large tiers run on the owner's machine only, as a plain script outside any agent session (`HOW_TO_RUN.md`), and only after an independent review of the model against the spec (PROCESS.md §3). `scripts/tests/test_tla_engine_jobs.py` keeps the model's names in step with §13 at every push.
 - **It replaces the planned `formal/tla/WriteProtocol.tla`** (S0047; never built). That plan modelled writers queued per ledger root with lock time limits, `RECOVERING` on the next open and a legacy app v0.4 waited for; the converged design has none of these (one engine job at a time, ADR-0064; no engine job has a time limit; every unfinished save recovered before any workspace opens, ADR-0063; a held legacy lock only refuses, ADR-0062). Everything else it planned is in §13's model, except the mirror's generation publish (pointer swap, reader pinning, GC, the stale-WAL rule), which the Hypothesis model (§8.2) and the mirror slice's tests check; whether the model needs it too is BL-0110's question.
 - **Code mapping.** Each engine and app action of the model names the code function that carries it out, which carries a no-op `@tla_action("…")` marker; a test parses the model's `Next` relation and the markers and fails on an action with no function or a marker that names no action (with the engine-jobs slice, BL-0109). User, OS and outside-editor actions have no code function.
 - **Not modelled** (§13): Beancount semantics (the corpus and the Hypothesis model), digests beyond equal or not, and OS rename atomicity beyond the stated swap and exclusive-create primitives.
@@ -912,9 +912,9 @@ The versions below are the newest stable releases published on or before **2026-
     package_app.py  smoke_packaged.py           the packaged build for this platform and its smoke check (S0012)
   formal/
     tla/        tools.lock  fetch_tools.sh (the pinned jar into tools/, not committed)
-                engine-scheduler/: the model of design/specs/engine-jobs.md §13 (EngineScheduler.tla,
+                engine-jobs/: the model of design/specs/engine-jobs.md §13 (EngineJobs.tla,
                 MAPPING.md both ways, gen_cfgs.py → cfg/ + configs.txt, run_all.sh, HOW_TO_RUN.md);
-                scripts/tests/test_tla_engine_scheduler.py keeps its names in step with the spec
+                scripts/tests/test_tla_engine_jobs.py keeps its names in step with the spec
   corpora/                                      shared repo assets: nasty ledgers, XSS/SQL/path attack-input corpora,
                                                 anonymized exports (owner-reviewed, privacy gate), old-workspace fixtures,
                                                 vectors/ (the Beancount domain vectors, S0024)

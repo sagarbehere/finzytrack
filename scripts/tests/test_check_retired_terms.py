@@ -72,7 +72,7 @@ TRAP_LINES = [
     "The workspace enters `RECOVERING`; recovery runs first.",
     "The phase change is shown; phase c of the plan.",
     "The scheduler thread runs the pure tables; the scheduler starts the oldest job.",
-    "The model `formal/tla/engine-scheduler/` and `scripts/tests/test_tla_engine_scheduler.py`; EngineScheduler.tla.",
+    "The model `formal/tla/engine-jobs/` and `scripts/tests/test_tla_engine_jobs.py`; EngineJobs.tla.",
     "A rate limiter on the price source.",
     "Engine-jobs spec §6; the engine-jobs slice.",
 ]
