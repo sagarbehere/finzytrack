@@ -931,6 +931,10 @@ The versions below are the newest stable releases published on or before **2026-
     package_app.py  smoke_packaged.py           the packaged build for this platform and its smoke check (S0012)
   formal/
     tla/        WriteProtocol.tla  WriteProtocol.cfg  WriteProtocol_small.cfg  MAPPING.md (generated)  tools.lock
+                fetch_tools.sh (the pinned jar into tools/, not committed)
+                engine-scheduler/: the model of design/specs/engine-scheduler.md §13 (EngineScheduler.tla,
+                MAPPING.md both ways, gen_cfgs.py → cfg/ + configs.txt, run_all.sh, HOW_TO_RUN.md);
+                scripts/tests/test_tla_engine_scheduler.py keeps its names in step with the spec
   corpora/                                      shared repo assets: nasty ledgers, XSS/SQL/path attack-input corpora,
                                                 anonymized exports (owner-reviewed, privacy gate), old-workspace fixtures,
                                                 vectors/ (the Beancount domain vectors, S0024)

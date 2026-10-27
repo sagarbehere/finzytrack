@@ -1,0 +1,6 @@
+# formal/tla/tools.lock: the pinned TLA+ toolchain (ADR-0050 item 13; ARCHITECTURE §8.3).
+# fetch_tools.sh downloads the jar into tools/ (not committed) and refuses any other bytes.
+# Runtime: Java 21 (Temurin). TLC reports itself as "TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)".
+# name          version  sha256
+tla2tools.jar   1.7.4    936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+# source: https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar

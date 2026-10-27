@@ -70,3 +70,7 @@ logs/
 # --- Claude Code: agents, skills, hooks and settings.json are tracked; personal state is not ---
 .claude/settings.local.json
 .claude/worktrees/
+
+# --- TLA+ (formal/tla): the pinned jar is fetched by fetch_tools.sh; run results stay local ---
+formal/tla/tools/
+formal/tla/*/results/
