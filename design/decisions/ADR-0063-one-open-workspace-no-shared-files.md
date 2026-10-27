@@ -2,7 +2,7 @@
 
 This record decides that a Finzytrack instance works with one open workspace at a time, that opening another one is a switch, and that every interrupted save in the app is recovered before any workspace opens.
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended by ADR-0064 (2026-10-27): ADR-0011's per-workspace write limiter, listed as unchanged below, is retired.
 - **Date:** 2026-10-27
 - **Deciders:** owner: "1. Yes to forbidding two workspaces sharing a file. If it'll help we can simplify further: No sharing anywhere, no multiple instances of Finzytrack anywhere. Period. Finzytrack is just about one instance, working with one workspace at a time. Switching between workspaces should work well, without issues. The switch should do whatever book-keeping that is needed. Fine to tell the user something like, "Just a moment.. switching workspaces." or similar, if the switch takes time." (2026-10-27, in session, after the fourth review of the engine-scheduler design). The owner confirmed three agent decisions: "I agree with the territory rule and am confirming the three decisions the agent wrote in ADR-0063." (2026-10-27, in session, relayed by the orchestrator). The three are: sharing a workspace between users in hosted mode is excluded (decision 3); no idle container is kept warm (decision 1); the overlap check works from the registry alone, without opening other workspaces. That third one is now moot, since decision 2 no longer checks overlap at all. Decision 2, the recovery rule, replaced the territory rule after the S0045 verifier's round 2: the orchestrator proposed it and the owner answered "Yes, write both into the hand-off and give me the prompt" (2026-10-27, in session, relayed by the orchestrator). Its way out after round 3: "Yes, I agree with the keep the files as they are now way out." (same day, relayed). What this ADR adds beyond those words is marked "(agent)".
 - **Area:** workspaces, API, lifecycle, data safety, hosting
@@ -112,3 +112,8 @@ Two attempts to prevent sharing failed review. A file-by-file check missed files
 ## References
 
 Review 4 of the engine-scheduler design (owner's private archive, `m1a/scheduler-design/review-4/REPORT.md`: H1, H2, H4, H5, L1, L2); the S0045 verifier reports (`m1a/s0045-verifier/`, `m1a/s0045-verifier-r2/`); `design/specs/engine-scheduler.md` draft 3 §4.8, §4.9, §5.2, §5.7, §11, §15; review:23 §3; review:10 I6; ADR-0008, ADR-0011, ADR-0012, ADR-0013, ADR-0015, ADR-0017, ADR-0018, ADR-0019, ADR-0021, ADR-0041, ADR-0062; INV-03, INV-11, INV-22, INV-25, INV-27, INV-28, INV-29, INV-30, INV-31, INV-32; CAP-WS-SWITCH, CAP-WS-MULTIWINDOW, CAP-WS-RECOVER-FIRST, CAP-WS-COPY-ITEM, CAP-WS-LIBRARY, CAP-HOSTED-WORKSPACES; BL-0101, BL-0102, BL-0103, BL-0104; inbox `design/inbox/answered/20261027-inv-32-recovery-rule.md`; journal `design/journal/S0045-one-workspace-at-a-time.md`.
+
+## Amendment (2026-10-27): the per-workspace write limiter is retired (ADR-0064)
+
+Owner, approving the first golden review's recommendations for the engine-scheduler spec: "I agree with all the recommendations. Proceed on that basis." (2026-10-27, in session, relayed by the orchestrator).
+- **Superseded on the Unchanged line:** "ADR-0011's per-workspace write limiter". One engine runs one job at a time (ADR-0064), so the limiter has nothing left to serialize; tool-state files keep their own per-file lock. The rest of the line, and of this record, is unchanged.

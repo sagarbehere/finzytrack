@@ -2,7 +2,7 @@
 
 This record decides how the contract runs a full official load of text that is not yet on disk.
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended by ADR-0064 (2026-10-27): guardrail 3's re-check runs after "saved" in every mode and is never switched off; the load rule's "heavy-load semaphore" becomes one engine job at a time.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** write path, ledger
@@ -39,3 +39,10 @@ Contract step 3 (ADR-0008) needs Beancount's full load on the candidate texts be
 ## References
 
 review:D1 §9, §12.3; review:18 §2 inv. 4, M-1, L11-02, L11-06; review:25 §2.4 item 4; ADR-0004, ADR-0008, ADR-0040, ADR-0041; INV-01, INV-02, INV-03.
+
+## Amendment (2026-10-27): the runtime re-check in every mode (ADR-0064)
+
+Owner, approving the first golden review's recommendations for the engine-scheduler spec: "I agree with all the recommendations. Proceed on that basis." (2026-10-27, in session, relayed by the orchestrator). The recommendation: the R4 re-check always runs after "saved" and gates only the next save, in every mode, and is never switched off (safety outranks speed; hosted mode is not built).
+- **Superseded in guardrail 3:** "in the background; synchronously during rollout and dogfooding; off in hosted mode". **Instead:** after each committed write, the real `load_file` (through the `LoadPolicy`) is compared with the adopted result right after the save reports "saved", in every mode; the next save to that workspace waits for it (ADR-0008 amendment); a mismatch pauses saving, adopts the `load_file` result and shows the backup (`design/specs/engine-scheduler.md` §6.7). It is never switched off. If hosting is ever planned, its cost is decided then, by a new ADR.
+- **Also (ADR-0064 decision 1):** the load rule's "both under the heavy-load semaphore" becomes "both inside engine jobs, which run one at a time".
+- **Unchanged:** the overlay load, the `LoadPolicy`, guardrails 1, 2 and 4, and the mismatch handling.
