@@ -20,3 +20,6 @@ Today only `/health` is served (it says the version), so nothing is at risk yet.
 Option 1, built with the shell token in M2 before the first data route lands, recorded as an amendment to ADR-0040. It closes both attacks for every route at once and uses the token the design already has. The `Host` check costs nothing and also protects the browser build.
 
 ## Answer (owner, verbatim, with date)
+Owner, 2026-10-28, in session: "For the model, let's go with B. For the security question, option 1." (the model part answers another question).
+
+To apply (BL-0115, M2, before the first route that serves ledger or app data): option 1, every API request carries the shell token and the server refuses a `Host` other than `127.0.0.1:<port>` or `localhost:<port>`, recorded as an amendment to ADR-0040.
