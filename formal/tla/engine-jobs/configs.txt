@@ -6,6 +6,7 @@ S_save_quit                          PASS                                       
 S_save_quit_power                    PASS                                                 S base   check
 S_cancel_commit                      PASS                                                 S base   check
 S_r4_outcomes                        PASS                                                 S base   check
+S_r4_ends                            PASS                                                 S base   check
 S_r4_attempts                        PASS                                                 S base   check
 S_r4_build                           PASS                                                 S base   check
 S_forget                             PASS                                                 S base   check
@@ -117,3 +118,12 @@ MUT_rc_unsynced                      VIOLATE:OutcomeTruthful                    
 MUT_switch_job_not_cancelable        VIOLATE:EveryWaitHasAnExit                           S mutant check
 MUT_quit_anyway_only_while_quitting  VIOLATE:EveryWaitHasAnExit                           S mutant check
 MUT_finishing_confirmed_only         VIOLATE:EveryQuitEndsOrOffersQuitAnyway              S mutant check
+MUT_rv_boot_skips_recovery           VIOLATE:EveryJournalRecoveredOrBlocking              S mutant check
+MUT_rv_retry_skips_recovery          VIOLATE:EveryJournalRecoveredOrBlocking              S mutant check
+MUT_rv_r4_crash_nosync               VIOLATE:R4GateLiftedOnlyByUser                       S mutant check
+MUT_r4_cancel_nosync                 VIOLATE:R4GateLiftedOnlyByUser                       S mutant check
+MUT_create_crash_msg_from_memory     VIOLATE:OutcomeTruthful                              S mutant check
+MUT_rv_quiesce_ends_confirmed        VIOLATE:CancelReachIsTheOneRule                      S mutant check
+MUT_rv_cancel_keeps_stage            VIOLATE:OpeningHasItsJob                             S mutant check
+MUT_rv_create_no_sync                VIOLATE:NoManifestOverIncompleteFolder               S mutant check
+MUT_notes_only_at_boot               VIOLATE:NotesAnsweredByRecovery                      S mutant check

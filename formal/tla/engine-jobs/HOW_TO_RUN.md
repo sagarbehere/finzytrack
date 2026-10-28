@@ -1,6 +1,6 @@
 # How to run the engine-jobs model checks
 
-The TLA+ model of `design/specs/engine-jobs.md` §13 (at 31afbd82). It runs as a plain shell script with Java;
+The TLA+ model of `design/specs/engine-jobs.md` §13 (at c87ce786). It runs as a plain shell script with Java;
 no AI is involved. MAPPING.md says what the model checks and how it maps to the spec.
 
 ## Before the first run
@@ -38,7 +38,8 @@ Options: `--workers N` (TLC worker threads; default all cores), `--heap 12g` (de
 - One log per configuration: `results/<name>.log`. After every configuration it rewrites `results/SUMMARY.md`:
   result, expected result, distinct states, depth, wall time and distinct states per second, the total per
   tier, and **ALL AS EXPECTED** or **SURPRISES**. A log of an older model, `.cfg`, tool or simulation size
-  shows as `stale` and does not count: run it again.
+  shows as `stale` and does not count: run it again. A log whose verdict is `ERROR` or `INCOMPLETE` is
+  run again on resume.
 - TLC runs under `nice -n 10`, so the Mac stays usable.
 - **Ctrl-C** stops the running TLC, deletes its temporary state folder (`results/states/`), records the stopped
   run as `INCOMPLETE` with the states it reached, and writes the summary. Run the same command again to resume:
@@ -60,16 +61,16 @@ Options: `--workers N` (TLC worker threads; default all cores), `--heap 12g` (de
 ## How long it takes
 
 Measured on the owner's Mac (Apple M4 Pro, 14 cores, 48 GB) on 2026-10-28 with 14 TLC workers, on the
-model after fidelity review 2 (load from the runs themselves only). The agent ran the small tier in parts
-of at most 7 minutes (`--only` lists and `--kind mutant`).
+model after fidelity review 3 (load from the runs themselves only). The agent ran the small tier in parts
+of at most 9 minutes (`--only` lists and `--kind mutant`).
 
 | Tier | Configurations | Result | Size | Wall time |
 |---|---|---|---|---|
-| S | 29 safety worlds | all PASS | 2,548 to 7,982,845 distinct states (`S_fs_weak`) | 1 s to 172 s each (`S_r4_attempts`); 778 s together |
-| S | 4 liveness worlds (`LS_boot`, `LS_quit`, `LS_free`, `LS_free_cc`) | all PASS | up to 921,756 (`LS_boot`) | up to 218 s (`LS_boot`) |
-| S | `LS_jobs` | **not re-run by the agent** (one run takes longer than an agent tool call); the owner's `--tier S` run covers it | 1,723,585 on the previous model | 642 s on the previous model |
-| S | 74 mutants | each violates its property | | 249 s of checking, about 6.5 min with start-up (longest `MUT_cnc_auto_lift`, 93 s) |
-| S | all of the above but `LS_jobs` | **all as expected, 107 configurations** | | about 30 min together; with `LS_jobs` about 40 min |
+| S | 30 safety worlds | all PASS | 2,548 to 7,284,780 distinct states (`S_r4_attempts`) | 1 s to 91 s each (`S_switch`); 641 s together |
+| S | 4 liveness worlds (`LS_boot`, `LS_quit`, `LS_free`, `LS_free_cc`) | all PASS | up to 865,284 (`LS_boot`) | up to 211 s (`LS_boot`) |
+| S | `LS_jobs` | **not re-run by the agent** (one run takes longer than an agent tool call); the owner's `--tier S` run covers it | 1,723,585 on an earlier model | 642 s on an earlier model |
+| S | 83 mutants (the reviewers' own among them, MAPPING.md §6) | each violates its property | | 239 s of checking, about 8.5 min with start-up (longest `MUT_cnc_auto_lift`, 68 s) |
+| S | all of the above but `LS_jobs` | **all as expected, 117 configurations** | | about 30 min together; with `LS_jobs` about 40 min |
 | M | `LM_free`, `M_recover_temps`, `M_r4_switch` | not run on this model | | `LM_free`: 219 s on an earlier model; others below |
 | L | `L_save_all`, `L_r4_switch`, `L_session`, `L_recover_all`, `L_save_deep` | not run on this model | | estimate below |
 | L | `L_world` (bounded simulation) | not run on this model | default 200,000 traces of ≤ 200 steps (about 11.5 million states) | estimate below |

@@ -1,8 +1,8 @@
 ------------------------------ MODULE EngineJobs ------------------------------
 (***************************************************************************)
 (* TLA+ model of design/specs/engine-jobs.md (draft 5 with the model      *)
-(* findings F1-F4, O1, N1-N3 and fidelity reviews 1-2 folded in,         *)
-(* 31afbd82),                                                              *)
+(* findings F1-F4, O1, N1-N3 and fidelity reviews 1-3 folded in,         *)
+(* c87ce786),                                                              *)
 (* built only from that spec's §13 obligations and the sections it cites. *)
 (* MAPPING.md maps every spec rule and property to this file, both ways,  *)
 (* and lists what is abstracted away.                                      *)
@@ -40,7 +40,7 @@ CONSTANTS
     R4Outs,         \* subset of {"pass","nondet","differ"}: what a fresh load may give
     StopBound,      \* S0040: stops in the window that make the engine Unavailable (3)
     MaxSaves, MaxBg, MaxReads, MaxRebuild, MaxEdits, MaxCrash, MaxAppCrash,
-    MaxPower, MaxStarts, MaxSwitch, MaxHang, MaxStuck, StuckSigOnly, MaxOrphan,
+    MaxPower, MaxStarts, MaxSwitch, MaxHang, MaxStuck, MaxOrphan,
     MaxUnreach, MaxLink, MaxForget, MaxIO, MaxClose, MaxUpdate,
     MaxExpire, MaxDrop, MaxResume,
     DoCopy,         \* TRUE: the user may copy W2 (app-scoped)
@@ -91,7 +91,7 @@ NoJ == [st |-> "none", pl |-> {"none"}, lin |-> 0, key |-> 0, files |-> {},
         pre |-> ZeroFP, post |-> ZeroFP, pfp |-> ZeroFP, why |-> "", old |-> FALSE,
         build |-> 0, sb |-> FALSE, cnc |-> FALSE, att |-> 0]
 BootSt(j) == IF j = "b3" /\ BootTorn THEN "topen" ELSE "open"
-BootJRec(j) == [NoJ EXCEPT !.st = BootSt(j), !.pl = {BootSt(j)},
+BootJRec(j) == [NoJ EXCEPT !.st = BootSt(j), !.pl = {BootSt(j)}, !.old = TRUE,
                   !.lin = IF j = "b2" THEN 2 ELSE 3, !.key = IF j = "b2" THEN 2 ELSE 3,
                   !.files = JFiles(j),
                   !.pre = [f \in Files |-> IF f \in JFiles(j) THEN V0 ELSE 0],
@@ -161,10 +161,12 @@ Init ==
     /\ tgt = [ex |-> CreateTarget \in {"empty","nonempty"},
               c  |-> [x \in Names |-> IF x = "x" /\ CreateTarget = "nonempty" THEN "frn" ELSE "no"],
               pl |-> [x \in Names |-> {IF x = "x" /\ CreateTarget = "nonempty" THEN "frn" ELSE "no"}]]
-    /\ ses = [app |-> "boot", stage |-> "recover", opened |-> {}, from |-> 0,
+    \* seeded bug rv_boot_skips_recovery (review 3): the boot opens without recover_all
+    /\ ses = [app |-> "boot", stage |-> IF MUTANT = "rv_boot_skips_recovery" THEN "assess" ELSE "recover",
+              opened |-> {}, from |-> 0,
               target |-> BootTarget, screen |-> "none", sctx |-> "none", endedBy |-> "none",
               stops |-> 0, advice |-> "none", locks |-> {}, mem |-> {}]
-    /\ q = <<RecJob(1)>>
+    /\ q = IF MUTANT = "rv_boot_skips_recovery" THEN <<>> ELSE <<RecJob(1)>>
     /\ runs = {}
     /\ ctl = NoCtl
     /\ eng = NoEng
@@ -266,6 +268,10 @@ QueueR4(w) == IF NeedR4(w) THEN q \o <<NewR4(w)>> ELSE q
 CanAct == UserBudget = 0 \/ n.ua < UserBudget
 Spent == IF UserBudget = 0 THEN n ELSE [n EXCEPT !.ua = @ + 1]
 NoteAfterKeep(J) == {nt \in pst.notes : ~(nt.k = "save" /\ nt.s \in J)}
+\* INV-32 (fidelity review 3, H1): when a boot or a switch's recovery begins, every journal on disk is
+\* "from before this start or switch" (`old`): EveryJournalRecoveredOrBlocking and
+\* NoOpenOverUnresolvedJournal then see journals that no recover-all has listed
+MarkOld == [j \in JIds |-> IF jr[j].st \in OpenSt THEN [jr[j] EXCEPT !.old = TRUE] ELSE jr[j]]
 
 \* the switch's or the boot's failed screen (§9.1 step 6, §9.2)
 OpenFailSes == IF ses.app = "boot"
@@ -297,6 +303,11 @@ CrStopGh(cause) ==
                                ELSE "check_first"]
   ELSE UNCHANGED gh
 
+\* §6.5 (fidelity review 3, M1): an R4 step ended by a Cancel or the quiesce after its record's rename and
+\* before that rename's sync: the sidecar syncs the journal directory before it acts on anything (I16)
+SyncR4End == IF Busy /\ ctl.pc = "r4_sync" /\ ctl.r4j # "none" /\ MUTANT # "r4_cancel_nosync"
+             THEN [jr EXCEPT ![ctl.r4j].pl = {jr[ctl.r4j].st}] ELSE jr
+
 \* The outcome of a running job that our end (Cancel, quiesce, close of its tab) ended.
 \* Used by every path that signals the engine with reason `cancel` (§4, §9.1 step 2).
 CancelEffects(by) ==
@@ -317,7 +328,8 @@ CancelEffects(by) ==
             /\ CrStopGh("cancel")
             /\ UNCHANGED <<ses, pst, q, n>>
        [] OTHER -> UNCHANGED <<gh, ses, pst, q, n>>
-  /\ UNCHANGED <<fs, jr, tgt>>
+  /\ jr' = SyncR4End
+  /\ UNCHANGED <<fs, tgt>>
 
 \* recover_all has ended: every journal recovered or blocking. At boot the quit note is read.
 \* §9.3: each note (local/quit-notes/<job>.json) answered from the durable record or target
@@ -346,7 +358,9 @@ RecoverEndEffects(e, J) ==
   /\ jr' = SyncCL(J)
   /\ JobEnd(e)
   /\ ses' = [ses EXCEPT !.stage = "assess", !.locks = {}]
-  /\ IF ses.app = "boot"
+  \* §8.1 "Afterwards", §9.3 (c87ce786, L1): the quit notes are answered at the end of every recover-all
+  \* (seeded bug notes_only_at_boot: only at the boot's)
+  /\ IF ses.app = "boot" \/ MUTANT # "notes_only_at_boot"
      THEN /\ pst' = [pst EXCEPT !.notes = NoteNotes]
           /\ gh' = NoteGh
      ELSE UNCHANGED <<pst, gh>>
@@ -395,7 +409,8 @@ UserCancelQueued(i) ==
   /\ LET j  == q[i]
          q1 == RemoveAt(q, i)
          g1 == IF j.k = "save" THEN [gh EXCEPT !.told[j.s] = "notsaved", !.cxl[j.s] = TRUE] ELSE gh
-         s1 == IF j.own = "switch" THEN CancelledSes ELSE ses
+         \* (seeded bug rv_cancel_keeps_stage, review 3: the switch stays in its stage)
+         s1 == IF j.own = "switch" /\ MUTANT # "rv_cancel_keeps_stage" THEN CancelledSes ELSE ses
      IN
      IF Busy /\ Endable(Ended(RJ)) /\ RJ.k # "recover"
      THEN \* ends the running job: an R4 load, a background save before its commit point,
@@ -407,7 +422,8 @@ UserCancelQueued(i) ==
           \* M1: an open ended this way ends its switch or boot on the failed screen, as its own Cancel does
           /\ ses' = IF r.k = "open" /\ MUTANT # "cancel_open_keeps_opening" THEN OpenFailSes
                     ELSE [s1 EXCEPT !.advice = "none"]
-          /\ UNCHANGED <<fs, jr, pst, tgt, n>>
+          /\ jr' = SyncR4End
+          /\ UNCHANGED <<fs, pst, tgt, n>>
      ELSE
           /\ q' = q1 /\ gh' = g1
           /\ ses' = IF Busy /\ ~(RJ.k \in Reads \cup {"open","recover"} /\ RJ.req = "present")
@@ -466,23 +482,30 @@ UserCloseTab(id) ==
                 /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, ctl, eng, gh>>
 
 \* §9.1 step 2: the quiesce of the open workspace A (switch, Reopen, quit, update)
+\* kept: other workspaces' jobs, A's confirmed saves, and creates and copies (app-scoped and confirmed;
+\* §9.3 step 2, fidelity review 3 L9: also when no workspace is open)
 QuiesceKeep(A, j) == j.w # A \/ (j.k = "save" /\ j.conf /\ MUTANT # "switch_drops_confirmed_save")
+                     \/ j.k \in {"create","copy"}
 DroppedTold(A) ==
   LET D == {i \in 1..Len(q) : ~QuiesceKeep(A, q[i]) /\ q[i].k = "save" /\ q[i].conf}
   IN [gh EXCEPT !.told = [s \in SaveIds |->
                             IF \E i \in D : q[i].s = s THEN "notopen" ELSE gh.told[s]]]
+\* a read, an R4, or a background save before its commit point, also between two engines (L3);
+\* never a confirmed save (seeded bug rv_quiesce_ends_confirmed, review 3)
 QuiesceEndsRunning(A) ==
-  /\ Busy /\ RJ.w = A /\ eng.st = "busy"
-  /\ (RJ.k \in Reads \cup {"r4"} \/ (RJ.k = "save" /\ ~RJ.conf /\ ~ctl.past))
+  /\ Busy /\ RJ.w = A /\ (eng.st = "busy" \/ ctl.pc \in SpawnPcs)
+  /\ (RJ.k \in Reads \cup {"r4"}
+      \/ (RJ.k = "save" /\ (~RJ.conf \/ MUTANT = "rv_quiesce_ends_confirmed") /\ ~ctl.past))
 Quiesce(A, newSes, extra) ==
   LET q1 == SelectSeq(q, LAMBDA j : QuiesceKeep(A, j)) IN
   /\ q' = q1 \o extra
   /\ IF A # 0 /\ QuiesceEndsRunning(A)
      THEN LET r == RJ IN
-          /\ JobEnd(SigEng("cancel", "quiesce"))
+          /\ JobEnd(IF eng.st = "busy" THEN SigEng("cancel", "quiesce") ELSE eng)
           /\ gh' = IF r.k = "save" THEN [DroppedTold(A) EXCEPT !.told[r.s] = Rehash(r.s), !.cxl[r.s] = TRUE]
                    ELSE DroppedTold(A)
-     ELSE /\ gh' = DroppedTold(A) /\ UNCHANGED <<runs, ctl, eng>>
+          /\ jr' = SyncR4End
+     ELSE /\ gh' = DroppedTold(A) /\ jr' = jr /\ UNCHANGED <<runs, ctl, eng>>
   /\ ses' = newSes
 
 OpenW == IF ses.opened = {} THEN 0 ELSE CHOOSE w \in ses.opened : TRUE
@@ -494,7 +517,8 @@ UserSwitch(t) ==
      THEN /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "recover", !.from = 0, !.target = t]
           /\ q' = q \o <<RecJob(NewId)>>
           /\ n' = [n EXCEPT !.sw = @ + 1]
-          /\ UNCHANGED <<fs, jr, pst, tgt, runs, ctl, eng, gh>>
+          /\ jr' = MarkOld
+          /\ UNCHANGED <<fs, pst, tgt, runs, ctl, eng, gh>>
      ELSE LET A == OpenW IN
           IF MUTANT = "open_before_close"
           THEN /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "recover", !.from = A, !.target = t]
@@ -504,7 +528,7 @@ UserSwitch(t) ==
           ELSE LET extra == IF MUTANT = "recovery_while_open" THEN <<RecJob(NewId)>> ELSE <<>> IN
                /\ Quiesce(A, [ses EXCEPT !.app = "switch", !.stage = "quiesce", !.from = A, !.target = t], extra)
                /\ n' = [n EXCEPT !.sw = @ + 1]
-               /\ UNCHANGED <<fs, jr, pst, tgt>>
+               /\ UNCHANGED <<fs, pst, tgt>>
 
 \* §9.1 step 3: Stay cancels the switch until A has closed
 GStay == ses.app = "switch" /\ ses.stage = "quiesce"
@@ -523,12 +547,14 @@ UserRetry ==
   /\ GRetry /\ MUTANT # "retry_disabled" /\ CanAct
   /\ n' = Spent
   \* blocked, or the switch's own job cancelled (M4): recover_all runs again, then the open
-  /\ IF ses.screen \in {"blocked","cancelled"}
+  \* (seeded bug rv_retry_skips_recovery, review 3: after a cancelled switch, Retry only assesses)
+  /\ IF ses.screen = "blocked" \/ (ses.screen = "cancelled" /\ MUTANT # "rv_retry_skips_recovery")
      THEN /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "recover", !.screen = "none"]
           /\ q' = q \o <<RecJob(NewId)>>
      ELSE /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "assess", !.screen = "none"]
           /\ UNCHANGED q
-  /\ UNCHANGED <<fs, jr, pst, tgt, runs, ctl, eng, gh>>
+  /\ jr' = MarkOld
+  /\ UNCHANGED <<fs, pst, tgt, runs, ctl, eng, gh>>
 UserBack ==
   /\ GBack /\ CanAct
   /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "assess", !.screen = "none", !.target = ses.from]
@@ -540,7 +566,8 @@ UserOpenAnother(t) ==
                         !.from = 0, !.target = t]
   /\ q' = q \o <<RecJob(NewId)>>
   /\ n' = Spent
-  /\ UNCHANGED <<fs, jr, pst, tgt, runs, ctl, eng, gh>>
+  /\ jr' = MarkOld
+  /\ UNCHANGED <<fs, pst, tgt, runs, ctl, eng, gh>>
 \* "Keep the files as they are now" (§8.1): writes nothing to the ledger files; first durable_syncs every
 \* file and folder the journal names (N1), then renames the journal .kept (its directory synced)
 KeepSet == {j \in JIds : jr[j].st = "topen" \/ (jr[j].st = "open" /\ jr[j].files \cap LS(ses.target) # {})}
@@ -590,7 +617,7 @@ UserQuit(kind) ==
   /\ kind = "quit" \/ (kind = "update" /\ n.upd < MaxUpdate)
   /\ n' = IF kind = "update" THEN [n EXCEPT !.upd = @ + 1] ELSE n
   /\ Quiesce(OpenW, [ses EXCEPT !.app = kind, !.stage = "quiesce"], <<>>)
-  /\ UNCHANGED <<fs, jr, pst, tgt>>
+  /\ UNCHANGED <<fs, pst, tgt>>
 
 \* What the engine leaves behind when the app goes (quit, Quit anyway, app crash):
 \* a process stuck in the kernel keeps its locks (an orphan, §5.2); a live one may linger (§15)
@@ -632,7 +659,8 @@ Relaunch ==
                         !.stops = 0, !.advice = "none", !.locks = {}, !.mem = {}]
   /\ q' = <<RecJob(NewId)>>
   /\ n' = [n EXCEPT !.start = @ + 1]
-  /\ UNCHANGED <<fs, jr, pst, tgt, runs, ctl, eng, gh>>
+  /\ jr' = MarkOld
+  /\ UNCHANGED <<fs, pst, tgt, runs, ctl, eng, gh>>
 
 ----------------------------------------------------------------------------
 (* APP ACTIONS (the sidecar)                                               *)
@@ -664,7 +692,8 @@ CloseA ==
   /\ ses' = [ses EXCEPT !.opened = {}, !.stage = "recover"]
   /\ q' = IF MUTANT = "recovery_while_open" THEN q ELSE q \o <<RecJob(NewId)>>
   /\ n' = n
-  /\ UNCHANGED <<fs, jr, pst, tgt, runs, ctl, eng, gh>>
+  /\ jr' = MarkOld
+  /\ UNCHANGED <<fs, pst, tgt, runs, ctl, eng, gh>>
 
 \* §9.3 step 4 (quit) and the update: after the quiesce
 QuitClose ==
@@ -783,11 +812,14 @@ DispatchUnavail ==
                \* the sidecar lists the journals after syncing their directories (§8.1, M2)
                /\ jr' = SyncCL([x \in JIds |->
                           IF jr[x].st \in OpenSt /\ MUTANT # "untried_unmarked"
-                          THEN [jr[x] EXCEPT !.why = "not_tried", !.old = TRUE, !.pl = {jr[x].st}]
-                          ELSE IF jr[x].st \in OpenSt THEN [jr[x] EXCEPT !.why = "", !.old = TRUE, !.pl = {jr[x].st}]
+                          THEN [jr[x] EXCEPT !.why = "not_tried", !.pl = {jr[x].st}]
+                          ELSE IF jr[x].st \in OpenSt THEN [jr[x] EXCEPT !.why = "", !.pl = {jr[x].st}]
                           ELSE jr[x]])
                /\ ses' = [ses EXCEPT !.stage = "assess"]
-               /\ UNCHANGED <<gh, pst>>
+               \* the end of this recover-all answers the quit notes (L1)
+               /\ IF MUTANT # "notes_only_at_boot" \/ ses.app = "boot"
+                  THEN /\ pst' = [pst EXCEPT !.notes = NoteNotes] /\ gh' = NoteGh
+                  ELSE UNCHANGED <<gh, pst>>
           [] j.k = "save" ->
                /\ gh' = SetTold(gh, j.s, "notsaved") /\ UNCHANGED <<jr, ses, pst>>
           [] j.k = "open" ->
@@ -871,6 +903,11 @@ NextS(p) ==
 Adv(p) == [ctl EXCEPT !.pc = NextS(p)]
 
 \* a refusal before anything is written: locks released, the job ends (§6.1 steps 1-6)
+SaveRefuseFrom(g, msg) ==
+  /\ gh' = SetTold(g, SV, msg)
+  /\ JobEnd(Retired)
+  /\ ses' = [ses EXCEPT !.locks = {}, !.advice = "none"]
+  /\ UNCHANGED <<fs, jr, pst, tgt, q, n>>
 SaveRefuse(msg) ==
   /\ gh' = SetTold(gh, SV, msg)
   /\ JobEnd(Retired)
@@ -908,7 +945,8 @@ S_Gate ==
         \/ OpenJ(1) # {}                    \* WRITES_PAUSED {unfinished_save}
         \/ GateClosed(1) # {}               \* R4 owed
         \/ GateMism(1) # {}                 \* WRITES_PAUSED {check_failed}
-     THEN SaveRefuse("notsaved")
+     \* a refusal for a .mismatch shows the pause (WRITES_PAUSED {check_failed}; fidelity review 3, M1)
+     THEN SaveRefuseFrom([gh EXCEPT !.paused = @ \cup GateMism(1)], "notsaved")
      ELSE /\ ctl' = Adv("s_gate")
           /\ gh' = [gh EXCEPT !.edSeen = [f \in Files |-> IF f \in LS(1) THEN TRUE ELSE gh.edSeen[f]],
                               !.edLoad = FALSE]
@@ -1099,7 +1137,9 @@ S_Saved ==
 \* journal exists; otherwise queue a rebuild
 S_Publish ==
   /\ Step("s_pub")
-  /\ IF FP(1) = PostFP /\ OpenJ(1) = {}
+  \* (review 3's rv_publish_over_open drops the .open test: equivalent here, since the gate refused any
+  \* .open journal of W1 and no other job runs until this one ends; MAPPING.md §6)
+  /\ IF FP(1) = PostFP /\ (OpenJ(1) = {} \/ MUTANT = "rv_publish_over_open")
      THEN /\ pst' = [pst EXCEPT !.mirror[1] = [fp |-> FP(1), src |-> "overlay", build |-> pst.build]]
           /\ UNCHANGED <<q, n>>
      ELSE /\ q' = IF ses.app = "run" THEN q \o <<Job(NewId, "rebuild", 1, TRUE, FALSE, "app", "none", ZeroFP)>> ELSE q
@@ -1257,11 +1297,11 @@ RS_Resolve ==
 
 ----------------------------------------------------------------------------
 (* RECOVER_ALL (§8.1)                                                      *)
-\* start: every journal now existing predates this recover_all (old); earlier judgements cleared; .part journals deleted (they never block)
+\* start: earlier judgements cleared; .part journals deleted (they never block); the directories synced
 RC_Init ==
   /\ Step("rc_init")
   /\ jr' = [j \in JIds |-> CASE jr[j].st \in {"part","tpart"} -> NoJ
-                              [] jr[j].st \in OpenSt -> [jr[j] EXCEPT !.why = "", !.pl = {jr[j].st}, !.old = TRUE]
+                              [] jr[j].st \in OpenSt -> [jr[j] EXCEPT !.why = "", !.pl = {jr[j].st}]
                               \* §6.6, §8.1 (F1): recover-all syncs the journal directories it lists, so the
                               \* quit note and the open read only durable records
                               [] MUTANT = "cnc_auto_lift" /\ jr[j].st = "mismatch" /\ jr[j].cnc ->
@@ -1515,7 +1555,7 @@ CR_WriteA ==
           /\ UNCHANGED <<fs, jr, pst, ses, q, runs, eng, n, gh>>
 CR_SyncA ==
   /\ Step("cr_ws")
-  /\ tgt' = [tgt EXCEPT !.pl["a"] = IF tgt.c["a"] = "ours" THEN {"ours"} ELSE @]
+  /\ tgt' = [tgt EXCEPT !.pl["a"] = IF tgt.c["a"] = "ours" /\ MUTANT # "rv_create_no_sync" THEN {"ours"} ELSE @]
   /\ ctl' = [ctl EXCEPT !.pc = IF MUTANT = "no_readback" THEN "cr_load" ELSE "cr_rb"]
   /\ UNCHANGED <<fs, jr, pst, ses, q, runs, eng, n, gh>>
 \* step 4: read back every file
@@ -1574,7 +1614,7 @@ CR_Register ==
 R4Pcs == {"r4_a","r4_load","r4_c","r4_fresh","r4_spawn","r4_conf","r4_sync"}
 \* the sidecar's handler: §6.5 (M5) "before anything acts on the new state": a rename the dead engine
 \* made is synced first; then, on the third failure, .mismatch {could_not_check}, synced, shown
-R4SyncJ(j) == IF jr[j].st # "none" THEN [jr EXCEPT ![j].pl = {jr[j].st}] ELSE jr
+R4SyncJ(j) == IF jr[j].st # "none" /\ MUTANT # "rv_r4_crash_nosync" THEN [jr EXCEPT ![j].pl = {jr[j].st}] ELSE jr
 R4Cnc(j) == jr[j].st = "closed" /\ jr[j].att + 1 >= 3
 R4Failed(j) == LET J == R4SyncJ(j) IN
                IF jr[j].st # "closed" THEN J
@@ -1618,6 +1658,13 @@ EngineCrash ==
             /\ JobEnd(CrashEng)
             /\ ses' = [OpenFailSes EXCEPT !.stops = @ + 1, !.locks = {}]
             /\ UNCHANGED <<fs, jr, pst, tgt, q, gh>>
+       \* §10 (fidelity review 3, M2): past the manifest's rename the folder is a complete workspace and
+       \* the job registers it, from disk after syncing the parent (seeded bug create_crash_msg_from_memory)
+       [] r.k = "create" /\ tgt.c["m"] = "ours" /\ MUTANT # "create_crash_msg_from_memory" ->
+            /\ tgt' = [tgt EXCEPT !.pl["m"] = {"ours"}]
+            /\ gh' = [gh EXCEPT !.crOut = "created", !.crMsg = "created"]
+            /\ JobEnd(CrashEng) /\ ses' = s1
+            /\ UNCHANGED <<fs, jr, pst, q>>
        [] r.k = "create" ->
             /\ CrStopGh("crash") /\ JobEnd(CrashEng) /\ ses' = s1
             /\ UNCHANGED <<fs, jr, pst, tgt, q>>
@@ -1635,12 +1682,12 @@ Hang ==
 \* a member of the engine's group stuck in the kernel: it never ends after a signal
 Stuck ==
   /\ Alive /\ eng.p > 0 /\ ~eng.stuck /\ n.stuck < MaxStuck
-  /\ eng.st \in (IF StuckSigOnly THEN {"sig"} ELSE {"busy","sig"})
+  /\ eng.st \in {"busy","sig"}
   /\ eng' = [eng EXCEPT !.stuck = TRUE]
   /\ n' = [n EXCEPT !.stuck = @ + 1]
   /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, ctl, gh>>
 
-\* an I/O error after the first replace (rollback), or during a rollback or a restore; or (§6.4, L6) a
+\* an I/O error after the journal is durable (rollback), or during a rollback or a restore; or (§6.4, L6) a
 \* full disk before the journal is durable: not a rollback, nothing was replaced, "not saved" (the
 \* .part journal, if any, is left for recover-all, which deletes it)
 WritePcs == {"s_tw1","s_tw2","s_ts","s_sw","s_cmp","s_ds","s_rbk","s_rmt"}
@@ -1649,7 +1696,8 @@ RestPcs  == {"rb_chk","rs_w","rs_x","rs_c","rs_tmp","rs_sync","rs_res"}
 IOFail ==
   /\ Alive /\ Busy /\ EngOK /\ n.io < MaxIO
   /\ n' = [n EXCEPT !.io = @ + 1]
-  /\ \/ /\ RJ.k = "save" /\ ctl.pc \in WritePcs /\ \E f \in Tg : fs.cur[f] = PV
+  \* after the journal is durable (c87ce786, L10: also before the first replace) the rollback runs
+  /\ \/ /\ RJ.k = "save" /\ ctl.pc \in WritePcs
         /\ ctl' = StartRB("notsaved", "none")
         /\ UNCHANGED <<fs, jr, pst, tgt, ses, q, runs, eng, gh>>
      \/ /\ ctl.pc \in RestPcs /\ ctl.rj # "none"
@@ -1835,6 +1883,10 @@ WaitedForFirst ==
 NoOwnEndAfterCommitPoint ==   \* Quit anyway (the exception) leaves no session behind
   eng.st = "sig" /\ eng.reason = "cancel" => ~(eng.ended.past /\ Writing(eng.ended.k))
 CancelReachIsTheOneRule ==
+  \* "closing is not a cancel" (§9.1 step 2; fidelity review 3, M3): the quiesce ends only a read, an R4,
+  \* or a save the user did not confirm, before its commit point
+  /\ eng.endBy = "quiesce" => (eng.ended.k \in Reads \cup {"r4"}
+                               \/ (eng.ended.k = "save" /\ ~eng.ended.conf /\ ~eng.ended.past))
   /\ eng.endBy = "other" => (eng.ended.k = "r4" \/ (eng.ended.k = "save" /\ ~eng.ended.conf /\ ~eng.ended.past)
                              \/ (eng.ended.k \in Reads \cup {"open"} /\ eng.ended.req = "gone"))
   /\ (ses.advice = "cancel" /\ Busy /\ eng.st = "busy") =>
@@ -1851,6 +1903,9 @@ TruthInv ==
        /\ gh.told[s] \in {"unfinished","q_notyet"} => jr[s].st \in {"open","kept"}
        /\ gh.told[s] # "notopen"                       \* a confirmed save is never dropped by a switch
        /\ s \in SaveNotes => jr[s].st # "kept"
+  \* fidelity review 3, M2: the in-session create outcome matches the target (§8.2, §10)
+  /\ gh.crMsg \in {"delete_ok","check_first","not_created"} => tgt.c["m"] # "ours"
+  /\ gh.crMsg = "created" => tgt.c["m"] = "ours"
   /\ gh.crTold = "q_created" => tgt.c["m"] = "ours"
   /\ gh.crTold = "q_notcreated" => tgt.c["m"] # "ours"
   /\ gh.cpTold = "q_created" => gh.cpMan
@@ -2060,5 +2115,10 @@ AppScopedStarts == \A i \in 1..Len(q) : (StartedId(q[i].id) /\ q[i].k \in {"crea
 AppScopedRuns == (Busy /\ RJ.k \in {"create","copy"}) => ~RecoveryWindow
 AppScopedWaitsForRecovery ==
   [][IF MUTANT = "appscoped_runs" THEN AppScopedRuns' ELSE AppScopedStarts]_vars
+\* §8.1 "Afterwards", §9.3 (c87ce786, L1): every recover-all answers the quit notes it can, so no
+\* workspace is open while a note that says saved or undone is still waiting (review 3's NotesAnswered)
+NotesAnsweredByRecovery ==
+  (ses.app = "run" /\ ses.opened # {}) =>
+     ~\E nt \in pst.notes : nt.k = "save" /\ SaveNoteMsg(nt.s) \in {"q_saved","q_undone"}
 JobIdsBounded == Cardinality(UsedIds) <= JobBound
 =============================================================================

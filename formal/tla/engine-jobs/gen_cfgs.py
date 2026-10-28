@@ -20,7 +20,7 @@ DEFAULTS = {
     "StopBound": "3",
     "MaxSaves": "0", "MaxBg": "0", "MaxReads": "0", "MaxRebuild": "0", "MaxEdits": "0",
     "MaxCrash": "0", "MaxAppCrash": "0", "MaxPower": "0", "MaxStarts": "0", "MaxSwitch": "0",
-    "MaxHang": "0", "MaxStuck": "0", "StuckSigOnly": "FALSE", "MaxOrphan": "0",
+    "MaxHang": "0", "MaxStuck": "0", "MaxOrphan": "0",
     "MaxUnreach": "0", "MaxLink": "0", "MaxForget": "0", "MaxIO": "0", "MaxClose": "0",
     "MaxUpdate": "0", "MaxExpire": "0", "MaxDrop": "0", "MaxResume": "0",
     "DoCopy": "FALSE", "CreateTarget": '"none"', "DoQuit": "FALSE", "EdDurable": "TRUE", "RestartAfterQuit": "FALSE", "CloseQueued": "TRUE", "JobBound": "12",
@@ -39,7 +39,7 @@ INVARIANTS = [
     "NoManifestOverIncompleteFolder", "NonEmptyTargetUntouched", "DroppedFileNeverReplaced",
     "OtherNamesDoNotStop", "ForeignOverwriteCaughtByReadBack",
     "NoAdviceOnTimerForSlowWork", "EveryWaitHasAnExit", "QuitAnywayAlwaysEnabled",
-    "NoEngineStall", "OpeningHasItsJob", "JobIdsBounded",
+    "NoEngineStall", "OpeningHasItsJob", "NotesAnsweredByRecovery", "JobIdsBounded",
 ]
 SAFETY_PROPS = [
     "WaitedForFirst", "OutcomeTruthful", "UnchangedOnlyAfterRehash", "NoTornLedgerAfterRecovery",
@@ -73,6 +73,10 @@ WORLDS = {
     "S_cancel_commit": ("S", S(MaxSaves=1, MaxEdits=1, EdFiles=strs("R", "I"), MaxCrash=1)),
     # --- R4 and records (§6.5, §6.7) ---
     "S_r4_outcomes": ("S", S(MaxSaves=2, R4Outs=ALLR4, MaxEdits=1, EdFiles=strs("I"), MaxResume=1)),
+    # fidelity review 3 (M1): R4 ended by another job's Cancel or a crash after its record's rename, the
+    # gate that then acts on the record, and a power loss (the reviewer's RV3_gate_unsynced_*, RV3_lift_by_cancel)
+    "S_r4_ends": ("S", S(MaxSaves=2, R4Outs=ALLR4, MaxReads=1, MaxCrash=1, MaxPower=1, MaxStarts=1,
+                         MaxResume=1)),
     "S_r4_attempts": ("S", S(MaxSaves=2, MaxCrash=3, MaxExpire=3, MaxResume=1, MaxStarts=1,
                              MaxAppCrash=1)),
     "S_r4_build": ("S", S(RestartAfterQuit=True, MaxSaves=1, DoQuit=True, MaxUpdate=1, MaxStarts=1, MaxCrash=1)),
@@ -253,6 +257,16 @@ MUTANTS = [
     ("switch_job_not_cancelable", "S_switch_hung_create", "EveryWaitHasAnExit", {}),        # M4
     ("quit_anyway_only_while_quitting", "S_cancel_commit", "EveryWaitHasAnExit", {}),       # M4 (Quit-anyway clauses)
     ("finishing_confirmed_only", "LS_quit", "EveryQuitEndsOrOffersQuitAnyway", {}),         # M3: a reachability check
+    # fidelity review 3 (spec at c87ce786): the reviewer's mutants (rv_*) and the old rules of its fixes
+    ("rv_boot_skips_recovery", "S_recover", "EveryJournalRecoveredOrBlocking", S(BootJ=strs("b3"))),       # H1
+    ("rv_retry_skips_recovery", "S_recover", "EveryJournalRecoveredOrBlocking", S(BootJ=strs("b3"))),      # H1
+    ("rv_r4_crash_nosync", "S_r4_ends", "R4GateLiftedOnlyByUser", {}),                                     # M1
+    ("r4_cancel_nosync", "S_r4_ends", "R4GateLiftedOnlyByUser", {}),                                       # M1
+    ("create_crash_msg_from_memory", "S_create_absent", "OutcomeTruthful", {}),                           # M2
+    ("rv_quiesce_ends_confirmed", "S_switch", "CancelReachIsTheOneRule", {}),                             # M3
+    ("rv_cancel_keeps_stage", "S_switch_hung_create", "OpeningHasItsJob", {}),
+    ("rv_create_no_sync", "S_create_empty", "NoManifestOverIncompleteFolder", {}),
+    ("notes_only_at_boot", "S_save_quit_power", "NotesAnsweredByRecovery", {}),                          # L1
 ]
 
 
@@ -298,7 +312,9 @@ def build():
         consts.update(w)
         out[name + ".cfg"] = render(name, consts, spec, invs, props, comment)
         rows.append((name, "PASS", tier, "base", mode))
-    for mut, base, prop, extra in MUTANTS:
+    for m in MUTANTS:
+        mut, base, prop, extra = m[:4]
+        suffix = ("_" + m[4]) if len(m) > 4 else ""
         tier, w, spec, live = world_of(base)
         consts = dict(DEFAULTS)
         consts.update(w)
@@ -308,7 +324,7 @@ def build():
             invs, props = [prop], []
         else:
             invs, props = [], [prop]
-        name = "MUT_" + mut
+        name = "MUT_" + mut + suffix
         out[name + ".cfg"] = render(name, consts, spec, invs, props,
                                     "mutant %s on %s: TLC must report %s violated" % (mut, base, prop))
         rows.append((name, "VIOLATE:" + prop, "S", "mutant", "check"))

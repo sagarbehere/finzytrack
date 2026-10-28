@@ -7,8 +7,8 @@
 #
 # - One log per configuration: results/<name>.log. results/SUMMARY.md is rewritten after each one:
 #   result, expected result, distinct states, depth and wall time per configuration.
-# - A configuration whose log already holds a verdict for the same model, .cfg, jar and Java
-#   version is skipped (so an interrupted run resumes); --force runs it again.
+# - A configuration whose log already holds a verdict (not ERROR or INCOMPLETE) for the same model,
+#   .cfg, jar and Java version is skipped (so an interrupted run resumes); --force runs it again.
 # - A configuration of mode "simulate" runs TLC's bounded random simulation (SIM_TRACES traces of at
 #   most SIM_DEPTH steps), not an exhaustive check.
 # - Ctrl-C stops the running TLC, deletes its state folder, writes the summary and exits.
@@ -175,7 +175,7 @@ while read -r name expect tier kind mode; do
     EXTRA=""
   fi
   if [ "$FORCE" = 0 ] && [ -f "$log" ] && grep -q "^RUNNER-HASH $hash" "$log" \
-     && grep -q "^RUNNER-VERDICT " "$log" && ! grep -q "^RUNNER-VERDICT INCOMPLETE" "$log"; then
+     && grep -q "^RUNNER-VERDICT " "$log" && ! grep -q -E "^RUNNER-VERDICT (INCOMPLETE|ERROR)" "$log"; then
     echo "skip   $name (done: $(sed -n 's/^RUNNER-VERDICT //p' "$log"))"
     continue
   fi
