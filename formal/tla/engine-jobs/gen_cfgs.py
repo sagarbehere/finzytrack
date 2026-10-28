@@ -40,12 +40,15 @@ INVARIANTS = [
     "OtherNamesDoNotStop", "ForeignOverwriteCaughtByReadBack",
     "NoAdviceOnTimerForSlowWork", "EveryWaitHasAnExit", "QuitAnywayAlwaysEnabled",
     "NoEngineStall", "OpeningHasItsJob", "NotesAnsweredByRecovery", "JobIdsBounded",
+    # fidelity review 4: the reviewer's checks, now permanent (model-only, MAPPING.md §1.4)
+    "StrictRecovered", "BlockedScreenHasReason", "AssessWaitHasCancel",
 ]
 SAFETY_PROPS = [
     "WaitedForFirst", "OutcomeTruthful", "UnchangedOnlyAfterRehash", "NoTornLedgerAfterRecovery",
     "CutTempNeverBlocks", "BlockedOnlyForCause", "R4GateLiftedOnlyByUser",
     "BuildChangePublishesRealLoad", "DeleteAdviceOnlyForOwnFiles", "InstallerNeverOverOpenJournal",
     "OwedR4BeforeNextSave", "NoFalseMismatch", "AppScopedWaitsForRecovery",
+    "KeepOnlyJudged",   # fidelity review 4
 ]
 LIVENESS = ["EveryBootEnds", "EveryWaitedForJobEnds", "EverySwitchEnds", "EveryQuitEndsOrOffersQuitAnyway",
             "EngineCanAlwaysBeFreed"]
@@ -71,6 +74,9 @@ WORLDS = {
     "S_save_quit_power": ("S", S(RestartAfterQuit=True, MaxSaves=1, MaxStarts=2, MaxStuck=1, MaxOrphan=1,
                                  MaxClose=1, MaxPower=1)),
     "S_cancel_commit": ("S", S(MaxSaves=1, MaxEdits=1, EdFiles=strs("R", "I"), MaxCrash=1)),
+    # fidelity review 4 (H1): the app crashes during a save past its commit point and its engine runs on
+    # (an orphaned writer); the next start's recover-all and its next save meet it
+    "S_save_orphan": ("S", S(MaxSaves=2, MaxAppCrash=1, MaxOrphan=1, MaxStarts=1)),
     # --- R4 and records (§6.5, §6.7) ---
     "S_r4_outcomes": ("S", S(MaxSaves=2, R4Outs=ALLR4, MaxEdits=1, EdFiles=strs("I"), MaxResume=1)),
     # fidelity review 3 (M1): R4 ended by another job's Cancel or a crash after its record's rename, the
@@ -267,6 +273,19 @@ MUTANTS = [
     ("rv_cancel_keeps_stage", "S_switch_hung_create", "OpeningHasItsJob", {}),
     ("rv_create_no_sync", "S_create_empty", "NoManifestOverIncompleteFolder", {}),
     ("notes_only_at_boot", "S_save_quit_power", "NotesAnsweredByRecovery", {}),                          # L1
+    # fidelity review 4 (spec at c87ce786): the reviewer's mutants (rv4_*) and the old rules of its fixes
+    ("rv4_rc_ignores_orphan", "S_recover_lock", "NoTornLedgerAfterRecovery", S(BootLink=False)),          # H1
+    ("rv4_save_ignores_orphan", "S_save_orphan", "NoSaveWhileR4Owed", {}),                                # H1
+    ("back_skips_recovery", "S_recover", "StrictRecovered",                                               # M1
+     S(BootJ=strs("b3"), MaxSwitch=1, MaxCrash=0, MaxEdits=0, EdFiles="{}")),
+    ("back_skips_recovery", "S_switch", "BlockedScreenHasReason",                                         # M1
+     S(MaxCrash=1, MaxBg=0, MaxReads=0, MaxSwitch=1), "blocked"),
+    ("back_skips_recovery", "S_switch", "KeepOnlyJudged",                                                 # M1
+     S(MaxCrash=1, MaxBg=0, MaxReads=0, MaxSwitch=1), "keep"),
+    ("assess_waits_for_work", "S_switch_hung_create", "AssessWaitHasCancel", S(MaxCrash=1, MaxUnreach=1)),  # M2
+    ("rv4_quit_drops_create", "S_create_absent", "OutcomeTruthful", S(DoQuit=True, MaxDrop=0)),          # L2
+    ("rv4_no_cancel_recover", "S_recover", "EveryWaitHasAnExit", {}),
+    ("rv4_outcome_open_notsaved", "S_save_crash", "OutcomeTruthful", {}),
 ]
 
 

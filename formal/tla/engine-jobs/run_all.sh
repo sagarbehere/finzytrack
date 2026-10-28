@@ -110,7 +110,11 @@ summary() {
   grep -v '^#' "$LIST" | while read -r name expect tier kind mode; do
     [ -n "$name" ] || continue
     log="$RES/$name.log"
-    [ -f "$log" ] || continue
+    # a configuration with no log has never been run here: listed, not counted (fidelity review 4, L4)
+    if [ ! -f "$log" ]; then
+      echo "| $name | $tier | $kind | $expect | not run | not run | - | - | - | - |"
+      continue
+    fi
     res=$(sed -n 's/^RUNNER-VERDICT //p' "$log" | tail -1)
     [ -n "$res" ] || res="running or stopped"
     # a log of an older model, .cfg, tool or simulation size is not a result of this one
@@ -133,9 +137,10 @@ summary() {
   {
     echo
     n_run=$(awk -F'|' '$3 ~ /^ [SML] $/' "$out" | wc -l | tr -d ' ')
-    n_bad=$(awk -F'|' '$3 ~ /^ [SML] $/ && $7 ~ /no/' "$out" | wc -l | tr -d ' ')
-    n_stale=$(awk -F'|' '$3 ~ /^ [SML] $/ && $7 ~ /stale/' "$out" | wc -l | tr -d ' ')
-    n_run=$((n_run - n_stale))
+    n_bad=$(awk -F'|' '$3 ~ /^ [SML] $/ && $7 == " no "' "$out" | wc -l | tr -d ' ')
+    n_stale=$(awk -F'|' '$3 ~ /^ [SML] $/ && $7 == " stale "' "$out" | wc -l | tr -d ' ')
+    n_none=$(awk -F'|' '$3 ~ /^ [SML] $/ && $7 == " not run "' "$out" | wc -l | tr -d ' ')
+    n_run=$((n_run - n_stale - n_none))
     for t in S M L; do
       s=$(awk -F'|' -v t=" $t " '$3 == t && $10 ~ /[0-9]/ {s += $10; c++} END {printf "%d configurations run, %d s in total", c, s}' "$out")
       echo "- Tier $t: $s"
@@ -144,6 +149,7 @@ summary() {
     if [ "$n_bad" = 0 ]; then echo "**ALL AS EXPECTED** ($n_run configurations run on this model)"
     else echo "**SURPRISES: $n_bad of $n_run** (the rows with As expected = no; read their logs)"; fi
     [ "$n_stale" = 0 ] || echo "$n_stale logs are of an older model or .cfg (stale): run them again"
+    [ "$n_none" = 0 ] || echo "$n_none configurations have never been run here (not run)"
   } >> "$out"
 }
 

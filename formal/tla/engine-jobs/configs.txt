@@ -5,6 +5,7 @@ S_save_power                         PASS                                       
 S_save_quit                          PASS                                                 S base   check
 S_save_quit_power                    PASS                                                 S base   check
 S_cancel_commit                      PASS                                                 S base   check
+S_save_orphan                        PASS                                                 S base   check
 S_r4_outcomes                        PASS                                                 S base   check
 S_r4_ends                            PASS                                                 S base   check
 S_r4_attempts                        PASS                                                 S base   check
@@ -127,3 +128,12 @@ MUT_rv_quiesce_ends_confirmed        VIOLATE:CancelReachIsTheOneRule            
 MUT_rv_cancel_keeps_stage            VIOLATE:OpeningHasItsJob                             S mutant check
 MUT_rv_create_no_sync                VIOLATE:NoManifestOverIncompleteFolder               S mutant check
 MUT_notes_only_at_boot               VIOLATE:NotesAnsweredByRecovery                      S mutant check
+MUT_rv4_rc_ignores_orphan            VIOLATE:NoTornLedgerAfterRecovery                    S mutant check
+MUT_rv4_save_ignores_orphan          VIOLATE:NoSaveWhileR4Owed                            S mutant check
+MUT_back_skips_recovery              VIOLATE:StrictRecovered                              S mutant check
+MUT_back_skips_recovery_blocked      VIOLATE:BlockedScreenHasReason                       S mutant check
+MUT_back_skips_recovery_keep         VIOLATE:KeepOnlyJudged                               S mutant check
+MUT_assess_waits_for_work            VIOLATE:AssessWaitHasCancel                          S mutant check
+MUT_rv4_quit_drops_create            VIOLATE:OutcomeTruthful                              S mutant check
+MUT_rv4_no_cancel_recover            VIOLATE:EveryWaitHasAnExit                           S mutant check
+MUT_rv4_outcome_open_notsaved        VIOLATE:OutcomeTruthful                              S mutant check
