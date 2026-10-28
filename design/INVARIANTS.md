@@ -22,8 +22,8 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 ### INV-02: Beancount is the oracle
 - **Rule:** Beancount is the oracle for booking, tolerance, validation, account grammar and price semantics. Finzytrack never reimplements them.
 - **Why:** A second implementation drifts from Beancount and gives wrong numbers silently (review:11).
-- **Enforced by:** planned: domain vectors generated from Beancount; in the engine, an architecture test that only `ledger.beancount_port` imports Beancount (BL-0041); in the main sidecar, `backend/.importlinter` and `backend/tests/architecture/test_contracts.py` (no Beancount import at all, ADR-0054). *(Enforcement list updated with the owner's approval, 2026-10-25.)*
-- **Status:** pending (BL-0002, by M1a)
+- **Enforced by:** the domain vectors generated from Beancount, kept equal to it by `scripts/oracle/tests/test_domain_vectors.py` and passed by the engine's own load and wrappers in `engine/tests/ledger/test_vectors.py`; in the engine, only `ledger.beancount_port` imports Beancount (`scripts/check_engine_boundary.py`, run by `engine/tests/architecture/test_boundaries.py`), its load stages are reached only from the overlay load (`engine/tests/architecture/test_load_rule.py`), and the overlay load equals Beancount's loader on the D1 corpus (`engine/tests/ledger/test_overlay.py`); in the main sidecar, `backend/.importlinter` and `backend/tests/architecture/test_contracts.py` (no Beancount import at all, ADR-0054). The frontend tolerance port (L3-09) and the main sidecar's `PriceIndex` (L3-12) pass the vectors when they are built. *(Enforcement list updated with the owner's approval, 2026-10-25; the planned checks built and the status set in S0049, BL-0002.)*
+- **Status:** enforced
 
 ### INV-03: Beancount parity
 - **Rule:** No Beancount feature is narrowed. If Beancount loads a ledger, Finzytrack handles it: custom roots, every booking method, globs, plugins. Where Beancount itself refuses something, say so. *(Stated exception, owner 2026-10-25, ADR-0059: in v0.4.0 a ledger with an encrypted file is refused with a plain message, not read.)*

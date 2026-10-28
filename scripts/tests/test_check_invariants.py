@@ -93,6 +93,18 @@ class InvariantCheck(unittest.TestCase):
                 (self.root / ".githooks/pre-push").write_text(f"run x {marker}\n")
                 self.assertEqual(self.run_check(GOOD.replace("scripts/tests/test_one.py", rel)), [])
 
+    def test_an_engine_test_counts_only_while_the_pre_push_hook_runs_the_engines_pytest(self) -> None:  # S0049
+        rel = "engine/tests/ledger/test_x.py"
+        (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (self.root / rel).write_text("# INV-01\n")
+        text = GOOD.replace("scripts/tests/test_one.py", rel)
+        (self.root / ".githooks/pre-push").write_text("run x bash -c \"cd backend && .venv/bin/pytest -q\"\n")
+        self.assertTrue(any("no enforcement file" in e for e in self.run_check(text)))
+        (self.root / ".githooks/pre-push").write_text(
+            "run x bash -c \"cd engine && .venv/bin/python -m pytest -q -x\"\n"
+        )
+        self.assertEqual(self.run_check(text), [])
+
     def test_the_real_pre_push_runs_every_test_root(self) -> None:
         hook = (Path(__file__).resolve().parents[2] / ".githooks/pre-push").read_text()
         self.assertEqual([m for m in ci.PUSHED_TEST_ROOTS.values() if m not in hook], [])

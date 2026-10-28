@@ -36,5 +36,8 @@ module-name = "ledger_engine"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--strict-markers", "-p", "no:cacheprovider"]
+markers = [
+  "inv(id): the invariant a test enforces (design/INVARIANTS.md; scripts/check_invariants.py)",
+]
 xfail_strict = true
 empty_parameter_set_mark = "fail_at_collect"

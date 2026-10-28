@@ -54,6 +54,7 @@ PUSHED_TEST_ROOTS = {
     "frontend/tests/": "node_modules/.bin/vitest run",
     "scripts/tests/": "scripts/run_meta_tests.py",  # S0034: the parallel runner of `discover -s scripts/tests`
     "scripts/oracle/tests/": "discover -s scripts/oracle/tests",
+    "engine/tests/": "cd engine && .venv/bin/python -m pytest",  # S0049: the engine's own environment (S0035)
 }
 
 
