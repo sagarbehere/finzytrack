@@ -7,6 +7,9 @@ padding transactions Beancount inserted, lots are Beancount's inventory. What th
 in the spec: the TransactionId and content hash (README "Ids"; ADR-0026, ADR-0055, INV-21), `source_account`
 (ADR-0055), the metadata JSON (README "Metadata JSON"), and three aggregates in a 64-digit context that refuses to
 round (README "Exact numbers": `account_balances.balance`, `lots.book_value`, `commodity_usage.total_volume`).
+Every Decimal operation here that could round runs in that context, Beancount's inventory merge for `lots`
+included; Python's default context (28 digits, rounding silently) is never used: magnitudes are `copy_abs()`, and
+text conversion and comparison never round (`test_the_rows_do_no_arithmetic_in_the_default_context`).
 
 `today` (the build date in the user's time zone) is the caller's (EP-10, INV-07): `account_balances` and `lots`
 stop at it (ADR-0025 amendment). The stamp (`ledger_version`, `fingerprint`, `built_at`) is the caller's too: the
@@ -405,7 +408,12 @@ def lot_rows(txns: Iterable[port.Transaction]) -> list[Row]:
     """Beancount's booked positions held at cost, per account, ordered by account, commodity, date, cost and
     label. `txns` are the transactions up to the build date."""
     lots: list[tuple[str, port.Position, port.Cost]] = []
-    for account, positions in port.booked_positions(txns).items():
+    try:
+        with decimal.localcontext(EXACT):  # Beancount's merge and reduction of lots: exact or refused
+            booked = port.booked_positions(txns)
+    except decimal.Inexact as e:
+        raise InexactError("lots", "units_number") from e
+    for account, positions in booked.items():
         lots.extend((account, pos, pos.cost) for pos in positions if pos.cost is not None)
 
     def order(lot: tuple[str, port.Position, port.Cost]) -> tuple[Any, ...]:
@@ -446,7 +454,7 @@ def usage_rows(txns: Iterable[port.Transaction]) -> list[Row]:
             count, volume, first, last = usage.get(code, (0, Decimal(0), txn.date, txn.date))
             if p.units.number is not None:
                 try:
-                    volume = EXACT.add(volume, abs(p.units.number))
+                    volume = EXACT.add(volume, p.units.number.copy_abs())  # copy_abs: abs() rounds to 28 digits
                 except decimal.Inexact as e:
                     raise InexactError("commodity_usage", "total_volume") from e
             usage[code] = (count + 1, volume, min(first, txn.date), max(last, txn.date))
@@ -473,6 +481,11 @@ def training_rows(txns: Iterable[port.Transaction], kind_of: Mapping[str, str]) 
     return out
 
 
+# TODO(BL-0120): True once the `commodities` rows are built. A build says it is incomplete in its result and in
+# `meta.build_complete`, and the publish refuses it (BL-0113).
+COMPLETE: Final = False
+
+
 def meta_rows(stamp: Stamp) -> list[Row]:
     return [
         ("surface_version", str(schema.SURFACE_VERSION)),
@@ -480,7 +493,7 @@ def meta_rows(stamp: Stamp) -> list[Row]:
         ("fingerprint", stamp.fingerprint),
         ("export_version", schema.EXPORT_VERSION),
         ("built_at", stamp.built_at),
-        ("build_complete", "1"),
+        ("build_complete", "1" if COMPLETE else "0"),
     ]
 
 
@@ -499,7 +512,7 @@ def table_rows(
         "postings": posting_rows(txns, kind_of),
         "accounts": account_rows(entries, kind_of),
         # TODO(BL-0120): the commodities rows, once the owner has said which ISO 4217 codes count as cash
-        # (design/inbox/20261028-iso-currency-list.md). Until then the mirror is incomplete and is not published.
+        # (design/inbox/20261028-iso-currency-list.md). Until then the build is marked incomplete (`COMPLETE`).
         "commodities": [],
         "balance_assertions": balance_rows(entries),
         **directive_rows(entries),

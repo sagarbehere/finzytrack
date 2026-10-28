@@ -31,8 +31,12 @@ FILE_MODE = 0o600  # the ledger's content: readable by the user's own tools only
 
 @dataclass(frozen=True, slots=True)
 class Built:
+    """The file was written. `complete` is False while a table is not built yet (BL-0120): such a file says so in
+    `meta.build_complete` too, and the publish must refuse it (BL-0113)."""
+
     path: str
     rows: dict[str, int]
+    complete: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +61,7 @@ def build(loaded: Loaded, path: str, today: date, stamp: Stamp) -> Built | Build
             with contextlib.suppress(FileNotFoundError):
                 os.remove(leftover)
         raise
-    return Built(path, {name: len(table) for name, table in tables.items()})
+    return Built(path, {name: len(table) for name, table in tables.items()}, rows.COMPLETE)
 
 
 def _write(path: str, tables: dict[str, list[rows.Row]]) -> None:

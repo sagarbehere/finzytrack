@@ -11,8 +11,10 @@ import json
 from pathlib import Path
 
 import pytest
+from beancount.loader import LoadError
 
 from ledger_engine.mirror.core import schema
+from ledger_engine.mirror.core.rows import error_rows
 
 from .support import STAMP, build_text, one, rows
 
@@ -171,6 +173,16 @@ def test_source_account_rule_2_the_leg_with_an_import_key(tmp_path: Path) -> Non
     ]
 
 
+def test_source_account_rule_2_comes_before_the_other_leg_of_two(tmp_path: Path) -> None:
+    # Every v0.4 import's shape (S0050 verifier F3): two legs, the key on the bank leg. Rule 3 would give the bank
+    # row Expenses:Food.
+    body = '2021-01-01 * "Cafe"\n  Expenses:Food  6 USD\n  Assets:Bank  -6 USD\n    import-key: "v1:bank:0001"\n'
+    assert source_accounts(tmp_path, body) == [
+        ("Expenses:Food", "Assets:Bank", "Assets"),
+        ("Assets:Bank", "Assets:Bank", "Assets"),
+    ]
+
+
 def test_source_account_rule_3_the_other_leg_of_two(tmp_path: Path) -> None:
     body = '2021-01-01 * "x"\n  Expenses:Food  6 USD\n  Income:Salary\n'
     assert source_accounts(tmp_path, body) == [
@@ -227,6 +239,17 @@ def test_accounts_keep_the_earliest_open_and_the_latest_close(tmp_path: Path) ->
     ]
     meta = json.loads(one(con, "SELECT metadata_json FROM accounts WHERE name = 'Assets:Bank'")[0])
     assert meta["note"] == "first"
+
+
+def test_accounts_keep_the_first_open_in_entry_order_on_a_date_tie(tmp_path: Path) -> None:
+    # S0050 verifier F5: two opens on one date; the one Beancount orders first (the file order) is kept.
+    con = build_text(
+        tmp_path,
+        '2020-01-01 open Assets:Bank\n  note: "first"\n2020-01-01 open Assets:Bank USD "FIFO"\n  note: "second"\n',
+    )
+    got = one(con, "SELECT currencies_json, booking, metadata_json FROM accounts")
+    assert got[:2] == ("[]", None)
+    assert json.loads(got[2])["note"] == "first"
 
 
 def test_accounts_currencies_in_written_order_and_the_booking_text(tmp_path: Path) -> None:
@@ -406,6 +429,12 @@ def test_ledger_errors(tmp_path: Path) -> None:
     assert entry[1:4] == ["2020-01-05", "Assets:Bank", ["50", "USD"]]
 
 
+def test_an_error_with_a_file_but_no_line_has_a_null_line() -> None:
+    # A plugin's error may name a file and no line; v0.2.2 wrote NULL (surface.toml `line_number`, change "same").
+    (row,) = error_rows([LoadError({"filename": "plugins/check.py"}, "plugin failed", None)])
+    assert row[1:3] == ("plugins/check.py", None)
+
+
 # ---- balances, lots and usage -------------------------------------------------------------------------------------
 
 
@@ -510,5 +539,5 @@ def test_meta(tmp_path: Path) -> None:
         "fingerprint": STAMP.fingerprint,
         "export_version": hashlib.sha256(schema.ddl().encode("utf-8")).hexdigest(),
         "built_at": STAMP.built_at,
-        "build_complete": "1",
+        "build_complete": "0",  # no `commodities` rows yet (BL-0120)
     }

@@ -298,7 +298,7 @@ Surface version 1. 18 tables, 126 columns: 121 from v0.2.2, 1 from v0.3.0, 4 fro
 |---|---|---|---|---|---|---|---|---|
 | `id` | INTEGER / ordinal | Position among the load's errors, counting from 1. | Build counter in Beancount's error order. | n/a | v0.2.2 | same | yes | decided |
 | `source_file` | TEXT / path | File the error points at; NULL when Beancount gives none. | Error source `filename`. | n/a | v0.2.2 | same | yes | decided |
-| `line_number` | INTEGER / int | Line the error points at (0 when Beancount gives a file but no line); NULL when it gives none. | Error source `lineno`. | n/a | v0.2.2 | same | yes | decided |
+| `line_number` | INTEGER / int | Line the error points at; NULL when Beancount gives none, also when it gives a file but no line (as v0.2.2). | Error source `lineno`. | n/a | v0.2.2 | same | yes | decided |
 | `message` | TEXT / text | Beancount's error message. | Error message. | n/a | v0.2.2 | same | yes | decided |
 | `entry_json` | TEXT / json-entry | The entry the error is about, as a JSON array of its fields in Beancount's order (meta first, then date, ...); NULL when the error has no entry. | Error entry, converted by README 'Metadata JSON'. | n/a | v0.2.2 | same | yes | decided |
 | `error_type` | TEXT / text | The error's Beancount class name (`BalanceError`, `ValidationError`, ...). | Error class name. | n/a | v0.4 | new | yes | decided |
@@ -321,7 +321,7 @@ Surface version 1. 18 tables, 126 columns: 121 from v0.2.2, 1 from v0.3.0, 4 fro
 - **One row is:** One fact about this mirror file (key and value), for the app and its freshness check.
 - **As of:** load
 - **Origin:** v0.2.2; **status:** draft; **cites:** ADR-0015
-- **Note:** Internal in v0.2.2 too (not in its user docs, not on ADR-0048's list); its name is still served. v0.4 keys: `surface_version`, `ledger_version`, `fingerprint`, `export_version` (a hash of this DDL), `built_at`, `build_complete` (always `1`: only complete generations are published). v0.2.2's `ledger_files` key is replaced by `fingerprint`.
+- **Note:** Internal in v0.2.2 too (not in its user docs, not on ADR-0048's list); its name is still served. v0.4 keys: `surface_version`, `ledger_version`, `fingerprint`, `export_version` (a hash of this DDL), `built_at`, `build_complete` (`1` when every table has its rows; `0` while a table is not built yet, such as `commodities` before BL-0120: the build reports it in its result too, and the publish must refuse such a file, so a published generation always says `1`). v0.2.2's `ledger_files` key is replaced by `fingerprint`.
 
 | Column | Type / format | Meaning | Source | Sign | Origin | Change from legacy | User SQL | Status |
 |---|---|---|---|---|---|---|---|---|
