@@ -428,3 +428,15 @@ Format:
 - Observed effect: pending.
 - Status: kept (the EP rewritten with the owner's approval).
 - Owner approval: "I agree with both recommendations, including that EP-19 keeps requiring a formal model for the mirror publish" (2026-10-27, in session; S0047 verifier round 1).
+
+
+## IMP-0044: bounded review rounds, simplification first, formal models kept to durability and recovery, the overdue reflection (2026-10-28)
+- Trigger: owner request and metric. In about 24 hours (2026-10-27/28) the engine-jobs design had 7 full spec reviews, 5 model reviews and 3 model fix rounds, about 14,000 lines under `formal/tla`, against about 700 lines of product code (S0047, S0048); since about round 3 most findings were edges created by the previous fix or the model disagreeing with the spec, not design flaws; the feature behind most of them (a crashed app's engine writing on) was removed by a policy (ADR-0064 amendment, option B) only in round 5. The owner asked whether the process "is the price to pay for constructing a correct system" or "a cumbersome and time/token consuming development process"; the agent proposed four changes.
+- What changed: doc. PROCESS.md §3 "Golden specs": step 1, at most two full review rounds per design or model, then only a High forces another round; a later Medium becomes a test or a backlog row unless it threatens data safety (INV-01, INV-22, INV-32); step 2, a feature that produces findings in two rounds running is offered to the owner to forbid, bound or drop before any fix; the model paragraph, formal models only for durability and recovery and the mirror publish, and running code as the default check once a model's small tier and bounded rounds are done. Item 4 is an action, not a rule: the periodic reflection (§9), overdue, runs now, measuring product rows built against process cost and proposing at least one consolidation.
+- PROCESS.md section: §3, §9.
+- Why: "no High and no Medium" with no bound never converged on a large design: an adversarial reviewer almost always finds a Medium, and each fix adds new edges. Tests and the slice verifier find code-level edges more cheaply than prose reviews; models pay where interleavings can lose data.
+- Expected effect: no design spends more than two full review rounds before code; fewer findings per round once simplification comes first; the share of product work per week rises (measured at the next reflection).
+- Observed effect: pending.
+- Status: kept (a loosening, approved by the owner first).
+- Owner approval: "agreed" (2026-10-28, in session, to the four proposals: bounded review rounds; simplify first; formal models only for durability and recovery; run the overdue reflection now).
+
