@@ -15,7 +15,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CFG_DIR = os.path.join(HERE, "cfg")
 
 DEFAULTS = {
-    "MUTANT": '"none"', "UserBudget": "0", "BootJ": "{}", "BootTemps": "FALSE", "BootTarget": "1",
+    "MUTANT": '"none"', "UserBudget": "0", "BootJ": "{}", "BootTemps": "FALSE", "BootTorn": "FALSE", "BootTarget": "1",
     "BootOrphan": "FALSE", "BootLink": "FALSE", "EdFiles": "{}", "R4Outs": '{"pass"}',
     "StopBound": "3",
     "MaxSaves": "0", "MaxBg": "0", "MaxReads": "0", "MaxRebuild": "0", "MaxEdits": "0",
@@ -39,7 +39,7 @@ INVARIANTS = [
     "NoManifestOverIncompleteFolder", "NonEmptyTargetUntouched", "DroppedFileNeverReplaced",
     "OtherNamesDoNotStop", "ForeignOverwriteCaughtByReadBack",
     "NoAdviceOnTimerForSlowWork", "EveryWaitHasAnExit", "QuitAnywayAlwaysEnabled",
-    "NoEngineStall", "JobIdsBounded",
+    "NoEngineStall", "OpeningHasItsJob", "JobIdsBounded",
 ]
 SAFETY_PROPS = [
     "WaitedForFirst", "OutcomeTruthful", "UnchangedOnlyAfterRehash", "NoTornLedgerAfterRecovery",
@@ -67,6 +67,9 @@ WORLDS = {
                             MaxStarts=1, MaxAppCrash=1, MaxReads=1)),
     "S_save_power": ("S", S(MaxSaves=1, MaxPower=1, MaxStarts=1, MaxEdits=1, EdFiles=strs("R"))),
     "S_save_quit": ("S", S(RestartAfterQuit=True, MaxSaves=1, MaxStarts=2, MaxStuck=1, MaxOrphan=1, MaxClose=1)),
+    # fidelity review 2 (RV_save_quit_power, M2): quit notes and a power loss together
+    "S_save_quit_power": ("S", S(RestartAfterQuit=True, MaxSaves=1, MaxStarts=2, MaxStuck=1, MaxOrphan=1,
+                                 MaxClose=1, MaxPower=1)),
     "S_cancel_commit": ("S", S(MaxSaves=1, MaxEdits=1, EdFiles=strs("R", "I"), MaxCrash=1)),
     # --- R4 and records (§6.5, §6.7) ---
     "S_r4_outcomes": ("S", S(MaxSaves=2, R4Outs=ALLR4, MaxEdits=1, EdFiles=strs("I"), MaxResume=1)),
@@ -82,12 +85,19 @@ WORLDS = {
                                EdFiles=strs("R"), MaxLink=1)),
     "S_boot": ("S", S(BootJ=strs("b2"), BootTarget=2, MaxCrash=1, CreateTarget='"absent"',
                       MaxUnreach=1)),
+    # fidelity review 2 (RV_stuck_opening, M1): another job's Cancel ends the boot's open
+    "S_stuck_opening": ("S", S(BootTarget=2, EdFiles=strs("J"), MaxEdits=1, MaxClose=1,
+                               CreateTarget='"absent"')),
+    # L3: a journal whose file list cannot be read blocks every open and every copy; Keep
+    "S_recover_torn": ("S", S(BootJ=strs("b3"), BootTorn=True, BootTarget=3, DoCopy=True, MaxSwitch=1)),
     # --- copy and create (§8.2) ---
     "S_copy": ("S", S(BootJ=strs("b2"), DoCopy=True, MaxSaves=1, MaxCrash=1)),
     "S_create_absent": ("S", S(RestartAfterQuit=True, BootTarget=0, CreateTarget='"absent"', MaxDrop=2, MaxCrash=1, MaxStarts=1)),
     "S_create_empty": ("S", S(BootTarget=0, CreateTarget='"empty"', MaxDrop=2, MaxPower=1,
                               MaxStarts=1)),
     "S_create_nonempty": ("S", S(BootTarget=0, CreateTarget='"nonempty"', MaxDrop=1)),
+    # L2: a confirmed create or copy with its requester present or gone, and a read waiting behind it
+    "S_create_close": ("S", S(CreateTarget='"absent"', DoCopy=True, MaxReads=1, MaxClose=1, MaxHang=1)),
     # --- queue, Cancel's one rule, the engine (§3, §4, §5) ---
     "S_cancel": ("S", S(MaxSaves=1, MaxBg=1, MaxReads=1, MaxHang=1, MaxStuck=1, MaxClose=1)),
     "S_queue": ("S", S(MaxSaves=1, MaxBg=1, MaxReads=1, MaxCrash=1, MaxRebuild=1, MaxEdits=1,
@@ -98,10 +108,13 @@ WORLDS = {
     #     kept or dropped on its own ---
     "S_fs_weak": ("S", S(EdDurable=False, MaxSaves=1, MaxPower=1, MaxStarts=1, MaxIO=1, MaxEdits=2,
                          EdFiles=strs("R", "I"))),
+    # L8: widened with an I/O error during the restore (a swap-back and a stopped journal, unsynced)
     "S_fs_weak_recover": ("S", S(EdDurable=False, BootJ=strs("b2"), BootTemps=True, MaxPower=1,
-                                 MaxStarts=1, MaxEdits=1, EdFiles=strs("R"))),
+                                 MaxStarts=1, MaxEdits=1, EdFiles=strs("R"), MaxIO=1)),
     # --- switch, quit, update (§9) ---
     "S_switch": ("S", S(MaxSaves=1, MaxBg=1, MaxReads=1, MaxSwitch=2, CreateTarget='"empty"')),
+    # fidelity review 2 (RV_switch_hung_create, M4): the switch's recover_all queued behind a hung create
+    "S_switch_hung_create": ("S", S(MaxSwitch=1, MaxHang=1, CreateTarget='"empty"')),
     "S_quit": ("S", S(RestartAfterQuit=True, DoQuit=True, MaxSaves=1, MaxUpdate=1, MaxStarts=1,
                       MaxCrash=1)),
     # --- medium: two actors combined ---
@@ -133,12 +146,12 @@ WORLDS = {
 # liveness configurations: world, spec, properties
 LIVE = {
     "LS_boot": ("S", S(UserBudget=3, BootJ=strs("b2"), BootTarget=2, MaxCrash=1, CreateTarget='"absent"',
-                       JobBound=6), "FairSpec", ["EveryBootEnds"]),
+                       MaxClose=1, JobBound=6), "FairSpec", ["EveryBootEnds"]),
     "LS_jobs": ("S", S(UserBudget=3, MaxSaves=1, MaxBg=1, MaxReads=1, MaxCrash=1, MaxSwitch=1, MaxExpire=2,
                        JobBound=8), "FairSpec",
                 ["EveryWaitedForJobEnds", "EverySwitchEnds"]),
-    "LS_quit": ("S", S(UserBudget=3, DoQuit=True, MaxSaves=1, MaxReads=1, MaxStuck=1, MaxHang=1, MaxUpdate=1,
-                       JobBound=6), "FairSpec", ["EveryQuitEndsOrOffersQuitAnyway"]),
+    "LS_quit": ("S", S(UserBudget=3, DoQuit=True, MaxSaves=1, MaxBg=1, MaxReads=1, MaxStuck=1, MaxHang=1,
+                       MaxUpdate=1, JobBound=6), "FairSpec", ["EveryQuitEndsOrOffersQuitAnyway"]),
     # EngineCanAlwaysBeFreed: the waiting user's exits are Cancel and Quit anyway (a closed waiting tab
     # or a switch ends that user's wait: EveryWaitedForJobEnds), so no queued tab closes and no switch
     "LS_free": ("S", S(MaxSaves=1, MaxBg=1, MaxReads=1, MaxHang=1, MaxStuck=1, MaxClose=1,
@@ -231,6 +244,15 @@ MUTANTS = [
     ("keep_no_sync", "S_forget", "SavedSurvivesPowerLoss", {}),
     ("appscoped_runs", "S_switch", "AppScopedWaitsForRecovery", {}),   # the old wording: a reachability check
     ("advice_only_to_waiting", "LS_free", "EngineCanAlwaysBeFreed", {}),
+    # fidelity review 2 (spec at 31afbd82) and its model fixes: each old rule must fail its property
+    ("no_restore_temp_fsync", "S_recover_power", "NoTornLedgerAfterRecovery", {}),          # H1
+    ("r4_rename_unsynced", "S_r4_outcomes", "R4GateLiftedOnlyByUser", {}),                   # M5
+    ("cancel_open_keeps_opening", "S_stuck_opening", "OpeningHasItsJob", {}),                # M1
+    ("recover_cancel_before_listing", "S_save_quit_power", "OutcomeTruthful", {}),          # M2
+    ("rc_unsynced", "S_save_quit_power", "OutcomeTruthful", {}),                             # M2 (the reviewer's)
+    ("switch_job_not_cancelable", "S_switch_hung_create", "EveryWaitHasAnExit", {}),        # M4
+    ("quit_anyway_only_while_quitting", "S_cancel_commit", "EveryWaitHasAnExit", {}),       # M4 (Quit-anyway clauses)
+    ("finishing_confirmed_only", "LS_quit", "EveryQuitEndsOrOffersQuitAnyway", {}),         # M3: a reachability check
 ]
 
 

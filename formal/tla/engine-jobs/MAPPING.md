@@ -1,9 +1,9 @@
 # EngineJobs.tla and the engine-jobs spec, both ways
 
-- **Spec:** `design/specs/engine-jobs.md` at 4fb67b23: draft 5 (d8ca7823, then named `engine-scheduler.md`) with the model's findings F1-F4, O1 and N1-N3 and model review 1's spec items folded in. §13 lists what the model must check. Built only from that text and the ADRs and invariants it cites for meaning.
+- **Spec:** `design/specs/engine-jobs.md` at 31afbd82: draft 5 (d8ca7823, then named `engine-scheduler.md`) with the model's findings F1-F4, O1 and N1-N3 and the spec items of model review 1 and fidelity review 2 (H1, M4, M5, §13's `OpeningHasItsJob` and "Finishing") folded in. §13 lists what the model must check. Built only from that text and the ADRs and invariants it cites for meaning.
 - **Model:** `EngineJobs.tla` (one module; at 84c8b8c9 it had the folder's and the spec's old name, renamed in BL-0111). Configurations come from `gen_cfgs.py` (`cfg/*.cfg`, `configs.txt`); `run_all.sh` runs them (HOW_TO_RUN.md).
-- **No fix switch.** F1-F4, O1 and N1-N3 are rules of the spec now and of the model; each one's old rule is a mutant that must fail its property (§5; §13 "The model's former fix switch").
-- **State:** the small tier (S worlds, the small liveness worlds and every mutant) runs to completion on this model, all as expected (HOW_TO_RUN.md). The medium and large tiers have not been run on it.
+- **No fix switch.** F1-F4, O1, N1-N3 and fidelity review 2's items are rules of the spec now and of the model; each one's old rule is a mutant that must fail its property (§5; §13 "The model's former fix switch").
+- **State:** on this model the small tier ran to completion, all as expected (29 safety worlds, 4 of the 5 small liveness worlds, all 74 mutants), except `LS_jobs`, which takes longer than one agent tool call (642 s on the previous model) and was not re-run by the agent: the owner's `--tier S` run covers it. The medium and large tiers have not been run on it (HOW_TO_RUN.md).
 - `scripts/tests/test_tla_engine_jobs.py` keeps this file honest: every action in `Next` has a row in §2 and every row names an action; every property and mutant §13 names exists in the model and in `gen_cfgs.py`; every property has at least one mutant.
 
 ## 1. Spec → model
@@ -18,9 +18,9 @@
 | per file the bytes on disk and, separately, what survives a power loss (also entries kept before their data, torn) | `fs.cur` and `fs.pl` (possible contents after a power loss, `TORN` = -1, `ABS` = 0); a pending exchange or rename couples a file and its temp (`fs.cp`, `fs.cpn`) |
 | backups | `fs.bk`, `fs.bkpl` per save (R's pre bytes) |
 | the save's temps, cut off at any point while written | `fs.tc`, `fs.tpl` per (journal, file); `S_TempStart` leaves `TORN` until `S_TempDone` |
-| restore temps | `fs.rt` (deleted without a check, §6.4) |
-| journal states `.part` `.open` `.closed` `.done` `.mismatch` `.resolved` `.kept` and the R4 attempt count | `jr[j].st` (plus `tpart`/`topen` for torn ones), `jr[j].pl`, `jr[j].att`, `jr[j].cnc`; `jr[j].old`: the journal existed when the last recover-all started |
-| two or three journals left by crashed saves at boot, one on a disk that may be unreachable | `BootJ` ⊆ {b2 (W2: R, J), b3 (W3: K)}, `BootTemps` (cut, pre or post temps beside them); K's disk: `pst.unr`, `Unreach`; with a crashed save of W1 (s1) a third |
+| restore temps (torn by a power loss until their data sync, §8.1 step 3) | `fs.rt`, written from the backup and synced in one step (`RS_Write`; H1); a restore temp is deleted without a check (§6.4), so its own power-loss outcomes are not tracked: what matters is what a swap puts in place. With the seeded bug `no_restore_temp_fsync` the swapped-in bytes may be torn after a power loss (`fs.ud`) |
+| journal states `.part` `.open` `.closed` `.done` `.mismatch` `.resolved` `.kept` and the R4 attempt count | `jr[j].st` (plus `tpart`/`topen` for torn ones), `jr[j].pl` (a rename not yet synced keeps the old state possible), `jr[j].att`, `jr[j].cnc`; `jr[j].old`: the journal existed when the last recover-all started |
+| two or three journals left by crashed saves at boot, one on a disk that may be unreachable | `BootJ` ⊆ {b2 (W2: R, J), b3 (W3: K)}, `BootTemps` (cut, pre or post temps beside them), `BootTorn` (b3's journal torn: its file list cannot be read, world `S_recover_torn`); K's disk: `pst.unr`, `Unreach`; with a crashed save of W1 (s1) a third |
 | the queue with waited-for and background jobs | `q` (job records with `wf`, `conf`, `req`, `own`) |
 | one engine slot, the engine's process group (a member stuck in the kernel) | `eng` (`p` processes, `st` none/idle/busy/sig, `user`, `stuck`, `reason`) |
 | the requester of each job (present or gone) | job field `req`; `UserCloseTab` |
@@ -94,6 +94,12 @@
 | §8.2 step 7 | a `.finzytrack` that appeared before the manifest's exclusive rename: ours removed, nothing registered, the foreign one left | `CR_ManifestRename` |
 | §9.3 | one quit note per job (`local/quit-notes/<job>.json`); a copy's note too | `UserQuitAnyway`, `NoteNotes`, `NoteGh` |
 | §6.5 | a workspace's records: registry key or lineage id | `Match` |
+| §6.5, §6.7 (M5) | every rename of an R4 record (`.done`, `.mismatch`, `could_not_check`) is synced before its outcome is acted on or shown; after an engine death the sidecar syncs before it acts (I16); Resume saving's rename and sync are one step | `R4Rename` → `R4_Sync` → `R4Finish`; `R4Failed` (`R4SyncJ`); `UserResume` |
+| §6.4, §8.1 step 3 (H1) | a restore temp is written from the backup and its data synced before the swap | `RS_Write` (one step), `RS_Swap` |
+| §6.4 last bullet (L6) | a full disk before the journal is durable: not a rollback, nothing replaced, "not saved" | `IOFail` at `PreJournalPcs` |
+| §9.1 step 3, §9.2 (M4) | the switch's or the boot's own queued job (`recover_all`, the open), waiting behind other work, is the user's to cancel: "Switch cancelled." / "Opening cancelled." with Retry and Back or Open another workspace; the one rule's answer for the work ahead | `SwitchJobBehind`, `CancelableQ`, `UserCancelQueued`, `CancelledSes` (screen `cancelled`), `UserRetry` |
+| §13 `OpeningHasItsJob` | in the recover or opening stage, the switch's or boot's own job is queued or running; another job's Cancel that ends an open applies the open's failed screen (M1) | `OpeningHasItsJob`; `UserCancelQueued` (then-branch) |
+| §8.1 (M2) | recover-all never ends without its listing (with the directory sync); a Cancel before the listing marks nothing (I14); the Unavailable paths list after the sync too | `UserCancelRunning`, `SpawnStep`, `DispatchUnavail` |
 
 ### 1.4 Properties (§13; names as in the spec)
 
@@ -109,15 +115,15 @@
 | `NoOwnEndAfterCommitPoint` | INV | our `cancel` never ends a writing job past its commit point (Quit anyway leaves no session) | `cancel_after_commit` |
 | `CancelReachIsTheOneRule` | INV | another job's Cancel ended only an R4, a background save before its commit point, or a read/open whose requester is gone; the quit advice answers a Cancel only for a job the rule does not let it end | `cancel_ends_writing_job`, `r4_only` |
 | `CancelBeforeCommitLeavesDiskUnchanged` | INV | a save ended by any Cancel before its commit point (its own, another job's, the quiesce's) has no journal and no post bytes on disk | `gate_after_journal` |
-| `OutcomeTruthful` | INV + ACT | every told outcome (saved, not saved, unfinished, undone, the quit note's three notices, created / not created) matches the records and files; the note is deleted only once the record is saved, undone or kept; a confirmed save is never answered "not open" | `quit_says_undone`, `quit_note_two_branches`, `switch_drops_confirmed_save` |
+| `OutcomeTruthful` | INV + ACT | every told outcome (saved, not saved, unfinished, undone, the quit note's three notices, created / not created) matches the records and files; the note is deleted only once the record is saved, undone or kept; a confirmed save is never answered "not open" | `quit_says_undone`, `quit_note_two_branches`, `switch_drops_confirmed_save`, `recover_cancel_before_listing` (M2), `rc_unsynced` (M2, the reviewer's) |
 | `SavedSurvivesPowerLoss` | INV | told "saved" ⇒ the record survives a power loss as closed or later, and its files (not named by another open journal) durably hold post | `report_before_close_sync`, `outcome_unsynced` (F1), `keep_no_sync` (N1) |
 | `UnchangedOnlyAfterRehash` | ACT | "unchanged" is told only when the targets equal their pre bytes in that step | `unchanged_without_rehash` |
 | `BackupDurableBeforeReplace` | INV | post bytes on disk before the close ⇒ the backup is durable | `no_backup_sync` |
 | `JournalDurableBeforeFirstReplace` | INV | post bytes on disk before the close ⇒ the journal is durably `.open` | `no_journal_sync` |
-| `PartJournalNeverBlocks` | INV | only a complete `.open` journal is ever marked blocking (a journal cut while written never blocks) | `direct_open` |
+| `PartJournalNeverBlocks` | INV | only a complete `.open` journal is ever marked blocking (a journal of ours cut while written never blocks; a boot journal torn by something else blocks, §8.1, `BootTorn`) | `direct_open` |
 | `CommittedCombinationChecked` | INV | a save past its commit point saw no outside edit to the include it does not write during its load | `no_recheck` |
 | `ExternalEditNeverSilentlyLost` | INV | the editor's latest bytes of a file are in the file, a temp beside it or a restore temp, or were the plan's base, or fall under §15's accepted loss | `no_displaced_check`, `plain_create`, `rollback_skips_temp_rule` (F2), `swap_back_unsynced` (F3) |
-| `NoTornLedgerAfterRecovery` | INV + ACT | a ledger file is torn only while a journal naming it is `.open`; a journal becomes `.resolved` only when its files durably hold something other than its post bytes | `resolve_before_restores_synced`, `no_temp_fsync` |
+| `NoTornLedgerAfterRecovery` | INV + ACT | a ledger file is torn only while a journal naming it is `.open`; a journal becomes `.resolved` only when its files durably hold something other than its post bytes | `resolve_before_restores_synced`, `no_temp_fsync`, `no_restore_temp_fsync` (H1) |
 | `RecoveryNeverClobbersForeignBytes` | INV | as `ExternalEditNeverSilentlyLost`, for edits made while a journal naming the file is `.open` | `no_temp_check` |
 | `RecoveryWritesOnlyRecordedPaths` | INV | recovery never writes through a replaced folder (its restore swap does write through the link when the guard is missing) | `no_path_guard`, `fb_no_guard` |
 | `CutTempNeverBlocks` | ACT + INV | a journal is never stopped when its only fault is a cut temp beside a file that does not hold post; no temp of a save outlives its journal (I4) | `old_temp_rule`, `temps_after_close` |
@@ -127,7 +133,7 @@
 | `BlockedOnlyForCause` | ACT | a journal becomes blocking only with its cause present: foreign bytes, moved or unreachable path, bad backup, foreign temp beside post, unreadable, lock in use, Cancel, crash or I/O error, Unavailable | `block_without_cause` |
 | `NoSaveWhileR4Owed` | INV | a save that writes has no other closed or mismatch record of W1 | `gate_in_memory` |
 | `RecordsMatchByLineage` | INV | as above, for records under W1's old registry key (forget and re-add) | `gate_by_key` |
-| `R4GateLiftedOnlyByUser` | ACT | a `.mismatch` record changes only with a Resume saving | `cnc_auto_lift` |
+| `R4GateLiftedOnlyByUser` | ACT + INV | a `.mismatch` record changes only with a Resume saving, except that a power loss may drop a pause not yet synced and never acted on or shown; a pause acted on or shown (`gh.paused`: saving paused, the backup shown) is durable (M5) | `cnc_auto_lift`, `r4_rename_unsynced` (M5) |
 | `BuildChangePublishesRealLoad` | ACT | a record that becomes `.done {superseded_build}` publishes the new build's `load_file` result | `supersede_publishes_nothing` |
 | `NoManifestOverIncompleteFolder` | INV | a manifest (also one that may survive a power loss) only over the job's read-back, checked files | `manifest_first` |
 | `NonEmptyTargetUntouched` | INV | nothing written into a non-empty target | `no_refuse_nonempty` |
@@ -139,11 +145,12 @@
 | `EveryBootEnds` | LIVE | the boot ends; a queued create then leaves the queue | `boot_waits_for_success`, `screen_holds_queue` (F4) |
 | `EveryWaitedForJobEnds` | LIVE | ∀ job id: waited-for queued or running ~> neither | `save_waits_r4_forever` |
 | `EverySwitchEnds` | LIVE | a switch reaches the target open or its failed or blocked screen, or ends by Stay or Back | `switch_waits_for_r4` |
-| `EveryQuitEndsOrOffersQuitAnyway` | LIVE + ACT | a quit ends, or reaches "Finishing your last change…" (a confirmed save, create or copy still queued or running) with Quit anyway enabled; Quit anyway always ends the app | `quit_waits_reap` |
+| `EveryQuitEndsOrOffersQuitAnyway` | LIVE + ACT | a quit ends, or reaches "Finishing your last change…" with Quit anyway enabled; "Finishing" is §13's: any running save, create or copy, background saves included, or a queued confirmed one (M3); Quit anyway always ends the app | `quit_waits_reap`; `finishing_confirmed_only` (M3: the reading before M3, a reachability check) |
 | `OwedR4BeforeNextSave` | ACT | a record becomes closed only with no other closed or mismatch record of W1 | `r4_skipped_before_save` |
 | `EngineCanAlwaysBeFreed` | LIVE (`FairUserSpec`) | as §13 states it: `(a waited-for job is queued) ~> (the engine slot is free, or the quit advice is shown, or the app has quit)`, under weak fairness of the waiting user's Cancel, a requester's Cancel of its own job and Quit anyway once the advice is shown; also `[]QuitAnywayAlwaysEnabled` | `no_quit_message_for_writing`, `advice_only_to_waiting` (N3) |
 | `NoAdviceOnTimerForSlowWork` | INV | timer advice only while a signalled process holds the slot | `advice_on_timer` |
-| `EveryWaitHasAnExit` | INV with `ENABLED` | in each wait, the exit action itself is enabled (`ENABLED UserCancelQueued`, `UserCancelRunning`, `UserStay`, `UserRetry`, `UserBack`, `UserOpenAnother`, `UserKeep`, `UserQuitAnyway`); none of these actions has a counter or bound in its guard | `boot_no_actions`, `stay_disabled`, `retry_disabled` |
+| `EveryWaitHasAnExit` | INV with `ENABLED` | in each wait, the exit action itself is enabled (`ENABLED UserCancelQueued`, `UserCancelRunning`, `UserStay`, `UserRetry`, `UserBack`, `UserOpenAnother`, `UserKeep`, `UserQuitAnyway`); a switch's or boot's own job queued behind other work can be cancelled (M4, `SwitchJobBehind`); none of these actions has a counter or bound in its guard in the safety worlds. The Quit-anyway clauses hold because Quit anyway is always enabled (I11); `quit_anyway_only_while_quitting` shows they catch a narrower guard | `boot_no_actions`, `stay_disabled`, `retry_disabled`, `switch_job_not_cancelable` (M4), `quit_anyway_only_while_quitting` |
+| `OpeningHasItsJob` | INV | in a switch's or the boot's recover or opening stage, its `recover_all` or its target's `open` is queued or running (a stall check) | `cancel_open_keeps_opening` (M1) |
 | `AppScopedWaitsForRecovery` | ACT | as §13 states it (N2): no create or copy *starts* while recover-all runs, or between a switch's close and its target's open or screen (boot included); one started earlier runs on (`AppScopedStarts`) | `app_scoped_during_recovery`; `appscoped_runs` (N2: the old wording, a reachability check, §5) |
 
 Model-only properties (not named in §13; each with a mutant):
@@ -165,12 +172,12 @@ Model-only properties (not named in §13; each with a mutant):
 | `UserRead` | §2 `preview`, `bql` (one transient load, waited-for) |
 | `UserCreate` | §2, §8.2 `create` |
 | `UserCopy` | §2, §8.2 `copy` of W2 |
-| `UserCancelQueued` | §4 table rows 1-2, the one rule |
-| `UserCancelRunning` | §4 table rows 3-5; §8.1 Cancel per journal |
+| `UserCancelQueued` | §4 table rows 1-2, the one rule; §9.1 step 3 and §9.2 (the switch's or boot's own queued job, M4) |
+| `UserCancelRunning` | §4 table rows 3-5; §8.1 Cancel per journal; before the listing, I14 |
 | `UserCloseTab` | §4 "a client that goes away"; §13 requester gone |
 | `UserSwitch` | §9.1 (Reopen when the target is the open workspace; from no workspace, §9.2's "Open another") |
 | `UserStay` | §9.1 step 3 |
-| `UserRetry` | §8.1 "Retry on the blocked screen runs recover_all again"; §9.1 step 6; §9.2 |
+| `UserRetry` | §8.1 "Retry on the blocked screen runs recover_all again"; §9.1 steps 3 and 6; §9.2 (after a cancelled switch or boot, recover-all runs again, I15) |
 | `UserBack` | §9.1 step 6 "Back to A" |
 | `UserOpenAnother` | §9.2 "Open another workspace" |
 | `UserKeep` | §8.1 afterwards, "Keep the files as they are now" (syncs what it keeps first, N1) |
@@ -204,7 +211,7 @@ Model-only properties (not named in §13; each with a mutant):
 | `S_Publish` | §6.1 step 10 |
 | `S_Release` | §6.1 step 11 |
 | `RB_Check` | finding F2 (recovery's step-2 temp rule applied by the rollback) |
-| `RS_Write`, `RS_Swap`, `RS_Compare` | §6.4 rollback, §8.1 step 3 restore by temp and swap, displaced check, path guard |
+| `RS_Write`, `RS_Swap`, `RS_Compare` | §6.4 rollback, §8.1 step 3 restore by temp (written from the backup, its data synced, H1) and swap, displaced check, path guard |
 | `RS_Temps` | §8.1 step 3 temps deleted whatever they hold; §15 accepted loss |
 | `RS_Sync` | §8.1 step 3 "every changed directory is synced" |
 | `RS_Resolve` | §8.1 step 4, §6.4 `.resolved {not_saved}` |
@@ -213,6 +220,7 @@ Model-only properties (not named in §13; each with a mutant):
 | `RC_Lock` | §8.1 step 1 |
 | `RC_Check` | §8.1 step 2 |
 | `R4_Pick`, `R4_Start`, `R4_Load`, `R4_Check`, `R4_Confirm` | §6.7 steps 1-4 |
+| `R4_Sync` | §6.5 and §6.7 (M5): the record's rename synced before the outcome is acted on or shown |
 | `FreshEnd` | §5.1, §6.7 step 4 "that engine ends" |
 | `RD_Load`, `RD_Check` | §7 (preview, BQL, rebuild) |
 | `OP_Load`, `OP_Check` | §2 `open`, §7, §9.1 step 6 |
@@ -223,7 +231,7 @@ Model-only properties (not named in §13; each with a mutant):
 | `PowerLoss` | §10 "power" |
 | `Stuck` | §5.2 a process that cannot be ended |
 | `Hang` | §5.4 slow or hung user code (no time limit) |
-| `IOFail` | §6.4 any failure after the first replace; §8.1 step 3 I/O error |
+| `IOFail` | §6.4 any failure after the first replace, and a full disk before the journal is durable (L6); §8.1 step 3 I/O error |
 | `Drain` | §5.2 drain and reap |
 | `OrphanEnd`, `OrphanEndStuck` | §5.2, §15 orphaned engine |
 | `WindowExpire` | §5.3 stops leave the 300 s window |
@@ -235,15 +243,15 @@ Model-only properties (not named in §13; each with a mutant):
 
 | Variable | Spec |
 |---|---|
-| `fs` | ledger files, temps, backups, restore temps and their power-loss outcomes (§6.1 step 8, §6.2, §10) |
+| `fs` | ledger files, temps, backups, restore temps and their power-loss outcomes (§6.1 step 8, §6.2, §10); `ud` only for the seeded bug `no_restore_temp_fsync` |
 | `jr` | records in `local/*/journal/` (§6.5); `why` = the blocking reason of §8.1; `old` = it existed when the last recover-all started |
 | `pst` | durable state: engine build, W1's registry key, the quit notes `local/quit-notes/<job>.json`, the link, K's disk, orphans' locks, the published mirrors, the last opened workspace |
 | `tgt` | the create's target folder (§8.2) |
 | `ses` | the session: app phase (boot, run, switch, quit, update, dead), switch stage, open workspace, screen, how the app last ended (`endedBy`), stops (§5.3), advice (§5.2, §11), our locks, the scheduler's in-memory cache of closed records (§6.5 "a cache") |
-| `q`, `runs`, `ctl` | the queue (§3), the running job, its progress |
+| `q`, `runs`, `ctl` | the queue (§3), the running job, its progress (`r4res`: an R4 outcome waiting for its rename's sync) |
 | `eng` | the engine process and its group (§5) |
 | `n` | bounds on the environment and the user (model only) |
-| `gh` | ghost: what the user was told (§11), and history the properties need (editor's last bytes, accepted losses, create outcomes) |
+| `gh` | ghost: what the user was told (§11), and history the properties need (editor's last bytes, accepted losses, create outcomes, `paused`: the R4 pauses acted on or shown) |
 
 ## 3. What the model abstracts away
 
@@ -253,8 +261,8 @@ Model-only properties (not named in §13; each with a mutant):
 | OS rename atomicity beyond the stated primitives | §13; an exchange or exclusive rename is kept or dropped whole by a power loss; nothing else is assumed about the order of unsynced operations (§13 "File-system assumptions"; the `S_fs_weak*` worlds drop the one stronger assumption the other worlds make, next row) |
 | A durable outside save syncs its folder (worlds with `EdDurable = TRUE`) | §13's own assumption: a sync makes everything done before it in that folder durable, so our pending operations there persist with it. With `EdDurable = FALSE` an outside save is not durable, does not sync, and a power loss may drop it (that program's loss, excused by `PowerLoss` only when the save was not durable) |
 | Our own folder syncs make an outside program's earlier unsynced save durable (§13) | not modelled in the `EdDurable = FALSE` worlds: there the outside save stays droppable; this only adds behaviours in which an outside save is lost, and such a loss is excused only when its write was never durable |
-| Restore temps under a power loss | `fs.rt` keeps its content; recovery deletes restore temps without a check either way, and the loss this allows is §15's accepted limit (recorded in `gh.acc`) |
-| One folder per workspace; journals, backups and the note durable when their step says so | the order of their syncs is modelled per step; rename+sync of `.resolved`, `.mismatch`, `.done` and the note are one step each, as the spec states them durable |
+| Restore temps under a power loss | a restore temp's own content is not tracked by `PowerLoss`; recovery deletes restore temps without a check either way, and the loss this allows is §15's accepted limit (recorded in `gh.acc`). Its data is synced before its swap (H1), so the swapped-in bytes are never torn; the seeded bug shows the opposite |
+| One folder per workspace; journals, backups and the note durable when their step says so | the order of their syncs is modelled per step; rename+sync of `.resolved`, `.kept`, Resume saving's `.done`, the sidecar's `could_not_check` and the note are one step each, as the spec states them durable; the R4 job's renames are a rename step and a sync step (M5) |
 | Legacy-lock detection (§6.1 step 2) | not in §13's world; ADR-0062's detection tests (§14 "Legacy lock") |
 | `max_queued`, `ENGINE_QUEUE_FULL` (named `BUSY_HEAVY_LOAD` at d8ca7823) | bounded by the model's counters instead; §14 queue tests |
 | Job ids | canonical: a new job takes the lowest id not in use (`NewId`), so equal queues are equal states |
@@ -273,17 +281,20 @@ Model-only properties (not named in §13; each with a mutant):
 
 ## 4. Interpretations where the spec is still silent
 
-Readings of draft 5 that 1cf1fb4c made spec text are gone from this list (I5, I6, I8 and I9 of 84c8b8c9); I12 (the "runs" wording) went with N2 at 4fb67b23.
+Readings of draft 5 that 1cf1fb4c made spec text are gone from this list (I5, I6, I8 and I9 of 84c8b8c9); I12 (the "runs" wording) went with N2 at 4fb67b23; I6' (what "Finishing" covers) went with §13's text at 31afbd82 (M3).
 
-- **I1** A Cancel of `recover_all` marks the journal it is on as blocking (`cancelled`) and goes on in a new engine; before a journal is in hand, "the journal it is on" is the next one it would try, and with none left the Cancel ends recover-all; while recover-all only waits for a new engine it holds none and there is nothing to cancel (a stuck slot then gets the timer advice).
+- **I1** A Cancel of `recover_all` marks the journal it is on as blocking (`cancelled`) and goes on in a new engine; after the listing and before a journal is in hand, "the journal it is on" is the next one it would try, and with none left the Cancel ends recover-all (its listing already synced the records); while recover-all only waits for a new engine it holds none and there is nothing to cancel (a stuck slot then gets the timer advice). Before the listing, see I14.
 - **I2** A save that ends during a quiesce (switch, quit, update) does not queue its R4 or rebuild: §9.1 step 2 refuses new jobs naming A, and the closed record stays for the next open.
 - **I3** A Cancel by the waiting user also applies when the running job sits between two engines (`SpawnPcs`); ending a job that holds no engine signals nothing.
 - **I4** `temps_after_close` has no named property in §13; the model attaches "no temp of a save outlives its journal" (§6.1 step 8.4) to `CutTempNeverBlocks`.
-- **I6'** `EveryQuitEndsOrOffersQuitAnyway`: "Quit anyway is offered" is read as the quit's "Finishing your last change…" state (§9.3 step 3: a confirmed save, create or copy still queued or running) with Quit anyway enabled. Read as "Quit anyway is enabled" alone, the property would hold for every quit, since Quit anyway is enabled whenever the app is alive.
 - **I7** A confirmed save is never answered "not open" by a switch ("closing is not a cancel"); §13 maps the switch-drop mutant to `OutcomeTruthful`, which is where the model states it.
 - **I10** The assessment of a workspace on an unreachable disk fails (the open fails), as reading its files does.
-- **I11** The user may quit, and press Quit anyway, in every state while the app is alive; the open's requester (the window of a switch or boot) may go away, which leaves the open running and endable by another job's Cancel (§4's list), like a read whose requester has gone.
+- **I11** The user may quit, and press Quit anyway, in every state while the app is alive (the shell's quit, then Quit anyway, §9.3); so `EveryWaitHasAnExit`'s Quit-anyway clauses and `QuitAnywayAlwaysEnabled` hold by this guard, and the mutant `quit_anyway_only_while_quitting` shows they would catch a narrower one. The open's requester (the window of a switch or boot) may go away, which leaves the open running and endable by another job's Cancel (§4's list), like a read whose requester has gone; that Cancel then ends the switch or boot on the failed screen (M1).
 - **I13** The liveness worlds driven by engine and app fairness (`LS_boot`, `LS_jobs`, `LS_quit`) give the user a budget of exits (`UserBudget`: Retry, Back, Open another, Keep, Stay, Try again), assuming the user eventually stops restarting work; otherwise pressing Retry and Cancel forever starves a queued create, which is not a system failure. Safety worlds and `EngineCanAlwaysBeFreed`'s worlds leave the exits unbounded.
+- **I14** A Cancel of `recover_all` before its listing (§8.1: the journal directories synced, then listed): nothing is in hand, so nothing is marked, and recover-all never ends without its listing (M2). The model ends the switch or boot on its cancelled screen, as §9.1 step 3 and §9.2 do for its queued job; Retry runs recover-all again. §4 and §8.1 do not say this case. The other reading, "recovery goes on in a new engine" from the listing, lets a user who presses Cancel before every listing restart recover-all for ever: under `EngineCanAlwaysBeFreed`'s fairness `LS_free_cc` then fails (a create waits behind the boot's recover-all, which the user's Cancel keeps restarting). Open for the owner (fidelity review 2 hand-off).
+- **I15** After "Switch cancelled." or "Opening cancelled.", Retry runs the switch's own work again (recover-all, then the open), as Retry on the blocked screen does; Back opens the previous workspace as after a failed open (§9.1 step 6).
+- **I16** An R4 engine that dies between a record's rename and its sync: the sidecar syncs the journal directory before it acts on the record (§6.5: "before anything acts on the new state or shows it"), as §6.6 does for a save; the pause is then durable before anything shows it.
+- **I17** `LS_jobs` and `LS_boot` have no stuck process and no hang (`MaxStuck` = `MaxHang` = 0): one that never ends would hold a waited-for job, a switch or the boot for ever, which `EveryWaitedForJobEnds`, `EverySwitchEnds` and `EveryBootEnds` cannot allow for (the spec answers it with Quit anyway and the advice, which `EngineCanAlwaysBeFreed` checks in `LS_free*` with both). `LS_quit` has one of each: its property allows for them (Quit anyway offered).
 
 ## 5. The model's findings: now spec rules
 
@@ -306,12 +317,30 @@ The model at 145aed17 checked the spec at 1cf1fb4c as written, with the fixes be
 - A second path to the same end (found with a narrower first fix that showed the advice only after the waiting user's Cancel): the waiting user's Cancel removes only their own job (the running read's requester is present, §4), then that requester closes their tab; the read's engine is signalled and stuck, and nobody waits.
 - Judgement: a gap between §4/§5.2 and §13: §13 lists the ways a wait ends outside the property (a closed tab, a switch) but not "the waiting user's own Cancel", after which nothing explains a slot held for ever. No data is at risk; the user gets no explanation and the next request waits again. Adopted (§4, §5.2, §11, §13): §5.2's advice ("Finzytrack cannot stop the earlier ledger work. Quit and reopen Finzytrack.") appears whenever a signalled process holds the slot past the display delay, whether or not a job waits (in the waiting job's place, or as a notice). Model: `AdviceTimer`; mutant `advice_only_to_waiting` (the advice only while a job waits) must break `EngineCanAlwaysBeFreed` on `LS_free`. It still never appears on a timer for work that is merely slow (`NoAdviceOnTimerForSlowWork`), and the `no_quit_message_for_writing` mutant is still caught. Weakening the property instead ("… or nobody waits any more") would let that mutant pass.
 
+### Fidelity review 2 (of cac8ad13 against the spec at 4fb67b23)
+
+Verdict: not faithful (1 High, 5 Medium, 8 Low). The spec took its spec items at 31afbd82; this model encodes them and fixes the model's own bugs. Each old rule is a mutant that must fail; each of the reviewer's failing cases is a small world that now passes.
+- **H1** (spec): a restore temp's data synced before its swap (§6.4, §8.1 step 3). The model already assumed it; `RS_Write` now says so, and `no_restore_temp_fsync` (swapped-in bytes torn after a power loss) must break `NoTornLedgerAfterRecovery` on `S_recover_power`.
+- **M1** (model): another job's Cancel that ended an `open` (its requester gone) left the switch or boot in its opening stage for ever. It now applies the open's failed screen; `OpeningHasItsJob` (§13 at 31afbd82) is the stall check; `cancel_open_keeps_opening` must break it on `S_stuck_opening` (the reviewer's `RV_stuck_opening`); `LS_boot` gained a tab close (`MaxClose = 1`).
+- **M2** (model): a Cancel of recover-all before its listing marked the first journal (a mark the listing then erased) or, with none left, ended recover-all without the listing's sync, so a quit note could be answered from a record a power loss then took back (`OutcomeTruthful`; the reviewer's `RV_save_quit_power`, now the world `S_save_quit_power`). Now recover-all never ends unlisted, the Unavailable paths list after the sync, and a Cancel before the listing ends the switch or boot on its cancelled screen (I14). Mutants `recover_cancel_before_listing` (the old rule) and the reviewer's `rc_unsynced` (recover-all reads records without the sync) must break `OutcomeTruthful` on `S_save_quit_power`.
+- **M3** (spec wording): §13's "Finishing" covers any running save, create or copy, background saves included. `LS_quit` gained a background save (`MaxBg = 1`, the reviewer's `RV_quit_bg`); `finishing_confirmed_only` (the old reading) must fail there, which shows that a running background save past its commit point does hold a quit.
+- **M4** (spec): the switch's or boot's own queued job can be cancelled while it waits behind other work ("Switch cancelled." / "Opening cancelled."). Model: `SwitchJobBehind`, `CancelableQ`, `CancelledSes`; Retry runs recover-all again (I15); a new `EveryWaitHasAnExit` clause; world `S_switch_hung_create` (the reviewer's `RV_switch_hung_create`), where `switch_job_not_cancelable` must break `EveryWaitHasAnExit`. The Quit-anyway clauses hold by I11; `quit_anyway_only_while_quitting` must break them on `S_cancel_commit`.
+- **M5** (spec): every R4 record rename is synced before its outcome is acted on or shown. Model: `R4Rename`, then `R4_Sync`; the sidecar syncs after an engine death (I16); `R4GateLiftedOnlyByUser` now also says a shown pause is durable; `r4_rename_unsynced` must break it on `S_r4_outcomes`.
+- **L1** `run_all.sh`'s summary marks a log of an older model, `.cfg`, tool or simulation size as stale (not counted as a result); the resume key includes `SIM_TRACES` and `SIM_DEPTH` for the simulation; the stale `P_` logs were deleted.
+- **L2** world `S_create_close`: a confirmed create and copy with the requester present or gone, and a read waiting behind them.
+- **L3** world `S_recover_torn` (`BootTorn`): a journal whose file list cannot be read blocks every open and every copy; Keep syncs only what readable journals name. `PartJournalNeverBlocks` now exempts a torn boot journal (not ours).
+- **L4** the comment on exchanges no longer claims ordered metadata; §6's `quit_waits_reap` row names `EveryQuitEndsOrOffersQuitAnyway`.
+- **L5** HOW_TO_RUN.md: disk needs, `--only` for `L_session` and `L_recover_all`, honest totals.
+- **L6** a full disk before the journal is durable (§6.4's last bullet): `IOFail` at the backup and `.part` steps refuses with nothing replaced ("not saved"). A failure between the durable `.open` and the first replace is not described by §6.4 and is not modelled (an engine crash there is).
+- **L7** I17.
+- **L8** `S_fs_weak_recover` gained an I/O error during the restore (`MaxIO = 1`).
+
 ### Model corrections made while running
 Not spec issues; listed so a reviewer can judge them. At 84c8b8c9: the power-loss model first let a file and its temp revert independently after an atomic exchange (fixed with the coupled pairs of §3); refusal branches silently disabled by contradictory `UNCHANGED` clauses (found by the action-coverage check); a hang that survived the replacement of its engine; a blocking mark that survived a power loss; recover-all's Cancel read three ways before I1; properties first stated too strictly. In this update: the recover-all epoch counter grew without bound once the exits lost their counters (replaced by the journal flag `old`); a coupling left by an earlier save's temp was reused by a later save's exchange of the same file (now dissolved into independent outcomes first); the outside editor's durable save no longer stands in for an ordering assumption (it syncs its folder, which §13 now states).
 
 ## 6. Mutants
 
-Each runs on a small world (`cfg/MUT_<name>.cfg`) and checks only its property; `run_all.sh` requires TLC to report that property violated. 35 come from the two executable models §13 cites, 5 are §13's additional ones, 11 were added at 84c8b8c9 so that every property has one (PROCESS.md §3), 8 are the model's former findings (F1-F4, O1, N1-N3), and 7 come from model review 1 or the update after it (66 in all). `appscoped_runs` is a reachability check rather than a seeded bug (§5 N2).
+Each runs on a small world (`cfg/MUT_<name>.cfg`) and checks only its property; `run_all.sh` requires TLC to report that property violated. 35 come from the two executable models §13 cites, 5 are §13's additional ones, 11 were added at 84c8b8c9 so that every property has one (PROCESS.md §3), 8 are the model's former findings (F1-F4, O1, N1-N3), 7 come from model review 1 or the update after it, and 8 from fidelity review 2 (74 in all). `appscoped_runs` and `finishing_confirmed_only` are reachability checks rather than seeded bugs (§5).
 
 | Mutant | Origin | Property | World | What it changes |
 |---|---|---|---|---|
@@ -363,7 +392,7 @@ Each runs on a small world (`cfg/MUT_<name>.cfg`) and checks only its property; 
 | `installer_ignores_journal` | added | `InstallerNeverOverOpenJournal` | `S_quit` | the installer runs over a `.open` journal |
 | `save_waits_r4_forever` | added | `EveryWaitedForJobEnds` | `LS_jobs` (two saves) | the save waits for the queued R4 instead of running it |
 | `switch_waits_for_r4` | added | `EverySwitchEnds` | `LS_jobs` | A closes only once its owed R4 ran |
-| `quit_waits_reap` | added | `EveryQuitEnds` | `LS_quit` | close waits for the reap |
+| `quit_waits_reap` | added | `EveryQuitEndsOrOffersQuitAnyway` | `LS_quit` | close waits for the reap |
 | `cnc_auto_lift` | added | `R4GateLiftedOnlyByUser` | `S_r4_attempts` (three saves) | recover-all turns `could_not_check` back into an owed R4 |
 | `r4_skipped_before_save` | added | `OwedR4BeforeNextSave` | `S_r4_outcomes` | the save skips step 1 and the gate's closed-record test |
 | `outcome_unsynced` | finding F1 | `SavedSurvivesPowerLoss` | `S_save_power` (+ crash) | the outcome check and recover-all read records without syncing their directory |
@@ -374,6 +403,14 @@ Each runs on a small world (`cfg/MUT_<name>.cfg`) and checks only its property; 
 | `keep_no_sync` | finding N1 | `SavedSurvivesPowerLoss` | `S_forget` | Keep renames the journal `.kept` without syncing the files it names |
 | `appscoped_runs` | finding N2 | `AppScopedWaitsForRecovery` | `S_switch` | checks the old wording ("no create or copy *runs*" in the window); must fail, so a create that started earlier still runs on (a reachability check) |
 | `advice_only_to_waiting` | finding N3 | `EngineCanAlwaysBeFreed` | `LS_free` | the timer advice only while a job waits |
+| `no_restore_temp_fsync` | fidelity review 2, H1 | `NoTornLedgerAfterRecovery` | `S_recover_power` | a restore temp swapped in before its data was synced |
+| `r4_rename_unsynced` | fidelity review 2, M5 | `R4GateLiftedOnlyByUser` | `S_r4_outcomes` | R4's record renames (and `could_not_check`) acted on and shown before the sync |
+| `cancel_open_keeps_opening` | fidelity review 2, M1 | `OpeningHasItsJob` | `S_stuck_opening` | another job's Cancel ends the open and leaves the boot in its opening stage |
+| `recover_cancel_before_listing` | fidelity review 2, M2 | `OutcomeTruthful` | `S_save_quit_power` | a Cancel before the listing marks a journal or ends recover-all unlisted (the old I1) |
+| `rc_unsynced` | fidelity review 2, M2 (the reviewer's) | `OutcomeTruthful` | `S_save_quit_power` | recover-all reads the records without syncing their directories |
+| `switch_job_not_cancelable` | fidelity review 2, M4 | `EveryWaitHasAnExit` | `S_switch_hung_create` | the switch's queued recover-all cannot be cancelled |
+| `quit_anyway_only_while_quitting` | fidelity review 2, M4 | `EveryWaitHasAnExit` | `S_cancel_commit` | Quit anyway offered only during a quit |
+| `finishing_confirmed_only` | fidelity review 2, M3 | `EveryQuitEndsOrOffersQuitAnyway` | `LS_quit` | "Finishing" read as confirmed jobs only: must fail (a reachability check) |
 | `stay_disabled` | model review 1 | `EveryWaitHasAnExit` | `S_switch` | Stay is never offered |
 | `retry_disabled` | model review 1 | `EveryWaitHasAnExit` | `S_boot` | Retry is never offered |
 | `fb_no_guard` | model review 1 | `RecoveryWritesOnlyRecordedPaths` | `S_recover_lock` (no orphan) | the path guard is missing from recovery's check |

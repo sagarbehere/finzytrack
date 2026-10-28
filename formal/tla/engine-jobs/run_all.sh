@@ -91,6 +91,12 @@ verdict() {  # log cfg mode -> PASS | VIOLATE:<property> | ERROR | INCOMPLETE
   echo INCOMPLETE
 }
 
+# the resume key of one configuration: model, .cfg, jar, Java version and, for a simulation, its size
+cfghash() {  # name mode
+  sim=""; [ "${2:-check}" = simulate ] && sim="simulate $SIM_TRACES $SIM_DEPTH"
+  (cat "$MODEL" "$HERE/cfg/$1.cfg"; echo "$TOOLKEY"; if [ -n "$sim" ]; then echo "$sim"; fi) | sha256
+}
+
 summary() {
   out="$RES/SUMMARY.md"
   {
@@ -107,6 +113,11 @@ summary() {
     [ -f "$log" ] || continue
     res=$(sed -n 's/^RUNNER-VERDICT //p' "$log" | tail -1)
     [ -n "$res" ] || res="running or stopped"
+    # a log of an older model, .cfg, tool or simulation size is not a result of this one
+    if ! grep -q "^RUNNER-HASH $(cfghash "$name" "$mode")" "$log"; then
+      echo "| $name | $tier | $kind | $expect | stale: not run on this model | stale | - | - | - | - |"
+      continue
+    fi
     secs=$(sed -n 's/^RUNNER-SECONDS //p' "$log" | tail -1)
     # the final count, or the last progress report of a run that was stopped
     ds=$(sed -n 's/.* states generated, \([0-9,]*\) distinct states found.*/\1/p' "$log" | tail -1)
@@ -123,13 +134,16 @@ summary() {
     echo
     n_run=$(awk -F'|' '$3 ~ /^ [SML] $/' "$out" | wc -l | tr -d ' ')
     n_bad=$(awk -F'|' '$3 ~ /^ [SML] $/ && $7 ~ /no/' "$out" | wc -l | tr -d ' ')
+    n_stale=$(awk -F'|' '$3 ~ /^ [SML] $/ && $7 ~ /stale/' "$out" | wc -l | tr -d ' ')
+    n_run=$((n_run - n_stale))
     for t in S M L; do
       s=$(awk -F'|' -v t=" $t " '$3 == t && $10 ~ /[0-9]/ {s += $10; c++} END {printf "%d configurations run, %d s in total", c, s}' "$out")
       echo "- Tier $t: $s"
     done
     echo
-    if [ "$n_bad" = 0 ]; then echo "**ALL AS EXPECTED** ($n_run configurations)"
+    if [ "$n_bad" = 0 ]; then echo "**ALL AS EXPECTED** ($n_run configurations run on this model)"
     else echo "**SURPRISES: $n_bad of $n_run** (the rows with As expected = no; read their logs)"; fi
+    [ "$n_stale" = 0 ] || echo "$n_stale logs are of an older model or .cfg (stale): run them again"
   } >> "$out"
 }
 
@@ -154,7 +168,7 @@ while read -r name expect tier kind mode; do
   selected "$name" "$expect" "$tier" "$kind" || continue
   cfg="$HERE/cfg/$name.cfg"
   log="$RES/$name.log"
-  hash=$( (cat "$MODEL" "$cfg"; echo "$TOOLKEY") | sha256)
+  hash=$(cfghash "$name" "$mode")
   if [ "${mode:-check}" = simulate ]; then
     EXTRA="-simulate num=$SIM_TRACES -depth $SIM_DEPTH"
   else
