@@ -65,6 +65,9 @@ Owner, on the process (PROCESS.md §3 "Golden specs"): "We'll then produce the m
 - **F3:** a swap-back is synced at once.
 - **F4:** a switch or boot that shows its failed or blocked screen frees the queue for app-scoped jobs (§3).
 - **O1:** R4's confirm checks the fingerprint once more after the parse; moved → superseded, never a false mismatch (§6.7).
+- **N1:** "Keep the files as they are now" syncs the files and folders the journal names before renaming it `.kept`, so what it keeps survives a power loss (spec §8.1, §9.2).
+- **N2:** `AppScopedWaitsForRecovery` says a create or copy does not *start* during recovery, matching §3 and §9.1; behaviour unchanged.
+- **N3:** the quit advice for a signalled process that holds the engine slot past the display delay is shown whether or not a job still waits, never for work that is merely slow (spec §5.2).
 - From the model review: the manifest rename that collides after the commit point has a stated outcome (§8.2 step 7); one quit note per job (§9.3); §13 states the liveness properties as the model must encode them, the file-system assumptions, and `AppScopedWaitsForRecovery`; the engine is spawned when a job needs one (§5.5, convergence audit C29).
 
 ## References
