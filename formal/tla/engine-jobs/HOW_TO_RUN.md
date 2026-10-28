@@ -1,6 +1,6 @@
 # How to run the engine-jobs model checks
 
-The TLA+ model of `design/specs/engine-jobs.md` §13 (spec at c87ce786; model with fidelity review 4's fixes). It runs as a plain shell script with Java;
+The TLA+ model of `design/specs/engine-jobs.md` §13 (spec with simplification B of 2026-10-28: the engine lock, Back always recovers first; model with fidelity review 4's fixes and simplification B, MAPPING.md §5). It runs as a plain shell script with Java;
 no AI is involved. MAPPING.md says what the model checks and how it maps to the spec.
 
 ## Before the first run
@@ -61,25 +61,27 @@ Options: `--workers N` (TLC worker threads; default all cores), `--heap 12g` (de
 ## How long it takes
 
 Measured on the owner's Mac (Apple M4 Pro, 14 cores, 48 GB) on 2026-10-28 with 14 TLC workers, on the
-model after fidelity review 4. Other work loaded the Mac during part of these runs (load averages up to 150),
-so single times can be up to twice what a quiet Mac gives; the heaviest worlds were timed again when it was
-quieter (the times below). The agent ran the small tier in parts of at most 9 minutes (`--only` lists).
+model after simplification B. Other work may have loaded the Mac during these runs, so single times can be
+up to twice what a quiet Mac gives. The agent ran the small tier in parts of at most 10 minutes (`--only`
+lists).
 
 | Tier | Configurations | Result | Size | Wall time |
 |---|---|---|---|---|
-| S | 31 safety worlds (`S_save_orphan` new in review 4) | all PASS | 2,548 (`S_create_nonempty`) to 6,618,093 distinct states (`S_r4_attempts`); 40.3 million together | 1 s to 110 s each (`S_r4_attempts`); 798 s together |
-| S | 4 liveness worlds (`LS_boot`, `LS_quit`, `LS_free`, `LS_free_cc`) | all PASS | up to 790,140 (`LS_boot`) | 293 s together (`LS_boot` 215 s) |
+| S | 30 safety worlds (`S_save_orphan` removed by simplification B) | all PASS | 2,548 (`S_create_nonempty`) to 6,618,093 distinct states (`S_r4_attempts`); 38.6 million together | 1 s to 156 s each (`S_switch`); 735 s together |
+| S | 5 liveness worlds (`LS_boot`, `LS_quit`, `LS_free`, `LS_free_cc`, `LS_free_orphan` new in simplification B) | all PASS | up to 790,140 (`LS_boot`) | 449 s together (`LS_boot` 375 s, against 215 s on the model after review 4 with the same 790,140 states: the Mac was busier) |
 | S | `LS_jobs` | **not re-run by the agent** (one run takes longer than an agent tool call); the owner's `--tier S` run covers it | 1,723,585 on an earlier model | 642 s on an earlier model |
-| S | 92 mutant configurations (90 mutants; the reviewers' own among them, MAPPING.md §6) | each violates its property | | 267 s of checking, about 10 min with start-up (longest `MUT_cnc_auto_lift`, 78 s) |
-| S | all of the above but `LS_jobs` | **all as expected, 127 configurations** | | about 30 min together; with `LS_jobs` about 40-45 min |
+| S | 92 mutant configurations (90 mutants; the reviewers' own among them, MAPPING.md §6) | each violates its property | | 237 s of checking, about 10 min with start-up (longest `MUT_cnc_auto_lift`, 61 s) |
+| S | all of the above but `LS_jobs` | **all as expected, 127 configurations** | | 1,421 s of checking, about 30 min with start-up; with `LS_jobs` about 40-45 min |
 | M | `LM_free`, `M_recover_temps`, `M_r4_switch` | not run on this model | | `LM_free`: 219 s on an earlier model; others below |
 | L | `L_save_all`, `L_r4_switch`, `L_session`, `L_recover_all`, `L_save_deep` | not run on this model | | estimate below |
 | L | `L_world` (bounded simulation) | not run on this model | default 200,000 traces of ≤ 200 steps (about 11.5 million states) | estimate below |
 
-Fidelity review 4 left the small worlds' sizes about the same (a queued recover-all now clears earlier
-reasons, which merges states: `S_save_crash` 3,107,308 → 2,814,748) except where an orphaned engine now writes:
-`S_recover_lock` 74,675 → 151,810. The large worlds with a lingering engine after an app crash (`L_save_deep`,
-`L_world`) and with `BootOrphan` (`L_recover_all`) gain the orphan's interleavings; expect them to grow too.
+Simplification B removed the orphaned engine's own steps, so the worlds where it wrote shrank:
+`S_recover_lock` 151,810 → 31,173 (74,675 before review 4 added the writing orphan). Worlds without an orphan
+kept their size (`S_save_crash` 2,814,748). The large worlds that had a writing orphan (`L_save_deep` and
+`L_world`, a lingering engine after an app crash; `L_recover_all`, `BootOrphan`) lose those interleavings, so
+the estimates below, made before review 4 added them, stand; in exchange any lingering engine now holds the
+engine lock (before, only one that held ledger-set locks counted), which adds a little where `MaxOrphan` is 1.
 `results/SUMMARY.md` lists every configuration, those never run here as "not run".
 
 Estimates for what was not run, and how they were derived. The model grew between 84c8b8c9 and now: the
