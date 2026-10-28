@@ -49,6 +49,12 @@ GENERATORS: dict[str, tuple[list[str], list[str]]] = {
             "engine/uv.lock",
         ],
     ),
+    # The mirror's DDL snapshot, printed by the build's own table list (BL-0057, S0050); the build is checked against
+    # design/specs/mirror/surface.toml by engine/tests/mirror/test_surface.py.
+    "contracts/mirror-ddl.sql": (
+        [str(ENGINE_PYTHON), "-I", "-m", "ledger_engine.mirror.core.schema"],
+        ["engine/src/ledger_engine/mirror/core/schema.py"],
+    ),
     "design/generated/statecharts/engine-supervision.md": (
         [str(BACKEND_PYTHON), "-I", "backend/scripts/gen_statecharts.py", "--stdout"],
         ["backend/src/app/platform/engine_supervision.py", "backend/scripts/gen_statecharts.py"],

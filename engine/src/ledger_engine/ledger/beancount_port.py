@@ -23,7 +23,7 @@ Pinned to Beancount 3.2.0 (ADR-0004); `BEANCOUNT_VERSION` is checked by the over
 from __future__ import annotations
 
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from importlib.metadata import version
@@ -32,11 +32,18 @@ from typing import Any, Final
 from beancount.core.data import (
     Balance,
     BeancountError,
+    Close,
     Commodity,
+    Custom,
     Directive,
+    Document,
+    Event,
+    Note,
     Open,
+    Pad,
     Posting,
     Price,
+    Query,
     Transaction,
 )
 from beancount.core.data import entry_sortkey as _entry_sortkey
@@ -45,7 +52,8 @@ from beancount.core.display_context import Precision as _Precision
 from beancount.core.interpolate import AUTOMATIC_META as _AUTOMATIC_META
 from beancount.core.interpolate import compute_residual as _compute_residual
 from beancount.core.interpolate import infer_tolerances as _infer_tolerances
-from beancount.core.position import Cost
+from beancount.core.inventory import Inventory as _Inventory
+from beancount.core.position import Cost, Position
 from beancount.core.realization import compute_balance as _compute_balance
 from beancount.core.realization import get as _realization_get
 from beancount.core.realization import realize as _realize
@@ -67,21 +75,30 @@ __all__ = [
     "WRAPPERS",
     "Balance",
     "BeancountError",
+    "Close",
     "Commodity",
     "Cost",
+    "Custom",
     "Directive",
     "DisplayPrecision",
+    "Document",
+    "Event",
+    "Note",
     "Open",
     "OptionsMap",
+    "Pad",
     "ParseResult",
+    "Position",
     "Posting",
     "Price",
+    "Query",
     "Transaction",
     "TransactionCheck",
     "aggregate_options",
     "assertion_balance",
     "balance_tolerance",
     "book",
+    "booked_positions",
     "check_transaction",
     "default_options",
     "display_precision",
@@ -123,6 +140,7 @@ WRAPPERS: Final = frozenset(
         "check_transaction",
         "balance_tolerance",
         "assertion_balance",
+        "booked_positions",
         "display_precision",
         "is_interpolated",
     }
@@ -233,8 +251,9 @@ def assertion_balance(entries: Sequence[Directive], assertion: Balance) -> Decim
     """The units of the assertion's currency in its account and every child, from the entries before it in
     Beancount's order (a balance assertion is checked at the start of its day).
 
-    One realization per call, so all assertions of a ledger cost assertions x entries.
-    TODO(BL-0119): one pass for every assertion before the mirror build uses this.
+    One realization per call, so all assertions of a ledger cost assertions x entries. The mirror does not call it:
+    its `balance_assertions` rows read Beancount's own verdict, set on each failing assertion by the load (S0050).
+    TODO(BL-0119): one pass for every assertion before a whole-ledger caller (the reconciliation messages) uses this.
     """
     index = next(i for i, e in enumerate(entries) if e is assertion)
     account = _realization_get(_realize(list(entries[:index])), assertion.account)
@@ -242,6 +261,17 @@ def assertion_balance(entries: Sequence[Directive], assertion: Balance) -> Decim
         return Decimal(0)
     number = _compute_balance(account).get_currency_units(assertion.amount.currency).number
     return Decimal(0) if number is None else number
+
+
+def booked_positions(transactions: Iterable[Transaction]) -> dict[str, list[Position]]:
+    """Per account, the positions Beancount's inventory holds after every posting of `transactions`, added in the
+    order given: `Inventory.add_position`, as `realization` builds an account's balance (a lot is merged with an
+    equal one, reduced by a matching reduction, and gone when it reaches zero)."""
+    inventories: dict[str, _Inventory] = {}
+    for transaction in transactions:
+        for posting in transaction.postings:
+            inventories.setdefault(posting.account, _Inventory()).add_position(posting)
+    return {account: list(inventory.values()) for account, inventory in inventories.items()}
 
 
 @dataclass(frozen=True, slots=True)

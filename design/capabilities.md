@@ -4,7 +4,7 @@
 
 Every user-visible capability of Finzytrack, with its status: `planned`, `partial`, `built`, `cut` (absent on purpose) or `deferred` (not in v0.4.0). This page is the index; each row's full description, what changes in v0.4, where it lived in v0.3, its doc page, backlog items, ADRs, code and tests are in `design/capabilities.toml` (search for the ID). Edit the `.toml`, then run `python3 scripts/gen_capabilities.py`. Rules: `design/process/PROCESS.md` ("Project memory").
 
-**Totals:** cut 16, deferred 12, partial 1, planned 312; 341 rows; release-blocking 308.
+**Totals:** cut 16, deferred 12, partial 2, planned 311; 341 rows; release-blocking 308.
 
 ## Setup and workspaces
 
@@ -426,7 +426,7 @@ Every user-visible capability of Finzytrack, with its status: `planned`, `partia
 | CAP-DATA-BOOT | Boot phases with a screen for each (unprovisioned, recovering, config invalid, needs ledger, ledger… | new | planned | M2 | yes |
 | CAP-DATA-BACKUPS | A timestamped backup of every file before each write, retention, atomic writes, backups during… | change | planned | M3 | yes |
 | CAP-DATA-LOGS | Rotating log file and console output | keep | planned | M2 | yes |
-| CAP-DATA-MIRROR | SQLite mirror of the ledger, rebuilt after each write and on every switch | change | planned | M2 | yes |
+| CAP-DATA-MIRROR | SQLite mirror of the ledger, rebuilt after each write and on every switch | change | partial | M2 | yes |
 | CAP-DATA-EXPORT-API | Manual mirror export endpoints | cut | cut | M2 | n/a |
 | CAP-DATA-MULTIFILE | Multi-file ledgers: new entries routed by Fava's `insert-entry` / `default-file` options | keep | planned | M4 | yes |
 | CAP-DATA-WRITE | Writes re-render whole files: comments dropped, elided amounts and `{}` reductions baked in, plugin… | change | planned | M1 | yes |

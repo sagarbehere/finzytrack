@@ -5192,16 +5192,16 @@ area = "Data and lifecycle"
 capability = "SQLite mirror of the ledger, rebuilt after each write and on every switch"
 v04 = "change"
 v04_note = "atomic publish of a new generation file; one mirror per workspace in the cache dir with a corrected fingerprint (instant switch back); readers always see a complete mirror (review:D1 §11; review:23 §3.4)"
-status = "planned"
+status = "partial"
 milestone = "M2"
 release_blocking = "yes"
 doc = "reference/querying-data.md#ledger-mirror-tables"
 legacy_entry = "`services/sqlite_exporter.py`, `sqlite_reader.py`"
 demo = "no"
-backlog = ["I4", "L1-10", "L1.M5"]
-adrs = []
-code = []
-tests = []
+backlog = ["I4", "L1-10", "L1.M5", "BL-0057", "BL-0113", "BL-0120", "BL-0121"]
+adrs = ["ADR-0015", "ADR-0048", "ADR-0055"]
+code = ["engine/src/ledger_engine/mirror/build.py", "engine/src/ledger_engine/mirror/core/rows.py", "engine/src/ledger_engine/mirror/core/schema.py"]
+tests = ["engine/tests/mirror/"]
 
 [[capability]]
 id = "CAP-DATA-EXPORT-API"

@@ -1,12 +1,12 @@
 # Mirror: the SQL surface
 
 ## Orientation
-- **What exists:** this spec only (S0021): every table and column the v0.4 mirror has at M1a (`surface.toml` → generated `surface.md`), the `r_*` views, the v0.2.2 compatibility names, and a stdlib check. No mirror code yet: the engine builds and publishes the mirror in M1a (ADR-0054, ADR-0015); user SQL reaches it in M7.
+- **What exists:** this spec (S0021): every table and column the v0.4 mirror has at M1a (`surface.toml` → generated `surface.md`), the `r_*` views, the v0.2.2 compatibility names, and a stdlib check. The build (S0050, in the engine): `ledger_engine.mirror.build.build` writes every table and view of this spec into a fresh SQLite file from one overlay load, with the rows of every table but `commodities` (BL-0120, waiting for `design/inbox/20261028-iso-currency-list.md`) and the ledger's prices only (the sidecar's, BL-0121). Not built: the generation publish (BL-0113) and the reads; user SQL reaches the mirror in M7.
 - **Entry points:** `design/specs/mirror/surface.toml` (edit this); `scripts/gen_mirror_surface.py`; `scripts/check_mirror_surface.py` (`--legacy` also re-derives the v0.2.2 and v0.3.0 inventories from the legacy tags).
 - **Decisions it applies:** ADR-0015 (rebuildable cache, `r_*` is the public surface), ADR-0016 (SQLite only, one hardened QueryRunner), ADR-0023 (money is TEXT), ADR-0024 (Beancount decides; canonical account kind), ADR-0025 (`is_currency`), ADR-0026 (TransactionId), ADR-0030 (price sidecar), ADR-0031 (label-aware lots), ADR-0048 (v0.2.2 names kept through 0.4.x), ADR-0055 (`transaction_content_hash`, `source_account`).
 - **Invariants:** INV-05 (its view golden, BL-0005, will check the DDL against this spec), INV-06, INV-21 (fallback ids and metadata keys: [`inv21-goldens.md`](inv21-goldens.md); BL-0021).
 - **Traps:** money columns are TEXT, so `amount > 0` compares *text* (`'0.00' > 0` is true); cast first. Metadata keys with `-` need a quoted JSON path. `posting_id` and every `id` are positions, not identities. Do not re-implement a Beancount rule in the mirror (pad pairing, booking, tolerances): read Beancount's result. A row marked `owner:` waits for the owner: do not build it before the answer (none open since 2026-10-25). `account_balances` and `lots` stop at today: the build date is part of the mirror's freshness.
-- **Main tests:** `scripts/tests/test_mirror_surface.py` (the real spec passes; a must-not-pass per rule; the legacy inventories pinned and re-derived). `scripts/oracle/tests/test_inv21_goldens.py` (the INV-21 goldens, S0022). Later: the M1a mirror-build tests, the DDL snapshot and per-table checksums (BL-0057), the view golden (BL-0005).
+- **Main tests:** `scripts/tests/test_mirror_surface.py` (the real spec passes; a must-not-pass per rule; the legacy inventories pinned and re-derived). `scripts/oracle/tests/test_inv21_goldens.py` (the INV-21 goldens, S0022). `engine/tests/mirror/` (S0050: the built DDL against `surface.toml` with planted defects, the INV-21 goldens and the `balance` vectors through the built file, one test per row rule, the fresh-file and rounding refusals). Later: the per-table checksums (BL-0057), the view golden (BL-0005).
 
 ## Three layers
 
@@ -73,7 +73,7 @@ Every column of an `r_*` or compatibility view is a plain reference to a base-ta
 
 ## Not here yet
 
-- The **DDL snapshot** (`contracts/mirror-ddl.sql`, `mirror-views.md`) and **per-table checksums** over the corpus ledgers are generated from the M1a mirror build's code, which is checked against this spec (BL-0057). They are not written by hand.
+- The **per-table checksums** over the corpus ledgers, generated from the mirror build once every table has rows (BL-0057, BL-0120). The **DDL snapshot** exists since S0050: `contracts/mirror-ddl.sql`, generated from the build's table list (`ledger_engine.mirror.core.schema`), which `engine/tests/mirror/test_surface.py` checks against this spec; a separate `mirror-views.md` is not generated, since `surface.md` already documents every view column.
 - The **planning columns** the write contract needs (each entry's source file and line, `entry_hash`; review:D1 §10, review:28 §4.1) are added by M1b's slice through this spec. Adding base or public columns does not change the surface version.
 
 ## Where the v0.2.2 user docs differ from the code
