@@ -18,7 +18,7 @@ layers =
     app.api
     (app.boot)
     app.workspaces
-    (app.mirror)
+    app.mirror
     app.platform
     app.domain
 

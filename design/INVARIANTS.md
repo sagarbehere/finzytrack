@@ -64,7 +64,7 @@ Origin: accepted by the owner as a starting point on 2026-10-24 (review:20 §2),
 ### INV-09: Data is never markup
 - **Rule:** Data is never markup: no HTML or script from ledger, recipe, import or AI content. Query engines are confined.
 - **Why:** Ledger, import and AI text is untrusted input (review:18).
-- **Enforced by:** planned: XSS payload tests; SQL/BQL hardening tests; the CSP.
+- **Enforced by:** the SQL hardening tests of the one user-SQL runner, `backend/tests/mirror/test_query.py` (S0052). Planned: XSS payload tests; BQL hardening tests; the CSP.
 - **Status:** pending (BL-0009, by M2)
 
 ### INV-10: No resident parsed ledger; every cache is bounded

@@ -5198,10 +5198,10 @@ release_blocking = "yes"
 doc = "reference/querying-data.md#ledger-mirror-tables"
 legacy_entry = "`services/sqlite_exporter.py`, `sqlite_reader.py`"
 demo = "no"
-backlog = ["I4", "L1-10", "L1.M5", "BL-0057", "BL-0113", "BL-0120", "BL-0121", "BL-0124", "BL-0125"]
-adrs = ["ADR-0015", "ADR-0048", "ADR-0055"]
-code = ["engine/src/ledger_engine/ledger/fingerprint.py", "engine/src/ledger_engine/ledger/core/ledger_set.py", "engine/src/ledger_engine/mirror/build.py", "engine/src/ledger_engine/mirror/core/rows.py", "engine/src/ledger_engine/mirror/core/schema.py"]
-tests = ["engine/tests/mirror/", "engine/tests/ledger/test_fingerprint.py", "engine/tests/ledger/test_ledger_set.py"]
+backlog = ["I4", "L1-10", "L1.M5", "BL-0057", "BL-0113", "BL-0120", "BL-0121", "BL-0122", "BL-0124", "BL-0125", "BL-0126"]
+adrs = ["ADR-0015", "ADR-0016", "ADR-0048", "ADR-0055"]
+code = ["engine/src/ledger_engine/ledger/fingerprint.py", "engine/src/ledger_engine/ledger/core/ledger_set.py", "engine/src/ledger_engine/mirror/build.py", "engine/src/ledger_engine/mirror/core/rows.py", "engine/src/ledger_engine/mirror/core/schema.py", "backend/src/app/mirror/files.py", "backend/src/app/mirror/reader.py", "backend/src/app/mirror/query.py"]
+tests = ["engine/tests/mirror/", "engine/tests/ledger/test_fingerprint.py", "engine/tests/ledger/test_ledger_set.py", "backend/tests/mirror/"]
 
 [[capability]]
 id = "CAP-DATA-EXPORT-API"
