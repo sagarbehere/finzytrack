@@ -1,8 +1,8 @@
 ------------------------------ MODULE EngineJobs ------------------------------
 (***************************************************************************)
 (* TLA+ model of design/specs/engine-jobs.md (draft 5 with the model      *)
-(* findings F1-F4, O1 and model review 1 folded in, 1cf1fb4c), built only *)
-(* from that spec's §13 obligations and the sections it cites.            *)
+(* findings F1-F4, O1, N1-N3 and model review 1 folded in, 4fb67b23),     *)
+(* built only from that spec's §13 obligations and the sections it cites. *)
 (* MAPPING.md maps every spec rule and property to this file, both ways,  *)
 (* and lists what is abstracted away.                                      *)
 (*                                                                         *)
@@ -27,8 +27,6 @@ EXTENDS Integers, FiniteSets, Sequences, TLC
 
 CONSTANTS
     MUTANT,         \* "none" or the name of one seeded bug (MAPPING.md, mutants)
-    Proposals,      \* {} = the spec as written; else the model's proposed fixes for its new findings
-                    \* N1-N3 (MAPPING.md §5): "keep_syncs", "advice_while_slot_held", "appscoped_starts"
     UserBudget,     \* 0: user exits unbounded (safety); n > 0: at most n of them (liveness worlds driven by
                     \* engine and app fairness assume the user eventually stops restarting work)
     BootJ,          \* subset of {"b2","b3"}: journals left by crashed saves at boot
@@ -508,7 +506,8 @@ UserOpenAnother(t) ==
   /\ q' = q \o <<RecJob(NewId)>>
   /\ n' = Spent
   /\ UNCHANGED <<fs, jr, pst, tgt, runs, ctl, eng, gh>>
-\* "Keep the files as they are now": renames the journal .kept, writes nothing to the ledger files
+\* "Keep the files as they are now" (§8.1): writes nothing to the ledger files; first durable_syncs every
+\* file and folder the journal names (N1), then renames the journal .kept (its directory synced)
 KeepSet == {j \in JIds : jr[j].st = "topen" \/ (jr[j].st = "open" /\ jr[j].files \cap LS(ses.target) # {})}
 UserKeep ==
   /\ GKeep /\ CanAct
@@ -517,8 +516,8 @@ UserKeep ==
                         !.lnk = IF \E j \in KeepSet : "R" \in jr[j].files THEN FALSE ELSE @]
   /\ ses' = [ses EXCEPT !.app = "switch", !.stage = "assess", !.screen = "none"]
   /\ n' = Spent
-  \* proposal N1: "as they are now" made durable before the journal is renamed .kept
-  /\ fs' = IF "keep_syncs" \notin Proposals THEN fs
+  \* N1: "as they are now" made durable before the journal is renamed .kept
+  /\ fs' = IF MUTANT = "keep_no_sync" THEN fs
            ELSE LET F == UNION {jr[j].files : j \in KeepSet} IN
                 [fs EXCEPT !.pl = [f \in Files |-> IF f \in F THEN {fs.cur[f]} ELSE fs.pl[f]],
                            !.cp = [f \in Files |-> IF f \in F THEN {} ELSE fs.cp[f]],
@@ -685,13 +684,15 @@ Assess ==
             /\ UNCHANGED pst
   /\ UNCHANGED <<fs, jr, tgt, runs, ctl, eng, gh>>
 
-\* §5.2/§5.4: after the display delay, a waiting job reads the quit advice only while the slot
-\* is held by a process we signalled that has not ended
+\* §5.2/§5.4: after the display delay, the app shows the quit advice while the slot is held by a
+\* process we signalled that has not ended, whether or not a job waits (N3): in the waiting job's
+\* place, or as a notice
 WaitingQ == \E i \in 1..Len(q) : q[i].wf /\ q[i].req = "present"
 AdviceTimer ==
   /\ Alive /\ ses.advice = "none"
-  \* proposal N3: whenever a signalled process holds the slot, whether or not a job waits
-  /\ \/ /\ eng.st = "sig" /\ (WaitingQ \/ (Busy /\ ctl.pc \in SpawnPcs) \/ "advice_while_slot_held" \in Proposals)
+  /\ \/ /\ eng.st = "sig"
+        \* seeded bug (the rule before N3): the advice only while a job waits
+        /\ MUTANT = "advice_only_to_waiting" => (WaitingQ \/ (Busy /\ ctl.pc \in SpawnPcs))
      \/ /\ MUTANT = "advice_on_timer" /\ Busy /\ eng.st = "busy" /\ WaitingQ
         /\ ~Endable(Ended(RJ))
   /\ ses' = [ses EXCEPT !.advice = "timer"]
@@ -1960,15 +1961,16 @@ NoEngineStall == (Alive /\ Busy /\ EngOK /\ pst.orphan = {}) => ENABLED EngineSt
 \* O1 (§6.7 step 4): a mismatch only with the disk still at the record's post fingerprint
 NoFalseMismatch ==
   [][\A j \in JIds : (jr[j].st = "closed" /\ jr'[j].st = "mismatch" /\ ~jr'[j].cnc) => FP(1) = jr[j].pfp]_vars
-\* §13 "Also safety": no create or copy runs while recover_all runs, or between a switch's close and its
-\* target's open or screen
+\* §13 "Also safety" (N2): no create or copy starts while recover_all runs, or between a switch's close
+\* and its target's open or screen; one started earlier runs on (§3, §9.1 step 2)
 RecoveryWindow == ses.app = "boot" \/ (ses.app = "switch" /\ ses.stage \in {"recover","assess","opening"})
                   \/ (Busy /\ RJ.k = "recover")
-AppScopedRuns == (Busy /\ RJ.k \in {"create","copy"}) => ~RecoveryWindow
-\* proposal N2: "starts" (§3, §9.1 step 2: a create or copy that started earlier runs on)
 AppScopedStarts == \A i \in 1..Len(q) : (StartedId(q[i].id) /\ q[i].k \in {"create","copy"}) => ~RecoveryWindow
-\* (one action property: AppScopedRuns holds initially, so [][AppScopedRuns']_vars is []AppScopedRuns)
+\* the wording before N2 ("no create or copy runs" in the window). Mutant appscoped_runs checks it instead:
+\* not a seeded bug but a reachability check; it must fail, so the model still lets a create or copy that
+\* started before a switch's close run on through the window, as §9.1 step 2 says
+AppScopedRuns == (Busy /\ RJ.k \in {"create","copy"}) => ~RecoveryWindow
 AppScopedWaitsForRecovery ==
-  [][IF "appscoped_starts" \in Proposals THEN AppScopedStarts ELSE AppScopedRuns']_vars
+  [][IF MUTANT = "appscoped_runs" THEN AppScopedRuns' ELSE AppScopedStarts]_vars
 JobIdsBounded == Cardinality(UsedIds) <= JobBound
 =============================================================================

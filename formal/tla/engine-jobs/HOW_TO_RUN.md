@@ -1,6 +1,6 @@
 # How to run the engine-jobs model checks
 
-The TLA+ model of `design/specs/engine-jobs.md` §13 (at 1cf1fb4c). It runs as a plain shell script with Java;
+The TLA+ model of `design/specs/engine-jobs.md` §13 (at 4fb67b23). It runs as a plain shell script with Java;
 no AI is involved. MAPPING.md says what the model checks and how it maps to the spec.
 
 ## Before the first run
@@ -30,9 +30,8 @@ Options: `--workers N` (TLC worker threads; default all cores), `--heap 12g` (de
 
 - It runs the configurations in `configs.txt`, in that order. Each line says the result it must have:
   - `PASS`;
-  - `VIOLATE:<property>` for a seeded bug (a mutant);
-  - `VIOLATE:<property>` for a world where the spec as written breaks a property (findings N1-N3, MAPPING.md §5).
-    The world's `P_` companion runs with the model's proposed fixes and must pass.
+  - `VIOLATE:<property>` for a seeded bug (a mutant), or for `MUT_appscoped_runs`, which checks the wording
+    N2 replaced and must fail (a reachability check, MAPPING.md §5).
 - One log per configuration: `results/<name>.log`. After every configuration it rewrites `results/SUMMARY.md`:
   result, expected result, distinct states, depth, wall time and distinct states per second, the total per
   tier, and **ALL AS EXPECTED** or **SURPRISES**.
@@ -49,26 +48,24 @@ Options: `--workers N` (TLC worker threads; default all cores), `--heap 12g` (de
 | Result | Meaning |
 |---|---|
 | `PASS` as expected | the design holds in that world |
-| `VIOLATE:<property>` as expected | a mutant breaks exactly that property, so the model can catch that mistake; or a spec finding shows as expected |
+| `VIOLATE:<property>` as expected | a mutant breaks exactly that property, so the model can catch that mistake (for `MUT_appscoped_runs`: the old N2 wording still fails) |
 | a row with "As expected = no" | needs a look: read its log (TLC prints the shortest trace that breaks the property) |
 
 ## How long it takes
 
-Measured on the owner's Mac (Apple M4 Pro, 14 cores, 48 GB) on 2026-10-28 with 12 TLC workers, on the
-final model (other work running, load about 10). An idle Mac is faster.
+Measured on the owner's Mac (Apple M4 Pro, 14 cores, 48 GB) on 2026-10-28 with 14 TLC workers, on the
+model with N1-N3 adopted (load from the runs themselves only). The small tier was run in five parts
+(`--only` lists and `--kind mutant`) of 1.5 to 11 minutes each.
 
 | Tier | Configurations | Result | Size | Wall time |
 |---|---|---|---|---|
-| S | 24 safety worlds as the spec is written; 5 of them break a property through findings N1 or N2 and stop early (MAPPING.md §5) | all as expected | 196 to 6,666,629 distinct states (`S_fs_weak`) | 1 s to 87 s each |
-| S | 7 `P_` companions (those worlds, and the two liveness worlds below, with the proposed fixes) | all PASS | up to 6,819,452 (`P_S_r4_attempts`) | up to 78 s |
-| S | 5 liveness worlds as written (`LS_boot`, `LS_jobs`, `LS_quit` pass; `LS_free`, `LS_free_cc` break `EngineCanAlwaysBeFreed` through N3) | all as expected | up to 1,843,235 (`LS_jobs`) | up to 655 s (`LS_jobs`) |
-| S | 63 mutants | each violates its property | | 150 s together (longest `MUT_cnc_auto_lift`, 59 s) |
-| S | all of the above | **ALL AS EXPECTED, 99 configurations** | | about 24 min together |
-| M | `LM_free` (spec as written) | violates `EngineCanAlwaysBeFreed` (N3), as expected | 25,864 | 4 s |
-| M | `P_LM_free` (liveness, to completion) | PASS | 1,708,054 distinct, depth 104 | 219 s |
-| M | `M_recover_temps`, `M_r4_switch` | not run on this model | | estimate below |
+| S | 24 safety worlds | all PASS | 208 to 6,819,452 distinct states (`S_r4_attempts`) | 1 s to 95 s each |
+| S | 5 liveness worlds (`LS_boot`, `LS_jobs`, `LS_quit`, `LS_free`, `LS_free_cc`) | all PASS | up to 1,723,585 (`LS_jobs`) | up to 642 s (`LS_jobs`) |
+| S | 66 mutants | each violates its property | | 172 s of checking, about 4.5 min with start-up (longest `MUT_cnc_auto_lift`, 64 s) |
+| S | all of the above | **all as expected, 95 configurations** | | about 26 min together |
+| M | `LM_free`, `M_recover_temps`, `M_r4_switch` | not run on this model | | `LM_free`: 219 s with the N3 fix on the previous model; others below |
 | L | `L_save_all`, `L_r4_switch`, `L_session`, `L_recover_all`, `L_save_deep` | not run on this model | | estimate below |
-| L | `L_world` (bounded simulation) | a 200-trace smoke run passed (11,484 states, under 1 s) | default 200,000 traces of ≤ 200 steps (about 11.5 million states) | estimate below |
+| L | `L_world` (bounded simulation) | not run on this model (a 200-trace smoke run passed on the previous one) | default 200,000 traces of ≤ 200 steps (about 11.5 million states) | estimate below |
 
 Estimates for what was not run, and how they were derived. The model grew between 84c8b8c9 and now: the
 small worlds have 1-6 times as many states as before (`S_save_crash` 573,953 → 3,377,888; `S_recover`

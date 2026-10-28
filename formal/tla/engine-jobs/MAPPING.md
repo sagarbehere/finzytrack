@@ -1,9 +1,9 @@
 # EngineJobs.tla and the engine-jobs spec, both ways
 
-- **Spec:** `design/specs/engine-jobs.md` at 1cf1fb4c: draft 5 (d8ca7823, then named `engine-scheduler.md`) with the model's findings F1-F4 and O1 and model review 1's spec items folded in. §13 lists what the model must check. Built only from that text and the ADRs and invariants it cites for meaning.
+- **Spec:** `design/specs/engine-jobs.md` at 4fb67b23: draft 5 (d8ca7823, then named `engine-scheduler.md`) with the model's findings F1-F4, O1 and N1-N3 and model review 1's spec items folded in. §13 lists what the model must check. Built only from that text and the ADRs and invariants it cites for meaning.
 - **Model:** `EngineJobs.tla` (one module; at 84c8b8c9 it had the folder's and the spec's old name, renamed in BL-0111). Configurations come from `gen_cfgs.py` (`cfg/*.cfg`, `configs.txt`); `run_all.sh` runs them (HOW_TO_RUN.md).
-- **No fix switch.** F1-F4 and O1 are rules of the spec now and of the model; each one's old finding configuration is a mutant that must fail its property (§13 "The model's former fix switch").
-- **State:** the small tier, every mutant and `P_LM_free` run to completion on this model: all 99 small configurations and both `LM_free` configurations as expected (HOW_TO_RUN.md). The spec as written breaks three properties (new findings N1-N3, §5); with the model's proposed fixes every world passes.
+- **No fix switch.** F1-F4, O1 and N1-N3 are rules of the spec now and of the model; each one's old rule is a mutant that must fail its property (§5; §13 "The model's former fix switch").
+- **State:** the small tier (S worlds, the small liveness worlds and every mutant) runs to completion on this model, all as expected (HOW_TO_RUN.md). The medium and large tiers have not been run on it.
 - `scripts/tests/test_tla_engine_jobs.py` keeps this file honest: every action in `Next` has a row in §2 and every row names an action; every property and mutant §13 names exists in the model and in `gen_cfgs.py`; every property has at least one mutant.
 
 ## 1. Spec → model
@@ -62,7 +62,7 @@
 | §5.1 | at most one engine; a new one only after the reap and an empty group | `SlotFree`, `Spawned`, `Drain` |
 | §5.1 | an engine that ran user code is ended after its job; parse-only may serve the next | `Retired`, `Fresh` (reuse an idle engine with `user = FALSE`), `FreshEnd` |
 | §5.2 | the reason recorded before the signal; our end not a stop | `SigEng` records `reason`, `endBy`, `ended`; `stops` counts only `EngineCrash` |
-| §5.2 | a process that cannot be ended keeps the slot and its locks; the timer advice only for a signalled process | `Stuck`, `eng.st = "sig"` holds `SlotFree` false; `AdviceTimer` |
+| §5.2 | a process that cannot be ended keeps the slot and its locks; the timer advice only for a signalled process, shown whether or not a job waits (N3) | `Stuck`, `eng.st = "sig"` holds `SlotFree` false; `AdviceTimer` |
 | §5.2, §15 | an orphan holds its locks after its app died | `OrphanAfter`, `pst.orphan` |
 | §5.3 | crash, outcomes, bounded restart (Unavailable, Try again) | `EngineCrash`, `ses.stops`, `StopBound`, `WindowExpire`, `UserTryAgain`, `DispatchUnavail` |
 | §5.4 | no time limits; "Still working…" changes only text | no timer ends a job; only `AdviceTimer` changes `ses.advice` |
@@ -77,7 +77,7 @@
 | §6.7 | R4 steps 1-4, build change publishes load_file, nondeterministic, mismatch, attempts → could_not_check, Resume saving | `R4_Start`, `R4_Load`, `R4_Check`, `R4_Confirm`, `R4Failed`, `UserResume` |
 | §7 | loads re-check the fingerprint (retry, then LEDGER_CHANGING) and refuse over `.open` | `RD_Load`, `RD_Check`, `OP_Load`, `OP_Check` |
 | §8.1 | recover-all: `.part` deleted; per journal lock try, check, restore root first, temps deleted, sync, then `.resolved`; Cancel, crash and Unavailable mark blocking; every journal recovered or blocking | `RC_Init`, `RC_Next`, `RC_Lock`, `RC_Check`, `RS_*`, `UserCancelRunning`, `EngineCrash`, `SpawnStep`, `DispatchUnavail` |
-| §8.1 afterwards | blocking journal blocks opens and copies using its files; Keep renames `.kept` | `Blocked`, `Assess`, `CP_Check`, `UserKeep` |
+| §8.1 afterwards | blocking journal blocks opens and copies using its files; Keep `durable_sync`s every file and folder the journal names, then renames it `.kept` (N1) | `Blocked`, `Assess`, `CP_Check`, `UserKeep` |
 | §8.2 | create/copy: non-empty refused; copy refused over any `.open` journal; exclusive writes; only a collision with a written name stops; read-back; commit point; manifest last; delete advice from a listing | `CR_*`, `CP_*`, `CrStopGh` |
 | §9.1 | quiesce, Stay, A closes, recover_all, target opens, Back | `Quiesce`, `UserStay`, `CloseA`, `Assess`, `OP_*`, `UserBack` |
 | §9.2 | boot: recover_all then open; ends on success, failure or block; Retry, Open another, Keep | `Init`, `Relaunch`, `Assess`, `UserRetry`, `UserOpenAnother`, `UserKeep` |
@@ -110,7 +110,7 @@
 | `CancelReachIsTheOneRule` | INV | another job's Cancel ended only an R4, a background save before its commit point, or a read/open whose requester is gone; the quit advice answers a Cancel only for a job the rule does not let it end | `cancel_ends_writing_job`, `r4_only` |
 | `CancelBeforeCommitLeavesDiskUnchanged` | INV | a save ended by any Cancel before its commit point (its own, another job's, the quiesce's) has no journal and no post bytes on disk | `gate_after_journal` |
 | `OutcomeTruthful` | INV + ACT | every told outcome (saved, not saved, unfinished, undone, the quit note's three notices, created / not created) matches the records and files; the note is deleted only once the record is saved, undone or kept; a confirmed save is never answered "not open" | `quit_says_undone`, `quit_note_two_branches`, `switch_drops_confirmed_save` |
-| `SavedSurvivesPowerLoss` | INV | told "saved" ⇒ the record survives a power loss as closed or later, and its files (not named by another open journal) durably hold post | `report_before_close_sync`, `outcome_unsynced` (F1) |
+| `SavedSurvivesPowerLoss` | INV | told "saved" ⇒ the record survives a power loss as closed or later, and its files (not named by another open journal) durably hold post | `report_before_close_sync`, `outcome_unsynced` (F1), `keep_no_sync` (N1) |
 | `UnchangedOnlyAfterRehash` | ACT | "unchanged" is told only when the targets equal their pre bytes in that step | `unchanged_without_rehash` |
 | `BackupDurableBeforeReplace` | INV | post bytes on disk before the close ⇒ the backup is durable | `no_backup_sync` |
 | `JournalDurableBeforeFirstReplace` | INV | post bytes on disk before the close ⇒ the journal is durably `.open` | `no_journal_sync` |
@@ -141,10 +141,10 @@
 | `EverySwitchEnds` | LIVE | a switch reaches the target open or its failed or blocked screen, or ends by Stay or Back | `switch_waits_for_r4` |
 | `EveryQuitEndsOrOffersQuitAnyway` | LIVE + ACT | a quit ends, or reaches "Finishing your last change…" (a confirmed save, create or copy still queued or running) with Quit anyway enabled; Quit anyway always ends the app | `quit_waits_reap` |
 | `OwedR4BeforeNextSave` | ACT | a record becomes closed only with no other closed or mismatch record of W1 | `r4_skipped_before_save` |
-| `EngineCanAlwaysBeFreed` | LIVE (`FairUserSpec`) | as §13 states it: `(a waited-for job is queued) ~> (the engine slot is free, or the quit advice is shown, or the app has quit)`, under weak fairness of the waiting user's Cancel, a requester's Cancel of its own job and Quit anyway once the advice is shown; also `[]QuitAnywayAlwaysEnabled` | `no_quit_message_for_writing` |
+| `EngineCanAlwaysBeFreed` | LIVE (`FairUserSpec`) | as §13 states it: `(a waited-for job is queued) ~> (the engine slot is free, or the quit advice is shown, or the app has quit)`, under weak fairness of the waiting user's Cancel, a requester's Cancel of its own job and Quit anyway once the advice is shown; also `[]QuitAnywayAlwaysEnabled` | `no_quit_message_for_writing`, `advice_only_to_waiting` (N3) |
 | `NoAdviceOnTimerForSlowWork` | INV | timer advice only while a signalled process holds the slot | `advice_on_timer` |
 | `EveryWaitHasAnExit` | INV with `ENABLED` | in each wait, the exit action itself is enabled (`ENABLED UserCancelQueued`, `UserCancelRunning`, `UserStay`, `UserRetry`, `UserBack`, `UserOpenAnother`, `UserKeep`, `UserQuitAnyway`); none of these actions has a counter or bound in its guard | `boot_no_actions`, `stay_disabled`, `retry_disabled` |
-| `AppScopedWaitsForRecovery` | ACT | as stated: no create or copy runs while recover-all runs, or between a switch's close and its target's open or screen (boot included); broken by the spec as written (N2); with the proposal, "starts" | `app_scoped_during_recovery` |
+| `AppScopedWaitsForRecovery` | ACT | as §13 states it (N2): no create or copy *starts* while recover-all runs, or between a switch's close and its target's open or screen (boot included); one started earlier runs on (`AppScopedStarts`) | `app_scoped_during_recovery`; `appscoped_runs` (N2: the old wording, a reachability check, §5) |
 
 Model-only properties (not named in §13; each with a mutant):
 
@@ -173,7 +173,7 @@ Model-only properties (not named in §13; each with a mutant):
 | `UserRetry` | §8.1 "Retry on the blocked screen runs recover_all again"; §9.1 step 6; §9.2 |
 | `UserBack` | §9.1 step 6 "Back to A" |
 | `UserOpenAnother` | §9.2 "Open another workspace" |
-| `UserKeep` | §8.1 afterwards, "Keep the files as they are now" |
+| `UserKeep` | §8.1 afterwards, "Keep the files as they are now" (syncs what it keeps first, N1) |
 | `UserResume` | §6.5, §6.7 Resume saving |
 | `UserForgetReadd` | §6.5, §13 "W1 can be forgotten and added again under a new key" |
 | `UserTryAgain` | §5.3 Try again |
@@ -188,7 +188,7 @@ Model-only properties (not named in §13; each with a mutant):
 | `CloseA` | §9.1 step 4 |
 | `QuitClose` | §9.3 step 4; the installer (ADR-0012) |
 | `Assess` | §9.1 step 6, §9.2 |
-| `AdviceTimer` | §5.2 last bullet, §5.4 display delay |
+| `AdviceTimer` | §5.2 last bullet (whether or not a job waits, N3), §5.4 display delay |
 | `S_R4Check`, `S_WaitR4` | §6.1 step 1 (`S_WaitR4` exists only for the mutant `save_waits_r4_forever`) |
 | `S_Locks` | §6.1 step 3 |
 | `S_Gate` | §6.1 step 4 |
@@ -273,7 +273,7 @@ Model-only properties (not named in §13; each with a mutant):
 
 ## 4. Interpretations where the spec is still silent
 
-Readings of draft 5 that 1cf1fb4c made spec text are gone from this list (I5, I6, I8 and I9 of 84c8b8c9).
+Readings of draft 5 that 1cf1fb4c made spec text are gone from this list (I5, I6, I8 and I9 of 84c8b8c9); I12 (the "runs" wording) went with N2 at 4fb67b23.
 
 - **I1** A Cancel of `recover_all` marks the journal it is on as blocking (`cancelled`) and goes on in a new engine; before a journal is in hand, "the journal it is on" is the next one it would try, and with none left the Cancel ends recover-all; while recover-all only waits for a new engine it holds none and there is nothing to cancel (a stuck slot then gets the timer advice).
 - **I2** A save that ends during a quiesce (switch, quit, update) does not queue its R4 or rebuild: §9.1 step 2 refuses new jobs naming A, and the closed record stays for the next open.
@@ -283,36 +283,35 @@ Readings of draft 5 that 1cf1fb4c made spec text are gone from this list (I5, I6
 - **I7** A confirmed save is never answered "not open" by a switch ("closing is not a cancel"); §13 maps the switch-drop mutant to `OutcomeTruthful`, which is where the model states it.
 - **I10** The assessment of a workspace on an unreachable disk fails (the open fails), as reading its files does.
 - **I11** The user may quit, and press Quit anyway, in every state while the app is alive; the open's requester (the window of a switch or boot) may go away, which leaves the open running and endable by another job's Cancel (§4's list), like a read whose requester has gone.
-- **I12** `AppScopedWaitsForRecovery` is checked as §13 states it ("no create or copy *runs*" in the window); see §5 N2.
 - **I13** The liveness worlds driven by engine and app fairness (`LS_boot`, `LS_jobs`, `LS_quit`) give the user a budget of exits (`UserBudget`: Retry, Back, Open another, Keep, Stay, Try again), assuming the user eventually stops restarting work; otherwise pressing Retry and Cancel forever starves a queued create, which is not a system failure. Safety worlds and `EngineCanAlwaysBeFreed`'s worlds leave the exits unbounded.
 
 ## 5. The model's findings: now spec rules
 
 F1-F4 and O1 of 84c8b8c9 are spec rules at 1cf1fb4c (§6.6, §8.1, §9.3; §6.4; §6.4; §3; §6.7 step 4). The model encodes them with no switch; each finding's configuration is now a mutant that must fail its property: `outcome_unsynced` (F1, `SavedSurvivesPowerLoss`), `rollback_skips_temp_rule` (F2, `ExternalEditNeverSilentlyLost`), `swap_back_unsynced` (F3, `ExternalEditNeverSilentlyLost`), `screen_holds_queue` (F4, `EveryBootEnds`), `confirm_no_recheck` (O1, `NoFalseMismatch`).
 
-### New findings at 1cf1fb4c (spec not changed; for the owner)
+### Findings N1-N3 at 1cf1fb4c: adopted by the spec at 4fb67b23
 
-The base configurations model the spec exactly as written. Where a new finding breaks a property, that world's expected result is the violation, and a companion `P_<world>` runs with the model's proposed fixes (`Proposals`, off by default) and must pass, so the rest of the world is still checked. Mutant configurations run with the proposals on, so each mutant's violation is its own.
+The model at 145aed17 checked the spec at 1cf1fb4c as written, with the fixes below behind a `Proposals` switch. The spec adopted all three at 4fb67b23 (§4, §5.2, §8.1, §9.2, §13; ADR-0064's amendment), so they are now the model's rules with no switch, and every base world passes. Each old rule is a mutant that must fail the property it broke: `keep_no_sync` (N1), `appscoped_runs` (N2), `advice_only_to_waiting` (N3). The traces below are the ones the spec as it was produced.
 
 **N1 — "Keep the files as they are now" does not make "now" durable** (§8.1 afterwards, §9.2; breaks `SavedSurvivesPowerLoss`, worlds `S_r4_attempts`, `S_forget`).
 - Trace (`S_r4_attempts`, shortened): save s1 lands and is reported "saved" (its engine dies after the close; the outcome check syncs and answers "saved"); save s2 runs its R4 first, then swaps N (s1's post → s2's post); the app crashes; at the next start recover-all restores N (an exchange, not yet synced) and its engine crashes, so s2's journal blocks (`failed`); the user presses "Keep the files as they are now", which renames the journal `.kept` and writes nothing. A power loss can now bring back s2's N: s1's saved bytes in N are gone and the ledger mixes s1's R with s2's N, with no journal left to undo it.
-- Judgement: a spec gap, not a modelling error: §8.1 step 3 itself says a restore cut by an error leaves "each file whole at pre or post" (not durable), and Keep only renames the journal. Narrow (a crash during a restore, Keep, then a power loss before anything syncs that folder). Suggested fix (model proposal `keep_syncs`): Keep `durable_sync`s the files and folders the journal names before renaming it `.kept`.
+- Judgement: a spec gap, not a modelling error: §8.1 step 3 itself says a restore cut by an error leaves "each file whole at pre or post" (not durable), and Keep only renames the journal. Narrow (a crash during a restore, Keep, then a power loss before anything syncs that folder). Adopted (§8.1 afterwards, §9.2): Keep `durable_sync`s every file and folder the journal names, then renames it `.kept`. Model: `UserKeep`; mutant `keep_no_sync` (Keep writes no sync) must break `SavedSurvivesPowerLoss` on `S_forget`.
 
 **N2 — `AppScopedWaitsForRecovery` says "runs" where §3 and §9.1 say "start"** (§13 "Also safety" against §3 and §9.1 step 2; worlds `S_boot`, `S_copy`, `S_switch`).
 - Trace (`S_switch`, shortened): W1 open; the user asks for a create, which starts; the user switches to another workspace; A closes (the create is app-scoped, "not A's job and runs on", §9.1 step 2); the switch's recover-all is queued behind the running create. The create now "runs between a switch's close and its target's open", which §13 forbids. Same with a create or copy started while a boot or switch shows its failed or blocked screen (F4 now lets it start there) when the user then presses Retry.
-- Judgement: a contradiction inside the spec, not a safety problem: recover-all never runs beside a create (one job at a time) and waits until it ends. Suggested fix (model proposal `appscoped_starts`): §13 says "no create or copy *starts* while …", matching §3; or §9.1 makes the close wait for a running create or copy (a behaviour change the owner would have to want).
+- Judgement: a contradiction inside the spec, not a safety problem: recover-all never runs beside a create (one job at a time) and waits until it ends. Adopted (§13 "Also safety"): "no create or copy *starts* while …", matching §3; behaviour unchanged. Model: `AppScopedStarts`. The seeded bug for the new wording stays `app_scoped_during_recovery`. Since N2 changed no behaviour, `appscoped_runs` is not a seeded bug: it checks the old wording (`AppScopedRuns`) on `S_switch` and must fail, which shows the model still lets a create that started before a switch's close run on through the window (§9.1 step 2); if a model change ever made the close wait for it, this check would pass and be reported as a surprise.
 
 **N3 — `EngineCanAlwaysBeFreed` as stated fails when the waiting user cancels while a stuck process holds the slot** (§13 Liveness, §4, §5.2; worlds `LS_free`, `LS_free_cc`, `LM_free`).
 - Trace (`LS_free`, shortened): a job's engine is signalled (the requester's Cancel) and gets stuck in the kernel; the user queues a save and a read; under the property's own fairness the waiting user presses Cancel on their queued jobs. §4 gives the quit advice only for a Cancel behind a *running* job, and §5.2's timer advice needs a job that waits; with the queue now empty, nothing shows the advice, the slot is never free, and the app has not quit: `(a waited-for job is queued) ~> (slot free ∨ advice ∨ quit)` is violated.
-- A second path to the same end (`P_LS_free` with a narrower first proposal): the waiting user's Cancel removes only their own job (the running read's requester is present, §4), then that requester closes their tab; the read's engine is signalled and stuck, and nobody waits.
-- Judgement: a gap between §4/§5.2 and §13: §13 lists the ways a wait ends outside the property (a closed tab, a switch) but not "the waiting user's own Cancel", after which nothing explains a slot held for ever. No data is at risk; the user gets no explanation and the next request waits again. Suggested fix (model proposal `advice_while_slot_held`): §5.2's advice ("Finzytrack cannot stop the earlier ledger work. Quit and reopen Finzytrack.") appears whenever a signalled process holds the slot past the display delay, not only to a waiting job. It still never appears on a timer for work that is merely slow (`NoAdviceOnTimerForSlowWork`), and the `no_quit_message_for_writing` mutant is still caught. Weakening the property instead ("… or nobody waits any more") would let that mutant pass.
+- A second path to the same end (found with a narrower first fix that showed the advice only after the waiting user's Cancel): the waiting user's Cancel removes only their own job (the running read's requester is present, §4), then that requester closes their tab; the read's engine is signalled and stuck, and nobody waits.
+- Judgement: a gap between §4/§5.2 and §13: §13 lists the ways a wait ends outside the property (a closed tab, a switch) but not "the waiting user's own Cancel", after which nothing explains a slot held for ever. No data is at risk; the user gets no explanation and the next request waits again. Adopted (§4, §5.2, §11, §13): §5.2's advice ("Finzytrack cannot stop the earlier ledger work. Quit and reopen Finzytrack.") appears whenever a signalled process holds the slot past the display delay, whether or not a job waits (in the waiting job's place, or as a notice). Model: `AdviceTimer`; mutant `advice_only_to_waiting` (the advice only while a job waits) must break `EngineCanAlwaysBeFreed` on `LS_free`. It still never appears on a timer for work that is merely slow (`NoAdviceOnTimerForSlowWork`), and the `no_quit_message_for_writing` mutant is still caught. Weakening the property instead ("… or nobody waits any more") would let that mutant pass.
 
 ### Model corrections made while running
 Not spec issues; listed so a reviewer can judge them. At 84c8b8c9: the power-loss model first let a file and its temp revert independently after an atomic exchange (fixed with the coupled pairs of §3); refusal branches silently disabled by contradictory `UNCHANGED` clauses (found by the action-coverage check); a hang that survived the replacement of its engine; a blocking mark that survived a power loss; recover-all's Cancel read three ways before I1; properties first stated too strictly. In this update: the recover-all epoch counter grew without bound once the exits lost their counters (replaced by the journal flag `old`); a coupling left by an earlier save's temp was reused by a later save's exchange of the same file (now dissolved into independent outcomes first); the outside editor's durable save no longer stands in for an ordering assumption (it syncs its folder, which §13 now states).
 
 ## 6. Mutants
 
-Each runs on a small world (`cfg/MUT_<name>.cfg`) and checks only its property; `run_all.sh` requires TLC to report that property violated. 35 come from the two executable models §13 cites, 5 are §13's additional ones, 11 were added at 84c8b8c9 so that every property has one (PROCESS.md §3), 5 are the model's former findings, and 7 come from model review 1 or this update (63 in all).
+Each runs on a small world (`cfg/MUT_<name>.cfg`) and checks only its property; `run_all.sh` requires TLC to report that property violated. 35 come from the two executable models §13 cites, 5 are §13's additional ones, 11 were added at 84c8b8c9 so that every property has one (PROCESS.md §3), 8 are the model's former findings (F1-F4, O1, N1-N3), and 7 come from model review 1 or the update after it (66 in all). `appscoped_runs` is a reachability check rather than a seeded bug (§5 N2).
 
 | Mutant | Origin | Property | World | What it changes |
 |---|---|---|---|---|
@@ -372,6 +371,9 @@ Each runs on a small world (`cfg/MUT_<name>.cfg`) and checks only its property; 
 | `swap_back_unsynced` | finding F3 | `ExternalEditNeverSilentlyLost` | `S_save_power` (+ I/O error) | a swap-back is not synced |
 | `screen_holds_queue` | finding F4 | `EveryBootEnds` | `LS_boot` | a switch's failed or blocked screen still holds app-scoped jobs |
 | `confirm_no_recheck` | observation O1 | `NoFalseMismatch` | `S_r4_outcomes` | R4's confirm does not re-check the fingerprint |
+| `keep_no_sync` | finding N1 | `SavedSurvivesPowerLoss` | `S_forget` | Keep renames the journal `.kept` without syncing the files it names |
+| `appscoped_runs` | finding N2 | `AppScopedWaitsForRecovery` | `S_switch` | checks the old wording ("no create or copy *runs*" in the window); must fail, so a create that started earlier still runs on (a reachability check) |
+| `advice_only_to_waiting` | finding N3 | `EngineCanAlwaysBeFreed` | `LS_free` | the timer advice only while a job waits |
 | `stay_disabled` | model review 1 | `EveryWaitHasAnExit` | `S_switch` | Stay is never offered |
 | `retry_disabled` | model review 1 | `EveryWaitHasAnExit` | `S_boot` | Retry is never offered |
 | `fb_no_guard` | model review 1 | `RecoveryWritesOnlyRecordedPaths` | `S_recover_lock` (no orphan) | the path guard is missing from recovery's check |

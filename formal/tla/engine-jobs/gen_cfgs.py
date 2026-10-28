@@ -15,7 +15,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CFG_DIR = os.path.join(HERE, "cfg")
 
 DEFAULTS = {
-    "MUTANT": '"none"', "Proposals": "{}", "UserBudget": "0", "BootJ": "{}", "BootTemps": "FALSE", "BootTarget": "1",
+    "MUTANT": '"none"', "UserBudget": "0", "BootJ": "{}", "BootTemps": "FALSE", "BootTarget": "1",
     "BootOrphan": "FALSE", "BootLink": "FALSE", "EdFiles": "{}", "R4Outs": '{"pass"}',
     "StopBound": "3",
     "MaxSaves": "0", "MaxBg": "0", "MaxReads": "0", "MaxRebuild": "0", "MaxEdits": "0",
@@ -60,21 +60,6 @@ def strs(*xs):
 
 
 ALLR4 = strs("pass", "nondet", "differ")
-# the model's proposed fixes for its new findings N1-N3 (MAPPING.md §5); off = the spec as written
-ALL_PROPOSALS = strs("keep_syncs", "advice_while_slot_held", "appscoped_starts")
-# worlds where the spec as written breaks a property (a new finding): that is their expected result,
-# and a companion P_<world> with the proposals on must pass (it checks the rest of the world)
-SPEC_FINDINGS = {
-    "S_r4_attempts": ("SavedSurvivesPowerLoss", "N1"),
-    "S_forget": ("SavedSurvivesPowerLoss", "N1"),
-    "S_boot": ("AppScopedWaitsForRecovery", "N2"),
-    "S_copy": ("AppScopedWaitsForRecovery", "N2"),
-    "S_switch": ("AppScopedWaitsForRecovery", "N2"),
-    "LS_free": ("EngineCanAlwaysBeFreed", "N3"),
-    "LS_free_cc": ("EngineCanAlwaysBeFreed", "N3"),
-    "LM_free": ("EngineCanAlwaysBeFreed", "N3"),
-}
-
 # name: (tier, world overrides, specification, liveness properties or None for all safety)
 WORLDS = {
     # --- the save (§6.1-§6.6, §10) ---
@@ -242,6 +227,10 @@ MUTANTS = [
     ("manifest_overwrite", "S_create_empty", "DroppedFileNeverReplaced", {}),
     ("app_scoped_during_recovery", "S_boot", "AppScopedWaitsForRecovery", {}),
     ("read_refusal_stuck", "S_save_crash", "NoEngineStall", {}),
+    # the model's findings N1-N3, now rules of the spec (4fb67b23): each old rule must fail its property
+    ("keep_no_sync", "S_forget", "SavedSurvivesPowerLoss", {}),
+    ("appscoped_runs", "S_switch", "AppScopedWaitsForRecovery", {}),   # the old wording: a reachability check
+    ("advice_only_to_waiting", "LS_free", "EngineCanAlwaysBeFreed", {}),
 ]
 
 
@@ -283,24 +272,16 @@ def build():
             invs, props = ["JobIdsBounded"], live
             comment = "liveness under %s" % spec
         mode = "simulate" if name in SIMULATE else "check"
-        variants = [(name, "{}", "PASS", "the spec as written")]
-        if name in SPEC_FINDINGS:
-            prop, fid = SPEC_FINDINGS[name]
-            variants = [(name, "{}", "VIOLATE:" + prop, "the spec as written: finding %s breaks %s" % (fid, prop)),
-                        ("P_" + name, ALL_PROPOSALS, "PASS", "with the model's proposed fixes N1-N3")]
-        for vname, proposals, expect, what in variants:
-            consts = dict(DEFAULTS)
-            consts.update(w)
-            consts["Proposals"] = proposals
-            out[vname + ".cfg"] = render(vname, consts, spec, invs, props, comment + "; " + what)
-            rows.append((vname, expect, tier, "base", mode))
+        consts = dict(DEFAULTS)
+        consts.update(w)
+        out[name + ".cfg"] = render(name, consts, spec, invs, props, comment)
+        rows.append((name, "PASS", tier, "base", mode))
     for mut, base, prop, extra in MUTANTS:
         tier, w, spec, live = world_of(base)
         consts = dict(DEFAULTS)
         consts.update(w)
         consts.update(extra)
         consts["MUTANT"] = '"%s"' % mut
-        consts["Proposals"] = ALL_PROPOSALS   # so that the violation is the mutant's, not a finding's
         if prop in INVARIANTS:
             invs, props = [prop], []
         else:
