@@ -1,7 +1,7 @@
 """The Ids port (ARCHITECTURE.md §2.3; EP-10): every id is injected, so tests see deterministic ones.
 
-The first use is the API edge's request id (S0046). The real adapter arrives with the composition root that serves
-the API (BL-0105); tests use a sequence.
+The first use is the API edge's request id (S0046). The real adapter is `app.platform.adapters.ids.Uuid7Ids`, wired
+by the composition root that serves the API (S0048); tests use a sequence.
 """
 
 from __future__ import annotations

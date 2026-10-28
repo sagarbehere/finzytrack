@@ -1,6 +1,6 @@
 """EDGE: app factory, envelope, errors, workspace gate, route assembly, OpenAPI export (ARCHITECTURE.md §2.2).
 
-Nothing imports `api` (§2.4 rule 6). Built in S0046: the skeleton, not yet served (BL-0105).
+Nothing imports `api` (§2.4 rule 6). Built in S0046: the skeleton; served by `app.main` since S0048.
 """
 
 from app.api.app import create_app

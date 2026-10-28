@@ -2,8 +2,8 @@
 
 Builds the FastAPI app around the given routers (the product's by default): the edge middleware, the error handlers,
 the error envelope as every operation's `default` answer, and the route-scope check, which refuses a misdeclared
-route here. It does no I/O and serves nothing; serving it from `app.main` is BL-0105. FastAPI's own documentation
-pages and `/openapi.json` route are off: the contract is exported offline (`app.api.contract`).
+route here. It does no I/O and serves nothing itself; `app.main` serves it with uvicorn (S0048). FastAPI's own
+documentation pages and `/openapi.json` route are off: the contract is exported offline (`app.api.contract`).
 """
 
 from __future__ import annotations

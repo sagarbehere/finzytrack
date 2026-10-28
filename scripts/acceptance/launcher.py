@@ -8,7 +8,8 @@ One run per Playwright worker (`frontend/e2e/harness/`), started with the backen
 It creates a fresh temp root, generates a fresh demo workspace into it (`backend/scripts/gen_demo.py`, anchored at
 the frozen local date), starts an OpenAI-compatible LLM stub and the main sidecar (`python -m app.main`) on
 OS-assigned loopback ports with the sidecar's folders inside the root and its clock frozen, waits until the
-sidecar's own ledger engine (from `engine/.venv`, S0038) has started, then prints one line,
+sidecar's own ledger engine (from `engine/.venv`, S0038) has started and the sidecar serves `/health` with its
+handshake's version (S0048), then prints one line,
 `FT_HARNESS_READY {json}`, and waits. When its stdin closes (the worker finished or died) or it gets SIGTERM, it
 stops the processes it started and removes the root (`--keep` leaves the root for debugging).
 
@@ -359,16 +360,27 @@ def read_handshake(proc: subprocess.Popen[str], timeout: float) -> tuple[int, st
     return port
 
 
-def probe(port: int) -> None:
-    """The port answers HTTP (any status) while our child runs."""
+def probe(port: int, version: str) -> None:
+    """The sidecar serves the API (S0048, BL-0105): `GET /health` answers 200 in the envelope, `ok`, with the version
+    its handshake gave. Anything else refuses the run."""
     conn = http.client.HTTPConnection(LOOPBACK, check_port(port), timeout=10)
     try:
-        conn.request("GET", "/")
-        conn.getresponse().read()
+        conn.request("GET", "/health")
+        response = conn.getresponse()
+        status, raw = response.status, response.read()
     except OSError as e:
         raise Refused(f"nothing answers on {LOOPBACK}:{port}: {e}") from e
     finally:
         conn.close()
+    if status != 200:
+        raise Refused(f"the sidecar's /health answered {status}, not 200")
+    try:
+        body = json.loads(raw)
+    except ValueError as e:
+        raise Refused("the sidecar's /health did not answer JSON") from e
+    data = body.get("data") if isinstance(body, dict) else None
+    if data != {"status": "ok", "version": version}:
+        raise Refused(f"the sidecar's /health answered {str(data)[:120]}, not ok with version {version}")
 
 
 # --- The LLM stub: OpenAI-compatible, scripted, loopback only (ARCHITECTURE.md §2.3 `Llm` test double). ---
@@ -548,7 +560,7 @@ def main(argv: list[str] | None = None) -> int:
                               stdout=subprocess.PIPE, stderr=log, text=True)
         port, version = read_handshake(proc, timeout=30)
         wait_for_engine(log_file(dirs), proc)
-        probe(port)
+        probe(port, version)
         print(READY + json.dumps({
             "backend": f"http://{LOOPBACK}:{port}", "llm": f"http://{LOOPBACK}:{stub.port}/v1",
             "root": str(root.path), "workspace": str(dirs.workspace), "tz": args.tz,

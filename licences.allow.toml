@@ -45,6 +45,11 @@ version = "1.17.0"
 spdx = "MIT"
 source = "six-1.17.0.dist-info/LICENSE (MIT text); METADATA License: MIT; read 2026-10-26 (S0035)"
 
+[mapping.h11]
+version = "0.16.0"
+spdx = "MIT"
+source = "h11-0.16.0.dist-info/licenses/LICENSE.txt (MIT text); METADATA License: MIT; a runtime dependency since uvicorn (S0048); read 2026-10-28"
+
 [mapping.python-dateutil]
 version = "2.9.0.post0"
 spdx = "Apache-2.0 AND BSD-3-Clause"

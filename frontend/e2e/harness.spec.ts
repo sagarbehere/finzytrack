@@ -177,7 +177,7 @@ test('the request fixture refuses foreign origins', async ({ request, run }) => 
     await expect(request.get(`${f.origin}/x`)).rejects.toThrow(/not ours/)
     await expect(request.get('http://example.com/')).rejects.toThrow(/not ours/)
     expect(f.hits()).toBe(0)
-    expect((await request.get(`${run.backend}/api/boot`)).status()).toBe(501)
+    expect((await request.get(`${run.backend}/health`)).status()).toBe(200)
   } finally {
     f.close()
   }

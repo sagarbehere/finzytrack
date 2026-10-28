@@ -19,6 +19,7 @@ import threading
 import time
 import unittest
 from datetime import UTC, date, datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
@@ -497,6 +498,75 @@ class EngineTest(EnvMixin):
         self.assertLess(time.monotonic() - began, 10.0)
 
 
+class _FakeSidecar(ThreadingHTTPServer):
+    """A loopback server that answers `GET /health` with a fixed status and body (bytes)."""
+
+    def __init__(self, status: int, body: bytes) -> None:
+        self.status, self.body, self.paths = status, body, []
+        super().__init__(("127.0.0.1", 0), _FakeHandler)
+
+
+class _FakeHandler(BaseHTTPRequestHandler):
+    server: _FakeSidecar
+
+    def do_GET(self) -> None:  # noqa: N802 (http.server's name)
+        self.server.paths.append(self.path)
+        self.send_response(self.server.status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(self.server.body)))
+        self.end_headers()
+        self.wfile.write(self.server.body)
+
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002 (the base class's name)
+        pass
+
+
+def health_body(version: str = "0.4.0.dev0", status: str = "ok") -> bytes:
+    return json.dumps({"data": {"status": status, "version": version},
+                       "meta": {"request_id": "r", "workspace_id": None, "ledger_version": None,
+                                "config_version": None}}).encode()
+
+
+class HealthProbeTest(unittest.TestCase):
+    """S0048 (BL-0105): before a run is announced, the sidecar must serve `/health` in the envelope with the version
+    its handshake gave; any other answer, or none, refuses the run."""
+
+    def serve(self, status: int, body: bytes) -> _FakeSidecar:
+        server = _FakeSidecar(status, body)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server
+
+    def test_a_sidecar_that_serves_health_with_its_version_passes(self) -> None:
+        server = self.serve(200, health_body())
+        harness.probe(server.server_address[1], "0.4.0.dev0")
+        self.assertEqual(server.paths, ["/health"])
+
+    def test_any_other_answer_refuses_the_run(self) -> None:
+        cases = {
+            "the stand-in's 501": (501, b""),
+            "another status": (404, health_body()),
+            "another version": (200, health_body(version="0.3.0")),
+            "not ok": (200, health_body(status="starting")),
+            "not JSON": (200, b"<html>ok</html>"),
+            "outside the envelope": (200, json.dumps({"status": "ok", "version": "0.4.0.dev0"}).encode()),
+            "data not an object": (200, json.dumps({"data": ["ok"], "meta": {}}).encode()),
+        }
+        for name, (status, body) in cases.items():
+            with self.subTest(case=name):
+                server = self.serve(status, body)
+                with self.assertRaises(harness.Refused):
+                    harness.probe(server.server_address[1], "0.4.0.dev0")
+
+    def test_nothing_answering_refuses_the_run(self) -> None:
+        server = _FakeSidecar(200, b"")
+        port = server.server_address[1]
+        server.server_close()  # the port is free again: nothing listens there
+        with self.assertRaises(harness.Refused):
+            harness.probe(port, "0.4.0.dev0")
+
+
 class EndToEndTest(EnvMixin):
     def test_a_run_starts_isolated_and_leaves_nothing_behind(self) -> None:
         # An INV-24 enforcement file never switches a test off: a missing backend venv fails, it does not skip.
@@ -526,8 +596,10 @@ class EndToEndTest(EnvMixin):
             port = int(m.group(1))
             self.assertNotEqual(port, harness.OWNER_PORT)
             conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
-            conn.request("GET", "/api/boot")
-            self.assertEqual(conn.getresponse().status, 501)  # the sidecar's placeholder: no routes yet
+            conn.request("GET", "/health")  # S0048: the sidecar serves the API
+            health = conn.getresponse()
+            self.assertEqual(health.status, 200)
+            self.assertEqual(json.loads(health.read())["data"], {"status": "ok", "version": run["version"]})
             conn.close()
             llm = re.fullmatch(r"http://127\.0\.0\.1:(\d+)/v1", run["llm"])
             assert llm is not None, run["llm"]

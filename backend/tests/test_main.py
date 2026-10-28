@@ -1,4 +1,5 @@
-"""The main sidecar entry (ARCHITECTURE.md §5, the shell interface): CLI args, loopback bind, `FT_READY` handshake.
+"""The main sidecar entry (ARCHITECTURE.md §5, the shell interface): CLI args, loopback bind, `FT_READY` handshake,
+the API served by uvicorn (S0048, BL-0105) and the stop path that always closes the engine (failure-modes M7).
 
 The acceptance harness (S0030) starts this process with `--port 0` and data dirs inside its temp root, and reads
 the port from the handshake line only. `--frozen-clock` is the test-only way to freeze the backend's clock.
@@ -6,26 +7,39 @@ the port from the handshake line only. `--frozen-clock` is the test-only way to 
 
 from __future__ import annotations
 
+import asyncio
 import http.client
 import json
 import os
+import re
 import signal
+import socket
 import subprocess
 import sys
 import threading
 import time
+import uuid
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-from typing import cast
+from typing import cast, override
 
 import pytest
+from fastapi import APIRouter
 
 from app import main
+from app.api import ApiContainer, create_app
+from app.api.envelope import Envelope
+from app.api.health import health_router
+from app.api.routes import declare
 from app.platform.adapters.clock import SystemClock
 from app.platform.adapters.engine_client import EngineClient, EngineCommand, packaged_engine_site
 from app.platform.clock import FrozenClock
 from app.platform.engine_boot import EngineStarting
 from app.platform.observability import Event
+from app.workspaces.access import Unknown
+from tests.api.support import Counted, FakeContainer, FixedAccess
 
 
 def no_log(event: Event, /, **fields: object) -> None:
@@ -40,6 +54,9 @@ def dirs(tmp_path: Path) -> tuple[Path, Path]:
     return data, cache
 
 
+VERSION = "9.9.9-test"
+
+
 def argv(data: Path, cache: Path, *extra: str) -> list[str]:
     return ["--app-local-data", str(data), "--app-cache", str(cache), *extra]
 
@@ -48,12 +65,12 @@ def test_args_default_to_port_0_and_the_system_clock(dirs: tuple[Path, Path]) ->
     args = main.parse_args(argv(*dirs))
     assert args.port == 0
     assert args.workspace is None
-    assert isinstance(main.wire(args, no_log).clock, SystemClock)
+    assert isinstance(main.wire(args, no_log, VERSION).clock, SystemClock)
 
 
 def test_frozen_clock_arg_wires_a_frozen_clock(dirs: tuple[Path, Path]) -> None:
     args = main.parse_args(argv(*dirs, "--frozen-clock", "2026-03-31T21:30:00-07:00"))
-    clock = main.wire(args, no_log).clock
+    clock = main.wire(args, no_log, VERSION).clock
     assert isinstance(clock, FrozenClock)
     assert clock.now() == datetime(2026, 4, 1, 4, 30, tzinfo=UTC)
     assert clock.now().utcoffset() == timedelta(hours=-7)
@@ -95,17 +112,33 @@ def test_the_handshake_line_is_ft_ready_with_port_and_version() -> None:
     assert json.loads(line.removeprefix("FT_READY ")) == {"port": 51234, "version": "0.4.0.dev0"}
 
 
-def test_the_server_binds_loopback_only_on_an_os_assigned_port() -> None:
-    server = main.bind(0)
+def test_the_server_binds_loopback_only_on_an_os_assigned_port_and_listens_before_the_handshake() -> None:
+    sock = main.bind(0)
     try:
-        host, port = main.bound_address(server)
+        host, port = main.bound_address(sock)
         assert host == "127.0.0.1"
         assert 0 < port <= 65535
+        # Listening already: a client that connects right after `FT_READY`, before uvicorn's loop runs, is queued,
+        # never refused (S0048).
+        socket.create_connection((host, port), timeout=10).close()
     finally:
-        server.server_close()
+        sock.close()
 
 
-def test_the_process_prints_the_handshake_and_answers_on_its_port(dirs: tuple[Path, Path]) -> None:
+def get(port: int, path: str) -> tuple[int, dict[str, object]]:
+    """One request to the sidecar under test, on its own loopback port; the status and the JSON body."""
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        conn.request("GET", path)
+        response = conn.getresponse()
+        return response.status, cast("dict[str, object]", json.loads(response.read()))
+    finally:
+        conn.close()
+
+
+def test_the_process_prints_the_handshake_and_serves_health(dirs: tuple[Path, Path]) -> None:
+    """BL-0105: the sidecar serves `app.api.create_app`; `/health` answers in the envelope with the handshake's
+    version and a fresh uuid7 request id per request (the composition root's `Ids`)."""
     proc = subprocess.Popen(  # noqa: S603 (fixed argv: this interpreter running the entry under test)
         [sys.executable, "-m", "app.main", *argv(*dirs), "--port", "0"],
         stdout=subprocess.PIPE,
@@ -117,16 +150,40 @@ def test_the_process_prints_the_handshake_and_answers_on_its_port(dirs: tuple[Pa
         assert proc.stdout is not None
         line = proc.stdout.readline()
         assert line.startswith("FT_READY "), line
-        port = json.loads(line.removeprefix("FT_READY "))["port"]
+        handshake = json.loads(line.removeprefix("FT_READY "))
+        port = handshake["port"]
         assert port != 0
-        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
-        conn.request("GET", "/api/boot")
-        # No routes until the API edge exists (L1-07, L10-09): any request is answered, with 501.
-        assert conn.getresponse().status == 501
-        conn.close()
+        ids: list[str] = []
+        for _ in range(2):
+            status, answer = get(port, "/health")
+            assert status == 200, answer
+            assert answer["data"] == {"status": "ok", "version": handshake["version"]}
+            meta = cast("dict[str, object]", answer["meta"])
+            assert meta["workspace_id"] is None
+            request_id = meta["request_id"]
+            assert isinstance(request_id, str)
+            assert uuid.UUID(request_id).version == 7
+            ids.append(request_id)
+        assert ids[0] != ids[1]
     finally:
         proc.terminate()
         proc.wait(timeout=10)
+
+
+def test_an_unknown_route_is_route_not_found_in_the_envelope_from_the_real_server(dirs: tuple[Path, Path]) -> None:
+    sidecar = Sidecar(dirs)
+    try:
+        port = sidecar.handshake()
+        status, answer = get(port, "/api/boot")  # L10-09 (M2): not served yet
+        assert status == 404
+        error = cast("dict[str, object]", answer["error"])
+        assert error["code"] == "ROUTE_NOT_FOUND"
+        # A workspace path reaches no route yet, so no gate is asked (BL-0102 adds the routes and the gate).
+        status, answer = get(port, "/api/w/demo/version")
+        assert status == 404
+        assert cast("dict[str, object]", answer["error"])["code"] == "ROUTE_NOT_FOUND"
+    finally:
+        assert sidecar.stop() == 0
 
 
 # -- The engine at boot (S0038; BL-0083; ADR-0054 decision 4) ---------------------------------------------------
@@ -155,7 +212,7 @@ def test_engine_venv_must_be_a_folder(tmp_path: Path, dirs: tuple[Path, Path]) -
 
 
 def test_wire_builds_the_engine_client_without_starting_it(dirs: tuple[Path, Path]) -> None:
-    wiring = main.wire(main.parse_args(argv(*dirs, "--engine-venv", str(ENGINE_VENV))), no_log)
+    wiring = main.wire(main.parse_args(argv(*dirs, "--engine-venv", str(ENGINE_VENV))), no_log, VERSION)
     try:
         assert isinstance(wiring.engine, EngineClient)
         assert wiring.engine.pid is None
@@ -224,13 +281,9 @@ class Sidecar:
         return self.proc.wait(timeout=DEADLINE)
 
 
-def answers_http(port: int) -> int:
-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
-    try:
-        conn.request("GET", "/api/boot")
-        return conn.getresponse().status
-    finally:
-        conn.close()
+def health_status(port: int) -> int:
+    """The status `/health` answers with (S0048: 200 whatever the engine's state; BL-0094 adds the engine to it)."""
+    return get(port, "/health")[0]
 
 
 def pid_alive(pid: int) -> bool:
@@ -255,7 +308,7 @@ def test_the_sidecar_starts_a_real_engine_and_closes_it_on_sigterm(dirs: tuple[P
         pid = ready["pid"]
         assert isinstance(pid, int)
         assert pid_alive(pid)
-        assert answers_http(port) == 501
+        assert health_status(port) == 200
     finally:
         code = sidecar.stop()
     # The sidecar closed and reaped its engine before it exited: no grace time (its watchdog and stdin EOF would end
@@ -304,7 +357,7 @@ def test_a_missing_engine_is_a_reported_state_and_the_sidecar_keeps_answering(
         assert failed["level"] == "error"
         assert failed["kind"] == "start_failed"
         assert sidecar.proc.poll() is None, "the sidecar crashed with its engine"
-        assert answers_http(port) == 501
+        assert health_status(port) == 200
     finally:
         assert sidecar.stop() == 0
 
@@ -415,7 +468,7 @@ def test_an_exception_that_leaves_main_is_logged_as_its_type_and_never_printed(d
         sidecar = Sidecar(dirs, "--port", str(port), "--engine-venv", str(dirs[0]))
         code = sidecar.proc.wait(timeout=DEADLINE)
     finally:
-        taken.server_close()
+        taken.close()
     assert code == 1
     uncaught = sidecar.event("app.uncaught")
     assert uncaught["thread"] == "MainThread"
@@ -423,3 +476,319 @@ def test_an_exception_that_leaves_main_is_logged_as_its_type_and_never_printed(d
     assert exception["type"] == "OSError"
     assert set(exception) == {"type", "at"}
     assert sidecar.stderr_after_exit() == ""
+
+
+# -- The API's container (S0048, BL-0105; ARCHITECTURE.md §2.3) --------------------------------------------------
+
+
+def test_the_api_container_has_the_version_uuid7_ids_no_workspaces_and_the_log(dirs: tuple[Path, Path]) -> None:
+    wiring = main.wire(main.parse_args(argv(*dirs)), no_log, VERSION)
+    try:
+        api = wiring.api
+        assert api.app_version == VERSION
+        first, second = api.ids.new_id(), api.ids.new_id()
+        assert uuid.UUID(first).version == 7
+        assert first != second
+        # Until the registry exists (BL-0102) every key is unknown: `404 WORKSPACE_UNKNOWN`, never served.
+        for key in ("demo", "", "../x", "Assets:Bank"):
+            assert api.workspaces.access(key) == Unknown()
+        assert api.log is no_log
+    finally:
+        wiring.engine.close()
+
+
+# -- The stop path (S0048; failure-modes M7 and decision 6) -------------------------------------------------------
+
+
+@dataclass
+class FakeServer:
+    """The two flags of uvicorn's `Server` that the stop request sets."""
+
+    should_exit: bool = False
+    force_exit: bool = False
+
+
+def test_the_first_stop_ends_the_serve_and_a_later_one_ends_the_graceful_wait() -> None:
+    stop, server = main.StopRequest(), FakeServer()
+    stop.attach(server)
+    assert not stop.requested
+    stop(signal.SIGTERM, None)
+    assert stop.requested
+    assert (server.should_exit, server.force_exit) == (True, False)
+    stop(signal.SIGINT, None)
+    assert (server.should_exit, server.force_exit) == (True, True)
+
+
+@pytest.mark.parametrize(("before", "expected"), [(1, (True, False)), (2, (True, True))])
+def test_a_stop_before_the_server_exists_is_kept(before: int, expected: tuple[bool, bool]) -> None:
+    stop, server = main.StopRequest(), FakeServer()
+    for _ in range(before):
+        stop(signal.SIGTERM, None)
+    stop.attach(server)
+    assert (server.should_exit, server.force_exit) == expected
+
+
+def test_the_stop_handler_never_raises() -> None:
+    """The stand-in's handler raised `SystemExit`, so a signal at the wrong line cut the stop path before the
+    engine's close (decision 6). This one only records; with or without a server, any number of times."""
+    for server in (None, FakeServer()):
+        stop = main.StopRequest()
+        if server is not None:
+            stop.attach(server)
+        for signum in (*main.stop_signals(), *main.stop_signals(), *main.stop_signals()):
+            stop(signum, None)
+        assert stop.requested
+
+
+def test_the_stop_signals_are_sigterm_and_sigint() -> None:
+    assert {signal.SIGTERM, signal.SIGINT} <= set(main.stop_signals())
+
+
+@pytest.fixture
+def saved_handlers() -> Iterator[None]:
+    saved = {signum: signal.getsignal(signum) for signum in main.stop_signals()}
+    yield
+    for signum, handler in saved.items():
+        signal.signal(signum, handler)
+
+
+class NoRequestExpected(AssertionError):
+    """A request reached a server that these tests never send one to."""
+
+
+def _unused_container() -> ApiContainer:
+    raise NoRequestExpected
+
+
+@pytest.mark.usefixtures("saved_handlers")
+def test_while_uvicorn_serves_the_stop_handlers_are_the_composition_roots() -> None:
+    """uvicorn's `Server.serve` puts its own handlers in while it serves and, when it ends, puts the old ones back and
+    raises each caught signal again. The composition root owns the stop for the whole process instead, so one
+    handler decides and a caught signal is never raised again behind it (BL-0105: uvicorn's own signal handling
+    checked against M7). Runs in the main thread, where uvicorn would install its handlers."""
+    seen: list[dict[int, object]] = []
+
+    class OneTick(main.ApiServer):
+        @override
+        async def on_tick(self, counter: int) -> bool:
+            seen.append({signum: signal.getsignal(signum) for signum in main.stop_signals()})
+            return True
+
+    stop = main.StopRequest()
+    main.install_stop_handler(stop)
+    sock = main.bind(0)
+    server = OneTick(main.server_config(create_app(_unused_container), sock))
+    stop.attach(server)
+    server.run(sockets=[sock])
+    assert seen == [dict.fromkeys(main.stop_signals(), stop)]
+    assert {signum: signal.getsignal(signum) for signum in main.stop_signals()} == dict.fromkeys(
+        main.stop_signals(), stop
+    )
+    assert not stop.requested
+
+
+def test_the_server_config_turns_off_what_the_sidecar_does_itself() -> None:
+    sock = main.bind(0)
+    try:
+        config = main.server_config(create_app(_unused_container), sock)
+        assert (config.host, config.port) == main.bound_address(sock)
+    finally:
+        sock.close()
+    assert config.lifespan == "off"  # the composition root starts and stops the engine, on every path
+    assert config.log_config is None  # library records go to the structured log (ARCHITECTURE.md §6A.1)
+    assert config.access_log is False  # request logging arrives with the logging slice (§6A.5)
+    assert config.proxy_headers is False  # nothing proxies a loopback app; never trust a forwarded address
+    assert config.server_header is False
+    assert config.ws == "none"
+
+
+def wait_until(condition: Callable[[], bool]) -> None:
+    end = time.monotonic() + DEADLINE
+    tick = threading.Event()
+    while not condition():
+        assert time.monotonic() < end, "the condition never held"
+        tick.wait(0.01)
+
+
+def test_the_first_stop_waits_for_a_request_in_flight_and_a_second_ends_it() -> None:
+    """A request whose handler never returns: the first stop waits for it (a quit waits for work in flight); the
+    second ends it, so the serve returns and the way to `engine.close()` is open. Without that, asyncio's
+    `Server.wait_closed` waits for the open connection for ever, whatever uvicorn's `force_exit` says (S0048: seen
+    with uvicorn 0.54.0 on Python 3.13). The server runs on a thread here; its stop request is called directly."""
+    hung = APIRouter(prefix="/api/test")
+    reached = threading.Event()
+
+    @hung.get("/hang", openapi_extra=declare("app"))
+    async def hang() -> Envelope[Counted]:
+        reached.set()
+        await asyncio.Event().wait()
+        raise NoRequestExpected
+
+    container = FakeContainer(FixedAccess(Unknown()))
+    sock = main.bind(0)
+    port = main.bound_address(sock)[1]
+    server = main.ApiServer(main.server_config(create_app(lambda: container, routers=[health_router(), hung]), sock))
+    stop = main.StopRequest()
+    stop.attach(server)
+    serving = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+    serving.start()
+    wait_until(lambda: server.started)
+    client = socket.create_connection(("127.0.0.1", port), timeout=DEADLINE)
+    try:
+        client.sendall(b"GET /api/test/hang HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        assert reached.wait(DEADLINE)
+        stop(signal.SIGTERM, None)
+        serving.join(0.5)
+        assert serving.is_alive(), "the first stop did not wait for the request in flight"
+        client.settimeout(0.2)
+        with pytest.raises(TimeoutError):  # still open, waiting for its answer (b"" would mean closed)
+            client.recv(1)
+        stop(signal.SIGTERM, None)
+        serving.join(DEADLINE)
+        assert not serving.is_alive(), "a second stop left the serve waiting for the request"
+    finally:
+        client.close()
+        if serving.is_alive():
+            server.force_exit = server.should_exit = True
+
+
+def engine_gone(sidecar: Sidecar) -> None:
+    """The run's engine, if it started, is no longer running; `engine.closed` is logged exactly once."""
+    names = [e.get("event") for e in sidecar.events()]
+    assert names.count("engine.closed") == 1, names
+    for event in sidecar.events():
+        if event.get("event") == "engine.ready":
+            pid = event["pid"]
+            assert isinstance(pid, int)
+            assert not pid_alive(pid), "the sidecar exited before closing its engine"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGINT and pid probes as on POSIX; Windows is the manual CI run")
+def test_sigint_stops_the_sidecar_like_sigterm(dirs: tuple[Path, Path]) -> None:
+    sidecar = Sidecar(dirs, "--engine-venv", str(ENGINE_VENV))
+    try:
+        port = sidecar.handshake()
+        sidecar.event("engine.ready")
+        assert health_status(port) == 200
+    finally:
+        sidecar.proc.send_signal(signal.SIGINT)
+        code = sidecar.proc.wait(timeout=DEADLINE)
+    assert code == 0, sidecar.stderr_after_exit()
+    engine_gone(sidecar)
+
+
+# The storm: a child runs `app.main` with a line tracer on its main thread. Once a stop handler is installed (the
+# SIGTERM handler is neither the default nor "ignore"), it sends itself one SIGTERM at each line of `app.main` it
+# reaches, the first time it reaches it, so a signal lands at every line of the stop path; the interpreter handles it
+# at the next point it checks, inside that line. S0038's window was the line `signal.signal(SIGTERM, SIG_IGN)`
+# itself: `signal.signal` runs the pending handler before it changes the handler, so `SystemExit` left before the
+# close. In mode `after` the storm starts only once the flag file exists, which the test makes just before it sends
+# its own SIGTERM, so the stop after serving is stormed and the start is not.
+STORM = """
+import json, os, signal, sys
+from pathlib import Path
+from app import main
+
+TARGET, MODE, FLAG = main.__file__, sys.argv[1], Path(sys.argv[2])
+hit, raised = set(), []
+
+def storming():
+    handler = signal.getsignal(signal.SIGTERM)
+    if handler in (signal.SIG_DFL, signal.SIG_IGN, None):
+        return False
+    return MODE == "start" or FLAG.exists()
+
+def local(frame, event, arg):
+    where = (frame.f_code, frame.f_lineno)
+    if event == "line" and where not in hit and storming():
+        hit.add(where)
+        try:
+            os.kill(os.getpid(), signal.SIGTERM)  # handled right here, at the call's end
+        except BaseException as e:  # the handler raised into the start or stop path at this line
+            raised.append(f"{frame.f_code.co_name}:{frame.f_lineno}:{type(e).__name__}")
+            raise
+    return local
+
+def tracer(frame, event, arg):
+    return local if frame.f_code.co_filename == TARGET else None
+
+sys.settrace(tracer)
+try:
+    code = main.main(sys.argv[3:])
+finally:
+    sys.settrace(None)
+    print("STORM " + json.dumps({"lines": len(hit), "raised": raised}), flush=True)
+raise SystemExit(code)
+"""
+
+
+class StormedSidecar(Sidecar):
+    def __init__(self, dirs: tuple[Path, Path], mode: str, flag: Path) -> None:
+        self.log_path = dirs[0] / "logs" / "finzytrack.jsonl"
+        self.proc = subprocess.Popen(  # noqa: S603 (fixed argv: this interpreter running the entry under test)
+            [
+                sys.executable,
+                "-c",
+                STORM,
+                mode,
+                str(flag),
+                *argv(*dirs),
+                "--port",
+                "0",
+                "--engine-venv",
+                str(ENGINE_VENV),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+        self.raw = []
+        self._pumping = threading.Thread(target=self._pump, daemon=True)
+        self._pumping.start()
+
+    def storm(self) -> tuple[int, list[str]]:
+        """How many lines of `app.main` the storm hit, and where a handled signal raised; after the child exited."""
+        assert self.proc.stdout is not None
+        tail = self.proc.stdout.read()
+        found = re.search(r"^STORM (.*)$", tail, re.MULTILINE)
+        assert found is not None, tail + self.stderr_after_exit()
+        report = cast("dict[str, object]", json.loads(found.group(1)))
+        lines, raised = report["lines"], report["raised"]
+        assert isinstance(lines, int)
+        assert isinstance(raised, list)
+        return lines, [str(r) for r in cast("list[object]", raised)]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="signals to itself as on POSIX; Windows is the manual CI run")
+def test_a_signal_at_any_line_of_the_start_never_skips_the_engines_close(
+    tmp_path: Path, dirs: tuple[Path, Path]
+) -> None:
+    sidecar = StormedSidecar(dirs, "start", tmp_path / "unused")
+    code = sidecar.proc.wait(timeout=DEADLINE)
+    assert code == 0, sidecar.stderr_after_exit()
+    lines, raised = sidecar.storm()
+    assert raised == [], "a stop signal raised into the start or stop path"
+    assert lines > 5  # the storm reached the start and the stop path
+    engine_gone(sidecar)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="signals to itself as on POSIX; Windows is the manual CI run")
+def test_a_signal_at_any_line_of_the_stop_after_serving_never_skips_the_engines_close(
+    tmp_path: Path, dirs: tuple[Path, Path]
+) -> None:
+    flag = tmp_path / "storm"
+    sidecar = StormedSidecar(dirs, "after", flag)
+    try:
+        sidecar.handshake()
+        sidecar.event("engine.ready")
+    finally:
+        flag.touch()
+        sidecar.proc.send_signal(signal.SIGTERM)
+        code = sidecar.proc.wait(timeout=DEADLINE)
+    assert code == 0, sidecar.stderr_after_exit()
+    lines, raised = sidecar.storm()
+    assert raised == [], "a stop signal raised into the stop path"
+    assert lines > 2
+    engine_gone(sidecar)

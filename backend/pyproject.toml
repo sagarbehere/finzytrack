@@ -10,6 +10,8 @@ dependencies = [
     "pydantic==2.14.0",
     "starlette==1.8.0",
     "structlog==26.1.0",
+    "uuid-utils==0.17.1",
+    "uvicorn==0.54.0",
 ]
 
 [dependency-groups]

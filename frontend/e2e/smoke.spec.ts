@@ -23,7 +23,9 @@ test('the page runs on the frozen clock in the run zone, and the run has its own
   // The local date in the page is the run's "today", which differs from the UTC date in every profile.
   expect(await page.evaluate('new Date().toLocaleDateString("en-CA")')).toBe(run.today)
   expect(await page.evaluate('new Date().toISOString().slice(0, 10)')).not.toBe(run.today)
-  // No routes yet: the sidecar answers 501 until the API edge exists (L10-09).
-  expect((await request.get(`${run.backend}/api/boot`)).status()).toBe(501)
+  // The run's sidecar serves the API (S0048, BL-0105): `/health` answers with the run's version.
+  const health = await request.get(`${run.backend}/health`)
+  expect(health.status()).toBe(200)
+  expect(((await health.json()) as { data: unknown }).data).toEqual({ status: 'ok', version: run.version })
   expect(demo.path).toBe(run.workspace)
 })
