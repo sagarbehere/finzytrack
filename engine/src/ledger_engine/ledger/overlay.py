@@ -23,11 +23,13 @@ Where it differs from Beancount, on purpose (each refuses the whole load, EP-13;
 - **Every file is read once, by us, and parsed from those bytes** (`parse_string` with its path as the report
   filename, as `parse_file` does after opening it), so the load's fingerprint (`Loaded.fingerprint`, S0051) is the
   SHA-256 of exactly the bytes parsed: an editor's save between a read and the parse cannot make the fingerprint
-  describe bytes the load did not read (ADR-0008 step 4, ADR-0013). Each glob's matches are the ones followed; each
-  path looked for and not found is recorded absent, or a broken link when a glob found its name; each documents root
-  is listed after the policy allowed it and before Beancount scans it, and the file of each `document` directive is
-  checked before Beancount checks it, so a change during the load makes the next observation differ, never hides.
-  The `document` entries a plugin adds are only known after the plugins ran, so their files are checked then.
+  describe bytes the load did not read (ADR-0008 step 4, ADR-0013). Each `include`'s glob answer is the one
+  followed, recorded under the string the glob was asked (a plain path is globbed too, and its `lexists` is asked
+  of the path as written: a `..` after a link resolves elsewhere than the normalized path the loader then opens);
+  each path the loader found missing is recorded absent; each documents root is listed after the policy allowed it
+  and before Beancount scans it, and the file of each `document` directive is checked before Beancount checks it,
+  so a change during the load makes the next observation differ. The `document` entries a plugin adds are only
+  known after the plugins ran; their record comes from Beancount's own check (`_plugin_documents`).
 
 A load holds `sys.path` and the plugin modules of the process while it runs; engine jobs run one at a time
 (ADR-0064). Nothing calls this over the protocol yet: the mirror build runs it inside an engine job
@@ -37,14 +39,15 @@ A load holds `sys.path` and the plugin modules of the process while it runs; eng
 from __future__ import annotations
 
 import glob
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from os import path
-from typing import Literal
+from typing import Literal, cast
 
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint as fp
-from ledger_engine.ledger.core.ledger_set import Absent, BrokenLink, FileState, Fingerprint
+from ledger_engine.ledger.core.ledger_set import Absent, FileState, Fingerprint
 from ledger_engine.ledger.policy import LoadPolicy
 
 type RefusalReason = Literal[
@@ -57,6 +60,7 @@ type RefusalReason = Literal[
 ]
 
 ENCRYPTED_SUFFIXES = (".gpg", ".asc")
+DOCUMENTS_PLUGIN = "beancount.ops.documents"
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,27 +125,22 @@ def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadRes
     entries, balance_errors = port.book(entries, options)
     parse_errors.extend(balance_errors)
     entries, errors = port.run_transformations(entries, parse_errors, options)
+    listed = {path.join(d, name) for d, names in documents.items() if names is not None for name in names}
+    document_files.update(_plugin_documents(entries, errors, options, listed | set(document_files)))
     errors.extend(port.validate(entries, options))
     options["input_hash"] = port.input_hash(options["include"])
-
-    # The `document` entries a plugin added (Beancount checks their files when its documents plugin runs after the
-    # plugin); those from a documents root are in its listing already.
-    listed = {path.join(d, name) for d, names in documents.items() if names is not None for name in names}
-    for entry in entries:
-        if isinstance(entry, port.Document) and entry.filename not in listed:
-            document_files.setdefault(entry.filename, fp.document_file(entry.filename))
     fingerprint = Fingerprint.of(path.normpath(root), seen.files, seen.globs, documents, document_files)
     return Loaded(entries, errors, options, fingerprint)
 
 
 @dataclass(slots=True)
 class _Seen:
-    """What `_parse_recursive` read and looked for; the first state recorded for a path stays (a path found absent
-    and then read in the same load keeps `absent`, so the next observation differs: the safe side)."""
+    """What `_parse_recursive` read and looked for; the first answer recorded for a path or a glob stays (an include
+    that matched nothing and then matched in the same load keeps its empty answer, so the next observation differs:
+    the safe side)."""
 
     files: dict[str, FileState] = field(default_factory=dict[str, FileState])
     globs: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
-    matched: set[str] = field(default_factory=set[str])  # paths a glob returned: their name existed (`lexists`)
 
 
 def _parse_recursive(
@@ -169,9 +168,7 @@ def _parse_recursive(
         if not policy.may_read(filename):
             return LoadRefused("read-refused", filename)
         if on_disk and not path.exists(filename):
-            # A glob returned the path, so its name existed: a link to nothing (or one removed since, which the
-            # next observation sees). The root was never globbed: ask, as the observation will.
-            record.files.setdefault(filename, BrokenLink() if filename in record.matched else fp.missing(filename))
+            record.files.setdefault(filename, Absent())
             parse_errors.append(port.load_error(f'File "{filename}" does not exist'))
             continue
         if on_disk and port.is_encrypted_file(filename):
@@ -197,26 +194,64 @@ def _parse_recursive(
         for include in src_options["include"]:
             search = include if path.isabs(include) else path.join(cwd, include)
             matched = fp.matches(search)
-            if glob.has_magic(search):
-                record.globs.setdefault(search, list(matched))
             if not matched and not glob.has_magic(search) and path.normpath(search) in candidates:
                 matched = [search]  # a new file, named by its path: after the write, the glob finds it
+            # Under the string the glob was asked, as written: for a plain path the glob asks `lexists` of it, and a
+            # `..` after a link resolves elsewhere than the normalized path the loader then asks `exists` of.
+            record.globs.setdefault(search, list(matched))
             if matched:
                 expanded.extend(matched)
             else:
-                if not glob.has_magic(search):
-                    record.files.setdefault(path.normpath(search), Absent())
                 parse_errors.append(port.load_error(f'File glob "{include}" does not match any files'))
         for include in expanded:
-            target = path.normpath(include if path.isabs(include) else path.join(cwd, include))
-            stack.append(target)
-            record.matched.add(target)
+            stack.append(path.normpath(include if path.isabs(include) else path.join(cwd, include)))
 
     if options is None:
         options = port.default_options()
     options["include"] = sorted(seen)
     options = port.aggregate_options(options, other_options)
     return entries, parse_errors, options
+
+
+def _plugin_documents(
+    entries: list[port.Directive], errors: list[port.BeancountError], options: port.OptionsMap, known: set[str]
+) -> dict[str, bool]:
+    """The file of each `document` entry a plugin added (not a directive's, not a documents root's), with whether it
+    existed when Beancount checked it, for those Beancount checks.
+
+    Beancount checks them in its documents plugin (`verify_document_files_exist`), so only when that plugin runs
+    after the plugin that added them: never in the default mode (it runs first, `loader.PLUGINS_PRE`) unless the
+    ledger lists it again, and in raw mode where the ledger lists it; listed with a config, it fails before checking.
+    Its "File does not exist" error says which files it found missing. Which plugin added an entry is not known:
+    - no listed documents plugin: none was checked, so none is recorded (the load does not depend on them);
+    - no other plugin after the last one: each was checked, and Beancount's errors give each answer, so a change
+      after its check makes the next observation differ;
+    - another plugin after it: an entry with an error was checked and missing; any other is asked now, right after
+      the plugins (it may not have been checked, and recording it present when it is missing would make an unchanged
+      set observe changed forever). A file Beancount found that vanishes between its check and this question is the
+      one change hidden (S0051 journal, round 2).
+    A `pathlib.Path` counts by its text, as in Beancount's error. Any other name (a plugin may set any value) is never
+    asked: Beancount's own check fails on it, and its validation raises."""
+    names: list[str] = []
+    for entry in entries:
+        filename: object = entry.filename if isinstance(entry, port.Document) else None
+        if isinstance(filename, str | os.PathLike):
+            name = cast(object, os.fspath(filename))  # a bytes path gives bytes
+            if isinstance(name, str) and name not in known:
+                names.append(name)
+    plugins = [(name, config) for name, config in options["plugin"]]
+    checks = [i for i, (name, config) in enumerate(plugins) if name == DOCUMENTS_PLUGIN and config is None]
+    if not names or not checks:
+        return {}
+    messages = {m for e in errors if isinstance(m := getattr(e, "message", None), str)}
+    every_one_checked = all(name == DOCUMENTS_PLUGIN for name, _ in plugins[checks[-1] + 1 :])
+    record: dict[str, bool] = {}
+    for name in names:
+        if f'File does not exist: "{name}"' in messages:
+            record[name] = False
+        else:
+            record[name] = True if every_one_checked else fp.document_file(name)
+    return record
 
 
 def _ask_before_running(options: port.OptionsMap, policy: LoadPolicy) -> LoadRefused | None:

@@ -1,10 +1,12 @@
 """What a load read, recorded by the load itself: its ledger set and fingerprint (ADR-0008 step 4, ADR-0015; S0051).
 
 The fingerprint of a load describes the bytes that load parsed, the glob matches it followed, the paths it looked
-for and did not find (absent, or a link to nothing), the documents roots it scanned (listed before the scan, with
-whether each name leads to a file), and whether the file of each `document` directive exists (asked before Beancount
-asks), so a later observation that equals it means the next load would read the same inputs. Every overlay corpus
-case (`corpora/ledgers/write/`) is loaded from a temp copy (INV-24) and observed again unchanged.
+for and did not find, each `include`'s glob answer under the string the glob was asked (a plain path's too), the
+documents roots it scanned (listed before the scan, with whether each name leads to a file), and whether the file of
+each `document` entry Beancount checks exists (a directive's asked before Beancount asks, a plugin's taken from
+Beancount's own check where it is known), so a later observation that equals it means the next load would read the
+same inputs. Every overlay corpus case (`corpora/ledgers/write/`) is loaded from a temp copy (INV-24) and observed
+again unchanged.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import glob
 import hashlib
 import shutil
 import tomllib
+from collections.abc import Callable
 from os import path
 from pathlib import Path
 from typing import Any
@@ -21,7 +24,7 @@ import pytest
 
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint as fp_module
-from ledger_engine.ledger.core.ledger_set import Absent, BrokenLink, Content, Fingerprint
+from ledger_engine.ledger.core.ledger_set import Absent, Content, Fingerprint
 from ledger_engine.ledger.fingerprint import observe
 from ledger_engine.ledger.overlay import Loaded, load
 from ledger_engine.ledger.policy import DESKTOP
@@ -92,19 +95,20 @@ def test_a_glob_include_records_its_pattern_and_matches_in_the_loaders_order(tmp
     root = copy_case("includes", tmp_path)
     fp = loaded(root).fingerprint
     pattern = path.join(str(root.parent), "years/*.beancount")
-    assert dict(fp.globs) == {pattern: tuple(glob.glob(pattern, recursive=True))}
+    assert dict(fp.globs)[pattern] == tuple(glob.glob(pattern, recursive=True))
     assert set(dict(fp.globs)[pattern]) == {
         str(root.parent / "years" / "2023.beancount"),
         str(root.parent / "years" / "2024.beancount"),
     }
 
 
-def test_a_missing_plain_include_is_recorded_absent(tmp_path: Path) -> None:
+def test_a_missing_plain_include_is_recorded_as_its_globs_empty_answer(tmp_path: Path) -> None:
+    """Beancount's loader globs a plain path too (`glob.glob` asks `lexists` of it): no match, so it never asks
+    `exists` and never opens it; the record is the glob's answer, under the string it was asked."""
     root = write(tmp_path / "main.beancount", 'include "later.beancount"\n')
     fp = loaded(root).fingerprint
-    assert dict(fp.files)[str(tmp_path / "later.beancount")] == Absent()
-    assert dict(fp.files)[str(root)] == sha(root.read_bytes())
-    assert fp.globs == ()
+    assert fp.files == ((str(root), sha(root.read_bytes())),)
+    assert fp.globs == ((str(tmp_path / "later.beancount"), ()),)
 
 
 def test_a_glob_that_matches_nothing_is_recorded_with_no_matches(tmp_path: Path) -> None:
@@ -119,14 +123,18 @@ def test_a_missing_root_is_recorded_absent(tmp_path: Path) -> None:
     assert fp.files == ((str(root), Absent()),)
 
 
-def test_a_plain_include_that_is_a_link_to_nothing_is_recorded_as_one(tmp_path: Path) -> None:
-    """The loader's glob finds the link (`lexists`) and then reports the file missing; for an absent path the glob
-    finds nothing and the loader reports no match. Two errors, so two states."""
+def test_a_plain_include_that_is_a_link_to_nothing_is_recorded_as_the_glob_and_the_loader_saw_it(
+    tmp_path: Path,
+) -> None:
+    """The loader's glob finds the link (`lexists`) and the loader then finds no file (`exists`): "does not exist".
+    For an absent path the glob finds nothing: "does not match". Two errors, told apart by the glob's answer."""
     root = write(tmp_path / "main.beancount", 'include "x.beancount"\ninclude "y.beancount"\n')
     (tmp_path / "x.beancount").symlink_to(tmp_path / "nowhere.beancount")
     result = loaded(root)
-    assert dict(result.fingerprint.files)[str(tmp_path / "x.beancount")] == BrokenLink()
-    assert dict(result.fingerprint.files)[str(tmp_path / "y.beancount")] == Absent()
+    x, y = str(tmp_path / "x.beancount"), str(tmp_path / "y.beancount")
+    assert dict(result.fingerprint.globs) == {x: (x,), y: ()}
+    assert dict(result.fingerprint.files)[x] == Absent()
+    assert y not in dict(result.fingerprint.files)
     assert sorted(e.message for e in result.errors) == [
         f'File "{tmp_path / "x.beancount"}" does not exist',
         'File glob "y.beancount" does not match any files',
@@ -137,8 +145,9 @@ def test_a_plain_include_that_is_a_link_to_nothing_is_recorded_as_one(tmp_path: 
 def test_a_link_removed_between_the_glob_and_the_read_is_recorded_as_the_glob_saw_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The glob found the name, so the load reports "does not exist", not "no match": the record must not ask again
-    (it would find nothing and equal the next observation, which then hides that the next load differs)."""
+    """The glob found the name, so the load reports "does not exist", not "no match": the glob's answer is recorded as
+    it was given (asked again, it would find nothing and equal the next observation, hiding that the next load
+    differs)."""
     root = write(tmp_path / "main.beancount", 'include "x.beancount"\n')
     link = tmp_path / "x.beancount"
     link.symlink_to(tmp_path / "nowhere.beancount")
@@ -154,15 +163,17 @@ def test_a_link_removed_between_the_glob_and_the_read_is_recorded_as_the_glob_sa
     result = loaded(root)
     monkeypatch.undo()
     assert [e.message for e in result.errors] == [f'File "{link}" does not exist']
-    assert dict(result.fingerprint.files)[str(link)] == BrokenLink()
+    assert dict(result.fingerprint.globs)[str(link)] == (str(link),)
+    assert dict(result.fingerprint.files)[str(link)] == Absent()
     assert observe(result.fingerprint.ledger_set) != result.fingerprint
 
 
-def test_a_root_that_is_a_link_to_nothing_is_recorded_as_one(tmp_path: Path) -> None:
+def test_a_root_that_is_a_link_to_nothing_is_recorded_absent(tmp_path: Path) -> None:
+    """The root is never globbed: the loader asks only `exists`, false for a link to nothing as for no file."""
     root = tmp_path / "main.beancount"
     root.symlink_to(tmp_path / "nowhere.beancount")
     fp = loaded(root).fingerprint
-    assert fp.files == ((str(root), BrokenLink()),)
+    assert fp.files == ((str(root), Absent()),)
     assert observe(fp.ledger_set) == fp
 
 
@@ -210,8 +221,9 @@ def test_a_document_directives_file_is_recorded_before_beancount_asks(
 
 
 def test_a_document_a_plugin_makes_is_recorded(tmp_path: Path) -> None:
-    """A plugin may add a `document` entry, and Beancount checks its file when the documents plugin runs after it
-    (here `plugin_processing_mode "raw"` with `beancount.ops.documents` listed after the plugin)."""
+    """A plugin may add a `document` entry, and Beancount checks its file when its documents plugin runs after it
+    (here `plugin_processing_mode "raw"` with `beancount.ops.documents` listed after the plugin): Beancount's error
+    says the file is missing."""
     made = tmp_path / "made.pdf"
     write(
         tmp_path / "s0051_document_maker.py",
@@ -234,6 +246,204 @@ def test_a_document_a_plugin_makes_is_recorded(tmp_path: Path) -> None:
     made.write_bytes(b"%PDF")
     assert observe(result.fingerprint.ledger_set) != result.fingerprint
     assert loaded(root).errors == []
+
+
+def document_maker(tmp_path: Path, module: str, filename: str = "config") -> None:
+    """A plugin module that adds one `document` entry for `Assets:Cash`; its file is the plugin's config by default."""
+    write(
+        tmp_path / f"{module}.py",
+        "import datetime, pathlib\nfrom beancount.core import data\n__plugins__ = ['make']\n"
+        "def make(entries, options_map, config=None):\n"
+        f"    meta = data.new_metadata('<{module}>', 0)\n"
+        f"    doc = data.Document(meta, datetime.date(2024, 1, 3), 'Assets:Cash', {filename}, data.EMPTY_SET,"
+        " data.EMPTY_SET)\n"
+        "    return entries + [doc], []\n",
+    )
+
+
+def after_the_plugins(monkeypatch: pytest.MonkeyPatch, action: Callable[[], object]) -> None:
+    """Run `action` once Beancount's transformations (its documents check among them) are done, before the load
+    goes on."""
+    original = port.run_transformations
+
+    def then_act(
+        entries: list[port.Directive], errors: list[port.BeancountError], options: port.OptionsMap
+    ) -> tuple[list[port.Directive], list[port.BeancountError]]:
+        result = original(entries, errors, options)
+        action()
+        return result
+
+    monkeypatch.setattr(port, "run_transformations", then_act)
+
+
+def during_validation(monkeypatch: pytest.MonkeyPatch, action: Callable[[], object]) -> None:
+    original = port.validate
+
+    def act_first(entries: list[port.Directive], options: port.OptionsMap) -> list[Any]:
+        action()
+        return original(entries, options)
+
+    monkeypatch.setattr(port, "validate", act_first)
+
+
+RAW = 'option "plugin_processing_mode" "raw"\noption "insert_pythonpath" "TRUE"\n'
+
+
+@pytest.mark.parametrize(
+    "plugins", [["maker", "documents"], ["documents", "maker", "documents"]], ids=["after", "between-two"]
+)
+def test_a_plugin_document_beancount_checked_is_recorded_as_beancount_saw_it(
+    plugins: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Beancount found the file (no error), and it vanished right after: the record is Beancount's answer, not asked
+    again, so the next observation differs (verifier round 2, F2)."""
+    made = write(tmp_path / "made.pdf", "%PDF")
+    document_maker(tmp_path, "s0051_r2_checked")
+    lines = {"maker": f'plugin "s0051_r2_checked" "{made}"\n', "documents": 'plugin "beancount.ops.documents"\n'}
+    root = write(
+        tmp_path / "main.beancount", RAW + "".join(lines[p] for p in plugins) + "2020-01-01 open Assets:Cash USD\n"
+    )
+    after_the_plugins(monkeypatch, made.unlink)
+    result = loaded(root)
+    monkeypatch.undo()
+    assert result.errors == []
+    assert result.fingerprint.document_files == ((str(made), True),)
+    assert observe(result.fingerprint.ledger_set) != result.fingerprint
+
+
+def test_a_plugin_document_appearing_after_beancounts_check_is_recorded_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    made = tmp_path / "made.pdf"
+    document_maker(tmp_path, "s0051_r2_appears")
+    root = write(
+        tmp_path / "main.beancount",
+        RAW
+        + f'plugin "s0051_r2_appears" "{made}"\nplugin "beancount.ops.documents"\n2020-01-01 open Assets:Cash USD\n',
+    )
+    after_the_plugins(monkeypatch, lambda: made.write_bytes(b"%PDF"))
+    result = loaded(root)
+    monkeypatch.undo()
+    assert [e.message for e in result.errors] == [f'File does not exist: "{made}"']
+    assert result.fingerprint.document_files == ((str(made), False),)
+    assert observe(result.fingerprint.ledger_set) != result.fingerprint
+
+
+def test_with_a_plugin_after_the_check_a_document_is_asked_before_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Which plugin added it is not known, so the file is asked about: right after the plugins, so a delete while
+    the load validates (its longest step after them) makes the next observation differ."""
+    early = write(tmp_path / "early.pdf", "%PDF")
+    document_maker(tmp_path, "s0051_r2_window_early")
+    document_maker(tmp_path, "s0051_r2_window_late")
+    root = write(
+        tmp_path / "main.beancount",
+        RAW + f'plugin "s0051_r2_window_early" "{early}"\nplugin "beancount.ops.documents"\n'
+        f'plugin "s0051_r2_window_late" "{tmp_path / "late.pdf"}"\n2020-01-01 open Assets:Cash USD\n',
+    )
+    during_validation(monkeypatch, early.unlink)
+    result = loaded(root)
+    monkeypatch.undo()
+    assert dict(result.fingerprint.document_files)[str(early)] is True
+    assert observe(result.fingerprint.ledger_set) != result.fingerprint
+
+
+def test_a_document_directive_keeps_the_answer_asked_before_the_plugins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A directive's file is asked before Beancount checks it; the plugin documents' record must not replace that
+    answer with a later one (a delete after Beancount's check would then be hidden)."""
+    pdf = write(tmp_path / "a.pdf", "%PDF")
+    document_maker(tmp_path, "s0051_r2_directive_late")
+    root = write(
+        tmp_path / "main.beancount",
+        RAW + 'plugin "beancount.ops.documents"\n'
+        f'plugin "s0051_r2_directive_late" "{tmp_path / "late.pdf"}"\n'
+        '2020-01-01 open Assets:Cash USD\n2024-01-01 document Assets:Cash "a.pdf"\n',
+    )
+    after_the_plugins(monkeypatch, pdf.unlink)
+    result = loaded(root)
+    monkeypatch.undo()
+    assert result.errors == []
+    assert dict(result.fingerprint.document_files)[str(pdf)] is True
+    assert observe(result.fingerprint.ledger_set) != result.fingerprint
+
+
+def test_a_plugin_document_beancount_never_checks_is_not_recorded(tmp_path: Path) -> None:
+    """Default mode: Beancount's documents plugin runs before the user's plugins (`loader.PLUGINS_PRE`), so it never
+    checks a document a plugin adds; the load does not depend on that file, and an unchanged set observes unchanged
+    whether or not it exists."""
+    made = tmp_path / "made.pdf"
+    document_maker(tmp_path, "s0051_r2_unchecked")
+    root = write(
+        tmp_path / "main.beancount",
+        f'option "insert_pythonpath" "TRUE"\nplugin "s0051_r2_unchecked" "{made}"\n2020-01-01 open Assets:Cash USD\n',
+    )
+    result = loaded(root)
+    assert result.errors == []
+    assert result.fingerprint.document_files == ()
+    assert observe(result.fingerprint.ledger_set) == result.fingerprint
+
+
+def test_a_documents_plugin_listed_with_a_config_checks_nothing(tmp_path: Path) -> None:
+    """Its functions take no config, so Beancount reports the plugin failing and checks no file."""
+    made = tmp_path / "made.pdf"
+    document_maker(tmp_path, "s0051_r2_configured")
+    root = write(
+        tmp_path / "main.beancount",
+        'option "plugin_processing_mode" "raw"\noption "insert_pythonpath" "TRUE"\n'
+        f'plugin "s0051_r2_configured" "{made}"\nplugin "beancount.ops.documents" "x"\n'
+        "2020-01-01 open Assets:Cash USD\n",
+    )
+    result = loaded(root)
+    assert [e.message.split(":")[0] for e in result.errors] == ['Error applying plugin "beancount.ops.documents"'] * 2
+    assert result.fingerprint.document_files == ()
+
+
+def test_a_plugin_after_the_documents_plugin_leaves_its_document_unchecked_and_observed_unchanged(
+    tmp_path: Path,
+) -> None:
+    """Which plugin added a document is not known: with a plugin after Beancount's check, a document with no error is
+    recorded as it is now, so an unchanged set observes unchanged (the liveness side; journal, round 2)."""
+    early, late = tmp_path / "early.pdf", tmp_path / "late.pdf"
+    document_maker(tmp_path, "s0051_r2_early")
+    document_maker(tmp_path, "s0051_r2_late")
+    root = write(
+        tmp_path / "main.beancount",
+        'option "plugin_processing_mode" "raw"\noption "insert_pythonpath" "TRUE"\n'
+        f'plugin "s0051_r2_early" "{early}"\nplugin "beancount.ops.documents"\nplugin "s0051_r2_late" "{late}"\n'
+        "2020-01-01 open Assets:Cash USD\n",
+    )
+    result = loaded(root)
+    assert [e.message for e in result.errors] == [f'File does not exist: "{early}"']
+    assert result.fingerprint.document_files == ((str(early), False), (str(late), False))
+    assert observe(result.fingerprint.ledger_set) == result.fingerprint
+    early.write_bytes(b"%PDF")
+    assert observe(result.fingerprint.ledger_set) != result.fingerprint
+
+
+def test_a_plugin_document_named_by_a_path_object_is_recorded_by_its_text_and_never_breaks_the_load(
+    tmp_path: Path,
+) -> None:
+    """A plugin may give a `pathlib.Path`: Beancount's check takes it (`os.path.exists`) and its error names its text;
+    unchecked, Beancount never looks at it. Neither load may raise (verifier round 2, F3)."""
+    document_maker(tmp_path, "s0051_r2_pathobj", "pathlib.Path(config)")
+    for mode, listed in (("default", ""), ("raw", 'plugin "beancount.ops.documents"\n')):
+        made = tmp_path / f"{mode}.pdf"
+        root = write(
+            tmp_path / f"{mode}.beancount",
+            f'option "plugin_processing_mode" "{mode}"\noption "insert_pythonpath" "TRUE"\n'
+            f'plugin "s0051_r2_pathobj" "{made}"\n{listed}2020-01-01 open Assets:Cash USD\n'
+            f'2024-01-01 document Assets:Cash "y.pdf"\n',
+        )
+        result = loaded(root)
+        expected = [f'File does not exist: "{tmp_path / "y.pdf"}"'] + (
+            [f'File does not exist: "{made}"'] if mode == "raw" else []
+        )
+        assert sorted(e.message for e in result.errors) == sorted(expected)
+        assert dict(result.fingerprint.document_files).get(str(made)) == (False if mode == "raw" else None)
+        assert observe(result.fingerprint.ledger_set) == result.fingerprint
 
 
 def test_documents_roots_are_resolved_as_beancount_resolves_them_and_listed(tmp_path: Path) -> None:
@@ -282,6 +492,7 @@ def test_a_candidate_is_fingerprinted_by_the_candidate_bytes(tmp_path: Path) -> 
     candidate = b"2020-01-01 open Assets:Cash USD\n"
     fp = loaded(root, {new: candidate}).fingerprint
     assert dict(fp.files)[new] == sha(candidate)
+    assert dict(fp.globs)[new] == (new,)  # as the glob will answer once the file is written
     assert dict(observe(fp.ledger_set).files)[new] == Absent()  # not on disk yet: the disk differs
     Path(new).write_bytes(candidate)
     assert observe(fp.ledger_set) == fp  # after the save wrote the same bytes, the disk is what was loaded
@@ -314,7 +525,7 @@ def test_the_fingerprint_is_a_value() -> None:
     assert Fingerprint.of("/r/main.beancount", {}, {}, {}, {}) == Fingerprint.of("/r/main.beancount", {}, {}, {}, {})
 
 
-def test_a_path_found_absent_and_then_read_in_one_load_stays_absent(
+def test_a_path_found_absent_and_then_read_in_one_load_keeps_the_first_answer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The load reported the include missing and then read the file: its result holds both, which the next load
@@ -333,5 +544,5 @@ def test_a_path_found_absent_and_then_read_in_one_load_stays_absent(
     result = loaded(root)
     monkeypatch.undo()
     assert str(x) in result.options["include"]
-    assert dict(result.fingerprint.files)[str(x)] == Absent()
+    assert dict(result.fingerprint.globs)[str(x)] == ()  # the first answer stays
     assert observe(result.fingerprint.ledger_set) != result.fingerprint

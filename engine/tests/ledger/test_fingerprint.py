@@ -4,10 +4,10 @@
 Two requirements: a change the next load would see changes the fingerprint (else a save lands over an outside edit,
 or the mirror stays stale: INV-01, INV-05, INV-22), and an unchanged ledger set keeps it (else every open rebuilds and
 every save is refused). Each change below is one the loader reads: a file's bytes, a path appearing, vanishing or
-becoming a link to nothing, a glob's match list, a documents root's file names and whether each leads to a file, a
-`document` directive's file appearing or vanishing. The digest's encoding is pinned by a golden and checked by
-properties: it decodes back to the value it came from, so two different fingerprints never share a digest except by
-a SHA-256 collision.
+becoming a link to nothing, a glob's match list (a plain include's too: the loader globs it), a documents root's file
+names and whether each leads to a file, a `document` directive's file appearing or vanishing. The digest's encoding
+is pinned by a golden and checked by properties: it decodes back to the value it came from, so two different
+fingerprints never share a digest except by a SHA-256 collision.
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ from hypothesis import strategies as st
 
 from ledger_engine.ledger.core.ledger_set import (
     Absent,
-    BrokenLink,
     Content,
     FileState,
     Fingerprint,
@@ -224,7 +223,7 @@ def test_an_empty_documents_root_is_not_an_absent_one(tmp_path: Path) -> None:
 
 
 def test_an_absent_file_that_appears_unreadable_changes_the_fingerprint(tmp_path: Path) -> None:
-    """Absent and unreadable are two states: the next load reports a missing file in one and fails in the other."""
+    """The next load reports no match in one case and fails in the other: the include's glob now finds it."""
     if os.geteuid() == 0:
         pytest.skip("root reads a file whatever its mode")
     root = book(tmp_path)
@@ -232,8 +231,20 @@ def test_an_absent_file_that_appears_unreadable_changes_the_fingerprint(tmp_path
     create_the_absent_include(tmp_path)
     (tmp_path / "later.beancount").chmod(0)
     after = observe(before.ledger_set)
-    assert dict(after.files)[str(tmp_path / "later.beancount")] == Unreadable("EACCES")
+    later = str(tmp_path / "later.beancount")
+    assert dict(after.globs)[later] == (later,)
     assert digest(after) != digest(before)
+
+
+def test_a_loaded_file_made_unreadable_is_observed_unreadable(tmp_path: Path) -> None:
+    """Present and unreadable are two states: the next load parses it in one and fails in the other."""
+    if os.geteuid() == 0:
+        pytest.skip("root reads a file whatever its mode")
+    root = book(tmp_path)
+    before = fingerprint_of(root)
+    make_a_file_unreadable(tmp_path)
+    after = observe(before.ledger_set)
+    assert dict(after.files)[str(tmp_path / "includes" / "accounts.beancount")] == Unreadable("EACCES")
 
 
 def test_what_the_load_cannot_see_keeps_the_fingerprint(tmp_path: Path) -> None:
@@ -307,8 +318,10 @@ def test_an_unchanged_set_with_links_to_nothing_observes_unchanged(tmp_path: Pat
     (tmp_path / "gone.pdf").symlink_to(tmp_path / "nowhere.pdf")
     result = loaded(root)
     fp = result.fingerprint
-    assert dict(fp.files)[str(tmp_path / "x.beancount")] == BrokenLink()
-    assert dict(fp.files)[str(tmp_path / "y" / "z.beancount")] == BrokenLink()
+    x, z = str(tmp_path / "x.beancount"), str(tmp_path / "y" / "z.beancount")
+    assert dict(fp.globs)[x] == (x,)  # the loader's glob finds the link
+    assert dict(fp.files)[x] == Absent()  # and the loader then finds no file
+    assert dict(fp.files)[z] == Absent()
     assert dict(fp.document_files)[str(tmp_path / "gone.pdf")] is False  # Beancount reports it missing
     assert (
         dict(dict(fp.documents)[str(tmp_path / "docs")] or {})[path.join("Assets", "Cash", "2024-01-01.r.pdf")] is False
@@ -318,6 +331,41 @@ def test_an_unchanged_set_with_links_to_nothing_observes_unchanged(tmp_path: Pat
         f'File does not exist: "{tmp_path / "gone.pdf"}"',
     ]
     assert observe(fp.ledger_set) == fp
+
+
+def dotdot_through_a_link(tmp_path: Path) -> Path:
+    """ws/main includes linked/*.beancount; ws/linked is a link to ext/sub; ext/sub/a includes "../common.beancount".
+    The glob asks `lexists("ws/linked/../common.beancount")`, which the system resolves through the link to
+    ext/common.beancount; the loader then opens the normalized ws/common.beancount (Beancount's own behaviour)."""
+    write(tmp_path / "ext" / "sub" / "a.beancount", 'include "../common.beancount"\n')
+    (tmp_path / "ws").mkdir()
+    (tmp_path / "ws" / "linked").symlink_to(tmp_path / "ext" / "sub")
+    return write(tmp_path / "ws" / "main.beancount", 'include "linked/*.beancount"\n')
+
+
+@pytest.mark.parametrize("present", ["ext", "ws"])
+def test_a_dotdot_through_a_link_observes_unchanged(present: str, tmp_path: Path) -> None:
+    """The glob's question and the loader's are about two different files: each answer is recorded under the string
+    it was asked of, so an unchanged set observes unchanged (verifier round 2, F1, cases A and B)."""
+    root = dotdot_through_a_link(tmp_path)
+    write(tmp_path / present / "common.beancount", "")
+    result = loaded(root)
+    expected = {
+        "ext": f'File "{tmp_path / "ws" / "common.beancount"}" does not exist',
+        "ws": 'File glob "../common.beancount" does not match any files',
+    }[present]
+    assert [e.message for e in result.errors] == [expected]
+    assert observe(result.fingerprint.ledger_set) == result.fingerprint
+
+
+def test_a_file_appearing_behind_a_dotdot_through_a_link_changes_it(tmp_path: Path) -> None:
+    """Neither file exists; ext/common.beancount appears: the next load's error changes, so must the fingerprint
+    (verifier round 2, F1, case C)."""
+    root = dotdot_through_a_link(tmp_path)
+    before = loaded(root)
+    write(tmp_path / "ext" / "common.beancount", "")
+    assert sorted(e.message for e in loaded(root).errors) != sorted(e.message for e in before.errors)
+    assert observe(before.fingerprint.ledger_set) != before.fingerprint
 
 
 def test_observing_twice_gives_one_digest(tmp_path: Path) -> None:
@@ -343,11 +391,14 @@ GOLDEN = Fingerprint.of(
     "/books/main.beancount",
     {
         "/books/main.beancount": Content("abababababababababababababababababababababababababababababababab"),
-        "/books/later.beancount": Absent(),
-        "/books/linked.beancount": BrokenLink(),
+        "/books/linked.beancount": Absent(),
         "/books/locked.beancount": Unreadable("EACCES"),
     },
-    {"/books/years/*.beancount": ("/books/years/2024.beancount", "/books/years/2023.beancount")},
+    {
+        "/books/years/*.beancount": ("/books/years/2024.beancount", "/books/years/2023.beancount"),
+        "/books/later.beancount": (),
+        "/books/linked.beancount": ("/books/linked.beancount",),
+    },
     {
         "/books/docs": {"Assets/Cash/2024-01-06.link.pdf": False, "Assets/Cash/2024-01-05.receipt.pdf": True},
         "/books/gone": None,
@@ -358,13 +409,13 @@ GOLDEN_ENCODING = (
     b'{"document_files":[["/books/scans/a.pdf",true],["/books/scans/b.pdf",false]],'
     b'"documents":[["/books/docs",[["Assets/Cash/2024-01-05.receipt.pdf",true],'
     b'["Assets/Cash/2024-01-06.link.pdf",false]]],["/books/gone",null]],'
-    b'"files":[["/books/later.beancount",["absent"]],["/books/linked.beancount",["broken-link"]],'
-    b'["/books/locked.beancount",["unreadable","EACCES"]],'
+    b'"files":[["/books/linked.beancount",["absent"]],["/books/locked.beancount",["unreadable","EACCES"]],'
     b'["/books/main.beancount",["sha256","abababababababababababababababababababababababababababababababab"]]],'
-    b'"globs":[["/books/years/*.beancount",["/books/years/2024.beancount","/books/years/2023.beancount"]]],'
+    b'"globs":[["/books/later.beancount",[]],["/books/linked.beancount",["/books/linked.beancount"]],'
+    b'["/books/years/*.beancount",["/books/years/2024.beancount","/books/years/2023.beancount"]]],'
     b'"root":"/books/main.beancount","v":1}'
 )
-GOLDEN_DIGEST = "sha256:7b1f81a2a4bc2aabb649b7e99b019cdc1d176089f2dd4cb9610994ca36249823"
+GOLDEN_DIGEST = "sha256:2bdc7c665539f41bf7537f5e133c84f72dec1af2a14d51e50baf1c5722ef5aa5"
 
 
 def test_the_encoding_is_pinned() -> None:
@@ -415,7 +466,6 @@ hexes = st.text(alphabet="0123456789abcdef", min_size=64, max_size=64)
 states: st.SearchStrategy[FileState] = st.one_of(
     hexes.map(Content),
     st.just(Absent()),
-    st.just(BrokenLink()),
     st.sampled_from(["EACCES", "EIO", "ELOOP"]).map(Unreadable),
 )
 fingerprints = st.builds(
@@ -447,8 +497,6 @@ def decode(data: bytes) -> Fingerprint:
                 return Content(h)
             case ["absent"]:
                 return Absent()
-            case ["broken-link"]:
-                return BrokenLink()
             case ["unreadable", e]:
                 return Unreadable(e)
             case _:

@@ -199,7 +199,8 @@ engine/src/ledger_engine/
                  every file parsed from the bytes it read, so `Loaded.fingerprint` is what the load read (S0051)
     fingerprint.py  observe(ledger_set) -> Fingerprint: the disk asked the loader's own questions (S0051; ADR-0008
                  step 4, ADR-0015; SHA-256 per file per the engine-jobs spec §1, not ADR-0015's mtime and size;
-                 also links to nothing, documents listings with each name's presence, `document` entries' files)
+                 also each include's glob answer, plain paths too, documents listings with each name's presence, the
+                 files of the `document` entries Beancount checks)
     policy.py    LoadPolicy: may_read, may_run_plugin, may_add_pythonpath, may_scan_documents (built: the desktop
                  body for a trusted ledger, which allows all; the restrictive desktop body of ADR-0040 waits for
                  design/inbox/20261028-untrusted-ledger-load.md; the hosted body is deferred, ADR-0041) (S0049)

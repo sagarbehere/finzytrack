@@ -2,16 +2,17 @@
 "Fingerprint"; S0051). Pure.
 
 A **ledger set** is everything one load looked at: its root, every file it named (read, or looked for and not
-found), every glob `include` it expanded, every documents root it scanned, and the file of every `document` entry
-whose existence Beancount checks. A **fingerprint** is one observation of it: per file the SHA-256 of its bytes,
-`absent`, `broken-link` (a link to nothing) or `unreadable {errno}`; per glob the match list in the loader's order
-(it decides the order files are parsed in, so it can change entry order); per documents root its file names, each
-with whether it leads to a file, or `absent`; per document file whether it exists. Equal fingerprints mean the next
-load reads the same inputs; that is the whole contract, and what the write gate (ADR-0008 step 4, ADR-0013) and the
-mirror's freshness (ADR-0015) rely on. The one input of a load left out on purpose is each file's mtime and size,
-which Beancount reads only into `options["input_hash"]` (its cache key; no entry, error or other option depends on
-it): a fingerprint that held them would change on every `touch`. A digest that compares two loads' results must
-therefore leave `input_hash` out (R4, TODO(BL-0118)).
+found), every `include` it globbed (plain paths too: the loader globs each), every documents root it scanned, and the
+file of every `document` entry whose existence Beancount checks. A **fingerprint** is one observation of it: per file
+the SHA-256 of its bytes, `absent` (no file: `os.path.exists` is false) or `unreadable {errno}`; per include the
+glob's match list in the loader's order (it decides the order files are parsed in, so it can change entry order; for
+a plain path it is the path or nothing, the glob's `lexists`, which tells "does not exist" from "does not match");
+per documents root its file names, each with whether it leads to a file, or `absent`; per document file whether it
+exists. Equal fingerprints mean the next load reads the same inputs; that is the whole contract, and what the write gate
+(ADR-0008 step 4, ADR-0013) and the mirror's freshness (ADR-0015) rely on. The one input of a load left out on purpose
+is each file's mtime and size, which Beancount reads only into `options["input_hash"]` (its cache key; no entry, error
+or other option depends on it): a fingerprint that held them would change on every `touch`. A digest that compares two
+loads' results must therefore leave `input_hash` out (R4, TODO(BL-0118)).
 
 Content hashes, not `(mtime, size)` as ADR-0015 first wrote: an edit that keeps the size within the clock's
 resolution, or a tool that restores the mtime, would pass a stat (ADR-0064's spec, S0051 journal).
@@ -58,15 +59,8 @@ class Content:
 
 @dataclass(frozen=True, slots=True)
 class Absent:
-    """Nothing exists at the path: `os.path.exists` (the loader's question) and `os.path.lexists` (its glob's, for a
-    plain `include`) are both false."""
-
-
-@dataclass(frozen=True, slots=True)
-class BrokenLink:
-    """A name exists at the path but leads to no file (a link to nothing, or a loop): `lexists` is true, `exists`
-    false. The loader reports another error for it than for an absent path: a plain `include` of it is "does not
-    exist", of an absent path "does not match any files"."""
+    """No file at the path: `os.path.exists`, the loader's question, is false (nothing there, or a link to nothing:
+    the loader cannot tell them apart; whether its glob found the name is the include's match list)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +70,7 @@ class Unreadable:
     error: str
 
 
-type FileState = Content | Absent | BrokenLink | Unreadable
+type FileState = Content | Absent | Unreadable
 # A documents root's file names (relative, sorted), each with whether it leads to a file (`os.path.exists`: Beancount
 # makes a `document` entry for a dated name and then checks it); None when the root does not exist.
 type Listing = tuple[tuple[str, bool], ...] | None
@@ -155,8 +149,6 @@ def _state(state: FileState) -> list[str]:
             return ["sha256", h]
         case Absent():
             return ["absent"]
-        case BrokenLink():
-            return ["broken-link"]
         case Unreadable(error=e):
             return ["unreadable", e]
 
