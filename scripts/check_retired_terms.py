@@ -18,13 +18,18 @@ Exceptions inside the checked documents:
 - a `cut` capability row (it is kept for the record);
 - a backlog item row whose status is `done`, `removed` or `post-v0.4`; a row whose cells do not line up with its
   header, or whose status is not a known one, is checked (fails closed); text outside item tables is checked;
-- the owner's words quoted verbatim (`owner: "..."`, `Owner: "..."`): only the quoted text;
+- the owner's words quoted verbatim, in the attribution forms this repository uses and no other: `owner: "..."`,
+  `Owner A: "..."` (a labelled answer), `(owner, <date>: "...")`, `Owner, <date>, in session: "..."` and
+  `the owner's approval, <date>, ADR-nnnn: "..."` (between "owner" and the colon only a label letter, "'s approval",
+  dates, ADR IDs and "in session"); only the quoted text is exempt (S0047 verifier V2: a quote merely near the word
+  "owner", such as an owner-facing dialog's text, is not the owner's);
 - `ALLOW`, one entry per line, each with the term it allows, a fragment of that line and a reason. An entry that
   matches nothing is a problem, so the list cannot outlive the text it was written for.
 
 The terms are chosen so that the current design's own words pass: a bare slot, lane, gate, admit, warm, window,
 share, territory ("tax territory"), stall, heartbeat, timeout or Busy is never refused, and `RECOVERING` is a
-question of meaning that the verifier, not a word list, judges. `AFTER_ENGINE_JOBS` lists the terms that the
+question of meaning that the verifier, not a word list, judges. Each checked line is also read joined with the next
+checked line, so a multi-word term split by a line break is still found (reported on its first line). `AFTER_ENGINE_JOBS` lists the terms that the
 engine-jobs slice retires (the per-request time limits and their bounds); it is inactive until that slice lands.
 
 Exit 0 = nothing refused, 1 = refused or a problem with the check's own lists, 2 = the root cannot be read.
@@ -50,7 +55,8 @@ SPECS = "design/specs"
 ABANDONED = "**Abandoned, so stale wherever it is stated as current:**"
 HISTORY_STATUSES = frozenset({"done", "removed", "post-v0.4"})
 KNOWN_STATUSES = HISTORY_STATUSES | {"open", "in-progress", "parked"}
-OWNER_QUOTE = re.compile(r"\bowner\b[^\"\n]{0,60}?\"[^\"\n]*\"", re.I)
+OWNER_QUOTE = re.compile(
+    r"\b[Oo]wner(?:'s approval)?(?: [A-Z])?(?:,\s*(?:\d{4}-\d{2}-\d{2}|ADR-\d{4}|in session))*\s*:\s*\"[^\"\n]*\"")
 UNESCAPED_PIPE = re.compile(r"(?<!\\)\|")
 
 
@@ -72,7 +78,8 @@ def code(name: str) -> Term:
 # Refused now (the convergence audit of 2026-10-27, plus "heavy-load gate" and the spec's old name).
 ACTIVE: tuple[Term, ...] = (
     Term("semaphore", r"\bsemaphores?\b"),
-    Term("limiter", r"(?<!rate )(?<!rate-)\b\w*limiters?\b"),
+    # A word, never a suffix ("delimiter" passes, S0047 verifier V4): "limiter", or a CamelCase name ending in it.
+    Term("limiter", r"(?<!rate )(?<!rate-)(?<![\w-])(?:[Ll]imiters?|[A-Z]\w*Limiters?)\b", case=True),
     Term("heavy-load gate", r"\bheavy[- ]load gate\b"),
     Term("engine pool", r"\bengine pools?\b"),
     Term("slot count", r"\bslot counts?\b"),
@@ -140,6 +147,9 @@ ALLOW: tuple[Allow, ...] = (
           "the line's source note: the memory bound is what ADR-0011's retired semaphore was for"),
     Allow("design/specs/engine-jobs.md", "scheduler spec or slice", '("the scheduler spec draft 5 defines it")',
           "quotes ADR-0063 decision 2's own words, which predate the rename"),
+    Allow("design/specs/engine-jobs.md", "scheduler spec or slice", '"Yes, add it to the scheduler spec as a requirement.',
+          "the owner's words of 2026-10-26, in an attribution form (`The owner's requirement (<date>: ...`) the quote "
+          "rule does not take"),
     Allow("design/specs/README.md", "engine-scheduler.md", "**Renamed:** `engine-scheduler.md`",
           "the redirect from the spec's old name (owner, 2026-10-27)"),
     Allow("design/specs/README.md", "engine scheduler", "**Renamed:** `engine-scheduler.md`",
@@ -229,8 +239,26 @@ def _backlog_lines(lines: list[str]) -> list[tuple[int, str]]:
     return out
 
 
+def _spanning(first: str, second: str, terms: tuple[Term, ...]) -> list[str]:
+    """Terms that start on `first` and end on `second`, read as one line (S0047 verifier V6)."""
+    joined, cut = f"{first} {second}", len(first)
+    quoted = [(m.start(), m.end()) for m in OWNER_QUOTE.finditer(joined)]
+    found: list[str] = []
+    for term in terms:
+        for m in term.regex.finditer(joined):
+            if m.start() < cut < m.end() and not any(a <= m.start() and m.end() <= b for a, b in quoted):
+                found.append(term.name)
+                break
+    return found
+
+
 def scan_text(path: str, text: str, terms: tuple[Term, ...]) -> list[Hit]:
-    return [Hit(path, n, name, t) for n, t in checked_lines(path, text) for name in line_hits(t, terms)]
+    lines = checked_lines(path, text)
+    out = [Hit(path, n, name, t) for n, t in lines for name in line_hits(t, terms)]
+    for (n, t), (m, u) in zip(lines, lines[1:]):
+        if m == n + 1:
+            out += [Hit(path, n, name, f"{t} {u}") for name in _spanning(t, u, terms)]
+    return sorted(out, key=lambda h: h.line)
 
 
 def documents(root: Path) -> tuple[list[str], list[str]]:

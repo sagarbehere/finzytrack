@@ -9,6 +9,7 @@ runs at every push and every Stop (through `scripts/run_meta_tests.py`, as `chec
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,16 @@ import check_retired_terms as crt  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "check_retired_terms.py"
+# The current-state documents, written out here and not read from the script (S0047 verifier V1: a test that
+# iterates the script's own list cannot notice a document dropped from it).
+EXPECTED_FIXED = (
+    "design/ARCHITECTURE.md",
+    "design/INVARIANTS.md",
+    "design/ENGINEERING.md",
+    "design/glossary.md",
+    "design/capabilities.toml",
+    "design/backlog.md",
+)
 
 # One line per refuse-now term, as an abandoned design would have written it.
 RETIRED_LINES = {
@@ -74,6 +85,7 @@ TRAP_LINES = [
     "The scheduler thread runs the pure tables; the scheduler starts the oldest job.",
     "The model `formal/tla/engine-jobs/` and `scripts/tests/test_tla_engine_jobs.py`; EngineJobs.tla.",
     "A rate limiter on the price source.",
+    "The CSV importer guesses the delimiter from the first line; delimiters per bank.",  # S0047 verifier V4
     "Engine-jobs spec §6; the engine-jobs slice.",
 ]
 
@@ -94,6 +106,26 @@ class Terms(unittest.TestCase):
         for term, line in RETIRED_LINES.items():
             with self.subTest(term=term):
                 self.assertIn(term, names(hits(line)), line)
+
+    def test_every_limiter_spelling_is_refused(self) -> None:
+        for line in ("the per-workspace limiter", "a `WorkspaceLimiter`", "Limiters are gone", "two limiters"):
+            with self.subTest(line=line):
+                self.assertEqual(names(hits(line)), ["limiter"], line)
+
+    def test_a_term_split_by_a_line_break_is_refused_on_its_first_line(self) -> None:  # S0047 verifier V6
+        found = hits("Saves go through the engine\npool, one slot per workspace.\n")
+        self.assertEqual([(h.term, h.line) for h in found], [("engine pool", 1)])
+        self.assertEqual(names(hits("the heavy-load\ngate")), ["heavy-load gate"])
+
+    def test_lines_are_joined_only_when_both_are_checked(self) -> None:
+        text = "**Abandoned, so stale wherever it is stated as current:** an engine\npool here is fine.\n"
+        self.assertEqual(hits(text, "design/ARCHITECTURE.md"), [])
+        # two checked lines with an exempt one between them are not neighbours
+        text = "Saves use the engine\n**Abandoned, so stale wherever it is stated as current:** x\npool later.\n"
+        self.assertEqual(hits(text, "design/ARCHITECTURE.md"), [])
+
+    def test_an_owner_quote_split_by_a_line_break_is_still_exempt(self) -> None:
+        self.assertEqual(hits('as decided (owner: "no engine\npool, ever")\n'), [])
 
     def test_case_does_not_hide_a_term(self) -> None:
         for line in ("SEMAPHORE", "Engine Pool", "run ANYWAY", "Kept Warm"):
@@ -141,6 +173,26 @@ class Exceptions(unittest.TestCase):
 
     def test_a_quote_not_from_the_owner_is_refused(self) -> None:
         self.assertEqual(names(hits('the reviewer: "the engine pool is fine"')), ["engine pool"])
+
+    def test_the_owner_quote_forms_of_the_repository_are_exempt(self) -> None:
+        for line in (
+            '(owner, 2026-10-27: "no engine pool")',
+            'Owner, 2026-10-27, in session: "no engine pool"',
+            "with the owner's approval, 2026-10-25, ADR-0063: \"no engine pool\"",
+            'Owner A: "no engine pool"',
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(hits(line), [], line)
+
+    def test_a_quote_near_the_word_owner_is_not_the_owners(self) -> None:  # S0047 verifier V2
+        for line, term in (
+            ('The owner-facing dialog reads "Run anyway" while a save runs.', "Run anyway"),
+            ('The owner rejected the agent proposal "keep the engine pool".', "engine pool"),
+            ("On the owner's machine the \"heavy-load gate\" admits two loads.", "heavy-load gate"),
+            ('owner, 2026-10-27, rejected it: "the engine pool"', "engine pool"),
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(names(hits(line)), [term], line)
 
     def test_the_abandoned_paragraph_of_architecture_is_exempt(self) -> None:
         text = "**Abandoned, so stale wherever it is stated as current:** an engine pool, slots, admission.\n"
@@ -231,7 +283,7 @@ def make_root(case: unittest.TestCase, files: dict[str, str]) -> Path:
     """A scratch repository holding every current-state document (clean), then `files` on top."""
     tmp = Path(tempfile.mkdtemp())
     case.addCleanup(shutil.rmtree, tmp, True)
-    base = {path: "nothing retired\n" for path in crt.FIXED_FILES}
+    base = {path: "nothing retired\n" for path in EXPECTED_FIXED}
     base["design/specs/a.md"] = "nothing retired\n"
     for path, text in {**base, **files}.items():
         (tmp / path).parent.mkdir(parents=True, exist_ok=True)
@@ -244,7 +296,7 @@ class Scope(unittest.TestCase):
         return make_root(self, files)
 
     def test_each_current_state_document_is_checked(self) -> None:
-        for path in (*crt.FIXED_FILES, "design/specs/a.md", "design/specs/write-path/deep/b.md"):
+        for path in (*EXPECTED_FIXED, "design/specs/a.md", "design/specs/write-path/deep/b.md"):
             with self.subTest(path=path):
                 root = self.make({path: "a semaphore\n"})
                 self.assertEqual([p.split(":")[0] for p in crt.check(root, allow=())], [path])
@@ -313,6 +365,9 @@ class RealRepository(unittest.TestCase):
         r = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, check=False)  # noqa: S603
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("0 refused", r.stdout)
+        # every current-state document was read: the fixed ones and every Markdown file under design/specs/
+        specs = [f for _, _, files in os.walk(ROOT / "design/specs") for f in files if f.endswith(".md")]
+        self.assertIn(f"retired terms: {len(EXPECTED_FIXED) + len(specs)} documents,", r.stdout)
 
     def test_a_retired_term_in_the_repository_fails_the_script(self) -> None:
         root = make_root(self, {"design/glossary.md": "- **Semaphore.** retired\n"})

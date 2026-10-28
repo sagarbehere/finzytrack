@@ -418,3 +418,13 @@ Format:
 - Observed effect: pending.
 - Status: kept (tightening, agent-approved; S0047).
 
+
+## IMP-0043: EP-19 names the engine-jobs model and keeps a formal model for the mirror publish (2026-10-27)
+- Trigger: S0047 verifier round 1, V3: S0047 rewrote EP-19 (its planned `formal/tla/WriteProtocol.tla` replaced by the engine-jobs model, the large runs moved from T2 to the owner's machine, the code-mapping test moved to the engine-jobs slice) and left the mirror's generation publish out of formal scope, without an entry here or the owner's approval (ENGINEERING.md §4: loosening an EP needs the owner first).
+- What changed: doc. `design/ENGINEERING.md` EP-19: one model, `formal/tla/engine-jobs/`, checks the engine-jobs design; its small tier runs in T1 and its medium and large tiers on the owner's machine after an independent review of the model (IMP-0042); the code-mapping test arrives with the engine-jobs slice (BL-0109); the mirror's generation publish (`ReadersSeeCompleteGeneration`, `SnapshotIsSomeCommittedState`) keeps a formal model, built alongside its spec when that slice is designed (BL-0113). ARCHITECTURE.md §8.3 and BL-0110 say the same.
+- PROCESS.md section: none (ENGINEERING.md EP-19; ARCHITECTURE.md §8).
+- Why: the planned model's scope was retired with the designs it modelled, except the mirror publish, whose interleavings (readers pinning a generation while GC runs) are what a model checker finds and tests rarely reach.
+- Expected effect: no part of the write or publish protocol leaves formal scope by accident.
+- Observed effect: pending.
+- Status: kept (the EP rewritten with the owner's approval).
+- Owner approval: "I agree with both recommendations, including that EP-19 keeps requiring a formal model for the mirror publish" (2026-10-27, in session; S0047 verifier round 1).

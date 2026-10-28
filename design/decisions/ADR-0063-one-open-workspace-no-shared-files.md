@@ -120,6 +120,6 @@ Owner, approving the first golden review's recommendations for the engine-schedu
 
 ## Amendment (2026-10-27): the hosting paragraph without limiters (S0047)
 
-Agent, a direct consequence of the amendment above and of INV-11 as amended (owner: "Yes, I agree with both", 2026-10-27, in session). Convergence audit C20.
+Agent, a direct consequence of the amendment above and of INV-11 as amended (owner: "Yes, I agree with both", 2026-10-27, in session). Convergence audit C20 and C2. Owner confirmation: "I agree with both recommendations, including that EP-19 keeps requiring a formal model for the mirror publish" (2026-10-27, in session, on the S0047 verifier's recommendations, which included confirming this agent amendment).
 - **Superseded in the hosting paragraph of the Decision:** "the limiters, job queue and containers stay where INV-11 puts them". **Instead:** "the engine job queue and the containers stay where INV-11 puts them"; ADR-0064 retired the limiters.
 - **Superseded in decision 1's refusal rule:** "the open workspace while it warms or recovers is still `409 WORKSPACE_NOT_READY {phase}`". **Instead:** only while it warms (`WARMING`). Decision 2 recovers every unfinished save before any workspace opens, and a failed rollback in the session pauses writes with `WRITES_PAUSED` (ADR-0064), so the open workspace is never `RECOVERING`; the API's phase type says so since S0047 (convergence audit C2).

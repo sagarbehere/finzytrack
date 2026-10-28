@@ -220,16 +220,19 @@ def test_every_registry_entry_exists_and_declares_its_bounds() -> None:
     assert registry_problems(REGISTRY, modules()) == []
 
 
-SOURCES = {"app.platform.plans": "class PlanStore:\n    pass\n", "app.platform.jobs": "class JobQueue:\n    pass\n"}
+SOURCES = {
+    "app.platform.plans": "class PlanStore:\n    pass\n",
+    "app.platform.jobs": "class JobQueue:\n    pass\n",
+    "app.recipes.memo": "class RecipeMemo:\n    pass\n",
+}
 
 
 @pytest.mark.inv("INV-11")
 def test_good_registry_entries_pass() -> None:
     entries = (
         StateEntry("app.platform.plans", "PlanStore", "UserContainer", "200 plans", "TTL 1 h, then LRU"),
-        StateEntry(
-            "app.platform.jobs", "JobQueue", "WorkspaceContainer", "max_queued jobs", "a job leaves when it ends"
-        ),
+        StateEntry("app.platform.jobs", "JobQueue", "UserContainer", "max_queued jobs", "a job leaves when it ends"),
+        StateEntry("app.recipes.memo", "RecipeMemo", "WorkspaceContainer", "configurable bytes", "LRU"),
     )
     assert registry_problems(entries, SOURCES) == []
 
