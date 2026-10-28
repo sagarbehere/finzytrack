@@ -1,0 +1,22 @@
+# What happens when a ledger runs code and the user has not trusted it yet?
+- Asked: 2026-10-28 by the orchestrator, from S0049's verifier (finding F2)
+- blocks: the first slice that opens a user's ledger in the product (M2's open flow, with BL-0102), and the restrictive desktop body of `LoadPolicy`; not S0049, which builds the seam only. Until answered, L11-02, L11-06 and L11.M-1 stay open ("seam built; desktop body pending this answer").
+- Rubric item: 6 (security posture) and 3 (finance correctness: which numbers the user sees)
+- ADRs checked: ADR-0040 (security foundations: "until trusted, it loads under the restrictive policy"), ADR-0041 (Deferred: the desktop trust prompt and its restrictive LoadPolicy ship in v0.4.0), ADR-0010 (overlay load and LoadPolicy), ADR-0059 (load refusals). None says what "loads under the restrictive policy" shows the user.
+
+## Context (plain language, an example first)
+A Beancount ledger can run Python code when it is loaded: plugins (`plugin "my_plugin"`) and extra code folders (`option "insert_pythonpath"`). Opening a ledger someone else wrote could run their code on your machine. ADR-0040 says: on first open such a ledger asks "This ledger runs code … Trust?", and until the user trusts it, it "loads under the restrictive policy".
+
+The problem is what that load shows. Example: a ledger uses a plugin that adds price entries or splits expenses between accounts. Loaded without that plugin, its balances and net worth come out **different**: not wrong arithmetic, but not what the ledger means. Showing those numbers, even with a banner, risks the user acting on them.
+
+S0049 built the seam (`LoadPolicy` is asked before every file read, every plugin, every code folder and every documents folder) and the desktop body that allows everything. Its only answer to a "no" today is refusing the whole load.
+
+## Options
+1. **Until trusted, the ledger does not open.** The open shows what code the ledger runs (plugin names, code folders) with "Trust and open" and "Cancel". The answer is remembered on this machine. No numbers are ever shown without the ledger's own code. Beancount's own built-in plugins count as trusted (an allowlist). Amends ADR-0040's sentence to "until trusted, it does not load".
+2. **As ADR-0040 is written:** until trusted, it loads without the untrusted code and shows its numbers with a banner ("This ledger's plugins did not run; figures may differ"). Users see something at once, but the figures can differ from what the ledger means.
+3. **No trust prompt on desktop:** a ledger on your own machine runs its code, as `bean-check` and Fava do today. Simplest; the risk is opening a ledger from someone else. Amends ADR-0040 and ADR-0041 (a loosening).
+
+## Recommendation
+Option 1. It keeps the protection ADR-0040 wants and never shows numbers computed without the ledger's own code (finance correctness first). It is also simple: the seam already refuses the whole load on a "no"; the only addition is the trust screen in M2's open flow, and the plugin's config passed to the policy (for ADR-0040's "plugins that evaluate non-literal config"). Built in M2 with the open flow; a backlog row is added once you answer.
+
+## Answer (owner, verbatim, with date)

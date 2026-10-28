@@ -15,10 +15,18 @@ port, a `getattr` on it, or a use of the port module as a value (which could car
 from __future__ import annotations
 
 import ast
-import inspect
+import functools
+import importlib
+import sys
+import typing
+from collections.abc import Mapping
+from decimal import Decimal
 from pathlib import Path
+from types import ModuleType
+from typing import TypeAliasType
 
 import pytest
+from beancount.parser import booking as beancount_booking
 
 from ledger_engine.ledger import beancount_port as port
 
@@ -27,6 +35,8 @@ pytestmark = pytest.mark.inv("INV-02")
 ENGINE_SRC = Path(__file__).resolve().parents[2] / "src"
 PORT = "ledger_engine.ledger.beancount_port"
 ALLOWED = frozenset({"ledger_engine/ledger/overlay.py"})
+ENGINE_PACKAGE = "ledger_engine"
+_MISSING = object()
 
 
 def module_of(rel: str) -> str:
@@ -44,54 +54,115 @@ def absolute(rel: str, node: ast.ImportFrom) -> str:
     return ".".join([*base, node.module] if node.module else base)
 
 
+def _import(name: str) -> ModuleType | None:
+    try:
+        return importlib.import_module(name)
+    except ImportError:
+        return None
+
+
+def _in_engine(module: str) -> bool:
+    return module == ENGINE_PACKAGE or module.startswith(ENGINE_PACKAGE + ".")
+
+
 def violations(rel: str, source: str, stages: frozenset[str]) -> list[str]:
-    """Every reference to a load stage in one engine source file (`rel` is relative to `engine/src/`)."""
+    """Every way one engine source file (`rel` is relative to `engine/src/`) can reach a load stage.
+
+    Imports of engine modules are resolved at runtime, so the port is followed through every module that holds it
+    (the overlay's `port`, the `ledger` package, a dotted import). Then: a load stage imported, or reached by any
+    attribute path, is a violation; so is any name the port does not export (`__all__`: `__dict__`, Beancount's own
+    names), the port module used as a value (passed, assigned, `getattr`, `vars`), a star import that brings the
+    port or a stage, an engine import that does not resolve, and the port's module name in a string handed to a call
+    or a subscript (`importlib.import_module`, `sys.modules`). A name computed at run time is beyond a static scan.
+    """
     if rel in ALLOWED or module_of(rel) == PORT:
         return []
+    exported = frozenset(port.__all__)
+    stage_ids = {id(getattr(port, name)) for name in stages if hasattr(port, name)}
     tree = ast.parse(source)
     out: list[str] = []
-    aliases: set[str] = set()  # names bound to the port module
-    dotted_port: set[str] = set()  # `import ledger_engine.ledger.beancount_port` binds the package root
+    bound: dict[str, object] = {}  # names bound by an engine import, to the object they hold
+
+    def reaches_stage(where: str, what: str, value: object) -> None:
+        if id(value) in stage_ids:
+            out.append(f"{where}: {what} is a load stage")
+
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             mod = absolute(rel, node)
+            if not _in_engine(mod):
+                continue
+            module = _import(mod)
+            if module is None:
+                out.append(f"{rel}:{node.lineno}: cannot resolve the import of {mod}")
+                continue
             for a in node.names:
-                if mod == PORT:
-                    if a.name == "*":
-                        out.append(f"{rel}:{node.lineno}: star import of the port")
-                    elif a.name in stages:
-                        out.append(f"{rel}:{node.lineno}: imports the load stage {a.name}")
-                elif f"{mod}.{a.name}" == PORT:
-                    aliases.add(a.asname or a.name)
+                if a.name == "*":
+                    public = getattr(module, "__all__", [n for n in vars(module) if not n.startswith("_")])
+                    values = [getattr(module, n, None) for n in public]
+                    if module is port or any(v is port or id(v) in stage_ids for v in values):
+                        out.append(f"{rel}:{node.lineno}: a star import that brings the port or a load stage")
+                    continue
+                value = getattr(module, a.name, _MISSING)
+                if value is _MISSING:
+                    value = _import(f"{mod}.{a.name}")
+                if value is None:
+                    out.append(f"{rel}:{node.lineno}: cannot resolve {a.name} from {mod}")
+                    continue
+                if module is port and a.name not in exported:
+                    out.append(f"{rel}:{node.lineno}: imports {a.name}, which the port does not export")
+                reaches_stage(f"{rel}:{node.lineno}", f"the import of {a.name}", value)
+                bound[a.asname or a.name] = value
         elif isinstance(node, ast.Import):
             for a in node.names:
-                if a.name == PORT and a.asname:
-                    aliases.add(a.asname)
-                elif a.name == PORT:
-                    dotted_port.add(PORT)
-    attribute_values: set[int] = set()
+                if not _in_engine(a.name):
+                    continue
+                target = a.name if a.asname else a.name.split(".")[0]
+                if _import(a.name) is None or (module := _import(target)) is None:
+                    out.append(f"{rel}:{node.lineno}: cannot resolve the import of {a.name}")
+                    continue
+                bound[a.asname or target] = module
+
+    inner: set[int] = set()  # nodes that are the `.value` of an attribute: judged as part of the longer path
+    parents: dict[int, ast.AST] = {}
     for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
         if isinstance(node, ast.Attribute):
-            attribute_values.add(id(node.value))
-            target = node.value
-            is_port = (isinstance(target, ast.Name) and target.id in aliases) or (
-                dotted_port and ast.unparse(target) == PORT
-            )
-            if is_port and node.attr in stages:
-                out.append(f"{rel}:{node.lineno}: uses the load stage {node.attr}")
-            if is_port:
-                attribute_values.add(id(target))
-                for sub in ast.walk(target):
-                    attribute_values.add(id(sub))
+            inner.add(id(node.value))
     for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr":
-            first = node.args[0] if node.args else None
-            if isinstance(first, ast.Name) and first.id in aliases:
-                out.append(f"{rel}:{node.lineno}: getattr on the port")
-                attribute_values.add(id(first))
-        elif isinstance(node, ast.Name) and node.id in aliases and id(node) not in attribute_values:
-            if isinstance(node.ctx, ast.Load):
-                out.append(f"{rel}:{node.lineno}: the port module used as a value")
+        where = f"{rel}:{getattr(node, 'lineno', 0)}"
+        if isinstance(node, ast.Name) and node.id in bound and id(node) not in inner:
+            if isinstance(node.ctx, ast.Load) and bound[node.id] is port:
+                out.append(f"{where}: the port module used as a value")
+        elif isinstance(node, ast.Attribute) and id(node) not in inner:
+            chain: list[str] = []
+            base: ast.expr = node
+            while isinstance(base, ast.Attribute):
+                chain.insert(0, base.attr)
+                base = base.value
+            if not isinstance(base, ast.Name) or base.id not in bound:
+                continue
+            value: object = bound[base.id]
+            for attr in chain:
+                if value is port and attr not in exported:
+                    out.append(f"{where}: uses {attr}, which the port does not export")
+                if not isinstance(value, ModuleType):
+                    value = _MISSING
+                    break
+                following = getattr(value, attr, _MISSING)
+                if following is _MISSING and _in_engine(value.__name__):
+                    following = _import(f"{value.__name__}.{attr}") or _MISSING
+                value = following
+                reaches_stage(where, f"{ast.unparse(node)}", value)
+                if value is _MISSING:
+                    break
+            if value is port:
+                out.append(f"{where}: the port module used as a value")
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str) and "beancount_port" in node.value:
+            parent = parents.get(id(node))
+            if isinstance(parent, ast.Call | ast.Subscript | ast.BinOp):
+                out.append(f"{where}: names the port module in a string")
     return sorted(set(out))
 
 
@@ -101,12 +172,27 @@ def source_files() -> list[tuple[str, str]]:
     ]
 
 
-def public_callables() -> set[str]:
-    return {
-        name
-        for name, value in vars(port).items()
-        if not name.startswith("_") and inspect.isfunction(value) and value.__module__ == port.__name__
-    }
+def is_type(value: object) -> bool:
+    """A class or a type alias: a name for a type, not a step that runs."""
+    return isinstance(value, type | TypeAliasType) or typing.get_origin(value) is not None
+
+
+def exported_callables(namespace: Mapping[str, object], exported: list[str]) -> set[str]:
+    """The names another module may use that run something: every exported callable that is not a type."""
+    return {n for n in exported if callable(namespace.get(n)) and not is_type(namespace.get(n))}
+
+
+def leaked_names(namespace: Mapping[str, object], exported: list[str]) -> list[str]:
+    """Public names of the port outside `__all__` that come from Beancount, or whose origin cannot be told (a
+    constant): each must be imported under a private alias, so nothing of Beancount's is reachable unclassed."""
+    out: list[str] = []
+    for name, value in namespace.items():
+        if name.startswith("_") or name in exported:
+            continue
+        origin = value.__name__ if isinstance(value, ModuleType) else getattr(value, "__module__", None)
+        if not isinstance(origin, str) or origin.split(".")[0] == "beancount":
+            out.append(name)
+    return sorted(out)
 
 
 # ---- the rule on the tree ----------------------------------------------------------------------------------------
@@ -135,15 +221,19 @@ def test_a_home_that_misses_a_load_stage_is_found() -> None:
 
 
 def classing_errors(public: set[str], stages: frozenset[str], wrappers: frozenset[str]) -> list[str]:
-    """Every public function must be in exactly one class, and each class names only public functions."""
+    """Every exported callable must be in exactly one class, and each class names only exported callables."""
     out = [f"{n}: both a load stage and a wrapper" for n in sorted(stages & wrappers)]
     out += [f"{n}: not classed" for n in sorted(public - stages - wrappers)]
-    out += [f"{n}: classed but not a public function of the port" for n in sorted((stages | wrappers) - public)]
+    out += [f"{n}: classed but not an exported callable of the port" for n in sorted((stages | wrappers) - public)]
     return out
 
 
-def test_every_public_function_of_the_port_is_classed() -> None:
-    assert classing_errors(public_callables(), port.LOAD_STAGES, port.WRAPPERS) == []
+def test_every_exported_callable_of_the_port_is_classed() -> None:
+    assert classing_errors(exported_callables(vars(port), port.__all__), port.LOAD_STAGES, port.WRAPPERS) == []
+
+
+def test_the_port_holds_nothing_of_beancount_under_a_public_name_it_does_not_export() -> None:
+    assert leaked_names(vars(port), port.__all__) == []
 
 
 def test_an_unclassed_or_doubly_classed_function_is_found() -> None:
@@ -154,8 +244,33 @@ def test_an_unclassed_or_doubly_classed_function_is_found() -> None:
         "book: both a load stage and a wrapper"
     ]
     assert classing_errors({"book"}, stages, wrappers) == [
-        "parse_string: classed but not a public function of the port"
+        "parse_string: classed but not an exported callable of the port"
     ]
+
+
+def test_an_exported_callable_is_told_from_a_type() -> None:
+    namespace: dict[str, object] = {
+        "book": port.book,
+        "Transaction": port.Transaction,
+        "Directive": port.Directive,
+        "OptionsMap": port.OptionsMap,
+        "BEANCOUNT_VERSION": port.BEANCOUNT_VERSION,
+        "run": functools.partial(port.book),
+    }
+    assert exported_callables(namespace, list(namespace)) == {"book", "run"}
+
+
+def test_a_beancount_name_or_a_constant_left_public_is_found() -> None:
+    namespace: dict[str, object] = {
+        "beancount_book": beancount_booking.book,
+        "booking": beancount_booking,
+        "OPTIONS": {"a": 1},
+        "Decimal": Decimal,
+        "sys": sys,
+        "book": port.book,
+        "_book": beancount_booking.book,
+    }
+    assert leaked_names(namespace, ["book"]) == ["OPTIONS", "beancount_book", "booking"]
 
 
 def test_the_port_offers_no_beancount_load_entry_point() -> None:
@@ -183,6 +298,27 @@ REL = "ledger_engine/mirror/build.py"
         "from ledger_engine.ledger import beancount_port as p\ngetattr(p, 'bo' + 'ok')([], {})\n",
         "from ledger_engine.ledger import beancount_port as p\nq = p\nq.book([], {})\n",
         "from ledger_engine.ledger import beancount_port as p\nrun(p)\n",
+        # Beancount's own steps, held by the port under private names, and names the port does not export (S0049
+        # verifier F1a).
+        "from ledger_engine.ledger.beancount_port import _book\n",
+        "from ledger_engine.ledger import beancount_port as p\np._validate([], {}, None, None)\n",
+        "from ledger_engine.ledger.beancount_port import beancount_book\n",
+        "from ledger_engine.ledger import beancount_port as p\np.__dict__['book']([], {})\n",
+        "from ledger_engine.ledger import beancount_port as p\nvars(p)['book']([], {})\n",
+        # The port reached through another module that holds it (F1b).
+        "from ledger_engine.ledger.overlay import port\nport.book([], {})\n",
+        "from ledger_engine.ledger.overlay import port\nrun(port)\n",
+        "from ledger_engine.ledger import overlay\noverlay.port.validate([], {})\n",
+        "from ledger_engine.ledger.overlay import *\n",
+        "from ledger_engine import ledger\nledger.beancount_port.book([], {})\n",
+        "import ledger_engine.ledger\nledger_engine.ledger.beancount_port.book([], {})\n",
+        "import ledger_engine\nf = ledger_engine.ledger.beancount_port.validate\n",
+        "import ledger_engine.ledger.beancount_port\nq = ledger_engine.ledger.beancount_port\nq.book([], {})\n",
+        "import importlib\nq = importlib.import_module('ledger_engine.ledger.beancount_port')\n",
+        "import sys\nq = sys.modules['ledger_engine.ledger.' + 'beancount_port']\n",
+        "from ledger_engine.ledger import no_such_module\n",
+        "from ledger_engine.no_such_package import port\nport.book([], {})\n",
+        "import ledger_engine.no_such_module as m\n",
     ],
 )
 def test_a_planted_reference_to_a_load_stage_is_found(source: str) -> None:
@@ -201,6 +337,11 @@ def test_a_relative_import_inside_the_ledger_package_is_resolved() -> None:
         "from ledger_engine.ledger import beancount_port as p\np.parse_string(b'')\n",
         "from ledger_engine.ledger import beancount_port as p\nx: p.Transaction\n",
         "book = 1\nvalidate = book\n",
+        "from ledger_engine.ledger.overlay import port\nport.parse_string(b'')\n",
+        "from ledger_engine.ledger.overlay import load, Loaded\n",
+        "from ledger_engine.ledger import grammar\ngrammar.parse_account\n",
+        "import ledger_engine.ledger.beancount_port\nx = ledger_engine.ledger.beancount_port.parse_string(b'')\n",
+        '"""The beancount_port module is the gateway."""\n',
     ],
 )
 def test_ordinary_wrappers_and_unrelated_names_pass(source: str) -> None:

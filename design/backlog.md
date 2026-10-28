@@ -42,15 +42,15 @@ This file is the tracked home of the private review backlog (`review:99`). The r
 |---|---|
 | Finding index rows | 287 |
 | Unique (canonical) findings | 240 |
-| of which to build in v0.4.0 (`open`) | 224 |
-| of which `done` | 8 |
+| of which to build in v0.4.0 (`open`) | 227 |
+| of which `done` | 5 |
 | of which `post-v0.4` (hosted-only) | 4 |
 | of which `removed` (investment scope reset) | 4 |
 | Doubles (merged onto a canonical row) | 47 |
 | Invariant-enforcement items (`BL-0001`…`BL-0031`) | 31 |
-| Other new items (`BL-0032`…`BL-0118`) | 87 |
+| Other new items (`BL-0032`…`BL-0119`) | 88 |
 
-Canonical findings to build, by milestone: M0 0, M1a 6, M1b 6, M2 47, M3 15, M4 18, M5 20, M6 40, M7 37, M8 23, M9 12, M10–M12 0 (total 224; S0023 closed L1-06 and L9-18 and split M1; S0025 closed L9.M-7; S0027 closed L10-18; S0049 closed L1-09, L11-02, L11-06 and L11.M-1).
+Canonical findings to build, by milestone: M0 0, M1a 9, M1b 6, M2 47, M3 15, M4 18, M5 20, M6 40, M7 37, M8 23, M9 12, M10–M12 0 (total 227; S0023 closed L1-06 and L9-18 and split M1; S0025 closed L9.M-7; S0027 closed L10-18; S0049 closed L1-09; it built the `LoadPolicy` seam of L11-02, L11-06 and L11.M-1, which stay open for the desktop restrictive body, `design/inbox/20261028-untrusted-ledger-load.md`).
 
 ---
 
@@ -211,7 +211,7 @@ Evidence: `review:10 §1` (I-series); index `review:99 §4.1`.
 | I1 | Account delete shows an all-time preview of every transaction it removes, with a real choice | High | WS-WRITE | M4 | open | L2-01 | `review:10 §1` |
 | I2 | Glob includes are never expanded into the root file on write | High | WS-WRITE | M1b | open | L1.M2 | `review:10 §1` |
 | I3 | Plugin-generated entries are never written to disk | High | WS-WRITE | M1b | open | L1.M1 | `review:10 §1` |
-| I4 | The mirror is published atomically; readers never see an empty or partial mirror | High | WS-MIRROR | M1a | open | L1-01, L1.M5 | `review:10 §1` |
+| I4 | The mirror is published atomically; readers never see an empty or partial mirror | High | WS-MIRROR | M1a | open | L1-01, L1.M5 | `review:10 §1`; its P1 test `backend/tests/integrity/test_mirror_publish.py` names the engine's API (`ledger_engine.ledger.overlay.load`, `policy.DESKTOP`, S0049; the planned `ledger_engine.mirror.publish`), which the backend may never import: the slice that builds the publish moves the test to `engine/tests/` |
 | I5 | Duplicate detection does not use the legacy content hash (tolerated, never matched, never written) | Medium | WS-IMPORT | M6 | open | — | `review:10 §1` |
 | I6 | A failed workspace open records nothing; nothing is swapped in place | High | WS-BACKEND-CORE | M2 | open | L10-03 | `review:10 §1` |
 | I7 | Dashboard widgets never show results for stale parameters | High | WS-FE-DATA | M7 | open | L2-02 | `review:10 §1` |
@@ -510,14 +510,14 @@ Evidence: `review:L11`, `review:L11-verif`, `review:18`; index `review:99 §4.12
 
 | ID | Title | Sev | Area | Milestone | Status | Doubles | Ref |
 |---|---|---|---|---|---|---|---|
-| L11-02 | Ledger includes are confined by LoadPolicy | Critical (hosted) | WS-ISOLATION | M1a | done | — | `review:L11`; closed by S0049 (the `LoadPolicy` seam of `ledger_engine.ledger.overlay.load`: every file read, user plugin, `pythonpath` directory and documents root is put to the policy before it happens, and a refusal refuses the whole load; held by a refusing test policy in `engine/tests/ledger/test_overlay.py`; the hosted body that confines them is post-v0.4, ADR-0041) |
+| L11-02 | Ledger includes are confined by LoadPolicy | Critical (hosted) | WS-ISOLATION | M1a | open | — | `review:L11`; S0049 built the seam (the `LoadPolicy` of `ledger_engine.ledger.overlay.load`: every file read, user plugin, `pythonpath` directory and documents root is put to the policy before it happens, and a refusal refuses the whole load; held by a refusing test policy in `engine/tests/ledger/test_overlay.py`); the desktop restrictive body waits for `design/inbox/20261028-untrusted-ledger-load.md` (ADR-0040; ADR-0041: the trust prompt and its restrictive policy ship in v0.4.0); the hosted body is post-v0.4 |
 | L11-03 | Logging is configured through an injected callback, not by a settings change | Medium (hosted) | WS-ISOLATION | M1a | open | — | `review:L11` |
-| L11-06 | Documents roots are confined by LoadPolicy | Critical (hosted) | WS-ISOLATION | M1a | done | — | `review:L11`; closed by S0049 (the `LoadPolicy` seam of `ledger_engine.ledger.overlay.load`: every file read, user plugin, `pythonpath` directory and documents root is put to the policy before it happens, and a refusal refuses the whole load; held by a refusing test policy in `engine/tests/ledger/test_overlay.py`; the hosted body that confines them is post-v0.4, ADR-0041) |
+| L11-06 | Documents roots are confined by LoadPolicy | Critical (hosted) | WS-ISOLATION | M1a | open | — | `review:L11`; S0049 built the seam (the `LoadPolicy` of `ledger_engine.ledger.overlay.load`: every file read, user plugin, `pythonpath` directory and documents root is put to the policy before it happens, and a refusal refuses the whole load; held by a refusing test policy in `engine/tests/ledger/test_overlay.py`); the desktop restrictive body waits for `design/inbox/20261028-untrusted-ledger-load.md` (ADR-0040; ADR-0041: the trust prompt and its restrictive policy ship in v0.4.0); the hosted body is post-v0.4 |
 | L11-07 | BQL is limited to a statement allowlist | Low-Med | WS-ISOLATION | M7 | open | — | `review:L11` |
 | L11-08 | Isolation tests check effects, not only the changed field | Test gap | WS-ISOLATION | M2 | open | L10.M-3 | `review:L11` |
 | L11-09 | Hosted eviction, cwd-relative files and user-id case | Low (hosted) | WS-ISOLATION | post-v0.4 | post-v0.4 | — | `review:L11` |
 | L11-10 | Hosted proxy-config cache keying | Low (hosted) | WS-ISOLATION | post-v0.4 | post-v0.4 | — | `review:L11` |
-| L11.M-1 | Plugins and `pythonpath` are controlled by LoadPolicy | Critical (hosted) | WS-ISOLATION | M1a | done | — | `review:L11-verif`; closed by S0049 (the `LoadPolicy` seam of `ledger_engine.ledger.overlay.load`: every file read, user plugin, `pythonpath` directory and documents root is put to the policy before it happens, and a refusal refuses the whole load; held by a refusing test policy in `engine/tests/ledger/test_overlay.py`; the hosted body that confines them is post-v0.4, ADR-0041) |
+| L11.M-1 | Plugins and `pythonpath` are controlled by LoadPolicy | Critical (hosted) | WS-ISOLATION | M1a | open | — | `review:L11-verif`; S0049 built the seam (the `LoadPolicy` of `ledger_engine.ledger.overlay.load`: every file read, user plugin, `pythonpath` directory and documents root is put to the policy before it happens, and a refusal refuses the whole load; held by a refusing test policy in `engine/tests/ledger/test_overlay.py`); the desktop restrictive body waits for `design/inbox/20261028-untrusted-ledger-load.md` (ADR-0040; ADR-0041: the trust prompt and its restrictive policy ship in v0.4.0); the hosted body is post-v0.4 |
 | L11.M-2 | Document cleanup never offers ledger, include or sidecar files | Medium (data loss) | WS-ISOLATION | M5 | open | — | `review:L11-verif` |
 | L11.M-3 | Secret references are resolved by an injected resolver, scoped per workspace | Critical (hosted) | WS-ISOLATION | M3 | open | — | `review:L11-verif` |
 | L11.M-4 | IMAP verifies server certificates | security | WS-SECURITY | M6 | open | — | `review:L11-verif` |
@@ -711,3 +711,4 @@ Each item builds the check that turns one invariant from "pending" into "enforce
 | BL-0116 | Build `scripts/concept_counters.py` (EP-23, EP-03; ADR-0024 Consequences: tolerance, balance-check and account-grammar implementations at one each): each concept's one home carries an `@concept <name>` marker and the check fails when a second implementation appears outside it. Named by ENGINEERING.md since M0, never built and never tracked (found in S0049); it is the "not reimplemented" half of BL-0002's text that the import boundary and the load-rule test do not cover. In the engine the homes are `ledger_engine.ledger.grammar` and `beancount_port` | WS-KERNEL | M1a | open | `S0049`, EP-23 |
 | BL-0117 | A candidate for a new ledger file that only a glob `include` reaches: the overlay load globs the disk as Beancount does, so it refuses such a candidate as "not reached" (`engine/tests/ledger/test_overlay.py`). The first mutator that creates a file a glob would pick up (M3's `create_ledger_set`, the routed insert into a new year file) needs the glob to see the candidate as Beancount will after the write, with an equivalence test against `load_file` after the write | WS-WRITE | M3 | open | `S0049`, ADR-0010 |
 | BL-0118 | The reconciliation re-check's "fresh `load_file`" (R4, `design/specs/engine-jobs.md` §6.7 step 2; ADR-0010 guardrail 3) must be Beancount's real loader, not the replica (else it cannot catch replica drift), and must not use `loader.load_file`, which reads, deletes and writes `.<root>.picklecache` beside the ledger (ADR-0040; L1-09): a `beancount_port` wrapper over the uncached `loader._load([(root, True)], ...)`, classed as a load stage callable only from the reconciliation job, with a test that no cache file appears. Lands with BL-0109 | WS-WRITE | M1a | open | `S0049`, ADR-0040, ADR-0010 |
+| BL-0119 | Balance-assertion balances in one pass before the mirror build uses them: `beancount_port.assertion_balance` realizes every entry before the assertion, once per assertion, so its cost is assertions × entries (S0049 verifier F5: 200 assertions on 20k transactions take 3.9 s against 0.45 s for the whole load; about a minute of mirror build at 54k entries and 1000 assertions). The mirror's `balance_assertions` rows (`design/specs/kernel/vectors.md`, family `balance`) need one walk of the sorted entries that keeps running balances per account and currency and reads them at each assertion, with the vectors still passing and a scale test | WS-KERNEL | M1a | open | `S0049`, verifier F5 |

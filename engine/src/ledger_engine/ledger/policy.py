@@ -1,13 +1,19 @@
-"""LoadPolicy: what a load may read and run (ADR-0010; WS-ISOLATION "seam now": L11-02, L11-06, L11.M-1).
+"""LoadPolicy: what a load may read and run (ADR-0010; WS-ISOLATION "seam now" for L11-02, L11-06, L11.M-1).
 
 One policy is passed to every load. `overlay.load` puts four kinds of question to it, each with an absolute path or
-a plugin's module name, before the thing happens: every file it reads (the root and each include), and, once the
-files are parsed and before any plugin runs, every user plugin, every `insert_pythonpath` directory and every
-documents root. A "no" refuses the whole load; nothing is partly loaded.
+a plugin's module name, before the thing happens: every file it reads (the root and each include, before the file is
+touched), and, once the files are parsed and before any plugin runs, every user plugin, every `insert_pythonpath`
+directory and every documents root. A "no" refuses the whole load; nothing is partly loaded.
 
-The desktop body allows all four: the user's own ledger may include, run and scan what it names (INV-03). The hosted
-body, which would confine them, is written only when hosting is planned (ADR-0041). Encrypted files are not a policy
-choice: v0.4.0 refuses them under every policy (ADR-0059).
+Only the allowing desktop body is built. `DESKTOP` allows all four: a ledger the user trusts may include, run and
+scan what it names (INV-03). ADR-0040 also asks, on desktop, for a trust prompt before a ledger that runs code
+(plugins, `insert_pythonpath`) first runs it, and a restrictive policy until the user trusts it; ADR-0041 ships both
+in v0.4.0. What a restrictive load shows (nothing until trusted, or numbers computed without the ledger's own code)
+is the owner's open question, `design/inbox/20261028-untrusted-ledger-load.md`, so that body is not written yet
+(L11-02, L11-06, L11.M-1). The hosted body is deferred until hosting is planned (ADR-0041). Two facts for whoever
+writes a confining body: `may_run_plugin` gets the plugin's name, not its config (ADR-0040 names "plugins that
+evaluate non-literal config"); and an `include` glob lists directories before the policy is asked about the files
+it matched. Encrypted files are not a policy choice: v0.4.0 refuses them under every policy (ADR-0059).
 """
 
 from __future__ import annotations
@@ -37,7 +43,7 @@ class LoadPolicy(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class DesktopPolicy:
-    """The desktop body: everything the ledger names is allowed."""
+    """The desktop body for a trusted ledger: everything the ledger names is allowed."""
 
     def may_read(self, path: str) -> bool:
         return True

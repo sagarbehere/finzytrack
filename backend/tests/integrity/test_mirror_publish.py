@@ -7,8 +7,11 @@ including an injected failed build.
 Interface: `mirror.build_generation(load_result) -> Generation` and `mirror.publish(gen)` (ARCHITECTURE.md §2.3);
 `ledger.overlay.load(root, overlay, policy)` (§2.2). Assumed, not decided: `publish` takes the workspace's mirror
 directory, and a load result exposes its directives as `.entries`, so a proxy can fail the build part-way
-through. Under ADR-0054 the build half of `mirror` and `ledger` live in the engine environment; when BL-0041
-creates it, this file moves to the engine's tests (a move plus import fixes).
+through. Under ADR-0054 the build half of `mirror` and `ledger` live in the engine (`ledger_engine`, built in S0049:
+`ledger_engine.ledger.overlay.load` returns `Loaded` with `.entries`, and `policy.DESKTOP` is the desktop policy).
+The backend may never import the engine, so the planned names below stay missing here: the mirror-build slice
+(I4) moves this file to `engine/tests/` and turns the `planned()` calls into imports; the arrange, act and
+assert stay as written.
 """
 
 from __future__ import annotations
@@ -68,11 +71,10 @@ class _MidBuildFault:
 
 @pytest.mark.fixme(id="I4", due="M1a", reason="capability not built")
 def test_readers_never_see_an_empty_or_partial_mirror(tmp_path: Path) -> None:
-    load = planned("app.ledger.overlay", "load")
-    load_policy = planned("app.ledger.policy", "LoadPolicy")
-    build_generation = planned("app.mirror.publish", "build_generation")
-    publish = planned("app.mirror.publish", "publish")
-    policy = load_policy.desktop()
+    load = planned("ledger_engine.ledger.overlay", "load")
+    policy = planned("ledger_engine.ledger.policy", "DESKTOP")
+    build_generation = planned("ledger_engine.mirror.publish", "build_generation")
+    publish = planned("ledger_engine.mirror.publish", "publish")
 
     roots: dict[str, Path] = {}
     for name, text in (("A", LEDGER_A), ("B", LEDGER_B)):

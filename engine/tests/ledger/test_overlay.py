@@ -135,6 +135,37 @@ def test_a_candidate_equals_load_file_after_the_same_bytes_are_written(tmp_path:
     same(predicted, load_file(root), written_after=True)
 
 
+def test_a_candidate_named_by_a_path_that_is_not_normalized_is_the_same_file(tmp_path: Path) -> None:
+    # The overlay's keys are normalized as the include paths are, so `<dir>/./food.beancount` and
+    # `<dir>/sub/../food.beancount` replace food.beancount (not the disk's copy, and not refused as unreached).
+    root = copy_case("insert-entry", tmp_path)
+    new = b'2024-01-07 * "Shop" "candidate"\n  Expenses:Food  2.25 USD\n  Assets:Cash  -2.25 USD\n'
+    for key in (f"{root.parent}/./food.beancount", f"{root.parent}/sub/../food.beancount"):
+        loaded = load(str(root), {key: new}, DESKTOP)
+        assert isinstance(loaded, Loaded), (key, loaded)
+        narrations = [e.narration for e in loaded.entries if isinstance(e, port.Transaction)]
+        assert narrations == ["candidate"], key
+        assert str(root.parent / "food.beancount") in loaded.options["include"]
+
+
+@pytest.mark.usefixtures("no_decryption")
+def test_a_missing_encrypted_looking_file_is_a_missing_file(tmp_path: Path) -> None:
+    # Not refused as encrypted (nothing is there to be encrypted) and not a crash: the loader's own error. A missing
+    # include does not match its glob; a root that is gone and a dangling link the glob still lists are missing.
+    for name in ("gone.beancount.gpg", "gone.beancount.asc"):
+        loaded = load(str(tmp_path / name), {}, DESKTOP)
+        assert isinstance(loaded, Loaded), loaded
+        assert [e.message for e in loaded.errors] == [f'File "{tmp_path / name}" does not exist']
+    # The same for a missing plain root, which Beancount's own loader also reports this way.
+    same(load(str(tmp_path / "gone.beancount"), {}, DESKTOP), load_file(tmp_path / "gone.beancount"))
+    root = tmp_path / "main.beancount"
+    (tmp_path / "dangling.beancount.asc").symlink_to(tmp_path / "nowhere.beancount.asc")
+    root.write_text('include "dangling.beancount.asc"\n', encoding="utf-8")
+    loaded = load(str(root), {}, DESKTOP)
+    assert isinstance(loaded, Loaded), loaded
+    assert [e.message for e in loaded.errors] == [f'File "{tmp_path / "dangling.beancount.asc"}" does not exist']
+
+
 def test_a_candidate_for_a_new_file_named_by_a_plain_include_is_loaded(tmp_path: Path) -> None:
     root = tmp_path / "main.beancount"
     root.write_bytes(b'include "new.beancount"\n')
@@ -332,6 +363,62 @@ def test_a_refused_candidate_path_refuses_the_load(tmp_path: Path) -> None:
     food = str(root.parent / "food.beancount")
     result = load(str(root), {food: b""}, Recording(refuse={food}))
     assert result == LoadRefused("read-refused", food)
+
+
+@pytest.fixture
+def parsed(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every file the load parses, from disk or from candidate bytes, in order."""
+    calls: list[str] = []
+    real_file, real_string = port.parse_file, port.parse_string
+
+    def parse_file(path: str) -> port.ParseResult:
+        calls.append(path)
+        return real_file(path)
+
+    def parse_string(data: bytes, report_filename: str | None = None) -> port.ParseResult:
+        calls.append(report_filename or "<string>")
+        return real_string(data, report_filename)
+
+    monkeypatch.setattr(port, "parse_file", parse_file)
+    monkeypatch.setattr(port, "parse_string", parse_string)
+    return calls
+
+
+def test_a_file_the_policy_refuses_is_never_parsed(parsed: list[str], tmp_path: Path) -> None:
+    root = copy_case("includes", tmp_path)
+    nested = str(root.parent / "years" / "2024.beancount")
+    assert load(str(root), {}, Recording(refuse={nested})) == LoadRefused("read-refused", nested)
+    assert str(root) in parsed  # the files before it were parsed and recorded
+    assert nested not in parsed
+    parsed.clear()
+    root = copy_case("insert-entry", tmp_path)
+    food = str(root.parent / "food.beancount")
+    assert load(str(root), {food: b""}, Recording(refuse={food})) == LoadRefused("read-refused", food)
+    assert food not in parsed
+    parsed.clear()
+    assert load(str(root), {}, Recording(refuse={str(root)})) == LoadRefused("read-refused", str(root))
+    assert parsed == []
+
+
+def test_the_policy_is_asked_before_the_load_touches_a_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # A refused `.asc` include is not opened by the encrypted-file test (which reads its first bytes), so the refusal
+    # says "read-refused", not "encrypted"; a refused missing root is refused, not reported missing.
+    sniffed: list[str] = []
+    real = port.is_encrypted_file
+
+    def is_encrypted_file(path: str) -> bool:
+        sniffed.append(path)
+        return real(path)
+
+    monkeypatch.setattr(port, "is_encrypted_file", is_encrypted_file)
+    secret = tmp_path / "outside.beancount.asc"
+    secret.write_text("-----BEGIN PGP MESSAGE-----\nxx\n", encoding="ascii")
+    missing = tmp_path / "missing.beancount"
+    root = tmp_path / "main.beancount"
+    root.write_text(f'include "{secret.name}"\n', encoding="utf-8")
+    assert load(str(root), {}, Recording(refuse={str(secret)})) == LoadRefused("read-refused", str(secret))
+    assert str(secret) not in sniffed
+    assert load(str(missing), {}, Recording(refuse={str(missing)})) == LoadRefused("read-refused", str(missing))
 
 
 # ---- guardrail 2: the replica is pinned to Beancount 3.2.0 -------------------------------------------------------

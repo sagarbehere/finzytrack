@@ -9,7 +9,8 @@ stages of a full load and the semantic calls (tolerance, residual, balance asser
   aggregation). Only `ledger/overlay.py` uses them, so every full load is the overlay replica (ADR-0010), with its
   `LoadPolicy` and its refusals.
 - `WRAPPERS`, everything else: parser-only calls and the semantic calls, usable anywhere in the engine.
-Every public function is in exactly one of them.
+Other modules use only the names in `__all__`; every function there is in exactly one of the two classes. Beancount's
+own names are imported under private (`_`) aliases, so none of its load steps is reachable under a public name.
 
 **No `load_file` or `load_string` here.** Beancount's `load_file` keeps a pickle cache beside the root file: it reads
 `.<name>.picklecache` (unpickling a file from the ledger folder runs whatever code it holds), deletes it when stale
@@ -37,23 +38,28 @@ from beancount.core.data import (
     Posting,
     Price,
     Transaction,
-    entry_sortkey,
-    new_metadata,
 )
-from beancount.core.display_context import Precision
-from beancount.core.interpolate import AUTOMATIC_META, compute_residual, infer_tolerances
+from beancount.core.data import entry_sortkey as _entry_sortkey
+from beancount.core.data import new_metadata as _new_metadata
+from beancount.core.display_context import Precision as _Precision
+from beancount.core.interpolate import AUTOMATIC_META as _AUTOMATIC_META
+from beancount.core.interpolate import compute_residual as _compute_residual
+from beancount.core.interpolate import infer_tolerances as _infer_tolerances
 from beancount.core.position import Cost
-from beancount.core.realization import compute_balance, realize
-from beancount.core.realization import get as realization_get
-from beancount.loader import LoadError, aggregate_options_map, compute_input_hash
-from beancount.loader import run_transformations as beancount_run_transformations
-from beancount.ops.balance import get_balance_tolerance
-from beancount.ops.validation import validate as beancount_validate
-from beancount.parser.booking import book as beancount_book
-from beancount.parser.options import OPTIONS_DEFAULTS
-from beancount.parser.parser import parse_file as beancount_parse_file
-from beancount.parser.parser import parse_string as beancount_parse_string
-from beancount.utils.encryption import is_encrypted_file as beancount_is_encrypted_file
+from beancount.core.realization import compute_balance as _compute_balance
+from beancount.core.realization import get as _realization_get
+from beancount.core.realization import realize as _realize
+from beancount.loader import LoadError as _LoadError
+from beancount.loader import aggregate_options_map as _aggregate_options_map
+from beancount.loader import compute_input_hash as _compute_input_hash
+from beancount.loader import run_transformations as _run_transformations
+from beancount.ops.balance import get_balance_tolerance as _get_balance_tolerance
+from beancount.ops.validation import validate as _validate
+from beancount.parser.booking import book as _book
+from beancount.parser.options import OPTIONS_DEFAULTS as _OPTIONS_DEFAULTS
+from beancount.parser.parser import parse_file as _parse_file
+from beancount.parser.parser import parse_string as _parse_string
+from beancount.utils.encryption import is_encrypted_file as _is_encrypted_file
 
 __all__ = [
     "BEANCOUNT_VERSION",
@@ -128,30 +134,30 @@ WRAPPERS: Final = frozenset(
 
 def parse_file(path: str) -> ParseResult:
     """Parse one file from disk, as `loader._parse_recursive` does (no includes followed, nothing booked)."""
-    entries, errors, options = beancount_parse_file(path)
+    entries, errors, options = _parse_file(path)
     return list(entries), list(errors), dict(options)
 
 
 def parse_string(data: bytes, report_filename: str | None = None) -> ParseResult:
     """Parse bytes as if they were the file `report_filename` (its name goes into every entry's metadata)."""
-    entries, errors, options = beancount_parse_string(data, report_filename)
+    entries, errors, options = _parse_string(data, report_filename)
     return list(entries), list(errors), dict(options)
 
 
 def is_encrypted_file(path: str) -> bool:
     """Beancount's own test: a `.gpg` name, or an `.asc` name whose file starts with a PGP message header."""
-    return beancount_is_encrypted_file(path)
+    return _is_encrypted_file(path)
 
 
 # ---- the stages of a full load (only ledger/overlay.py) ------------------------------------------------------------
 
 
 def sort_entries(entries: list[Directive]) -> None:
-    entries.sort(key=entry_sortkey)
+    entries.sort(key=_entry_sortkey)
 
 
 def book(entries: list[Directive], options: OptionsMap) -> tuple[list[Directive], list[BeancountError]]:
-    booked, errors = beancount_book(entries, options)
+    booked, errors = _book(entries, options)
     return list(booked), list(errors)
 
 
@@ -164,31 +170,31 @@ def run_transformations(
     try:
         if "pythonpath" in options:
             sys.path[0:0] = options["pythonpath"]
-        transformed, all_errors = beancount_run_transformations(entries, errors, options, None)
+        transformed, all_errors = _run_transformations(entries, errors, options, None)
     finally:
         sys.path[:] = saved
     return list(transformed), list(all_errors)
 
 
 def validate(entries: list[Directive], options: OptionsMap) -> list[BeancountError]:
-    return list(beancount_validate(entries, options, None, None))
+    return list(_validate(entries, options, None, None))
 
 
 def aggregate_options(top: OptionsMap, others: list[OptionsMap]) -> OptionsMap:
-    return dict(aggregate_options_map(top, others))
+    return dict(_aggregate_options_map(top, others))
 
 
 def default_options() -> OptionsMap:
-    return dict(OPTIONS_DEFAULTS)
+    return dict(_OPTIONS_DEFAULTS)
 
 
 def input_hash(paths: list[str]) -> str:
-    return compute_input_hash(paths)
+    return _compute_input_hash(paths)
 
 
 def load_error(message: str) -> BeancountError:
     """An error of the loader itself (a missing file, a duplicate include), as `_parse_recursive` makes it."""
-    return LoadError(new_metadata("<load>", 0), message)
+    return _LoadError(_new_metadata("<load>", 0), message)
 
 
 # ---- semantic calls ------------------------------------------------------------------------------------------------
@@ -206,8 +212,8 @@ class TransactionCheck:
 
 def check_transaction(postings: Sequence[Posting], options: OptionsMap) -> TransactionCheck:
     """The inferred tolerances and the residual of booked postings, and whether the residual is within them."""
-    tolerances = infer_tolerances(list(postings), options)
-    residual = compute_residual(list(postings))
+    tolerances = _infer_tolerances(list(postings), options)
+    residual = _compute_residual(list(postings))
     amounts = {p.units.currency: p.units.number for p in residual if p.units.number is not None}
     return TransactionCheck(
         tolerances=dict(tolerances),
@@ -220,17 +226,21 @@ def check_transaction(postings: Sequence[Posting], options: OptionsMap) -> Trans
 def balance_tolerance(assertion: Balance, options: OptionsMap) -> Decimal:
     """The tolerance Beancount allows a balance assertion: its explicit `~`, else twice the multiplier at its
     written precision, else 0."""
-    return get_balance_tolerance(assertion, options)
+    return _get_balance_tolerance(assertion, options)
 
 
 def assertion_balance(entries: Sequence[Directive], assertion: Balance) -> Decimal:
     """The units of the assertion's currency in its account and every child, from the entries before it in
-    Beancount's order (a balance assertion is checked at the start of its day)."""
+    Beancount's order (a balance assertion is checked at the start of its day).
+
+    One realization per call, so all assertions of a ledger cost assertions x entries.
+    TODO(BL-0119): one pass for every assertion before the mirror build uses this.
+    """
     index = next(i for i, e in enumerate(entries) if e is assertion)
-    account = realization_get(realize(list(entries[:index])), assertion.account)
+    account = _realization_get(_realize(list(entries[:index])), assertion.account)
     if account is None:
         return Decimal(0)
-    number = compute_balance(account).get_currency_units(assertion.amount.currency).number
+    number = _compute_balance(account).get_currency_units(assertion.amount.currency).number
     return Decimal(0) if number is None else number
 
 
@@ -248,10 +258,10 @@ def display_precision(options: OptionsMap, currency: str) -> DisplayPrecision | 
     context = contexts.get(currency)  # .get: the mapping is a defaultdict; indexing would add the currency
     if context is None:
         return None
-    return DisplayPrecision(context.get_fractional(Precision.MOST_COMMON), context.get_fractional(Precision.MAXIMUM))
+    return DisplayPrecision(context.get_fractional(_Precision.MOST_COMMON), context.get_fractional(_Precision.MAXIMUM))
 
 
 def is_interpolated(posting: Posting) -> bool:
     """True for a leg Beancount filled in (an elided amount)."""
     meta = posting.meta
-    return meta is not None and AUTOMATIC_META in meta
+    return meta is not None and _AUTOMATIC_META in meta

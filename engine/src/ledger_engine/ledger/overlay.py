@@ -10,9 +10,12 @@ Beancount upgrade re-mirrors this module first (ADR-0004).
 
 Where it differs from Beancount, on purpose (each refuses the whole load, EP-13; nothing is partly loaded):
 - **Encrypted files** in the include tree, the root included, are refused, never decrypted (ADR-0059); a candidate
-  for a `.gpg` or `.asc` file (any letter case) is refused before anything is read (ADR-0010 guardrail 4).
-- **The policy** is asked before each file is read and, once all files are parsed and before any plugin runs, about
-  each user plugin, `pythonpath` directory and documents root (`policy.LoadPolicy`).
+  for a `.gpg` or `.asc` file (any letter case) is refused before anything is read (ADR-0010 guardrail 4). A missing
+  `.gpg` or `.asc` include is the loader's "does not exist" error, like any missing file (Beancount would try to
+  decrypt or open it and fail).
+- **The policy** is asked about each file before the load touches it (before its existence is checked or its first
+  bytes read by the encrypted-file test) and, once all files are parsed and before any plugin runs, about each user
+  plugin, `pythonpath` directory and documents root (`policy.LoadPolicy`).
 - **A candidate the load never reaches** is refused: validating the set without it would validate the wrong text
   (INV-22). A candidate for a file that does not exist yet is reached through a plain `include` of its path; a glob
   matches only files on disk, as in Beancount, so a new file reached only through a glob is refused (BL-0117).
@@ -122,16 +125,18 @@ def _parse_recursive(root: str, candidates: Mapping[str, bytes], policy: LoadPol
         is_top_level = options is None
         filename = path.normpath(source)
         on_disk = filename not in candidates
-        if on_disk and path.exists(filename) and port.is_encrypted_file(filename):
-            return LoadRefused("encrypted", filename)
         if filename in seen:
             parse_errors.append(port.load_error(f'Duplicate filename parsed: "{filename}"'))
             continue
+        # The policy first, before the path is touched: not even its existence is checked, nor its first bytes
+        # read by the encrypted-file test.
+        if not policy.may_read(filename):
+            return LoadRefused("read-refused", filename)
         if on_disk and not path.exists(filename):
             parse_errors.append(port.load_error(f'File "{filename}" does not exist'))
             continue
-        if not policy.may_read(filename):
-            return LoadRefused("read-refused", filename)
+        if on_disk and port.is_encrypted_file(filename):
+            return LoadRefused("encrypted", filename)
         seen.add(filename)
         if on_disk:
             src_entries, src_errors, src_options = port.parse_file(filename)
@@ -174,10 +179,11 @@ def _ask_before_running(options: port.OptionsMap, policy: LoadPolicy) -> LoadRef
     for directory in options["pythonpath"]:
         if not policy.may_add_pythonpath(directory):
             return LoadRefused("pythonpath-refused", directory)
-    base = path.dirname(options["filename"])
     for raw in options["documents"]:
         directory = path.normpath(str(raw))
-        # As beancount.ops.documents.find_documents resolves a documents root.
+        # As beancount.ops.documents.find_documents resolves a documents root. (Only here: a root that does not
+        # exist leaves `filename` unset, and then no documents option either.)
+        base = path.dirname(options["filename"])
         resolved = directory if path.isabs(directory) else path.abspath(path.normpath(path.join(base, directory)))
         if not policy.may_scan_documents(resolved):
             return LoadRefused("documents-refused", resolved)
