@@ -23,9 +23,11 @@ Where it differs from Beancount, on purpose (each refuses the whole load, EP-13;
 - **Every file is read once, by us, and parsed from those bytes** (`parse_string` with its path as the report
   filename, as `parse_file` does after opening it), so the load's fingerprint (`Loaded.fingerprint`, S0051) is the
   SHA-256 of exactly the bytes parsed: an editor's save between a read and the parse cannot make the fingerprint
-  describe bytes the load did not read (ADR-0008 step 4, ADR-0013). Each glob's matches are the ones followed, each
-  path looked for and not found is recorded absent, and each documents root is listed after the policy allowed it
-  and before Beancount scans it, so a document added during the load changes the next observation, never hides.
+  describe bytes the load did not read (ADR-0008 step 4, ADR-0013). Each glob's matches are the ones followed; each
+  path looked for and not found is recorded absent, or a broken link when a glob found its name; each documents root
+  is listed after the policy allowed it and before Beancount scans it, and the file of each `document` directive is
+  checked before Beancount checks it, so a change during the load makes the next observation differ, never hides.
+  The `document` entries a plugin adds are only known after the plugins ran, so their files are checked then.
 
 A load holds `sys.path` and the plugin modules of the process while it runs; engine jobs run one at a time
 (ADR-0064). Nothing calls this over the protocol yet: the mirror build runs it inside an engine job
@@ -42,7 +44,7 @@ from typing import Literal
 
 from ledger_engine.ledger import beancount_port as port
 from ledger_engine.ledger import fingerprint as fp
-from ledger_engine.ledger.core.ledger_set import Absent, FileState, Fingerprint, Listing
+from ledger_engine.ledger.core.ledger_set import Absent, BrokenLink, FileState, Fingerprint
 from ledger_engine.ledger.policy import LoadPolicy
 
 type RefusalReason = Literal[
@@ -111,7 +113,8 @@ def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadRes
     refused = _ask_before_running(options, policy)
     if refused is not None:
         return refused
-    documents: dict[str, Listing] = {d: fp.listing(d) for d in _documents_roots(options)}
+    documents = {d: fp.listing(d) for d in _documents_roots(options)}
+    document_files = {e.filename: fp.document_file(e.filename) for e in entries if isinstance(e, port.Document)}
 
     # loader._load, after _parse_recursive.
     port.sort_entries(entries)
@@ -120,7 +123,15 @@ def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadRes
     entries, errors = port.run_transformations(entries, parse_errors, options)
     errors.extend(port.validate(entries, options))
     options["input_hash"] = port.input_hash(options["include"])
-    return Loaded(entries, errors, options, Fingerprint.of(path.normpath(root), seen.files, seen.globs, documents))
+
+    # The `document` entries a plugin added (Beancount checks their files when its documents plugin runs after the
+    # plugin); those from a documents root are in its listing already.
+    listed = {path.join(d, name) for d, names in documents.items() if names is not None for name in names}
+    for entry in entries:
+        if isinstance(entry, port.Document) and entry.filename not in listed:
+            document_files.setdefault(entry.filename, fp.document_file(entry.filename))
+    fingerprint = Fingerprint.of(path.normpath(root), seen.files, seen.globs, documents, document_files)
+    return Loaded(entries, errors, options, fingerprint)
 
 
 @dataclass(slots=True)
@@ -130,6 +141,7 @@ class _Seen:
 
     files: dict[str, FileState] = field(default_factory=dict[str, FileState])
     globs: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+    matched: set[str] = field(default_factory=set[str])  # paths a glob returned: their name existed (`lexists`)
 
 
 def _parse_recursive(
@@ -157,7 +169,9 @@ def _parse_recursive(
         if not policy.may_read(filename):
             return LoadRefused("read-refused", filename)
         if on_disk and not path.exists(filename):
-            record.files.setdefault(filename, Absent())
+            # A glob returned the path, so its name existed: a link to nothing (or one removed since, which the
+            # next observation sees). The root was never globbed: ask, as the observation will.
+            record.files.setdefault(filename, BrokenLink() if filename in record.matched else fp.missing(filename))
             parse_errors.append(port.load_error(f'File "{filename}" does not exist'))
             continue
         if on_disk and port.is_encrypted_file(filename):
@@ -194,7 +208,9 @@ def _parse_recursive(
                     record.files.setdefault(path.normpath(search), Absent())
                 parse_errors.append(port.load_error(f'File glob "{include}" does not match any files'))
         for include in expanded:
-            stack.append(path.normpath(include if path.isabs(include) else path.join(cwd, include)))
+            target = path.normpath(include if path.isabs(include) else path.join(cwd, include))
+            stack.append(target)
+            record.matched.add(target)
 
     if options is None:
         options = port.default_options()

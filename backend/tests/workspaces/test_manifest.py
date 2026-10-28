@@ -168,11 +168,36 @@ REFUSED = [
     "books/main.beancount.",
     "books/main.beancount ",
     "a\x00b",
+    # Windows device names, with any extension and in any case: the name opens the device, not a file there.
+    "CON",
+    "a/NUL",
+    "books/COM1.beancount",
+    "books/com9",
+    "lpt1.txt",
+    "books/LPT9.tar.gz",
+    "COM\u00b9",
+    "CONIN$",
+    "conout$.beancount",
+    "a/aux.txt",
+    "Prn",
+    "nul .txt",
+    "COM0",
+    "LPT0.x",
+    # Characters Windows does not allow in a name.
+    "books/a?b",
+    "books/a*b",
+    'books/a"b',
+    "books/a<b",
+    "books/a>b",
+    "books/a|b",
+    "books/a\tb",
+    "books/a\x1fb",
 ]
+ALSO_ACCEPTED = ["CONSOLE/main.beancount", "books/NULL.beancount", "COM10", "a/LPT.txt", "auxiliary/x", "con-1"]
 
 
 @pytest.mark.inv("INV-27")
-@pytest.mark.parametrize("text", ACCEPTED)
+@pytest.mark.parametrize("text", ACCEPTED + ALSO_ACCEPTED)
 def test_a_relative_path_inside_the_folder_is_accepted_as_written(text: str) -> None:
     assert str(WorkspacePath.parse(text)) == text
 
@@ -185,7 +210,13 @@ def test_a_path_that_is_absolute_escapes_or_is_not_normal_is_refused(text: str) 
 
 
 @pytest.mark.inv("INV-27")
-@given(st.text(alphabet=st.sampled_from("ab./\\: C\x00"), max_size=12) | st.text(max_size=12))
+@given(
+    st.text(alphabet=st.sampled_from("ab./\\: C\x00"), max_size=12)
+    | st.text(max_size=12)
+    | st.lists(
+        st.sampled_from(["con", "NUL", "Aux", "COM1", "lpt9", "CONIN$", "a", ".txt", " ", "/", "."]), max_size=5
+    ).map("".join)
+)
 def test_an_accepted_path_stays_inside_any_folder_on_any_system(text: str) -> None:
     try:
         p = WorkspacePath.parse(text)
@@ -197,6 +228,7 @@ def test_an_accepted_path_stays_inside_any_folder_on_any_system(text: str) -> No
     nt = ntpath.normpath(ntpath.join("C:\\w", text))
     assert nt.startswith("C:\\w\\")
     assert all(part.rstrip(". ") not in ("", "..") for part in text.split("/"))
+    assert not ntpath.isreserved(text)  # no device name, no character Windows refuses
 
 
 def test_a_workspace_path_is_a_value() -> None:

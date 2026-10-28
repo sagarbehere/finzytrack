@@ -1,12 +1,17 @@
 """The extended fingerprint of a ledger set, as a value (ADR-0008 step 4, ADR-0015, `design/specs/engine-jobs.md` §1
 "Fingerprint"; S0051). Pure.
 
-A **ledger set** is everything one load looked at: its root, every file it named (read, or looked for and absent),
-every glob `include` it expanded, every documents root it scanned. A **fingerprint** is one observation of it: per
-file the SHA-256 of its bytes, `absent` or `unreadable {errno}`; per glob the match list in the loader's order (it
-decides the order files are parsed in, so it can change entry order); per documents root its file names or
-`absent`. Equal fingerprints mean the next load reads the same inputs; that is the whole contract, and what the
-write gate (ADR-0008 step 4, ADR-0013) and the mirror's freshness (ADR-0015) rely on.
+A **ledger set** is everything one load looked at: its root, every file it named (read, or looked for and not
+found), every glob `include` it expanded, every documents root it scanned, and the file of every `document` entry
+whose existence Beancount checks. A **fingerprint** is one observation of it: per file the SHA-256 of its bytes,
+`absent`, `broken-link` (a link to nothing) or `unreadable {errno}`; per glob the match list in the loader's order
+(it decides the order files are parsed in, so it can change entry order); per documents root its file names, each
+with whether it leads to a file, or `absent`; per document file whether it exists. Equal fingerprints mean the next
+load reads the same inputs; that is the whole contract, and what the write gate (ADR-0008 step 4, ADR-0013) and the
+mirror's freshness (ADR-0015) rely on. The one input of a load left out on purpose is each file's mtime and size,
+which Beancount reads only into `options["input_hash"]` (its cache key; no entry, error or other option depends on
+it): a fingerprint that held them would change on every `touch`. A digest that compares two loads' results must
+therefore leave `input_hash` out (R4, TODO(BL-0118)).
 
 Content hashes, not `(mtime, size)` as ADR-0015 first wrote: an edit that keeps the size within the clock's
 resolution, or a tool that restores the mtime, would pass a stat (ADR-0064's spec, S0051 journal).
@@ -53,7 +58,15 @@ class Content:
 
 @dataclass(frozen=True, slots=True)
 class Absent:
-    """Nothing exists at the path (as `os.path.exists` says, which is what the loader asks)."""
+    """Nothing exists at the path: `os.path.exists` (the loader's question) and `os.path.lexists` (its glob's, for a
+    plain `include`) are both false."""
+
+
+@dataclass(frozen=True, slots=True)
+class BrokenLink:
+    """A name exists at the path but leads to no file (a link to nothing, or a loop): `lexists` is true, `exists`
+    false. The loader reports another error for it than for an absent path: a plain `include` of it is "does not
+    exist", of an absent path "does not match any files"."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,8 +76,10 @@ class Unreadable:
     error: str
 
 
-type FileState = Content | Absent | Unreadable
-type Listing = tuple[str, ...] | None  # a documents root's file names (relative, sorted), or None when absent
+type FileState = Content | Absent | BrokenLink | Unreadable
+# A documents root's file names (relative, sorted), each with whether it leads to a file (`os.path.exists`: Beancount
+# makes a `document` entry for a dated name and then checks it); None when the root does not exist.
+type Listing = tuple[tuple[str, bool], ...] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +90,7 @@ class LedgerSet:
     files: tuple[str, ...]
     globs: tuple[str, ...]
     documents: tuple[str, ...]
+    document_files: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,17 +102,19 @@ class Fingerprint:
     files: tuple[tuple[str, FileState], ...]
     globs: tuple[tuple[str, tuple[str, ...]], ...]
     documents: tuple[tuple[str, Listing], ...]
+    document_files: tuple[tuple[str, bool], ...]
 
     def __post_init__(self) -> None:
         for name, keys in (
             ("files", [k for k, _ in self.files]),
             ("globs", [k for k, _ in self.globs]),
             ("documents", [k for k, _ in self.documents]),
+            ("document_files", [k for k, _ in self.document_files]),
         ):
             if not _strictly_sorted(keys):
                 raise NotCanonicalError(name)
         for _, listing in self.documents:
-            if listing is not None and not _strictly_sorted(listing):
+            if listing is not None and not _strictly_sorted([name for name, _ in listing]):
                 raise NotCanonicalError("listing")
 
     @classmethod
@@ -105,13 +123,15 @@ class Fingerprint:
         root: str,
         files: Mapping[str, FileState],
         globs: Mapping[str, Sequence[str]],
-        documents: Mapping[str, Sequence[str] | None],
+        documents: Mapping[str, Mapping[str, bool] | None],
+        document_files: Mapping[str, bool],
     ) -> Fingerprint:
         return cls(
             root,
             tuple(sorted(files.items())),
             tuple((k, tuple(v)) for k, v in sorted(globs.items())),
-            tuple((k, None if v is None else tuple(sorted(set(v)))) for k, v in sorted(documents.items())),
+            tuple((k, None if v is None else tuple(sorted(v.items()))) for k, v in sorted(documents.items())),
+            tuple(sorted(document_files.items())),
         )
 
     @property
@@ -121,6 +141,7 @@ class Fingerprint:
             tuple(k for k, _ in self.files),
             tuple(k for k, _ in self.globs),
             tuple(k for k, _ in self.documents),
+            tuple(k for k, _ in self.document_files),
         )
 
 
@@ -134,6 +155,8 @@ def _state(state: FileState) -> list[str]:
             return ["sha256", h]
         case Absent():
             return ["absent"]
+        case BrokenLink():
+            return ["broken-link"]
         case Unreadable(error=e):
             return ["unreadable", e]
 
@@ -145,7 +168,8 @@ def encode(fp: Fingerprint) -> bytes:
         "root": fp.root,
         "files": [[p, _state(s)] for p, s in fp.files],
         "globs": [[p, list(m)] for p, m in fp.globs],
-        "documents": [[p, None if m is None else list(m)] for p, m in fp.documents],
+        "documents": [[p, None if m is None else [[n, e] for n, e in m]] for p, m in fp.documents],
+        "document_files": [[p, e] for p, e in fp.document_files],
     }
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
 

@@ -198,7 +198,8 @@ engine/src/ledger_engine/
                  ADR-0010; encrypted files, unreached candidates and policy refusals refuse the whole load) (S0049);
                  every file parsed from the bytes it read, so `Loaded.fingerprint` is what the load read (S0051)
     fingerprint.py  observe(ledger_set) -> Fingerprint: the disk asked the loader's own questions (S0051; ADR-0008
-                 step 4, ADR-0015; SHA-256 per file per the engine-jobs spec §1, not ADR-0015's mtime and size)
+                 step 4, ADR-0015; SHA-256 per file per the engine-jobs spec §1, not ADR-0015's mtime and size;
+                 also links to nothing, documents listings with each name's presence, `document` entries' files)
     policy.py    LoadPolicy: may_read, may_run_plugin, may_add_pythonpath, may_scan_documents (built: the desktop
                  body for a trusted ledger, which allows all; the restrictive desktop body of ADR-0040 waits for
                  design/inbox/20261028-untrusted-ledger-load.md; the hosted body is deferred, ADR-0041) (S0049)
@@ -319,7 +320,7 @@ Execution rule: every `async def` handler only `await`s. Sync work runs on a wor
 | CanonicalEntryKey, ErrorKey | `NewType`s over `str` | — | `ledger.core` (ADR-0008) |
 | LedgerVersion | `@dataclass(frozen=True, order=True)` (generation, fingerprint hash) | brand + comparator | `mirror.ledger_version()` |
 | PlanId, PreviewHash | `NewType`s | brands | `PlanStore` |
-| WorkspacePath | frozen value: relative POSIX, normalized, non-escaping on every OS (no `\`, `:`, NUL, or component ending in a dot or space), validated on construction (`domain.paths`, S0051) | brand | `WorkspacePath.parse(text)` (lexical; a symlink out of the folder is the open's check) |
+| WorkspacePath | frozen value: relative POSIX, normalized, non-escaping and nameable on every OS (no `\`, `:`, control character or `"*<>?|`, no component ending in a dot or space, no Windows device name such as `NUL` or `com1.txt`), validated on construction (`domain.paths`, S0051) | brand | `WorkspacePath.parse(text)` (lexical; a symlink out of the folder is the open's check) |
 | AppPath | frozen value under one of the app roots | — | `main` (from the shell's args) |
 | UntrustedText vs markup | `UntrustedText` wrapper (payees, narrations, metadata values, attachments, email bodies, model output) | the same brand; markup only as `SafeHtml` from `renderMarkdown()` | edge parsers; `SafeHtml` only from markdown-it + DOMPurify |
 | User query text | `UserSql`, `UserBql` NewTypes; internal SQL is `LiteralString` | brands in the recipe and Analyze editors | the recipe validator / the Analyze endpoint |
