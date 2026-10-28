@@ -113,3 +113,28 @@ forbidden_modules =
     secrets
     uuid
     datetime
+
+[importlinter:contract:workspace-format-pure]
+# The workspace format reads bytes and returns values; the open does the I/O (ADR-0017: one extractable format
+# package; ARCHITECTURE.md §2.3: `format/` imports only `domain` + pydantic; EP-01; S0051).
+name = The workspace format is pure (ARCHITECTURE.md §2.3, ADR-0017)
+type = forbidden
+source_modules =
+    app.workspaces.format
+forbidden_modules =
+    app.platform
+    app.api
+    app.main
+    app.workspaces.access
+    fastapi
+    sqlite3
+    httpx
+    portalocker
+    os
+    pathlib
+    subprocess
+    socket
+    time
+    random
+    secrets
+    uuid

@@ -147,7 +147,8 @@ backend/src/app/
                  steps schema (ADR-0029)
   workspaces/    KERNEL. The workspace format and the open/switch machinery (ADR-0017 to ADR-0021, ADR-0063).
     format/      manifest models, per-file markers, assess_workspace, assess_portability,
-                 resolve_open_target, safe export/import plans (pure; extractable as one package)
+                 resolve_open_target, safe export/import plans (pure; extractable as one package; built:
+                 manifest.py, `read_manifest(bytes) -> Manifest | ManifestNewer | ManifestInvalid`, S0051)
     registry.py  the registry (registry key vs lineage id, dedupe by canonical root)
     containers.py  UserContainer / WorkspaceContainer (composition; ref-counted; never hold a ledger;
                  at most one open WorkspaceContainer per UserContainer, ADR-0063)
@@ -191,9 +192,13 @@ engine/src/ledger_engine/
                  contracts/engine-protocol.schema.json), server.py (the stdio loop, channel, watchdog) (S0035)
   ledger/        KERNEL. Beancount wrapped, never re-implemented (EP-03, INV-02).
     core/        source_edit (Fava-ported splicing: locate, apply_edits, route_insert, replace_token),
-                 semantic diff (canonical entry keys), error keys, IntendedChange, Edit/EditPlan types
+                 semantic diff (canonical entry keys), error keys, IntendedChange, Edit/EditPlan types;
+                 ledger_set.py: LedgerSet, the extended Fingerprint as a value, encode/digest (S0051)
     overlay.py   load(root, overlay, policy) -> Loaded | LoadRefused  (the D2 replica of _parse_recursive, pinned;
-                 ADR-0010; encrypted files, unreached candidates and policy refusals refuse the whole load) (S0049)
+                 ADR-0010; encrypted files, unreached candidates and policy refusals refuse the whole load) (S0049);
+                 every file parsed from the bytes it read, so `Loaded.fingerprint` is what the load read (S0051)
+    fingerprint.py  observe(ledger_set) -> Fingerprint: the disk asked the loader's own questions (S0051; ADR-0008
+                 step 4, ADR-0015; SHA-256 per file per the engine-jobs spec §1, not ADR-0015's mtime and size)
     policy.py    LoadPolicy: may_read, may_run_plugin, may_add_pythonpath, may_scan_documents (built: the desktop
                  body for a trusted ledger, which allows all; the restrictive desktop body of ADR-0040 waits for
                  design/inbox/20261028-untrusted-ledger-load.md; the hosted body is deferred, ADR-0041) (S0049)
@@ -206,7 +211,7 @@ engine/src/ledger_engine/
                  untyped Beancount modules have local stubs in engine/typings/ (S0049)
   mirror/        the build half: projection of a LoadResult into SQLite.
     core/        schema.py: the tables, the DDL, the r_* and compatibility views (S0050); rows.py: the row
-                 builders, pure (S0050); the fingerprint
+                 builders, pure (S0050)
     build.py     build(loaded, path, today, stamp) -> Built | BuildFailed: a fresh file or none (S0050)
     publish.py   generation publish (symlink / Windows pointer file, ADR-0015), GC (BL-0113)
 ```
@@ -232,9 +237,9 @@ Each slice has the same internal layout, so an agent finds things by convention:
 |---|---|---|---|
 | `domain` | Domain primitives and their rules; the error taxonomy | `Amount`, `Commodity`, `Currency` (a refinement, §2.6), `AccountName` and `Tolerance` (brands/value types; their only constructors live in `ledger.grammar`, ADR-0024), `today(tz, clock)`, `quantize_derived`, `PriceIndex`, `MetadataKey`, `DomainError` subclasses, `Result` unions | stdlib, `decimal`, `zoneinfo`, `dateutil` (nothing else) |
 | `platform` | Ports, concurrency primitives, registries, observability, plans, error registry | Protocols: `Clock`, `Ids`, `Rng`, `FileSystem`, `Locks`, `Http`, `Imap`, `Llm`, `EnginePort`, `SecretResolver`; `Registry[T]`, `PlanStore`, `log_context`, `timed`, `ErrorCode` | `domain`, stdlib; `platform.adapters` alone may import portalocker, httpx, pydantic_ai, imaplib, ssl |
-| `ledger` (engine) | Read and write the ledger set through Beancount; the write-safety contract | `overlay.load` (built S0049), `parse_files`, `grammar.parse_account(text, roots)`, `grammar.parse_currency`, `grammar.transaction_balance`, `grammar.balance_assertion` (the Beancount grammar and tolerance behind `beancount_port`, passing the domain vectors; INV-02; built S0049), `LoadPolicy`, `Edit`, `EditPlan`, `IntendedChange`, `contract.prepare(plan) -> Prepared \| Refused`, `writer.commit(prepared, acks) -> Committed \| Refused`, `ErrorKey`, `CanonicalEntryKey` | the engine's own packages and its environment; `beancount_port` alone imports `beancount` (§2.0) |
+| `ledger` (engine) | Read and write the ledger set through Beancount; the write-safety contract | `overlay.load` (built S0049; its result carries the load's `Fingerprint`, S0051), `fingerprint.observe(ledger_set)`, `core.ledger_set.digest` (built S0051), `parse_files`, `grammar.parse_account(text, roots)`, `grammar.parse_currency`, `grammar.transaction_balance`, `grammar.balance_assertion` (the Beancount grammar and tolerance behind `beancount_port`, passing the domain vectors; INV-02; built S0049), `LoadPolicy`, `Edit`, `EditPlan`, `IntendedChange`, `contract.prepare(plan) -> Prepared \| Refused`, `writer.commit(prepared, acks) -> Committed \| Refused`, `ErrorKey`, `CanonicalEntryKey` | the engine's own packages and its environment; `beancount_port` alone imports `beancount` (§2.0) |
 | `mirror` | Build and publish (in the engine), read the SQLite projection and run hardened user SQL (main sidecar) | engine: `build.build(loaded, path, today, stamp) -> Built | BuildFailed` (built S0050), `publish(gen)`; main: `Reader` (typed reads), `QueryRunner.run_user_sql(UserSql, params)`, `ledger_version()` | main: `domain`, `platform`; stdlib `sqlite3` |
-| `workspaces` | Workspace format, registry, open/switch, containers, legacy adoption | `access.WorkspaceAccess` (the open-workspace gate's answer for a key: `Open \| Unknown \| NotOpen \| NotReady`; built S0046, only `NoWorkspaces` until BL-0102), `format.assess_workspace`, `format.assess_portability`, `format.resolve_open_target`, `Registry`, `open_workspace(key) -> Opened \| NotReady(phase)` (a switch when another workspace is open: assess, quiesce and close it, then open; ADR-0063), `WorkspaceContainer`, `UserContainer` | `domain`, `platform`, `ledger`, `mirror`; `format/` imports only `domain` + pydantic (extractable, ADR-0017) |
+| `workspaces` | Workspace format, registry, open/switch, containers, legacy adoption | `access.WorkspaceAccess` (the open-workspace gate's answer for a key: `Open \| Unknown \| NotOpen \| NotReady`; built S0046, only `NoWorkspaces` until BL-0102), `format.manifest.read_manifest` (built S0051), `format.assess_workspace`, `format.assess_portability`, `format.resolve_open_target`, `Registry`, `open_workspace(key) -> Opened \| NotReady(phase)` (a switch when another workspace is open: assess, quiesce and close it, then open; ADR-0063), `WorkspaceContainer`, `UserContainer` | `domain`, `platform`, `ledger`, `mirror`; `format/` imports only `domain` + pydantic (extractable, ADR-0017) |
 | `boot` | App-level assessment and lifecycle runs; migrations; content packs; demo | `assess_app(probe) -> AppPhase`, `LifecyclePlan`, `execute(plan, consent)`, `Migration` registry, `ContentPack` | kernel packages; `content` |
 | `content` | Shipped read-only content and the demo/corpus generator | `packs.load(id, version)`, `demo.generate(anchor_date, size, fragments)` (built S0027: `Fragment`, `Size` demo/5k/54k, `default_fragments()`) | `domain`, `ledger.core` (printer-free text builders) |
 | feature slices | One capability each (§2.2) | `<slice>.usecases` functions, `<slice>.capabilities`, `<slice>.registry` | kernel packages; other slices only through the declared edges (§2.4) |
@@ -309,12 +314,12 @@ Execution rule: every `async def` handler only `await`s. Sync work runs on a wor
 | Currency | `NewType("Currency", Commodity)`, a *role* | branded | **only** `profile.as_currency(c)` (ADR-0025: a role the Profile assigns, not a lexical class) |
 | AccountName | `NewType("AccountName", str)` | branded `string` | `ledger.grammar.parse_account(text, profile)` (the Beancount grammar behind `beancount_port`, L3-04); `domain.AccountName` is a brand whose only constructor lives in `ledger`. `Tolerance` likewise (ADR-0024) |
 | CivilDate | `datetime.date` (already distinct; no wrapper) | `Temporal.PlainDate` | `parse_date`, the clock |
-| WorkspaceKey / LineageId | two `NewType`s over `str` / `UUID` | two brands | the registry / the manifest (ADR-0017: confusing them is the costly mistake) |
+| WorkspaceKey / LineageId | two `NewType`s over `str` (`LineageId`: canonical lower-case UUID text; built S0046 / S0051) | two brands | the registry / the manifest (`workspaces.format.manifest.read_manifest`) (ADR-0017: confusing them is the costly mistake) |
 | TransactionId | `NewType`: the legacy `id`/`transaction_id` meta, else `k:` + the entry's first `import-key` element, else the fallback content hash + ordinal (INV-21 data contract). Mutating requests pair it with an `entry_hash` (canonical whole-entry hash); write responses return an old→new id map (ADR-0026) | brand | the mirror |
 | CanonicalEntryKey, ErrorKey | `NewType`s over `str` | — | `ledger.core` (ADR-0008) |
 | LedgerVersion | `@dataclass(frozen=True, order=True)` (generation, fingerprint hash) | brand + comparator | `mirror.ledger_version()` |
 | PlanId, PreviewHash | `NewType`s | brands | `PlanStore` |
-| WorkspacePath | frozen value: relative POSIX, normalized, non-escaping, validated on construction | brand | `WorkspacePath.parse(root, text)` |
+| WorkspacePath | frozen value: relative POSIX, normalized, non-escaping on every OS (no `\`, `:`, NUL, or component ending in a dot or space), validated on construction (`domain.paths`, S0051) | brand | `WorkspacePath.parse(text)` (lexical; a symlink out of the folder is the open's check) |
 | AppPath | frozen value under one of the app roots | — | `main` (from the shell's args) |
 | UntrustedText vs markup | `UntrustedText` wrapper (payees, narrations, metadata values, attachments, email bodies, model output) | the same brand; markup only as `SafeHtml` from `renderMarkdown()` | edge parsers; `SafeHtml` only from markdown-it + DOMPurify |
 | User query text | `UserSql`, `UserBql` NewTypes; internal SQL is `LiteralString` | brands in the recipe and Analyze editors | the recipe validator / the Analyze endpoint |
@@ -817,7 +822,7 @@ The versions below are the newest stable releases published on or before **2026-
 | ruff | 0.17.0 | format + lint, incl. `TID251` banned APIs, `DTZ`, `BLE`, `S`, `TRY` |
 | import-linter | 2.15 | §2.4 contracts |
 | pytest | 9.1.1 | with pytest-xdist 3.8.0 and coverage 7.16.2 |
-| hypothesis | 6.168.4 | properties + `RuleBasedStateMachine` |
+| hypothesis | 6.168.4 | properties + `RuleBasedStateMachine`; also in the engine's dev group (S0051) |
 | syrupy | 6.1.1 | golden snapshots (subject to the golden change rule in `PROCESS.md`) |
 | mutmut | 3.8.0 | T2 mutation testing |
 | deptry | 0.25.1 | unused or undeclared dependencies |
@@ -882,7 +887,8 @@ The versions below are the newest stable releases published on or before **2026-
   contracts/                                    the cross-package contracts, all committed:
     openapi.json                                  generated (offline export, S0046); never hand-edited
     recipe.schema.json                            SOURCE of the recipe format (moved from frontend/src/types)
-    workspace-manifest.schema.json  app-manifest.schema.json   generated from the Pydantic models
+    workspace-manifest.schema.json                generated from `ManifestV1` (S0051, `backend/scripts/export_manifest_schema.py`)
+    app-manifest.schema.json                      generated from its Pydantic model (with the app manifest)
     error-codes.json                              generated from the registry (also inside openapi.json)
     mirror-ddl.sql                                generated snapshot of the mirror's DDL, from the build's table list (S0050);
                                                   the views' column documentation is design/specs/mirror/surface.md

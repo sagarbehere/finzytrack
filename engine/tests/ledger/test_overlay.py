@@ -17,7 +17,7 @@ import shutil
 import tomllib
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
@@ -63,7 +63,7 @@ def same(
     entries, errors, options = expected
     if written_after:
         options = {k: v for k, v in options.items() if k != "input_hash"}
-        result = Loaded(result.entries, result.errors, {k: v for k, v in result.options.items() if k != "input_hash"})
+        result = replace(result, options={k: v for k, v in result.options.items() if k != "input_hash"})
     assert result.entries == entries
     assert [(type(e).__name__, e.source, e.message) for e in result.errors] == [
         (type(e).__name__, e.source, e.message) for e in errors

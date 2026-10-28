@@ -3,10 +3,10 @@
 Mirrors Beancount 3.2.0's `beancount/loader.py`: `_parse_recursive` (the only loader step that touches files) and the
 sequence of `_load` after it. A file with candidate bytes is parsed from them (`parse_string` with its path as the
 report filename, so entries carry the same metadata and includes resolve from the same folder); every other file
-from disk (`parse_file`). Then Beancount's own sort, `booking.book`, `run_transformations` and `validation.validate`,
-unchanged. `load(root, {}, policy)` is the plain load of the disk, and equals `loader.load_file(root)`; the
-equivalence and the pin of the mirrored source are `engine/tests/ledger/test_overlay.py` (guardrails 1 and 2). A
-Beancount upgrade re-mirrors this module first (ADR-0004).
+from the bytes this module read from disk, the same way (see below). Then Beancount's own sort, `booking.book`,
+`run_transformations` and `validation.validate`, unchanged. `load(root, {}, policy)` is the plain load of the
+disk, and equals `loader.load_file(root)`; the equivalence and the pin of the mirrored source are
+`engine/tests/ledger/test_overlay.py` (guardrails 1 and 2). A Beancount upgrade re-mirrors this module first (ADR-0004).
 
 Where it differs from Beancount, on purpose (each refuses the whole load, EP-13; nothing is partly loaded):
 - **Encrypted files** in the include tree, the root included, are refused, never decrypted (ADR-0059); a candidate
@@ -20,6 +20,12 @@ Where it differs from Beancount, on purpose (each refuses the whole load, EP-13;
   (INV-22). A candidate for a file that does not exist yet is reached through a plain `include` of its path; a glob
   matches only files on disk, as in Beancount, so a new file reached only through a glob is refused (BL-0117).
 - **No pickle cache**, no `log_timings`, no `encoding` argument (the engine passes none).
+- **Every file is read once, by us, and parsed from those bytes** (`parse_string` with its path as the report
+  filename, as `parse_file` does after opening it), so the load's fingerprint (`Loaded.fingerprint`, S0051) is the
+  SHA-256 of exactly the bytes parsed: an editor's save between a read and the parse cannot make the fingerprint
+  describe bytes the load did not read (ADR-0008 step 4, ADR-0013). Each glob's matches are the ones followed, each
+  path looked for and not found is recorded absent, and each documents root is listed after the policy allowed it
+  and before Beancount scans it, so a document added during the load changes the next observation, never hides.
 
 A load holds `sys.path` and the plugin modules of the process while it runs; engine jobs run one at a time
 (ADR-0064). Nothing calls this over the protocol yet: the mirror build runs it inside an engine job
@@ -30,11 +36,13 @@ from __future__ import annotations
 
 import glob
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import path
 from typing import Literal
 
 from ledger_engine.ledger import beancount_port as port
+from ledger_engine.ledger import fingerprint as fp
+from ledger_engine.ledger.core.ledger_set import Absent, FileState, Fingerprint, Listing
 from ledger_engine.ledger.policy import LoadPolicy
 
 type RefusalReason = Literal[
@@ -51,11 +59,13 @@ ENCRYPTED_SUFFIXES = (".gpg", ".asc")
 
 @dataclass(frozen=True, slots=True)
 class Loaded:
-    """Beancount's result: the booked, transformed and validated entries, every error, and the options map."""
+    """Beancount's result: the booked, transformed and validated entries, every error, and the options map; and
+    what the load read (`fingerprint`: observe its `ledger_set` again to learn whether the next load would differ)."""
 
     entries: list[port.Directive]
     errors: list[port.BeancountError]
     options: port.OptionsMap
+    fingerprint: Fingerprint
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +100,8 @@ def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadRes
         if name.lower().endswith(ENCRYPTED_SUFFIXES):
             return LoadRefused("encrypted", name)
 
-    parsed = _parse_recursive(path.normpath(root), candidates, policy)
+    seen = _Seen()
+    parsed = _parse_recursive(path.normpath(root), candidates, policy, seen)
     if isinstance(parsed, LoadRefused):
         return parsed
     entries, parse_errors, options = parsed
@@ -100,6 +111,7 @@ def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadRes
     refused = _ask_before_running(options, policy)
     if refused is not None:
         return refused
+    documents: dict[str, Listing] = {d: fp.listing(d) for d in _documents_roots(options)}
 
     # loader._load, after _parse_recursive.
     port.sort_entries(entries)
@@ -108,11 +120,23 @@ def load(root: str, overlay: Mapping[str, bytes], policy: LoadPolicy) -> LoadRes
     entries, errors = port.run_transformations(entries, parse_errors, options)
     errors.extend(port.validate(entries, options))
     options["input_hash"] = port.input_hash(options["include"])
-    return Loaded(entries, errors, options)
+    return Loaded(entries, errors, options, Fingerprint.of(path.normpath(root), seen.files, seen.globs, documents))
 
 
-def _parse_recursive(root: str, candidates: Mapping[str, bytes], policy: LoadPolicy) -> port.ParseResult | LoadRefused:
-    """loader._parse_recursive for a single root file, with the overlay, the policy and the refusals above."""
+@dataclass(slots=True)
+class _Seen:
+    """What `_parse_recursive` read and looked for; the first state recorded for a path stays (a path found absent
+    and then read in the same load keeps `absent`, so the next observation differs: the safe side)."""
+
+    files: dict[str, FileState] = field(default_factory=dict[str, FileState])
+    globs: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
+
+
+def _parse_recursive(
+    root: str, candidates: Mapping[str, bytes], policy: LoadPolicy, record: _Seen
+) -> port.ParseResult | LoadRefused:
+    """loader._parse_recursive for a single root file, with the overlay, the policy, the refusals and the record
+    above."""
     entries: list[port.Directive] = []
     parse_errors: list[port.BeancountError] = []
     options: port.OptionsMap | None = None
@@ -133,15 +157,19 @@ def _parse_recursive(root: str, candidates: Mapping[str, bytes], policy: LoadPol
         if not policy.may_read(filename):
             return LoadRefused("read-refused", filename)
         if on_disk and not path.exists(filename):
+            record.files.setdefault(filename, Absent())
             parse_errors.append(port.load_error(f'File "{filename}" does not exist'))
             continue
         if on_disk and port.is_encrypted_file(filename):
             return LoadRefused("encrypted", filename)
         seen.add(filename)
         if on_disk:
-            src_entries, src_errors, src_options = port.parse_file(filename)
+            with open(filename, "rb") as f:
+                data = f.read()
         else:
-            src_entries, src_errors, src_options = port.parse_string(candidates[filename], filename)
+            data = candidates[filename]
+        record.files.setdefault(filename, fp.content(data))
+        src_entries, src_errors, src_options = port.parse_string(data, filename)
         cwd = path.dirname(filename)
 
         entries.extend(src_entries)
@@ -154,12 +182,16 @@ def _parse_recursive(root: str, candidates: Mapping[str, bytes], policy: LoadPol
         expanded: list[str] = []
         for include in src_options["include"]:
             search = include if path.isabs(include) else path.join(cwd, include)
-            matched = glob.glob(search, recursive=True)
+            matched = fp.matches(search)
+            if glob.has_magic(search):
+                record.globs.setdefault(search, list(matched))
             if not matched and not glob.has_magic(search) and path.normpath(search) in candidates:
                 matched = [search]  # a new file, named by its path: after the write, the glob finds it
             if matched:
                 expanded.extend(matched)
             else:
+                if not glob.has_magic(search):
+                    record.files.setdefault(path.normpath(search), Absent())
                 parse_errors.append(port.load_error(f'File glob "{include}" does not match any files'))
         for include in expanded:
             stack.append(path.normpath(include if path.isabs(include) else path.join(cwd, include)))
@@ -179,12 +211,18 @@ def _ask_before_running(options: port.OptionsMap, policy: LoadPolicy) -> LoadRef
     for directory in options["pythonpath"]:
         if not policy.may_add_pythonpath(directory):
             return LoadRefused("pythonpath-refused", directory)
-    for raw in options["documents"]:
-        directory = path.normpath(str(raw))
-        # As beancount.ops.documents.find_documents resolves a documents root. (Only here: a root that does not
-        # exist leaves `filename` unset, and then no documents option either.)
-        base = path.dirname(options["filename"])
-        resolved = directory if path.isabs(directory) else path.abspath(path.normpath(path.join(base, directory)))
+    for resolved in _documents_roots(options):
         if not policy.may_scan_documents(resolved):
             return LoadRefused("documents-refused", resolved)
     return None
+
+
+def _documents_roots(options: port.OptionsMap) -> list[str]:
+    """Each documents root as beancount.ops.documents.find_documents resolves it. (Only here: a root that does not
+    exist leaves `filename` unset, and then no documents option either.)"""
+    roots: list[str] = []
+    for raw in options["documents"]:
+        directory = path.normpath(str(raw))
+        base = path.dirname(options["filename"])
+        roots.append(directory if path.isabs(directory) else path.abspath(path.normpath(path.join(base, directory))))
+    return roots

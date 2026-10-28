@@ -268,10 +268,10 @@ release_blocking = "yes"
 doc = "—"
 legacy_entry = "—"
 demo = "no"
-backlog = []
-adrs = []
-code = []
-tests = []
+backlog = ["BL-0027"]
+adrs = ["ADR-0017"]
+code = ["backend/src/app/domain/paths.py", "backend/src/app/workspaces/format/manifest.py"]
+tests = ["backend/tests/workspaces/test_manifest.py"]
 
 [[capability]]
 id = "CAP-WS-PORTABILITY-CHECK"
@@ -5131,9 +5131,9 @@ doc = "—"
 legacy_entry = "—"
 demo = "no"
 backlog = ["L10-08"]
-adrs = []
-code = []
-tests = []
+adrs = ["ADR-0019"]
+code = ["backend/src/app/workspaces/format/manifest.py"]
+tests = ["backend/tests/workspaces/test_manifest.py"]
 
 [[capability]]
 id = "CAP-DATA-BOOT"
@@ -5198,10 +5198,10 @@ release_blocking = "yes"
 doc = "reference/querying-data.md#ledger-mirror-tables"
 legacy_entry = "`services/sqlite_exporter.py`, `sqlite_reader.py`"
 demo = "no"
-backlog = ["I4", "L1-10", "L1.M5", "BL-0057", "BL-0113", "BL-0120", "BL-0121"]
+backlog = ["I4", "L1-10", "L1.M5", "BL-0057", "BL-0113", "BL-0120", "BL-0121", "BL-0124", "BL-0125"]
 adrs = ["ADR-0015", "ADR-0048", "ADR-0055"]
-code = ["engine/src/ledger_engine/mirror/build.py", "engine/src/ledger_engine/mirror/core/rows.py", "engine/src/ledger_engine/mirror/core/schema.py"]
-tests = ["engine/tests/mirror/"]
+code = ["engine/src/ledger_engine/ledger/fingerprint.py", "engine/src/ledger_engine/ledger/core/ledger_set.py", "engine/src/ledger_engine/mirror/build.py", "engine/src/ledger_engine/mirror/core/rows.py", "engine/src/ledger_engine/mirror/core/schema.py"]
+tests = ["engine/tests/mirror/", "engine/tests/ledger/test_fingerprint.py", "engine/tests/ledger/test_ledger_set.py"]
 
 [[capability]]
 id = "CAP-DATA-EXPORT-API"
@@ -5283,10 +5283,10 @@ release_blocking = "yes"
 doc = "—"
 legacy_entry = "—"
 demo = "no"
-backlog = ["I9"]
-adrs = []
-code = []
-tests = []
+backlog = ["I9", "BL-0109"]
+adrs = ["ADR-0008", "ADR-0013"]
+code = ["engine/src/ledger_engine/ledger/fingerprint.py"]
+tests = ["engine/tests/ledger/test_fingerprint.py"]
 
 [[capability]]
 id = "CAP-DATA-UNDO"

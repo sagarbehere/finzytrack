@@ -16,6 +16,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+  "hypothesis==6.168.4",
   "jsonschema==4.26.0",
   "pip-licenses==5.5.5",
   "pyright==1.1.414",

@@ -65,6 +65,11 @@ GENERATORS: dict[str, tuple[list[str], list[str]]] = {
         [str(BACKEND_PYTHON), "-I", "backend/scripts/export_openapi.py", "--stdout"],
         ["backend/src/app/", "backend/scripts/export_openapi.py", "backend/pyproject.toml", "backend/uv.lock"],
     ),
+    # The workspace manifest's JSON Schema, exported from its model (EP-14, EP-16; S0051).
+    "contracts/workspace-manifest.schema.json": (
+        [str(BACKEND_PYTHON), "-I", "backend/scripts/export_manifest_schema.py", "--stdout"],
+        ["backend/src/app/workspaces/format/", "backend/scripts/export_manifest_schema.py", "backend/uv.lock"],
+    ),
     # Its TypeScript types (openapi-typescript), generated from the contract in the same commit (ADR-0038, S0046).
     "frontend/src/api/generated/openapi.ts": (
         ["node", "frontend/scripts/gen-api-types.mjs", "--stdout"],

@@ -1,0 +1,7 @@
+{
+  "format": 2,
+  "min_reader": 1,
+  "lineage_id": "0192f3a4-5b6c-7d8e-9f00-000000000002",
+  "ledger": {"root": "main.beancount", "added_in_2": true},
+  "added_in_2": {"anything": [1, 2]}
+}
