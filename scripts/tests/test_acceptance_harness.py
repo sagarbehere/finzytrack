@@ -521,10 +521,12 @@ class _FakeHandler(BaseHTTPRequestHandler):
         pass
 
 
+META = {"request_id": "r", "workspace_id": None, "ledger_version": None, "config_version": None}
+HEALTH = {"status": "ok", "version": "0.4.0.dev0"}
+
+
 def health_body(version: str = "0.4.0.dev0", status: str = "ok") -> bytes:
-    return json.dumps({"data": {"status": status, "version": version},
-                       "meta": {"request_id": "r", "workspace_id": None, "ledger_version": None,
-                                "config_version": None}}).encode()
+    return json.dumps({"data": {"status": status, "version": version}, "meta": META}).encode()
 
 
 class HealthProbeTest(unittest.TestCase):
@@ -550,8 +552,18 @@ class HealthProbeTest(unittest.TestCase):
             "another version": (200, health_body(version="0.3.0")),
             "not ok": (200, health_body(status="starting")),
             "not JSON": (200, b"<html>ok</html>"),
-            "outside the envelope": (200, json.dumps({"status": "ok", "version": "0.4.0.dev0"}).encode()),
-            "data not an object": (200, json.dumps({"data": ["ok"], "meta": {}}).encode()),
+            "outside the envelope": (200, json.dumps(HEALTH).encode()),
+            "data not an object": (200, json.dumps({"data": ["ok"], "meta": META}).encode()),
+            # The envelope as ARCHITECTURE.md §4.1 and app.api.envelope define it (S0048 verifier F3):
+            "data without meta": (200, json.dumps({"data": HEALTH}).encode()),
+            "meta null": (200, json.dumps({"data": HEALTH, "meta": None}).encode()),
+            "error beside data": (200, json.dumps({"data": HEALTH, "meta": META, "error": {"code": "X"}}).encode()),
+            "meta missing a field": (200, json.dumps({"data": HEALTH, "meta": {"request_id": "r"}}).encode()),
+            "meta with a field it does not have": (200, json.dumps({"data": HEALTH, "meta": {**META, "x": 1}}).encode()),
+            "no request id": (200, json.dumps({"data": HEALTH, "meta": {**META, "request_id": None}}).encode()),
+            "an empty request id": (200, json.dumps({"data": HEALTH, "meta": {**META, "request_id": ""}}).encode()),
+            "a request id not text": (200, json.dumps({"data": HEALTH, "meta": {**META, "request_id": 7}}).encode()),
+            "a meta field not text": (200, json.dumps({"data": HEALTH, "meta": {**META, "ledger_version": 3}}).encode()),
         }
         for name, (status, body) in cases.items():
             with self.subTest(case=name):

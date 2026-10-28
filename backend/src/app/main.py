@@ -25,10 +25,12 @@ or into the workspace is refused: the process exits with code 2 before the hands
 
 **The stop** (failure-modes M7). SIGTERM and SIGINT (and SIGBREAK on Windows) have one handler for the process's
 life, `StopRequest`, installed before the engine can start. It only records: the first signal ends the serve, which
-waits for the requests in flight; a later one ends those requests (`ApiServer`). It never raises, so no signal at any
-line can cut the way from the server's end to `engine.close()`, which every path (a stop, a server that fails, a
-refused bind) reaches through one `finally`. uvicorn's own handlers are kept out (`ApiServer`): while it serves it
-would replace the process's handlers, then put them back and raise each caught signal again.
+waits for the requests in flight; a later one closes their connections, so the serve ends (`ApiServer`). It never
+raises, so no signal at any line can cut the way from the server's end to `engine.close()`, which every path (a stop,
+a server that fails, a refused bind) reaches through one `finally`. Work on a worker thread cannot be ended from
+outside: the engine is closed, and the process exits once that work returns (the shell's Quit now, BL-0095).
+uvicorn's own handlers are kept out (`ApiServer`): while it serves it would replace the process's handlers, then put
+them back and raise each caught signal again.
 """
 
 from __future__ import annotations
@@ -231,7 +233,7 @@ class StopRequest:
     """The one handler of the stop signals for the process's life (failure-modes M7). It only records, and never
     raises: a signal handled at any line of the start or the stop cannot cut the way to `engine.close()` (S0038's
     handler raised `SystemExit`, so a signal at the line that switched it off skipped the close). The first request
-    ends the serve, which waits for the requests in flight; any later one also ends those requests (`ApiServer`). A
+    ends the serve, which waits for the requests in flight; any later one also closes their connections (`ApiServer`). A
     request made before the server exists is kept and applied when it is attached. Python runs signal handlers on
     the main thread only, between two of its steps, and `attach` runs there too, so the two never interleave inside
     a step."""
@@ -273,10 +275,10 @@ class ApiServer(uvicorn.Server):
     - no signal handling of its own: the composition root's `StopRequest` keeps the signals. uvicorn's
       `capture_signals` would replace the handlers while it serves, then put the old ones back and raise each caught
       signal again (`tests/test_main.py` checks that the handlers stay the composition root's);
-    - once `force_exit` is set (a second stop), the requests still in flight are ended: their connections are
-      closed. uvicorn's `force_exit` only stops its own waiting, and asyncio's
-      `Server.wait_closed` then waits for every open connection, so a handler that never returned would hold the
-      process for ever, short of `engine.close()`. The check repeats every 0.1 s, uvicorn's own shutdown tick."""
+    - once `force_exit` is set (a second stop), the connections of the requests still in flight are closed.
+      uvicorn's `force_exit` only stops its own waiting, and asyncio's `Server.wait_closed` then waits for every open
+      connection, so a handler that never returned would hold the serve for ever, short of `engine.close()`. The check
+      repeats every 0.1 s, uvicorn's own shutdown tick."""
 
     @override
     @contextlib.contextmanager
@@ -293,15 +295,18 @@ class ApiServer(uvicorn.Server):
         await ending  # its own exception, if any
 
     def _end_requests_in_flight(self) -> None:
-        """Close every open connection: `wait_closed` waits for them, nothing else. A handler still running is
-        cancelled with the loop's other tasks when `asyncio.run` ends."""
+        """Close every open connection: `wait_closed` waits for them, nothing else. A handler's task still running is
+        cancelled with the loop's other tasks when `asyncio.run` ends; work it handed to a worker thread runs on, and
+        the interpreter waits for that thread before the process exits (after `engine.close()`)."""
+        # TODO(BL-0095): the shell's Quit now (engine-jobs §9.3) ends a sidecar whose exit such work holds.
         for connection in list(self.server_state.connections):
             connection.transport.close()
 
 
 def server_config(app: FastAPI, sock: socket.socket) -> uvicorn.Config:
     """uvicorn on our socket; what the sidecar does itself is off. No time limit on the graceful shutdown: it waits
-    for requests in flight, and a second stop signal ends them (`ApiServer`; no fixed budget, PROCESS.md §6)."""
+    for requests in flight, and a second stop signal closes their connections (`ApiServer`; no fixed budget, PROCESS.md
+    §6)."""
     host, port = bound_address(sock)
     return uvicorn.Config(
         app,

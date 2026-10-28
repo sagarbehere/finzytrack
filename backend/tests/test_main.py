@@ -36,8 +36,8 @@ from app.api.routes import declare
 from app.platform.adapters.clock import SystemClock
 from app.platform.adapters.engine_client import EngineClient, EngineCommand, packaged_engine_site
 from app.platform.clock import FrozenClock
-from app.platform.engine_boot import EngineStarting
-from app.platform.observability import Event
+from app.platform.engine_boot import EngineBoot, EngineStarting
+from app.platform.observability import Event, EventLog
 from app.workspaces.access import Unknown
 from tests.api.support import Counted, FakeContainer, FixedAccess
 
@@ -652,6 +652,106 @@ def test_the_first_stop_waits_for_a_request_in_flight_and_a_second_ends_it() -> 
             server.force_exit = server.should_exit = True
 
 
+# A child that serves one extra route whose sync work runs on an anyio worker thread (ARCHITECTURE.md §2, the
+# execution rule for sync use cases) and blocks until its stdin closes; it touches the flag file once the work runs.
+SYNC_WORK = """
+import sys
+from pathlib import Path
+
+import anyio
+from fastapi import APIRouter
+
+from app import main
+from app.api import create_app
+from app.api.envelope import Envelope
+from app.api.health import health_router
+from app.api.routes import declare
+from tests.api.support import Counted
+
+FLAG = Path(sys.argv[1])
+work = APIRouter(prefix="/api/test")
+
+def blocking() -> None:
+    FLAG.touch()
+    sys.stdin.read()  # until the test closes our stdin
+
+@work.get("/sync", openapi_extra=declare("app"))
+async def sync() -> Envelope[Counted]:
+    await anyio.to_thread.run_sync(blocking)
+    raise AssertionError
+
+main.create_app = lambda container: create_app(container, routers=[health_router(), work])
+raise SystemExit(main.main(sys.argv[2:]))
+"""
+
+
+def child_path() -> str:
+    """The child's import path: what this run has (a mutant run puts its own `src` first), then `backend/`, so the
+    child can import `tests.api.support`."""
+    inherited = os.environ.get("PYTHONPATH")
+    backend = str(Path(__file__).resolve().parents[1])
+    return os.pathsep.join([inherited, backend]) if inherited else backend
+
+
+class SyncWorkSidecar(Sidecar):
+    def __init__(self, dirs: tuple[Path, Path], flag: Path) -> None:
+        self.log_path = dirs[0] / "logs" / "finzytrack.jsonl"
+        self.proc = subprocess.Popen(  # noqa: S603 (fixed argv: this interpreter running the entry under test)
+            [
+                sys.executable,
+                "-c",
+                SYNC_WORK,
+                str(flag),
+                *argv(*dirs),
+                "--port",
+                "0",
+                "--engine-venv",
+                str(ENGINE_VENV),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": child_path()},
+        )
+        self.raw = []
+        self._pumping = threading.Thread(target=self._pump, daemon=True)
+        self._pumping.start()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="signals and pid probes as on POSIX; Windows is the manual CI run")
+def test_a_second_stop_closes_the_engine_while_sync_work_is_in_flight(tmp_path: Path, dirs: tuple[Path, Path]) -> None:
+    """S0048 verifier F1: work on a worker thread cannot be ended from outside it. The second stop still ends the serve,
+    so `engine.close()` runs while the work is in flight; the process ends once the work returns (the thread is not
+    a daemon), which is the quit design's to change (engine-jobs §9.3, BL-0109). SIGTERM then SIGINT: two different
+    signals are never merged into one, as two pending SIGTERMs can be."""
+    flag = tmp_path / "working"
+    sidecar = SyncWorkSidecar(dirs, flag)
+    assert sidecar.proc.stdin is not None
+    client: socket.socket | None = None
+    try:
+        port = sidecar.handshake()
+        sidecar.event("engine.ready")
+        client = socket.create_connection((main.LOOPBACK, port), timeout=DEADLINE)
+        client.sendall(b"GET /api/test/sync HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        wait_until(flag.exists)
+        sidecar.proc.send_signal(signal.SIGTERM)
+        sidecar.proc.send_signal(signal.SIGINT)
+        sidecar.event("engine.closed")  # while the sync work is still blocked on our stdin
+    finally:
+        sidecar.proc.stdin.close()  # the work returns
+        if client is not None:
+            client.close()
+        try:
+            code = sidecar.proc.wait(timeout=DEADLINE)
+        except subprocess.TimeoutExpired:
+            sidecar.proc.kill()  # our own child: never leave it running when the test fails
+            sidecar.proc.wait()
+            raise
+    assert code == 0, sidecar.stderr_after_exit()
+    engine_gone(sidecar)
+
+
 def engine_gone(sidecar: Sidecar) -> None:
     """The run's engine, if it started, is no longer running; `engine.closed` is logged exactly once."""
     names = [e.get("event") for e in sidecar.events()]
@@ -661,6 +761,43 @@ def engine_gone(sidecar: Sidecar) -> None:
             pid = event["pid"]
             assert isinstance(pid, int)
             assert not pid_alive(pid), "the sidecar exited before closing its engine"
+
+
+class EngineStartAsked(Exception):
+    """Ends `main` at the engine's start in the test below: no engine, no server."""
+
+
+@pytest.mark.usefixtures("saved_handlers")
+def test_the_stop_handler_is_in_place_before_the_engine_can_start(
+    dirs: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Failure-modes M7, ARCHITECTURE.md §2.0: a stop that comes once the engine may be starting reaches its close. The
+    storm tests only storm once a handler is installed, so they cannot see where it is installed (S0048 verifier F2:
+    installing it after the engine's start passed them). The engine starts only through `start_in_background`
+    (`wire` builds and never starts it, as tested above), so the handlers are read at that call."""
+    seen: dict[int, object] = {}
+
+    def start(self: EngineBoot) -> None:
+        seen.update({s: signal.getsignal(s) for s in main.stop_signals()})
+        raise EngineStartAsked
+
+    monkeypatch.setattr(EngineBoot, "start_in_background", start)
+    logs: list[EventLog] = []
+
+    def capture_process(self: EventLog) -> Callable[[], None]:  # keep pytest's own hooks; close the log after
+        logs.append(self)
+        return lambda: None
+
+    monkeypatch.setattr(EventLog, "capture_process", capture_process)
+    try:
+        with pytest.raises(EngineStartAsked):
+            main.main(argv(*dirs))
+    finally:
+        for log in logs:
+            log.close()
+    handlers = set(map(id, seen.values()))
+    assert len(handlers) == 1, seen  # one handler for every stop signal
+    assert all(isinstance(h, main.StopRequest) for h in seen.values()), seen
 
 
 @pytest.mark.skipif(os.name != "posix", reason="SIGINT and pid probes as on POSIX; Windows is the manual CI run")

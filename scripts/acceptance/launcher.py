@@ -360,9 +360,25 @@ def read_handshake(proc: subprocess.Popen[str], timeout: float) -> tuple[int, st
     return port
 
 
+META_FIELDS = frozenset({"request_id", "workspace_id", "ledger_version", "config_version"})
+
+
+def _is_success_envelope(body: object) -> bool:
+    """`{data, meta}` and nothing else, `meta` with its four fields: a non-empty `request_id`, the others text or
+    null (ARCHITECTURE.md §4.1; `app.api.envelope`)."""
+    if not isinstance(body, dict) or set(body) != {"data", "meta"}:
+        return False
+    meta = body["meta"]
+    if not isinstance(meta, dict) or set(meta) != META_FIELDS:
+        return False
+    if not isinstance(meta["request_id"], str) or not meta["request_id"]:
+        return False
+    return all(meta[f] is None or isinstance(meta[f], str) for f in META_FIELDS - {"request_id"})
+
+
 def probe(port: int, version: str) -> None:
-    """The sidecar serves the API (S0048, BL-0105): `GET /health` answers 200 in the envelope, `ok`, with the version
-    its handshake gave. Anything else refuses the run."""
+    """The sidecar serves the API (S0048, BL-0105): `GET /health` answers 200 in the success envelope, `ok`, with the
+    version its handshake gave. Anything else refuses the run."""
     conn = http.client.HTTPConnection(LOOPBACK, check_port(port), timeout=10)
     try:
         conn.request("GET", "/health")
@@ -378,7 +394,9 @@ def probe(port: int, version: str) -> None:
         body = json.loads(raw)
     except ValueError as e:
         raise Refused("the sidecar's /health did not answer JSON") from e
-    data = body.get("data") if isinstance(body, dict) else None
+    if not _is_success_envelope(body):
+        raise Refused(f"the sidecar's /health answered {str(body)[:120]}, not the success envelope")
+    data = body["data"]
     if data != {"status": "ok", "version": version}:
         raise Refused(f"the sidecar's /health answered {str(data)[:120]}, not ok with version {version}")
 
