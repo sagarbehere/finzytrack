@@ -3,8 +3,8 @@
 The app's SQL is fixed text over the base tables (`m_*`, `design/specs/mirror/README.md` "Three layers"), run on a
 read-only connection (`files.open_mirror`); user SQL never comes here (`query.QueryRunner`). Each read opens and
 closes its own connection: nothing stays resident (INV-10) and no read loads the ledger (ADR-0011). Text that came
-from the ledger is `UntrustedText` (INV-09: data, never markup). A file that is not a readable mirror is
-`MirrorUnavailable` (EP-13).
+from the ledger is `UntrustedText` (INV-09: data, never markup). A file that is not a readable mirror, or a row that
+is not of its column's kind, is `MirrorUnavailable` (EP-13).
 
 The first reads are the ones the open needs: the mirror's own facts (`info`: its `ledger_version` for the envelope,
 §9.1 step 4, and whether the build was complete) and the load's errors (`ledger_errors`: the notice of
@@ -20,42 +20,37 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Final, LiteralString
+from typing import Final, LiteralString, TypeGuard
 
 from app.domain.text import UntrustedText
-from app.mirror.files import MirrorUnavailable, absolute, open_mirror, unavailable
+from app.mirror.files import (
+    MirrorInfo,
+    MirrorUnavailable,
+    NotAMirrorError,
+    OpenMirror,
+    absolute,
+    app_read_outcome,
+    open_mirror,
+    require_table,
+)
 
 __all__ = ["LedgerError", "LedgerErrors", "MirrorInfo", "Reader"]
 
-TABLE_SQL: Final[LiteralString] = "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?"
-META_SQL: Final[LiteralString] = "SELECT key, value FROM m_meta"
 ERROR_COUNT_SQL: Final[LiteralString] = "SELECT COUNT(*) FROM m_ledger_errors"
 ERRORS_SQL: Final[LiteralString] = (
     "SELECT id, source_file, line_number, message, error_type, entry_json FROM m_ledger_errors ORDER BY id LIMIT ?"
 )
-META_KEYS = ("surface_version", "ledger_version", "fingerprint", "export_version", "built_at", "build_complete")
-
-
-@dataclass(frozen=True, slots=True)
-class MirrorInfo:
-    """The mirror's `meta` (surface.toml `meta` note). `build_complete` is False while a table is not built yet
-    (BL-0120); a published generation is always complete (BL-0113)."""
-
-    surface_version: int
-    ledger_version: str
-    fingerprint: str
-    export_version: str
-    built_at: str
-    build_complete: bool
+MAX_LIMIT: Final = 2**63 - 1  # SQLite's largest integer: a larger limit cannot be bound
 
 
 @dataclass(frozen=True, slots=True)
 class LedgerError:
     """One error of the load (`ledger_errors`): a parser, booking, validation or plugin error. `line_number` and
-    `source_file` are None when Beancount gives none."""
+    `source_file` are None when Beancount gives none. `source_file` is the path the build wrote (an include's name
+    is ledger text, so it is `UntrustedText` too)."""
 
     id: int
-    source_file: str | None
+    source_file: UntrustedText | None
     line_number: int | None
     message: UntrustedText
     error_type: str
@@ -70,10 +65,6 @@ class LedgerErrors:
     errors: tuple[LedgerError, ...]
 
 
-class _NotAMirror(Exception):
-    pass
-
-
 class Reader:
     """Reads one mirror file. Holds only its path."""
 
@@ -84,79 +75,64 @@ class Reader:
         self._path = path
 
     def info(self) -> MirrorInfo | MirrorUnavailable:
-        """The mirror's own facts. Every key must be there once, with a value of its kind."""
-        return self._read(_info)
+        """The mirror's own facts, as checked by the open (`files.read_info`)."""
+        return self._read(lambda mirror: mirror.info)
 
     def ledger_errors(self, limit: int) -> LedgerErrors | MirrorUnavailable:
-        """The first `limit` errors of the load, in its order, with the total."""
-        if limit <= 0:
-            msg = f"limit must be positive, not {limit}"
+        """The first `limit` errors of the load, in its order, with the total. A limit outside 1 to 2**63 - 1 is a
+        caller error (`ValueError`)."""
+        if not 0 < limit <= MAX_LIMIT:
+            msg = f"limit must be between 1 and {MAX_LIMIT}, not {limit}"
             raise ValueError(msg)
-        return self._read(lambda con: _errors(con, limit))
+        return self._read(lambda mirror: _errors(mirror.con, limit))
 
-    def _read[T](self, read: Callable[[sqlite3.Connection], T]) -> T | MirrorUnavailable:
-        con = open_mirror(self._path)
-        if isinstance(con, MirrorUnavailable):
-            return con
+    def _read[T](self, read: Callable[[OpenMirror], T]) -> T | MirrorUnavailable:
+        mirror = open_mirror(self._path)
+        if isinstance(mirror, MirrorUnavailable):
+            return mirror
         try:
-            return read(con)
-        except _NotAMirror as e:
+            return read(mirror)
+        except NotAMirrorError as e:
             return MirrorUnavailable("not_a_mirror", str(e))
         except sqlite3.Error as e:
-            if (outcome := unavailable(e)) is not None:
+            if (outcome := app_read_outcome(e)) is not None:
                 return outcome
             raise
         finally:
-            con.close()
+            mirror.con.close()
 
 
-def _require(con: sqlite3.Connection, table: str) -> None:
-    """A file without the base table is not a mirror (asked of the schema, not read from an error's text)."""
-    if con.execute(TABLE_SQL, (table,)).fetchone() is None:
-        msg = f"the file has no table {table}"
-        raise _NotAMirror(msg)
+def _text(value: object) -> TypeGuard[str]:
+    return isinstance(value, str)
 
 
-def _info(con: sqlite3.Connection) -> MirrorInfo:
-    _require(con, "m_meta")
-    found: dict[str, str] = {}
-    for key, value in con.execute(META_SQL):
-        if key in found:
-            msg = f"meta has {key} twice"
-            raise _NotAMirror(msg)
-        found[str(key)] = str(value)
-    for key in META_KEYS:
-        if key not in found:
-            msg = f"meta has no {key}"
-            raise _NotAMirror(msg)
-    if not found["surface_version"].isdecimal():
-        msg = f"meta surface_version is not a number: {found['surface_version']!r}"
-        raise _NotAMirror(msg)
-    if found["build_complete"] not in ("0", "1"):
-        msg = f"meta build_complete is not 0 or 1: {found['build_complete']!r}"
-        raise _NotAMirror(msg)
-    return MirrorInfo(
-        surface_version=int(found["surface_version"]),
-        ledger_version=found["ledger_version"],
-        fingerprint=found["fingerprint"],
-        export_version=found["export_version"],
-        built_at=found["built_at"],
-        build_complete=found["build_complete"] == "1",
-    )
+def _int(value: object) -> TypeGuard[int]:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _errors(con: sqlite3.Connection, limit: int) -> LedgerErrors:
-    _require(con, "m_ledger_errors")
+    require_table(con, "m_ledger_errors")
     (total,) = con.execute(ERROR_COUNT_SQL).fetchone()
-    errors = tuple(
-        LedgerError(
-            id=int(id_),
-            source_file=None if source is None else str(source),
-            line_number=None if line is None else int(line),
-            message=UntrustedText(str(message)),
-            error_type=str(error_type),
-            entry_json=None if entry is None else UntrustedText(str(entry)),
+    errors: list[LedgerError] = []
+    for id_, source, line, message, error_type, entry in con.execute(ERRORS_SQL, (limit,)):
+        if not (
+            _int(id_)
+            and (source is None or _text(source))
+            and (line is None or _int(line))
+            and _text(message)
+            and _text(error_type)
+            and (entry is None or _text(entry))
+        ):
+            msg = f"ledger_errors has a row whose values are not of their columns' kinds (id {id_!r})"
+            raise NotAMirrorError(msg)
+        errors.append(
+            LedgerError(
+                id=id_,
+                source_file=None if source is None else UntrustedText(source),
+                line_number=line,
+                message=UntrustedText(message),
+                error_type=error_type,
+                entry_json=None if entry is None else UntrustedText(entry),
+            )
         )
-        for id_, source, line, message, error_type, entry in con.execute(ERRORS_SQL, (limit,))
-    )
-    return LedgerErrors(int(total), errors)
+    return LedgerErrors(int(total), tuple(errors))

@@ -7,13 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from app.mirror.files import MirrorUnavailable, open_mirror
+from app.mirror.files import MirrorInfo, MirrorUnavailable, OpenMirror, open_mirror
 from tests.mirror.support import make_mirror
 
 
 def test_the_connection_is_read_only_and_query_only(tmp_path: Path) -> None:
-    con = open_mirror(str(make_mirror(tmp_path / "m.db")))
-    assert isinstance(con, sqlite3.Connection)
+    mirror = open_mirror(str(make_mirror(tmp_path / "m.db")))
+    assert isinstance(mirror, OpenMirror)
+    assert isinstance(mirror.info, MirrorInfo)  # the open checked the file is a mirror
+    con = mirror.con
     try:
         assert con.execute("PRAGMA query_only").fetchone() == (1,)
         con.execute("PRAGMA query_only = 0")  # even then the file itself is open read-only (`mode=ro`)

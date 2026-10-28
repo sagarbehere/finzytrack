@@ -142,10 +142,12 @@ backend/src/app/
                  Pydantic AI gateway, .env resolver,
                  engine_client (spawns and supervises the ledger engine, S0035)
   mirror/        KERNEL, the read half (the build half is in the engine, below).
-    files.py     the read-only open of a mirror file (`mode=ro`, `query_only`; MirrorUnavailable) (S0052)
+    files.py     the read-only open of a mirror file, checked to be one (header in rollback mode, no hot
+                 journal, a well-formed `meta`; `mode=ro`, `query_only`; MirrorUnavailable) (S0052)
     reader.py    typed reads returning domain DTOs (built S0052: `info`, `ledger_errors`)
     query.py     QueryRunner: the one hardened runner for user SQL (L5-07; built S0052: authorizer
-                 allowlist, limits, working timeout, row and size caps); later dsum, price_asof,
+                 allowlist, working timeout, row cap, memory bounds held while it runs, no temp
+                 file); later dsum, price_asof,
                  steps schema (ADR-0029, M7)
   workspaces/    KERNEL. The workspace format and the open/switch machinery (ADR-0017 to ADR-0021, ADR-0063).
     format/      manifest models, per-file markers, assess_workspace, assess_portability,
