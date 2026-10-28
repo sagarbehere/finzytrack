@@ -115,7 +115,9 @@ def exact_sum(numbers: list[str]) -> str:
 
 def test_a_units_number_over_28_digits_is_summed_exactly(tmp_path: Path) -> None:
     # Beancount keeps the written positive number whole; its parser rounds the negated one to 28 digits, so the
-    # oracle reads both legs from the postings table (plain notation, never rounded) instead of from the text.
+    # oracle reads both legs from the postings table instead of from the text. Reading the rounded leg back is a
+    # known deviation from "Exact numbers" (BL-0123, open owner question): this test pins only the build's own sum;
+    # test_a_written_negative_number_keeps_its_digits holds the written value as a strict xfail.
     con = build_text(
         tmp_path,
         "2020-01-01 open Assets:Wallet\n2020-01-01 open Equity:Opening\n"
@@ -127,6 +129,44 @@ def test_a_units_number_over_28_digits_is_summed_exactly(tmp_path: Path) -> None
     assert volume == [(exact_sum(legs),)]
     assert len(volume[0][0].replace(".", "")) > 28  # more digits than Python's default context keeps
     assert rows(con, "SELECT balance FROM account_balances WHERE account = 'Assets:Wallet'") == [(LONG,)]
+
+
+# An 18-decimal token: 29 significant digits (S0050 verifier R2-F1, repro test_written_negative_rounded.py).
+SHIB_18 = "12345678901.123456789012345678"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="BL-0123: Beancount's parser rounds a written negative number past 28 digits; owner question open",
+)
+def test_a_written_negative_number_keeps_its_digits(tmp_path: Path) -> None:
+    con = build_text(
+        tmp_path,
+        "2020-01-01 open Assets:Wallet\n2020-01-01 open Equity:Opening\n"
+        f'2021-01-01 * "buy"\n  Assets:Wallet  {SHIB_18} SHIB\n  Equity:Opening  -{SHIB_18} SHIB\n',
+    )
+    assert rows(con, "SELECT count(*) FROM ledger_errors") == [(0,)]
+    assert rows(con, "SELECT amount FROM postings WHERE account = 'Equity:Opening'") == [("-" + SHIB_18,)]
+    assert rows(con, "SELECT balance FROM account_balances WHERE account = 'Equity:Opening'") == [("-" + SHIB_18,)]
+
+
+def test_a_lot_merge_that_needs_rounding_fails_the_build(tmp_path: Path) -> None:
+    # The NONE booking keeps a negative lot at another cost (dated first), so the account balance cancels to a small
+    # exact number while Beancount's inventory merges the two lots at cost 1 USD into 1E+60 + 1E-10 (71 digits):
+    # lot_rows must refuse it as BuildFailed and leave no file, never let decimal.Inexact escape (R2-F2).
+    big = "1" + "0" * 60
+    result = try_build(
+        tmp_path,
+        '2020-01-01 open Assets:Broker "NONE"\n2020-01-01 open Equity:A\n2020-01-01 open Equity:B\n'
+        "2020-01-01 open Equity:C\n"
+        f'2020-12-31 * "b"\n  Assets:Broker  -{big} VTI {{2 USD}}\n  Equity:B\n'
+        f'2021-01-01 * "a"\n  Assets:Broker  {big} VTI {{1 USD}}\n  Equity:A\n'
+        '2021-01-01 * "c"\n  Assets:Broker  0.0000000001 VTI {1 USD}\n  Equity:C\n',
+    )
+    assert isinstance(result, BuildFailed), result
+    assert (result.reason, result.detail) == ("inexact", "lots.units_number")
+    assert not (tmp_path / "mirror.db").exists()
 
 
 def test_a_lot_merged_past_28_digits_is_exact(tmp_path: Path) -> None:
