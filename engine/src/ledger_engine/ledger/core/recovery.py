@@ -1,17 +1,21 @@
 """The per-file judgement of recovery and the rollback (`design/specs/engine-jobs.md` §8.1 step 2, §6.4 "The save's
-temp paths in recovery" (review 6 P1); §12: "the recovery check per file" is one of the engine's pure decisions;
-ADR-0012's per-file rule as amended by ADR-0064; S0061). Pure.
+temp paths in recovery"; §12: "the recovery check per file" is one of the engine's pure decisions; ADR-0012's per-file
+rule as amended by ADR-0064, and the temp rule as refined on 2026-10-29; S0061). Pure.
 
-From what was seen at a file the journal names, at the save's temp beside it and at its backup:
-- the file at its pre bytes (a created file: absent): **at pre**, whatever the temp holds, if the temp is a regular
-  file or absent (a temp cut off at any point while it was written is ours and blocks nothing);
-- the file at its post bytes: **at post** when the temp is absent or holds the pre or the post bytes and, for a
-  replaced file, the backup holds the pre bytes; a temp with other bytes is a displaced outside save and stops the
-  journal; a backup not at pre stops it (ADR-0012 F-1);
-- anything else (other bytes, a folder, a link, a FIFO) stops it.
+**The temp rule** (owner, 2026-10-29: "Refine the rule"; it replaced review 6 P1's "otherwise recovery deletes it,
+whatever it holds"): a save temp, or a restore temp, is **ours** only when it is empty, a prefix of the bytes being
+written into it (the post bytes for a save temp, the pre bytes for a restore temp: a write cut off at any point), or
+equal to the pre or the post bytes; anything else (other bytes, a folder, a link, a FIFO) is an outside save, moved to
+its kept name, and the journal stops, whatever the file beside it holds. `classify_temp` is that rule's one place.
+
+The file the temp sits beside, then:
+- at its pre bytes (a created file: absent): **at pre**;
+- at its post bytes: **at post** when, for a replaced file, the backup holds the pre bytes (ADR-0012 F-1), else stop;
+  for a created file, only while the save's temp is gone: a temp still there means the exclusive rename never
+  happened, so the file at the path is another program's, whatever it holds (S0061 red team r2 H1);
+- anything else (other bytes, a folder, a link, a FIFO): stop.
 The rollback's skipped file (`skip`: a created path an outside file took before the save's exclusive rename, §6.4) is
-**kept** whatever it holds, its temp only when it is absent or holds our post bytes.
-This module is the one place the temp rule lives.
+**kept** whatever it holds.
 """
 
 from __future__ import annotations
@@ -39,6 +43,29 @@ def seen_file(data: bytes) -> Seen:
     return Seen(Kind.FILE, hashlib.sha256(data).hexdigest())
 
 
+class TempState(StrEnum):
+    ABSENT = "absent"
+    OURS = "ours"  # deleting it loses nothing
+    FOREIGN = "foreign"  # moved to its kept name, never deleted
+
+
+def classify_temp(
+    kind: Kind | None, data: bytes | None, held: tuple[str | None, ...], cut_of: bytes | None
+) -> TempState:
+    """The temp rule (the module's docstring). `kind`/`data`: what stands at the temp name (`data` for a regular
+    file). `held`: the SHA-256 of the bytes we hold (pre and post). `cut_of`: the bytes a cut write would be a prefix
+    of, None when they are not known (then only empty and equal-to-held count as ours)."""
+    if kind is None:
+        return TempState.ABSENT
+    if kind is not Kind.FILE or data is None:
+        return TempState.FOREIGN
+    if not data or hashlib.sha256(data).hexdigest() in held:
+        return TempState.OURS
+    if cut_of is not None and cut_of.startswith(data):
+        return TempState.OURS
+    return TempState.FOREIGN
+
+
 class Verdict(StrEnum):
     AT_PRE = "at_pre"  # nothing to restore
     AT_POST = "at_post"  # restore it from its backup, or remove it if the save created it
@@ -48,8 +75,8 @@ class Verdict(StrEnum):
 class Cause(StrEnum):
     """Why a journal stops (`Stopped`, blocking reason `stopped`) or a try fails (`Failed`, reason `failed`)."""
 
-    FOREIGN = "foreign"  # a file holds neither its pre nor its post bytes, or is not a regular file
-    OUTSIDE_SAVE_IN_TEMP = "outside_save_in_temp"  # a temp beside a file at post holds other bytes (§6.4)
+    FOREIGN = "foreign"  # a file holds neither its pre nor its post bytes, is not a regular file, or is not ours
+    OUTSIDE_SAVE_IN_TEMP = "outside_save_in_temp"  # a temp holds outside bytes (§6.4): moved to its kept name
     BACKUP_BAD = "backup_bad"  # the backup a restore needs does not hold the pre bytes (ADR-0012 F-1)
     PATH_MOVED = "path_moved"  # a folder no longer resolves to its recorded canonical path (§6.3)
     UNREACHABLE = "unreachable"  # a folder the journal names is not there (a moved folder, an unmounted volume)
@@ -69,18 +96,28 @@ class Stop:
     cause: Cause
 
 
-def judge(entry: FileEntry, file: Seen, temp: Seen, backup: Seen | None, *, skip: bool = False) -> Verdict | Stop:
-    """The verdict for one file (the module's docstring). `backup` is what the backup holds, None when not read."""
-    post = Seen(Kind.FILE, entry.post)
+def judge(
+    entry: FileEntry,
+    file: Seen,
+    temp: TempState,
+    rtemp: TempState,
+    backup: Seen | None,
+    *,
+    skip: bool = False,
+) -> Verdict | Stop:
+    """The verdict for one file (the module's docstring). `temp`, `rtemp`: the save temp and the restore temp beside
+    it, by `classify_temp`. `backup`: what the backup holds, None when not read."""
+    if TempState.FOREIGN in (temp, rtemp):
+        return Stop(Cause.OUTSIDE_SAVE_IN_TEMP)
     if skip:
-        return Verdict.KEEP if temp in (ABSENT, post) else Stop(Cause.OUTSIDE_SAVE_IN_TEMP)
+        return Verdict.KEEP
+    post = Seen(Kind.FILE, entry.post)
     pre = ABSENT if entry.pre is None else Seen(Kind.FILE, entry.pre)
-    regular_or_none = temp.kind in (None, Kind.FILE)
     if file == pre:
-        return Verdict.AT_PRE if regular_or_none else Stop(Cause.FOREIGN)
+        return Verdict.AT_PRE
     if file == post:
-        if temp not in (ABSENT, pre, post) or temp.kind not in (None, Kind.FILE):
-            return Stop(Cause.OUTSIDE_SAVE_IN_TEMP)
+        if entry.pre is None and temp is not TempState.ABSENT:
+            return Stop(Cause.FOREIGN)  # the exclusive rename never happened: the file is another program's
         if entry.pre is not None and backup != pre:
             return Stop(Cause.BACKUP_BAD)
         return Verdict.AT_POST

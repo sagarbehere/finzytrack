@@ -30,6 +30,7 @@ from ledger_engine.ledger.core.journal import (
     is_kept_name,
     kept_name,
     parse_file_name,
+    post_copy_name,
     record_name,
     restore_temp_name,
     temp_name,
@@ -48,9 +49,14 @@ RECORD = Record(
     parse_digest="sha256:" + "b" * 64,
     backup_dir="/app/local/k1/backups/s1-j7",
     files=(
-        FileEntry("/w/L/inc/a.bean", "/w/l/inc/a.bean", "1" * 64, "2" * 64, "0-a.bean", ".a.bean.ft-j7.tmp"),
+        FileEntry("/w/L/inc/a.bean", "/w/l/inc/a.bean", "1" * 64, "2" * 64, "0-a.bean", ".a.bean.ft-s1-j7.tmp"),
         FileEntry(
-            "/w/L/y2026/Caf\u00e9.bean", "/w/l/y2026/cafe\u0301.bean", None, "3" * 64, None, ".Caf\u00e9.bean.ft-j7.tmp"
+            "/w/L/y2026/Caf\u00e9.bean",
+            "/w/l/y2026/cafe\u0301.bean",
+            None,
+            "3" * 64,
+            None,
+            ".Caf\u00e9.bean.ft-s1-j7.tmp",
         ),
     ),
     created_dirs=(DirEntry("/w/L/y2026", "/w/l/y2026"),),
@@ -140,7 +146,7 @@ def test_names_and_suffixes() -> None:
         assert parse_file_name(file_name("s1-j7", s)) == ("s1-j7", s)
     for other in ("s1-j7", "s1-j7.tmp", "s1.open", ".s1-j7.open", "s 1-j7.open", "s1-j-7.open", "-j7.open"):
         assert parse_file_name(other) is None, other
-    assert temp_name("main.beancount", "j7") == ".main.beancount.ft-j7.tmp"
+    assert temp_name("main.beancount", "s1-j7") == ".main.beancount.ft-s1-j7.tmp"
 
 
 # S0060 red team 4, verifier Q2: the writer's naming rules are part of the format, so recovery never acts on a name
@@ -177,11 +183,11 @@ def test_derived_names_stay_within_name_max_and_are_stable() -> None:
     it), and a short one keeps its readable name."""
     long = "é" * 124 + ".bean"
     assert len(long.encode()) == 253
-    for derived in (temp_name(long, "j7"), backup_name(10, long)):
+    for derived in (temp_name(long, "s1-j7"), backup_name(10, long)):
         assert len(derived.encode()) <= 255
         assert "é" not in derived  # shortened: the full name would pass 255 bytes
     assert backup_name(3, long) == f"3-{long}"  # 255 bytes: fits, kept readable
-    assert temp_name(long, "j7") == temp_name(long, "j7")
+    assert temp_name(long, "s1-j7") == temp_name(long, "s1-j7")
     assert backup_name(0, "a.bean") == "0-a.bean"
     rec = replace(
         RECORD,
@@ -190,7 +196,7 @@ def test_derived_names_stay_within_name_max_and_are_stable() -> None:
                 RECORD.files[0],
                 canonical_path=f"/w/L/inc/{long}",
                 path_key=f"/w/l/inc/{long}",
-                temp=temp_name(long, "j7"),
+                temp=temp_name(long, "s1-j7"),
                 backup=backup_name(0, long),
             ),
             RECORD.files[1],
@@ -203,11 +209,16 @@ def test_a_record_whose_temps_collide_is_unreadable() -> None:
     """S0060 red team r2 L1: every temp is its own name, never a file's or a created folder's path (compared folded
     the widest way)."""
     a = RECORD.files[0]
-    twin = FileEntry("/w/L/inc/A.bean", "/w/L/inc/A.bean", "1" * 64, "2" * 64, "1-A.bean", ".A.bean.ft-j7.tmp")
+    twin = FileEntry("/w/L/inc/A.bean", "/w/L/inc/A.bean", "1" * 64, "2" * 64, "1-A.bean", ".A.bean.ft-s1-j7.tmp")
     with pytest.raises(ValueError, match="duplicate_temp"):
         encode(replace(RECORD, files=(a, twin), created_dirs=()))
     at_temp = FileEntry(
-        "/w/L/inc/.a.bean.ft-j7.tmp", "/w/l/inc/.a.bean.ft-j7.tmp", None, "4" * 64, None, "..a.bean.ft-j7.tmp.ft-j7.tmp"
+        "/w/L/inc/.a.bean.ft-s1-j7.tmp",
+        "/w/l/inc/.a.bean.ft-s1-j7.tmp",
+        None,
+        "4" * 64,
+        None,
+        "..a.bean.ft-s1-j7.tmp.ft-s1-j7.tmp",
     )
     with pytest.raises(ValueError, match="temp_is_a_path"):
         encode(replace(RECORD, files=(a, at_temp), created_dirs=()))
@@ -233,9 +244,9 @@ def test_a_record_whose_temps_collide_is_unreadable() -> None:
 def test_a_record_with_a_file_at_another_files_restore_temp_is_unreadable() -> None:
     """S0061: recovery deletes restore temps without a check (§6.4), so no file or folder of a record may sit at one."""
     a = RECORD.files[0]
-    rtemp = restore_temp_name("a.bean", RECORD.job)
-    assert rtemp == ".a.bean.ft-restore-j7.tmp"
-    at_rtemp = FileEntry(f"/w/L/inc/{rtemp}", f"/w/l/inc/{rtemp}", None, "4" * 64, None, temp_name(rtemp, "j7"))
+    rtemp = restore_temp_name("a.bean", RECORD.name)
+    assert rtemp == ".a.bean.ft-restore-s1-j7.tmp"
+    at_rtemp = FileEntry(f"/w/L/inc/{rtemp}", f"/w/l/inc/{rtemp}", None, "4" * 64, None, temp_name(rtemp, "s1-j7"))
     bad = replace(RECORD, files=(a, at_rtemp), created_dirs=())
     with pytest.raises(ValueError, match="temp_is_a_path"):
         encode(bad)
@@ -250,32 +261,67 @@ def test_a_record_with_a_file_at_another_files_restore_temp_is_unreadable() -> N
 
 
 def test_restore_temp_names_are_stable_and_within_name_max() -> None:
-    assert restore_temp_name("main.bean", "j7") == ".main.bean.ft-restore-j7.tmp"
+    assert restore_temp_name("main.bean", "s1-j7") == ".main.bean.ft-restore-s1-j7.tmp"
     long = "a" * 250
-    assert len(restore_temp_name(long, "j7").encode()) <= 255
-    assert restore_temp_name(long, "j7") == restore_temp_name(long, "j7")
-    assert restore_temp_name(long, "j7") != temp_name(long, "j7")
+    assert len(restore_temp_name(long, "s1-j7").encode()) <= 255
+    assert restore_temp_name(long, "s1-j7") == restore_temp_name(long, "s1-j7")
+    assert restore_temp_name(long, "s1-j7") != temp_name(long, "s1-j7")
 
 
 def test_kept_names_are_visible_numbered_within_name_max_and_recognised() -> None:
     """§6.4 as decided on 2026-10-29 (the owner's kept-name design): `<name>.kept-<job>`, then `-2` and on."""
-    assert kept_name("main.bean", "j7") == "main.bean.kept-j7"
-    assert kept_name("main.bean", "j7", 2) == "main.bean.kept-j7-2"
+    assert kept_name("main.bean", "s1-j7") == "main.bean.kept-s1-j7"
+    assert kept_name("main.bean", "s1-j7", 2) == "main.bean.kept-s1-j7-2"
     long = "a" * 250
-    assert len(kept_name(long, "j7", 999).encode()) <= 255
-    assert is_kept_name(kept_name(long, "j7", 12), long, "j7")
-    assert is_kept_name("MAIN.BEAN.kept-j7", "main.bean", "j7")  # as a case-insensitive volume may spell it
-    for other in ("main.bean", "main.bean.kept-j8", "main.bean.kept-j77", "main.bean.kept-j7-x", "x.kept-j7"):
-        assert not is_kept_name(other, "main.bean", "j7"), other
+    assert len(kept_name(long, "s1-j7", 999).encode()) <= 255
+    assert is_kept_name(kept_name(long, "s1-j7", 12), long, "s1-j7")
+    assert is_kept_name("MAIN.BEAN.kept-s1-j7", "main.bean", "s1-j7")  # as a case-insensitive volume may spell it
+    for other in (
+        "main.bean",
+        "main.bean.kept-s1-j8",
+        "main.bean.kept-s1-j77",
+        "main.bean.kept-s1-j7-x",
+        "x.kept-s1-j7",
+    ):
+        assert not is_kept_name(other, "main.bean", "s1-j7"), other
     with pytest.raises(ValueError, match="kept_number"):
-        kept_name("main.bean", "j7", 1000)
+        kept_name("main.bean", "s1-j7", 1000)
 
 
 def test_a_record_with_a_file_at_another_files_kept_name_is_unreadable() -> None:
     """Recovery stops while a kept copy exists, so a record whose file is another file's kept copy would never
     resolve."""
     a = RECORD.files[0]
-    k = kept_name("a.bean", RECORD.job)
-    at_kept = FileEntry(f"/w/L/inc/{k}", f"/w/l/inc/{k}", None, "4" * 64, None, temp_name(k, "j7"))
+    k = kept_name("a.bean", RECORD.name)
+    at_kept = FileEntry(f"/w/L/inc/{k}", f"/w/l/inc/{k}", None, "4" * 64, None, temp_name(k, "s1-j7"))
     with pytest.raises(ValueError, match="temp_is_a_path"):
         encode(replace(RECORD, files=(a, at_kept), created_dirs=()))
+
+
+def test_every_derived_name_carries_the_session_and_the_job() -> None:
+    """S0061 verifier r2 F1: job numbers restart in each session; a kept copy outlives its journal (and a temp
+    outlives a journal the user chose to keep), so a name keyed by the job alone would meet a later session's save."""
+    for name in (
+        temp_name("main.bean", "s1-j7"),
+        restore_temp_name("main.bean", "s1-j7"),
+        kept_name("main.bean", "s1-j7"),
+    ):
+        assert "s1-j7" in name
+    assert not is_kept_name(kept_name("main.bean", "s1-j7"), "main.bean", "s2-j7")
+    assert temp_name("main.bean", "s1-j7") != temp_name("main.bean", "s2-j7")
+    for bad in ("j7", "s1-j-7", "-j7", "s1-"):
+        with pytest.raises(ValueError, match="tag"):
+            temp_name("main.bean", bad)
+    assert post_copy_name(0, "main.bean") == "0.post-main.bean"
+    assert post_copy_name(0, "main.bean") != backup_name(0, "main.bean")
+    assert len(post_copy_name(3, "a" * 254).encode()) <= 255
+
+
+def test_a_record_with_a_created_folder_at_a_files_kept_name_is_unreadable() -> None:
+    """S0061 red team r2 L2."""
+    f = FileEntry("/w/L/new/x.bean", "/w/l/new/x.bean", None, "4" * 64, None, temp_name("x.bean", "s1-j7"))
+    k = kept_name("a.bean", RECORD.name)
+    g = FileEntry(f"/w/L/inc/{k}/y.bean", f"/w/l/inc/{k}/y.bean", None, "5" * 64, None, temp_name("y.bean", "s1-j7"))
+    with pytest.raises(ValueError, match="temp_is_a_path"):
+        encode(replace(RECORD, files=(RECORD.files[0], g), created_dirs=(DirEntry(f"/w/L/inc/{k}", f"/w/l/inc/{k}"),)))
+    assert f.temp.startswith(".x.bean")

@@ -49,16 +49,16 @@ class Target:
 
     @property
     def temp(self) -> str:
-        return f"{self.folder}/.{self.base}.ft-j7.tmp"
+        return f"{self.folder}/.{self.base}.ft-s1-j7.tmp"
 
     @property
     def rtemp(self) -> str:
-        return f"{self.folder}/.{self.base}.ft-restore-j7.tmp"
+        return f"{self.folder}/.{self.base}.ft-restore-s1-j7.tmp"
 
     @property
     def kept(self) -> str:
         """The first kept name of this file (§6.4 as decided on 2026-10-29): where an outside save we met goes."""
-        return f"{self.folder}/{self.base}.kept-j7"
+        return f"{self.folder}/{self.base}.kept-s1-j7"
 
 
 @dataclass(frozen=True)

@@ -333,7 +333,7 @@ def test_a_locked_file_is_seen_by_stat_and_refuses_the_save_before_anything_is_w
 
 def test_a_file_with_a_name_near_name_max_saves_on_apfs(fs: DarwinFS, tmp_path: Path) -> None:
     """Red team 11: the derived temp and backup names are shortened, so the save lands (APFS allows 255 characters
-    per name: `.<name>.ft-j1.tmp` of a 250-character name would be 261)."""
+    per name: `.<name>.ft-s1-j1.tmp` of a 250-character name would be 261)."""
     (tmp_path / "L").mkdir()
     main = tmp_path / "L" / ("a" * 245 + ".bean")
     main.write_bytes(b"pre\n")

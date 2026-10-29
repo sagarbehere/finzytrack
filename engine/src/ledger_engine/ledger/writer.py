@@ -12,13 +12,15 @@ S0060): what a save does after its commit point (§6.1 step 7), through the file
 1. **Backups:** this save's backup folder `<backups_dir>/<session>-<job>/` made and its parent synced; each file the
    save replaces read through a handle on its folder (checked to be the same object again), hashed against the
    planned pre hash (a file not at its pre bytes refuses: nothing was replaced), written as `<n>-<name>` and synced,
-   read back and hashed again (ADR-0012 F-1); the backup folder synced.
+   read back and hashed again (ADR-0012 F-1); with them a post copy of every file (`journal.post_copy_name`, for
+   recovery's temp rule: S0061 round 2); the backup folder synced.
 2. **Journal:** the record (`ledger.core.journal`) written as `<session>-<job>.part` and synced, renamed `.open`, the
    journal folder synced. It names every file by `canonical_path` and `path_key`, resolved at step 1.
 3. **Per file, in the plan's order** (the caller orders children first and the root last): each directory the save
    creates made and its parent synced; the path guard (the folder's handle is still at the recorded canonical path,
-   checked through the descriptor the write uses, §6.3); the temp `.<name>.ft-<job>.tmp` written with the file's
-   mode and extended attributes (not its ACL: owner, 2026-10-29), and synced; a **swap** with the file, and the
+   checked through the descriptor the write uses, §6.3); the temp `.<name>.ft-<session>-<job>.tmp` written with the
+   file's mode and extended attributes (not its ACL: owner, 2026-10-29), synced, and its entry made durable by the
+   folder's sync; a **swap** with the file, and the
    displaced entry checked to be the planned object holding the pre bytes (§6.4: anything else is an outside save:
    swapped back at once and the folder synced, so it is kept); for a file the save creates, an **exclusive rename**
    that fails if a file appeared; the folder synced. Each folder the save creates is made once, before the first
@@ -187,11 +189,11 @@ class _Target:
     identity: tuple[int, int] | None  # the replaced file's (st_dev, st_ino); None for a created file
     new_dirs: tuple[tuple[str, str], ...]  # (canonical, key) of the folders the save makes for it, parents first
     rest: tuple[str, ...]  # the components that did not exist at resolution
-    job: str = ""
+    tag: str = ""  # the record's name `<session>-<job>`, which every name derived from the save carries
 
     def kept_free(self, h: DirHandle) -> bool:
         """No entry in its folder is one of this file's kept names (a stranger there would stop recovery for ever)."""
-        return not any(journal.is_kept_name(n, self.base, self.job) for n in h.names())
+        return not any(journal.is_kept_name(n, self.base, self.tag) for n in h.names())
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,16 +275,17 @@ def _target(fs: FileSystem, handles: Handles, index: int, c: Commit, ch: Change)
         raise BadPlanError("target_is_root")
     base = check_name(parts[-1])
     parent, parent_key = "/" + "/".join(parts[:-1]), "/" + "/".join(kparts[:-1])
-    temp = journal.temp_name(base, c.job)
+    tag = journal.record_name(c.session, c.job)
+    temp = journal.temp_name(base, tag)
     temp_key = _join(parent_key, fold(temp, r.rules[-1]))
-    rtemp = journal.restore_temp_name(base, c.job)
+    rtemp = journal.restore_temp_name(base, tag)
     rtemp_key = _join(parent_key, fold(rtemp, r.rules[-1]))
     names = (temp, temp_key, rtemp, rtemp_key)
     if not r.rest:
-        return _Target(index, ch, canonical, key, parent, parent_key, base, *names, r.identity, (), (), c.job)
+        return _Target(index, ch, canonical, key, parent, parent_key, base, *names, r.identity, (), (), tag)
     n = len(r.existing)
     new_dirs = tuple(("/" + "/".join(parts[:i]), "/" + "/".join(kparts[:i])) for i in range(n + 1, len(parts)))
-    return _Target(index, ch, canonical, key, parent, parent_key, base, *names, None, new_dirs, r.rest, c.job)
+    return _Target(index, ch, canonical, key, parent, parent_key, base, *names, None, new_dirs, r.rest, tag)
 
 
 def _check_folder(h: DirHandle, canonical: str) -> None:
@@ -341,7 +344,11 @@ def _prepare(fs: FileSystem, handles: Handles, c: Commit, targets: tuple[_Target
             if a is not b and (
                 _within(b.key, a.temp_key)
                 or _within(b.key, a.rtemp_key)
-                or (b.parent_key == a.parent_key and journal.is_kept_name(b.base, a.base, a.job))
+                or (b.parent_key == a.parent_key and journal.is_kept_name(b.base, a.base, a.tag))
+                or any(  # a folder the save makes at a kept name (S0061 red team r2 L2)
+                    dk.rpartition("/")[0] == a.parent_key and journal.is_kept_name(dc.rpartition("/")[2], a.base, a.tag)
+                    for dc, dk in b.new_dirs
+                )
                 or {b.temp_key, b.rtemp_key} & {a.temp_key, a.rtemp_key}
             ):
                 raise BadPlanError("temp_name_taken")  # recovery deletes temps (S0060 red team 7, r2 L1); a folder the
@@ -403,6 +410,12 @@ def _backups(handles: Handles, plan: _Plan, name: str) -> dict[str, str]:
         if back is None or sha256(back) != t.change.pre:
             raise _Stop(Reason.IO_ERROR, t.canonical)  # ADR-0012 F-1
         names[t.key] = bname
+    for t in plan.targets:
+        handles.on = t.canonical
+        # the post bytes, for recovery to tell a temp cut off while written (a prefix of them) from an outside
+        # save, even when the file is back at pre (S0061 r2; owner, 2026-10-29: "Refine the rule"); read only when
+        # they hash to the recorded post hash, so no read-back is needed here
+        folder.create(journal.post_copy_name(t.index, t.base), t.change.post, BACKUP_MODE)
     handles.on = None
     folder.sync()
     return names
@@ -454,7 +467,7 @@ def _check_displaced(h: DirHandle, name: str, t: _Target) -> None:
     if d is Displaced.LINKED:
         raise _Stop(Reason.HARD_LINKED, t.canonical)
     if d is Displaced.FOREIGN:
-        keep(h, name, t.base, t.job)  # none free: it stays at the temp name beside a file at post, so it blocks
+        keep(h, name, t.base, t.tag)  # none free: it stays at the temp name beside a file at post, so it blocks
     raise _Stop(Reason.CHANGED, t.canonical)
 
 
@@ -476,6 +489,7 @@ def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
     h = handles.at(t.parent)
     if t.change.pre is None:
         h.create(t.temp, t.change.post, CREATED_MODE)
+        h.sync()  # the temp durable first: while it stands there, recovery takes the path for another program's
         before = progress.replaced
         progress.replaced = True  # an exclusive rename that answers an error may still have happened...
         try:
@@ -490,6 +504,10 @@ def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
     h.create(t.temp, t.change.post, st.mode, like=t.base)
     if h.stat(t.temp) is None:
         raise _Stop(Reason.CHANGED, t.canonical)  # our temp vanished before the swap
+    # the temp's entry durable before the swap: if a power loss then drops the swap, whatever an editor wrote in place
+    # through the file's name meanwhile is in an object that still has a durable name, our temp's, which the temp rule
+    # keeps (S0061 verifier r2 F2, red team r2 M1)
+    h.sync()
     progress.replaced = True
     h.swap(t.temp, t.base)
     _check_displaced(h, t.temp, t)

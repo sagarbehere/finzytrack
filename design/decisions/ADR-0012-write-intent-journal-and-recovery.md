@@ -2,7 +2,7 @@
 
 This record makes multi-file writes crash-safe and defines the single recovery procedure for writes and lifecycle runs.
 
-- **Status:** Accepted. Amended by ADR-0063 (2026-10-27): recovery runs before any workspace opens, for every journal in the app; a journal names each file by its canonical path, created files included. Amended by ADR-0064 (2026-10-27): a failed rollback pauses writes with Reopen instead of `RECOVERING`; F-6's locked snapshot reads are replaced; temps cut off mid-write never block.
+- **Status:** Accepted. Amended on 2026-10-29 (S0061): the temp rule refined (a temp is deleted only when it is empty, a cut write of ours, or our own bytes). Amended by ADR-0063 (2026-10-27): recovery runs before any workspace opens, for every journal in the app; a journal names each file by its canonical path, created files included. Amended by ADR-0064 (2026-10-27): a failed rollback pauses writes with Reopen instead of `RECOVERING`; F-6's locked snapshot reads are replaced; temps cut off mid-write never block.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** write path, data safety, lifecycle
@@ -60,6 +60,14 @@ Owner, on the second golden review of the engine-scheduler spec (review 6): "I a
 - **Superseded (agent, ADR-0064 decision 9):** S5 gap F-6's "the WARMING rebuild and snapshot reads take the locks". With one engine job at a time no save of ours runs beside a load; loads read without locks, re-check the fingerprint after the load (under the locks for a publish), and refuse while a journal is open.
 - **Temps** (owner, review 6 P1): a save's temp counts as a displaced outside save only when its file already holds the post bytes; otherwise recovery deletes it, whatever it holds. Recovery and rollback write their restore temps under their own names and delete them without a check. A journal is written as `.part` and renamed `.open`; recovery deletes a `.part` (no replace happens before the rename).
 - **Unchanged:** the per-file rule, the fsync order, in-process rollback itself, the order with lifecycle run records, Q29 and Q30.
+
+## Amendment (2026-10-29): the temp rule refined (S0061)
+
+- **Deciders:** owner, 2026-10-29, in session, relayed by the orchestrator, answering what to do about the two narrow losses found under the review-6 temp rule (S0061 data-safety red team round 2, M1 and M2; verifier round 2, F2): "Refine the rule". The option as shown: "A temp that isn't empty, a prefix of our new bytes, or the old bytes becomes a kept copy instead of being deleted; recovery stops until you delete it. Closes both cases; more kept copies after power losses."
+- **Superseded:** this record's amendment of 2026-10-27, "**Temps** (owner, review 6 P1): a save's temp counts as a displaced outside save only when its file already holds the post bytes; otherwise recovery deletes it, whatever it holds. Recovery and rollback write their restore temps under their own names and delete them without a check."
+- **Instead:** a save's temp, or a restore temp, is deleted only when it is empty, a prefix of the bytes written into it (the post bytes for a save temp, the pre bytes for a restore temp: a write cut off at any point), or equal to the pre or the post bytes. Anything else is an outside save: it is moved to its kept name beside the file (ADR-0013's amendment of 2026-10-29), and the journal stops (`kept_copy`) until the user has deleted it. This holds whatever the file beside it holds. A temp cut off while it was written still never blocks.
+- **Details (agent, S0061):** to recognise a cut write of the post bytes when the file is back at pre, the save writes a copy of each file's post bytes into its own backup folder with the backups (`<index>.post-<name>`, §6.1 step 8.1), used only when it hashes to the recorded post hash; without it, only an empty temp or one equal to the pre or post bytes would count as ours. The temp's own entry is synced before its swap, so an in-place write an editor makes through the file's name while the swap is not yet durable always keeps a durable name. The rule's one place is `ledger_engine.ledger.core.recovery.classify_temp`.
+- **Unchanged:** the per-file rule, the fsync order, in-process rollback and everything else in this record.
 
 ## References
 

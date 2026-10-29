@@ -139,32 +139,44 @@ def _fits(name: str) -> bool:
     return len(name.encode()) <= NAME_MAX
 
 
-def temp_name(name: str, job: str) -> str:
-    """The save's temp beside a file (§6.1 step 8.3): `.<name>.ft-<job>.tmp`, or `.<sha16>.ft-<job>.tmp` when that
-    would pass NAME_MAX (S0060 red team finding 11)."""
-    full = f".{name}.ft-{check_id(job)}.tmp"
-    return full if _fits(full) else f".{_short(name)}.ft-{job}.tmp"
+_TAG: Final = re.compile(r"[A-Za-z0-9_]{1,64}-[A-Za-z0-9_]{1,64}")
 
 
-def restore_temp_name(name: str, job: str) -> str:
-    """The restore temp beside a file (§6.4, §8.1 step 3): `.<name>.ft-restore-<job>.tmp`, `<job>` being the save's
-    job, so every try (the rollback and each recovery) uses one name per file that the record alone gives, and a
-    leftover from a try that was cut off is found without a listing; `.<sha16>.ft-restore-<job>.tmp` past NAME_MAX."""
-    full = f".{name}.ft-restore-{check_id(job)}.tmp"
-    return full if _fits(full) else f".{_short(name)}.ft-restore-{job}.tmp"
+def check_tag(tag: str) -> str:
+    """A record's name `<session>-<job>`, as every name derived from a save carries it: job numbers restart in each
+    session, so a job alone could meet a name a save of an earlier session left (S0061 verifier r2 F1)."""
+    if not _TAG.fullmatch(tag):
+        raise BadRecordError("tag")
+    return tag
+
+
+def temp_name(name: str, tag: str) -> str:
+    """The save's temp beside a file (§6.1 step 8.3): `.<name>.ft-<session>-<job>.tmp`, or `.<sha16>.ft-...tmp` when
+    that would pass NAME_MAX (S0060 red team finding 11)."""
+    full = f".{name}.ft-{check_tag(tag)}.tmp"
+    return full if _fits(full) else f".{_short(name)}.ft-{tag}.tmp"
+
+
+def restore_temp_name(name: str, tag: str) -> str:
+    """The restore temp beside a file (§6.4, §8.1 step 3): `.<name>.ft-restore-<session>-<job>.tmp`, named after the
+    save (not the try), so every try (the rollback and each recovery) uses one name per file that the record alone
+    gives, and a leftover from a try that was cut off is found without a listing; `.<sha16>.ft-restore-...tmp` past
+    NAME_MAX."""
+    full = f".{name}.ft-restore-{check_tag(tag)}.tmp"
+    return full if _fits(full) else f".{_short(name)}.ft-restore-{tag}.tmp"
 
 
 MAX_KEPT: Final = 999  # numbered kept names tried before the save or the try stops without one
 
 
-def kept_name(name: str, job: str, n: int = 1) -> str:
+def kept_name(name: str, tag: str, n: int = 1) -> str:
     """The visible name beside a file for an outside save that a swap, a removal or a temp check of this save met
-    (§6.4; owner, 2026-10-29: "Yes" to the kept-name design, ADR-0013 amendment): `<name>.kept-<job>`, then
-    `<name>.kept-<job>-2` and on when that is taken; `<sha16>.kept-<job>...` past NAME_MAX. Nothing of ours ever
-    deletes a kept name, and a journal stops while one exists for any of its files (`is_kept_name`)."""
+    (§6.4; owner, 2026-10-29: "Yes" to the kept-name design, ADR-0013 amendment): `<name>.kept-<session>-<job>`, then
+    `...-2` and on when that is taken; `<sha16>.kept-...` past NAME_MAX. Nothing of ours ever deletes a kept name,
+    and a journal stops while one exists for any of its files (`is_kept_name`)."""
     if not 1 <= n <= MAX_KEPT:
         raise BadRecordError("kept_number")
-    suffix = f".kept-{check_id(job)}" + ("" if n == 1 else f"-{n}")
+    suffix = f".kept-{check_tag(tag)}" + ("" if n == 1 else f"-{n}")
     full = name + suffix
     return full if _fits(full) else _short(name) + suffix
 
@@ -172,16 +184,25 @@ def kept_name(name: str, job: str, n: int = 1) -> str:
 _KEPT_TAIL: Final = re.compile(r"(?:-[0-9]{1,3})?")
 
 
-def is_kept_name(entry: str, name: str, job: str) -> bool:
-    """`entry` is a kept name of the file `name` for the save `job` (any number), compared after the widest folding,
+def is_kept_name(entry: str, name: str, tag: str) -> bool:
+    """`entry` is a kept name of the file `name` for the save `tag` (any number), compared after the widest folding,
     so a volume's own spelling of it still matches (more matches only stop more journals: fail closed)."""
     wide = FoldRule(nfd=True, casefold=True)
     e = fold(entry, wide)
     for stem in (name, _short(name)):
-        head = fold(f"{stem}.kept-{job}", wide)
+        head = fold(f"{stem}.kept-{tag}", wide)
         if e.startswith(head) and _KEPT_TAIL.fullmatch(e[len(head) :]):
             return True
     return False
+
+
+def post_copy_name(index: int, name: str) -> str:
+    """The copy of the post bytes of the file at `index`, in the save's backup folder (§6.1 step 8.1, S0061 r2): what
+    recovery compares a save temp with to tell a cut write of ours (a prefix) from anything else, even when the file
+    is back at pre. `<index>.post-<name>`, or `<index>.post-<sha16>` past NAME_MAX; never a backup's name (those are
+    `<index>-<name>`)."""
+    full = f"{index}.post-{name}"
+    return full if _fits(full) else f"{index}.post-{_short(name)}"
 
 
 def backup_name(index: int, name: str) -> str:
@@ -239,7 +260,7 @@ def _check(record: Record) -> None:
         _sha(f.post)
         if (f.pre is None) != (f.backup is None):
             raise BadRecordError("backup_iff_pre")
-        if f.temp != temp_name(canonical[-1], record.job):
+        if f.temp != temp_name(canonical[-1], record.name):
             raise BadRecordError("temp_name")
         if f.backup is not None and f.backup != backup_name(i, canonical[-1]):
             raise BadRecordError("backup_name")
@@ -262,10 +283,12 @@ def _check(record: Record) -> None:
     taken = [tuple(fold(c, wide) for c in fc) for fc, _ in files]
     taken += [tuple(fold(c, wide) for c in _parts(d.canonical_path)) for d in record.created_dirs]
     temps = [tuple(fold(c, wide) for c in (*fc[:-1], f.temp)) for (fc, _), f in zip(files, record.files, strict=True)]
-    temps += [tuple(fold(c, wide) for c in (*fc[:-1], restore_temp_name(fc[-1], record.job))) for fc, _ in files]
-    for fc, _ in files:  # no file of the record at another file's kept name: recovery would stop on it for ever
-        for gc, _ in files:
-            if fc[:-1] == gc[:-1] and is_kept_name(gc[-1], fc[-1], record.job):
+    temps += [tuple(fold(c, wide) for c in (*fc[:-1], restore_temp_name(fc[-1], record.name))) for fc, _ in files]
+    # no file of the record at a file's kept name, nor under one (a created folder at it is always an ancestor of a
+    # file: red team r2 L2): recovery would stop on it for ever
+    for fc, _ in files:
+        for p in (gc for gc, _ in files):
+            if p[: len(fc) - 1] == fc[:-1] and len(p) >= len(fc) and is_kept_name(p[len(fc) - 1], fc[-1], record.name):
                 raise BadRecordError("temp_is_a_path")
     if len(set(temps)) != len(temps):
         raise BadRecordError("duplicate_temp")
