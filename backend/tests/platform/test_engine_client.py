@@ -1176,16 +1176,42 @@ def test_a_retire_ends_the_idle_engine_and_the_next_call_gets_a_fresh_one(fake_t
     assert [(e.name, f) for e, f in events.seen if e.name == "engine.ended"] == [("engine.ended", {"reason": "retire"})]
 
 
-def test_a_retire_while_a_call_is_in_flight_is_refused() -> None:
-    """A retire follows the final reply (§5.1); during a call it is a bug in the caller, never a silent Cancel."""
-    c = EngineClient(engine_command())
+def test_a_retire_while_a_call_is_in_flight_ends_that_call_as_our_end_and_never_raises() -> None:
+    """Our ends never raise (S0058 verifier F1: a retire that raised on the scheduler thread wedged the queue; S0057
+    made `end` callable from any thread at any time). A retire during a call ends the engine as our end, like a
+    Cancel: the call fails `cancelled`, no stop is counted, and the end report says `retire`."""
+    ends = Ends()
+    c = EngineClient(engine_command(), on_engine_ended=ends)
     try:
-        t, _ = stall(c)
-        with pytest.raises(RuntimeError, match="retire"):
-            c.end("retire")
-        assert t.is_alive()
-        c.end("cancel")
+        t, out = stall(c)
+        c.end("retire")
         t.join(DEADLINE)
+        assert not t.is_alive()
+        (failure,) = out
+        assert isinstance(failure, EngineFailure)
+        assert failure.kind == "cancelled"
+        assert ends.wait(1)
+        assert ends.reports[-1].reason == "retire"
+        state = c.state
+        assert isinstance(state, Idle)
+        assert state.stops == ()
+    finally:
+        c.close()
+
+
+def test_a_retire_while_another_public_call_holds_the_client_is_carried_out_when_it_returns() -> None:
+    """The F1 window: a reset (Try again) holds the client's call lock while the scheduler retires the engine of the
+    job that has just ended. The retire does not raise and the engine is ended once the reset returns."""
+    ends = Ends()
+    c = EngineClient(engine_command(), on_engine_ended=ends)
+    try:
+        assert isinstance(c.start(), EngineInfo)
+        serial = c.serial
+        with c._call():  # pyright: ignore[reportPrivateUsage] (the window of any public call, held open)
+            c.end("retire")
+        assert ends.wait(1)
+        assert (ends.reports[-1].serial, ends.reports[-1].reason) == (serial, "retire")
+        assert isinstance(c.state, Idle)
     finally:
         c.close()
 

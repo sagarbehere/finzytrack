@@ -21,12 +21,13 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any, override
 
 import pytest
 
 from app.platform.adapters.engine_client import EngineClient, EngineCommand
 from app.platform.adapters.engine_lock import engine_lock_path, wait_engine_lock
-from app.platform.engine import EngineEnd, EngineEvent, EngineFailure, GateReached
+from app.platform.engine import EndReason, EngineEnd, EngineEvent, EngineFailure, GateReached
 from app.platform.engine_jobs.queue import JobKind, JobSpec, QueuePolicy
 from app.platform.engine_jobs.scheduler import (
     Done,
@@ -39,13 +40,14 @@ from app.platform.engine_jobs.scheduler import (
     WorkResult,
 )
 from app.platform.engine_jobs.text import ADVICE, describe, notice
-from app.platform.engine_supervision import RestartPolicy
+from app.platform.engine_supervision import Reset, RestartPolicy
 from app.platform.errors import (
     EngineStoppedDetails,
     EngineUnavailableDetails,
     ErrorCode,
     JobCancelledDetails,
     WorkspaceNotOpenDetails,
+    spec_for,
 )
 from app.platform.observability import Event
 from app.platform.observability.events import ENGINE_EXIT, ENGINE_START_FAILED, JOB_INTERNAL_ERROR
@@ -55,7 +57,7 @@ REPO = Path(__file__).resolve().parents[3]
 ENGINE_VENV = REPO / "engine" / ".venv"
 DEADLINE = 20.0
 ABSENCE = 0.5
-DELAY = 0.05  # the display delay in these tests (the product's is 2 s, §5.4)
+DELAY = 2.0  # §5.4's display delay; on the tests' clock, which moves only when a test moves it
 W1 = "ws-1"
 W2 = "ws-2"
 
@@ -107,17 +109,36 @@ class LockWait:
         assert self._open.wait(DEADLINE), "the lock wait was never freed"
 
 
+class Clock:
+    """The scheduler's monotonic clock in these tests: it moves only when a test moves it, and `EngineJobs.tick()`
+    makes the scheduler look at its timers then (owner's rule: wall time never decides a test; S0058 round 1)."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
 class Rig:
-    def __init__(self, *, policy: QueuePolicy | None = None, restart: RestartPolicy | None = None) -> None:
-        self.engine = FakeEngine()
+    def __init__(
+        self,
+        *,
+        policy: QueuePolicy | None = None,
+        restart: RestartPolicy | None = None,
+        engine: FakeEngine | None = None,
+    ) -> None:
+        self.engine = engine or FakeEngine()
         self.lock = LockWait()
         self.log = Log()
+        self.clock = Clock()
         self.jobs = EngineJobs(
             self.engine,
             wait_engine_lock=self.lock,
             policy=policy or QueuePolicy(max_queued=8),
             restart=restart or RestartPolicy(),
             display_delay=DELAY,
+            monotonic=self.clock,
             log=self.log,
         )
         self.engine.spawned = self.jobs.engine_spawned
@@ -134,6 +155,15 @@ class Rig:
 
     def close(self) -> None:
         self.jobs.close()
+
+    def later(self, seconds: float) -> None:
+        """Time passes; the scheduler fires what is due before this returns."""
+        self.clock.now += seconds
+        self.jobs.tick()
+
+    def advice_after_the_delay(self) -> bool:
+        self.later(DELAY)
+        return self.jobs.status().queue.advice
 
 
 @pytest.fixture
@@ -374,7 +404,7 @@ def test_a_cancel_after_proceed_is_too_late_and_the_save_finishes(rig: Rig) -> N
     ticket = submit(rig, user("save"), lambda ctx: WorkResult(ctx.call("gate", {})))
     wait_until(lambda: rig.engine.proceeded == 1)
     assert rig.jobs.cancel(ticket.id) == "too_late"
-    shown = describe(rig.jobs.status(), ticket.id, now=time.monotonic())
+    shown = describe(rig.jobs.status(), ticket.id, now=rig.clock.now)
     assert shown is not None
     assert shown.text == "Finishing your change…"
     assert not shown.cancel
@@ -404,15 +434,14 @@ def test_the_one_rule_behind_a_confirmed_save_the_waiting_users_own_request_is_c
     save = submit(rig, user("save"), calls("block"))
     blocked(rig)
     waiting = submit(rig, user("preview"), calls("ok"))
-    shown = describe(rig.jobs.status(), waiting.id, now=time.monotonic(), delay=60.0)  # "at once", also under load
+    shown = describe(rig.jobs.status(), waiting.id, now=rig.clock.now, delay=DELAY)
     assert shown is not None
     assert shown.text.startswith("Waiting for: ")
     assert shown.cancel
-    later = describe(rig.jobs.status(), waiting.id, now=time.monotonic() + 10 * DELAY, delay=DELAY)
+    later = describe(rig.jobs.status(), waiting.id, now=rig.clock.now + 10 * DELAY, delay=DELAY)
     assert later is not None
     assert later.text == "Still working…"
-    absent_for_a_while()
-    assert not rig.jobs.status().queue.advice, "quit advice on a timer for work that may only be slow"
+    assert not rig.advice_after_the_delay(), "quit advice on a timer for work that may only be slow"
     assert rig.jobs.cancel(waiting.id) == "cancelled"
     assert details(outcome(waiting)) == JobCancelledDetails(cannot_stop_ahead=True)
     assert save.outcome is None, "the confirmed save was ended"
@@ -441,7 +470,7 @@ def test_a_client_that_goes_away_cancels_its_read_but_never_a_save(rig: Rig) -> 
 def test_a_background_job_offers_no_cancel_and_ignores_one(rig: Rig) -> None:
     r4 = submit(rig, background("r4"), calls("block"))
     blocked(rig)
-    shown = describe(rig.jobs.status(), r4.id, now=time.monotonic())
+    shown = describe(rig.jobs.status(), r4.id, now=rig.clock.now)
     assert shown is not None
     assert not shown.cancel
     assert rig.jobs.cancel(r4.id) == "nothing"
@@ -496,7 +525,7 @@ def test_while_a_cancelled_jobs_start_is_under_way_the_slot_is_held(rig: Rig) ->
     wait_until(lambda: (2, "cancel") in rig.engine.ends)  # and the job ended it
     spawned = rig.engine.serial
     waiting = submit(rig, user("bql"), calls("ok"))
-    wait_until(lambda: rig.jobs.status().queue.advice)
+    assert rig.advice_after_the_delay()
     absent_for_a_while()
     assert rig.engine.serial == spawned, "an engine started beside one whose end was never reported"
     assert slot(rig) == "ending"
@@ -616,10 +645,10 @@ def test_a_signalled_engine_that_never_ends_gets_the_advice_and_no_next_engine()
         blocked(rig)
         rig.engine.stuck = True
         assert rig.jobs.cancel(ticket.id) == "cancelled"
-        wait_until(lambda: rig.jobs.status().queue.advice)
+        assert rig.advice_after_the_delay()
         assert notice(rig.jobs.status()) == ADVICE, "no notice while no job waits (N3)"
         waiting = submit(rig, user("bql"), calls("ok"))
-        shown = describe(rig.jobs.status(), waiting.id, now=time.monotonic())
+        shown = describe(rig.jobs.status(), waiting.id, now=rig.clock.now)
         assert shown is not None
         assert shown.text == ADVICE
         assert notice(rig.jobs.status()) is None, "the advice shows in the waiting job's place"
@@ -628,7 +657,7 @@ def test_a_signalled_engine_that_never_ends_gets_the_advice_and_no_next_engine()
         assert rig.engine.serial == before
         rig.engine.release_ends()
         assert outcome(waiting) == Done({"op": "ok"})
-        wait_until(lambda: not rig.jobs.status().queue.advice)
+        assert not rig.jobs.status().queue.advice
     finally:
         rig.close()
 
@@ -645,16 +674,17 @@ def test_no_engine_starts_before_the_boots_wait_for_the_engine_lock_ends_and_the
         rig.lock.hold()
         boot = rig.jobs.start()
         assert isinstance(boot, JobTicket)
-        wait_until(lambda: rig.jobs.status().queue.advice)
+        assert not rig.jobs.status().queue.advice, "the advice before the display delay"
+        assert rig.advice_after_the_delay()
         assert rig.engine.starts == 0, "an engine started while the engine lock was waited for"
-        shown = describe(rig.jobs.status(), boot.id, now=time.monotonic())
+        shown = describe(rig.jobs.status(), boot.id, now=rig.clock.now)
         assert shown is not None
         assert shown.text == ADVICE
         assert shown.cancel, "the boot's own job waiting for the lock is the user's to cancel (§9.2)"
         rig.lock.free()
         assert outcome(boot) == Done(None)
         assert rig.engine.starts == 1
-        wait_until(lambda: not rig.jobs.status().queue.advice)
+        assert not rig.jobs.status().queue.advice
     finally:
         rig.close()
 
@@ -718,7 +748,7 @@ def test_the_engine_lock_is_waited_for_again_before_every_fresh_engine(rig: Rig)
     rig.lock.hold()
     nxt = submit(rig, user("bql"), calls("ok"))
     wait_until(lambda: rig.lock.calls == 2)
-    wait_until(lambda: rig.jobs.status().queue.advice)
+    assert rig.advice_after_the_delay()
     starts = rig.engine.starts
     absent_for_a_while()
     assert rig.engine.starts == starts, "an engine started before the lock was waited for"
@@ -731,14 +761,13 @@ def test_the_engine_lock_is_waited_for_again_before_every_fresh_engine(rig: Rig)
 
 def test_after_the_bound_jobs_end_unavailable_without_an_engine_until_the_window_lets_a_stop_go() -> None:
     """§5.3: "three stops in 300 s make the engine `Unavailable` until the oldest leaves the window, or Try again";
-    §11 "bound reached ... `ENGINE_UNAVAILABLE`"."""
-    window = 3.0  # far above the few steps before the shell reads the state, also under load (EP-28)
-    rig = Rig(restart=RestartPolicy(window=window))
+    §11 "bound reached ... `ENGINE_UNAVAILABLE`". On the tests' clock: the window ends exactly when the oldest
+    counted stop is one window old, never earlier (S0040: half-open)."""
+    rig = Rig()
     try:
         rig.boot()
-        rig.engine.stuck = False
-        now = time.monotonic()
-        rig.engine.unavailable((now, now, now))
+        t = rig.clock.now
+        rig.engine.unavailable((t, t, t))
         crashed = submit(rig, user("preview"), calls("crash"))
         assert code_of(outcome(crashed)) == ErrorCode.ENGINE_STOPPED
         wait_until(lambda: rig.jobs.status().queue.unavailable)
@@ -748,15 +777,39 @@ def test_after_the_bound_jobs_end_unavailable_without_an_engine_until_the_window
         assert code_of(out) == ErrorCode.ENGINE_UNAVAILABLE
         assert details(out) == EngineUnavailableDetails(reason="stopped_often")
         assert rig.engine.starts == starts, "an engine was started while unavailable"
+        rig.later(RestartPolicy().window - 1.0)
+        assert rig.jobs.status().queue.unavailable, "available before the oldest stop left the window"
+        rig.later(1.0)
+        assert not rig.jobs.status().queue.unavailable
         rig.engine.available()
-        wait_until(lambda: not rig.jobs.status().queue.unavailable, timeout=window + DEADLINE)
         assert outcome(submit(rig, user("bql"), calls("ok"))) == Done({"op": "ok"})
     finally:
         rig.close()
 
 
+def test_at_the_windows_end_the_stops_are_counted_again() -> None:
+    """§5.3: unavailable "until the oldest leaves the window": the shell reads the client's stops again when its
+    timer fires; stops made since keep the bound, and the window is waited for again (S0058 verifier F6)."""
+    rig = Rig()
+    try:
+        rig.boot()
+        t = rig.clock.now
+        rig.engine.unavailable((t, t, t))
+        assert code_of(outcome(submit(rig, user("preview"), calls("crash")))) == ErrorCode.ENGINE_STOPPED
+        wait_until(lambda: rig.jobs.status().queue.unavailable)
+        window = RestartPolicy().window
+        rig.engine.unavailable((t + 100.0, t + 100.0, t + 100.0))  # three newer stops (the client's own count)
+        rig.later(window)
+        assert rig.jobs.status().queue.unavailable, "available while three stops are still in the window"
+        rig.later(100.0)
+        assert not rig.jobs.status().queue.unavailable
+    finally:
+        rig.close()
+
+
 def test_try_again_resets_the_engine_and_lets_jobs_start() -> None:
-    """§5.3: "... or **Try again**"; an incompatible engine is never retried until a reset (S0035)."""
+    """§5.3: "... or **Try again**"; an incompatible engine is never retried until a reset (S0035). Try again is a
+    step of the scheduler; the reset runs beside it, and jobs start once it is done."""
     rig = Rig()
     try:
         rig.boot()
@@ -769,11 +822,30 @@ def test_try_again_resets_the_engine_and_lets_jobs_start() -> None:
         wait_until(lambda: rig.jobs.status().queue.unavailable)
         rig.engine.available()
         rig.jobs.try_again()
+        wait_until(lambda: not rig.jobs.status().queue.unavailable)
         assert rig.engine.resets == 1
-        assert not rig.jobs.status().queue.unavailable
         assert outcome(submit(rig, user("preview"), calls("ok"))) == Done({"op": "ok"})
     finally:
         rig.close()
+
+
+def test_try_again_while_the_engine_is_available_changes_nothing(rig: Rig) -> None:
+    """Model `UserTryAgain` needs `Unavail`: with the engine available there is nothing to reset."""
+    rig.jobs.try_again()
+    assert rig.engine.resets == 0
+    assert outcome(submit(rig, user("preview"), calls("ok"))) == Done({"op": "ok"})
+
+
+def test_try_again_answers_at_once_while_a_job_runs(rig: Rig) -> None:
+    """The scheduler's contract: "each caller waits only for that step's answer, never for the engine" (S0058
+    verifier F2: the reset ran on the caller's thread and waited for the client's call lock)."""
+    job = submit(rig, user("preview"), calls("block"))
+    blocked(rig)
+    done = threading.Event()
+    threading.Thread(target=lambda: (rig.jobs.try_again(), done.set()), daemon=True).start()
+    assert done.wait(DEADLINE), "try_again() waited for the running job's engine call"
+    rig.engine.release()
+    assert isinstance(outcome(job), Done)
 
 
 # -- a fresh engine mid-job (§5.1), the boot, the log, close ---------------------------------------------------------
@@ -811,30 +883,36 @@ def test_a_recover_all_between_engines_offers_no_cancel(rig: Rig) -> None:
     ticket = submit(rig, spec, work)
     assert asked.wait(DEADLINE)
     wait_until(lambda: slot(rig) == "ending")
-    shown = describe(rig.jobs.status(), ticket.id, now=time.monotonic())
+    shown = describe(rig.jobs.status(), ticket.id, now=rig.clock.now)
     assert shown is not None
     assert not shown.cancel
-    wait_until(lambda: rig.jobs.status().queue.advice)
-    shown = describe(rig.jobs.status(), ticket.id, now=time.monotonic())
+    assert rig.advice_after_the_delay()
+    shown = describe(rig.jobs.status(), ticket.id, now=rig.clock.now)
     assert shown is not None
     assert shown.text == ADVICE, "the wait is explained"
     rig.engine.release_ends()
     assert outcome(ticket) == Done(None)
 
 
-def test_every_engine_end_is_logged_with_its_job(rig: Rig) -> None:
-    """BL-0150: "log each engine's end report (exit, peak memory) with its job"; content-free fields only."""
-    assert isinstance(outcome(submit(rig, user("preview"), calls("ok"))), Done)
-    wait_until(lambda: len(rig.log.of(ENGINE_EXIT)) == 1)
-    (line,) = rig.log.of(ENGINE_EXIT)
-    assert line == {
-        "engine": 1,
-        "job": "preview",
-        "reason": "retire",
-        "exit_code": None,
-        "signal": 9,
-        "max_rss_kib": 2048,
-    }
+def test_every_engine_end_is_logged_with_its_job() -> None:
+    """BL-0150: "log each engine's end report (exit, peak memory) with its job"; content-free fields only. The line
+    names the queue's engine number, not the client's serial (a start can spawn twice, §5.1), the kind of the last
+    job started on that engine, and the report's own peak memory (S0058 verifier F3)."""
+    engine = FakeEngine(spawns_per_start=2)  # the boot's start spawns serials 1 and 2: both are engine 1
+    rig = Rig(engine=engine)
+    try:
+        rig.boot()
+        wait_until(lambda: len(rig.log.of(ENGINE_EXIT)) == 1)  # the boot's first spawn, ended by the retry
+        assert isinstance(outcome(submit(rig, user("bql"), calls("ok", ran_user_code=False))), Done)
+        assert isinstance(outcome(submit(rig, user("rebuild"), calls("ok"))), Done)  # user code: retired
+        wait_until(lambda: len(rig.log.of(ENGINE_EXIT)) == 2)
+        lines = sorted(rig.log.of(ENGINE_EXIT), key=lambda f: str(f["reason"]))
+        assert lines == [
+            {"engine": 1, "job": "rebuild", "reason": "retire", "exit_code": None, "signal": 9, "max_rss_kib": 2002},
+            {"engine": 1, "job": "recover_all", "reason": "stop", "exit_code": 1, "signal": None, "max_rss_kib": 1001},
+        ]
+    finally:
+        rig.close()
 
 
 def test_a_work_that_raises_is_internal_and_its_engine_is_not_reused(rig: Rig) -> None:
@@ -851,6 +929,83 @@ def test_a_work_that_raises_is_internal_and_its_engine_is_not_reused(rig: Rig) -
     assert [f["exception_type"] for f in rig.log.of(JOB_INTERNAL_ERROR)] == ["RuntimeError"]
     assert outcome(submit(rig, user("bql"), calls("ok"))) == Done({"op": "ok"})
     assert rig.engine.calls[-1] == (first + 1, "ok")
+
+
+def test_an_effect_that_raises_does_not_cut_its_step_short_and_is_logged() -> None:
+    """The step rule (S0058 verifier F1): every effect of a step is carried out, also when one of them raises (a bug:
+    effects must not raise); the raise is logged `jobs.internal_error`. Here the engine's end raises when the slot's
+    engine is retired: the job's answer and the advice timer of the same step still happen, so the held slot is
+    explained instead of wedged in silence."""
+
+    class EndRaises(FakeEngine):
+        @override
+        def end(self, reason: EndReason) -> None:
+            if reason == "retire":
+                msg = "end refused"
+                raise RuntimeError(msg)
+            super().end(reason)
+
+    rig = Rig(engine=EndRaises())
+    try:
+        rig.boot()
+        ticket = submit(rig, user("preview"), calls("ok"))
+        assert outcome(ticket) == Done({"op": "ok"})
+        assert [f["exception_type"] for f in rig.log.of(JOB_INTERNAL_ERROR)] == ["RuntimeError"]
+        assert slot(rig) == "ending"
+        assert rig.advice_after_the_delay(), "the step's advice timer was lost with the raise"
+    finally:
+        rig.close()
+
+
+def test_the_status_read_after_an_answer_shows_that_answer(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A request's answer and the published status agree: once `submit` has returned, `status()` shows its step
+    (found in round 1 as the likely cause of the one loaded failure of round 0: the status was published after the
+    caller was answered). The publish is held open here; the answer must wait for it."""
+    original = EngineJobs._publish  # pyright: ignore[reportPrivateUsage]
+    held = threading.Event()
+    hold = threading.Event()
+
+    def slow_publish(self: EngineJobs) -> None:
+        if hold.is_set():
+            assert held.wait(DEADLINE)
+        original(self)
+
+    monkeypatch.setattr(EngineJobs, "_publish", slow_publish)
+    first = submit(rig, user("bql"), calls("block"))
+    blocked(rig)
+    answered: list[JobTicket] = []
+    hold.set()
+    t = threading.Thread(target=lambda: answered.append(submit(rig, user("preview"), calls("ok"))), daemon=True)
+    t.start()
+    t.join(ABSENCE)
+    if answered:  # answered while its step was not published yet: the status must show it all the same
+        queued = answered[0]
+        assert any(j.id == queued.id for j in rig.jobs.status().queue.queued), "the status lags the answer"
+    held.set()
+    t.join(DEADLINE)
+    hold.clear()
+    (queued,) = answered
+    assert any(j.id == queued.id for j in rig.jobs.status().queue.queued)
+    rig.engine.release()
+    assert isinstance(outcome(first), Done)
+
+
+def test_a_save_whose_engine_died_past_its_commit_point_is_not_told_its_files_are_safe(rig: Rig) -> None:
+    """§5.3: "a save's outcome is resolved from disk (§6.6)"; OutcomeTruthful (S0058 verifier F5). Until BL-0151
+    reads the disk, the answer is that the outcome is not known, never "Your ledger files are safe"."""
+    save = submit(rig, user("save"), calls("gate_die"))
+    out = outcome(save)
+    assert rig.engine.proceeded == 1
+    assert code_of(out) == ErrorCode.CHANGE_OUTCOME_UNKNOWN
+    unknown = spec_for(ErrorCode.CHANGE_OUTCOME_UNKNOWN)
+    assert unknown is not None
+    assert not unknown.data_safe
+    assert not unknown.retryable, "a change that may have landed must not be repeated by a Retry"
+
+
+def test_a_save_whose_engine_died_before_its_commit_point_is_engine_stopped(rig: Rig) -> None:
+    save = submit(rig, user("save"), calls("crash"))
+    assert code_of(outcome(save)) == ErrorCode.ENGINE_STOPPED
 
 
 def test_close_answers_every_waiting_job(rig: Rig) -> None:
@@ -953,5 +1108,107 @@ def test_with_the_real_engine_a_cancel_at_the_gate_leaves_no_file_and_after_proc
         assert outcome(save) == Done({"status": "ok"})
         assert target.read_text(encoding="utf-8") == "post"
     finally:
+        jobs.close()
+        client.close()
+
+
+class ResetHeld(EngineClient):
+    """The real client, whose `reset` holds the call lock until released: the window a reset occupies when it takes
+    the lock as a job's final call returns (the verifier's repro, S0058 round 1)."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.hold = threading.Event()
+        self.entered = threading.Event()
+
+    @override
+    def reset(self) -> None:
+        with self._call():
+            self.entered.set()
+            assert self.hold.wait(DEADLINE)
+            self._drive(Reset())
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows is BL-0087")
+def test_with_the_real_engine_a_retire_during_another_client_call_does_not_wedge_the_queue(tmp_path: Path) -> None:
+    """S0058 verifier F1: a user-code job finishing while another public client call is in flight (a reset) made
+    `EngineClient.end("retire")` raise on the scheduler thread, and the slot stayed `ending` for the session. Our
+    ends never raise; the retire is carried out when the other call has returned."""
+    if not (ENGINE_VENV / "bin" / "python").exists():
+        pytest.fail("engine/.venv is missing: run `uv sync --locked` in engine/ (the engine tests need it)")
+    lock = engine_lock_path(tmp_path)
+    holder: list[EngineJobs] = []
+
+    def spawned(serial: int) -> None:
+        holder[0].engine_spawned(serial)
+
+    def ended(end: EngineEnd) -> None:
+        holder[0].engine_ended(end)
+
+    client = ResetHeld(
+        EngineCommand.for_venv(ENGINE_VENV, test_ops=True, engine_lock=lock),
+        on_engine_spawned=spawned,
+        on_engine_ended=ended,
+    )
+    jobs = EngineJobs(client, wait_engine_lock=lambda: wait_engine_lock(lock), display_delay=DELAY)
+    holder.append(jobs)
+    try:
+        boot = jobs.start()
+        assert isinstance(boot, JobTicket)
+        assert outcome(boot) == Done(None)
+        wait_until(lambda: not jobs.status().queue.exclusive)
+        jobs.workspace_opened(W1)
+        go = threading.Event()
+        pinged = threading.Event()
+
+        def work(ctx: JobContext) -> WorkResult:
+            ctx.call("ping", {})
+            pinged.set()
+            assert go.wait(DEADLINE)
+            return WorkResult("v", ran_user_code=True)  # its engine is retired
+
+        ticket = jobs.submit(user("preview"), work)
+        assert isinstance(ticket, JobTicket)
+        assert pinged.wait(DEADLINE)
+        threading.Thread(target=client.reset, daemon=True).start()
+        assert client.entered.wait(DEADLINE)
+        go.set()  # the job returns while the reset is inside the client's call
+        assert outcome(ticket) == Done("v")
+        client.hold.set()
+        nxt = jobs.submit(user("bql"), calls("ping"))
+        assert isinstance(nxt, JobTicket)
+        q = jobs.status().queue
+        assert outcome(nxt) == Done({"status": "ok"}), f"queue wedged: slot={q.slot} advice={q.advice}"
+    finally:
+        client.hold.set()
+        jobs.close()
+        client.close()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups and flock are POSIX; Windows is BL-0087")
+def test_with_the_real_engine_try_again_pressed_while_jobs_run_never_wedges_the_queue(tmp_path: Path) -> None:
+    """The verifier's hammer, bounded: Try again pressed over and over while jobs that run user code come and go."""
+    jobs, client = real_rig(tmp_path)
+    stop = threading.Event()
+
+    def hammer() -> None:
+        while not stop.is_set():
+            jobs.try_again()
+
+    try:
+        boot = jobs.start()
+        assert isinstance(boot, JobTicket)
+        assert outcome(boot) == Done(None)
+        wait_until(lambda: not jobs.status().queue.exclusive)
+        jobs.workspace_opened(W1)
+        for _ in range(2):
+            threading.Thread(target=hammer, daemon=True).start()
+        for i in range(40):
+            ticket = jobs.submit(user("preview"), calls("ping"))
+            assert isinstance(ticket, JobTicket)
+            q = jobs.status().queue
+            assert outcome(ticket) == Done({"status": "ok"}), f"job {i}: slot={q.slot} advice={q.advice}"
+    finally:
+        stop.set()
         jobs.close()
         client.close()

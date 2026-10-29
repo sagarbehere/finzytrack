@@ -50,6 +50,7 @@ describe('[S0046] the generated API types', () => {
       | 'JOB_CANCELLED'
       | 'ENGINE_STOPPED'
       | 'ENGINE_UNAVAILABLE'
+      | 'CHANGE_OUTCOME_UNKNOWN'
       | 'INTERNAL'
     >()
   })

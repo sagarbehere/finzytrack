@@ -94,10 +94,12 @@ from app.platform.engine_jobs.queue import (
     QueuePolicy,
     QueueState,
     Refused,
+    ResetEngine,
     RetireEngine,
     Start,
     Submit,
     TooLate,
+    TryAgain,
     WaitEngineLock,
     WorkspaceClosed,
     WorkspaceOpened,
@@ -360,7 +362,10 @@ class _Feed:
 
 @dataclass(slots=True)
 class _Call:
+    """A request run on the scheduler thread; `fallback` is its answer if `fn` raises (a bug, logged)."""
+
     fn: Callable[[], object]
+    fallback: object = None
     done: threading.Event = field(default_factory=threading.Event)
     value: object = None
 
@@ -412,6 +417,7 @@ class _Job:
     value: object = None
     raised: bool = False
     failure: EngineFailure | None = None
+    past_commit: bool = False  # `Proceed` was sent for it (§4)
 
 
 class _Books:
@@ -501,9 +507,14 @@ class EngineJobs:
         self._ask(lambda: self._step(ClientGone(job_id)), None)
 
     def try_again(self) -> None:
-        """§5.3 "Try again": forget the engine's stops (and an incompatible verdict), and let jobs start."""
-        self._engine.reset()
-        self._ask(self._available, None)
+        """§5.3 "Try again": a step of the table, which asks for the client's reset while the engine is unavailable;
+        the reset runs on a thread of its own and jobs start once it is done. Never waits for the engine."""
+        self._ask(lambda: self._step(TryAgain()), None)
+
+    def tick(self) -> None:
+        """Fire the timers that are due now: the scheduler's own wait does it with the real clock; a test whose clock
+        moves only when it moves it calls this after moving it (S0058 round 1: wall time decides no test)."""
+        self._ask(self._fire_timers, None)
 
     def workspace_opened(self, key: str) -> None:
         self._ask(lambda: self._step(WorkspaceOpened(key)), None)
@@ -558,13 +569,14 @@ class EngineJobs:
         self._inbox.put(message)
 
     def _ask[T](self, fn: Callable[[], T], closed: T) -> T:
-        """Run `fn` on the scheduler thread and return its value (at once when already there)."""
+        """Run `fn` on the scheduler thread and return its value (at once when already there); `closed` is the answer
+        once the scheduler has stopped, and if `fn` raises (logged)."""
         if threading.current_thread() is self._thread:
             return fn()
         with self._guard:
             if not self._started or self._closed:
                 return closed
-            call = _Call(fn)
+            call = _Call(fn, closed)
             self._inbox.put(call)
         call.done.wait()
         return call.value  # type: ignore[return-value]
@@ -579,9 +591,10 @@ class EngineJobs:
             except Exception as exc:  # noqa: BLE001 (the scheduler's top-level loop: logged, the loop goes on)
                 self._log_internal(None, exc)
             finally:
+                # Published before the caller is answered, so a `status()` read after an answer shows its step.
+                self._publish()
                 if isinstance(message, _Call):
                     message.done.set()
-            self._publish()
 
     def _next_message(self) -> _Message | None:
         dues = [d for d in (self._advice_due[0] if self._advice_due else None, self._window_due) if d is not None]
@@ -605,7 +618,11 @@ class EngineJobs:
         """One message; True when the scheduler stops (close)."""
         match message:
             case _Call():
-                message.value = message.fn()
+                try:
+                    message.value = message.fn()
+                except Exception as exc:  # noqa: BLE001 (a bug: logged; the caller gets its fallback, never None)
+                    self._log_internal(None, exc)
+                    message.value = message.fallback
                 return message.fn == self._close
             case _Feed(event=event):
                 self._step(event)
@@ -637,7 +654,12 @@ class EngineJobs:
             if ended and (job := self._jobs.get(effect.job_id)) is not None and job.worker is not None:
                 job.worker.end()
         for effect in step.effects:
-            self._effect(effect)
+            # Effects must not raise; one that does (a bug) is logged and the step's other effects still happen, so
+            # no step is left half carried out after its state was taken (S0058 verifier F1).
+            try:
+                self._effect(effect)
+            except Exception as exc:  # noqa: BLE001 (the rule above)
+                self._log_internal(None, exc)
         while self._follow:
             self._step(self._follow.pop(0))
         self._settle_slot()
@@ -733,8 +755,12 @@ class EngineJobs:
                     self._jobs[job.id] = _Job(ticket, box, work, Shown(None, self._now()), boot)
             case Start():
                 self._start(effect)
-            case Proceed():
+            case Proceed(job_id=job_id):
+                if (job := self._jobs.get(job_id)) is not None:
+                    job.past_commit = True
                 self._engine.proceed()
+            case ResetEngine():
+                threading.Thread(target=self._reset, name="engine-reset", daemon=True).start()
             case EndEngine(reason=reason):
                 if reason != "crashed":  # a dead engine needs no signal; the client never signals after the reap
                     self._engine.end(reason)
@@ -790,6 +816,11 @@ class EngineJobs:
             return Failed(error(ErrorCode.ENGINE_UNAVAILABLE, EngineUnavailableDetails(reason)))
         if kind == "closed":
             return self._closing()
+        if job is not None and job.past_commit:
+            # §5.3 "a save's outcome is resolved from disk (§6.6)": past its commit point a writing job may have
+            # changed files, so it is never told "Your ledger files are safe" (S0058 verifier F5).
+            # TODO(BL-0151): the outcome check of §6.6 replaces this answer with what the disk says.
+            return Failed(error(ErrorCode.CHANGE_OUTCOME_UNKNOWN))
         # TODO(BL-0094): `killed_by_system` once the end report's cause is told apart (failure-modes E4).
         return Failed(error(ErrorCode.ENGINE_STOPPED, EngineStoppedDetails(reason="crashed")))
 
@@ -838,6 +869,15 @@ class EngineJobs:
             self._post(_Feed(EngineLockFailed()))
         else:
             self._post(_Feed(EngineLockFree()))
+
+    def _reset(self) -> None:
+        """Try again's reset, beside the scheduler thread: the client's reset waits for its call lock, which a call to
+        an engine that has not ended yet can hold."""
+        try:
+            self._engine.reset()
+        except Exception as exc:  # noqa: BLE001 (the job runner's rule: logged; the engine is tried again anyway)
+            self._log_internal(None, exc)
+        self._post(_Call(self._available))
 
     def _read_availability(self) -> None:
         state = self._engine.state

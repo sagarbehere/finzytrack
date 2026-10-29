@@ -61,6 +61,7 @@ from app.platform.engine_jobs.queue import (
     QueuePolicy,
     QueueState,
     Refused,
+    ResetEngine,
     RetireEngine,
     Running,
     ShowAdvice,
@@ -68,6 +69,7 @@ from app.platform.engine_jobs.queue import (
     Step,
     Submit,
     TooLate,
+    TryAgain,
     WaitEngineLock,
     WorkspaceClosed,
     WorkspaceOpened,
@@ -1065,6 +1067,35 @@ def test_once_available_again_queued_jobs_start() -> None:
     assert started(effects) == [create]
 
 
+def test_try_again_while_unavailable_asks_for_the_engine_reset_and_lifts_nothing_yet() -> None:
+    """§5.3 "Try again"; model `UserTryAgain` (`Unavail`): the client's stops are forgotten first (`ResetEngine`);
+    the shell feeds `EngineAvailability(True)` once the reset is done, so no job starts on a client that would still
+    refuse it (S0058 verifier F2: the reset is the scheduler's effect, never the caller's)."""
+    state = unavailable(ready())
+    step = transition(POLICY, state, TryAgain())
+    assert step.effects == (ResetEngine(),)
+    assert step.state.unavailable
+    step = transition(POLICY, step.state, TryAgain())
+    assert step.effects == (), "a second reset while the first one is under way"
+
+
+def test_try_again_while_available_does_nothing() -> None:
+    state, _ = busy_with(user("preview"))
+    step = transition(POLICY, state, TryAgain())
+    assert step.effects == ()
+    assert step.state == state
+
+
+def test_the_end_of_the_reset_lets_the_waiting_jobs_start() -> None:
+    state = unavailable(QueueState(engine_lock="free", exclusive=True))
+    state, _ = run(state, TryAgain())
+    assert state.resetting
+    state, (create,) = submit(state, user("create", None))
+    state, effects = run(state, EngineAvailability(available=True), ExclusiveEnded())
+    assert not state.resetting
+    assert started(effects) == [create]
+
+
 # -- Cancel offered (§4, §5.4: "Cancel where §4 allows"; S0053 verifier round 2) -----------------------------------
 
 
@@ -1225,6 +1256,13 @@ def check_step(policy: QueuePolicy, before: QueueState, event: Event, step: Step
             assert r.wants_engine or event == EngineNeeded(r.job.id), "a running job ended that asked for no engine"
     if after.unavailable and after.running is None:
         assert not any(eligible(after, j) for j in after.queued), "an eligible job kept while nothing can start"
+    # S0058 round 1: the engine is reset only on Try again while unavailable, once at a time
+    if any(isinstance(e, ResetEngine) for e in effects):
+        assert isinstance(event, TryAgain)
+        assert before.unavailable
+        assert not before.resetting
+        assert after.resetting
+    assert not after.resetting or after.unavailable
     # one wait for the engine lock at a time, asked for at boot or when a fresh engine is needed
     waits = [e for e in effects if isinstance(e, WaitEngineLock)]
     assert len(waits) <= 1
@@ -1276,6 +1314,7 @@ def events_for(state: QueueState) -> st.SearchStrategy[Event]:
         st.just(EngineLockFree()),
         st.just(EngineLockFailed()),
         st.booleans().map(EngineAvailability),
+        st.just(TryAgain()),
         st.sampled_from([state.epoch, state.epoch - 1]).map(AdviceTimer),
         st.sampled_from([W1, W2]).map(WorkspaceOpened),
         st.just(WorkspaceClosed()),
@@ -1320,9 +1359,18 @@ def abstract_states() -> Iterable[QueueState]:
     queues += [(Job(6, "preview", W1, True, False, "user", True),), (Job(6, "r4", W1, False, False, "app", True),)]
     queues += [(Job(6, "recover_all", None, True, False, "switch", True),)]
     locks: tuple[EngineLock, ...] = ("unchecked", "waiting", "free")
-    for running, slot, lock, excl, queued, advice, unavail in itertools.product(
-        runnings, ("none", "idle", "busy", "ending"), locks, (False, True), queues, (False, True), (False, True)
+    for running, slot, lock, excl, queued, advice, unavail, resetting in itertools.product(
+        runnings,
+        ("none", "idle", "busy", "ending"),
+        locks,
+        (False, True),
+        queues,
+        (False, True),
+        (False, True),
+        (False, True),
     ):
+        if resetting and not unavail:
+            continue
         if running is None and slot == "busy":
             continue
         if advice and not (slot == "ending" or lock == "waiting"):
@@ -1336,6 +1384,7 @@ def abstract_states() -> Iterable[QueueState]:
             exclusive=excl,
             advice=advice,
             unavailable=unavail,
+            resetting=resetting,
             epoch=3,
             next_id=7,
             engine=None if slot == "none" else 4,
@@ -1356,6 +1405,7 @@ def abstract_events(state: QueueState) -> Iterable[Event]:
         EngineLockFailed(),
         EngineAvailability(available=True),
         EngineAvailability(available=False),
+        TryAgain(),
         AdviceTimer(3),
         AdviceTimer(2),
         Boot(),

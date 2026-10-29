@@ -635,11 +635,11 @@ class EngineClient:
             return True
 
     def end(self, reason: EndReason) -> None:
-        """Record `reason` and signal the engine's group once (§5.2). Never waits."""
+        """Record `reason` and signal the engine's group once (§5.2). Never waits and never raises, from any thread
+        at any time (S0058 verifier F1). A retire meant for an idle engine that finds a call in flight ends that
+        call's engine as our end, like a Cancel (no stop; the call fails `cancelled`); past the commit point only
+        Quit anyway ends it (`_mark_ended`)."""
         with self._signals:
-            if reason == "retire" and self._in_call:
-                msg = "retire ends an idle engine after its job's final reply, never a call in flight"
-                raise RuntimeError(msg)
             self._mark_ended(reason)
             self._needs_settle = True
         self._settle_if_idle()
@@ -736,7 +736,7 @@ class EngineClient:
         run = self._run
         if run is not None and isinstance(self._state, Ready):
             if run.reason is not None:
-                self._drive(self._ours(run.reason, run))
+                self._drive(self._ours(run.reason, run, at_rest=True))
             elif run.group.exited.is_set() or run.group.leader_exited():  # it died since the last request: a stop
                 self._drive(Exited("the engine exited between requests", self._monotonic()))
         if self._closing and not isinstance(self._state, Closed):
@@ -746,13 +746,15 @@ class EngineClient:
                     run.reason = "close"  # a close deferred past a commit point is still ours (R2-F1)
             self._drive(Close())
 
-    def _ours(self, reason: _Ours, run: _Running | None = None) -> SupervisionEvent:
+    def _ours(self, reason: _Ours, run: _Running | None = None, *, at_rest: bool = False) -> SupervisionEvent:
+        """Our end as the table's event: a retire is `Retired` at rest (an idle engine); a call it ends observes it
+        as our end of that call, `Cancelled` (S0058 verifier F1: the table has no `Retired` in a passing state)."""
         if reason == "close":
             return Close()
-        if reason == "retire":
+        if reason == "retire" and at_rest:
             return Retired()
         past = run is not None and run.past_commit
-        return Cancelled(reason, self._monotonic(), past_commit=past)
+        return Cancelled("cancel" if reason == "retire" else reason, self._monotonic(), past_commit=past)
 
     def _wait_unless_ended(self, seconds: float) -> None:
         """The real backoff pause: it ends early when the waiting call is ended (`end`, `close`)."""

@@ -49,6 +49,7 @@ class ErrorCode(StrEnum):
     JOB_CANCELLED = "JOB_CANCELLED"
     ENGINE_STOPPED = "ENGINE_STOPPED"
     ENGINE_UNAVAILABLE = "ENGINE_UNAVAILABLE"
+    CHANGE_OUTCOME_UNKNOWN = "CHANGE_OUTCOME_UNKNOWN"
     INTERNAL = "INTERNAL"
 
 
@@ -176,7 +177,8 @@ def specs() -> tuple[ErrorSpec, ...]:
             ErrorClass.UNAVAILABLE,
             retryable=True,
             message="The ledger engine stopped while working on this.",
-            data_safe=True,  # a read job's; a save's engine death is resolved from disk instead (§6.6)
+            data_safe=True,  # nothing was written: a read job, or a writing job before its commit point (§4); past it
+            # the answer is CHANGE_OUTCOME_UNKNOWN until the outcome check of §6.6 (BL-0151) reads the disk
             next_step="Try again. If it happens again, copy the diagnostics and report a problem.",
             details=EngineStoppedDetails,
         ),
@@ -185,9 +187,19 @@ def specs() -> tuple[ErrorSpec, ...]:
             ErrorClass.UNAVAILABLE,
             retryable=True,
             message="The ledger engine is not working right now, so Finzytrack did not do this.",
-            data_safe=True,  # nothing ran
+            data_safe=True,  # nothing ran; the UI words each reason (`app.platform.engine_jobs.text.unavailable_text`)
             next_step="Try again in a moment. If it happens again, copy the diagnostics and report a problem.",
             details=EngineUnavailableDetails,
+        ),
+        ErrorSpec(
+            ErrorCode.CHANGE_OUTCOME_UNKNOWN,
+            ErrorClass.UNAVAILABLE,
+            retryable=False,  # the change may have landed: a retry could make it twice
+            message="The ledger engine stopped while it was saving your change, so Finzytrack does not know yet "
+            "whether it was saved.",
+            data_safe=False,
+            next_step="Do not make the change again yet. Reopen the workspace so Finzytrack can check your files.",
+            details=None,  # TODO(BL-0151): replaced by the outcome check of §6.6 (saved, not saved, or unfinished)
         ),
         ErrorSpec(
             ErrorCode.INTERNAL,

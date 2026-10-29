@@ -21,6 +21,35 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ChangeOutcomeUnknownError */
+        ChangeOutcomeUnknownError: {
+            /**
+             * Class
+             * @constant
+             */
+            class: "unavailable";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            code: "CHANGE_OUTCOME_UNKNOWN";
+            /** Correlation Id */
+            correlation_id: string;
+            /** Data Safe */
+            data_safe: boolean;
+            /** Details */
+            details: null;
+            /** Issues */
+            issues: components["schemas"]["Issue"][];
+            /** Message */
+            message: string;
+            /** Next Step */
+            next_step: string;
+            /** Retry After Ms */
+            retry_after_ms: number | null;
+            /** Retryable */
+            retryable: boolean;
+        };
         /** EngineQueueFullError */
         EngineQueueFullError: {
             /**
@@ -139,7 +168,7 @@ export interface components {
         /** ErrorEnvelope */
         ErrorEnvelope: {
             /** Error */
-            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["EngineQueueFullError"] | components["schemas"]["JobCancelledError"] | components["schemas"]["EngineStoppedError"] | components["schemas"]["EngineUnavailableError"] | components["schemas"]["InternalError"];
+            error: components["schemas"]["ValidationFailedError"] | components["schemas"]["RouteNotFoundError"] | components["schemas"]["WorkspaceUnknownError"] | components["schemas"]["WorkspaceNotOpenError"] | components["schemas"]["WorkspaceNotReadyError"] | components["schemas"]["EngineQueueFullError"] | components["schemas"]["JobCancelledError"] | components["schemas"]["EngineStoppedError"] | components["schemas"]["EngineUnavailableError"] | components["schemas"]["ChangeOutcomeUnknownError"] | components["schemas"]["InternalError"];
             meta: components["schemas"]["Meta"];
         };
         /** HealthData */

@@ -23,8 +23,9 @@ from app.platform.engine_jobs.text import (
     cancelled_text,
     describe,
     notice,
+    unavailable_text,
 )
-from app.platform.errors import JobCancelledDetails
+from app.platform.errors import EngineUnavailableDetails, JobCancelledDetails
 
 POLICY = QueuePolicy()
 NOW = 100.0
@@ -164,3 +165,47 @@ def test_the_advice_and_still_working_are_the_specs() -> None:
     assert ADVICE == "Finzytrack cannot stop the earlier ledger work. Quit and reopen Finzytrack."
     assert STILL_WORKING == "Still working…"
     assert FINISHING == "Finishing your change…"
+
+
+def test_a_waited_for_job_between_engines_carries_the_advice_so_no_notice_shows() -> None:
+    """§5.2: "in the waiting job's place if there is one": a running job that waits for its next engine is waiting
+    (S0058 verifier F4)."""
+    between = status(
+        running=Running(SAVE, wants_engine=True), shown={2: Shown("saving", NOW)}, slot="ending", advice=True
+    )
+    shown = describe(between, 2, NOW, DELAY)
+    assert shown is not None
+    assert shown.text == ADVICE
+    assert notice(between) is None
+
+
+def test_a_queued_job_whose_requester_left_carries_no_advice_so_the_notice_shows() -> None:
+    """§5.2, N3: nobody waits on a job whose tab was closed, so the advice is a notice in the window."""
+    gone = Job(4, "save", "ws-1", True, True, "user", False)
+    s = status(queued=(gone,), shown={4: Shown(None, NOW)}, slot="ending", advice=True)
+    assert notice(s) == ADVICE
+
+
+def test_a_background_job_queued_carries_no_advice_so_the_notice_shows() -> None:
+    s = status(queued=(R4,), shown={3: Shown(None, NOW)}, slot="ending", advice=True)
+    assert notice(s) == ADVICE
+
+
+@pytest.mark.parametrize(
+    ("reason", "text"),
+    [
+        (
+            "stopped_often",
+            "The ledger engine stopped several times. Your ledger files are safe. Saving is off until it works again.",
+        ),
+        (
+            "cannot_start",
+            "The ledger engine could not start. You can still look at your ledgers; saving changes is off.",
+        ),
+        ("closing", "Finzytrack is closing."),
+    ],
+)
+def test_the_engine_unavailable_answer_is_worded_by_its_reason(reason: str, text: str) -> None:
+    """§11 "bound reached | failure-modes E1's text"; E6's text for an engine that cannot start (S0058 verifier F8).
+    The registry's message is the code's short form; these are the words the UI shows for each reason (BL-0092)."""
+    assert unavailable_text(EngineUnavailableDetails(reason=reason)) == text  # type: ignore[arg-type]

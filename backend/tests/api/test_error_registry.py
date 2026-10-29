@@ -98,6 +98,8 @@ def test_the_codes_of_architecture_6_1_this_slice_raises_have_their_classes() ->
         "JOB_CANCELLED": ErrorClass.CONFLICT,
         "ENGINE_STOPPED": ErrorClass.UNAVAILABLE,
         "ENGINE_UNAVAILABLE": ErrorClass.UNAVAILABLE,
+        # S0058 round 1 (verifier F5): a writing job cut past its commit point, until BL-0151 resolves it from disk
+        "CHANGE_OUTCOME_UNKNOWN": ErrorClass.UNAVAILABLE,
         "INTERNAL": ErrorClass.INTERNAL,
     }
     assert {s.code: s.error_class for s in specs()} == expected

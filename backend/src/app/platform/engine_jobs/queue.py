@@ -63,7 +63,7 @@ from typing import Any, Final, Literal
 
 from app.platform.tla import tla_action
 
-TABLE_VERSION: Final = 2  # 2 (S0058): the lock before every fresh engine; the engine unavailable
+TABLE_VERSION: Final = 3  # 2 (S0058): the lock before every fresh engine, the engine unavailable; 3: Try again
 """Raised whenever a decision changes, so the decision log (§12) replays each recording with its own table."""
 
 type JobKind = Literal["open", "rebuild", "preview", "save", "r4", "bql", "recover_all", "create", "copy"]
@@ -134,7 +134,7 @@ class QueueState:
     the next fresh engine gets. Every spawn gets a new number and a reused engine keeps its own, so an `EngineDied`
     names one engine and never an earlier one (§5.3). `engine_lock`: `waiting` while the sidecar waits for it, `free`
     once waited out, `unchecked` after a fresh start or a failed wait (the next fresh engine waits again).
-    `unavailable`: the engine cannot be started (§5.3)."""
+    `unavailable`: the engine cannot be started (§5.3); `resetting`: Try again's reset of the client is under way."""
 
     queued: tuple[Job, ...] = ()
     running: Running | None = None
@@ -148,6 +148,7 @@ class QueueState:
     engine: int | None = None
     next_engine: int = 1
     unavailable: bool = False
+    resetting: bool = False
 
 
 # -- Events -----------------------------------------------------------------------------------------------------------
@@ -175,6 +176,11 @@ class EngineAvailability:
     incompatible; True when the restart window lets a stop go, or after Try again."""
 
     available: bool
+
+
+@dataclass(frozen=True, slots=True)
+class TryAgain:
+    """The user pressed Try again on the engine unavailable (§5.3, §11)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,6 +278,7 @@ type Event = (
     | EngineLockFree
     | EngineLockFailed
     | EngineAvailability
+    | TryAgain
     | Submit
     | Cancel
     | ClientGone
@@ -293,6 +300,7 @@ EVENTS: tuple[type, ...] = (
     EngineLockFree,
     EngineLockFailed,
     EngineAvailability,
+    TryAgain,
     Submit,
     Cancel,
     ClientGone,
@@ -315,6 +323,11 @@ EVENTS: tuple[type, ...] = (
 @dataclass(frozen=True, slots=True)
 class WaitEngineLock:
     """Take the engine lock, waiting, and release it at once; then feed `EngineLockFree` (§5.1)."""
+
+
+@dataclass(frozen=True, slots=True)
+class ResetEngine:
+    """Forget the client's stops and an incompatible verdict, then feed `EngineAvailability(True)` (Try again)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,6 +431,7 @@ class NoEngine:
 
 type Effect = (
     WaitEngineLock
+    | ResetEngine
     | ArmAdviceTimer
     | ShowAdvice
     | HideAdvice
@@ -627,8 +641,19 @@ def _engine_lock_failed(p: QueuePolicy, s: QueueState, e: EngineLockFailed) -> S
 
 
 def _engine_availability(p: QueuePolicy, s: QueueState, e: EngineAvailability) -> Step:
-    """§5.3: the engine's bound reached or lifted; the dispatch after this step ends or starts the waiting jobs."""
-    return Step(replace(s, unavailable=not e.available))
+    """§5.3: the engine's bound reached or lifted (a reset under way is done once it is lifted); the dispatch after
+    this step ends or starts the waiting jobs."""
+    return Step(replace(s, unavailable=not e.available, resetting=s.resetting and not e.available))
+
+
+@tla_action("UserTryAgain")
+def _try_again(p: QueuePolicy, s: QueueState, e: TryAgain) -> Step:
+    """§5.3; model `UserTryAgain` (`Unavail`): reset the client's bound, one reset at a time; the engine is available
+    only once the reset is done (the shell feeds `EngineAvailability(True)` then), so no job meets a client that
+    still refuses (S0058 verifier F2: the reset is an effect of this step, not the caller's own call)."""
+    if not s.unavailable or s.resetting:
+        return Step(s)
+    return Step(replace(s, resetting=True), (ResetEngine(),))
 
 
 def _submit(p: QueuePolicy, s: QueueState, e: Submit) -> Step:
@@ -795,6 +820,7 @@ HANDLERS: tuple[tuple[type, Handler], ...] = (
     (EngineLockFree, _engine_lock_free),
     (EngineLockFailed, _engine_lock_failed),
     (EngineAvailability, _engine_availability),
+    (TryAgain, _try_again),
     (Submit, _submit),
     (Cancel, _cancel),
     (ClientGone, _client_gone),

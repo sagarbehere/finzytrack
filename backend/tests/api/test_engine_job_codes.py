@@ -83,6 +83,12 @@ class Scenarios:
     def stopped(self) -> object:
         return self._outcome(self._submit(lambda ctx: WorkResult(ctx.call("crash", {}))))
 
+    def outcome_unknown(self) -> object:
+        spec = JobSpec(kind="save", workspace=W1, waited_for=True, confirmed=True, owner="user")
+        ticket = self.jobs.submit(spec, lambda ctx: WorkResult(ctx.call("gate_die", {})))
+        assert isinstance(ticket, JobTicket)
+        return self._outcome(ticket)
+
     def unavailable(self) -> object:
         self.engine.incompatible()
         self.engine.die()
@@ -187,4 +193,17 @@ def test_an_engine_that_cannot_run_is_engine_unavailable_with_its_reason(scenari
     assert error["code"] == "ENGINE_UNAVAILABLE"
     assert error["retryable"] is True
     assert error["details"] == {"reason": "cannot_start"}
+    conforms(app, payload)
+
+
+@pytest.mark.error_code("CHANGE_OUTCOME_UNKNOWN")
+def test_a_save_cut_past_its_commit_point_is_change_outcome_unknown_and_not_retryable(scenarios: Scenarios) -> None:
+    """§5.3 "a save's outcome is resolved from disk (§6.6)" (BL-0151); until then the answer says the outcome is not
+    known, never that the files are safe, and offers no Retry (S0058 verifier F5)."""
+    status, payload, app = answer(scenarios, "outcome_unknown")
+    assert status == 503
+    error = payload["error"]
+    assert error["code"] == "CHANGE_OUTCOME_UNKNOWN"
+    assert error["retryable"] is False
+    assert error["data_safe"] is False
     conforms(app, payload)

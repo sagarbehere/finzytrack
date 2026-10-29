@@ -18,7 +18,7 @@ from typing import Final
 
 from app.platform.engine_jobs.queue import cancel_offered
 from app.platform.engine_jobs.scheduler import DISPLAY_DELAY, JobsStatus, ShownPhase
-from app.platform.errors import JobCancelledDetails
+from app.platform.errors import EngineUnavailableDetails, JobCancelledDetails
 
 PHASES: Final[tuple[tuple[str, str], ...]] = (
     ("starting", "Starting the ledger engine…"),
@@ -92,3 +92,19 @@ def notice(status: JobsStatus) -> str | None:
 def cancelled_text(details: JobCancelledDetails) -> str:
     """§4, §11: the answer to a Cancel."""
     return CANNOT_STOP_FROM_HERE if details.cannot_stop_ahead else CANCELLED
+
+
+UNAVAILABLE: Final[tuple[tuple[str, str], ...]] = (
+    (
+        "stopped_often",
+        "The ledger engine stopped several times. Your ledger files are safe. Saving is off until it works again.",
+    ),
+    ("cannot_start", "The ledger engine could not start. You can still look at your ledgers; saving changes is off."),
+    ("closing", "Finzytrack is closing."),
+)
+"""§11 "bound reached | failure-modes E1's text"; E6's text for an engine that cannot start; the app closing."""
+
+
+def unavailable_text(details: EngineUnavailableDetails) -> str:
+    """`ENGINE_UNAVAILABLE` worded by its reason (§11; the registry's message is the code's short form)."""
+    return next(text for reason, text in UNAVAILABLE if reason == details.reason)

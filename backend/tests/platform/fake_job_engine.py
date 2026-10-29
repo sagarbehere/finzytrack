@@ -8,7 +8,10 @@ engine; past `proceed` only Quit anyway ends the engine (engine-jobs §4; S0057 
 - `ok`: answers at once with `{"op": "ok"}`;
 - `block`: waits until `release()` or until the engine is ended (then `cancelled`);
 - `gate`: reports `GateReached`, waits for `proceed()` (then answers `{"wrote": True}`) or for its end;
-- `crash`: the engine dies by itself mid-request (`crashed`; its end is reported with no reason of ours).
+- `crash`: the engine dies by itself mid-request (`crashed`; its end is reported with no reason of ours);
+- `gate_die`: as `gate`, but the engine dies right after `proceed` (a save cut mid-write).
+
+Each end report's peak memory names its engine (1000, 2000 or 4000 plus the serial), so a test can tell them apart.
 
 Every wait is on a condition (EP-28) and ends when the engine ends, so a test never hangs on the fake itself.
 """
@@ -56,6 +59,7 @@ class FakeEngine:
     _cond: threading.Condition = field(default_factory=threading.Condition)
     _start_released: threading.Event = field(default_factory=threading.Event)
     _decided: bool = False
+    _in_call: int = 0
 
     # -- the port ----------------------------------------------------------------------------------------------
 
@@ -84,7 +88,7 @@ class FakeEngine:
                 finally:
                     self._cond.acquire()
                 if n < self.spawns_per_start - 1:  # the failed first start of the bytecode retry: ended by "stop"
-                    self._report(EngineEnd(serial, 1000 + serial, "stop", 1, 1024))
+                    self._report(EngineEnd(serial, 1000 + serial, "stop", 1, 1000 + serial))
             self._live = _Engine(self._serial)
             self.state_now = Ready((), 1000 + self._serial, INFO)
             return INFO
@@ -113,12 +117,15 @@ class FakeEngine:
                 self._die(eng)
                 return EngineFailure("crashed", "the engine's output ended")
             if op == "block":
+                self._in_call += 1
                 self._cond.wait_for(lambda: op in self._released or eng.ended is not None)
+                self._in_call -= 1
+                self._cond.notify_all()
                 if eng.ended is not None:
                     return EngineFailure("cancelled", "ended by us")
                 self._released.discard(op)
                 return {"op": op}
-            if op == "gate":
+            if op in ("gate", "gate_die"):  # `gate_die`: a save cut mid-write, after `proceed` (S0058 verifier F5)
                 eng.gate = "pending"
             else:
                 msg = f"the fake has no op {op!r}"
@@ -129,6 +136,9 @@ class FakeEngine:
             self._cond.wait_for(lambda: eng.gate == "proceeded" or eng.ended is not None)
             if eng.ended is not None:
                 return EngineFailure("cancelled", "ended by us")
+            if op == "gate_die":
+                self._die(eng)
+                return EngineFailure("crashed", "the engine's output ended")
             self._cond.wait_for(lambda: "gate" in self._released or eng.ended is not None)
             self._released.discard("gate")
             eng.past_commit = False
@@ -165,10 +175,12 @@ class FakeEngine:
             self._decided = True
             self.state_now = Idle()
             self._cond.notify_all()
-            self._report(EngineEnd(eng.serial, 1000 + eng.serial, reason, -9, 2048))
+            self._report(EngineEnd(eng.serial, 1000 + eng.serial, reason, -9, 2000 + eng.serial))
 
     def reset(self) -> None:
+        """As the client's: it takes the call lock, so it waits while a request is in flight."""
         with self._cond:
+            self._cond.wait_for(lambda: self._in_call == 0)
             self.resets += 1
             self.state_now = Idle()
 
@@ -226,7 +238,7 @@ class FakeEngine:
     def _die(self, eng: _Engine) -> None:
         eng.ended = "died"
         self._cond.notify_all()
-        self._report(EngineEnd(eng.serial, 1000 + eng.serial, None, -11, 4096))
+        self._report(EngineEnd(eng.serial, 1000 + eng.serial, None, -11, 4000 + eng.serial))
 
     def _report(self, end: EngineEnd) -> None:
         """Under the lock: the end is reported on a thread of its own, as the client's reaper does."""
