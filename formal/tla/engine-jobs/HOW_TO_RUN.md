@@ -24,6 +24,7 @@ formal/tla/engine-jobs/run_all.sh --kind mutant            # only the seeded bug
 formal/tla/engine-jobs/run_all.sh --list                   # what would run; runs nothing
 ```
 
+An unknown or empty `--tier`, `--kind` or `--only` value is refused (exit 2), so a typo never runs nothing quietly.
 Options: `--workers N` (TLC worker threads; default all cores), `--heap 12g` (default half the RAM),
 `--force` (run again configurations that already have a result). `SIM_TRACES=… SIM_DEPTH=…` size the simulation
 (default 200,000 traces of at most 200 steps).

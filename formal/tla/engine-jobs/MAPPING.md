@@ -544,3 +544,11 @@ through what they do to the queue (the job ends, reaches its commit point, asks 
 file actions and two record actions (7) must leave the queue's state as it is; create and copy (BL-0153) and the
 switch, quit, the app's crash, a power loss and the next start (BL-0154) (29) are left out of the walk. The test's
 docstring and `design/journal/S0059-conformance-traces.md` give the equivalences and what the replay cannot see.
+
+What it covers today is BL-0150's action names over 62 traces of small worlds, not every branch of them: a Cancel
+meeting a background save past its commit point, a Cancel while an R4 runs, `SpawnStep`'s unavailable branch and
+`OrphanEndStuck` (mapped, never replayed) are not in the corpus, and each world has one workspace, so a job of a
+workspace that is not open is never seen (the switch is BL-0154). `SpawnStep`'s `rc_spawn` branch is not left out of
+the walk (guarding it would deadlock the walk, which takes the dispatch whenever it is enabled): it is only absent
+with this seed. BL-0159 widens the corpus by branch with BL-0151; until then the hand-written suites
+(`test_engine_queue.py`, `test_engine_scheduler.py`) are the main guard for these rules.

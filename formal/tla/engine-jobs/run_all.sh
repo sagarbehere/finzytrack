@@ -37,6 +37,18 @@ while [ $# -gt 0 ]; do
 done
 
 inlist() { case ",$2," in *",$1,"*) return 0 ;; esac; return 1; }
+# refuse a value that names nothing (owner, 2026-10-29: `--tier S.` ran nothing and looked like a success)
+NAMES=$(grep -v '^#' "$LIST" | awk 'NF {printf "%s%s", sep, $1; sep=","}')
+check_values() {  # option values allowed [what they are]
+  [ -n "$2" ] || { echo "$1: empty value (see --help)" >&2; exit 2; }
+  for v in $(echo "$2" | tr ',' ' '); do
+    inlist "$v" "$3" || { echo "$1: unknown value '$v' (allowed: ${4:-$3})" >&2; exit 2; }
+  done
+  case "$2" in *,,*|,*|*,) echo "$1: empty item in '$2'" >&2; exit 2 ;; esac
+}
+check_values --tier "$TIERS" "S,M,L"
+check_values --kind "$KINDS" "base,mutant"
+[ -z "$ONLY" ] || check_values --only "$ONLY" "$NAMES" "a configuration of configs.txt; see --list"
 sha256() {
   if command -v shasum >/dev/null 2>&1; then shasum -a 256 | awk '{print $1}'
   else sha256sum | awk '{print $1}'; fi

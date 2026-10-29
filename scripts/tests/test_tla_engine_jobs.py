@@ -104,5 +104,31 @@ class EngineJobsModel(unittest.TestCase):
             self.assertTrue(self.defined(name), f"{name} is in Next but not defined")
 
 
+class RunAllArgumentsTest(unittest.TestCase):
+    """run_all.sh refuses an option value that names nothing (owner, 2026-10-29: `--tier S.` ran nothing and looked
+    like a success). `--list` runs no TLC."""
+
+    def run_all(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["sh", str(DIR / "run_all.sh"), *args, "--list"], capture_output=True, text=True,
+                              timeout=60, check=False)  # fmt: skip
+
+    def test_unknown_values_are_refused(self) -> None:
+        for args in (["--tier", "S."], ["--tier", "S,,M"], ["--tier", ""], ["--kind", "mutants"],
+                     ["--only", "S_queue,NoSuch"]):  # fmt: skip
+            with self.subTest(args=args):
+                done = self.run_all(*args)
+                self.assertEqual(done.returncode, 2, done.stderr)
+                self.assertIn("--", done.stderr)
+                self.assertEqual(done.stdout, "")
+
+    def test_known_values_list_their_configurations(self) -> None:
+        done = self.run_all("--tier", "S", "--kind", "base")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("S_queue", done.stdout)
+        done = self.run_all("--only", "S_queue,S_cancel")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(len(done.stdout.splitlines()), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

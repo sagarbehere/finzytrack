@@ -30,7 +30,15 @@ it (`End`), and as many fresh engines must have started (§5.1: an engine that r
 later piece's engine step projected through the job-step rule, a later piece's app step played through the shell's
 seam, projected away (no effect on the queue; checked per step), or left out of the traces (`gen_traces.OUT`).
 A few branches stop their trace (`STOPS`): behaviour of a later piece that the code does not have yet; the walk
-leaves them out (`gen_traces.GUARDS`), and the coverage test checks that none is reached.
+leaves four of them out (`gen_traces.GUARDS`), the fifth is only absent (see `STOPS`), and the coverage test checks
+that none is reached.
+
+What this covers today: the action names of BL-0150 over 62 traces of small worlds, not every branch of them (S0059
+verifier F1, F3, F4): a Cancel meeting a background save past its commit point, a Cancel while an R4 runs,
+`SpawnStep`'s unavailable branch and `OrphanEndStuck` (mapped, never replayed) are not in the corpus, and each world
+has one workspace, so a job of a workspace that is not open is never seen (the switch is BL-0154). BL-0159 widens the
+corpus by branch with BL-0151. The hand-written suites (`test_engine_queue.py`, `test_engine_scheduler.py`) remain
+the main guard for these rules; this replay checks the code against the model's behaviour as a whole.
 """
 
 from __future__ import annotations
@@ -127,7 +135,7 @@ MAPPED = (
     "AdviceTimer",  # the display delay passes (§5.4): the clock moves, `AdviceTimer`
     "Drain",  # the ended engine's group is drained: its end report, `EngineEnded` (§5.2)
     "OrphanEnd",  # the earlier session's engine ends: the lock wait returns, `EngineLockFree` (§5.1)
-    "OrphanEndStuck",
+    "OrphanEndStuck",  # mapped, never replayed: its stuck orphan needs a quit (left out); BL-0159
     "WindowExpire",  # the restart window lets the bound go: `EngineAvailability(True)` (§5.3)
     "UserTryAgain",  # `try_again()`: `TryAgain`, `ResetEngine`, `EngineAvailability(True)`
     "UserCancelQueued",  # `cancel()` of a queued job (§4)
@@ -401,14 +409,20 @@ type EndKind = Literal["finished", "cancelled", "lost", "no_engine", "other"]
 class End:
     """How a job ended, as its requester is told: its value (`finished`), `JOB_CANCELLED` (with or without "the earlier
     ledger work cannot be stopped from here"), its engine's death (`ENGINE_STOPPED`, or `CHANGE_OUTCOME_UNKNOWN` past
-    its commit point), or `ENGINE_UNAVAILABLE` (no engine). `cannot_stop_ahead` None: the model does not say."""
+    its commit point), or `ENGINE_UNAVAILABLE` (no engine). `cannot_stop_ahead` None: the model does not say.
+    `past_commit` (a lost job only): its engine died past its commit point, so the user is told the outcome is being
+    checked (`CHANGE_OUTCOME_UNKNOWN`), never "your files are safe" (`ENGINE_STOPPED`; §5.3, §6.6; S0059 verifier F2);
+    None where the code's side does not say (the table's `EngineLost`: the shell picks the code)."""
 
     kind: EndKind
     cannot_stop_ahead: bool | None = None
+    past_commit: bool | None = None
 
 
 def matches(want: End, got: End | None) -> bool:
     if got is None or got.kind != want.kind:
+        return False
+    if want.past_commit is not None and got.past_commit is not None and want.past_commit != got.past_commit:
         return False
     return want.cannot_stop_ahead is None or want.cannot_stop_ahead == got.cannot_stop_ahead
 
@@ -422,7 +436,7 @@ def ends_of(s: StateJ, t: StateJ, classes: Mapping[str, Class]) -> dict[int, End
     out: dict[int, End] = {}
     for mid in left:
         if a == "EngineCrash" and run is not None and mid == run["id"]:
-            out[mid] = End("lost")
+            out[mid] = End("lost", past_commit=s["ctl"]["past"])  # only a writing job has a commit point
         elif classes[a] == "job_step":
             out[mid] = End("finished")
         elif a in ("DispatchUnavail", "SpawnStep"):
@@ -495,7 +509,10 @@ STOPS: Mapping[str, str] = {
     "open_job": f"the boot's open of a workspace whose mirror is out of date runs an open job ({R4_READS})",
 }
 """Steps that stop their trace: behaviour of a later piece that the code does not have yet. `gen_traces.GUARDS`
-leaves each of these branches out of the traces, so none should occur (the coverage test checks it)."""
+leaves four of them out of the walk (`recover_cancel`, `recover_crash`, `open_crash`, `open_job`). `recover_spawn` is
+not guarded: guarding `SpawnStep` would deadlock the walk (the trace module takes the dispatch whenever it is enabled),
+so it is only absent from this corpus, its seed and its worlds (it follows only from `recover_crash` or
+`recover_cancel`). The coverage test fails if a trace reaches any of them (S0059 verifier F5)."""
 
 
 class Stop(Exception):
@@ -894,8 +911,10 @@ def end_of(err: DomainError) -> End:
             details = err.details
             assert isinstance(details, JobCancelledDetails)
             return End("cancelled", details.cannot_stop_ahead)
-        case ErrorCode.ENGINE_STOPPED | ErrorCode.CHANGE_OUTCOME_UNKNOWN:
-            return End("lost")
+        case ErrorCode.ENGINE_STOPPED:
+            return End("lost", past_commit=False)
+        case ErrorCode.CHANGE_OUTCOME_UNKNOWN:
+            return End("lost", past_commit=True)
         case ErrorCode.ENGINE_UNAVAILABLE:
             return End("no_engine")
         case _:
