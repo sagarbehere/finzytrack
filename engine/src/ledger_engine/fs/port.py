@@ -49,6 +49,14 @@ class Resolved:
     """`(st_dev, st_ino)` of the last existing component, the object the canonical path was checked to name."""
 
 
+class Right(StrEnum):
+    """What the save needs to be allowed, as the system would decide it (permissions and ACLs, `access(2)`)."""
+
+    CHANGE_ENTRIES = "change_entries"  # in a folder: add, rename and remove entries (write and search)
+    DELETE = "delete"  # an entry may be renamed away or removed (its own ACL, or the folder's delete_child)
+    READ_XATTRS = "read_xattrs"  # a file's extended attributes may be read (to copy them to the temp)
+
+
 class Kind(StrEnum):
     FILE = "file"
     DIR = "dir"
@@ -91,8 +99,17 @@ class DirHandle(Protocol):
 
     def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> None:
         """Create the file `name` exclusively (it fails if any entry of that name exists), write `data`, give it
-        `mode` and, with `like`, the extended attributes and ACL of the regular file `like` in this directory (a
-        replaced file keeps its Finder tags and ACL), and sync its data. The entry is durable only after `sync`."""
+        `mode` and, with `like`, the extended attributes of the regular file `like` in this directory (a replaced file
+        keeps its Finder tags; not its ACL: owner, 2026-10-29), and sync its data. The entry is durable only after
+        `sync`."""
+        ...
+
+    def allowed(self, name: str, right: Right) -> bool:
+        """Whether the system allows `right` on the entry `name` (`"."`: this folder). Asking writes nothing."""
+        ...
+
+    def can_swap(self) -> bool:
+        """Whether this folder's volume supports the swap and the exclusive rename (`RENAME_SWAP`, `RENAME_EXCL`)."""
         ...
 
     def swap(self, a: str, b: str) -> None:

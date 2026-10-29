@@ -194,3 +194,34 @@ def test_derived_names_stay_within_name_max_and_are_stable() -> None:
         ),
     )
     assert decode(encode(rec)) == rec
+
+
+def test_a_record_whose_temps_collide_is_unreadable() -> None:
+    """S0060 red team r2 L1: every temp is its own name, never a file's or a created folder's path (compared folded
+    the widest way)."""
+    a = RECORD.files[0]
+    twin = FileEntry("/w/L/inc/A.bean", "/w/L/inc/A.bean", "1" * 64, "2" * 64, "1-A.bean", ".A.bean.ft-j7.tmp")
+    with pytest.raises(ValueError, match="duplicate_temp"):
+        encode(replace(RECORD, files=(a, twin), created_dirs=()))
+    at_temp = FileEntry(
+        "/w/L/inc/.a.bean.ft-j7.tmp", "/w/l/inc/.a.bean.ft-j7.tmp", None, "4" * 64, None, "..a.bean.ft-j7.tmp.ft-j7.tmp"
+    )
+    with pytest.raises(ValueError, match="temp_is_a_path"):
+        encode(replace(RECORD, files=(a, at_temp), created_dirs=()))
+    for bad in (
+        replace(RECORD, files=(a, twin), created_dirs=()),
+        replace(RECORD, files=(a, at_temp), created_dirs=()),
+    ):
+        obj = json.loads(encode(replace(bad, files=bad.files[:1])))
+        obj["files"].append(
+            {
+                "canonical_path": bad.files[1].canonical_path,
+                "path_key": bad.files[1].path_key,
+                "pre": bad.files[1].pre,
+                "post": bad.files[1].post,
+                "backup": bad.files[1].backup,
+                "temp": bad.files[1].temp,
+            }
+        )
+        data = (json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
+        assert isinstance(decode(data), Unreadable)

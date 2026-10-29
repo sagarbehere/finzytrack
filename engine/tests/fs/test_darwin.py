@@ -288,8 +288,11 @@ def _run(*argv: str) -> str:
     return subprocess.run(argv, capture_output=True, text=True, check=True).stdout  # noqa: S603 (fixed system tools)
 
 
-def test_a_replaced_file_keeps_its_extended_attributes_and_acl_on_apfs(fs: DarwinFS, tmp_path: Path) -> None:
-    """Red team 10: Finder tags (an extended attribute) and the ACL survive the swap; the mode too."""
+def test_a_replaced_file_keeps_its_extended_attributes_and_mode_but_not_its_acl_on_apfs(
+    fs: DarwinFS, tmp_path: Path
+) -> None:
+    """Red team r1 10 and the owner's answer of 2026-10-29 ("Keep xattrs, drop ACLs (Recommended)"): Finder tags
+    (an extended attribute) and the mode survive the swap; the file's ACL does not."""
     (tmp_path / "L").mkdir()
     main = tmp_path / "L" / "main.bean"
     main.write_bytes(b"pre\n")
@@ -298,14 +301,12 @@ def test_a_replaced_file_keeps_its_extended_attributes_and_acl_on_apfs(fs: Darwi
     _run("/usr/bin/xattr", "-w", tag, "tagdata", str(main))
     me = os.environ.get("USER") or str(os.getuid())
     _run("/bin/chmod", "+a", f"user:{me} allow readattr", str(main))
-    acl_before = _run("/bin/ls", "-le", str(main))
+    assert "allow readattr" in _run("/bin/ls", "-le", str(main))
     out = durable_commit(fs, _commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n")))
     assert isinstance(out, Landed)
     assert main.read_bytes() == b"post\n"
     assert _run("/usr/bin/xattr", "-p", tag, str(main)).strip() == "tagdata"
-    acl_after = _run("/bin/ls", "-le", str(main))
-    assert "allow readattr" in acl_before
-    assert acl_before.splitlines()[1:] == acl_after.splitlines()[1:]
+    assert "allow readattr" not in _run("/bin/ls", "-le", str(main))
     assert main.stat().st_mode & 0o7777 == 0o640
 
 
@@ -365,3 +366,59 @@ def test_resolve_refuses_a_file_replaced_between_its_lookup_and_its_folder_listi
     with pytest.raises(OSError, match="changed while it was resolved"):
         fs.resolve(str(main))
     assert swapped
+
+
+# ---- S0060 verifier round 2 and data-safety red team round 2 ------------------------------------------------------
+
+
+def test_create_gives_the_mode_asked_for_whatever_the_umask(fs: DarwinFS, tmp_path: Path) -> None:
+    """@regression-guard (S0060 verifier r2 F7, its proposed test: it kills dropping `os.fchmod`): a preserved
+    group-writable mode survives umask 022."""
+    old = os.umask(0o022)
+    try:
+        with fs.open_dir(str(tmp_path)) as d:
+            d.create("f", b"x", 0o664)
+    finally:
+        os.umask(old)
+    assert (tmp_path / "f").stat().st_mode & 0o777 == 0o664
+
+
+def test_an_apfs_volume_can_swap(fs: DarwinFS, tmp_path: Path) -> None:
+    """`can_swap` reads `VOL_CAP_INT_RENAME_SWAP` and `_EXCL`; an exFAT image answers False (checked by hand in
+    S0060 round 2 with `hdiutil create -fs ExFAT`, not in this suite: it would mount a disk image)."""
+    with fs.open_dir(str(tmp_path)) as d:
+        assert d.can_swap()
+
+
+@pytest.mark.parametrize(
+    ("acl", "on_folder"),
+    [
+        ("everyone deny delete", False),
+        ("everyone deny delete_child", True),
+        ("everyone deny readextattr", False),
+        (None, True),  # a read-only folder (mode 0555)
+    ],
+)
+def test_permissions_that_would_block_the_save_refuse_it_before_anything_is_written_on_apfs(
+    fs: DarwinFS, tmp_path: Path, acl: str | None, on_folder: bool
+) -> None:
+    """Verifier r2 F2, red team r2 M3 and L3: `access(2)` with the extended bits sees modes and ACLs."""
+    folder = tmp_path / "L"
+    folder.mkdir()
+    main = folder / "main.bean"
+    main.write_bytes(b"pre\n")
+    target = folder if on_folder else main
+    try:
+        if acl is None:
+            os.chmod(folder, 0o555)  # noqa: S103 (read-only on purpose)
+        else:
+            _run("/bin/chmod", "+a", acl, str(target))
+        out = durable_commit(fs, _commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n")))
+        assert isinstance(out, NotSaved)
+        assert (out.reason, out.unchanged, out.open_journal) == (Reason.PERMISSION, True, False)
+        assert os.listdir(tmp_path / "local" / "backups") == []
+        assert sorted(os.listdir(folder)) == ["main.bean"]
+    finally:
+        os.chmod(folder, 0o755)  # noqa: S103 (the temp folder back to its default)
+        _run("/bin/chmod", "-RN", str(folder))  # every ACL off, so a regression cannot wedge the temp clean-up
+    assert main.read_bytes() == b"pre\n"

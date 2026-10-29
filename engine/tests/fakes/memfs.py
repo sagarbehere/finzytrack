@@ -46,6 +46,7 @@ from ledger_engine.fs.port import (
     Kind,
     MalformedPathError,
     Resolved,
+    Right,
     check_name,
     split_absolute,
 )
@@ -70,6 +71,7 @@ class _File:
     mode: int
     xattrs: dict[str, bytes] = field(default_factory=lambda: {})
     locked: bool = False
+    deny: set[Right] = field(default_factory=lambda: set())
 
 
 @dataclass
@@ -90,6 +92,8 @@ class _Dir:
     durable: dict[str, tuple[str, int]] = field(default_factory=lambda: {})
     pending: list[tuple[str, ...]] = field(default_factory=lambda: [])  # ("link"|"unlink"|"swap"|"rename", ...)
     mode: int = 0o755
+    deny: set[Right] = field(default_factory=lambda: set())  # CHANGE_ENTRIES: read-only; DELETE: deny delete_child
+    no_swap: bool = False  # a volume without RENAME_SWAP and RENAME_EXCL (exFAT, FAT)
 
 
 _Node = _File | _Dir | _Link | _Other
@@ -247,14 +251,15 @@ class MemFS:
             raise FileNotFoundError(errno.ENOENT, "no parent")
         return self._dir(ino), parts[-1]
 
-    def outside_mkdirs(self, path: str, *, case_insensitive: bool | None = None) -> None:
+    def outside_mkdirs(self, path: str, *, case_insensitive: bool | None = None, no_swap: bool | None = None) -> None:
         parts = split_absolute(path)
         for i in range(1, len(parts) + 1):
             d, name = self._parent_and_name("/" + "/".join(parts[:i]))
             if self._find(d, name) is None:
                 pino = next(k for k, v in self.nodes.items() if v is d)
                 ci = d.ci if case_insensitive is None or i < len(parts) else case_insensitive
-                ino = self._new(_Dir(ci=ci, parent=pino))
+                ns = d.no_swap if no_swap is None or i < len(parts) else no_swap
+                ino = self._new(_Dir(ci=ci, parent=pino, no_swap=ns))
                 d.entries[_key(name, d.ci)] = (name, ino)
                 d.durable = dict(d.entries)
                 d.pending = []
@@ -308,6 +313,12 @@ class MemFS:
         node = self._at(path)
         assert isinstance(node, _File)
         return dict(node.xattrs)
+
+    def outside_deny(self, path: str, right: Right) -> None:
+        """An ACL or mode that denies `right` on the file or folder at `path` (on a folder, DELETE is delete_child)."""
+        node = self._at(path)
+        assert isinstance(node, _File | _Dir)
+        node.deny.add(right)
 
     def outside_fifo(self, path: str) -> None:
         d, name = self._parent_and_name(path)
@@ -505,11 +516,43 @@ class MemDir:
         return EntryStat(kind=kind, dev=1, ino=hit[1], nlink=self._fs.nlink(hit[1]), mode=mode, locked=locked)
 
     def _unlocked(self, key: str) -> None:
+        """The entry `key` may be renamed away or removed: not locked, and its deletion allowed."""
         hit = self._d.entries.get(key)
         if hit is not None:
             node = self._fs.nodes[hit[1]]
             if isinstance(node, _File) and node.locked:
                 raise PermissionError(errno.EPERM, "locked")
+            if not self._may_delete(node):
+                raise PermissionError(errno.EACCES, "delete denied")
+
+    def _may_delete(self, node: _Node) -> bool:
+        d = self._d
+        own: set[Right] = node.deny if isinstance(node, _File | _Dir) else set()
+        return Right.CHANGE_ENTRIES not in d.deny and Right.DELETE not in d.deny and Right.DELETE not in own
+
+    def _writable(self) -> None:
+        if Right.CHANGE_ENTRIES in self._d.deny:
+            raise PermissionError(errno.EACCES, "folder not writable")
+
+    def _swappable(self) -> None:
+        if self._d.no_swap:
+            raise OSError(errno.ENOTSUP, "no RENAME_SWAP or RENAME_EXCL on this volume")
+
+    def allowed(self, name: str, right: Right) -> bool:
+        d = self._d
+        if name == ".":
+            return right not in d.deny
+        hit = self._entry(name)
+        if hit is None:
+            return False
+        node = self._fs.nodes[hit[1]]
+        if right is Right.DELETE:
+            return self._may_delete(node)
+        own: set[Right] = node.deny if isinstance(node, _File | _Dir) else set()
+        return right not in own
+
+    def can_swap(self) -> bool:
+        return not self._d.no_swap
 
     def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> None:
         d = self._d
@@ -521,6 +564,7 @@ class MemDir:
             if not isinstance(node, _File):
                 raise OSError(errno.EINVAL, "not a regular file")
             source = node
+        self._writable()
         f = _File(data=b"", synced=b"", mode=mode & 0o7777)
 
         def link() -> None:
@@ -533,6 +577,8 @@ class MemDir:
         def write() -> None:
             f.data = data
             if source is not None:
+                if Right.READ_XATTRS in source.deny:
+                    raise PermissionError(errno.EACCES, "extended attributes not readable")
                 f.xattrs = dict(source.xattrs)
 
         def cut(n: int) -> None:
@@ -550,6 +596,8 @@ class MemDir:
         ka, kb = _key(check_name(a), d.ci), _key(check_name(b), d.ci)
 
         def do() -> None:
+            self._swappable()
+            self._writable()
             if ka not in d.entries or kb not in d.entries:
                 raise FileNotFoundError(errno.ENOENT, "no entry")
             self._unlocked(ka)
@@ -564,6 +612,8 @@ class MemDir:
         ks, kd = _key(check_name(src), d.ci), _key(check_name(dst), d.ci)
 
         def do() -> None:
+            self._swappable()
+            self._writable()
             if ks not in d.entries:
                 raise FileNotFoundError(errno.ENOENT, "no entry")
             if kd in d.entries:
@@ -579,6 +629,7 @@ class MemDir:
         key = _key(check_name(name), d.ci)
 
         def do() -> None:
+            self._writable()
             hit = d.entries.get(key)
             if hit is None:
                 raise FileNotFoundError(errno.ENOENT, "no entry")
@@ -595,9 +646,10 @@ class MemDir:
         key = _key(check_name(name), d.ci)
 
         def do() -> None:
+            self._writable()
             if key in d.entries:
                 raise FileExistsError(errno.EEXIST, "exists")
-            ino = self._fs._new(_Dir(ci=d.ci, parent=self._ino))
+            ino = self._fs._new(_Dir(ci=d.ci, parent=self._ino, no_swap=d.no_swap))
             d.entries[key] = (name, ino)
             d.pending.append(("link", key, name, str(ino)))
 

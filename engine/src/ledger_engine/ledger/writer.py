@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final
 
-from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem, Kind, check_name, fold, split_absolute
+from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem, Kind, Right, check_name, fold, split_absolute
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import DirEntry, FileEntry, Record, State
@@ -107,6 +107,9 @@ class Reason(StrEnum):
     NOT_A_FILE = "not_a_file"  # a replaced path is not a regular file (a folder, a FIFO, a device)
     LOCKED = "locked"  # a replaced file is immutable or append-only (`chflags uchg`)
     HARD_LINKED = "hard_linked"  # a replaced file has more than one hard link (`_hard_links`)
+    PERMISSION = "permission"  # the system would not allow the swap or its clean-up (a mode, an ACL)
+    VOLUME_NO_SWAP = "volume_no_swap"  # the volume has no RENAME_SWAP/RENAME_EXCL (`_volume_without_swap`)
+    NAME_NOT_UTF8 = "name_not_utf8"  # a path is not valid UTF-8 (the journal cannot name it)
 
 
 class Step(StrEnum):
@@ -140,8 +143,10 @@ class NotSaved:
 
 @dataclass(frozen=True, slots=True)
 class Unfinished:
-    """The journal is `.open` and the save stopped: the files are each whole at pre or post (or an outside save kept
-    in place), and recovery must resolve it. `path`: the canonical path of the file it stopped at, if any."""
+    """The save stopped after a ledger file may have been replaced: the journal is `.open` (or `.closed` but not yet
+    durable, when the close's own sync failed: never "saved"), the files are each whole at pre or post, or an outside
+    save is kept in the file or in our temp, and recovery must resolve it. `path`: the canonical path of the file it
+    stopped at, if known."""
 
     step: Step
     reason: Reason
@@ -189,6 +194,7 @@ class _Handles:
 
     fs: FileSystem
     open: dict[str, DirHandle] = field(default_factory=lambda: {})
+    on: str | None = None  # the canonical path of the target being worked on, for the outcome (S0060 verifier r2 F8)
 
     def at(self, canonical: str) -> DirHandle:
         h = self.open.get(canonical)
@@ -210,6 +216,14 @@ def _hard_links(st: EntryStat) -> Reason | None:
     "Refuse to save it (Recommended)"; ADR-0013 amendment of 2026-10-29). The swap gives the name a new file, so the
     other link would silently keep the old bytes. Reads are not affected. The one place this rule lives."""
     return Reason.HARD_LINKED if st.nlink > 1 else None
+
+
+def _volume_without_swap(h: DirHandle) -> Reason | None:
+    """A folder on a volume without `RENAME_SWAP` and `RENAME_EXCL` (exFAT, FAT, some network shares) refuses the save
+    before anything is written. Owner, 2026-10-29: "Unsafe fallback on such drives", then "Agreed, fallback as its
+    own slice after slice 4" (ADR-0013 amendment of 2026-10-29). The one place this rule lives.
+    TODO(BL-0160): the fallback write path for such volumes replaces this refusal."""
+    return None if h.can_swap() else Reason.VOLUME_NO_SWAP
 
 
 def _join(parent: str, name: str) -> str:
@@ -272,6 +286,10 @@ def _check_replaced(st: EntryStat | None, identity: tuple[int, int] | None, cano
 def _target(fs: FileSystem, handles: _Handles, index: int, c: Commit, ch: Change) -> _Target:
     r = fs.resolve(ch.path)
     canonical, key = core_paths.canonical_path(r), core_paths.path_key(r)
+    try:
+        canonical.encode()
+    except UnicodeEncodeError:
+        raise _Stop(Reason.NAME_NOT_UTF8, canonical.encode(errors="backslashreplace").decode()) from None
     parts, kparts = split_absolute(canonical), split_absolute(key)
     if not parts:
         raise BadPlanError("target_is_root")
@@ -286,12 +304,30 @@ def _target(fs: FileSystem, handles: _Handles, index: int, c: Commit, ch: Change
     return _Target(index, ch, canonical, key, parent, parent_key, base, temp, temp_key, None, new_dirs, r.rest)
 
 
+def _check_folder(h: DirHandle, canonical: str) -> None:
+    """A folder the save writes in: on a volume with the swap, and the save may add and remove entries there."""
+    reason = _volume_without_swap(h)
+    if reason is not None:
+        raise _Stop(reason, canonical)
+    if not h.allowed(".", Right.CHANGE_ENTRIES):
+        raise _Stop(Reason.PERMISSION, canonical)
+
+
 def _check_target(handles: _Handles, t: _Target) -> None:
     """One target against the disk, before the first effect."""
+    handles.on = t.canonical
     if not t.rest:
         if t.change.pre is None:
             raise _Stop(Reason.CHANGED, t.canonical)  # a file the save creates already exists
-        _check_replaced(handles.at(t.parent).stat(t.base), t.identity, t.canonical)
+        h = handles.at(t.parent)
+        _check_replaced(h.stat(t.base), t.identity, t.canonical)
+        _check_folder(h, t.canonical)
+        if not h.allowed(t.base, Right.DELETE):
+            raise _Stop(Reason.PERMISSION, t.canonical)  # the swap moves it away; an ACL denies that (deny delete)
+        if not h.allowed(t.base, Right.READ_XATTRS):
+            raise _Stop(Reason.PERMISSION, t.canonical)  # its extended attributes could not be copied to the temp
+        if h.stat(t.temp) is not None:
+            raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at our temp name (S0060 red team r2 L2)
         return
     if t.change.pre is not None:
         raise _Stop(Reason.CHANGED, t.canonical)  # a file the save replaces vanished
@@ -303,12 +339,16 @@ def _check_target(handles: _Handles, t: _Target) -> None:
         raise _Stop(Reason.CHANGED, t.canonical) from None  # the deepest existing component is not a folder
     if holder.stat(t.rest[0]) is not None:
         raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at the path (a dangling link, S0060 verifier F3)
+    _check_folder(holder, t.canonical)
+    if len(t.rest) == 1 and holder.stat(t.temp) is not None:
+        raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at our temp name
 
 
 def _prepare(fs: FileSystem, handles: _Handles, c: Commit, targets: tuple[_Target, ...]) -> _Plan:
     """Step 0: check each target and the plan as a whole before the first effect (the module's docstring)."""
     for t in targets:
         _check_target(handles, t)
+    handles.on = None
     keys = [t.key for t in targets]
     if len(set(keys)) != len(keys):
         raise BadPlanError("one_file_twice")
@@ -316,8 +356,9 @@ def _prepare(fs: FileSystem, handles: _Handles, c: Commit, targets: tuple[_Targe
         for b in targets:
             if a is not b and _within(b.key, a.key):
                 raise BadPlanError("file_inside_file")  # a target is a folder another target is in
-            if a is not b and b.key == a.temp_key:
-                raise BadPlanError("temp_name_taken")  # recovery deletes temps (S0060 red team finding 7)
+            if a is not b and (_within(b.key, a.temp_key) or b.temp_key == a.temp_key):
+                raise BadPlanError("temp_name_taken")  # recovery deletes temps (S0060 red team 7, r2 L1); a folder the
+                # save makes at a temp name is covered too: a target file is inside it
     dirs: dict[str, str] = {}
     for t in targets:
         for canonical, key in t.new_dirs:
@@ -363,6 +404,7 @@ def _backups(handles: _Handles, plan: _Plan, name: str) -> dict[str, str]:
     for t in plan.targets:
         if t.change.pre is None:
             continue
+        handles.on = t.canonical
         h = handles.at(t.parent)
         _check_replaced(h.stat(t.base), t.identity, t.canonical)
         data = h.read(t.base)
@@ -374,6 +416,7 @@ def _backups(handles: _Handles, plan: _Plan, name: str) -> dict[str, str]:
         if back is None or sha256(back) != t.change.pre:
             raise _Stop(Reason.IO_ERROR, t.canonical)  # ADR-0012 F-1
         names[t.key] = bname
+    handles.on = None
     folder.sync()
     return names
 
@@ -411,20 +454,35 @@ class _Progress:
     made: set[str] = field(default_factory=lambda: set())  # keys of the folders made so far
 
 
-def _displaced_is_ours(h: DirHandle, name: str, t: _Target) -> bool:
-    """The entry `name` is the planned object (`identity`) and holds the pre bytes (§6.4)."""
+def _displaced_is_ours(h: DirHandle, name: str, t: _Target) -> Reason | None:
+    """None when the entry `name` is the planned object (`identity`), still with one link (the owner's hard-link rule
+    holds at the swap too: S0060 red team r2 M2), holding the pre bytes (§6.4); otherwise why not."""
     st = h.stat(name)
     if st is None or st.identity != t.identity:
-        return False
+        return Reason.CHANGED
+    if _hard_links(st) is not None:
+        return Reason.HARD_LINKED
     try:
         data = h.read(name)
     except OSError:
+        return Reason.CHANGED
+    return None if data is not None and sha256(data) == t.change.pre else Reason.CHANGED
+
+
+def _is_our_temp(h: DirHandle, name: str, identity: tuple[int, int], post: bytes) -> bool:
+    """The entry `name` is our own temp (`identity`) with the post bytes."""
+    st = h.stat(name)
+    if st is None or st.identity != identity:
         return False
-    return data is not None and sha256(data) == t.change.pre
+    try:
+        return h.read(name) == post
+    except OSError:
+        return False
 
 
 def _replace(handles: _Handles, t: _Target, progress: _Progress) -> None:
     """Step 8.3 for one file."""
+    handles.on = t.canonical
     for canonical, key in t.new_dirs:
         if key in progress.made:
             continue
@@ -450,18 +508,27 @@ def _replace(handles: _Handles, t: _Target, progress: _Progress) -> None:
         return
     st = _check_replaced(h.stat(t.base), t.identity, t.canonical)
     h.create(t.temp, t.change.post, st.mode, like=t.base)
+    made = h.stat(t.temp)
+    if made is None:
+        raise _Stop(Reason.CHANGED, t.canonical)  # our temp vanished before the swap
     progress.replaced = True
     h.swap(t.temp, t.base)
-    if not _displaced_is_ours(h, t.temp, t):
-        h.swap(t.temp, t.base)  # the outside save back in place, kept (§6.4)
+    why = _displaced_is_ours(h, t.temp, t)
+    if why is not None:
+        h.swap(t.temp, t.base)  # the outside save (or the linked file) back in place, kept (§6.4)
         h.sync()  # at once (model finding F3)
-        raise _Stop(Reason.CHANGED, t.canonical)
+        if not _is_our_temp(h, t.temp, made.identity, t.change.post):
+            # a second outside save took the name before the swap-back: it is now in our temp and the first one is
+            # back in the file; neither is ours, so nothing is swapped again and both are kept (S0060 red team r2 M1)
+            raise _Stop(Reason.CHANGED, t.canonical)
+        raise _Stop(why, t.canonical)
     h.sync()
 
 
 def _read_back(handles: _Handles, targets: tuple[_Target, ...]) -> None:
     """Step 8.4: every written file equals its post bytes (ADR-0008 step 6)."""
     for t in targets:
+        handles.on = t.canonical
         if handles.at(t.parent).read(t.base) != t.change.post:
             raise _Stop(Reason.READ_BACK, t.canonical)
 
@@ -474,11 +541,14 @@ def _remove_temps(handles: _Handles, targets: tuple[_Target, ...]) -> None:
     for t in targets:
         if t.change.pre is None:
             continue
+        handles.on = t.canonical
         h = handles.at(t.parent)
-        if not _displaced_is_ours(h, t.temp, t):
-            raise _Stop(Reason.CHANGED, t.canonical)
+        why = _displaced_is_ours(h, t.temp, t)
+        if why is not None:
+            raise _Stop(why, t.canonical)
         h.remove(t.temp)
         touched[t.parent] = h
+    handles.on = None
     for h in touched.values():
         h.sync()
 
@@ -497,10 +567,11 @@ def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
             backups = _backups(handles, plan, name)
             data = journal.encode(_record(c, plan, name, backups))
             step = Step.JOURNAL
+            handles.on = None
             jd = handles.at(plan.journal_dir)
             jd.create(journal.file_name(name, State.PART), data, JOURNAL_MODE)
         except (OSError, _Stop) as e:
-            reason, path = (e.reason, e.path) if isinstance(e, _Stop) else (Reason.IO_ERROR, None)
+            reason, path = (e.reason, e.path) if isinstance(e, _Stop) else (Reason.IO_ERROR, handles.on)
             return NotSaved(step, reason, _unchanged(handles, targets), path=path)
         progress = _Progress()
         try:
@@ -517,7 +588,7 @@ def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
             jd.rename_excl(journal.file_name(name, State.OPEN), journal.file_name(name, State.CLOSED))
             jd.sync()
         except (OSError, _Stop) as e:
-            reason, path = (e.reason, e.path) if isinstance(e, _Stop) else (Reason.IO_ERROR, None)
+            reason, path = (e.reason, e.path) if isinstance(e, _Stop) else (Reason.IO_ERROR, handles.on)
             if not progress.replaced:
                 return NotSaved(step, reason, _unchanged(handles, plan.targets), progress.open_journal, path)
             return Unfinished(step, reason, path)

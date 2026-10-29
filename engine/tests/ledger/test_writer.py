@@ -24,6 +24,7 @@ from dataclasses import dataclass, replace
 
 import pytest
 
+from ledger_engine.fs.port import Right
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core.journal import Record, State
 from ledger_engine.ledger.writer import (
@@ -825,4 +826,184 @@ def test_a_replaced_file_that_vanished_refuses_before_the_first_effect() -> None
     w.fs.outside_move("/w/L/inc/a.bean", "/w/gone/a.bean")
     out = durable_commit(w.fs, w.commit)
     assert out == NotSaved(Step.BACKUP, Reason.CHANGED, False, path="/w/L/inc/a.bean")
+    assert w.fs.effects == []
+
+
+# ---- S0060 verifier round 2 and data-safety red team round 2 ------------------------------------------------------
+
+
+def test_a_second_outside_save_before_the_swap_back_is_kept_and_nothing_is_swapped_again() -> None:
+    """@regression-guard (S0060 red team r2 M1: 4c275f57 already ended this way; the swap-back's displaced entry is
+    now checked as well). An outside save by rename during our temp's write is displaced by our swap; a second one takes
+    the name before the swap-back. The swap-back's displaced entry is then not our temp: the save stops at once,
+    with the first outside save in the file and the second in our temp, and swaps nothing more."""
+    w = world()
+    first, second = b"; outside save 1\n", b"; outside save 2\n"
+    swaps = 0
+
+    def on_swap(i: int, label: str) -> None:
+        nonlocal swaps
+        if label == "create /w/L:.main.bean.ft-j7.tmp":
+            w.fs.outside_write("/w/L/main.bean", first, new_inode=True)
+        if label == "swap /w/L:.main.bean.ft-j7.tmp,main.bean":
+            swaps += 1
+            if swaps == 2:  # right before the swap-back
+                w.fs.outside_write("/w/L/main.bean", second, new_inode=True)
+
+    w.fs.on_effect = on_swap
+    out = durable_commit(w.fs, w.commit)
+    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, "/w/L/main.bean")
+    assert swaps == 2
+    assert w.fs.file("/w/L/main.bean") == first
+    assert w.fs.file(w.targets[2].temp) == second
+    for state in w.fs.power_loss_states():
+        assert {state.file("/w/L/main.bean"), state.file(w.targets[2].temp)} == {first, second}
+
+
+def test_a_hard_link_made_after_the_journal_refuses_before_that_file_is_swapped() -> None:
+    """@regression-guard (S0060 verifier r2 F5, its proposed test: it kills the mutant that drops the check before the
+    swap)."""
+    w = world()
+    w.fs.outside_mkdirs("/w/Backup")
+    _hook(w.fs, f"sync {JD}:", lambda: w.fs.outside_link("/w/L/inc/a.bean", "/w/Backup/copy.bean"))
+    out = durable_commit(w.fs, w.commit)
+    assert out == NotSaved(Step.REPLACE, Reason.HARD_LINKED, True, open_journal=True, path="/w/L/inc/a.bean")
+    assert w.fs.file("/w/Backup/copy.bean") == w.fs.file("/w/L/inc/a.bean")
+
+
+def test_a_hard_link_made_between_the_pre_swap_check_and_the_swap_is_never_told_saved() -> None:
+    """Verifier r2 F1, red team r2 M2 (the verifier's proposed test, with the outcome pinned): the displaced file has
+    a second link, so it is swapped back and both names keep the pre bytes."""
+    w = world()
+    w.fs.outside_mkdirs("/w/Backup")
+    _hook(w.fs, "create /w/L:.main.bean.ft-j7.tmp", lambda: w.fs.outside_link("/w/L/main.bean", "/w/Backup/copy.bean"))
+    out = durable_commit(w.fs, w.commit)
+    assert out == Unfinished(Step.REPLACE, Reason.HARD_LINKED, "/w/L/main.bean")
+    assert w.fs.file("/w/L/main.bean") == w.fs.file("/w/Backup/copy.bean") == w.targets[2].pre
+
+
+def test_a_hard_link_made_to_the_displaced_file_before_its_temp_is_removed_stops_the_save() -> None:
+    """Red team r2 M2, second timing: after the swap, a link to the displaced file (now our temp)."""
+    w = world()
+    w.fs.outside_mkdirs("/w/Backup")
+
+    def link_late(_: int, label: str) -> None:
+        if label == "sync /w/L:" and w.fs.file("/w/L/main.bean") == w.targets[2].post:
+            w.fs.on_effect = None
+            w.fs.outside_link(w.targets[2].temp, "/w/Backup/copy.bean")
+
+    w.fs.on_effect = link_late
+    out = durable_commit(w.fs, w.commit)
+    assert out == Unfinished(Step.READ_BACK, Reason.HARD_LINKED, "/w/L/main.bean")
+    assert w.fs.file(w.targets[2].temp) == w.targets[2].pre  # kept: it is a file another name still shows
+
+
+@pytest.mark.parametrize(
+    ("where", "right"),
+    [
+        ("/w/L", Right.CHANGE_ENTRIES),  # a read-only ledger folder
+        ("/w/L/main.bean", Right.DELETE),  # an ACL: deny delete on the file
+        ("/w/L", Right.DELETE),  # an ACL: deny delete_child on the folder
+        ("/w/L/main.bean", Right.READ_XATTRS),  # an ACL: deny readextattr (the tags could not be copied)
+    ],
+)
+def test_permissions_that_would_block_the_swap_or_its_clean_up_refuse_before_the_first_effect(
+    where: str, right: Right
+) -> None:
+    """Verifier r2 F2, red team r2 M3 and L3: refused up front, "not saved", the ledger unchanged."""
+    w = world()
+    w.fs.outside_deny(where, right)
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved)
+    assert (out.reason, out.unchanged, out.open_journal) == (Reason.PERMISSION, True, False)
+    assert out.path in ("/w/L/main.bean", "/w/L/prices.bean")
+    assert w.fs.effects == []
+
+
+def test_a_ledger_on_a_volume_without_the_swap_refuses_before_the_first_effect() -> None:
+    """Verifier r2 F3, red team r2 M4; owner, 2026-10-29: refused until the fallback of BL-0160 exists."""
+    w = world()
+    w.fs.outside_mkdirs("/w/X", no_swap=True)
+    w.fs.outside_write("/w/X/main.bean", b"pre\n")
+    out = durable_commit(w.fs, replace(w.commit, changes=(Change("/w/X/main.bean", sha256(b"pre\n"), b"post\n"),)))
+    assert out == NotSaved(Step.BACKUP, Reason.VOLUME_NO_SWAP, True, path="/w/X/main.bean")
+    assert w.fs.effects == []
+
+
+def test_two_targets_with_one_temp_name_or_a_folder_at_a_temp_name_are_refused() -> None:
+    """Red team r2 L1: a long name's hashed temp equal to another target's temp; a created folder at a temp name."""
+    w = world()
+    long = "a" * 250
+    sha_temp = journal.temp_name(long, "j7")  # `.<sha16>.ft-j7.tmp`
+    w.fs.outside_write(f"/w/L/{long}", b"x\n")
+    twin = sha_temp[1 : -len(".ft-j7.tmp")]  # a file literally named <sha16>: its temp is the same name
+    for bad in (
+        replace(
+            w.commit, changes=(Change(f"/w/L/{long}", sha256(b"x\n"), b"y\n"), Change(f"/w/L/{twin}", None, b"z\n"))
+        ),
+        replace(w.commit, changes=(w.commit.changes[2], Change("/w/L/.main.bean.ft-j7.tmp/x.bean", None, b"z\n"))),
+    ):
+        with pytest.raises(ValueError, match="temp_name_taken"):
+            durable_commit(w.fs, bad)
+    assert w.fs.effects == []
+
+
+def test_an_entry_already_at_a_temp_name_refuses_before_the_first_effect() -> None:
+    """Red team r2 L2: the journal never names a temp the save did not make, so recovery cannot delete a stranger."""
+    w = world()
+    w.fs.outside_write("/w/L/.main.bean.ft-j7.tmp", b"someone else's\n")
+    out = durable_commit(w.fs, w.commit)
+    assert out == NotSaved(Step.BACKUP, Reason.CHANGED, True, path="/w/L/main.bean")
+    assert w.fs.effects == []
+    assert w.fs.file("/w/L/.main.bean.ft-j7.tmp") == b"someone else's\n"
+
+
+def test_a_failure_before_the_created_folder_is_made_is_not_saved_and_unchanged() -> None:
+    """@regression-guard (S0060 verifier r2 F6, its proposed test: it kills the mutant that answers False for a folder
+    never made)."""
+    w = world(new_dir=True)
+    probe = world(new_dir=True)
+    durable_commit(probe.fs, probe.commit)
+    at = next(i for i, e in enumerate(probe.fs.effects) if e.startswith("rename ") and e.endswith(".open"))
+    w.fs.inject(at, crash=False, err=errno.EIO)
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, NotSaved)
+    assert out.unchanged, "every target is at its pre bytes and the created file's folder was never made"
+    assert w.fs.file("/w/L/y2026/prices.bean") is None
+
+
+def test_an_io_error_names_the_file_the_writer_was_on() -> None:
+    """Verifier r2 F8: an `OSError` outcome carries the target it happened at."""
+    base, _ = clean_run()
+    for label, path in (
+        (f"fsync {SAVE_DIR}:2-main.bean", "/w/L/main.bean"),
+        ("fsync /w/L/inc:.a.bean.ft-j7.tmp", "/w/L/inc/a.bean"),
+        ("swap /w/L:.main.bean.ft-j7.tmp,main.bean", "/w/L/main.bean"),
+        (f"rename {JD}:{NAME}.part,{NAME}.open", None),
+    ):
+        w = world()
+        w.fs.inject(base.fs.effects.index(label), crash=False)
+        out = durable_commit(w.fs, w.commit)
+        assert isinstance(out, NotSaved | Unfinished)
+        assert out.path == path, (label, out)
+
+
+def test_a_folder_name_that_is_not_utf8_refuses_as_an_outcome_before_the_first_effect() -> None:
+    """Red team r2 overflow: a name decoded with surrogates (not UTF-8 on disk) cannot be written in the journal."""
+    w = world()
+    bad = "/w/L/x\udcff.bean"
+    w.fs.outside_write(bad, b"pre\n")
+    out = durable_commit(w.fs, replace(w.commit, changes=(Change(bad, sha256(b"pre\n"), b"post\n"),)))
+    assert isinstance(out, NotSaved)
+    assert out.reason is Reason.NAME_NOT_UTF8
+    assert w.fs.effects == []
+
+
+def test_a_file_created_in_a_read_only_folder_refuses_before_the_first_effect() -> None:
+    """Verifier r2 F2 for a created file: only the folder's own right applies (no file to delete)."""
+    w = world()
+    w.fs.outside_mkdirs("/w/RO")
+    w.fs.outside_deny("/w/RO", Right.CHANGE_ENTRIES)
+    out = durable_commit(w.fs, replace(w.commit, changes=(Change("/w/RO/new.bean", None, b"x\n"),)))
+    assert out == NotSaved(Step.BACKUP, Reason.PERMISSION, True, path="/w/RO/new.bean")
     assert w.fs.effects == []

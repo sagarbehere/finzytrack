@@ -15,7 +15,9 @@
   case-insensitive: folding may merge names, never split them, §15).
 - `read` and `stat` never follow a link; `read` refuses anything but a regular file before opening it, and opens
   with `O_NONBLOCK`. `create(..., like=...)` copies the extended attributes and the ACL of `like` (`fcopyfile`
-  with `COPYFILE_XATTR | COPYFILE_ACL`; not `COPYFILE_STAT`, which would copy the old modification time).
+  with `COPYFILE_XATTR` only: the ACL is not kept, owner, 2026-10-29; not `COPYFILE_STAT`, which would copy the old
+  modification time). `allowed` is `access(2)` with the extended bits (`_DELETE_OK`, `_REXT_OK`), which apply ACLs;
+  `can_swap` reads the volume's `VOL_CAP_INT_RENAME_SWAP` and `_EXCL` (`fgetattrlist`; exFAT and FAT have neither).
 
 Other operating systems refuse (`for_this_os`): their primitives are BL-0087 (spec §14).
 """
@@ -27,6 +29,7 @@ import errno
 import fcntl
 import os
 import stat
+import struct
 import sys
 from collections.abc import Callable
 from typing import Final, Self
@@ -38,13 +41,19 @@ from ledger_engine.fs.port import (
     Kind,
     MalformedPathError,
     Resolved,
+    Right,
     check_name,
     fold,
     split_absolute,
 )
 
-COPYFILE_ACL: Final = 1 << 0
 COPYFILE_XATTR: Final = 1 << 2
+ACCESS_DELETE: Final = 1 << 12  # <sys/unistd.h> _DELETE_OK: access(2) answers it from the file's and folder's ACLs
+ACCESS_READ_XATTRS: Final = 1 << 17  # _REXT_OK
+ATTR_VOL_INFO: Final = 0x80000000
+ATTR_VOL_CAPABILITIES: Final = 0x00020000
+VOL_CAP_INT_RENAME_SWAP: Final = 0x00040000
+VOL_CAP_INT_RENAME_EXCL: Final = 0x00080000
 LOCK_FLAGS: Final = stat.UF_IMMUTABLE | stat.UF_APPEND | stat.SF_IMMUTABLE | stat.SF_APPEND
 MAX_LINKS: Final = 40
 RENAME_SWAP: Final = 0x2
@@ -68,7 +77,22 @@ def _libc() -> ctypes.CDLL:
     cp = lib.fcopyfile
     cp.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32]
     cp.restype = ctypes.c_int
+    ga = lib.fgetattrlist
+    ga.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32]
+    ga.restype = ctypes.c_int
     return lib
+
+
+class _AttrList(ctypes.Structure):
+    _fields_ = (
+        ("bitmapcount", ctypes.c_ushort),
+        ("reserved", ctypes.c_uint16),
+        ("commonattr", ctypes.c_uint32),
+        ("volattr", ctypes.c_uint32),
+        ("dirattr", ctypes.c_uint32),
+        ("fileattr", ctypes.c_uint32),
+        ("forkattr", ctypes.c_uint32),
+    )
 
 
 def _errno_raise() -> None:
@@ -167,7 +191,7 @@ class DarwinDir:
             if like is not None:
                 src = self._open_regular(check_name(like))
                 try:
-                    if self._fs.libc.fcopyfile(src, fd, None, COPYFILE_XATTR | COPYFILE_ACL) != 0:
+                    if self._fs.libc.fcopyfile(src, fd, None, COPYFILE_XATTR) != 0:
                         _errno_raise()
                 finally:
                     os.close(src)
@@ -175,6 +199,25 @@ class DarwinDir:
             self._fs.durable_sync(fd)
         finally:
             os.close(fd)
+
+    def allowed(self, name: str, right: Right) -> bool:
+        mode = {
+            Right.CHANGE_ENTRIES: os.W_OK | os.X_OK,
+            Right.DELETE: ACCESS_DELETE,
+            Right.READ_XATTRS: ACCESS_READ_XATTRS,
+        }[right]
+        target = "." if name == "." else check_name(name)
+        return os.access(target, mode, dir_fd=self.fd, follow_symlinks=False)
+
+    def can_swap(self) -> bool:
+        attrs = _AttrList(5, 0, 0, ATTR_VOL_INFO | ATTR_VOL_CAPABILITIES, 0, 0, 0)
+        buf = ctypes.create_string_buffer(64)
+        if self._fs.libc.fgetattrlist(self.fd, ctypes.byref(attrs), buf, len(buf), 0) != 0:
+            _errno_raise()
+        # u_int32 length, then vol_capabilities_attr_t: capabilities[4], valid[4]; index 1 = the interfaces
+        _, _, interfaces, _, _, _, valid, _, _ = struct.unpack("<9I", buf.raw[:36])
+        need = VOL_CAP_INT_RENAME_SWAP | VOL_CAP_INT_RENAME_EXCL
+        return interfaces & need == need and valid & need == need
 
     def _renamex(self, a: str, b: str, flags: int) -> None:
         rc = self._fs.libc.renameatx_np(self.fd, os.fsencode(check_name(a)), self.fd, os.fsencode(check_name(b)), flags)

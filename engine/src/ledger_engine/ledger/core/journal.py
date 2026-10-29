@@ -218,6 +218,16 @@ def _check(record: Record) -> None:
         dir_keys.add(d.path_key)
     if not record.files:
         raise BadRecordError("no_files")
+    # every temp is its own name, never a file's or a created folder's path, nor inside one (S0060 red team r2 L1);
+    # compared folded the widest way, so two names a volume may treat as one count as one
+    wide = FoldRule(nfd=True, casefold=True)
+    taken = [tuple(fold(c, wide) for c in fc) for fc, _ in files]
+    taken += [tuple(fold(c, wide) for c in _parts(d.canonical_path)) for d in record.created_dirs]
+    temps = [tuple(fold(c, wide) for c in (*fc[:-1], f.temp)) for (fc, _), f in zip(files, record.files, strict=True)]
+    if len(set(temps)) != len(temps):
+        raise BadRecordError("duplicate_temp")
+    if any(p[: len(tp)] == tp for tp in temps for p in taken):
+        raise BadRecordError("temp_is_a_path")
     keys = [f.path_key for f in record.files]
     if len(set(keys)) != len(keys):
         raise BadRecordError("duplicate_path_key")
