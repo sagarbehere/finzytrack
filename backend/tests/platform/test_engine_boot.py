@@ -1,7 +1,8 @@
 """The engine's first start at boot as a reported state (`app.platform.engine_boot`; S0038; ADR-0054 decision 4).
 
 A fake `EnginePort` stands in for the engine: the state is starting, then ready or down. A failure is a state, never
-an exception. The outcome is logged by the client's supervision table, once per start (S0040), not here.
+an exception. The outcome is logged by the client's supervision table, once per start (S0040); the boot logs only a
+failed wait for the engine lock (S0053).
 """
 
 from __future__ import annotations
@@ -128,4 +129,24 @@ def test_any_os_error_of_the_wait_is_a_down_state(error: OSError) -> None:
     state = boot.run()
     assert isinstance(state, EngineDown)
     assert boot.state == state
+    assert engine.starts == 0
+
+
+def test_a_log_sink_that_raises_loses_the_line_never_the_state() -> None:
+    """S0041's rule (a sink that raises loses its line and changes nothing else), here for the boot's own line
+    (S0053 verifier R2-F3): the failed wait still ends in `EngineDown`, on the background thread too, and no engine
+    starts."""
+
+    def fail() -> None:
+        raise PermissionError(13, "denied")
+
+    def sink(event: Event, /, **fields: object) -> None:
+        raise OSError(28, "no space left on device")
+
+    engine = FakeEngine(INFO)
+    boot = EngineBoot(engine, wait_engine_lock=fail, log=sink)
+    boot.start_in_background().join(15)
+    state = boot.state
+    assert isinstance(state, EngineDown)
+    assert state.failure.kind == "start_failed"
     assert engine.starts == 0

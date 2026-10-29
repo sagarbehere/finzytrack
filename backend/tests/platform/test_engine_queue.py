@@ -267,40 +267,93 @@ def test_an_engine_that_ran_only_parse_only_work_serves_the_next_job() -> None:
 
 def test_an_idle_engine_that_dies_is_drained_and_never_reused() -> None:
     """§5.3: a crash is noticed by the engine's exit, also between jobs; §5.2: its group is drained before the next
-    engine; "Queued jobs stay queued and run on the next engine". The shell reports the death with the last job
-    the engine ran, or with no job (S0053 verifier F4)."""
-    for reported in (None, 1):
-        state, first = busy_with(user("preview"))
-        assert first == 1
-        state, _ = run(state, JobDone(first, ran_user_code=False))
-        assert state.slot == "idle"
-        state, effects = run(state, EngineDied(reported))
-        assert ends(effects) == ["crashed"]
-        assert state.slot == "ending"
-        state, (second,) = submit(state, user("bql"))
-        assert state.running is None, "a job started on an engine that died"
-        state, effects = run(state, EngineEnded())
-        assert [(e.job.id, e.reuse) for e in effects if isinstance(e, Start)] == [(second, False)]
+    engine; "Queued jobs stay queued and run on the next engine". The shell reports the death with the
+    number the engine's `Start` carried (S0053 verifier F4, R2-F1)."""
+    state, effects = run(ready(), Submit(user("preview")))
+    (start,) = [e for e in effects if isinstance(e, Start)]
+    state, _ = run(state, JobDone(start.job.id, ran_user_code=False))
+    assert state.slot == "idle"
+    state, effects = run(state, EngineDied(start.engine))
+    assert ends(effects) == ["crashed"]
+    assert state.slot == "ending"
+    state, (second,) = submit(state, user("bql"))
+    assert state.running is None, "a job started on an engine that died"
+    state, effects = run(state, EngineEnded())
+    starts = [e for e in effects if isinstance(e, Start)]
+    assert [(e.job.id, e.reuse) for e in starts] == [(second, False)]
+    assert starts[0].engine != start.engine, "a fresh engine took the dead engine's number"
+
+
+def test_each_spawn_gets_a_new_number_and_a_reused_engine_keeps_its_own() -> None:
+    """§5.3 (S0053 verifier R2-F1): the number names one engine for its whole life; the shell reports a death by it.
+    A reuse keeps it; every spawn, also mid-job after a retire, gets one never used before."""
+    state, effects = run(ready(), Submit(user("preview")))
+    (first,) = [e for e in effects if isinstance(e, Start)]
+    state, effects = run(state, JobDone(first.job.id, ran_user_code=False), Submit(user("bql")))
+    (reused,) = [e for e in effects if isinstance(e, Start)]
+    assert reused.reuse
+    assert reused.engine == first.engine
+    state, effects = run(state, JobDone(reused.job.id, ran_user_code=True), EngineEnded(), Submit(user("save")))
+    (save,) = [e for e in effects if isinstance(e, Start)]
+    state, effects = run(state, RetireEngine(save.job.id), EngineNeeded(save.job.id), EngineEnded())
+    (again,) = [e for e in effects if isinstance(e, Start)]
+    assert again.job.id == save.job.id
+    assert not save.reuse
+    assert not again.reuse
+    numbers = [first.engine, save.engine, again.engine]
+    assert len(set(numbers)) == 3, numbers
+    assert state.engine == again.engine
+
+
+def test_a_death_noticed_before_a_reuse_but_fed_after_it_ends_the_reused_engine() -> None:
+    """§5.3, §5.2 (S0053 verifier R2-F1): the idle engine exits; before the shell feeds `EngineDied`, a Submit starts
+    the next job on it (`reuse`). The report names that engine, which is still in the slot: its job is lost and the
+    group drained, so the queue does not stall behind a job "running" on a dead engine (a background R4 has no
+    Cancel)."""
+    state, effects = run(ready(), Submit(user("preview")))
+    (first,) = [e for e in effects if isinstance(e, Start)]
+    state, _ = run(state, JobDone(first.job.id, ran_user_code=False))
+    state, effects = run(state, Submit(background("r4")))
+    (reuse,) = [e for e in effects if isinstance(e, Start)]
+    assert reuse.reuse
+    state, (waiting,) = submit(state, user("bql"))
+    state, effects = run(state, EngineDied(first.engine))
+    assert EngineLost(reuse.job.id) in effects
+    assert ends(effects) == ["crashed"]
+    assert state.running is None
+    state, effects = run(state, EngineEnded())
+    assert [(e.job.id, e.reuse) for e in effects if isinstance(e, Start)] == [(waiting, False)]
 
 
 def test_a_death_reported_for_an_earlier_engine_leaves_the_current_one_alone() -> None:
-    """The `EngineDied` contract: `job_id` is the last job started on the engine that died; a report naming a job
-    that engine never ran is about an engine already gone (its end was ours and drained) and changes nothing."""
+    """The `EngineDied` contract: `engine` is the number of the engine that died; a report naming an earlier engine
+    (its end was ours and drained, §5.2) changes nothing, whether the current engine is busy or idle, also when the
+    current engine was reused."""
     state, first = busy_with(user("preview"))
+    earlier = state.engine
+    assert earlier is not None
     state, _ = run(state, Cancel(first), EngineEnded())
     state, second = busy_with(user("bql"), state)
+    assert state.engine != earlier
+    state, effects = run(state, EngineDied(earlier))
+    assert effects == []
+    assert state.slot == "busy"
     state, _ = run(state, JobDone(second, ran_user_code=False))
-    state, effects = run(state, EngineDied(first))
+    state, effects = run(state, EngineDied(earlier))
     assert effects == []
     assert state.slot == "idle"
     state, effects = run(state, Submit(user("preview")))
     assert [e.reuse for e in effects if isinstance(e, Start)] == [True]
+    state, effects = run(state, EngineDied(earlier))
+    assert effects == []
+    assert state.slot == "busy"
 
 
 def test_an_engine_that_died_is_drained_before_the_next_one_starts() -> None:
     state, first = busy_with(user("preview"))
     state, (second,) = submit(state, user("bql"))
-    state, effects = run(state, EngineDied(first))
+    assert state.engine is not None
+    state, effects = run(state, EngineDied(state.engine))
     assert EngineLost(first) in effects
     assert ends(effects) == ["crashed"]
     assert started(effects) == []
@@ -825,9 +878,9 @@ def slot_at_dispatch(before: QueueState, event: Event) -> str:
     """The engine slot after the event's own work and before any dispatch, written from §5.1 and §5.2: an ended
     engine frees it; a job that ran user code retires its engine; parse-only work leaves it idle for the next job;
     our end, a retire or a death leaves it ending until the group is drained. A death is the engine's in the slot
-    when it names the last job started on it, or no job."""
+    only when it names that engine's number (§5.3)."""
     r = before.running
-    if isinstance(event, EngineDied) and before.slot in ("busy", "idle") and event.job_id in (None, before.engine_job):
+    if isinstance(event, EngineDied) and before.slot in ("busy", "idle") and event.engine == before.engine:
         return "ending"
     if isinstance(event, EngineEnded) and before.slot == "ending":
         return "none"
@@ -848,6 +901,13 @@ def check_step(policy: QueuePolicy, before: QueueState, event: Event, step: Step
         slot = slot_at_dispatch(before, event)
         assert slot in ("none", "idle"), f"an engine started while the slot was {slot}"
         assert s.reuse == (slot == "idle")
+        # §5.3: a reused engine keeps its number; a fresh one takes a number never used before
+        if s.reuse:
+            assert s.engine == before.engine
+        else:
+            assert s.engine == before.next_engine
+            assert after.next_engine == before.next_engine + 1
+        assert after.engine == s.engine
         assert after.slot == "busy"
         assert after.running is not None
         assert after.running.job.id == s.job.id
@@ -862,8 +922,12 @@ def check_step(policy: QueuePolicy, before: QueueState, event: Event, step: Step
             assert s.job.id == (fg[0] if fg else pool[0]).id
     if after.running is None:
         assert after.slot != "busy"
-    # `engine_job` names the engine in the slot, and only while there is one
-    assert (after.engine_job is None) == (after.slot == "none")
+    # `engine` names the engine in the slot, and only while there is one; numbers are never given twice
+    assert (after.engine is None) == (after.slot == "none")
+    assert after.engine is None or after.engine < after.next_engine
+    if not starts:
+        assert after.next_engine == before.next_engine
+        assert after.engine in (before.engine, None)
     assert len(after.queued) <= policy.max_queued
     # NoOwnEndAfterCommitPoint: our Cancel never ends a writing job past its commit point
     if any(e == EndEngine("cancel") for e in effects):
@@ -928,7 +992,7 @@ def events_for(state: QueueState) -> st.SearchStrategy[Event]:
         jid.map(ClientGone),
         jid.map(Gate),
         st.builds(JobDone, jid, st.booleans()),
-        st.builds(EngineDied, st.one_of(st.none(), jid)),
+        st.builds(EngineDied, st.integers(min_value=0, max_value=state.next_engine)),
         jid.map(EngineNeeded),
         jid.map(RetireEngine),
         st.just(EngineEnded()),
@@ -993,7 +1057,8 @@ def abstract_states() -> Iterable[QueueState]:
             advice=advice,
             epoch=3,
             next_id=7,
-            engine_job=None if slot == "none" else (running.job.id if running is not None and slot == "busy" else 4),
+            engine=None if slot == "none" else 4,
+            next_engine=5,
         )
 
 
@@ -1001,9 +1066,9 @@ def abstract_events(state: QueueState) -> Iterable[Event]:
     ids = (5, 6, 999)
     for jid in ids:
         yield from (Cancel(jid), ClientGone(jid), Gate(jid), JobDone(jid, True), JobDone(jid, False))
-        yield from (EngineDied(jid), EngineNeeded(jid), RetireEngine(jid))
+        yield from (EngineNeeded(jid), RetireEngine(jid))
     yield from (
-        EngineDied(None),
+        EngineDied(3),
         EngineDied(4),
         EngineEnded(),
         EngineLockFree(),

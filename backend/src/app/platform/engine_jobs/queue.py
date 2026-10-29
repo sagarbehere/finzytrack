@@ -11,7 +11,9 @@ product calls it. Each rule names its spec line.
   `none`, `idle` (alive, ran only parse-only work, may serve the next job), `busy` (the running job's engine) or
   `ending` (we signalled it, or it died, and its group is not drained yet). A new engine starts only from `none` or
   `idle`, and only once the sidecar has waited out the engine lock (`engine_lock == "free"`): an engine of an earlier
-  session must have ended before this session's first ledger work (simplification B).
+  session must have ended before this session's first ledger work (simplification B). Each spawn gets its own
+  number, carried in `Start` and named by `EngineDied`; a reused engine keeps its number, so a death report is never
+  taken for an earlier engine's, and one about an earlier engine changes nothing (§5.3).
 - **The ordering rule** (§3): when the engine is free, the oldest eligible queued waited-for job starts, else the
   oldest eligible background job. A running job is never interrupted to start another. Eligible: during a switch's,
   a Reopen's or the boot's window (`exclusive`; the boot's opens with `Boot`, "from the start") only its own jobs
@@ -118,8 +120,9 @@ class Running:
 
 @dataclass(frozen=True, slots=True)
 class QueueState:
-    """`engine_job`: the last job started on the engine in the slot (None when the slot is `none`); it names the
-    engine an `EngineDied` is about."""
+    """`engine`: the spawn number of the engine in the slot (None when the slot is `none`); `next_engine`: the number
+    the next fresh engine gets. Every spawn gets a new number and a reused engine keeps its own, so an `EngineDied`
+    names one engine and never an earlier one (§5.3)."""
 
     queued: tuple[Job, ...] = ()
     running: Running | None = None
@@ -130,7 +133,8 @@ class QueueState:
     advice: bool = False
     epoch: int = 0
     next_id: int = 1
-    engine_job: int | None = None
+    engine: int | None = None
+    next_engine: int = 1
 
 
 # -- Events -----------------------------------------------------------------------------------------------------------
@@ -182,11 +186,12 @@ class JobDone:
 
 @dataclass(frozen=True, slots=True)
 class EngineDied:
-    """The engine ended without our signal (§5.3: noticed by its exit), busy or idle. `job_id` is the last job
-    started on it, or None when the shell cannot tell; a report naming another job is about an engine already gone
-    and changes nothing."""
+    """The engine ended without our signal (§5.3: noticed by its exit), busy or idle. `engine` is the number its
+    `Start` carried; a report naming another number is about an earlier engine, already ended and drained (§5.2),
+    and changes nothing. A report about the engine in the slot is never mistaken for an earlier one's, even when a
+    job was started on it (reused) after it died and before the report was fed (S0053 verifier R2-F1)."""
 
-    job_id: int | None
+    engine: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,10 +324,12 @@ class AlreadyQueued:
 
 @dataclass(frozen=True, slots=True)
 class Start:
-    """Run `job` on the idle engine (`reuse`) or on a fresh one."""
+    """Run `job` on the idle engine (`reuse`, keeping its number) or on a fresh one, spawned as number `engine`; the
+    shell names the engine by that number in `EngineDied` (§5.3)."""
 
     job: Job
     reuse: bool
+    engine: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -437,20 +444,28 @@ def _dispatch(state: QueueState) -> tuple[QueueState, tuple[Effect, ...]]:
     starts, else the oldest eligible background job."""
     if state.engine_lock != "free" or state.slot not in ("none", "idle"):
         return state, ()
-    reuse = state.slot == "idle"
     running = state.running
     if running is not None:
         if not running.wants_engine:
             return state, ()
-        state = replace(state, running=replace(running, wants_engine=False), slot="busy", engine_job=running.job.id)
-        return state, (Start(running.job, reuse),)
+        state, start = _start(state, running.job)
+        return replace(state, running=replace(running, wants_engine=False)), (start,)
     pool = [j for j in state.queued if eligible(state, j)]
     if not pool:
         return state, ()
     waited = [j for j in pool if j.waited_for]
     job = waited[0] if waited else pool[0]
-    queued = tuple(j for j in state.queued if j.id != job.id)
-    return replace(state, queued=queued, running=Running(job), slot="busy", engine_job=job.id), (Start(job, reuse),)
+    state, start = _start(replace(state, queued=tuple(j for j in state.queued if j.id != job.id)), job)
+    return replace(state, running=Running(job)), (start,)
+
+
+def _start(state: QueueState, job: Job) -> tuple[QueueState, Start]:
+    """§5.1, §5.3: called with the slot `none` or `idle`; an idle engine (the slot holds a number) serves the job and
+    keeps its number; otherwise a fresh one is spawned with the next number (each spawn its own)."""
+    if state.engine is not None:
+        return replace(state, slot="busy"), Start(job, reuse=True, engine=state.engine)
+    number = state.next_engine
+    return replace(state, slot="busy", engine=number, next_engine=number + 1), Start(job, reuse=False, engine=number)
 
 
 @tla_action("SpawnStep")
@@ -608,9 +623,9 @@ def _job_done(p: QueuePolicy, s: QueueState, e: JobDone) -> Step:
 
 def _engine_died(p: QueuePolicy, s: QueueState, e: EngineDied) -> Step:
     """§5.3: a crash is noticed by the engine's exit. Its job is lost (not run again by itself); its group is
-    drained before the next engine (§5.2)."""
+    drained before the next engine (§5.2). Only a report naming the engine in the slot counts."""
     r = s.running
-    if s.slot not in ("busy", "idle") or e.job_id not in (None, s.engine_job):
+    if s.slot not in ("busy", "idle") or e.engine != s.engine:
         return Step(s)
     if s.slot == "busy" and r is not None:
         state, ended = _ending(replace(s, running=None), "crashed")
@@ -622,7 +637,7 @@ def _engine_died(p: QueuePolicy, s: QueueState, e: EngineDied) -> Step:
 def _engine_ended(p: QueuePolicy, s: QueueState, e: EngineEnded) -> Step:
     if s.slot != "ending":
         return Step(s)
-    state, effects = _clear_advice(replace(s, slot="none", engine_job=None))
+    state, effects = _clear_advice(replace(s, slot="none", engine=None))
     return Step(state, effects)
 
 

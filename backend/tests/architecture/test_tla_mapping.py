@@ -38,6 +38,8 @@ MODEL = REPO / "formal" / "tla" / "engine-jobs" / "EngineJobs.tla"
 BACKLOG = REPO / "design" / "backlog.md"
 SOURCES = (REPO / "backend" / "src", REPO / "engine" / "src")
 APP_ACTIONS_OUTSIDE_APPSTEP = frozenset({"AdviceTimer"})  # MAPPING.md §1.2: an app action, listed in EnvStep
+MARKED_GROUPS = ("EngineStep", "AppStep")  # their actions are the code's: each needs a marker or a PLANNED row
+FREE_GROUPS = ("UserStep", "EnvStep")  # user, OS and outside-editor actions: no marker needed
 
 SAVE = "BL-0151"  # the save, rollback and recover-all over the fake file system
 R4_READS = "BL-0152"  # R4, the reads and the open
@@ -151,18 +153,36 @@ def defined_operators(model: str) -> set[str]:
     return set(re.findall(r"^([A-Za-z_][A-Za-z0-9_]*)(?:\([^)]*\))?\s*==", model, re.MULTILINE))
 
 
+def definition_body(model: str, name: str) -> str:
+    """The body of the top-level definition `name ==`: the rest of its line and every following line until the next
+    line that starts in the first column (the next definition), blank lines included; TLA+ line comments dropped.
+    A group is read whole, however its lines are spaced (S0053 verifier R2-F2)."""
+    lines = model.splitlines()
+    starts = [i for i, line in enumerate(lines) if re.match(rf"{name}\s*==", line)]
+    assert len(starts) == 1, f"{name}: defined {len(starts)} times in the model, not once"
+    first = starts[0]
+    body = [lines[first].split("==", 1)[1]]
+    for line in lines[first + 1 :]:
+        if line[:1] not in ("", " ", "\t"):
+            break
+        body.append(line)
+    return "\n".join(re.sub(r"\\\*.*$", "", line) for line in body)
+
+
+def disjuncts(model: str, name: str) -> list[str]:
+    """The disjuncts of the definition `name`, with or without a leading `\\/`; an empty one is kept, for the caller
+    to refuse."""
+    parts = [part.strip() for part in re.split(r"\\/", definition_body(model, name))]
+    return parts[1:] if parts[0] == "" else parts
+
+
 def step_actions(model: str, group: str) -> set[str]:
-    """The actions a disjunction of `Next` names (`EngineStep`, `AppStep`, `UserStep`, `EnvStep`). Each disjunct
-    must be an operator of the model, applied or not, possibly under existentials (`\\/ A`, `\\/ A(x)`,
-    `\\/ \\E i \\in S : \\E j \\in T : A(i, j)`); any other form is refused rather than dropped, since a dropped
-    disjunct would leave its action out of the required set."""
-    match = re.search(rf"^{group}\s*==\s*\n(.*?)(?:\n\s*\n)", model, re.MULTILINE | re.DOTALL)
-    assert match is not None, f"{group} not found in the model"
-    parts = [part.strip() for part in re.split(r"\\/", match.group(1))]
-    assert parts[0] == "", f"{group}: cannot read {parts[0]!r} before its first disjunct"
+    """The actions a group of `Next` names. Each disjunct must be an operator of the model, applied or not, possibly
+    under existentials (`\\/ A`, `\\/ A(x)`, `\\/ \\E i \\in S : \\E j \\in T : A(i, j)`); any other form is refused
+    rather than dropped, since a dropped disjunct would leave its action out of the required set."""
     defined = defined_operators(model)
     names: set[str] = set()
-    for part in parts[1:]:
+    for part in disjuncts(model, group):
         read = DISJUNCT.fullmatch(part)
         assert read is not None, (
             f"{group}: cannot read the disjunct {part!r}; write it as an action, or extend the reader"
@@ -204,13 +224,33 @@ def open_rows(backlog: str) -> set[str]:
     return {row for row, _ in rows}
 
 
+def next_groups(model: str) -> list[str]:
+    """The groups `Next` is the disjunction of, every one of them, each a bare operator name."""
+    groups = disjuncts(model, "Next")
+    for group in groups:
+        assert re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", group), f"Next: cannot read the disjunct {group!r} as a group"
+    return groups
+
+
 def problems(
     model: str, found: Iterable[Marker], planned: Mapping[str, str], partial: Mapping[str, str], live: set[str]
 ) -> list[str]:
-    every = set[str]().union(*(step_actions(model, g) for g in ("EngineStep", "AppStep", "UserStep", "EnvStep")))
-    required = step_actions(model, "EngineStep") | step_actions(model, "AppStep") | APP_ACTIONS_OUTSIDE_APPSTEP
+    groups = {g: step_actions(model, g) for g in next_groups(model)}
+    every = set[str]().union(*groups.values())
+    required = set[str]().union(*(groups.get(g, set[str]()) for g in MARKED_GROUPS)) | APP_ACTIONS_OUTSIDE_APPSTEP
     marked = {m.action for m in found}
-    out = [f"{m.where}: @tla_action({m.action!r}) names no action of Next" for m in found if m.action not in every]
+    out = [
+        f"{g}: a group of Next the code map does not classify (actions {sorted(acts)}); add it to MARKED_GROUPS "
+        "or FREE_GROUPS"
+        for g, acts in groups.items()
+        if g not in (*MARKED_GROUPS, *FREE_GROUPS)
+    ]
+    out += [
+        f"{a}: a group of Next the code map expects is missing"
+        for a in (*MARKED_GROUPS, *FREE_GROUPS)
+        if a not in groups
+    ]
+    out += [f"{m.where}: @tla_action({m.action!r}) names no action of Next" for m in found if m.action not in every]
     out += [
         f"{a}: an engine or app action with no @tla_action and no PLANNED row"
         for a in sorted(required)
@@ -272,6 +312,8 @@ EnvStep ==
   \\/ AdviceTimer
 
 AdviceTimer == TRUE
+
+Next == EngineStep \\/ AppStep \\/ UserStep \\/ EnvStep
 """
 
 
@@ -312,6 +354,63 @@ def test_must_not_pass(
     assert any(needle in p for p in out), out
 
 
+def test_a_blank_line_inside_a_group_does_not_end_it() -> None:
+    """S0053 verifier R2-F2: a group is read up to the next definition, not to its first blank line; an action after
+    a blank line is still required."""
+    model = TOY.replace("AppStep ==\n  \\/ B\n", "AppStep ==\n  \\/ B\n\n  \\/ A_Late\n").replace(
+        "B == TRUE", "B == TRUE\nA_Late == TRUE"
+    )
+    assert "\\/ B\n\n  \\/ A_Late" in model
+    assert step_actions(model, "AppStep") == {"B", "A_Late"}
+    out = problems(model, [m("A_One"), m("A_Two"), m("B"), m("AdviceTimer")], {}, {}, set[str]())
+    assert any("A_Late: an engine or app action" in p for p in out), out
+
+
+def test_a_comment_in_a_group_is_not_read_as_a_disjunct() -> None:
+    model = TOY.replace("AppStep ==\n  \\/ B\n", "AppStep ==\n  \\/ B \\* the app's own\n")
+    assert step_actions(model, "AppStep") == {"B"}
+
+
+def test_every_group_of_next_is_read_and_an_unclassified_one_fails() -> None:
+    """S0053 verifier R2-F2: the groups come from `Next` itself; a fifth group fails until it is classified, so its
+    actions are never left out of the required set unnoticed."""
+    model = (
+        TOY.replace("\\/ EnvStep\n", "\\/ EnvStep \\/ OrphanStep\n")
+        + "\nOrphanStep ==\n  \\/ A_Orphan\n\nA_Orphan == TRUE\n"
+    )
+    assert next_groups(model)[-1] == "OrphanStep"
+    out = problems(model, [m("A_One"), m("A_Two"), m("B"), m("AdviceTimer")], {}, {}, set[str]())
+    assert any("OrphanStep: a group of Next the code map does not classify" in p and "A_Orphan" in p for p in out), out
+
+
+def test_a_marked_group_missing_from_next_fails() -> None:
+    model = TOY.replace("Next == EngineStep \\/ ", "Next == ")
+    out = problems(model, [m("B"), m("AdviceTimer")], {}, {}, set[str]())
+    assert any("EngineStep: a group of Next the code map expects is missing" in p for p in out), out
+
+
+@pytest.mark.parametrize(
+    "next_line", ["Next == EngineStep \\/ (AppStep)", "Next == EngineStep \\/ \\/ AppStep", "Next == EngineStep \\/"]
+)
+def test_a_next_disjunct_that_is_not_a_group_name_is_refused(next_line: str) -> None:
+    model = re.sub(r"^Next ==.*$", lambda _: next_line, TOY, flags=re.MULTILINE)
+    assert next_line in model
+    with pytest.raises(AssertionError, match="cannot read"):
+        next_groups(model)
+
+
+def test_a_definition_given_twice_is_refused() -> None:
+    """A second `Next` (or group) would let the reader pick the one without the new group (the verifier's repro of
+    R2-F2 appends one); TLA+ refuses a redefinition, and so does the reader."""
+    model = TOY + "\nNext == EngineStep \\/ AppStep \\/ UserStep \\/ EnvStep \\/ OrphanStep\n"
+    with pytest.raises(AssertionError, match="defined 2 times"):
+        next_groups(model)
+
+
+def test_the_real_models_next_has_exactly_the_four_classified_groups() -> None:
+    assert next_groups(MODEL.read_text(encoding="utf-8")) == [*MARKED_GROUPS, *FREE_GROUPS]
+
+
 def test_nested_existentials_are_read_as_their_action() -> None:
     model = TOY.replace(
         "\\/ A_One \\/ \\E i \\in S : A_Two(i)", "\\/ A_One \\/ \\E i \\in S : \\E j \\in T : A_Two(i, j)"
@@ -324,8 +423,8 @@ def test_nested_existentials_are_read_as_their_action() -> None:
 
 @pytest.mark.parametrize(
     "disjunct",
-    ["(A_One)", "A_One /\\ x = 1", "IF c THEN A_One ELSE A_Two(1)", "\\E i \\in S : (A_Two(i))", "Undefined"],
-    ids=["parenthesised", "conjunction", "if-then-else", "parenthesised-under-exists", "not-an-operator"],
+    ["(A_One)", "A_One /\\ x = 1", "IF c THEN A_One ELSE A_Two(1)", "\\E i \\in S : (A_Two(i))", "Undefined", ""],
+    ids=["parenthesised", "conjunction", "if-then-else", "parenthesised-under-exists", "not-an-operator", "empty"],
 )
 def test_a_disjunct_the_reader_cannot_parse_is_refused_not_dropped(disjunct: str) -> None:
     """S0053 verifier F9: a disjunct the reader does not understand would drop an action from the required set, and

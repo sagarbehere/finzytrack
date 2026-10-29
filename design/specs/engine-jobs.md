@@ -93,6 +93,7 @@ Cancel is the user's way to stop waiting, and the only way a slow job ends early
 ### 5.3 Crash and bounded restart
 
 - **A crash is noticed by the engine's exit**: the reader sees the output end (`Ended`), or the reap sees the exit. Nothing polls or times the engine. [Owner A]
+- **Each engine has its own number** for its whole life: every spawn takes a new one, and an engine that serves the next job after parse-only work (§5.1) keeps it. The shell reports a death by that number. A report about the engine in the slot ends it as `crashed`, even when a job was started on it after it died and before the report arrived (that job is lost like any crashed job); a report about an earlier engine, already ended and drained (§5.2), changes nothing. Naming the engine by its last job would mistake the first case for the second and leave the slot held by a dead engine. [S0053 verifier R2-F1]
 - **How an engine ended:**
 
 | Observation | Outcome | Counted as a stop (S0040 bound) |

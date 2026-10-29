@@ -4,9 +4,9 @@ The composition root starts the engine on a thread while the sidecar binds its p
 slow or missing engine delays only itself. The outcome is a state, never an exception: `EngineStarting`, then
 `EngineReady` (the handshake's facts and the engine's pid) or `EngineDown` (the typed failure). The client's
 supervision table logs every start and stop (`engine.ready`, `engine.start_failed`, ...; S0040), this first one
-included, so this module logs nothing. A later request restarts a stopped engine through that table
-(`app.platform.engine_supervision`); this module only reports the first start, and the client's `state` is the
-current one.
+included, so this module logs only a failed wait for the engine lock (below), which starts no engine. A later
+request restarts a stopped engine through that table (`app.platform.engine_supervision`); this module only reports
+the first start, and the client's `state` is the current one.
 
 **The engine lock** (S0053; engine-jobs §5.1, simplification B): before the first start the boot waits for the engine
 lock (`wait_engine_lock`, the composition root's `app.platform.adapters.engine_lock.wait_engine_lock`), so no engine
@@ -15,11 +15,13 @@ stays `EngineStarting` meanwhile and the sidecar keeps answering. The quit advic
 with the job queue's shell (BL-0150). A wait that fails (an `OSError`: a file where `locks/` belongs, a read-only
 folder) starts no engine, since an earlier session's engine may still run: the state is `EngineDown` with
 `start_failed`, and this module logs it as `engine.start_failed` (the one outcome no client start logs; EP-13,
-S0053 verifier F2).
+S0053 verifier F2). A log sink that raises loses that line, never the state (S0041's rule for the client; S0053
+verifier R2-F3).
 """
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -81,8 +83,9 @@ class EngineBoot:
             self._wait_engine_lock()
         except OSError as exc:
             failure = EngineFailure("start_failed", f"the engine lock could not be waited for: {exc}")
-            self._log(ENGINE_START_FAILED, kind=failure.kind, detail=failure.detail)
             state = EngineDown(failure)
+            with contextlib.suppress(Exception):
+                self._log(ENGINE_START_FAILED, kind=failure.kind, detail=failure.detail)
         else:
             out = self._engine.start()
             state = EngineDown(out) if isinstance(out, EngineFailure) else EngineReady(out, self._pid())
