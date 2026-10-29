@@ -40,6 +40,8 @@ An editor, Fava or a sync client may save a ledger file between our final finger
 - **Volumes without the swap** (exFAT, FAT, some network shares: no `RENAME_SWAP` or `RENAME_EXCL`). Owner, 2026-10-29, answering what should happen there: "Unsafe fallback on such drives"; then, after the trade-offs and the proposal to build it as its own slice with an up-front refusal until then: "Agreed, fallback as its own slice after slice 4". So such a volume gets a non-atomic fallback write path in a later slice (BL-0160, after BL-0151's slice 4), and until it exists a save there is refused before anything is written (`ledger_engine.ledger.writer._volume_without_swap`, which reads the volume's capabilities).
 - **Unchanged:** the swap, the displaced-file check and everything else in this record.
 
+- **Code pointer, S0061** (no change to the decision): the two rules' one function each moved with the restore, which shares them with the save: `ledger_engine.ledger.handles.hard_links` (was `writer._hard_links`) and `ledger_engine.ledger.handles.volume_without_swap` (was `writer._volume_without_swap`). The restore applies the hard-link rule too: a file to restore with a second hard link stops the journal instead of being swapped.
+
 ## References
 
 review:D1 §13.2; review:25 §8.3, §14 item 5; review:27 M1 risks; ADR-0008, ADR-0012; INV-01; CAP-DATA-EXTERNAL-EDIT.

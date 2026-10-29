@@ -1,26 +1,21 @@
-"""The save's durable order (`design/specs/engine-jobs.md` §6.1 step 8, §6.4, §10, §13, §14 "Save, durable order";
-ADR-0008 steps 5-6, ADR-0012, ADR-0013; S0060), over the in-memory file system with its durable layer.
+"""The save's durable order and its rollback (`design/specs/engine-jobs.md` §6.1 step 8, §6.4, §10, §13, §14 "Save,
+durable order"; ADR-0008 steps 5-6, ADR-0012, ADR-0013; S0060, S0061), over the in-memory file system with its
+durable layer.
 
-One oracle (`check_disk`) states what every state of the disk must satisfy, crash or not, before or after a power
-loss, written from §10's rows and §13's write-protocol properties:
-- every target is whole at its pre or its post bytes (a created file: absent or post): `NoTornLedger`;
-- a target at its post bytes only under a readable `.open` or `.closed` journal whose backups hold the pre bytes:
-  `BackupDurableBeforeReplace`, `JournalDurableBeforeFirstReplace`; a `.part` may be torn, an `.open` never;
-- a `.closed` journal only with every target at post and no temp of ours left (`temps_after_close`);
-- nothing changed outside the recorded paths, the save's temps, its backups and its journal (INV-32).
-Then each injected failure checks the outcome told against the disk: `NotSaved` only with every target at pre and no
-`.open` journal, `Unfinished` only with a readable `.open` journal, `Landed` only with a `.closed` journal that every
-power loss keeps (`SavedSurvivesPowerLoss`).
-
-Rollback is the next slice (BL-0151): a failure after the journal's rename leaves it `.open`, the spec's state of a
-failed rollback (§6.4), which this oracle accepts and recovery resolves.
+The oracle is `tests.ledger.worlds.check_disk`, for every state of the disk, crash or not, before or after a power
+loss. Then each injected failure checks the outcome told against the disk (§6.4: any failure from the `.open` journal
+on rolls back at once): `NotSaved` only with every target at pre (or, for the file whose outside save the save kept,
+at that outside save) and, unless `open_journal`, no `.open` journal in the disk or in any power-loss state of it;
+`Unfinished` only with a readable journal that is not `.closed`-and-durable; `Landed` only with a `.closed` journal
+that every power loss keeps (`SavedSurvivesPowerLoss`). A crash (the process died: no rollback) is followed by
+recovery (`tests/ledger/test_restore.py`).
 """
 
 from __future__ import annotations
 
 import errno
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 import pytest
 
@@ -40,126 +35,21 @@ from ledger_engine.ledger.writer import (
     sha256,
 )
 from tests.fakes.memfs import Crash, MemFS
+from tests.ledger.worlds import (
+    BD,
+    JD,
+    NAME,
+    SAVE_DIR,
+    World,
+    check_disk,
+    check_every_power_loss,
+    check_recovered,
+    journals,
+    recover,
+    world,
+)
 
 pytestmark = [pytest.mark.inv("INV-01"), pytest.mark.inv("INV-22")]
-
-JD = "/w/local/journal"
-BD = "/w/local/backups"
-NAME = "s1-j7"
-SAVE_DIR = f"{BD}/{NAME}"
-
-
-@dataclass(frozen=True)
-class Target:
-    path: str  # canonical
-    pre: bytes | None
-    post: bytes
-
-    @property
-    def folder(self) -> str:
-        return self.path.rpartition("/")[0]
-
-    @property
-    def temp(self) -> str:
-        base = self.path.rpartition("/")[2]
-        return f"{self.folder}/.{base}.ft-j7.tmp"
-
-
-@dataclass(frozen=True)
-class World:
-    fs: MemFS
-    commit: Commit
-    targets: tuple[Target, ...]
-    before: dict[str, tuple[object, ...]]
-    new_dirs: tuple[str, ...] = ()
-
-
-def world(*, new_dir: bool = False, mode: int = 0o644) -> World:
-    """A ledger set in `/w/L`: `inc/a.bean` (a child, replaced), `prices.bean` (created; with `new_dir`, in a new
-    folder `y2026/`), `main.bean` (the root, replaced last) and `other.bean` (in the set, not written)."""
-    fs = MemFS()
-    for d in (JD, BD, "/w/L/inc"):
-        fs.outside_mkdirs(d)
-    fs.outside_write("/w/L/main.bean", b'include "inc/a.bean"\n', mode=mode)
-    fs.outside_write("/w/L/inc/a.bean", b"2026-01-01 open Assets:A\n")
-    fs.outside_write("/w/L/other.bean", b"; not written\n")
-    created = "/w/L/y2026/prices.bean" if new_dir else "/w/L/prices.bean"
-    targets = (
-        Target("/w/L/inc/a.bean", b"2026-01-01 open Assets:A\n", b"2026-01-01 open Assets:A\n2026-01-02 *\n"),
-        Target(created, None, b"2026-01-03 price X 1 EUR\n"),
-        Target("/w/L/main.bean", b'include "inc/a.bean"\n', b'include "inc/a.bean"\ninclude "prices.bean"\n'),
-    )
-    commit = Commit(
-        session="s1",
-        job="j7",
-        workspace_key="k1",
-        lineage="lin1",
-        engine_build="build1",
-        post_fingerprint="sha256:" + "f" * 64,
-        adopted_digest="sha256:" + "a" * 64,
-        parse_digest="sha256:" + "b" * 64,
-        changes=tuple(Change(t.path, None if t.pre is None else sha256(t.pre), t.post) for t in targets),
-        journal_dir=JD,
-        backups_dir=BD,
-    )
-    return World(fs, commit, targets, fs.snapshot(), ("/w/L/y2026",) if new_dir else ())
-
-
-def journals(fs: MemFS) -> dict[State, bytes]:
-    out: dict[State, bytes] = {}
-    for path, entry in fs.snapshot().items():
-        if path.startswith(JD + "/"):
-            parsed = journal.parse_file_name(path.rpartition("/")[2])
-            assert parsed is not None, f"a foreign name in the journal folder: {path}"
-            assert parsed[0] == NAME, f"another save's record: {path}"
-            assert entry[0] == "file"
-            out[parsed[1]] = entry[1]  # type: ignore[assignment]
-    return out
-
-
-def check_disk(fs: MemFS, w: World) -> None:
-    """The oracle (the module's docstring)."""
-    snap = fs.snapshot()
-    js = journals(fs)
-    assert len(js) <= 1, f"one record per save, found {sorted(js)}"
-    state, data = next(iter(js.items())) if js else (None, b"")
-    record = journal.decode(data) if state in (State.OPEN, State.CLOSED) else None
-    if state in (State.OPEN, State.CLOSED):
-        assert isinstance(record, Record), f"a {state} journal is never torn: {record}"
-    if state is not None:
-        assert state in (State.PART, State.OPEN, State.CLOSED)
-    at_post = False
-    for t in w.targets:
-        now = fs.file(t.path)
-        assert now in (t.pre, t.post), f"{t.path} is torn or foreign: {now!r}"
-        if now == t.post and now != t.pre:
-            at_post = True
-    if at_post:
-        assert isinstance(record, Record), "a target at post with no readable .open or .closed journal"
-        for f in record.files:
-            if f.backup is not None:
-                backup = fs.file(f"{record.backup_dir}/{f.backup}")
-                assert backup is not None, "a replaced file whose backup is gone"
-                assert sha256(backup) == f.pre, "a replaced file whose backup does not hold its pre bytes"
-    if state is State.CLOSED:
-        for t in w.targets:
-            assert fs.file(t.path) == t.post, "closed, but a target is not at post"
-            assert t.temp not in snap, "closed with a temp of ours left"
-    ours = {t.path for t in w.targets} | {t.temp for t in w.targets} | set(w.new_dirs) | {SAVE_DIR, JD, BD}
-    for path, entry in snap.items():
-        if path in ours or path.startswith((SAVE_DIR + "/", JD + "/")):
-            continue
-        assert w.before.get(path) == entry, f"written outside the recorded paths: {path}"
-    for path in w.before:
-        assert path in snap, f"removed: {path}"
-
-
-def check_every_power_loss(fs: MemFS, w: World) -> int:
-    n = 0
-    for state in fs.power_loss_states():
-        check_disk(state, w)
-        n += 1
-    return n
 
 
 def clean_run() -> tuple[World, Outcome]:
@@ -268,51 +158,157 @@ def test_a_crash_at_every_effect_then_every_power_loss_leaves_a_recoverable_disk
     assert check_every_power_loss(w.fs, w) >= 1
 
 
+def check_told(fs: MemFS, w: World, out: Outcome, *, kept: str | None = None) -> None:
+    """The outcome told matches the disk (§6.4, §10, §11; INV-22), in the disk now and in every power-loss state of it.
+    `kept`: the file whose outside save the save itself put back (it holds those bytes, not pre)."""
+    for state in (fs, *fs.power_loss_states()):
+        js = journals(state)
+        match out:
+            case Landed():
+                assert set(js) == {State.CLOSED}
+            case NotSaved():
+                assert State.CLOSED not in js, "not saved, but a closed record"
+                for t in w.targets:
+                    if t.path != kept:
+                        assert state.file(t.path) == t.pre, f"not saved, but {t.path} is not at pre"
+                if not out.open_journal:
+                    assert State.OPEN not in js, "an .open journal left behind and not told (writes must pause)"
+                if out.unchanged:
+                    assert kept is None
+            case Unfinished():
+                assert len(js) == 1, js
+                ((st, data),) = js.items()
+                assert st in (State.OPEN, State.CLOSED, State.RESOLVED), st
+                assert isinstance(journal.decode(data), Record), "unfinished means a readable journal on disk"
+
+
 @pytest.mark.parametrize("at", range(len(clean_run()[0].fs.effects)))
-def test_an_io_error_at_every_effect_is_told_truthfully_and_every_power_loss_after_it_is_recoverable(at: int) -> None:
+def test_an_io_error_at_every_effect_is_rolled_back_and_told_not_saved_in_every_power_loss(at: int) -> None:
+    """§6.4: any failure from the `.open` journal on rolls back at once (before it, nothing was replaced: not a
+    rollback); with the rollback resolving, every single I/O error is "not saved", the ledger unchanged after the
+    re-hash, no `.open` journal and nothing of ours left (§6.4 last bullet, fidelity review 3 L10)."""
     w = world()
     w.fs.inject(at, crash=False, err=errno.ENOSPC)
     out = durable_commit(w.fs, w.commit)
     check_disk(w.fs, w)
     check_every_power_loss(w.fs, w)
-    js = journals(w.fs)
-    match out:
-        case NotSaved():
-            assert out.reason is Reason.IO_ERROR
-            assert out.unchanged, "an I/O error before the first replace leaves every target at pre"
-            for t in w.targets:
-                assert w.fs.file(t.path) == t.pre
-            assert State.CLOSED not in js
-            if State.OPEN in js:
-                assert out.open_journal, "an .open journal left behind is always told (writes stay paused)"
-        case Unfinished():
-            ((state, data),) = js.items()
-            # `.closed` only when the close's folder sync failed: not durable, so not "saved" (§6.1 step 8.5)
-            assert state in (State.OPEN, State.CLOSED), "unfinished means a readable journal on disk"
-            assert isinstance(journal.decode(data), Record)
-            if state is State.CLOSED:
-                assert w.fs.effects[at] == f"sync {JD}:"
-                assert at == len(w.fs.effects) - 1
-        case Landed():
-            pytest.fail(f"an I/O error at effect {at} ({w.fs.effects[at]}) cannot land")
+    assert isinstance(out, NotSaved), (at, w.fs.effects[at], out)
+    assert out.reason is Reason.IO_ERROR
+    assert (out.unchanged, out.open_journal) == (True, False), out
+    check_told(w.fs, w, out)
+    assert set(journals(w.fs)) <= {State.PART, State.RESOLVED}
+    if State.RESOLVED in journals(w.fs):
+        check_recovered(w.fs, w, None)
 
 
-def test_a_failure_before_the_first_replace_is_not_saved_and_one_after_it_is_unfinished() -> None:
-    """The step rule: the first swap or exclusive rename of a ledger file divides `NotSaved` (true whatever the
-    journal's state: nothing was replaced) from `Unfinished`; `open_journal` from the journal's rename to `.open` on."""
+FIRST_REPLACE = min(i for i, x in enumerate(clean_run()[0].fs.effects) if x.startswith(("swap /w/L", "rename /w/L")))
+OPEN_RENAME = clean_run()[0].fs.effects.index(f"rename {JD}:{NAME}.part,{NAME}.open")
+
+
+def _rollback_effects(at: int) -> range:
+    w = world()
+    w.fs.inject(at, crash=False)
+    durable_commit(w.fs, w.commit)
+    return range(at + 1, len(w.fs.effects))
+
+
+ROLLBACK_POINTS = [(at, j) for at in range(OPEN_RENAME, len(clean_run()[0].fs.effects)) for j in _rollback_effects(at)]
+
+
+@pytest.mark.parametrize(("at", "j"), ROLLBACK_POINTS)
+def test_an_io_error_in_the_rollback_at_every_effect_is_told_truthfully_and_recovery_then_resolves(
+    at: int, j: int
+) -> None:
+    """§6.4: "If the rollback fails (an I/O error included), the journal stays `.open`": unfinished from the first
+    replace on, not saved (writes paused) before it; then recovery (Reopen, §6.6) resolves it."""
+    w = world()
+    w.fs.inject(at, crash=False)
+    w.fs.inject(j, crash=False, err=errno.EIO)
+    out = durable_commit(w.fs, w.commit)
+    check_disk(w.fs, w)
+    check_every_power_loss(w.fs, w)
+    assert not isinstance(out, Landed)
+    if at < FIRST_REPLACE:
+        assert isinstance(out, NotSaved), (at, j, out)
+        assert out.open_journal
+    else:
+        assert isinstance(out, Unfinished), (at, j, out)
+    check_told(w.fs, w, out)
+    for state in (w.fs, *w.fs.power_loss_states()):
+        check_recovered(state, w, recover(state))
+
+
+@pytest.mark.parametrize(("at", "j"), ROLLBACK_POINTS)
+def test_a_crash_at_every_effect_of_the_rollback_then_recovery_resolves(at: int, j: int) -> None:
+    """§10: "A crash during a recovery or a rollback leaves the journal `.open` with each file at pre or post, so the
+    next recover-all finishes it"."""
+    w = world()
+    w.fs.inject(at, crash=False)
+    w.fs.inject(j, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    for state in (w.fs, *w.fs.power_loss_states()):
+        check_disk(state, w)
+        check_recovered(state, w, recover(state))
+
+
+def test_the_rollback_is_the_restore_root_first_and_resolves_after_its_syncs() -> None:
+    """§6.4 "rolls back at once from the journal, as recovery does (§8.1 steps 2-4)": a failure at the read-back's
+    temp removal (every file at post) is followed by the restore's effects, root first, then `.resolved` synced."""
     base, _ = clean_run()
-    e = base.fs.effects
-    rename = _index(e, f"rename {JD}:{NAME}.part,{NAME}.open")
-    first_replace = min(i for i, x in enumerate(e) if x.startswith(("swap /w/L", "rename /w/L")))
-    for at in range(len(e)):
+    at = _index(base.fs.effects, "remove /w/L/inc:.a.bean.ft-j7.tmp")
+    w = world()
+    w.fs.inject(at, crash=False)
+    out = durable_commit(w.fs, w.commit)
+    assert out == NotSaved(Step.READ_BACK, Reason.IO_ERROR, True, path="/w/L/inc/a.bean")
+    e = w.fs.effects[at + 1 :]
+    assert [x for x in e if x.startswith("swap ")] == [
+        "swap /w/L:.main.bean.ft-restore-j7.tmp,main.bean",
+        "swap /w/L/inc:.a.bean.ft-restore-j7.tmp,a.bean",
+    ]
+    assert e[-2:] == [f"rename {JD}:{NAME}.open,{NAME}.resolved", f"sync {JD}:"]
+    check_recovered(w.fs, w, None)
+
+
+@pytest.mark.parametrize("after", [False, True])
+def test_a_failed_close_is_rolled_back_and_never_leaves_a_closed_record_over_restored_files(after: bool) -> None:
+    """S0060 verifier Q1: the close's rename or its folder sync answers an error (with `after`, it happened): the
+    `.closed` record is renamed back to `.open` and synced before any file is restored, so no power loss can show a
+    `.closed` record (saved) over files the rollback put back; the save is told not saved."""
+    base, _ = clean_run()
+    for label in (f"rename {JD}:{NAME}.open,{NAME}.closed", f"sync {JD}:"):
+        at = len(base.fs.effects) - 1 if label.startswith("sync") else base.fs.effects.index(label)
         w = world()
-        w.fs.inject(at, crash=False)
+        w.fs.inject(at, crash=False, err=errno.EIO, after=after)
         out = durable_commit(w.fs, w.commit)
-        if at < first_replace:
-            assert isinstance(out, NotSaved), (at, e[at], out)
-            assert out.open_journal == (at >= rename), (at, e[at], out)  # a failed rename may have happened
-        else:
-            assert isinstance(out, Unfinished), (at, e[at], out)
+        assert out == NotSaved(Step.CLOSE, Reason.IO_ERROR, True), (label, out)
+        check_told(w.fs, w, out)
+        check_recovered(w.fs, w, None)
+        e = w.fs.effects[at + 1 :]
+        if after:
+            assert e[:2] == [f"rename {JD}:{NAME}.closed,{NAME}.open", f"sync {JD}:"], e[:3]
+        for k in range(at + 1, len(w.fs.effects)):  # a crash anywhere in that rollback, then every power loss
+            v = world()
+            v.fs.inject(at, crash=False, err=errno.EIO, after=after)
+            v.fs.inject(k, crash=True)
+            with pytest.raises(Crash):
+                durable_commit(v.fs, v.commit)
+            for state in (v.fs, *v.fs.power_loss_states()):
+                check_disk(state, v)  # `.closed` only with every file at post
+                check_recovered(state, v, recover(state))
+
+
+def test_a_full_disk_after_the_journal_is_durable_and_before_the_first_replace_is_resolved_and_not_saved() -> None:
+    """§14 model finding L10, §6.4 last bullet: every file at pre, the journal `.resolved`, the temps deleted."""
+    base, _ = clean_run()
+    at = _index(base.fs.effects, "write /w/L/inc:.a.bean.ft-j7.tmp")
+    w = world()
+    w.fs.inject(at, crash=False, err=errno.ENOSPC, cut=5)
+    out = durable_commit(w.fs, w.commit)
+    assert out == NotSaved(Step.REPLACE, Reason.IO_ERROR, True, path="/w/L/inc/a.bean")
+    assert set(journals(w.fs)) == {State.RESOLVED}
+    assert w.fs.file(w.targets[0].temp) is None
+    check_recovered(w.fs, w, None)
 
 
 def test_landed_survives_every_power_loss() -> None:
@@ -341,21 +337,27 @@ def test_an_exclusive_create_refuses_a_file_that_appeared_and_keeps_it() -> None
     w = world()
     _hook(w.fs, "rename /w/L:.prices.bean.ft-j7.tmp,prices.bean", lambda: w.fs.outside_write("/w/L/prices.bean", b"x"))
     out = durable_commit(w.fs, w.commit)
-    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, "/w/L/prices.bean")
+    assert out == NotSaved(Step.REPLACE, Reason.CHANGED, False, path="/w/L/prices.bean")
     assert w.fs.file("/w/L/prices.bean") == b"x"
-    assert set(journals(w.fs)) == {State.OPEN}
+    assert set(journals(w.fs)) == {State.RESOLVED}, "the other files rolled back (§6.4)"
+    check_told(w.fs, w, out, kept="/w/L/prices.bean")
 
 
 def test_a_displaced_outside_save_at_a_swap_is_swapped_back_synced_and_kept() -> None:
     """§6.4: the swap hashes what it displaced; other bytes are put back at once and the folder synced (F3), so every
-    power loss keeps the outside save in place."""
+    power loss keeps the outside save in place; then the other files are rolled back and the journal resolved, and the
+    user is told "Your editor saved this file at the same moment" (§6.4)."""
     w = world()
     foreign = b"; saved by an editor\n"
     _hook(w.fs, "swap /w/L:.main.bean.ft-j7.tmp,main.bean", lambda: w.fs.outside_write("/w/L/main.bean", foreign))
     out = durable_commit(w.fs, w.commit)
-    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, "/w/L/main.bean")
+    assert out == NotSaved(Step.REPLACE, Reason.CHANGED, False, path="/w/L/main.bean")
     assert w.fs.file("/w/L/main.bean") == foreign
-    assert w.fs.effects[-1] == "sync /w/L:"  # the swap-back synced before anything else
+    swap = "swap /w/L:.main.bean.ft-j7.tmp,main.bean"
+    back = [i for i, x in enumerate(w.fs.effects) if x == swap][1]
+    assert w.fs.effects[back + 1] == "sync /w/L:"  # the swap-back synced before anything else (F3)
+    assert set(journals(w.fs)) == {State.RESOLVED}
+    check_told(w.fs, w, out, kept="/w/L/main.bean")
     for state in w.fs.power_loss_states():
         assert state.file("/w/L/main.bean") == foreign
 
@@ -373,6 +375,10 @@ def test_a_crash_right_after_a_swap_that_displaced_an_outside_save_keeps_both_ve
     for state in [w.fs, *w.fs.power_loss_states()]:
         versions = {state.file(target.path), state.file(target.temp)}
         assert foreign in versions, "the outside save was lost"
+        assert set(journals(state)) == {State.OPEN}
+        out = recover(state)  # recovery stops on it (§8.1 step 2), both versions kept
+        assert type(out).__name__ == "Stopped", out
+        assert foreign in {state.file(target.path), state.file(target.temp)}
         assert set(journals(state)) == {State.OPEN}
 
 
@@ -500,8 +506,9 @@ def test_a_folder_that_appears_before_the_save_makes_it_stops_the_save_and_is_le
     w = world(new_dir=True)
     _hook(w.fs, "mkdir /w/L:y2026", lambda: w.fs.outside_mkdirs("/w/L/y2026"))
     out = durable_commit(w.fs, w.commit)
-    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, "/w/L/y2026")
-    assert w.fs.snapshot()["/w/L/y2026"] == ("dir",)
+    assert out == NotSaved(Step.REPLACE, Reason.CHANGED, True, path="/w/L/y2026")
+    assert w.fs.snapshot()["/w/L/y2026"] == ("dir",), "a folder the save did not make is never removed"
+    assert set(journals(w.fs)) == {State.RESOLVED}
     assert [p for p in w.fs.snapshot() if p.startswith("/w/L/y2026/")] == []
 
 
@@ -677,7 +684,8 @@ def test_a_failed_exclusive_rename_with_nothing_replaced_is_not_saved() -> None:
     c = replace(w.commit, changes=(w.commit.changes[1],))
     _hook(w.fs, "rename /w/L:.prices.bean.ft-j7.tmp,prices.bean", lambda: w.fs.outside_write("/w/L/prices.bean", b"x"))
     out = durable_commit(w.fs, c)
-    assert out == NotSaved(Step.REPLACE, Reason.CHANGED, False, open_journal=True, path="/w/L/prices.bean")
+    assert out == NotSaved(Step.REPLACE, Reason.CHANGED, False, path="/w/L/prices.bean")
+    assert set(journals(w.fs)) == {State.RESOLVED}
     assert w.fs.file("/w/L/prices.bean") == b"x"
 
 
@@ -718,8 +726,9 @@ def test_a_file_replaced_by_another_with_the_same_bytes_before_the_swap_is_not_s
 
     w.fs.on_effect = hook
     out = durable_commit(w.fs, w.commit)
-    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, "/w/L/main.bean")
+    assert out == NotSaved(Step.REPLACE, Reason.CHANGED, True, path="/w/L/main.bean")
     assert w.fs.file("/w/L/main.bean") == pre
+    assert set(journals(w.fs)) == {State.RESOLVED}
 
 
 def test_empty_record_fields_are_refused_before_the_first_effect() -> None:
@@ -867,7 +876,8 @@ def test_a_hard_link_made_after_the_journal_refuses_before_that_file_is_swapped(
     w.fs.outside_mkdirs("/w/Backup")
     _hook(w.fs, f"sync {JD}:", lambda: w.fs.outside_link("/w/L/inc/a.bean", "/w/Backup/copy.bean"))
     out = durable_commit(w.fs, w.commit)
-    assert out == NotSaved(Step.REPLACE, Reason.HARD_LINKED, True, open_journal=True, path="/w/L/inc/a.bean")
+    assert out == NotSaved(Step.REPLACE, Reason.HARD_LINKED, True, path="/w/L/inc/a.bean")
+    assert set(journals(w.fs)) == {State.RESOLVED}
     assert w.fs.file("/w/Backup/copy.bean") == w.fs.file("/w/L/inc/a.bean")
 
 
@@ -878,8 +888,9 @@ def test_a_hard_link_made_between_the_pre_swap_check_and_the_swap_is_never_told_
     w.fs.outside_mkdirs("/w/Backup")
     _hook(w.fs, "create /w/L:.main.bean.ft-j7.tmp", lambda: w.fs.outside_link("/w/L/main.bean", "/w/Backup/copy.bean"))
     out = durable_commit(w.fs, w.commit)
-    assert out == Unfinished(Step.REPLACE, Reason.HARD_LINKED, "/w/L/main.bean")
+    assert out == NotSaved(Step.REPLACE, Reason.HARD_LINKED, True, path="/w/L/main.bean")
     assert w.fs.file("/w/L/main.bean") == w.fs.file("/w/Backup/copy.bean") == w.targets[2].pre
+    assert set(journals(w.fs)) == {State.RESOLVED}
 
 
 def test_a_hard_link_made_to_the_displaced_file_before_its_temp_is_removed_stops_the_save() -> None:
@@ -894,8 +905,10 @@ def test_a_hard_link_made_to_the_displaced_file_before_its_temp_is_removed_stops
 
     w.fs.on_effect = link_late
     out = durable_commit(w.fs, w.commit)
-    assert out == Unfinished(Step.READ_BACK, Reason.HARD_LINKED, "/w/L/main.bean")
-    assert w.fs.file(w.targets[2].temp) == w.targets[2].pre  # kept: it is a file another name still shows
+    assert out == NotSaved(Step.READ_BACK, Reason.HARD_LINKED, True, path="/w/L/main.bean")
+    # rolled back: the temp holds the pre bytes (§8.1 step 2 allows it); its other name keeps them
+    assert w.fs.file("/w/Backup/copy.bean") == w.targets[2].pre
+    assert set(journals(w.fs)) == {State.RESOLVED}
 
 
 @pytest.mark.parametrize(
@@ -1007,3 +1020,62 @@ def test_a_file_created_in_a_read_only_folder_refuses_before_the_first_effect() 
     out = durable_commit(w.fs, replace(w.commit, changes=(Change("/w/RO/new.bean", None, b"x\n"),)))
     assert out == NotSaved(Step.BACKUP, Reason.PERMISSION, True, path="/w/RO/new.bean")
     assert w.fs.effects == []
+
+
+def test_a_target_at_a_restore_temp_name_or_an_entry_standing_at_one_is_refused_before_the_first_effect() -> None:
+    """S0061: recovery deletes restore temps without a check (§6.4), so no ledger file may sit at one, and a save
+    never starts while a stranger stands at one of its restore temps."""
+    w = world()
+    c = replace(w.commit, changes=(Change("/w/L/.main.bean.ft-restore-j7.tmp", None, b"x\n"), w.commit.changes[2]))
+    with pytest.raises(ValueError, match="temp_name_taken"):
+        durable_commit(w.fs, c)
+    w.fs.outside_write("/w/L/.main.bean.ft-restore-j7.tmp", b"someone else's\n")
+    out = durable_commit(w.fs, w.commit)
+    assert out == NotSaved(Step.BACKUP, Reason.CHANGED, True, path="/w/L/main.bean")
+    assert w.fs.effects == []
+    w2 = world()
+    w2.fs.outside_write("/w/L/.prices.bean.ft-restore-j7.tmp", b"someone else's\n")
+    assert durable_commit(w2.fs, w2.commit) == NotSaved(Step.BACKUP, Reason.CHANGED, True, path="/w/L/prices.bean")
+
+
+def test_the_rollback_of_a_save_that_made_a_folder_removes_it_and_leaves_nothing_of_ours() -> None:
+    """§6.4, §8.1 step 3: a failure after the created file landed in its new folder: the rollback removes the file
+    and the folder the save made."""
+    probe = world(new_dir=True)
+    durable_commit(probe.fs, probe.commit)
+    for at in range(probe.fs.effects.index(f"rename {JD}:{NAME}.part,{NAME}.open"), len(probe.fs.effects)):
+        w = world(new_dir=True)
+        w.fs.inject(at, crash=False, err=errno.EIO, after=True)
+        out = durable_commit(w.fs, w.commit)
+        assert isinstance(out, NotSaved), (at, probe.fs.effects[at], out)
+        assert (out.unchanged, out.open_journal) == (True, False)
+        assert "/w/L/y2026" not in w.fs.snapshot(), probe.fs.effects[at]
+        check_recovered(w.fs, w, None)
+
+
+def test_a_rollback_that_cannot_tell_whether_the_journal_exists_tries_the_restore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The writer's own look at the journal folder fails: it never assumes there is no `.open` record."""
+    from tests.fakes.memfs import MemDir
+
+    base, _ = clean_run()
+    at = _index(base.fs.effects, "swap /w/L/inc:.a.bean.ft-j7.tmp,a.bean")
+    w = world()
+    w.fs.inject(at, crash=False)
+    real = MemDir.stat
+    calls = 0
+
+    def failing(self: MemDir, name: str) -> object:
+        nonlocal calls
+        if name == f"{NAME}.open":
+            calls += 1
+            if calls == 1:
+                raise OSError(errno.EIO, "injected stat error")
+        return real(self, name)
+
+    monkeypatch.setattr(MemDir, "stat", failing)
+    out = durable_commit(w.fs, w.commit)
+    assert calls >= 1
+    check_told(w.fs, w, out)
+    assert set(journals(w.fs)) == {State.RESOLVED}

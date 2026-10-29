@@ -3,11 +3,12 @@ S0060): what a save does after its commit point (§6.1 step 7), through the file
 
 0. **Before the first effect** (`_prepare`; every refusal here writes nothing): every path resolved (§6.3) and
    checked to be the file the plan meant: a replaced file a regular file (never a link, a FIFO or a folder), not
-   locked (`uchg`), not hard-linked (`_hard_links`, the owner's decision point), the same object its canonical path
-   names (`st_dev`, `st_ino`); a created path free of any entry (a dangling link included) under an existing folder.
-   The plan as a whole: one entry per `path_key`, no target inside another target's path, no target at another's
-   temp name, the folders the save makes once each and never two that differ only in case, no target in the
-   journal or backup folder, and neither of those folders inside a folder the save writes in.
+   locked (`uchg`), not hard-linked (`handles.hard_links`, the owner's decision point), the same object its
+   canonical path names (`st_dev`, `st_ino`); a created path free of any entry (a dangling link included) under an
+   existing folder. The plan as a whole: one entry per `path_key`, no target inside another target's path, no target
+   at another's temp or restore-temp name and no entry standing at one, the folders the save makes once each and never
+   two that differ only in case, no target in the journal or backup folder, and neither of those folders inside a
+   folder the save writes in.
 1. **Backups:** this save's backup folder `<backups_dir>/<session>-<job>/` made and its parent synced; each file the
    save replaces read through a handle on its folder (checked to be the same object again), hashed against the
    planned pre hash (a file not at its pre bytes refuses: nothing was replaced), written as `<n>-<name>` and synced,
@@ -17,49 +18,52 @@ S0060): what a save does after its commit point (§6.1 step 7), through the file
 3. **Per file, in the plan's order** (the caller orders children first and the root last): each directory the save
    creates made and its parent synced; the path guard (the folder's handle is still at the recorded canonical path,
    checked through the descriptor the write uses, §6.3); the temp `.<name>.ft-<job>.tmp` written with the file's
-   mode, extended attributes and ACL, and synced; a **swap** with the file, and the displaced entry checked to be the
-   planned object holding the pre bytes (§6.4: anything else is an outside save: swapped back at once and the folder
-   synced, so it is kept); for a file the save creates, an **exclusive rename** that fails if a file appeared; the
-   folder synced. Each folder the save creates is made once, before the first file in it.
+   mode and extended attributes (not its ACL: owner, 2026-10-29), and synced; a **swap** with the file, and the
+   displaced entry checked to be the planned object holding the pre bytes (§6.4: anything else is an outside save:
+   swapped back at once and the folder synced, so it is kept); for a file the save creates, an **exclusive rename**
+   that fails if a file appeared; the folder synced. Each folder the save creates is made once, before the first
+   file in it.
 4. **Read-back:** every written file equals its post bytes; then each temp, checked to still be the displaced object
    holding the pre bytes (an outside program may write through a descriptor it held: those bytes are kept, and the
    save stops unfinished, §6.4), removed, and the folders synced.
 5. **Close:** `.open` renamed `.closed` and the journal folder synced. `Landed` is returned exactly then.
 
 **The step rule.** Every port operation may raise `OSError`, and the process may die at any of them. A failure
-before the first replace (the first swap or exclusive rename of a ledger file) returns `NotSaved`: no ledger file was
-replaced, so it is true whatever the journal's state; `unchanged` is true only after every target was hashed again
-and equals its pre bytes (§11), and `open_journal` says whether the journal was left `.open` (from its rename on),
-which pauses the workspace's writes until recovery resolves it. Backups, a `.part`, temps and a folder the save made
-may be left; recover-all removes a `.part` (§6.1 step 8.2) and an `.open` journal's temps. From the first replace on,
-any failure returns `Unfinished`: the journal is left `.open` (the state of a failed rollback, §6.4).
-TODO(BL-0151): slice 2 replaces the `.open` journal left by a failure after its rename (both outcomes) with the
-in-engine rollback (§6.4, its last bullet for `NotSaved`), wherever that rollback succeeds.
+before the journal's rename to `.open` is not a rollback (§6.4: nothing was replaced): `NotSaved`, with `unchanged`
+true only after every target was hashed again and equals its pre bytes (§11); backups and a `.part` may be left
+(recover-all removes a `.part`, §6.1 step 8.2). **Any failure from that rename on rolls back at once** (§6.4,
+S0061): the restore of `ledger.restore` on this save's own record, which first applies recovery's checks (the temp
+rule included), leaves the file whose outside save the save kept as it is (a displaced outside save swapped back, a
+file that appeared at a created path), removes only the folders this save made, and after a failed close renames a
+`.closed` record back to `.open` first, so no power loss shows "saved" over restored files. The outcome then:
+- the rollback resolved the journal (or no `.open` record was ever made): `NotSaved`, `open_journal` false;
+- it did not (a cause found, an I/O error), before the first replace (the first swap or exclusive rename of a ledger
+  file): `NotSaved` with `open_journal` true, which pauses the workspace's writes until recovery resolves it;
+- it did not, from the first replace on: `Unfinished` (the journal is `.open`, or `.resolved` when only the
+  rollback's last sync failed, or `.closed` when even its reopening failed: never "saved").
 A malformed plan raises `ValueError` before the first write. Anything else raised is a bug and propagates.
 """
 
 from __future__ import annotations
 
 import errno
-import hashlib
 import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final
 
 from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem, Kind, Right, check_name, fold, split_absolute
+from ledger_engine.ledger import restore as _restore
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import DirEntry, FileEntry, Record, State
+from ledger_engine.ledger.handles import Handles, PathMovedError, hard_links, sha256, volume_without_swap
+from ledger_engine.ledger.handles import join as _join
 
 _SHA256: Final = re.compile(r"[0-9a-f]{64}")
 BACKUP_MODE: Final = 0o600
 JOURNAL_MODE: Final = 0o600
 CREATED_MODE: Final = 0o644
-
-
-def sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 class BadPlanError(ValueError):
@@ -129,10 +133,11 @@ class Landed:
 
 @dataclass(frozen=True, slots=True)
 class NotSaved:
-    """No ledger file was replaced. `unchanged`: every target was hashed again and equals its pre bytes.
-    `open_journal`: the journal may have been left `.open` (its rename was asked for), which pauses writes until
-    recovery resolves it. `path`: the canonical path of the file the refusal is about, if any (the message names it:
-    a hard-linked file, a locked one, one that changed)."""
+    """No ledger file was replaced, or the rollback put every replaced one back (§6.4; the file whose outside save the
+    save kept holds that outside save). `unchanged`: every target was hashed again and equals its pre bytes.
+    `open_journal`: the journal may have been left `.open` (its rename was asked for and the rollback did not resolve
+    it), which pauses writes until recovery resolves it. `path`: the canonical path of the file the refusal is about,
+    if any (the message names it: a hard-linked file, a locked one, one that changed)."""
 
     step: Step
     reason: Reason
@@ -143,10 +148,11 @@ class NotSaved:
 
 @dataclass(frozen=True, slots=True)
 class Unfinished:
-    """The save stopped after a ledger file may have been replaced: the journal is `.open` (or `.closed` but not yet
-    durable, when the close's own sync failed: never "saved"), the files are each whole at pre or post, or an outside
-    save is kept in the file or in our temp, and recovery must resolve it. `path`: the canonical path of the file it
-    stopped at, if known."""
+    """The save stopped after a ledger file may have been replaced and its rollback (§6.4) could not resolve the
+    journal: the journal is `.open` (or `.resolved` when only the rollback's last sync failed, or `.closed` when the
+    close's own sync and then the record's reopening failed: never "saved"), the files are each whole at pre or post,
+    or an outside save is kept in the file or in our temp, and recovery must resolve it. `path`: the canonical path of
+    the file it stopped at, if known."""
 
     step: Step
     reason: Reason
@@ -167,6 +173,8 @@ class _Target:
     base: str
     temp: str
     temp_key: str
+    rtemp: str  # the restore temp's name (§6.4), never taken either
+    rtemp_key: str
     identity: tuple[int, int] | None  # the replaced file's (st_dev, st_ino); None for a created file
     new_dirs: tuple[tuple[str, str], ...]  # (canonical, key) of the folders the save makes for it, parents first
     rest: tuple[str, ...]  # the components that did not exist at resolution
@@ -185,49 +193,6 @@ class _Stop(Exception):
         super().__init__(reason.value)
         self.reason = reason
         self.path = path
-
-
-@dataclass
-class _Handles:
-    """One handle per folder, opened once and checked at every use (§6.3: the check and the write go through one
-    descriptor)."""
-
-    fs: FileSystem
-    open: dict[str, DirHandle] = field(default_factory=lambda: {})
-    on: str | None = None  # the canonical path of the target being worked on, for the outcome (S0060 verifier r2 F8)
-
-    def at(self, canonical: str) -> DirHandle:
-        h = self.open.get(canonical)
-        if h is None:
-            h = self.fs.open_dir(canonical)
-            self.open[canonical] = h
-        if h.path() != canonical:
-            raise _Stop(Reason.PATH_MOVED, canonical)
-        return h
-
-    def close(self) -> None:
-        for h in self.open.values():
-            h.close()
-        self.open.clear()
-
-
-def _hard_links(st: EntryStat) -> Reason | None:
-    """A ledger file with more than one hard link refuses the save before anything is written (owner, 2026-10-29:
-    "Refuse to save it (Recommended)"; ADR-0013 amendment of 2026-10-29). The swap gives the name a new file, so the
-    other link would silently keep the old bytes. Reads are not affected. The one place this rule lives."""
-    return Reason.HARD_LINKED if st.nlink > 1 else None
-
-
-def _volume_without_swap(h: DirHandle) -> Reason | None:
-    """A folder on a volume without `RENAME_SWAP` and `RENAME_EXCL` (exFAT, FAT, some network shares) refuses the save
-    before anything is written. Owner, 2026-10-29: "Unsafe fallback on such drives", then "Agreed, fallback as its
-    own slice after slice 4" (ADR-0013 amendment of 2026-10-29). The one place this rule lives.
-    TODO(BL-0160): the fallback write path for such volumes replaces this refusal."""
-    return None if h.can_swap() else Reason.VOLUME_NO_SWAP
-
-
-def _join(parent: str, name: str) -> str:
-    return "/" + name if parent == "/" else f"{parent}/{name}"
 
 
 def _within(key: str, folder: str) -> bool:
@@ -277,13 +242,12 @@ def _check_replaced(st: EntryStat | None, identity: tuple[int, int] | None, cano
         raise _Stop(Reason.NOT_A_FILE, canonical)
     if st.locked:
         raise _Stop(Reason.LOCKED, canonical)
-    reason = _hard_links(st)
-    if reason is not None:
-        raise _Stop(reason, canonical)
+    if hard_links(st):
+        raise _Stop(Reason.HARD_LINKED, canonical)
     return st
 
 
-def _target(fs: FileSystem, handles: _Handles, index: int, c: Commit, ch: Change) -> _Target:
+def _target(fs: FileSystem, handles: Handles, index: int, c: Commit, ch: Change) -> _Target:
     r = fs.resolve(ch.path)
     canonical, key = core_paths.canonical_path(r), core_paths.path_key(r)
     try:
@@ -297,23 +261,25 @@ def _target(fs: FileSystem, handles: _Handles, index: int, c: Commit, ch: Change
     parent, parent_key = "/" + "/".join(parts[:-1]), "/" + "/".join(kparts[:-1])
     temp = journal.temp_name(base, c.job)
     temp_key = _join(parent_key, fold(temp, r.rules[-1]))
+    rtemp = journal.restore_temp_name(base, c.job)
+    rtemp_key = _join(parent_key, fold(rtemp, r.rules[-1]))
+    names = (temp, temp_key, rtemp, rtemp_key)
     if not r.rest:
-        return _Target(index, ch, canonical, key, parent, parent_key, base, temp, temp_key, r.identity, (), ())
+        return _Target(index, ch, canonical, key, parent, parent_key, base, *names, r.identity, (), ())
     n = len(r.existing)
     new_dirs = tuple(("/" + "/".join(parts[:i]), "/" + "/".join(kparts[:i])) for i in range(n + 1, len(parts)))
-    return _Target(index, ch, canonical, key, parent, parent_key, base, temp, temp_key, None, new_dirs, r.rest)
+    return _Target(index, ch, canonical, key, parent, parent_key, base, *names, None, new_dirs, r.rest)
 
 
 def _check_folder(h: DirHandle, canonical: str) -> None:
     """A folder the save writes in: on a volume with the swap, and the save may add and remove entries there."""
-    reason = _volume_without_swap(h)
-    if reason is not None:
-        raise _Stop(reason, canonical)
+    if volume_without_swap(h):
+        raise _Stop(Reason.VOLUME_NO_SWAP, canonical)
     if not h.allowed(".", Right.CHANGE_ENTRIES):
         raise _Stop(Reason.PERMISSION, canonical)
 
 
-def _check_target(handles: _Handles, t: _Target) -> None:
+def _check_target(handles: Handles, t: _Target) -> None:
     """One target against the disk, before the first effect."""
     handles.on = t.canonical
     if not t.rest:
@@ -326,7 +292,7 @@ def _check_target(handles: _Handles, t: _Target) -> None:
             raise _Stop(Reason.PERMISSION, t.canonical)  # the swap moves it away; an ACL denies that (deny delete)
         if not h.allowed(t.base, Right.READ_XATTRS):
             raise _Stop(Reason.PERMISSION, t.canonical)  # its extended attributes could not be copied to the temp
-        if h.stat(t.temp) is not None:
+        if h.stat(t.temp) is not None or h.stat(t.rtemp) is not None:
             raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at our temp name (S0060 red team r2 L2)
         return
     if t.change.pre is not None:
@@ -340,11 +306,11 @@ def _check_target(handles: _Handles, t: _Target) -> None:
     if holder.stat(t.rest[0]) is not None:
         raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at the path (a dangling link, S0060 verifier F3)
     _check_folder(holder, t.canonical)
-    if len(t.rest) == 1 and holder.stat(t.temp) is not None:
+    if len(t.rest) == 1 and (holder.stat(t.temp) is not None or holder.stat(t.rtemp) is not None):
         raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at our temp name
 
 
-def _prepare(fs: FileSystem, handles: _Handles, c: Commit, targets: tuple[_Target, ...]) -> _Plan:
+def _prepare(fs: FileSystem, handles: Handles, c: Commit, targets: tuple[_Target, ...]) -> _Plan:
     """Step 0: check each target and the plan as a whole before the first effect (the module's docstring)."""
     for t in targets:
         _check_target(handles, t)
@@ -356,7 +322,11 @@ def _prepare(fs: FileSystem, handles: _Handles, c: Commit, targets: tuple[_Targe
         for b in targets:
             if a is not b and _within(b.key, a.key):
                 raise BadPlanError("file_inside_file")  # a target is a folder another target is in
-            if a is not b and (_within(b.key, a.temp_key) or b.temp_key == a.temp_key):
+            if a is not b and (
+                _within(b.key, a.temp_key)
+                or _within(b.key, a.rtemp_key)
+                or {b.temp_key, b.rtemp_key} & {a.temp_key, a.rtemp_key}
+            ):
                 raise BadPlanError("temp_name_taken")  # recovery deletes temps (S0060 red team 7, r2 L1); a folder the
                 # save makes at a temp name is covered too: a target file is inside it
     dirs: dict[str, str] = {}
@@ -373,7 +343,7 @@ def _prepare(fs: FileSystem, handles: _Handles, c: Commit, targets: tuple[_Targe
     return _Plan(targets, tuple((cn, k) for k, cn in dirs.items()), journal_dir, backups_dir)
 
 
-def _unchanged(handles: _Handles, targets: tuple[_Target, ...]) -> bool:
+def _unchanged(handles: Handles, targets: tuple[_Target, ...]) -> bool:
     """Every target hashed again equals its pre bytes (absent for a created file); any failure, or targets that
     could not be resolved, says no."""
     if not targets:
@@ -389,12 +359,12 @@ def _unchanged(handles: _Handles, targets: tuple[_Target, ...]) -> bool:
             data = folder.read(t.base)
             if (None if data is None else sha256(data)) != t.change.pre:
                 return False
-    except (OSError, _Stop):
+    except (OSError, _Stop, PathMovedError):
         return False
     return True
 
 
-def _backups(handles: _Handles, plan: _Plan, name: str) -> dict[str, str]:
+def _backups(handles: Handles, plan: _Plan, name: str) -> dict[str, str]:
     """Step 8.1. Returns the backup name per target key."""
     parent = handles.at(plan.backups_dir)
     parent.mkdir(name)
@@ -451,7 +421,8 @@ def _record(c: Commit, plan: _Plan, name: str, backups: dict[str, str]) -> Recor
 class _Progress:
     open_journal: bool = False
     replaced: bool = False  # a ledger file's swap or exclusive rename was asked for, and may have happened
-    made: set[str] = field(default_factory=lambda: set())  # keys of the folders made so far
+    made: set[str] = field(default_factory=lambda: set())  # keys of the folders made so far (or that may have been)
+    kept: str | None = None  # the key of the file whose outside save the save put back (or left in place)
 
 
 def _displaced_is_ours(h: DirHandle, name: str, t: _Target) -> Reason | None:
@@ -460,7 +431,7 @@ def _displaced_is_ours(h: DirHandle, name: str, t: _Target) -> Reason | None:
     st = h.stat(name)
     if st is None or st.identity != t.identity:
         return Reason.CHANGED
-    if _hard_links(st) is not None:
+    if hard_links(st):
         return Reason.HARD_LINKED
     try:
         data = h.read(name)
@@ -480,7 +451,7 @@ def _is_our_temp(h: DirHandle, name: str, identity: tuple[int, int], post: bytes
         return False
 
 
-def _replace(handles: _Handles, t: _Target, progress: _Progress) -> None:
+def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
     """Step 8.3 for one file."""
     handles.on = t.canonical
     for canonical, key in t.new_dirs:
@@ -488,11 +459,12 @@ def _replace(handles: _Handles, t: _Target, progress: _Progress) -> None:
             continue
         parent, _, name = canonical.rpartition("/")
         h = handles.at(parent or "/")
+        progress.made.add(key)  # a mkdir that answers an error may still have happened...
         try:
             h.mkdir(name)
         except FileExistsError:
+            progress.made.discard(key)  # ...except this one: another program's folder stood there, never removed
             raise _Stop(Reason.CHANGED, canonical) from None
-        progress.made.add(key)
         h.sync()
     h = handles.at(t.parent)
     if t.change.pre is None:
@@ -503,6 +475,7 @@ def _replace(handles: _Handles, t: _Target, progress: _Progress) -> None:
             h.rename_excl(t.temp, t.base)
         except FileExistsError:
             progress.replaced = before  # ...except this one: a file stood there, nothing was replaced
+            progress.kept = t.key  # that file is an outside program's: the rollback leaves it as it is
             raise _Stop(Reason.CHANGED, t.canonical) from None
         h.sync()
         return
@@ -515,6 +488,7 @@ def _replace(handles: _Handles, t: _Target, progress: _Progress) -> None:
     h.swap(t.temp, t.base)
     why = _displaced_is_ours(h, t.temp, t)
     if why is not None:
+        progress.kept = t.key  # whatever happens next, the rollback leaves this file as it is (§6.4)
         h.swap(t.temp, t.base)  # the outside save (or the linked file) back in place, kept (§6.4)
         h.sync()  # at once (model finding F3)
         if not _is_our_temp(h, t.temp, made.identity, t.change.post):
@@ -525,7 +499,7 @@ def _replace(handles: _Handles, t: _Target, progress: _Progress) -> None:
     h.sync()
 
 
-def _read_back(handles: _Handles, targets: tuple[_Target, ...]) -> None:
+def _read_back(handles: Handles, targets: tuple[_Target, ...]) -> None:
     """Step 8.4: every written file equals its post bytes (ADR-0008 step 6)."""
     for t in targets:
         handles.on = t.canonical
@@ -533,7 +507,7 @@ def _read_back(handles: _Handles, targets: tuple[_Target, ...]) -> None:
             raise _Stop(Reason.READ_BACK, t.canonical)
 
 
-def _remove_temps(handles: _Handles, targets: tuple[_Target, ...]) -> None:
+def _remove_temps(handles: Handles, targets: tuple[_Target, ...]) -> None:
     """Step 8.4: each temp removed only while it is still the displaced object with the pre bytes; otherwise an outside
     program wrote into it (through a descriptor it held from before the swap), and it is kept (§6.4; S0060 red team
     finding 2)."""
@@ -553,11 +527,41 @@ def _remove_temps(handles: _Handles, targets: tuple[_Target, ...]) -> None:
         h.sync()
 
 
+def _why(e: Exception, handles: Handles) -> tuple[Reason, str | None]:
+    if isinstance(e, _Stop):
+        return e.reason, e.path
+    if isinstance(e, PathMovedError):
+        return Reason.PATH_MOVED, e.canonical
+    return Reason.IO_ERROR, handles.on
+
+
+def _rollback(fs: FileSystem, jd: DirHandle, record: Record, plan: _Plan, step: Step, progress: _Progress) -> bool:
+    """§6.4: the restore (`ledger.restore.restore`) of this save's own record, at once; True when it resolved the
+    journal, or when no `.open` (or `.closed`) record was ever made. The file whose outside save the save kept is left
+    as it is; only the folders this save made may be removed; after a failed close the record may be `.closed`."""
+    try:
+        present = jd.stat(journal.file_name(record.name, State.OPEN)) is not None
+        present = present or (step is Step.CLOSE and jd.stat(journal.file_name(record.name, State.CLOSED)) is not None)
+    except OSError:
+        present = True  # cannot tell: try the restore, which fails closed
+    if not present:
+        return True  # the rename to `.open` did not happen: the `.part` is recover-all's (§6.1 step 8.2)
+    out = _restore.restore(
+        fs,
+        record,
+        plan.journal_dir,
+        closed=step is Step.CLOSE,
+        skip=progress.kept,
+        made=frozenset(progress.made),
+    )
+    return isinstance(out, _restore.Resolved)
+
+
 def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
-    """§6.1 step 8 for a save past its commit point (see the module's docstring)."""
+    """§6.1 step 8 for a save past its commit point, with §6.4's rollback (see the module's docstring)."""
     _check_plan(c)
     name = journal.record_name(c.session, c.job)
-    handles = _Handles(fs)
+    handles = Handles(fs)
     targets: tuple[_Target, ...] = ()
     step = Step.BACKUP
     try:
@@ -565,13 +569,14 @@ def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
             targets = tuple(_target(fs, handles, i, c, ch) for i, ch in enumerate(c.changes))
             plan = _prepare(fs, handles, c, targets)
             backups = _backups(handles, plan, name)
-            data = journal.encode(_record(c, plan, name, backups))
+            record = _record(c, plan, name, backups)
+            data = journal.encode(record)
             step = Step.JOURNAL
             handles.on = None
             jd = handles.at(plan.journal_dir)
             jd.create(journal.file_name(name, State.PART), data, JOURNAL_MODE)
-        except (OSError, _Stop) as e:
-            reason, path = (e.reason, e.path) if isinstance(e, _Stop) else (Reason.IO_ERROR, handles.on)
+        except (OSError, _Stop, PathMovedError) as e:
+            reason, path = _why(e, handles)
             return NotSaved(step, reason, _unchanged(handles, targets), path=path)
         progress = _Progress()
         try:
@@ -587,13 +592,13 @@ def durable_commit(fs: FileSystem, c: Commit) -> Outcome:
             step = Step.CLOSE
             jd.rename_excl(journal.file_name(name, State.OPEN), journal.file_name(name, State.CLOSED))
             jd.sync()
-        except (OSError, _Stop) as e:
-            reason, path = (e.reason, e.path) if isinstance(e, _Stop) else (Reason.IO_ERROR, handles.on)
+        except (OSError, _Stop, PathMovedError) as e:
+            reason, path = _why(e, handles)
+            if _rollback(fs, jd, record, plan, step, progress):
+                return NotSaved(step, reason, _unchanged(handles, plan.targets), path=path)
             if not progress.replaced:
-                return NotSaved(step, reason, _unchanged(handles, plan.targets), progress.open_journal, path)
+                return NotSaved(step, reason, _unchanged(handles, plan.targets), True, path)
             return Unfinished(step, reason, path)
-        record = journal.decode(data)
-        assert isinstance(record, Record)  # noqa: S101 (encode's own output)
         return Landed(record)
     finally:
         handles.close()

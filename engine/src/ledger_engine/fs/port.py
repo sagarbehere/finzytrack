@@ -128,6 +128,12 @@ class DirHandle(Protocol):
         """Make the directory `name`; it fails if any entry of that name exists."""
         ...
 
+    def rmdir(self, name: str) -> None:
+        """Remove the directory `name` if it is empty: it fails with `ENOTEMPTY` when it holds any entry, `ENOTDIR`
+        when it is not a directory (a link to one included: never followed) and `ENOENT` when there is none. Durable
+        only after `sync`."""
+        ...
+
     def names(self) -> list[str]:
         """The names in this directory, sorted."""
         ...
@@ -152,6 +158,30 @@ class FileSystem(Protocol):
     def open_dir(self, path: str) -> DirHandle:
         """Open the directory at the absolute `path` (links in it are followed)."""
         ...
+
+
+class Lock(Protocol):
+    """A ledger-set lock held by this process (`design/specs/engine-jobs.md` §6.1 step 3)."""
+
+    def release(self) -> None: ...
+
+
+class Locks(Protocol):
+    """The ledger-set locks: one lock file per `path_key` in `app_local_data/locks/<sha256(path_key)>`, never
+    deleted (§6.1 step 3, §8.1 step 1; ADR-0012 Q29)."""
+
+    def try_lock(self, key: str) -> Lock | None:
+        """The lock of `key` taken without waiting, or None when any holder has it (this process included). An
+        `OSError` when the lock file cannot be opened."""
+        ...
+
+
+def same_path(now: str, recorded: str) -> bool:
+    """The path guard's comparison (§6.3): a folder's path now names the recorded canonical path, compared as the
+    volume compares names. Every volume the save writes on (macOS) treats two normalizations of a name as one, and
+    HFS+ answers NFD for a name made in NFC (S0061 probe), so both are compared after NFD; case stays exact, so a
+    folder renamed in case only counts as moved (fails closed). TODO(BL-0087): Linux compares bytes."""
+    return unicodedata.normalize("NFD", now) == unicodedata.normalize("NFD", recorded)
 
 
 def fold(component: str, rule: FoldRule) -> str:

@@ -14,7 +14,15 @@ import ast
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "ledger_engine"
-WRITE_PATH = ("ledger/writer.py", "ledger/paths.py", "ledger/core/journal.py", "ledger/core/paths.py")
+WRITE_PATH = (
+    "ledger/writer.py",
+    "ledger/restore.py",
+    "ledger/handles.py",
+    "ledger/paths.py",
+    "ledger/core/journal.py",
+    "ledger/core/paths.py",
+    "ledger/core/recovery.py",
+)
 DISK = frozenset({"os", "io", "shutil", "pathlib", "tempfile", "fcntl", "ctypes", "posix", "mmap", "glob"})
 OS_LEVEL = frozenset({"ctypes", "fcntl"})
 OS_LEVEL_ALSO = {"protocol/server.py": {"fcntl"}}  # the engine lock's `flock` (engine-jobs §5.1), not a file write

@@ -422,3 +422,137 @@ def test_permissions_that_would_block_the_save_refuse_it_before_anything_is_writ
         os.chmod(folder, 0o755)  # noqa: S103 (the temp folder back to its default)
         _run("/bin/chmod", "-RN", str(folder))  # every ACL off, so a regression cannot wedge the temp clean-up
     assert main.read_bytes() == b"pre\n"
+
+
+# ---- S0061: rmdir, the ledger-set locks, the restore over the real adapter -----------------------------------------
+
+
+def test_rmdir_removes_only_an_empty_folder_on_apfs(fs: DarwinFS, tmp_path: Path) -> None:
+    """Probed before coding (S0061): `ENOTEMPTY` for a folder holding a `.DS_Store`, `ENOTDIR` for a link."""
+    (tmp_path / "empty").mkdir()
+    (tmp_path / "full").mkdir()
+    (tmp_path / "full" / ".DS_Store").write_bytes(b"x")
+    (tmp_path / "link").symlink_to(tmp_path / "empty")
+    with fs.open_dir(str(tmp_path)) as d:
+        for name, err in (("full", errno.ENOTEMPTY), ("link", errno.ENOTDIR)):
+            with pytest.raises(OSError, match=r".") as e:
+                d.rmdir(name)
+            assert e.value.errno == err
+        d.rmdir("empty")
+        with pytest.raises(FileNotFoundError):
+            d.rmdir("empty")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["full", "link"]
+
+
+HOLD = """import fcntl, os, sys
+fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600)
+fcntl.flock(fd, fcntl.LOCK_EX)
+print("held", flush=True)
+sys.stdin.read()
+"""
+
+
+def test_a_ledger_set_lock_held_by_another_process_is_not_taken_and_is_free_once_it_ends(tmp_path: Path) -> None:
+    """§6.1 step 3, §8.1 step 1: one lock file per `path_key`, `<sha256(path_key)>`, never deleted; tried without
+    waiting."""
+    from ledger_engine.fs.darwin import DarwinLocks
+
+    locks = DarwinLocks(str(tmp_path))
+    key = "/users/x/ledger/main.bean"
+    lock_file = tmp_path / sha256(key.encode())
+    holder = subprocess.Popen(  # noqa: S603 (this interpreter, fixed code)
+        [sys.executable, "-c", HOLD, str(lock_file)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    )
+    try:
+        assert holder.stdout is not None
+        assert holder.stdout.readline() == "held\n"  # an event, not a sleep
+        assert locks.try_lock(key) is None
+    finally:
+        assert holder.stdin is not None
+        holder.stdin.close()
+        holder.wait()
+    mine = locks.try_lock(key)
+    assert mine is not None
+    mine.release()
+    assert lock_file.exists(), "lock files are never deleted"
+    assert stat.S_IMODE(lock_file.stat().st_mode) == 0o600
+
+
+class _Died(BaseException):
+    """The save's process died (a crash injected through a wrapper around the real adapter)."""
+
+
+class _DyingDir:
+    def __init__(self, inner: object, die_at: str) -> None:
+        self._inner = inner
+        self._die_at = die_at
+
+    def rename_excl(self, src: str, dst: str) -> None:
+        if dst.endswith(self._die_at):
+            raise _Died
+        self._inner.rename_excl(src, dst)  # type: ignore[attr-defined]
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._inner, name)
+
+    def __enter__(self) -> _DyingDir:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._inner.close()  # type: ignore[attr-defined]
+
+
+class _DyingFS:
+    def __init__(self, inner: DarwinFS, die_at: str) -> None:
+        self._inner = inner
+        self._die_at = die_at
+
+    def resolve(self, path: str) -> object:
+        return self._inner.resolve(path)
+
+    def open_dir(self, path: str) -> _DyingDir:
+        return _DyingDir(self._inner.open_dir(path), self._die_at)
+
+
+def _crashed_save_on_apfs(fs: DarwinFS, root: Path) -> tuple[Commit, Path, Path]:
+    ledger = root / "L"
+    (ledger / "y2026").mkdir(parents=True)
+    main = ledger / "main.bean"
+    main.write_bytes(b"pre\n")
+    created = ledger / "y2026" / "new.bean"
+    c = _commit(root, Change(str(created), None, b"new\n"), Change(str(main), sha256(b"pre\n"), b"post\n"))
+    with pytest.raises(_Died):
+        durable_commit(_DyingFS(fs, ".closed"), c)  # type: ignore[arg-type]
+    assert main.read_bytes() == b"post\n"
+    assert os.listdir(root / "local" / "journal") == ["s1-j1.open"]
+    return c, main, created
+
+
+def test_a_crashed_saves_journal_is_resolved_on_apfs(fs: DarwinFS, tmp_path: Path) -> None:
+    from ledger_engine.fs.darwin import DarwinLocks
+    from ledger_engine.ledger.restore import Resolved, recover_journal
+
+    c, main, created = _crashed_save_on_apfs(fs, tmp_path)
+    (tmp_path / "locks").mkdir()
+    out = recover_journal(fs, DarwinLocks(str(tmp_path / "locks")), c.journal_dir, "s1-j1")
+    assert out == Resolved("s1-j1")
+    assert main.read_bytes() == b"pre\n"
+    assert not created.exists()
+    assert sorted(p.name for p in (tmp_path / "L").iterdir()) == ["main.bean", "y2026"]
+    assert os.listdir(tmp_path / "local" / "journal") == ["s1-j1.resolved"]
+
+
+def test_a_hard_linked_file_at_post_stops_the_restore_on_apfs(fs: DarwinFS, tmp_path: Path) -> None:
+    """Probed before coding: a restore swap would give the name the pre bytes and leave the other link at post."""
+    from ledger_engine.fs.darwin import DarwinLocks
+    from ledger_engine.ledger.core.recovery import Cause
+    from ledger_engine.ledger.restore import Stopped, recover_journal
+
+    c, main, _ = _crashed_save_on_apfs(fs, tmp_path)
+    os.link(main, tmp_path / "copy.bean")
+    (tmp_path / "locks").mkdir()
+    out = recover_journal(fs, DarwinLocks(str(tmp_path / "locks")), c.journal_dir, "s1-j1")
+    assert isinstance(out, Stopped)
+    assert out.cause is Cause.HARD_LINKED
+    assert main.read_bytes() == (tmp_path / "copy.bean").read_bytes() == b"post\n"
+    assert os.listdir(tmp_path / "local" / "journal") == ["s1-j1.open"]

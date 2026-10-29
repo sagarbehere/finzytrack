@@ -14,8 +14,9 @@ or a rename kept or dropped whole, and each file whose data is not synced at its
 an entry kept before its data), its current bytes, or cut off (the first half of its current bytes).
 
 **Injection.** Every effect of the port's operations is numbered from 0 (`effects` lists their labels):
-`create` is three effects (the entry, the write, the data sync), every other write one. `inject(at, ...)` makes
-effect `at` raise: `Crash` (a `BaseException`, as a process death that no `except Exception` sees) or `OSError`
+`create` is three effects (the entry, the write, the data sync), every other write one (`rmdir` included).
+`inject(at, ...)` makes effect `at` raise (several faults may wait at once, each fires once: a save's and then its
+rollback's, S0061): `Crash` (a `BaseException`, as a process death that no `except Exception` sees) or `OSError`
 (`ENOSPC` by default), before the effect, or for a write after writing only its first `cut` bytes, or with
 `after=True` after the effect took place (an operation that happened but answered an error). `on_effect(i, label)`
 runs before each effect, for an outside program to act between two effects (`outside_*`: durable, as an editor that
@@ -24,7 +25,9 @@ syncs its save; they are not effects).
 **Resolution, as the macOS adapter does it:** links are followed, a dangling link counts as absent (its own name is
 the first missing component), and `Resolved.identity` is `(1, inode)`. Files may have several hard links
 (`outside_link`); `stat` gives the link count, and a locked file (`outside_lock`, `uchg`) refuses a swap, a rename
-and a remove. `create(..., like=...)` copies `like`'s extended attributes (`outside_setxattr`).
+and a remove. `create(..., like=...)` copies `like`'s extended attributes (`outside_setxattr`). With `stores_nfd`
+the volume keeps every name in NFD, as HFS+ does (S0061 probe). `MemLocks` stands for the ledger-set locks of one
+process (`outside_hold`: another process holds one).
 """
 
 # pyright: reportPrivateUsage=false
@@ -131,18 +134,23 @@ def _apply(entries: dict[str, tuple[str, int]], op: tuple[str, ...]) -> None:
 class MemFS:
     """The fake (`ledger_engine.fs.port.FileSystem`)."""
 
-    def __init__(self, *, case_insensitive: bool = True) -> None:
+    def __init__(self, *, case_insensitive: bool = True, stores_nfd: bool = False) -> None:
         self.nodes: dict[int, _Node] = {ROOT: _Dir(ci=case_insensitive, parent=ROOT)}
         self._next = ROOT + 1
         self.effects: list[str] = []
-        self._fault: _Fault | None = None
+        self._faults: dict[int, _Fault] = {}
         self.on_effect: Callable[[int, str], None] | None = None
+        self.stores_nfd = stores_nfd  # HFS+: every name stored in NFD, whatever spelling it was given (S0061 probe)
+
+    def stored(self, name: str) -> str:
+        """The spelling the volume keeps for a name it is given."""
+        return unicodedata.normalize("NFD", name) if self.stores_nfd else name
 
     # -- injection ---------------------------------------------------------------------------------------------
     def inject(
         self, at: int, *, crash: bool = True, err: int = errno.ENOSPC, cut: int | None = None, after: bool = False
     ) -> None:
-        self._fault = _Fault(at=at, crash=crash, err=err, cut=cut, after=after)
+        self._faults[at] = _Fault(at=at, crash=crash, err=err, cut=cut, after=after)
 
     def _effect(self, label: str, do: Callable[[], None], write: Callable[[int], None] | None = None) -> None:
         """One numbered effect: `do` carries it out, unless an injected fault comes first (a write first writes its
@@ -151,11 +159,10 @@ class MemFS:
         if self.on_effect is not None:
             self.on_effect(i, label)
         self.effects.append(label)
-        f = self._fault
-        if f is None or f.at != i:
+        f = self._faults.pop(i, None)
+        if f is None:
             do()
             return
-        self._fault = None
         if f.after:
             do()
         elif write is not None and f.cut is not None:
@@ -260,7 +267,7 @@ class MemFS:
                 ci = d.ci if case_insensitive is None or i < len(parts) else case_insensitive
                 ns = d.no_swap if no_swap is None or i < len(parts) else no_swap
                 ino = self._new(_Dir(ci=ci, parent=pino, no_swap=ns))
-                d.entries[_key(name, d.ci)] = (name, ino)
+                d.entries[_key(name, d.ci)] = (self.stored(name), ino)
                 d.durable = dict(d.entries)
                 d.pending = []
 
@@ -271,7 +278,7 @@ class MemFS:
         hit = self._find(d, name)
         if hit is None or new_inode:
             ino = self._new(_File(data=data, synced=data, mode=mode))
-            d.entries[_key(name, d.ci)] = (name, ino)
+            d.entries[_key(name, d.ci)] = (self.stored(name), ino)
             d.durable = dict(d.entries)
             d.pending = []
             return
@@ -295,6 +302,16 @@ class MemFS:
         if self._find(d, name) is not None:
             raise FileExistsError(errno.EEXIST, "exists")
         d.entries[_key(name, d.ci)] = (name, ino)
+        d.durable = dict(d.entries)
+        d.pending = []
+
+    def outside_rename_case(self, path: str, spelling: str) -> None:
+        """Rename an entry to another spelling of its name (a case-only rename on a case-insensitive volume),
+        durably."""
+        d, name = self._parent_and_name(path)
+        key = _key(name, d.ci)
+        assert _key(spelling, d.ci) == key
+        d.entries[key] = (spelling, d.entries[key][1])
         d.durable = dict(d.entries)
         d.pending = []
 
@@ -375,6 +392,12 @@ class MemFS:
         walk(ROOT, "")
         return out
 
+    def names_in(self, path: str) -> list[str]:
+        """The stored names in the folder at `path`, sorted."""
+        _, ino, rest, _ = self._walk(path)
+        assert not rest
+        return sorted(s for s, _ in self._dir(ino).entries.values())
+
     def file(self, path: str) -> bytes | None:
         """A file's bytes now (following links), or None when absent."""
         _, ino, rest, _ = self._walk(path)
@@ -425,7 +448,7 @@ class MemFS:
     def _durable_copy(
         self, tables: dict[int, dict[str, tuple[str, int]]], datas: dict[int, bytes], reach: list[int]
     ) -> MemFS:
-        out = MemFS()
+        out = MemFS(stores_nfd=self.stores_nfd)
         out.nodes = {}
         out._next = self._next
         for ino in reach:
@@ -571,8 +594,9 @@ class MemDir:
             if key in d.entries:
                 raise FileExistsError(errno.EEXIST, "exists")
             ino = self._fs._new(f)
-            d.entries[key] = (name, ino)
-            d.pending.append(("link", key, name, str(ino)))
+            stored = self._fs.stored(name)
+            d.entries[key] = (stored, ino)
+            d.pending.append(("link", key, stored, str(ino)))
 
         def write() -> None:
             f.data = data
@@ -619,8 +643,9 @@ class MemDir:
             if kd in d.entries:
                 raise FileExistsError(errno.EEXIST, "exists")
             self._unlocked(ks)
-            _apply(d.entries, ("rename", ks, kd, dst))
-            d.pending.append(("rename", ks, kd, dst))
+            stored = self._fs.stored(dst)
+            _apply(d.entries, ("rename", ks, kd, stored))
+            d.pending.append(("rename", ks, kd, stored))
 
         self._fs._effect(self._label("rename", src, dst), do)
 
@@ -650,10 +675,32 @@ class MemDir:
             if key in d.entries:
                 raise FileExistsError(errno.EEXIST, "exists")
             ino = self._fs._new(_Dir(ci=d.ci, parent=self._ino, no_swap=d.no_swap))
-            d.entries[key] = (name, ino)
-            d.pending.append(("link", key, name, str(ino)))
+            stored = self._fs.stored(name)
+            d.entries[key] = (stored, ino)
+            d.pending.append(("link", key, stored, str(ino)))
 
         self._fs._effect(self._label("mkdir", name), do)
+
+    def rmdir(self, name: str) -> None:
+        d = self._d
+        key = _key(check_name(name), d.ci)
+
+        def do() -> None:
+            self._writable()
+            hit = d.entries.get(key)
+            if hit is None:
+                raise FileNotFoundError(errno.ENOENT, "no entry")
+            node = self._fs.nodes[hit[1]]
+            if not isinstance(node, _Dir):
+                raise NotADirectoryError(errno.ENOTDIR, "not a directory")
+            if node.entries:
+                raise OSError(errno.ENOTEMPTY, "directory not empty")
+            if not self._may_delete(node):
+                raise PermissionError(errno.EACCES, "delete denied")
+            del d.entries[key]
+            d.pending.append(("unlink", key))
+
+        self._fs._effect(self._label("rmdir", name), do)
 
     def names(self) -> list[str]:
         return sorted(s for s, _ in self._d.entries.values())
@@ -666,3 +713,37 @@ class MemDir:
             d.pending = []
 
         self._fs._effect(self._label("sync"), do)
+
+
+class MemLock:
+    def __init__(self, locks: MemLocks, key: str) -> None:
+        self._locks = locks
+        self._key: str | None = key
+
+    def release(self) -> None:
+        if self._key is not None:
+            self._locks.held.discard(self._key)
+            self._key = None
+
+
+class MemLocks:
+    """The ledger-set locks (`ledger_engine.fs.port.Locks`) of one process. `outside_hold`: another process holds a
+    key's lock (a process outside the engine lock, §8.1 step 1). `taken` lists every key tried, in order."""
+
+    def __init__(self) -> None:
+        self.held: set[str] = set()
+        self.outside: set[str] = set()
+        self.taken: list[str] = []
+
+    def outside_hold(self, key: str) -> None:
+        self.outside.add(key)
+
+    def outside_release(self, key: str) -> None:
+        self.outside.discard(key)
+
+    def try_lock(self, key: str) -> MemLock | None:
+        self.taken.append(key)
+        if key in self.held or key in self.outside:
+            return None
+        self.held.add(key)
+        return MemLock(self, key)

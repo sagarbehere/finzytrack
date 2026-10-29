@@ -9,7 +9,7 @@ import errno
 
 import pytest
 
-from tests.fakes.memfs import Crash, MemFS
+from tests.fakes.memfs import Crash, MemFS, MemLocks
 
 
 def fs_with(*dirs: str, ci: bool = True) -> MemFS:
@@ -257,3 +257,69 @@ def test_a_fifo_is_neither_read_nor_opened() -> None:
         assert s.kind.value == "other"
         with pytest.raises(OSError, match="regular"):
             d.read("p")
+
+
+# ---- S0061: rmdir, several faults, a volume storing NFD, locks -----------------------------------------------------
+
+
+def test_rmdir_removes_only_an_empty_folder_and_is_durable_after_its_parents_sync() -> None:
+    fs = fs_with("/d/empty", "/d/full")
+    fs.outside_write("/d/full/.DS_Store", b"x")
+    fs.outside_symlink("/d/link", "/d/empty")
+    fs.outside_write("/d/file", b"f")
+    with fs.open_dir("/d") as d:
+        for name, err in (("full", errno.ENOTEMPTY), ("link", errno.ENOTDIR), ("file", errno.ENOTDIR)):
+            with pytest.raises(OSError, match=r".") as e:
+                d.rmdir(name)
+            assert e.value.errno == err
+        with pytest.raises(FileNotFoundError):
+            d.rmdir("missing")
+        d.rmdir("empty")
+        assert "/d/empty" not in fs.snapshot()
+        assert {"/d/empty" in s.snapshot() for s in fs.power_loss_states()} == {True, False}
+        d.sync()
+    assert {"/d/empty" in s.snapshot() for s in fs.power_loss_states()} == {False}
+
+
+def test_several_faults_can_be_injected_each_firing_once() -> None:
+    fs = fs_with("/d")
+    fs.inject(0, crash=False)
+    fs.inject(2, crash=False, err=errno.EIO)
+    with fs.open_dir("/d") as d:
+        with pytest.raises(OSError, match="injected") as e0:
+            d.create("a", b"1", 0o644)  # effect 0: the entry fails, nothing more is done
+        assert e0.value.errno == errno.ENOSPC
+        with pytest.raises(OSError, match="injected") as e1:
+            d.create("b", b"2", 0o644)  # effects 1, 2: the entry, then the write fails
+        assert e1.value.errno == errno.EIO
+        d.create("c", b"3", 0o644)  # no fault left
+    assert fs.effects[:3] == ["create /d:a", "create /d:b", "write /d:b"]
+    assert fs.file("/d/c") == b"3"
+
+
+def test_a_volume_that_stores_nfd_keeps_every_name_in_nfd_and_finds_it_by_either_form() -> None:
+    """HFS+ (probed, S0061): a name given in NFC is stored in NFD; a lookup in either form finds it."""
+    fs = MemFS(stores_nfd=True)
+    fs.outside_mkdirs("/d")
+    with fs.open_dir("/d") as d:
+        d.mkdir("Caf\u00e9")
+        d.create("x\u00e9", b"1", 0o644)
+        assert d.names() == ["Cafe\u0301", "xe\u0301"]
+        assert d.stat("Cafe\u0301") is not None
+        assert d.read("x\u00e9") == b"1"
+    with fs.open_dir("/d/Caf\u00e9") as h:
+        assert h.path() == "/d/Cafe\u0301"
+    assert fs.names_in("/d") == ["Cafe\u0301", "xe\u0301"]
+
+
+def test_the_fakes_locks_are_taken_without_waiting_and_released() -> None:
+    locks = MemLocks()
+    a = locks.try_lock("/k/a")
+    assert a is not None
+    assert locks.held == {"/k/a"}
+    assert locks.try_lock("/k/a") is None, "held by ourselves: a second take does not wait either"
+    locks.outside_hold("/k/b")
+    assert locks.try_lock("/k/b") is None
+    a.release()
+    assert locks.held == set()
+    assert locks.taken == ["/k/a", "/k/a", "/k/b"]

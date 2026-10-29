@@ -146,6 +146,14 @@ def temp_name(name: str, job: str) -> str:
     return full if _fits(full) else f".{_short(name)}.ft-{job}.tmp"
 
 
+def restore_temp_name(name: str, job: str) -> str:
+    """The restore temp beside a file (§6.4, §8.1 step 3): `.<name>.ft-restore-<job>.tmp`, `<job>` being the save's
+    job, so every try (the rollback and each recovery) uses one name per file that the record alone gives, and a
+    leftover from a try that was cut off is found without a listing; `.<sha16>.ft-restore-<job>.tmp` past NAME_MAX."""
+    full = f".{name}.ft-restore-{check_id(job)}.tmp"
+    return full if _fits(full) else f".{_short(name)}.ft-restore-{job}.tmp"
+
+
 def backup_name(index: int, name: str) -> str:
     """The backup of the file at `index` in the record: `<index>-<name>`, or `<index>-<sha16>` past NAME_MAX."""
     full = f"{index}-{name}"
@@ -224,6 +232,7 @@ def _check(record: Record) -> None:
     taken = [tuple(fold(c, wide) for c in fc) for fc, _ in files]
     taken += [tuple(fold(c, wide) for c in _parts(d.canonical_path)) for d in record.created_dirs]
     temps = [tuple(fold(c, wide) for c in (*fc[:-1], f.temp)) for (fc, _), f in zip(files, record.files, strict=True)]
+    temps += [tuple(fold(c, wide) for c in (*fc[:-1], restore_temp_name(fc[-1], record.job))) for fc, _ in files]
     if len(set(temps)) != len(temps):
         raise BadRecordError("duplicate_temp")
     if any(p[: len(tp)] == tp for tp in temps for p in taken):

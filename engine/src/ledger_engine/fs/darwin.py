@@ -19,6 +19,10 @@
   modification time). `allowed` is `access(2)` with the extended bits (`_DELETE_OK`, `_REXT_OK`), which apply ACLs;
   `can_swap` reads the volume's `VOL_CAP_INT_RENAME_SWAP` and `_EXCL` (`fgetattrlist`; exFAT and FAT have neither).
 
+- `rmdir`: `unlinkat(AT_REMOVEDIR)` on the folder's descriptor (`ENOTEMPTY` for a folder holding a `.DS_Store`,
+  `ENOTDIR` for a link, probed S0061). `DarwinLocks`: the ledger-set locks, a `flock(LOCK_EX | LOCK_NB)` on
+  `<locks>/<sha256(path_key)>`, never deleted.
+
 Other operating systems refuse (`for_this_os`): their primitives are BL-0087 (spec §14).
 """
 
@@ -27,6 +31,7 @@ from __future__ import annotations
 import ctypes
 import errno
 import fcntl
+import hashlib
 import os
 import stat
 import struct
@@ -236,6 +241,9 @@ class DarwinDir:
     def mkdir(self, name: str) -> None:
         os.mkdir(check_name(name), 0o755, dir_fd=self.fd)
 
+    def rmdir(self, name: str) -> None:
+        os.rmdir(check_name(name), dir_fd=self.fd)
+
     def names(self) -> list[str]:
         return sorted(os.listdir(self.fd))
 
@@ -347,6 +355,39 @@ class DarwinFS:
             holder = canonical if is_dir else "/" + "/".join(existing[:-1])
             rules.extend(rule_of(holder) for _ in rest)
         return Resolved(existing=existing, rest=rest, rules=tuple(rules), identity=identity)
+
+
+class DarwinLock:
+    def __init__(self, fd: int) -> None:
+        self._fd: int | None = fd
+
+    def release(self) -> None:
+        if self._fd is not None:
+            os.close(self._fd)  # closing the descriptor releases its `flock`
+            self._fd = None
+
+
+class DarwinLocks:
+    """The ledger-set locks (`ledger_engine.fs.port.Locks`): a whole-file `flock` on `<folder>/<sha256(key)>`, made
+    with mode 0600 if absent and never deleted (§6.1 step 3), taken with `LOCK_NB` (never waiting, §8.1 step 1)."""
+
+    def __init__(self, folder: str) -> None:
+        split_absolute(folder)
+        self._folder = folder
+
+    def try_lock(self, key: str) -> DarwinLock | None:
+        name = hashlib.sha256(key.encode()).hexdigest()
+        flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
+        fd = os.open(_join(self._folder, name), flags, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            return None
+        except BaseException:
+            os.close(fd)
+            raise
+        return DarwinLock(fd)
 
 
 def _identity(st: os.stat_result) -> tuple[int, int]:

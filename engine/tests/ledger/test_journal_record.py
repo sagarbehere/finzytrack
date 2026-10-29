@@ -29,6 +29,7 @@ from ledger_engine.ledger.core.journal import (
     file_name,
     parse_file_name,
     record_name,
+    restore_temp_name,
     temp_name,
 )
 
@@ -225,3 +226,30 @@ def test_a_record_whose_temps_collide_is_unreadable() -> None:
         )
         data = (json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
         assert isinstance(decode(data), Unreadable)
+
+
+def test_a_record_with_a_file_at_another_files_restore_temp_is_unreadable() -> None:
+    """S0061: recovery deletes restore temps without a check (§6.4), so no file or folder of a record may sit at one."""
+    a = RECORD.files[0]
+    rtemp = restore_temp_name("a.bean", RECORD.job)
+    assert rtemp == ".a.bean.ft-restore-j7.tmp"
+    at_rtemp = FileEntry(f"/w/L/inc/{rtemp}", f"/w/l/inc/{rtemp}", None, "4" * 64, None, temp_name(rtemp, "j7"))
+    bad = replace(RECORD, files=(a, at_rtemp), created_dirs=())
+    with pytest.raises(ValueError, match="temp_is_a_path"):
+        encode(bad)
+    obj = json.loads(encode(replace(bad, files=bad.files[:1])))
+    f = bad.files[1]
+    obj["files"].append(
+        {"canonical_path": f.canonical_path, "path_key": f.path_key, "pre": f.pre, "post": f.post, "backup": None}
+        | {"temp": f.temp}
+    )
+    data = (json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
+    assert isinstance(decode(data), Unreadable)
+
+
+def test_restore_temp_names_are_stable_and_within_name_max() -> None:
+    assert restore_temp_name("main.bean", "j7") == ".main.bean.ft-restore-j7.tmp"
+    long = "a" * 250
+    assert len(restore_temp_name(long, "j7").encode()) <= 255
+    assert restore_temp_name(long, "j7") == restore_temp_name(long, "j7")
+    assert restore_temp_name(long, "j7") != temp_name(long, "j7")
