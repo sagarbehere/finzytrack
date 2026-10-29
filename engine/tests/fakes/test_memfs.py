@@ -189,3 +189,71 @@ def test_a_power_loss_state_is_itself_fully_durable() -> None:
         d.create("f", b"x", 0o644)
     for s in fs.power_loss_states():
         assert len(list(s.power_loss_states())) == 1
+
+
+def test_a_dangling_link_resolves_as_absent_with_its_own_name_missing_as_on_macos() -> None:
+    """S0060 verifier F3: the fake's resolution matches the macOS adapter's (`stat` sees a dangling link as absent)."""
+    fs = fs_with("/w/L", "/w/far")
+    fs.outside_symlink("/w/L/new.bean", "/w/far/missing.bean")
+    r = fs.resolve("/w/L/new.bean")
+    assert (r.existing, r.rest) == (("w", "L"), ("new.bean",))
+    fs.outside_write("/w/far/missing.bean", b"x")
+    assert fs.resolve("/w/L/new.bean").existing == ("w", "far", "missing.bean")
+
+
+def test_hard_links_share_one_file_and_count_in_stat() -> None:
+    fs = fs_with("/a", "/b")
+    fs.outside_write("/a/f", b"1")
+    fs.outside_link("/a/f", "/b/g")
+    with fs.open_dir("/a") as a, fs.open_dir("/b") as b:
+        sa, sb = a.stat("f"), b.stat("g")
+        assert sa is not None
+        assert sb is not None
+        assert sa.identity == sb.identity
+        assert sa.nlink == 2
+    assert fs.resolve("/a/f").identity == fs.resolve("/b/g").identity
+    assert fs.resolve("/a/f").existing == ("a", "f")  # each path resolves to itself, as F_GETPATH must not decide
+
+
+def test_a_locked_file_refuses_swap_rename_and_remove() -> None:
+    fs = fs_with("/d")
+    fs.outside_write("/d/f", b"1")
+    fs.outside_write("/d/g", b"2")
+    fs.outside_lock("/d/f")
+    with fs.open_dir("/d") as d:
+        for act in (lambda: d.swap("f", "g"), lambda: d.rename_excl("f", "h"), lambda: d.remove("f")):
+            with pytest.raises(PermissionError):
+                act()
+        s = d.stat("f")
+        assert s is not None
+        assert s.locked
+
+
+def test_create_like_copies_extended_attributes() -> None:
+    fs = fs_with("/d")
+    fs.outside_write("/d/f", b"1")
+    fs.outside_setxattr("/d/f", "k", b"v")
+    with fs.open_dir("/d") as d:
+        d.create("t", b"2", 0o600, like="f")
+    assert fs.xattrs("/d/t") == {"k": b"v"}
+
+
+def test_an_effect_can_happen_and_still_answer_an_error() -> None:
+    fs = fs_with("/d")
+    fs.outside_write("/d/a", b"A")
+    fs.outside_write("/d/b", b"B")
+    fs.inject(0, crash=False, err=errno.EIO, after=True)
+    with fs.open_dir("/d") as d, pytest.raises(OSError, match="injected"):
+        d.swap("a", "b")
+    assert (fs.file("/d/a"), fs.file("/d/b")) == (b"B", b"A")
+
+
+def test_a_fifo_is_neither_read_nor_opened() -> None:
+    fs = fs_with("/d")
+    fs.outside_fifo("/d/p")
+    with fs.open_dir("/d") as d:
+        s = d.stat("p")
+        assert s is not None
+        assert s.kind.value == "other"
+        with pytest.raises(OSError, match="regular"):
+            d.read("p")

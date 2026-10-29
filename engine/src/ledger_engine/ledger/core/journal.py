@@ -14,11 +14,14 @@ loss, a foreign file, a missing or extra field) as `Unreadable`, never a partial
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final, cast
+
+from ledger_engine.fs.port import FoldRule, check_name, fold, split_absolute
 
 FORMAT: Final = "finzytrack-save-journal"
 VERSION: Final = 1
@@ -123,9 +126,45 @@ def parse_file_name(file: str) -> tuple[str, State] | None:
     return base, state
 
 
+NAME_MAX: Final = 255  # bytes of one name (APFS, ext4, NTFS in UTF-16 units: at least this)
+_RULES: Final = tuple(FoldRule(nfd=n, casefold=c) for n in (False, True) for c in (False, True))
+
+
+def _short(name: str) -> str:
+    """A stand-in for a name too long to carry inside a derived name: 16 hex digits of its SHA-256."""
+    return hashlib.sha256(name.encode()).hexdigest()[:16]
+
+
+def _fits(name: str) -> bool:
+    return len(name.encode()) <= NAME_MAX
+
+
 def temp_name(name: str, job: str) -> str:
-    """The save's temp beside a file (§6.1 step 8.3): `.<name>.ft-<job>.tmp`."""
-    return f".{name}.ft-{check_id(job)}.tmp"
+    """The save's temp beside a file (§6.1 step 8.3): `.<name>.ft-<job>.tmp`, or `.<sha16>.ft-<job>.tmp` when that
+    would pass NAME_MAX (S0060 red team finding 11)."""
+    full = f".{name}.ft-{check_id(job)}.tmp"
+    return full if _fits(full) else f".{_short(name)}.ft-{job}.tmp"
+
+
+def backup_name(index: int, name: str) -> str:
+    """The backup of the file at `index` in the record: `<index>-<name>`, or `<index>-<sha16>` past NAME_MAX."""
+    full = f"{index}-{name}"
+    return full if _fits(full) else f"{index}-{_short(name)}"
+
+
+def _parts(path: str) -> tuple[str, ...]:
+    """The components of an absolute path with no `.`, `..` or empty component, never the root alone."""
+    parts = split_absolute(path)
+    if not parts:
+        raise BadRecordError("root")
+    return parts
+
+
+def _key_folds(canonical: tuple[str, ...], key: tuple[str, ...]) -> bool:
+    """The key folds from the canonical path, component by component, by one of the folding rules (§6.3)."""
+    return len(canonical) == len(key) and all(
+        any(fold(c, r) == k for r in _RULES) for c, k in zip(canonical, key, strict=True)
+    )
 
 
 def _sha(value: object) -> str:
@@ -148,26 +187,42 @@ def _abs(value: object) -> str:
 
 
 def _check(record: Record) -> None:
+    """The writer's naming rules (S0060 red team finding 4): recovery acts on these names, so a record that names
+    anything else is not a record of ours."""
     check_id(record.session)
     check_id(record.job)
-    for f in record.files:
-        _abs(f.canonical_path)
-        _abs(f.path_key)
+    files: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+    for i, f in enumerate(record.files):
+        canonical, key = _parts(_abs(f.canonical_path)), _parts(_abs(f.path_key))
+        if not _key_folds(canonical, key):
+            raise BadRecordError("key_not_folded_from_path")
         if f.pre is not None:
             _sha(f.pre)
         _sha(f.post)
         if (f.pre is None) != (f.backup is None):
             raise BadRecordError("backup_iff_pre")
-        _str(f.temp)
+        if f.temp != temp_name(canonical[-1], record.job):
+            raise BadRecordError("temp_name")
+        if f.backup is not None and f.backup != backup_name(i, canonical[-1]):
+            raise BadRecordError("backup_name")
+        check_name(f.temp)
+        files.append((canonical, key))
+    dir_keys: set[str] = set()
     for d in record.created_dirs:
-        _abs(d.canonical_path)
-        _abs(d.path_key)
+        canonical, key = _parts(_abs(d.canonical_path)), _parts(_abs(d.path_key))
+        n = len(canonical)
+        if not any(len(fc) > n and fc[:n] == canonical and fk[:n] == key for fc, fk in files):
+            raise BadRecordError("created_dir_not_an_ancestor")
+        if d.path_key in dir_keys:
+            raise BadRecordError("duplicate_dir_key")
+        dir_keys.add(d.path_key)
     if not record.files:
         raise BadRecordError("no_files")
     keys = [f.path_key for f in record.files]
     if len(set(keys)) != len(keys):
         raise BadRecordError("duplicate_path_key")
-    _abs(record.backup_dir)
+    if _parts(_abs(record.backup_dir))[-1] != record_name(record.session, record.job):
+        raise BadRecordError("backup_dir")
     for v in (
         record.workspace_key,
         record.lineage,

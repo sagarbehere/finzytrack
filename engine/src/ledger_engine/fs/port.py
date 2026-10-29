@@ -18,7 +18,9 @@ in-memory fake `tests/fakes/memfs.py`, with a separate durable layer, crash, I/O
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol, Self
 
 
@@ -43,6 +45,32 @@ class Resolved:
     existing: tuple[str, ...]
     rest: tuple[str, ...]
     rules: tuple[FoldRule, ...]
+    identity: tuple[int, int] | None = None
+    """`(st_dev, st_ino)` of the last existing component, the object the canonical path was checked to name."""
+
+
+class Kind(StrEnum):
+    FILE = "file"
+    DIR = "dir"
+    LINK = "link"
+    OTHER = "other"  # a FIFO, a socket, a device
+
+
+@dataclass(frozen=True, slots=True)
+class EntryStat:
+    """One entry, not followed through a link (`lstat`). `locked`: an immutable or append-only flag is set
+    (`uchg`, `schg`, `uappnd`, `sappnd`): the entry cannot be swapped, renamed or removed."""
+
+    kind: Kind
+    dev: int
+    ino: int
+    nlink: int
+    mode: int
+    locked: bool
+
+    @property
+    def identity(self) -> tuple[int, int]:
+        return (self.dev, self.ino)
 
 
 class DirHandle(Protocol):
@@ -54,16 +82,17 @@ class DirHandle(Protocol):
 
     def read(self, name: str) -> bytes | None:
         """The bytes of the regular file `name`, or None when there is no entry of that name. A link, a directory or
-        any other kind of entry raises `OSError`."""
+        any other kind of entry (a FIFO included: it never blocks) raises `OSError`."""
         ...
 
-    def mode(self, name: str) -> int:
-        """The permission bits of the entry `name` (not followed through a link)."""
+    def stat(self, name: str) -> EntryStat | None:
+        """The entry `name`, not followed through a link, or None when there is none."""
         ...
 
-    def create(self, name: str, data: bytes, mode: int) -> None:
-        """Create the file `name` exclusively (it fails if any entry of that name exists), write `data` and sync its
-        data. The entry is durable only after `sync`."""
+    def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> None:
+        """Create the file `name` exclusively (it fails if any entry of that name exists), write `data`, give it
+        `mode` and, with `like`, the extended attributes and ACL of the regular file `like` in this directory (a
+        replaced file keeps its Finder tags and ACL), and sync its data. The entry is durable only after `sync`."""
         ...
 
     def swap(self, a: str, b: str) -> None:
@@ -106,6 +135,14 @@ class FileSystem(Protocol):
     def open_dir(self, path: str) -> DirHandle:
         """Open the directory at the absolute `path` (links in it are followed)."""
         ...
+
+
+def fold(component: str, rule: FoldRule) -> str:
+    """One name folded by its directory's rule (§6.3). Caseless matching is NFD(casefold(NFD(x))) (Unicode §3.13)."""
+    out = unicodedata.normalize("NFD", component) if rule.nfd or rule.casefold else component
+    if rule.casefold:
+        out = unicodedata.normalize("NFD", out.casefold())
+    return out
 
 
 class MalformedPathError(ValueError):

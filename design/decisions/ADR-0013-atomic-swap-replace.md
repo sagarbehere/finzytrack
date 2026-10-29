@@ -2,7 +2,7 @@
 
 This record decides how a write detects an outside program that saves the same file at the same moment.
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended on 2026-10-29 (S0060): a ledger file with a second hard link refuses the save; what the swap keeps of a file, and what it does not.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** write path, data safety
@@ -30,6 +30,14 @@ An editor, Fava or a sync client may save a ledger file between our final finger
 
 - The TLA+ property is `ExternalEditNeverSilentlyLost`.
 - The swap primitive is OS-specific code in the file-system adapter, tested on all three OSes in the packaged matrix.
+
+## Amendment (2026-10-29): hard-linked files, and what the swap keeps (S0060)
+
+- **Deciders:** owner, 2026-10-29, in session, relayed by the orchestrator, answering `design/inbox/answered/20261029-hard-linked-ledger-files.md`: "Refuse to save it (Recommended)". The option as shown: "Before writing anything, a ledger file with more than one hard link refuses the save with a message naming the file: remove the extra link or copy the file first. Reads and reports still work. Simple, fails closed, can be lifted later."
+- **Why:** the swap gives the name a new file, so a second hard link to a ledger file would keep the old bytes without anyone being told (S0060 data-safety red team, finding 1). Options 2 (save and warn) and 3 (write in place, losing the swap's crash safety) were rejected by that answer.
+- **Decision:** before the save writes anything, a ledger file it replaces whose link count is above 1 refuses the save, naming the file ("not saved", the ledger unchanged after the re-hash). Reads, reports and the other files are not affected. It is checked again when the file is backed up. One function holds the rule (`ledger_engine.ledger.writer._hard_links`).
+- **Also, by the same reasoning (agent):** the swap keeps the file's mode, extended attributes (Finder tags) and ACL (copied to the temp before the swap; `fcopyfile` on macOS). It does not keep the owner (the new file belongs to the user running Finzytrack, who owns their ledger files), the BSD flags (`chflags hidden` and the like) or the inode number. A locked file (`uchg`, append-only) refuses the save before anything is written. These are stated as limits in `design/specs/engine-jobs.md` §15.
+- **Unchanged:** the swap, the displaced-file check and everything else in this record.
 
 ## References
 

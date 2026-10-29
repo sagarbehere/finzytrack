@@ -4,15 +4,22 @@ BL-0087."""
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import fcntl
 import os
+import stat
+import subprocess
 import sys
+import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from ledger_engine.fs.darwin import DarwinFS
+from ledger_engine.ledger.paths import identify
+from ledger_engine.ledger.writer import Change, Commit, Landed, NotSaved, Reason, durable_commit, sha256
 
 pytestmark = [
     pytest.mark.inv("INV-01"),
@@ -174,3 +181,187 @@ def test_other_operating_systems_are_refused(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(darwin.sys, "platform", "linux")
     with pytest.raises(darwin.UnsupportedPlatform):
         darwin.for_this_os()
+
+
+# ---- S0060 verifier round 1 and data-safety red team round 1 ------------------------------------------------------
+
+
+def _hard_linked(tmp_path: Path) -> tuple[Path, Path]:
+    (tmp_path / "L").mkdir()
+    (tmp_path / "Other").mkdir()
+    main = tmp_path / "L" / "main.bean"
+    main.write_bytes(b"pre\n")
+    copy = tmp_path / "Other" / "copy.bean"
+    os.link(main, copy)
+    return main, copy
+
+
+def test_a_hard_linked_file_resolves_to_itself_while_another_process_looks_up_the_other_name(
+    fs: DarwinFS, tmp_path: Path
+) -> None:
+    """The red team's race probe, bounded: a second process stats the other link until told to stop, while this one
+    resolves the ledger path 3,000 times; every answer names the ledger path (before the fix about 1 in 9 did not)."""
+    main, copy = _hard_linked(tmp_path)
+    flag = tmp_path / "running"
+    flag.write_bytes(b"")
+    code = f"import os\nprint('ready', flush=True)\nwhile os.path.exists({str(flag)!r}): os.stat({str(copy)!r})\n"
+    child = subprocess.Popen(  # noqa: S603 (this interpreter, fixed code)
+        [sys.executable, "-I", "-c", code], stdout=subprocess.PIPE, text=True
+    )
+    try:
+        assert child.stdout is not None
+        assert child.stdout.readline().strip() == "ready"
+        wrong = sum(1 for _ in range(3000) if not identify(fs, str(main)).canonical.endswith("/L/main.bean"))
+    finally:
+        flag.unlink()
+        child.wait()
+    assert wrong == 0
+
+
+def _commit(root: Path, *changes: Change) -> Commit:
+    (root / "local" / "journal").mkdir(parents=True, exist_ok=True)
+    (root / "local" / "backups").mkdir(parents=True, exist_ok=True)
+    return Commit(
+        session="s1",
+        job="j1",
+        workspace_key="k",
+        lineage="lin",
+        engine_build="b",
+        post_fingerprint="fp",
+        adopted_digest="ad",
+        parse_digest="pd",
+        changes=changes,
+        journal_dir=str(root / "local" / "journal"),
+        backups_dir=str(root / "local" / "backups"),
+    )
+
+
+def test_a_hard_linked_ledger_file_refuses_the_save_on_apfs(fs: DarwinFS, tmp_path: Path) -> None:
+    """Owner, 2026-10-29: "Refuse to save it (Recommended)": nothing written, both names keep the pre bytes."""
+    main, copy = _hard_linked(tmp_path)
+    os.stat(copy)  # the other name looked up last, as in the red team's repro
+    out = durable_commit(fs, _commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n")))
+    assert isinstance(out, NotSaved)
+    assert (out.reason, out.unchanged) == (Reason.HARD_LINKED, True)
+    assert out.path is not None
+    assert out.path.endswith("/L/main.bean")
+    assert main.read_bytes() == copy.read_bytes() == b"pre\n"
+    assert os.listdir(tmp_path / "local" / "journal") == []
+
+
+def _bounded(fn: Callable[[], object]) -> bool:
+    """Run `fn` on a thread; True when it ended. A hang detector only (the call ends in microseconds)."""
+    done = threading.Event()
+
+    def run() -> None:
+        with contextlib.suppress(OSError):
+            fn()
+        done.set()
+
+    threading.Thread(target=run, daemon=True).start()
+    return done.wait(5)
+
+
+def test_a_fifo_never_blocks_read_stat_resolve_or_a_save(fs: DarwinFS, tmp_path: Path) -> None:
+    """Verifier F4, red team 8."""
+    fifo = tmp_path / "ledger.bean"
+    os.mkfifo(fifo)
+    d = fs.open_dir(str(tmp_path))
+    try:
+        assert _bounded(lambda: d.read("ledger.bean"))
+        st = d.stat("ledger.bean")
+        assert st is not None
+        assert st.kind.value == "other"
+        with pytest.raises(OSError, match="regular"):
+            d.read("ledger.bean")
+    finally:
+        d.close()
+    assert _bounded(lambda: fs.resolve(str(fifo)))
+    results: list[object] = []
+    assert _bounded(lambda: results.append(durable_commit(fs, _commit(tmp_path, Change(str(fifo), "0" * 64, b"x")))))
+    out = results[0]
+    assert isinstance(out, NotSaved)
+    assert out.reason is Reason.NOT_A_FILE
+
+
+def _run(*argv: str) -> str:
+    return subprocess.run(argv, capture_output=True, text=True, check=True).stdout  # noqa: S603 (fixed system tools)
+
+
+def test_a_replaced_file_keeps_its_extended_attributes_and_acl_on_apfs(fs: DarwinFS, tmp_path: Path) -> None:
+    """Red team 10: Finder tags (an extended attribute) and the ACL survive the swap; the mode too."""
+    (tmp_path / "L").mkdir()
+    main = tmp_path / "L" / "main.bean"
+    main.write_bytes(b"pre\n")
+    os.chmod(main, 0o640)
+    tag = "com.apple.metadata:_kMDItemUserTags"
+    _run("/usr/bin/xattr", "-w", tag, "tagdata", str(main))
+    me = os.environ.get("USER") or str(os.getuid())
+    _run("/bin/chmod", "+a", f"user:{me} allow readattr", str(main))
+    acl_before = _run("/bin/ls", "-le", str(main))
+    out = durable_commit(fs, _commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n")))
+    assert isinstance(out, Landed)
+    assert main.read_bytes() == b"post\n"
+    assert _run("/usr/bin/xattr", "-p", tag, str(main)).strip() == "tagdata"
+    acl_after = _run("/bin/ls", "-le", str(main))
+    assert "allow readattr" in acl_before
+    assert acl_before.splitlines()[1:] == acl_after.splitlines()[1:]
+    assert main.stat().st_mode & 0o7777 == 0o640
+
+
+def test_a_locked_file_is_seen_by_stat_and_refuses_the_save_before_anything_is_written(
+    fs: DarwinFS, tmp_path: Path
+) -> None:
+    """Red team 10: `chflags uchg`."""
+    (tmp_path / "L").mkdir()
+    main = tmp_path / "L" / "main.bean"
+    main.write_bytes(b"pre\n")
+    os.chflags(main, stat.UF_IMMUTABLE)
+    try:
+        with fs.open_dir(str(tmp_path / "L")) as d:
+            st = d.stat("main.bean")
+            assert st is not None
+            assert st.locked
+        out = durable_commit(fs, _commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n")))
+        assert isinstance(out, NotSaved)
+        assert out.reason is Reason.LOCKED
+        assert os.listdir(tmp_path / "local" / "backups") == []
+    finally:
+        os.chflags(main, 0)
+
+
+def test_a_file_with_a_name_near_name_max_saves_on_apfs(fs: DarwinFS, tmp_path: Path) -> None:
+    """Red team 11: the derived temp and backup names are shortened, so the save lands (APFS allows 255 characters
+    per name: `.<name>.ft-j1.tmp` of a 250-character name would be 261)."""
+    (tmp_path / "L").mkdir()
+    main = tmp_path / "L" / ("a" * 245 + ".bean")
+    main.write_bytes(b"pre\n")
+    out = durable_commit(fs, _commit(tmp_path, Change(str(main), sha256(b"pre\n"), b"post\n")))
+    assert isinstance(out, Landed)
+    assert main.read_bytes() == b"post\n"
+
+
+def test_resolve_refuses_a_file_replaced_between_its_lookup_and_its_folder_listing(
+    fs: DarwinFS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The object resolution names must be the one the path named (`st_dev`, `st_ino`): a file renamed over in the
+    moment between the two lookups makes resolution fail rather than name another object."""
+    (tmp_path / "L").mkdir()
+    main = tmp_path / "L" / "main.bean"
+    main.write_bytes(b"pre\n")
+    (tmp_path / "L" / "new").write_bytes(b"pre\n")
+    real_stat = os.stat
+    swapped = False
+
+    def stat_then_replace(path: object, *args: object, **kwargs: object) -> os.stat_result:
+        nonlocal swapped
+        st = real_stat(path, *args, **kwargs)  # type: ignore[arg-type]
+        if not swapped and path == str(main):
+            swapped = True
+            os.replace(tmp_path / "L" / "new", main)  # an editor's save by rename
+        return st
+
+    monkeypatch.setattr("ledger_engine.fs.darwin.os.stat", stat_then_replace)
+    with pytest.raises(OSError, match="changed while it was resolved"):
+        fs.resolve(str(main))
+    assert swapped

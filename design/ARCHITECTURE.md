@@ -232,9 +232,11 @@ engine/src/ledger_engine/
                  beancount_port (ADR-0024) (S0049)
     beancount_port.py  the only module that imports beancount.*: typed facade, its LOAD_STAGES and WRAPPERS;
                  untyped Beancount modules have local stubs in engine/typings/ (S0049)
-  fs/            the file-system port for writes (S0060): port.py (FileSystem.resolve, open_dir -> DirHandle: read,
-                 create exclusively and sync, swap, exclusive rename, remove, mkdir, sync, path by F_GETPATH),
-                 darwin.py (F_FULLFSYNC, renameatx_np on the folder's descriptor; other OSes refuse, BL-0087); the
+  fs/            the file-system port for writes (S0060): port.py (FileSystem.resolve with the object's identity,
+                 open_dir -> DirHandle: read, stat, create exclusively with the metadata of the file it replaces and
+                 sync, swap, exclusive rename, remove, mkdir, sync, path by F_GETPATH), darwin.py (F_FULLFSYNC,
+                 renameatx_np on the folder's descriptor, a file resolved through its folder and stored name, never
+                 F_GETPATH on a hard-linked file; fcopyfile for xattrs and ACL; other OSes refuse, BL-0087); the
                  in-memory fake with a durable layer and crash/power-loss injection is engine/tests/fakes/memfs.py
   mirror/        the build half: projection of a LoadResult into SQLite.
     core/        schema.py: the tables, the DDL, the r_* and compatibility views (S0050); rows.py: the row

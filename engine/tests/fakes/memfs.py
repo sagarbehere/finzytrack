@@ -16,9 +16,15 @@ an entry kept before its data), its current bytes, or cut off (the first half of
 **Injection.** Every effect of the port's operations is numbered from 0 (`effects` lists their labels):
 `create` is three effects (the entry, the write, the data sync), every other write one. `inject(at, ...)` makes
 effect `at` raise: `Crash` (a `BaseException`, as a process death that no `except Exception` sees) or `OSError`
-(`ENOSPC` by default), before the effect, or for a write after writing only its first `cut` bytes. `on_effect(i,
-label)` runs before each effect, for an outside program to act between two effects (`outside_*`: durable, as an
-editor that syncs its save; they are not effects).
+(`ENOSPC` by default), before the effect, or for a write after writing only its first `cut` bytes, or with
+`after=True` after the effect took place (an operation that happened but answered an error). `on_effect(i, label)`
+runs before each effect, for an outside program to act between two effects (`outside_*`: durable, as an editor that
+syncs its save; they are not effects).
+
+**Resolution, as the macOS adapter does it:** links are followed, a dangling link counts as absent (its own name is
+the first missing component), and `Resolved.identity` is `(1, inode)`. Files may have several hard links
+(`outside_link`); `stat` gives the link count, and a locked file (`outside_lock`, `uchg`) refuses a swap, a rename
+and a remove. `create(..., like=...)` copies `like`'s extended attributes (`outside_setxattr`).
 """
 
 # pyright: reportPrivateUsage=false
@@ -34,7 +40,15 @@ from typing import Self
 
 import pytest
 
-from ledger_engine.fs.port import FoldRule, MalformedPathError, Resolved, check_name, split_absolute
+from ledger_engine.fs.port import (
+    EntryStat,
+    FoldRule,
+    Kind,
+    MalformedPathError,
+    Resolved,
+    check_name,
+    split_absolute,
+)
 
 ROOT = 1
 MAX_STATES = 200_000
@@ -54,6 +68,13 @@ class _File:
     data: bytes
     synced: bytes
     mode: int
+    xattrs: dict[str, bytes] = field(default_factory=lambda: {})
+    locked: bool = False
+
+
+@dataclass
+class _Other:
+    """A FIFO (any entry that is neither a file, a folder nor a link)."""
 
 
 @dataclass
@@ -71,7 +92,7 @@ class _Dir:
     mode: int = 0o755
 
 
-_Node = _File | _Dir | _Link
+_Node = _File | _Dir | _Link | _Other
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +101,7 @@ class _Fault:
     crash: bool
     err: int
     cut: int | None
+    after: bool
 
 
 def _apply(entries: dict[str, tuple[str, int]], op: tuple[str, ...]) -> None:
@@ -113,23 +135,30 @@ class MemFS:
         self.on_effect: Callable[[int, str], None] | None = None
 
     # -- injection ---------------------------------------------------------------------------------------------
-    def inject(self, at: int, *, crash: bool = True, err: int = errno.ENOSPC, cut: int | None = None) -> None:
-        self._fault = _Fault(at=at, crash=crash, err=err, cut=cut)
+    def inject(
+        self, at: int, *, crash: bool = True, err: int = errno.ENOSPC, cut: int | None = None, after: bool = False
+    ) -> None:
+        self._fault = _Fault(at=at, crash=crash, err=err, cut=cut, after=after)
 
-    def _effect(self, label: str, write: Callable[[int | None], None] | None = None) -> None:
-        """Count an effect; raise there if injected (a write first writes its `cut` prefix)."""
+    def _effect(self, label: str, do: Callable[[], None], write: Callable[[int], None] | None = None) -> None:
+        """One numbered effect: `do` carries it out, unless an injected fault comes first (a write first writes its
+        `cut` prefix) or after it (`after`)."""
         i = len(self.effects)
         if self.on_effect is not None:
             self.on_effect(i, label)
         self.effects.append(label)
         f = self._fault
-        if f is not None and f.at == i:
-            self._fault = None
-            if write is not None and f.cut is not None:
-                write(f.cut)
-            if f.crash:
-                raise Crash(label)
-            raise OSError(f.err, f"injected at {label}")
+        if f is None or f.at != i:
+            do()
+            return
+        self._fault = None
+        if f.after:
+            do()
+        elif write is not None and f.cut is not None:
+            write(f.cut)
+        if f.crash:
+            raise Crash(label)
+        raise OSError(f.err, f"injected at {label}")
 
     # -- tree ------------------------------------------------------------------------------------------------
     def _dir(self, ino: int) -> _Dir:
@@ -147,13 +176,13 @@ class MemFS:
     def _find(self, d: _Dir, name: str) -> tuple[str, int] | None:
         return d.entries.get(_key(name, d.ci))
 
-    def _walk(self, path: str) -> tuple[list[str], int, list[str], list[bool]]:
+    def _walk(self, path: str, depth: int = 0) -> tuple[list[str], int, list[str], list[bool]]:
         """Resolve `path` as far as it exists, following links: the stored names of the existing part, its inode, the
         rest as written, and per component whether its directory is case-insensitive."""
         todo = list(split_absolute(path))
         names: list[str] = []
         cis: list[bool] = []
-        ino = ROOT
+        ino = parent = ROOT
         hops = 0
         while todo:
             node = self.nodes[ino]
@@ -166,24 +195,23 @@ class MemFS:
             target = self.nodes[child]
             if isinstance(target, _Link):
                 hops += 1
-                if hops > 40:
+                if hops + depth > 40:
                     raise OSError(errno.ELOOP, "too many links")
+                if self._walk(target.target, depth + hops)[2]:
+                    break  # a dangling link is absent, as `stat` (macOS) sees it: its own name is missing
                 todo = list(split_absolute(target.target)) + todo[1:]
                 names, cis, ino = [], [], ROOT
                 continue
             names.append(stored)
             cis.append(node.ci)
-            ino = child
+            parent, ino = ino, child
             todo.pop(0)
         last = self.nodes[ino]
-        rest_ci = last.ci if isinstance(last, _Dir) else self._dir(self._parent_of(ino)).ci
+        rest_ci = last.ci if isinstance(last, _Dir) else self._dir(parent).ci
         return names, ino, todo, cis + [rest_ci] * len(todo)
 
-    def _parent_of(self, ino: int) -> int:
-        for pino, node in self.nodes.items():
-            if isinstance(node, _Dir) and any(i == ino for _, i in node.entries.values()):
-                return pino
-        raise FileNotFoundError(errno.ENOENT, "not linked")
+    def nlink(self, ino: int) -> int:
+        return sum(1 for d in self.nodes.values() if isinstance(d, _Dir) for _, i in d.entries.values() if i == ino)
 
     def path_of(self, ino: int) -> str:
         """The current path of a directory inode (its entries chain to the root)."""
@@ -200,9 +228,9 @@ class MemFS:
 
     # -- the port ----------------------------------------------------------------------------------------------
     def resolve(self, path: str) -> Resolved:
-        names, _, rest, cis = self._walk(path)
+        names, ino, rest, cis = self._walk(path)
         rules = tuple(FoldRule(nfd=True, casefold=ci) for ci in cis)
-        return Resolved(existing=tuple(names), rest=tuple(rest), rules=rules)
+        return Resolved(existing=tuple(names), rest=tuple(rest), rules=rules, identity=(1, ino))
 
     def open_dir(self, path: str) -> MemDir:
         _, ino, rest, _ = self._walk(path)
@@ -231,11 +259,12 @@ class MemFS:
                 d.durable = dict(d.entries)
                 d.pending = []
 
-    def outside_write(self, path: str, data: bytes, *, mode: int = 0o644) -> None:
-        """An editor's durable save in place (its data synced; a new entry synced with its folder)."""
+    def outside_write(self, path: str, data: bytes, *, mode: int = 0o644, new_inode: bool = False) -> None:
+        """An editor's durable save: in place (its data synced), or with `new_inode` as a save by rename (a new file
+        under the name, the folder synced); a new entry is synced with its folder."""
         d, name = self._parent_and_name(path)
         hit = self._find(d, name)
-        if hit is None:
+        if hit is None or new_inode:
             ino = self._new(_File(data=data, synced=data, mode=mode))
             d.entries[_key(name, d.ci)] = (name, ino)
             d.durable = dict(d.entries)
@@ -245,6 +274,46 @@ class MemFS:
         if not isinstance(node, _File):
             raise IsADirectoryError(errno.EISDIR, "not a file")
         node.data = node.synced = data
+
+    def _at(self, path: str) -> _Node:
+        _, ino, rest, _ = self._walk(path)
+        if rest:
+            raise FileNotFoundError(errno.ENOENT, "no entry")
+        return self.nodes[ino]
+
+    def outside_link(self, path: str, new: str) -> None:
+        """A second hard link `new` to the file at `path`, durably."""
+        _, ino, rest, _ = self._walk(path)
+        if rest or not isinstance(self.nodes[ino], _File):
+            raise FileNotFoundError(errno.ENOENT, "no file")
+        d, name = self._parent_and_name(new)
+        if self._find(d, name) is not None:
+            raise FileExistsError(errno.EEXIST, "exists")
+        d.entries[_key(name, d.ci)] = (name, ino)
+        d.durable = dict(d.entries)
+        d.pending = []
+
+    def outside_lock(self, path: str) -> None:
+        """`chflags uchg`: the file cannot be swapped, renamed or removed."""
+        node = self._at(path)
+        assert isinstance(node, _File)
+        node.locked = True
+
+    def outside_setxattr(self, path: str, key: str, value: bytes) -> None:
+        node = self._at(path)
+        assert isinstance(node, _File)
+        node.xattrs[key] = value
+
+    def xattrs(self, path: str) -> dict[str, bytes]:
+        node = self._at(path)
+        assert isinstance(node, _File)
+        return dict(node.xattrs)
+
+    def outside_fifo(self, path: str) -> None:
+        d, name = self._parent_and_name(path)
+        d.entries[_key(name, d.ci)] = (name, self._new(_Other()))
+        d.durable = dict(d.entries)
+        d.pending = []
 
     def outside_symlink(self, path: str, target: str) -> None:
         d, name = self._parent_and_name(path)
@@ -286,6 +355,8 @@ class MemFS:
                     out[p] = ("file", node.data, node.mode)
                 elif isinstance(node, _Link):
                     out[p] = ("link", node.target)
+                elif isinstance(node, _Other):
+                    out[p] = ("other",)
                 else:
                     out[p] = ("dir",)
                     walk(child, p)
@@ -360,9 +431,17 @@ class MemFS:
                     assert isinstance(out_d, _Dir)
                     out_d.parent = ino
                 elif isinstance(node, _File):
-                    out.nodes[child] = _File(data=datas[child], synced=datas[child], mode=node.mode)
-                else:
+                    out.nodes[child] = _File(
+                        data=datas[child],
+                        synced=datas[child],
+                        mode=node.mode,
+                        xattrs=dict(node.xattrs),
+                        locked=node.locked,
+                    )
+                elif isinstance(node, _Link):
                     out.nodes[child] = _Link(target=node.target)
+                else:
+                    out.nodes[child] = _Other()
         return out
 
 
@@ -411,81 +490,127 @@ class MemDir:
             raise OSError(errno.ELOOP, "a link")
         if isinstance(node, _Dir):
             raise IsADirectoryError(errno.EISDIR, "a directory")
+        if isinstance(node, _Other):
+            raise OSError(errno.EINVAL, "not a regular file")
         return node.data
 
-    def mode(self, name: str) -> int:
+    def stat(self, name: str) -> EntryStat | None:
         hit = self._entry(name)
         if hit is None:
-            raise FileNotFoundError(errno.ENOENT, "no entry")
+            return None
         node = self._fs.nodes[hit[1]]
-        return 0o777 if isinstance(node, _Link) else node.mode
+        kind = {_File: Kind.FILE, _Dir: Kind.DIR, _Link: Kind.LINK, _Other: Kind.OTHER}[type(node)]
+        mode = node.mode if isinstance(node, _File | _Dir) else 0o777
+        locked = isinstance(node, _File) and node.locked
+        return EntryStat(kind=kind, dev=1, ino=hit[1], nlink=self._fs.nlink(hit[1]), mode=mode, locked=locked)
 
-    def create(self, name: str, data: bytes, mode: int) -> None:
+    def _unlocked(self, key: str) -> None:
+        hit = self._d.entries.get(key)
+        if hit is not None:
+            node = self._fs.nodes[hit[1]]
+            if isinstance(node, _File) and node.locked:
+                raise PermissionError(errno.EPERM, "locked")
+
+    def create(self, name: str, data: bytes, mode: int, like: str | None = None) -> None:
         d = self._d
         key = _key(check_name(name), d.ci)
-        self._fs._effect(self._label("create", name))
-        if key in d.entries:
-            raise FileExistsError(errno.EEXIST, "exists")
+        source: _File | None = None
+        if like is not None:
+            hit = self._entry(like)
+            node = None if hit is None else self._fs.nodes[hit[1]]
+            if not isinstance(node, _File):
+                raise OSError(errno.EINVAL, "not a regular file")
+            source = node
         f = _File(data=b"", synced=b"", mode=mode & 0o7777)
-        ino = self._fs._new(f)
-        d.entries[key] = (name, ino)
-        d.pending.append(("link", key, name, str(ino)))
 
-        def cut(n: int | None) -> None:
-            f.data = data[: n or 0]
+        def link() -> None:
+            if key in d.entries:
+                raise FileExistsError(errno.EEXIST, "exists")
+            ino = self._fs._new(f)
+            d.entries[key] = (name, ino)
+            d.pending.append(("link", key, name, str(ino)))
 
-        self._fs._effect(self._label("write", name), cut)
-        f.data = data
-        self._fs._effect(self._label("fsync", name))
-        f.synced = f.data
+        def write() -> None:
+            f.data = data
+            if source is not None:
+                f.xattrs = dict(source.xattrs)
+
+        def cut(n: int) -> None:
+            f.data = data[:n]
+
+        def fsync() -> None:
+            f.synced = f.data
+
+        self._fs._effect(self._label("create", name), link)
+        self._fs._effect(self._label("write", name), write, cut)
+        self._fs._effect(self._label("fsync", name), fsync)
 
     def swap(self, a: str, b: str) -> None:
         d = self._d
         ka, kb = _key(check_name(a), d.ci), _key(check_name(b), d.ci)
-        self._fs._effect(self._label("swap", a, b))
-        if ka not in d.entries or kb not in d.entries:
-            raise FileNotFoundError(errno.ENOENT, "no entry")
-        _apply(d.entries, ("swap", ka, kb))
-        d.pending.append(("swap", ka, kb))
+
+        def do() -> None:
+            if ka not in d.entries or kb not in d.entries:
+                raise FileNotFoundError(errno.ENOENT, "no entry")
+            self._unlocked(ka)
+            self._unlocked(kb)
+            _apply(d.entries, ("swap", ka, kb))
+            d.pending.append(("swap", ka, kb))
+
+        self._fs._effect(self._label("swap", a, b), do)
 
     def rename_excl(self, src: str, dst: str) -> None:
         d = self._d
         ks, kd = _key(check_name(src), d.ci), _key(check_name(dst), d.ci)
-        self._fs._effect(self._label("rename", src, dst))
-        if ks not in d.entries:
-            raise FileNotFoundError(errno.ENOENT, "no entry")
-        if kd in d.entries:
-            raise FileExistsError(errno.EEXIST, "exists")
-        _apply(d.entries, ("rename", ks, kd, dst))
-        d.pending.append(("rename", ks, kd, dst))
+
+        def do() -> None:
+            if ks not in d.entries:
+                raise FileNotFoundError(errno.ENOENT, "no entry")
+            if kd in d.entries:
+                raise FileExistsError(errno.EEXIST, "exists")
+            self._unlocked(ks)
+            _apply(d.entries, ("rename", ks, kd, dst))
+            d.pending.append(("rename", ks, kd, dst))
+
+        self._fs._effect(self._label("rename", src, dst), do)
 
     def remove(self, name: str) -> None:
         d = self._d
         key = _key(check_name(name), d.ci)
-        self._fs._effect(self._label("remove", name))
-        hit = d.entries.get(key)
-        if hit is None:
-            raise FileNotFoundError(errno.ENOENT, "no entry")
-        if isinstance(self._fs.nodes[hit[1]], _Dir):
-            raise IsADirectoryError(errno.EISDIR, "a directory")
-        del d.entries[key]
-        d.pending.append(("unlink", key))
+
+        def do() -> None:
+            hit = d.entries.get(key)
+            if hit is None:
+                raise FileNotFoundError(errno.ENOENT, "no entry")
+            if isinstance(self._fs.nodes[hit[1]], _Dir):
+                raise IsADirectoryError(errno.EISDIR, "a directory")
+            self._unlocked(key)
+            del d.entries[key]
+            d.pending.append(("unlink", key))
+
+        self._fs._effect(self._label("remove", name), do)
 
     def mkdir(self, name: str) -> None:
         d = self._d
         key = _key(check_name(name), d.ci)
-        self._fs._effect(self._label("mkdir", name))
-        if key in d.entries:
-            raise FileExistsError(errno.EEXIST, "exists")
-        ino = self._fs._new(_Dir(ci=d.ci, parent=self._ino))
-        d.entries[key] = (name, ino)
-        d.pending.append(("link", key, name, str(ino)))
+
+        def do() -> None:
+            if key in d.entries:
+                raise FileExistsError(errno.EEXIST, "exists")
+            ino = self._fs._new(_Dir(ci=d.ci, parent=self._ino))
+            d.entries[key] = (name, ino)
+            d.pending.append(("link", key, name, str(ino)))
+
+        self._fs._effect(self._label("mkdir", name), do)
 
     def names(self) -> list[str]:
         return sorted(s for s, _ in self._d.entries.values())
 
     def sync(self) -> None:
         d = self._d
-        self._fs._effect(self._label("sync"))
-        d.durable = dict(d.entries)
-        d.pending = []
+
+        def do() -> None:
+            d.durable = dict(d.entries)
+            d.pending = []
+
+        self._fs._effect(self._label("sync"), do)

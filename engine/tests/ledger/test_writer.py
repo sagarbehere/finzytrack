@@ -392,7 +392,7 @@ def test_the_path_guard_refuses_a_folder_replaced_by_a_link_after_the_journal() 
     w = world()
     _hook(w.fs, f"sync {JD}:", _swap_folder_for_link(w))  # right after the journal's rename to .open
     out = durable_commit(w.fs, w.commit)
-    assert out == NotSaved(Step.REPLACE, Reason.PATH_MOVED, False, open_journal=True)
+    assert out == NotSaved(Step.REPLACE, Reason.PATH_MOVED, False, open_journal=True, path="/w/L/inc")
     assert w.fs.file("/w/elsewhere/inc/a.bean") == b"elsewhere\n"
     assert [p for p in w.fs.snapshot() if p.startswith("/w/elsewhere/") and ".ft-" in p] == []
     for t in w.targets:
@@ -424,7 +424,7 @@ def test_the_path_guard_checks_through_the_descriptor_that_writes() -> None:
 
     _hook(w.fs, f"mkdir {BD}:{NAME}", swap_folder)  # after resolution, before any handle on /w/L/inc
     out = durable_commit(w.fs, w.commit)
-    assert out == NotSaved(Step.BACKUP, Reason.PATH_MOVED, False)
+    assert out == NotSaved(Step.BACKUP, Reason.PATH_MOVED, False, path="/w/L/inc")
     assert journals(w.fs) == {}
 
 
@@ -508,7 +508,9 @@ def test_a_file_not_at_its_planned_pre_bytes_refuses_before_anything_is_replaced
     w = world()
     w.fs.outside_write("/w/L/main.bean", b"; edited after the plan\n")
     out = durable_commit(w.fs, w.commit)
-    assert out == NotSaved(Step.BACKUP, Reason.CHANGED, False)  # not "unchanged": a file differs from the plan
+    assert out == NotSaved(
+        Step.BACKUP, Reason.CHANGED, False, path="/w/L/main.bean"
+    )  # not "unchanged": a file differs from the plan
     assert journals(w.fs) == {}
     assert w.fs.file("/w/L/inc/a.bean") == w.targets[0].pre
 
@@ -517,7 +519,7 @@ def test_a_file_the_save_creates_that_already_exists_refuses_before_anything_is_
     w = world()
     w.fs.outside_write("/w/L/prices.bean", b"already here\n")
     out = durable_commit(w.fs, w.commit)
-    assert out == NotSaved(Step.BACKUP, Reason.CHANGED, False)
+    assert out == NotSaved(Step.BACKUP, Reason.CHANGED, False, path="/w/L/prices.bean")
     assert w.fs.effects == []
 
 
@@ -532,7 +534,7 @@ def test_a_backup_corrupted_before_its_read_back_refuses_with_nothing_replaced()
 
     w.fs.on_effect = corrupt
     out = durable_commit(w.fs, w.commit)
-    assert out == NotSaved(Step.BACKUP, Reason.IO_ERROR, True)
+    assert out == NotSaved(Step.BACKUP, Reason.IO_ERROR, True, path="/w/L/inc/a.bean")
     assert journals(w.fs) == {}
 
 
@@ -572,4 +574,255 @@ def test_two_paths_of_one_file_are_refused_as_a_malformed_plan() -> None:
     c = replace(w.commit, changes=(Change("/w/L/main.bean", pre, b"1"), Change("/w/L/alias.bean", pre, b"2")))
     with pytest.raises(ValueError, match="twice"):
         durable_commit(w.fs, c)
+    assert w.fs.effects == []
+
+
+# ---- S0060 verifier round 1 and data-safety red team round 1 ------------------------------------------------------
+
+
+def test_a_hard_linked_ledger_file_refuses_the_save_before_anything_is_written() -> None:
+    """Owner, 2026-10-29: "Refuse to save it (Recommended)" (ADR-0013 amendment): the swap would leave the other
+    link with the old bytes, so a file with a second hard link is refused, the message naming it (red team 1)."""
+    w = world()
+    w.fs.outside_mkdirs("/w/Backup")
+    w.fs.outside_link("/w/L/main.bean", "/w/Backup/copy.bean")
+    out = durable_commit(w.fs, w.commit)
+    assert out == NotSaved(Step.BACKUP, Reason.HARD_LINKED, True, path="/w/L/main.bean")
+    assert w.fs.effects == []
+    assert w.fs.file("/w/Backup/copy.bean") == w.targets[2].pre
+
+
+def test_a_hard_link_made_after_resolution_still_refuses_before_any_ledger_file_is_replaced() -> None:
+    w = world()
+    w.fs.outside_mkdirs("/w/Backup")
+    _hook(w.fs, f"mkdir {BD}:{NAME}", lambda: w.fs.outside_link("/w/L/main.bean", "/w/Backup/copy.bean"))
+    out = durable_commit(w.fs, w.commit)
+    assert out == NotSaved(Step.BACKUP, Reason.HARD_LINKED, True, path="/w/L/main.bean")
+    assert journals(w.fs) == {}
+
+
+def test_a_locked_ledger_file_refuses_the_save_before_anything_is_written() -> None:
+    """Red team 10: a `uchg` file would fail at the swap after the journal; it is refused first."""
+    w = world()
+    w.fs.outside_lock("/w/L/main.bean")
+    out = durable_commit(w.fs, w.commit)
+    assert out == NotSaved(Step.BACKUP, Reason.LOCKED, True, path="/w/L/main.bean")
+    assert w.fs.effects == []
+
+
+def test_a_fifo_at_a_ledger_path_refuses_without_opening_it() -> None:
+    """Verifier F4, red team 8: a FIFO is never opened (it would block for ever)."""
+    w = world()
+    w.fs.outside_fifo("/w/L/other.fifo")
+    c = replace(w.commit, changes=(Change("/w/L/other.fifo", "0" * 64, b"x"),))
+    out = durable_commit(w.fs, c)
+    assert out == NotSaved(Step.BACKUP, Reason.NOT_A_FILE, False, path="/w/L/other.fifo")
+    assert w.fs.effects == []
+
+
+def _with_extra(w: World, *extra: Change) -> Commit:
+    ch = w.commit.changes
+    return replace(w.commit, changes=(ch[0], ch[1], *extra, ch[2]))
+
+
+def test_two_created_files_in_one_created_folder_land_and_the_folder_is_made_once() -> None:
+    """Verifier F1, red team 3."""
+    w = world(new_dir=True)
+    out = durable_commit(w.fs, _with_extra(w, Change("/w/L/y2026/tx.bean", None, b"2026-01-04 *\n")))
+    assert isinstance(out, Landed)
+    assert [d.canonical_path for d in out.record.created_dirs] == ["/w/L/y2026"]
+    assert w.fs.effects.count("mkdir /w/L:y2026") == 1
+    assert w.fs.file("/w/L/y2026/tx.bean") == b"2026-01-04 *\n"
+
+
+def test_nested_created_folders_shared_by_two_files_are_made_once_each_parents_first() -> None:
+    w = world()
+    extra = (Change("/w/L/new/sub/a.bean", None, b"a\n"), Change("/w/L/new/b.bean", None, b"b\n"))
+    out = durable_commit(w.fs, _with_extra(w, *extra))
+    assert isinstance(out, Landed)
+    assert [d.canonical_path for d in out.record.created_dirs] == ["/w/L/new", "/w/L/new/sub"]
+    assert w.fs.effects.count("mkdir /w/L:new") == 1
+    assert w.fs.effects.count("mkdir /w/L/new:sub") == 1
+
+
+def test_created_paths_that_collide_are_refused_before_the_first_effect() -> None:
+    """Verifier F2: a created file that is another target's folder, and two created folders that differ only in case
+    on a case-insensitive volume."""
+    w = world()
+    for extra in (
+        (Change("/w/L/x", None, b"x\n"), Change("/w/L/x/y.bean", None, b"y\n")),
+        (Change("/w/L/New/a.bean", None, b"a\n"), Change("/w/L/NEW/b.bean", None, b"b\n")),
+    ):
+        with pytest.raises(ValueError, match=r"file_inside_file|differ_in_case"):
+            durable_commit(w.fs, _with_extra(w, *extra))
+    assert w.fs.effects == []
+
+
+def test_an_entry_standing_at_a_created_path_refuses_before_the_first_effect() -> None:
+    """Verifier F3, red team 5: a dangling link resolves as on macOS (its own name is the missing part) and is
+    refused, never written through."""
+    w = world()
+    w.fs.outside_mkdirs("/w/far")
+    w.fs.outside_symlink("/w/L/prices.bean", "/w/far/missing.bean")
+    out = durable_commit(w.fs, w.commit)
+    assert out == NotSaved(Step.BACKUP, Reason.CHANGED, False, path="/w/L/prices.bean")
+    assert w.fs.effects == []
+    assert w.fs.file("/w/far/missing.bean") is None
+
+
+def test_a_failed_exclusive_rename_with_nothing_replaced_is_not_saved() -> None:
+    """Red team 5: a file that appears at the only created path before its rename: nothing was replaced."""
+    w = world()
+    c = replace(w.commit, changes=(w.commit.changes[1],))
+    _hook(w.fs, "rename /w/L:.prices.bean.ft-j7.tmp,prices.bean", lambda: w.fs.outside_write("/w/L/prices.bean", b"x"))
+    out = durable_commit(w.fs, c)
+    assert out == NotSaved(Step.REPLACE, Reason.CHANGED, False, open_journal=True, path="/w/L/prices.bean")
+    assert w.fs.file("/w/L/prices.bean") == b"x"
+
+
+def test_an_outside_write_into_the_displaced_file_after_the_swap_is_kept_and_the_save_stops() -> None:
+    """Red team 2: a program that held main.bean open writes through its descriptor after the displaced check; its
+    bytes are in our temp, which is kept (§6.4), and the save does not say saved."""
+    w = world()
+    fs = w.fs
+    d = fs._dir(fs._walk("/w/L")[1])  # pyright: ignore[reportPrivateUsage]
+    held = d.entries["main.bean"][1]
+    foreign = b"; written through an open descriptor\n"
+
+    def hook(_: int, label: str) -> None:
+        if label == "sync /w/L:" and fs.file("/w/L/main.bean") == w.targets[2].post:
+            fs.on_effect = None
+            node = fs.nodes[held]
+            node.data = node.synced = foreign  # type: ignore[union-attr]
+
+    fs.on_effect = hook
+    out = durable_commit(fs, w.commit)
+    assert out == Unfinished(Step.READ_BACK, Reason.CHANGED, "/w/L/main.bean")
+    assert fs.file(w.targets[2].temp) == foreign
+    assert set(journals(fs)) == {State.OPEN}
+
+
+def test_a_file_replaced_by_another_with_the_same_bytes_before_the_swap_is_not_swapped_over() -> None:
+    """The displaced entry must be the object resolution found (`st_dev`, `st_ino`), not only the same bytes: an
+    editor's save by rename puts a new file under the name."""
+    w = world()
+    pre = w.targets[2].pre or b""
+    replaced = False
+
+    def hook(_: int, label: str) -> None:
+        nonlocal replaced
+        if label == "create /w/L:.main.bean.ft-j7.tmp" and not replaced:
+            replaced = True
+            w.fs.outside_write("/w/L/main.bean", pre, new_inode=True)
+
+    w.fs.on_effect = hook
+    out = durable_commit(w.fs, w.commit)
+    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, "/w/L/main.bean")
+    assert w.fs.file("/w/L/main.bean") == pre
+
+
+def test_empty_record_fields_are_refused_before_the_first_effect() -> None:
+    """Verifier F5."""
+    w = world()
+    with pytest.raises(ValueError, match="empty_record_field"):
+        durable_commit(w.fs, replace(w.commit, lineage=""))
+    assert w.fs.effects == []
+
+
+def test_targets_in_the_app_folders_and_app_folders_in_the_ledger_folder_are_refused() -> None:
+    """Red team 6 (INV-27, INV-30): a target inside the journal or backup folder; a journal folder inside a folder
+    the save writes in."""
+    w = world()
+    w.fs.outside_mkdirs("/w/L/local/journal")
+    for bad in (
+        replace(w.commit, changes=(Change(f"{JD}/{NAME}.closed", None, b"x\n"),)),
+        replace(w.commit, changes=(Change(f"{BD}/x.bean", None, b"x\n"),)),
+        replace(w.commit, journal_dir="/w/L/local/journal"),
+    ):
+        with pytest.raises(ValueError, match="overlap"):
+            durable_commit(w.fs, bad)
+    assert w.fs.effects == []
+
+
+def test_a_target_at_another_targets_temp_name_is_refused() -> None:
+    """Red team 7: recovery deletes temps, so no ledger file may sit at one."""
+    w = world()
+    c = replace(w.commit, changes=(Change("/w/L/.main.bean.ft-j7.tmp", None, b"x\n"), w.commit.changes[2]))
+    with pytest.raises(ValueError, match="temp_name_taken"):
+        durable_commit(w.fs, c)
+    assert w.fs.effects == []
+
+
+def test_the_replaced_file_keeps_its_extended_attributes() -> None:
+    """Red team 10: Finder tags and other extended attributes go with the swap."""
+    w = world()
+    w.fs.outside_setxattr("/w/L/main.bean", "com.apple.metadata:_kMDItemUserTags", b"tag")
+    assert isinstance(durable_commit(w.fs, w.commit), Landed)
+    assert w.fs.xattrs("/w/L/main.bean") == {"com.apple.metadata:_kMDItemUserTags": b"tag"}
+
+
+def test_a_file_whose_derived_names_would_pass_name_max_lands() -> None:
+    """Red team 11: the temp and backup names are shortened by a hash past NAME_MAX (255 bytes)."""
+    w = world()
+    long = "/w/L/" + "a" * 245 + ".bean"  # `.<name>.ft-j7.tmp` and `0-<name>` would pass 255
+    w.fs.outside_write(long, b"pre\n")
+    out = durable_commit(w.fs, replace(w.commit, changes=(Change(long, sha256(b"pre\n"), b"post\n"),)))
+    assert isinstance(out, Landed)
+    f = out.record.files[0]
+    assert f.backup is not None
+    assert len(f.temp.encode()) <= 255
+    assert len(f.backup.encode()) <= 255
+    assert w.fs.file(long) == b"post\n"
+
+
+@pytest.mark.parametrize("at", range(len(clean_run()[0].fs.effects)))
+def test_an_effect_that_happens_but_answers_an_error_is_told_truthfully(at: int) -> None:
+    """@regression-guard (S0060 red team 12: the injection was missing, the writer already held): an operation that
+    took place and then answered EIO (a swap-back included)."""
+    w = world()
+    w.fs.inject(at, crash=False, err=errno.EIO, after=True)
+    out = durable_commit(w.fs, w.commit)
+    check_disk(w.fs, w)
+    check_every_power_loss(w.fs, w)
+    if isinstance(out, NotSaved):
+        for t in w.targets:
+            assert w.fs.file(t.path) == t.pre, "not saved, but a ledger file changed"
+        assert out.unchanged
+    assert not isinstance(out, Landed), "an operation that answered an error is never told saved"
+
+
+WRITE_POINTS = [(i, cut) for i, cut in CRASH_POINTS if cut is not None]
+
+
+@pytest.mark.parametrize(("at", "cut"), WRITE_POINTS)
+def test_an_io_error_part_way_through_a_write_is_told_truthfully(at: int, cut: int) -> None:
+    """@regression-guard (S0060 red team 12: the injection was missing, the writer already held): a write that wrote
+    `cut` bytes and then failed (a full disk)."""
+    w = world()
+    w.fs.inject(at, crash=False, cut=cut)
+    out = durable_commit(w.fs, w.commit)
+    check_disk(w.fs, w)
+    check_every_power_loss(w.fs, w)
+    assert not isinstance(out, Landed)
+    if isinstance(out, NotSaved):
+        assert out.unchanged
+
+
+def test_a_file_replaced_by_one_with_the_same_bytes_before_its_backup_refuses_with_nothing_replaced() -> None:
+    """The backup re-checks that the entry is still the object resolution found (`st_dev`, `st_ino`): a save by
+    rename with equal bytes after resolution is a changed file, refused before anything is replaced."""
+    w = world()
+    pre = w.targets[2].pre or b""
+    _hook(w.fs, f"mkdir {BD}:{NAME}", lambda: w.fs.outside_write("/w/L/main.bean", pre, new_inode=True))
+    out = durable_commit(w.fs, w.commit)
+    assert out == NotSaved(Step.BACKUP, Reason.CHANGED, True, path="/w/L/main.bean")
+    assert journals(w.fs) == {}
+
+
+def test_a_replaced_file_that_vanished_refuses_before_the_first_effect() -> None:
+    w = world()
+    w.fs.outside_mkdirs("/w/gone")
+    w.fs.outside_move("/w/L/inc/a.bean", "/w/gone/a.bean")
+    out = durable_commit(w.fs, w.commit)
+    assert out == NotSaved(Step.BACKUP, Reason.CHANGED, False, path="/w/L/inc/a.bean")
     assert w.fs.effects == []

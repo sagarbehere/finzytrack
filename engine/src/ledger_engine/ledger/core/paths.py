@@ -10,17 +10,9 @@ apart, never split names it treats as one (§15: it fails closed, with more lock
 
 from __future__ import annotations
 
-import unicodedata
+from ledger_engine.fs.port import MalformedPathError, Resolved, fold
 
-from ledger_engine.fs.port import FoldRule, MalformedPathError, Resolved
-
-
-def fold(component: str, rule: FoldRule) -> str:
-    """One component folded by its directory's rule. Caseless matching is NFD(casefold(NFD(x))) (Unicode §3.13)."""
-    out = unicodedata.normalize("NFD", component) if rule.nfd or rule.casefold else component
-    if rule.casefold:
-        out = unicodedata.normalize("NFD", out.casefold())
-    return out
+__all__ = ["canonical_path", "fold", "path_key"]
 
 
 def canonical_path(resolved: Resolved) -> str:

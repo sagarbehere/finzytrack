@@ -23,6 +23,7 @@ from ledger_engine.ledger.core.journal import (
     Record,
     State,
     Unreadable,
+    backup_name,
     decode,
     encode,
     file_name,
@@ -45,7 +46,9 @@ RECORD = Record(
     backup_dir="/app/local/k1/backups/s1-j7",
     files=(
         FileEntry("/w/L/inc/a.bean", "/w/l/inc/a.bean", "1" * 64, "2" * 64, "0-a.bean", ".a.bean.ft-j7.tmp"),
-        FileEntry("/w/L/Café.bean", "/w/l/café.bean", None, "3" * 64, None, ".Café.bean.ft-j7.tmp"),
+        FileEntry(
+            "/w/L/y2026/Caf\u00e9.bean", "/w/l/y2026/cafe\u0301.bean", None, "3" * 64, None, ".Caf\u00e9.bean.ft-j7.tmp"
+        ),
     ),
     created_dirs=(DirEntry("/w/L/y2026", "/w/l/y2026"),),
 )
@@ -135,3 +138,59 @@ def test_names_and_suffixes() -> None:
     for other in ("s1-j7", "s1-j7.tmp", "s1.open", ".s1-j7.open", "s 1-j7.open", "s1-j-7.open", "-j7.open"):
         assert parse_file_name(other) is None, other
     assert temp_name("main.beancount", "j7") == ".main.beancount.ft-j7.tmp"
+
+
+# S0060 red team 4, verifier Q2: the writer's naming rules are part of the format, so recovery never acts on a name
+# the writer would not have written.
+NAME_RULES: list[Callable[[dict[str, Any]], object]] = [
+    lambda o: o["files"][0].__setitem__("temp", "../../../w/L/inc/a.bean"),
+    lambda o: o["files"][0].__setitem__("temp", ".a.bean.ft-j8.tmp"),  # another job's temp
+    lambda o: o["files"][0].__setitem__("backup", "../../../etc/x"),
+    lambda o: o["files"][0].__setitem__("backup", "1-a.bean"),  # not its index
+    lambda o: o["files"][0].__setitem__("canonical_path", "/w/L/../../etc/a.bean"),
+    lambda o: o["files"][0].__setitem__("canonical_path", "/w/L/./inc/a.bean"),
+    lambda o: o["files"][0].__setitem__("path_key", "/unrelated/inc/a.bean"),
+    lambda o: o["files"][0].__setitem__("path_key", "/w/l/a.bean"),  # another component count
+    lambda o: o.__setitem__("backup_dir", "/"),
+    lambda o: o.__setitem__("backup_dir", "/app/local/k1/backups/s1-j8"),  # another save's folder
+    lambda o: o.__setitem__("created_dirs", [{"canonical_path": "/", "path_key": "/"}]),
+    lambda o: o.__setitem__("created_dirs", [{"canonical_path": "/w/M", "path_key": "/w/m"}]),  # no file in it
+    lambda o: o.__setitem__("created_dirs", [o["created_dirs"][0], o["created_dirs"][0]]),  # one key twice
+]
+
+
+@pytest.mark.parametrize("mutate", NAME_RULES)
+def test_a_record_that_breaks_the_writers_naming_rules_is_unreadable(
+    mutate: Callable[[dict[str, Any]], object],
+) -> None:
+    obj = json.loads(encode(RECORD))
+    mutate(obj)
+    data = (json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
+    assert isinstance(decode(data), Unreadable)
+
+
+def test_derived_names_stay_within_name_max_and_are_stable() -> None:
+    """Red team 11: a base name near NAME_MAX gets a hashed temp and backup name (deterministic, so decode can check
+    it), and a short one keeps its readable name."""
+    long = "é" * 124 + ".bean"
+    assert len(long.encode()) == 253
+    for derived in (temp_name(long, "j7"), backup_name(10, long)):
+        assert len(derived.encode()) <= 255
+        assert "é" not in derived  # shortened: the full name would pass 255 bytes
+    assert backup_name(3, long) == f"3-{long}"  # 255 bytes: fits, kept readable
+    assert temp_name(long, "j7") == temp_name(long, "j7")
+    assert backup_name(0, "a.bean") == "0-a.bean"
+    rec = replace(
+        RECORD,
+        files=(
+            replace(
+                RECORD.files[0],
+                canonical_path=f"/w/L/inc/{long}",
+                path_key=f"/w/l/inc/{long}",
+                temp=temp_name(long, "j7"),
+                backup=backup_name(0, long),
+            ),
+            RECORD.files[1],
+        ),
+    )
+    assert decode(encode(rec)) == rec

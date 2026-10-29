@@ -80,7 +80,8 @@ def test_case_and_normalization_spellings_of_one_file_share_its_canonical_path_a
     ids = {identify(fs, p) for p in spellings}
     assert len(ids) == 1
     (only,) = ids
-    assert only.canonical == f"{base}/Ledger/{NFC}" or only.canonical == f"{base}/Ledger/{NFD}"  # stored spelling
+    (stored,) = [n for n in os.listdir(root / "Ledger") if unicodedata.normalize("NFC", n) == NFC]
+    assert only.canonical == f"{base}/Ledger/{stored}"  # exactly the volume's stored spelling
 
 
 @macos
@@ -150,3 +151,42 @@ def test_relative_paths_and_dot_components_are_refused() -> None:
     for bad in ("v/Ledger", "/v/./Ledger", "/v/Ledger/../x"):
         with pytest.raises(ValueError, match=r"path|component"):
             path_key(fs, bad)
+
+
+@macos
+def test_a_hard_linked_file_has_one_identity_and_each_name_its_own_canonical_path(real: Real) -> None:
+    """S0060 red team 1: the canonical path of a hard-linked file is the name asked for, however recently the other
+    name was looked up; the identity (`st_dev`, `st_ino`) is the same for both."""
+    fs, root = real.fs, real.root
+    (root / "Other").mkdir()
+    os.link(root / "Ledger" / "Main.beancount", root / "Other" / "copy.beancount")
+    for _ in range(10):
+        os.stat(root / "Other" / "copy.beancount")
+        main = fs.resolve(f"{root}/Ledger/main.beancount")
+        assert main.existing[-2:] == ("Ledger", "Main.beancount")
+        os.stat(root / "Ledger" / "Main.beancount")
+        other = fs.resolve(f"{root}/Other/copy.beancount")
+        assert other.existing[-2:] == ("Other", "copy.beancount")
+        assert main.identity is not None
+        assert main.identity == other.identity
+
+
+def test_on_the_fake_a_hard_linked_file_has_one_identity_and_each_name_its_own_path() -> None:
+    fs = fake_tree(ci=True)
+    fs.outside_mkdirs("/v/Other")
+    fs.outside_link("/v/Ledger/Main.beancount", "/v/Other/copy.beancount")
+    a, b = fs.resolve("/v/Ledger/main.beancount"), fs.resolve("/v/Other/copy.beancount")
+    assert (a.existing, b.existing) == (("v", "Ledger", "Main.beancount"), ("v", "Other", "copy.beancount"))
+    assert a.identity is not None
+    assert a.identity == b.identity
+
+
+@macos
+def test_a_dangling_link_resolves_as_absent_with_its_own_name_missing(real: Real) -> None:
+    """@regression-guard (S0060 verifier F3: the adapter already did this; the fake now agrees, its row is in
+    `tests/fakes/test_memfs.py`)."""
+    fs, root = real.fs, real.root
+    (root / "Ledger" / "new.beancount").symlink_to(root / "nowhere" / "x.beancount")
+    r = fs.resolve(f"{root}/Ledger/new.beancount")
+    assert r.rest == ("new.beancount",)
+    assert r.existing[-1] == "Ledger"
