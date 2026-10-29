@@ -343,45 +343,6 @@ def test_an_exclusive_create_refuses_a_file_that_appeared_and_keeps_it() -> None
     check_told(w.fs, w, out, kept="/w/L/prices.bean")
 
 
-def test_a_displaced_outside_save_at_a_swap_is_swapped_back_synced_and_kept() -> None:
-    """§6.4: the swap hashes what it displaced; other bytes are put back at once and the folder synced (F3), so every
-    power loss keeps the outside save in place; then the other files are rolled back and the journal resolved, and the
-    user is told "Your editor saved this file at the same moment" (§6.4)."""
-    w = world()
-    foreign = b"; saved by an editor\n"
-    _hook(w.fs, "swap /w/L:.main.bean.ft-j7.tmp,main.bean", lambda: w.fs.outside_write("/w/L/main.bean", foreign))
-    out = durable_commit(w.fs, w.commit)
-    assert out == NotSaved(Step.REPLACE, Reason.CHANGED, False, path="/w/L/main.bean")
-    assert w.fs.file("/w/L/main.bean") == foreign
-    swap = "swap /w/L:.main.bean.ft-j7.tmp,main.bean"
-    back = [i for i, x in enumerate(w.fs.effects) if x == swap][1]
-    assert w.fs.effects[back + 1] == "sync /w/L:"  # the swap-back synced before anything else (F3)
-    assert set(journals(w.fs)) == {State.RESOLVED}
-    check_told(w.fs, w, out, kept="/w/L/main.bean")
-    for state in w.fs.power_loss_states():
-        assert state.file("/w/L/main.bean") == foreign
-
-
-def test_a_crash_right_after_a_swap_that_displaced_an_outside_save_keeps_both_versions() -> None:
-    """§14: "a crash right after such a swap leaves the journal stopped with both versions": the outside save is in
-    the file or in our temp, never lost, in every power-loss state."""
-    w = world()
-    foreign = b"; saved by an editor\n"
-    _hook(w.fs, "swap /w/L:.main.bean.ft-j7.tmp,main.bean", lambda: w.fs.outside_write("/w/L/main.bean", foreign))
-    w.fs.inject(_index(clean_run()[0].fs.effects, "swap /w/L:.main.bean.ft-j7.tmp,main.bean") + 1, crash=True)
-    with pytest.raises(Crash):
-        durable_commit(w.fs, w.commit)
-    target = w.targets[2]
-    for state in [w.fs, *w.fs.power_loss_states()]:
-        versions = {state.file(target.path), state.file(target.temp)}
-        assert foreign in versions, "the outside save was lost"
-        assert set(journals(state)) == {State.OPEN}
-        out = recover(state)  # recovery stops on it (§8.1 step 2), both versions kept
-        assert type(out).__name__ == "Stopped", out
-        assert foreign in {state.file(target.path), state.file(target.temp)}
-        assert set(journals(state)) == {State.OPEN}
-
-
 def _swap_folder_for_link(w: World) -> Callable[[], None]:
     w.fs.outside_mkdirs("/w/elsewhere/inc")
     w.fs.outside_write("/w/elsewhere/inc/a.bean", b"elsewhere\n")
@@ -689,48 +650,6 @@ def test_a_failed_exclusive_rename_with_nothing_replaced_is_not_saved() -> None:
     assert w.fs.file("/w/L/prices.bean") == b"x"
 
 
-def test_an_outside_write_into_the_displaced_file_after_the_swap_is_kept_and_the_save_stops() -> None:
-    """Red team 2: a program that held main.bean open writes through its descriptor after the displaced check; its
-    bytes are in our temp, which is kept (§6.4), and the save does not say saved."""
-    w = world()
-    fs = w.fs
-    d = fs._dir(fs._walk("/w/L")[1])  # pyright: ignore[reportPrivateUsage]
-    held = d.entries["main.bean"][1]
-    foreign = b"; written through an open descriptor\n"
-
-    def hook(_: int, label: str) -> None:
-        if label == "sync /w/L:" and fs.file("/w/L/main.bean") == w.targets[2].post:
-            fs.on_effect = None
-            node = fs.nodes[held]
-            node.data = node.synced = foreign  # type: ignore[union-attr]
-
-    fs.on_effect = hook
-    out = durable_commit(fs, w.commit)
-    assert out == Unfinished(Step.READ_BACK, Reason.CHANGED, "/w/L/main.bean")
-    assert fs.file(w.targets[2].temp) == foreign
-    assert set(journals(fs)) == {State.OPEN}
-
-
-def test_a_file_replaced_by_another_with_the_same_bytes_before_the_swap_is_not_swapped_over() -> None:
-    """The displaced entry must be the object resolution found (`st_dev`, `st_ino`), not only the same bytes: an
-    editor's save by rename puts a new file under the name."""
-    w = world()
-    pre = w.targets[2].pre or b""
-    replaced = False
-
-    def hook(_: int, label: str) -> None:
-        nonlocal replaced
-        if label == "create /w/L:.main.bean.ft-j7.tmp" and not replaced:
-            replaced = True
-            w.fs.outside_write("/w/L/main.bean", pre, new_inode=True)
-
-    w.fs.on_effect = hook
-    out = durable_commit(w.fs, w.commit)
-    assert out == NotSaved(Step.REPLACE, Reason.CHANGED, True, path="/w/L/main.bean")
-    assert w.fs.file("/w/L/main.bean") == pre
-    assert set(journals(w.fs)) == {State.RESOLVED}
-
-
 def test_empty_record_fields_are_refused_before_the_first_effect() -> None:
     """Verifier F5."""
     w = world()
@@ -839,34 +758,6 @@ def test_a_replaced_file_that_vanished_refuses_before_the_first_effect() -> None
 
 
 # ---- S0060 verifier round 2 and data-safety red team round 2 ------------------------------------------------------
-
-
-def test_a_second_outside_save_before_the_swap_back_is_kept_and_nothing_is_swapped_again() -> None:
-    """@regression-guard (S0060 red team r2 M1: 4c275f57 already ended this way; the swap-back's displaced entry is
-    now checked as well). An outside save by rename during our temp's write is displaced by our swap; a second one takes
-    the name before the swap-back. The swap-back's displaced entry is then not our temp: the save stops at once,
-    with the first outside save in the file and the second in our temp, and swaps nothing more."""
-    w = world()
-    first, second = b"; outside save 1\n", b"; outside save 2\n"
-    swaps = 0
-
-    def on_swap(i: int, label: str) -> None:
-        nonlocal swaps
-        if label == "create /w/L:.main.bean.ft-j7.tmp":
-            w.fs.outside_write("/w/L/main.bean", first, new_inode=True)
-        if label == "swap /w/L:.main.bean.ft-j7.tmp,main.bean":
-            swaps += 1
-            if swaps == 2:  # right before the swap-back
-                w.fs.outside_write("/w/L/main.bean", second, new_inode=True)
-
-    w.fs.on_effect = on_swap
-    out = durable_commit(w.fs, w.commit)
-    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, "/w/L/main.bean")
-    assert swaps == 2
-    assert w.fs.file("/w/L/main.bean") == first
-    assert w.fs.file(w.targets[2].temp) == second
-    for state in w.fs.power_loss_states():
-        assert {state.file("/w/L/main.bean"), state.file(w.targets[2].temp)} == {first, second}
 
 
 def test_a_hard_link_made_after_the_journal_refuses_before_that_file_is_swapped() -> None:
@@ -1079,3 +970,224 @@ def test_a_rollback_that_cannot_tell_whether_the_journal_exists_tries_the_restor
     assert calls >= 1
     check_told(w.fs, w, out)
     assert set(journals(w.fs)) == {State.RESOLVED}
+
+
+# ---- the kept name (owner, 2026-10-29: "Yes"; ADR-0013 amendment; S0061 round 1) ----------------------------------
+
+
+FOREIGN = b"; saved by an editor\n"
+
+
+def _delete_kept_and_recover(w: World, *paths: str) -> None:
+    """The user deletes the kept copies: the next try can resolve, every file back at pre."""
+    for p in paths:
+        d, name = w.fs._parent_and_name(p)  # pyright: ignore[reportPrivateUsage]
+        del d.entries[name.lower()]
+    out = recover(w.fs)
+    assert type(out).__name__ == "Resolved", out
+    check_recovered(w.fs, w, out)
+
+
+def test_a_displaced_outside_save_at_a_swap_is_moved_to_the_kept_name_and_the_save_stops() -> None:
+    """§6.4 as decided: what the swap displaced is not ours, so it is never swapped back: it goes at once to
+    `main.bean.kept-j7` beside the file, the folder is synced, the save stops; the file keeps Finzytrack's version;
+    recovery stops while the kept copy exists."""
+    w = world()
+    _hook(w.fs, "swap /w/L:.main.bean.ft-j7.tmp,main.bean", lambda: w.fs.outside_write("/w/L/main.bean", FOREIGN))
+    out = durable_commit(w.fs, w.commit)
+    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, "/w/L/main.bean")
+    t = w.targets[2]
+    assert (w.fs.file(t.path), w.fs.file(t.kept), w.fs.file(t.temp)) == (t.post, FOREIGN, None)
+    swap = w.fs.effects.index("swap /w/L:.main.bean.ft-j7.tmp,main.bean")
+    assert w.fs.effects[swap + 1 : swap + 3] == ["rename /w/L:.main.bean.ft-j7.tmp,main.bean.kept-j7", "sync /w/L:"]
+    assert w.fs.effects.count("swap /w/L:.main.bean.ft-j7.tmp,main.bean") == 1, "never swapped back"
+    assert set(journals(w.fs)) == {State.OPEN}
+    for state in w.fs.power_loss_states():
+        assert FOREIGN in {state.file(t.path), state.file(t.temp), state.file(t.kept)}, "the outside save was lost"
+    assert type(recover(w.fs)).__name__ == "Stopped"
+    assert w.fs.file(t.kept) == FOREIGN
+    _delete_kept_and_recover(w, t.kept)
+
+
+def test_a_crash_right_after_a_swap_that_displaced_an_outside_save_keeps_it_and_recovery_moves_it_aside() -> None:
+    """§14: "a crash right after such a swap leaves the journal stopped with both versions": the outside save is in
+    the file or in our temp in every power-loss state; recovery stops, moving a temp holding it to the kept name."""
+    w = world()
+    _hook(w.fs, "swap /w/L:.main.bean.ft-j7.tmp,main.bean", lambda: w.fs.outside_write("/w/L/main.bean", FOREIGN))
+    w.fs.inject(_index(clean_run()[0].fs.effects, "swap /w/L:.main.bean.ft-j7.tmp,main.bean") + 1, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    t = w.targets[2]
+    for state in [w.fs, *w.fs.power_loss_states()]:
+        assert FOREIGN in {state.file(t.path), state.file(t.temp)}, "the outside save was lost"
+        assert set(journals(state)) == {State.OPEN}
+        out = recover(state)
+        assert type(out).__name__ == "Stopped", out
+        assert FOREIGN in {state.file(t.path), state.file(t.kept)}
+        assert state.file(t.temp) != FOREIGN, "an outside save left at a temp name, where the temp rule reaches it"
+
+
+def test_an_outside_write_into_the_displaced_file_after_the_swap_goes_to_the_kept_name() -> None:
+    """S0060 red team finding 2: a program that held main.bean open writes through its descriptor after the swap; at
+    the temp's clean-up its bytes are moved to the kept name, never deleted, and the save stops."""
+    w = world()
+    fs = w.fs
+    d = fs._dir(fs._walk("/w/L")[1])  # pyright: ignore[reportPrivateUsage]
+    held = d.entries["main.bean"][1]
+
+    def hook(_: int, label: str) -> None:
+        if label == "sync /w/L:" and fs.file("/w/L/main.bean") == w.targets[2].post:
+            fs.on_effect = None
+            node = fs.nodes[held]
+            node.data = node.synced = FOREIGN  # type: ignore[union-attr]
+
+    fs.on_effect = hook
+    out = durable_commit(fs, w.commit)
+    assert out == Unfinished(Step.READ_BACK, Reason.CHANGED, "/w/L/main.bean")
+    assert fs.file(w.targets[2].kept) == FOREIGN
+    assert fs.file(w.targets[2].temp) is None
+    assert set(journals(fs)) == {State.OPEN}
+
+
+def test_A3_a_kept_outside_save_survives_the_file_being_put_back_to_its_old_version() -> None:
+    """S0061 red team M1: after the stop, the user (or git, or a sync tool) puts main.bean back to its old version;
+    recovery still stops on the kept copy, which nothing deletes, until the user deletes it."""
+    w = world()
+    fs = w.fs
+    d = fs._dir(fs._walk("/w/L")[1])  # pyright: ignore[reportPrivateUsage]
+    held = d.entries["main.bean"][1]
+
+    def hook(_: int, label: str) -> None:
+        if label == "sync /w/L:" and fs.file("/w/L/main.bean") == w.targets[2].post:
+            fs.on_effect = None
+            node = fs.nodes[held]
+            node.data = node.synced = FOREIGN  # type: ignore[union-attr]
+
+    fs.on_effect = hook
+    durable_commit(fs, w.commit)
+    t = w.targets[2]
+    fs.outside_write(t.path, t.pre or b"")
+    for _ in range(2):
+        out = recover(fs)
+        assert type(out).__name__ == "Stopped", out
+        assert fs.file(t.kept) == FOREIGN
+    _delete_kept_and_recover(w, t.kept)
+
+
+def test_A2_an_outside_save_with_the_pre_bytes_at_the_swap_is_ours_and_a_second_one_is_never_deleted() -> None:
+    """S0061 red team H1: outside save 1 replaces main.bean by rename with the same pre bytes (a no-op editor save,
+    git checkout); the swap displaces it, and it is treated as ours (deleting it loses nothing). Outside save 2
+    replaces main.bean after our swap: the read-back sees it, the rollback stops on it, and recovery stops on it
+    too: it is never deleted."""
+    w = world()
+    t = w.targets[2]
+    second = b"; outside 2: the user's real edit\n"
+
+    def on(_: int, label: str) -> None:
+        if label == "create /w/L:.main.bean.ft-j7.tmp":
+            w.fs.outside_write(t.path, t.pre or b"", new_inode=True)
+        if label == "sync /w/L:" and w.fs.file(t.path) == t.post:
+            w.fs.on_effect = None
+            w.fs.outside_write(t.path, second, new_inode=True)
+
+    w.fs.on_effect = on
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, Unfinished), out
+    assert w.fs.file(t.path) == second
+    for _ in range(2):
+        assert type(recover(w.fs)).__name__ == "Stopped"
+        assert w.fs.file(t.path) == second
+
+
+def test_a_file_replaced_by_another_with_the_same_bytes_before_the_swap_loses_nothing_and_lands() -> None:
+    """Owner, 2026-10-29 (the kept-name design, step 2): a displaced file byte-identical to the pre bytes (the backup
+    holds them) is treated as ours: an editor's save by rename with equal bytes after the pre-swap check is not an
+    outside change, and the save lands."""
+    w = world()
+    pre = w.targets[2].pre or b""
+    replaced = False
+
+    def hook(_: int, label: str) -> None:
+        nonlocal replaced
+        if label == "create /w/L:.main.bean.ft-j7.tmp" and not replaced:
+            replaced = True
+            w.fs.outside_write("/w/L/main.bean", pre, new_inode=True)
+
+    w.fs.on_effect = hook
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, Landed)
+    assert w.fs.file("/w/L/main.bean") == w.targets[2].post
+
+
+def test_a_second_outside_save_after_the_first_was_kept_is_kept_too() -> None:
+    """The old M1 case (S0060 red team r2): outside save 1 is displaced by our swap and kept; outside save 2 replaces
+    the file right then. Both survive, in the file and in the kept copy, in every power-loss state."""
+    w = world()
+    first, second = b"; outside save 1\n", b"; outside save 2\n"
+    t = w.targets[2]
+
+    def on(_: int, label: str) -> None:
+        if label == "create /w/L:.main.bean.ft-j7.tmp":
+            w.fs.outside_write(t.path, first, new_inode=True)
+        if label == "rename /w/L:.main.bean.ft-j7.tmp,main.bean.kept-j7":
+            w.fs.outside_write(t.path, second, new_inode=True)
+
+    w.fs.on_effect = on
+    out = durable_commit(w.fs, w.commit)
+    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, t.path)
+    assert (w.fs.file(t.path), w.fs.file(t.kept)) == (second, first)
+    for state in w.fs.power_loss_states():
+        assert {first, second} <= {state.file(t.path), state.file(t.temp), state.file(t.kept)}
+
+
+def test_an_entry_at_a_kept_name_or_a_target_at_one_is_refused_before_the_first_effect() -> None:
+    """Recovery stops while a kept copy exists: a stranger at one before the save starts would stop it for ever."""
+    w = world()
+    w.fs.outside_write("/w/L/main.bean.kept-j7-3", b"x\n")
+    assert durable_commit(w.fs, w.commit) == NotSaved(Step.BACKUP, Reason.CHANGED, True, path="/w/L/main.bean")
+    assert w.fs.effects == []
+    w2 = world()
+    c = replace(w2.commit, changes=(Change("/w/L/main.bean.kept-j7", None, b"x\n"), w2.commit.changes[2]))
+    with pytest.raises(ValueError, match="temp_name_taken"):
+        durable_commit(w2.fs, c)
+
+
+def test_a_folder_put_where_the_swap_displaces_the_file_is_moved_to_the_kept_name() -> None:
+    """Not a regular file, so never ours: an outside program replaced main.bean by a folder between the check and the
+    swap."""
+    w = world()
+    t = w.targets[2]
+
+    def to_folder() -> None:
+        w.fs.outside_write(w.targets[0].path, FOREIGN)  # a.bean changed too: the rollback stops there first
+        w.fs.outside_move(t.path, "/w/moved-away.bean")
+        w.fs.outside_mkdirs(t.path)
+
+    _hook(w.fs, "swap /w/L:.main.bean.ft-j7.tmp,main.bean", to_folder)
+    out = durable_commit(w.fs, w.commit)
+    assert out == Unfinished(Step.REPLACE, Reason.CHANGED, t.path)
+    assert w.fs.snapshot()[t.kept] == ("dir",)
+    assert w.fs.file(t.path) == t.post
+    swap = w.fs.effects.index("swap /w/L:.main.bean.ft-j7.tmp,main.bean")
+    assert w.fs.effects[swap + 1] == "rename /w/L:.main.bean.ft-j7.tmp,main.bean.kept-j7", "moved at once, by the save"
+    assert w.fs.file("/w/moved-away.bean") == t.pre
+
+
+def test_the_save_keeps_an_outside_save_itself_when_its_rollback_stops_on_another_file_first() -> None:
+    """The writer moves the displaced outside save to the kept name itself: its rollback may stop on an earlier file
+    of the record (here a.bean, changed by another program) before it reaches this one."""
+    w = world()
+    a, t = w.targets[0], w.targets[2]
+    second = b"; another outside save\n"
+
+    def on(_: int, label: str) -> None:
+        if label == "create /w/L:.main.bean.ft-j7.tmp":
+            w.fs.outside_write(a.path, FOREIGN)  # a.bean, already replaced, changed in place
+        if label == "swap /w/L:.main.bean.ft-j7.tmp,main.bean":
+            w.fs.outside_write(t.path, second)
+
+    w.fs.on_effect = on
+    out = durable_commit(w.fs, w.commit)
+    assert isinstance(out, Unfinished), out
+    assert w.fs.file(t.kept) == second
+    assert w.fs.file(t.temp) is None

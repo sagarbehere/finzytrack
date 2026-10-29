@@ -34,6 +34,7 @@ process (`outside_hold`: another process holds one).
 # (MemDir is a friend of MemFS: one fake, two classes)
 from __future__ import annotations
 
+import contextlib
 import errno
 import itertools
 import unicodedata
@@ -305,6 +306,13 @@ class MemFS:
         d.durable = dict(d.entries)
         d.pending = []
 
+    def outside_no_swap(self, path: str) -> None:
+        """The folder at `path` is now on a volume without RENAME_SWAP/RENAME_EXCL (as if the ledger were moved to an
+        exFAT drive under the same path)."""
+        node = self._at(path)
+        assert isinstance(node, _Dir)
+        node.no_swap = True
+
     def outside_rename_case(self, path: str, spelling: str) -> None:
         """Rename an entry to another spelling of its name (a case-only rename on a case-insensitive volume),
         durably."""
@@ -486,6 +494,7 @@ class MemDir:
         self._fs = fs
         self._ino = ino
         self._closed = False
+        self._last = fs.path_of(ino)  # what F_GETPATH answers once the folder is removed: its old path (APFS)
 
     def __enter__(self) -> Self:
         return self
@@ -510,7 +519,10 @@ class MemDir:
         return f"{what} {where}:" + ",".join(names)
 
     def path(self) -> str:
-        return self._fs.path_of(self._ino)
+        """The folder's path now; for a folder removed meanwhile, its last path (probed on APFS, S0061 red team L5)."""
+        with contextlib.suppress(FileNotFoundError):
+            self._last = self._fs.path_of(self._ino)
+        return self._last
 
     def _entry(self, name: str) -> tuple[str, int] | None:
         return self._fs._find(self._d, check_name(name))

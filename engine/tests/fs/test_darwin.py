@@ -556,3 +556,29 @@ def test_a_hard_linked_file_at_post_stops_the_restore_on_apfs(fs: DarwinFS, tmp_
     assert out.cause is Cause.HARD_LINKED
     assert main.read_bytes() == (tmp_path / "copy.bean").read_bytes() == b"post\n"
     assert os.listdir(tmp_path / "local" / "journal") == ["s1-j1.open"]
+
+
+def test_a_folder_the_save_made_in_a_read_only_parent_stops_the_restore_before_anything_is_written(
+    fs: DarwinFS, tmp_path: Path
+) -> None:
+    """S0061 verifier V1 on APFS: the parent made read-only (mode 0555) after the crash: the created folder could not
+    be removed, so the try stops at its checks with `permission`, every file as it was, instead of failing for ever."""
+    from ledger_engine.fs.darwin import DarwinLocks
+    from ledger_engine.ledger.core.recovery import Cause
+    from ledger_engine.ledger.restore import Stopped, recover_journal
+
+    (tmp_path / "L").mkdir()
+    created = tmp_path / "L" / "y2027" / "new.bean"
+    c = _commit(tmp_path, Change(str(created), None, b"new\n"))
+    with pytest.raises(_Died):
+        durable_commit(_DyingFS(fs, ".closed"), c)  # type: ignore[arg-type]
+    (tmp_path / "locks").mkdir()
+    os.chmod(tmp_path / "L", 0o555)  # noqa: S103 (read-only on purpose)
+    try:
+        out = recover_journal(fs, DarwinLocks(str(tmp_path / "locks")), c.journal_dir, "s1-j1")
+        assert isinstance(out, Stopped)
+        assert out.cause is Cause.PERMISSION
+        assert created.read_bytes() == b"new\n"
+        assert os.listdir(tmp_path / "local" / "journal") == ["s1-j1.open"]
+    finally:
+        os.chmod(tmp_path / "L", 0o755)  # noqa: S103 (the temp folder back to its default)

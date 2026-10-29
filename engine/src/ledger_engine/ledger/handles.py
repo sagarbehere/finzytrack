@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from ledger_engine.fs.port import DirHandle, EntryStat, FileSystem, same_path
+from ledger_engine.ledger.core.journal import MAX_KEPT, kept_name
 
 
 def sha256(data: bytes) -> str:
@@ -67,3 +69,45 @@ def volume_without_swap(h: DirHandle) -> bool:
     "Agreed, fallback as its own slice after slice 4" (ADR-0013 amendment of 2026-10-29). The one place this rule
     lives. TODO(BL-0160): the fallback write path for such volumes replaces this refusal."""
     return not h.can_swap()
+
+
+class Displaced(StrEnum):
+    """What a swap, an exclusive rename aside or a temp's clean-up found at a name of ours (§6.4)."""
+
+    OURS = "ours"  # a regular file with one link, byte-identical to bytes we hold (deleting it loses nothing)
+    LINKED = "linked"  # the same, but with a second hard link (the owner's hard-link rule: the save stops)
+    FOREIGN = "foreign"  # anything else: an outside save, moved to a kept name, never deleted
+    GONE = "gone"  # nothing there any more
+
+
+def displaced(h: DirHandle, name: str, ours: tuple[str | None, ...]) -> Displaced:
+    """Classify the entry `name` by its bytes (owner, 2026-10-29, the kept-name design, step 2: "If it is ours, or
+    byte-identical to something we already hold (the pre bytes, which the backup has; or the post bytes we wrote),
+    treat it as ours (deleting it loses nothing)"). `ours`: the SHA-256 of the bytes we hold."""
+    st = h.stat(name)
+    if st is None:
+        return Displaced.GONE
+    try:
+        data = h.read(name)  # refuses a folder, a link or a FIFO (the port's contract): never ours
+    except OSError:
+        return Displaced.FOREIGN
+    if data is None:
+        return Displaced.GONE
+    if sha256(data) not in ours:
+        return Displaced.FOREIGN
+    return Displaced.LINKED if hard_links(st) else Displaced.OURS
+
+
+def keep(h: DirHandle, name: str, base: str, job: str) -> str | None:
+    """Move the entry `name` (an outside save we met) at once to the first free kept name of the file `base`
+    (`journal.kept_name`, exclusive), then sync the folder: nothing of ours ever deletes it, and the journal stops
+    while it exists. None when every kept name is taken: the entry stays where it is, and the journal stops anyway
+    (those kept names exist). Owner, 2026-10-29: "Yes" (ADR-0013 amendment)."""
+    for n in range(1, MAX_KEPT + 1):
+        try:
+            h.rename_excl(name, kept_name(base, job, n))
+        except FileExistsError:
+            continue
+        h.sync()
+        return kept_name(base, job, n)
+    return None

@@ -9,8 +9,8 @@ From what was seen at a file the journal names, at the save's temp beside it and
   replaced file, the backup holds the pre bytes; a temp with other bytes is a displaced outside save and stops the
   journal; a backup not at pre stops it (ADR-0012 F-1);
 - anything else (other bytes, a folder, a link, a FIFO) stops it.
-The rollback's kept file (`skip`: the outside save the save itself swapped back, §6.4) is **kept** whatever it holds,
-its temp only when it is absent or holds our post bytes (anything else there is a second outside save).
+The rollback's skipped file (`skip`: a created path an outside file took before the save's exclusive rename, §6.4) is
+**kept** whatever it holds, its temp only when it is absent or holds our post bytes.
 This module is the one place the temp rule lives.
 """
 
@@ -42,7 +42,7 @@ def seen_file(data: bytes) -> Seen:
 class Verdict(StrEnum):
     AT_PRE = "at_pre"  # nothing to restore
     AT_POST = "at_post"  # restore it from its backup, or remove it if the save created it
-    KEEP = "keep"  # the rollback's kept file: left as it is
+    KEEP = "keep"  # the rollback's skipped file (an outside file took a created path first): left as it is
 
 
 class Cause(StrEnum):
@@ -57,7 +57,8 @@ class Cause(StrEnum):
     LOCKED = "locked"  # a file to restore has a lock flag (`uchg`)
     PERMISSION = "permission"  # the system would not allow the restore swap or the removal (a mode, an ACL)
     VOLUME_NO_SWAP = "volume_no_swap"  # the folder's volume has no RENAME_SWAP/RENAME_EXCL
-    DISPLACED = "displaced"  # an outside write met at a restore swap or a created file's removal, put back
+    DISPLACED = "displaced"  # an outside save met at a restore swap, a removal or a temp check: moved to a kept name
+    KEPT_COPY = "kept_copy"  # a kept copy of this journal's (an outside save we moved aside) is still there
     UNREADABLE = "unreadable"  # the record cannot be read: torn, foreign, newer, or not this name's
     LOCK_HELD = "lock_held"  # a ledger-set lock is held by another process (`Failed`)
     IO_ERROR = "io_error"  # an operation failed while restoring (`Failed`)

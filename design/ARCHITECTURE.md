@@ -228,8 +228,9 @@ engine/src/ledger_engine/
                  durable_commit, the durable order of engine-jobs §6.1 step 8 through `fs.port` (S0060), with
                  the rollback of §6.4 on any failure from the `.open` journal on (S0061)
     restore.py   the restore shared by the rollback (§6.4) and recovery's per-journal try (§8.1 steps 1-4):
-                 restore, recover_journal (S0061); handles.py the per-folder handles with the path guard and the
-                 owner's hard-link and no-swap rules, shared by the save and the restore
+                 restore, recover_journal (S0061); handles.py the per-folder handles with the path guard, the
+                 owner's hard-link and no-swap rules, and displaced/keep: an outside save a swap or a clean-up
+                 meets goes to a kept name beside the file, never swapped back (ADR-0013 amendment, S0061 r1)
     core/recovery.py  the per-file judgement of recovery (pre, post or a stop; the temp rule) (S0061)
     paths.py     canonical_path, path_key over `fs.port` (engine-jobs §6.3; S0060); core/paths.py the folding
     core/journal.py  the write-intent journal's record: fields, versioned encoding, names (ADR-0012; S0060)

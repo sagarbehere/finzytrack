@@ -27,6 +27,8 @@ from ledger_engine.ledger.core.journal import (
     decode,
     encode,
     file_name,
+    is_kept_name,
+    kept_name,
     parse_file_name,
     record_name,
     restore_temp_name,
@@ -253,3 +255,27 @@ def test_restore_temp_names_are_stable_and_within_name_max() -> None:
     assert len(restore_temp_name(long, "j7").encode()) <= 255
     assert restore_temp_name(long, "j7") == restore_temp_name(long, "j7")
     assert restore_temp_name(long, "j7") != temp_name(long, "j7")
+
+
+def test_kept_names_are_visible_numbered_within_name_max_and_recognised() -> None:
+    """§6.4 as decided on 2026-10-29 (the owner's kept-name design): `<name>.kept-<job>`, then `-2` and on."""
+    assert kept_name("main.bean", "j7") == "main.bean.kept-j7"
+    assert kept_name("main.bean", "j7", 2) == "main.bean.kept-j7-2"
+    long = "a" * 250
+    assert len(kept_name(long, "j7", 999).encode()) <= 255
+    assert is_kept_name(kept_name(long, "j7", 12), long, "j7")
+    assert is_kept_name("MAIN.BEAN.kept-j7", "main.bean", "j7")  # as a case-insensitive volume may spell it
+    for other in ("main.bean", "main.bean.kept-j8", "main.bean.kept-j77", "main.bean.kept-j7-x", "x.kept-j7"):
+        assert not is_kept_name(other, "main.bean", "j7"), other
+    with pytest.raises(ValueError, match="kept_number"):
+        kept_name("main.bean", "j7", 1000)
+
+
+def test_a_record_with_a_file_at_another_files_kept_name_is_unreadable() -> None:
+    """Recovery stops while a kept copy exists, so a record whose file is another file's kept copy would never
+    resolve."""
+    a = RECORD.files[0]
+    k = kept_name("a.bean", RECORD.job)
+    at_kept = FileEntry(f"/w/L/inc/{k}", f"/w/l/inc/{k}", None, "4" * 64, None, temp_name(k, "j7"))
+    with pytest.raises(ValueError, match="temp_is_a_path"):
+        encode(replace(RECORD, files=(a, at_kept), created_dirs=()))

@@ -2,7 +2,7 @@
 
 This record decides how a write detects an outside program that saves the same file at the same moment.
 
-- **Status:** Accepted. Amended on 2026-10-29 (S0060): a ledger file with a second hard link refuses the save; what the swap keeps of a file, and what it does not; volumes without the swap are refused until their fallback slice (BL-0160).
+- **Status:** Accepted. Amended on 2026-10-29 (S0060): a ledger file with a second hard link refuses the save; what the swap keeps of a file, and what it does not; volumes without the swap are refused until their fallback slice (BL-0160). Amended on 2026-10-29 (S0061): nothing is swapped back; an outside save a swap or a clean-up meets goes to a kept name beside the file.
 - **Date:** 2026-10-24
 - **Deciders:** owner
 - **Area:** write path, data safety
@@ -41,6 +41,22 @@ An editor, Fava or a sync client may save a ledger file between our final finger
 - **Unchanged:** the swap, the displaced-file check and everything else in this record.
 
 - **Code pointer, S0061** (no change to the decision): the two rules' one function each moved with the restore, which shares them with the save: `ledger_engine.ledger.handles.hard_links` (was `writer._hard_links`) and `ledger_engine.ledger.handles.volume_without_swap` (was `writer._volume_without_swap`). The restore applies the hard-link rule too: a file to restore with a second hard link stops the journal instead of being swapped.
+
+## Amendment (2026-10-29): nothing is swapped back; outside saves go to a kept name (S0061)
+
+- **Deciders:** owner, 2026-10-29, in session, relayed by the orchestrator, answering "Shall I go ahead with the simplification?": "Yes". The proposal as shown:
+
+  > anything we displaced that isn't ours is moved at once to a "kept" name that nothing of ours ever deletes, and the save stops.
+  > 1. Swap as today, then check what was displaced.
+  > 2. If it is ours, or byte-identical to something we already hold (the pre bytes, which the backup has; or the post bytes we wrote), treat it as ours (deleting it loses nothing).
+  > 3. Otherwise do not swap back: rename the displaced object straight to a visible kept name beside the file (e.g. `main.bean.kept-j7`), sync, and stop. Whatever now sits at `main.bean` stays.
+  > 4. At clean-up, if a temp we are about to remove holds outside bytes, it is renamed to the kept name instead.
+  > 5. Recovery stops while a kept file exists for the journal (the name is derived from the journal, so no new state); the blocked screen shows "the file" and "the kept copy"; once the user deletes the kept copy, recovery can resolve.
+  > Removed: the swap-back and its sync, the restore's created-file rename-aside-and-back, the second race window. The review-6 temp rule stays as decided: temps then only ever hold our own bytes or a cut write of ours. In that rare collision the file shows Finzytrack's version and the editor's sits beside it as the kept copy. The instant between our last check and the unlink stays a §15 limit. Touches spec §6.4 and §8.1 and ADR-0013's decision line.
+- **Why:** the swap-back opened a second window: a second outside save made in it landed in one of our temp names, and a later ordinary try deleted it under the review-6 temp rule (S0061 data-safety red team round 1, H1 and H2; its M1 was the same family). That mechanism had produced findings in three rounds running.
+- **Decision line, as amended:** "Then hash the displaced file and compare it with the planned pre-hash" now reads: then check what was displaced; if it is byte-identical to the pre bytes or to our post bytes, it is ours; otherwise it is an outside save, moved at once to its kept name beside the file, never swapped back, and the save stops. "On a mismatch, an outside save landed: its bytes are kept" holds, in the kept copy.
+- **Details (agent, S0061):** the kept name is `<name>.kept-<job>`, then `-2` to `-999` when taken, exclusive (`RENAME_EXCL`), a hash standing in for a name past 255 bytes (`ledger_engine.ledger.core.journal.kept_name`); the save refuses before its first effect an entry already standing at one of a file's kept names and a target at another's; a displaced file with a second hard link still stops the save (the hard-link amendment above). Code: `ledger_engine.ledger.handles.displaced` and `keep`.
+- **Unchanged:** the swap itself, the hard-link and no-swap amendments above, and the review-6 temp rule (ADR-0012's amendment of 2026-10-27).
 
 ## References
 

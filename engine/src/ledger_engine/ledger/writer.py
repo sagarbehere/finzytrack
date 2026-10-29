@@ -57,7 +57,16 @@ from ledger_engine.ledger import restore as _restore
 from ledger_engine.ledger.core import journal
 from ledger_engine.ledger.core import paths as core_paths
 from ledger_engine.ledger.core.journal import DirEntry, FileEntry, Record, State
-from ledger_engine.ledger.handles import Handles, PathMovedError, hard_links, sha256, volume_without_swap
+from ledger_engine.ledger.handles import (
+    Displaced,
+    Handles,
+    PathMovedError,
+    displaced,
+    hard_links,
+    keep,
+    sha256,
+    volume_without_swap,
+)
 from ledger_engine.ledger.handles import join as _join
 
 _SHA256: Final = re.compile(r"[0-9a-f]{64}")
@@ -178,6 +187,11 @@ class _Target:
     identity: tuple[int, int] | None  # the replaced file's (st_dev, st_ino); None for a created file
     new_dirs: tuple[tuple[str, str], ...]  # (canonical, key) of the folders the save makes for it, parents first
     rest: tuple[str, ...]  # the components that did not exist at resolution
+    job: str = ""
+
+    def kept_free(self, h: DirHandle) -> bool:
+        """No entry in its folder is one of this file's kept names (a stranger there would stop recovery for ever)."""
+        return not any(journal.is_kept_name(n, self.base, self.job) for n in h.names())
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,10 +279,10 @@ def _target(fs: FileSystem, handles: Handles, index: int, c: Commit, ch: Change)
     rtemp_key = _join(parent_key, fold(rtemp, r.rules[-1]))
     names = (temp, temp_key, rtemp, rtemp_key)
     if not r.rest:
-        return _Target(index, ch, canonical, key, parent, parent_key, base, *names, r.identity, (), ())
+        return _Target(index, ch, canonical, key, parent, parent_key, base, *names, r.identity, (), (), c.job)
     n = len(r.existing)
     new_dirs = tuple(("/" + "/".join(parts[:i]), "/" + "/".join(kparts[:i])) for i in range(n + 1, len(parts)))
-    return _Target(index, ch, canonical, key, parent, parent_key, base, *names, None, new_dirs, r.rest)
+    return _Target(index, ch, canonical, key, parent, parent_key, base, *names, None, new_dirs, r.rest, c.job)
 
 
 def _check_folder(h: DirHandle, canonical: str) -> None:
@@ -292,7 +306,7 @@ def _check_target(handles: Handles, t: _Target) -> None:
             raise _Stop(Reason.PERMISSION, t.canonical)  # the swap moves it away; an ACL denies that (deny delete)
         if not h.allowed(t.base, Right.READ_XATTRS):
             raise _Stop(Reason.PERMISSION, t.canonical)  # its extended attributes could not be copied to the temp
-        if h.stat(t.temp) is not None or h.stat(t.rtemp) is not None:
+        if h.stat(t.temp) is not None or h.stat(t.rtemp) is not None or not t.kept_free(h):
             raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at our temp name (S0060 red team r2 L2)
         return
     if t.change.pre is not None:
@@ -306,7 +320,9 @@ def _check_target(handles: Handles, t: _Target) -> None:
     if holder.stat(t.rest[0]) is not None:
         raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at the path (a dangling link, S0060 verifier F3)
     _check_folder(holder, t.canonical)
-    if len(t.rest) == 1 and (holder.stat(t.temp) is not None or holder.stat(t.rtemp) is not None):
+    if len(t.rest) == 1 and (
+        holder.stat(t.temp) is not None or holder.stat(t.rtemp) is not None or not t.kept_free(holder)
+    ):
         raise _Stop(Reason.CHANGED, t.canonical)  # an entry stands at our temp name
 
 
@@ -325,6 +341,7 @@ def _prepare(fs: FileSystem, handles: Handles, c: Commit, targets: tuple[_Target
             if a is not b and (
                 _within(b.key, a.temp_key)
                 or _within(b.key, a.rtemp_key)
+                or (b.parent_key == a.parent_key and journal.is_kept_name(b.base, a.base, a.job))
                 or {b.temp_key, b.rtemp_key} & {a.temp_key, a.rtemp_key}
             ):
                 raise BadPlanError("temp_name_taken")  # recovery deletes temps (S0060 red team 7, r2 L1); a folder the
@@ -422,33 +439,23 @@ class _Progress:
     open_journal: bool = False
     replaced: bool = False  # a ledger file's swap or exclusive rename was asked for, and may have happened
     made: set[str] = field(default_factory=lambda: set())  # keys of the folders made so far (or that may have been)
-    kept: str | None = None  # the key of the file whose outside save the save put back (or left in place)
+    skip: str | None = None  # the key of a created path an outside file took first: the rollback leaves it alone
 
 
-def _displaced_is_ours(h: DirHandle, name: str, t: _Target) -> Reason | None:
-    """None when the entry `name` is the planned object (`identity`), still with one link (the owner's hard-link rule
-    holds at the swap too: S0060 red team r2 M2), holding the pre bytes (§6.4); otherwise why not."""
-    st = h.stat(name)
-    if st is None or st.identity != t.identity:
-        return Reason.CHANGED
-    if hard_links(st):
-        return Reason.HARD_LINKED
-    try:
-        data = h.read(name)
-    except OSError:
-        return Reason.CHANGED
-    return None if data is not None and sha256(data) == t.change.pre else Reason.CHANGED
-
-
-def _is_our_temp(h: DirHandle, name: str, identity: tuple[int, int], post: bytes) -> bool:
-    """The entry `name` is our own temp (`identity`) with the post bytes."""
-    st = h.stat(name)
-    if st is None or st.identity != identity:
-        return False
-    try:
-        return h.read(name) == post
-    except OSError:
-        return False
+def _check_displaced(h: DirHandle, name: str, t: _Target) -> None:
+    """What the swap moved to our temp name (or what our temp holds at its clean-up), §6.4 as decided on 2026-10-29
+    (owner: "Yes" to the kept-name design; ADR-0013 amendment): a file byte-identical to the pre bytes (the backup
+    holds them) or to our post bytes is ours; with a second hard link the save stops (the owner's hard-link rule, S0060
+    red team r2 M2; nothing is lost, the rollback puts the pre bytes back); anything else is an outside save, moved at
+    once to the file's kept name beside it, never swapped back, and the save stops."""
+    d = displaced(h, name, (t.change.pre, sha256(t.change.post)))
+    if d is Displaced.OURS:
+        return
+    if d is Displaced.LINKED:
+        raise _Stop(Reason.HARD_LINKED, t.canonical)
+    if d is Displaced.FOREIGN:
+        keep(h, name, t.base, t.job)  # none free: it stays at the temp name beside a file at post, so it blocks
+    raise _Stop(Reason.CHANGED, t.canonical)
 
 
 def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
@@ -475,27 +482,17 @@ def _replace(handles: Handles, t: _Target, progress: _Progress) -> None:
             h.rename_excl(t.temp, t.base)
         except FileExistsError:
             progress.replaced = before  # ...except this one: a file stood there, nothing was replaced
-            progress.kept = t.key  # that file is an outside program's: the rollback leaves it as it is
+            progress.skip = t.key  # that file is an outside program's: the rollback leaves it as it is
             raise _Stop(Reason.CHANGED, t.canonical) from None
         h.sync()
         return
     st = _check_replaced(h.stat(t.base), t.identity, t.canonical)
     h.create(t.temp, t.change.post, st.mode, like=t.base)
-    made = h.stat(t.temp)
-    if made is None:
+    if h.stat(t.temp) is None:
         raise _Stop(Reason.CHANGED, t.canonical)  # our temp vanished before the swap
     progress.replaced = True
     h.swap(t.temp, t.base)
-    why = _displaced_is_ours(h, t.temp, t)
-    if why is not None:
-        progress.kept = t.key  # whatever happens next, the rollback leaves this file as it is (§6.4)
-        h.swap(t.temp, t.base)  # the outside save (or the linked file) back in place, kept (§6.4)
-        h.sync()  # at once (model finding F3)
-        if not _is_our_temp(h, t.temp, made.identity, t.change.post):
-            # a second outside save took the name before the swap-back: it is now in our temp and the first one is
-            # back in the file; neither is ours, so nothing is swapped again and both are kept (S0060 red team r2 M1)
-            raise _Stop(Reason.CHANGED, t.canonical)
-        raise _Stop(why, t.canonical)
+    _check_displaced(h, t.temp, t)
     h.sync()
 
 
@@ -508,18 +505,18 @@ def _read_back(handles: Handles, targets: tuple[_Target, ...]) -> None:
 
 
 def _remove_temps(handles: Handles, targets: tuple[_Target, ...]) -> None:
-    """Step 8.4: each temp removed only while it is still the displaced object with the pre bytes; otherwise an outside
-    program wrote into it (through a descriptor it held from before the swap), and it is kept (§6.4; S0060 red team
-    finding 2)."""
+    """Step 8.4: each temp removed only while it holds bytes we hold (the pre bytes, or our post bytes) with one link;
+    an outside program may have written into it through a descriptor it held from before the swap (S0060 red team
+    finding 2): those bytes are moved at once to the file's kept name, and the save stops (§6.4)."""
     touched: dict[str, DirHandle] = {}
     for t in targets:
         if t.change.pre is None:
             continue
         handles.on = t.canonical
         h = handles.at(t.parent)
-        why = _displaced_is_ours(h, t.temp, t)
-        if why is not None:
-            raise _Stop(why, t.canonical)
+        if h.stat(t.temp) is None:
+            continue  # gone: nothing of anyone's to remove
+        _check_displaced(h, t.temp, t)
         h.remove(t.temp)
         touched[t.parent] = h
     handles.on = None
@@ -551,7 +548,7 @@ def _rollback(fs: FileSystem, jd: DirHandle, record: Record, plan: _Plan, step: 
         record,
         plan.journal_dir,
         closed=step is Step.CLOSE,
-        skip=progress.kept,
+        skip=progress.skip,
         made=frozenset(progress.made),
     )
     return isinstance(out, _restore.Resolved)

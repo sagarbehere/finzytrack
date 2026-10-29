@@ -180,7 +180,7 @@ def test_an_outside_write_before_every_effect_of_recovery_is_never_deleted(at: i
         out = recover(w.fs)
         w.fs.on_effect = None
         for state in (w.fs, *w.fs.power_loss_states()):
-            where = {state.file(t.path), state.file(t.temp), state.file(t.rtemp)}
+            where = {state.file(t.path), state.file(t.temp), state.file(t.rtemp), state.file(t.kept)}
             assert FOREIGN in where, (k, out, "the outside save was deleted")
             if state.file(t.path) != FOREIGN:
                 assert State.OPEN in journals(state), (k, out)
@@ -274,64 +274,6 @@ def test_a_leftover_restore_temp_is_deleted_without_a_check() -> None:
 # and its restore swap, and during a created file's removal, is put back and the journal stops") -------------------
 
 
-@pytest.mark.parametrize("by_rename", [False, True])
-def test_an_outside_write_between_the_check_and_the_restore_swap_is_put_back_synced_and_the_journal_stops(
-    by_rename: bool,
-) -> None:
-    w = crashed(CLOSE)
-    _hook(
-        w.fs,
-        "swap /w/L:.main.bean.ft-restore-j7.tmp,main.bean",
-        lambda: w.fs.outside_write("/w/L/main.bean", FOREIGN, new_inode=by_rename),
-    )
-    out = recover(w.fs)
-    assert out == Stopped(Cause.DISPLACED, "/w/L/main.bean")
-    assert w.fs.file("/w/L/main.bean") == FOREIGN
-    assert w.fs.effects[-1] == "sync /w/L:", "the swap-back synced at once (model finding F3)"
-    assert set(journals(w.fs)) == {State.OPEN}
-    for state in w.fs.power_loss_states():
-        assert state.file("/w/L/main.bean") == FOREIGN
-        assert set(journals(state)) == {State.OPEN}
-    assert recover(w.fs) == Stopped(Cause.FOREIGN, "/w/L/main.bean"), "the next try stops too, both versions kept"
-
-
-def test_an_outside_write_during_a_created_files_removal_is_put_back_and_the_journal_stops() -> None:
-    w = crashed(CLOSE)
-    _hook(
-        w.fs,
-        "rename /w/L:prices.bean,.prices.bean.ft-restore-j7.tmp",
-        lambda: w.fs.outside_write("/w/L/prices.bean", FOREIGN),
-    )
-    out = recover(w.fs)
-    assert out == Stopped(Cause.DISPLACED, "/w/L/prices.bean")
-    assert w.fs.file("/w/L/prices.bean") == FOREIGN
-    assert w.fs.effects[-1] == "sync /w/L:"
-    for state in w.fs.power_loss_states():
-        assert FOREIGN in (state.file("/w/L/prices.bean"), state.file("/w/L/.prices.bean.ft-restore-j7.tmp"))
-        assert set(journals(state)) == {State.OPEN}
-
-
-def test_a_second_outside_save_before_the_restore_swap_back_is_kept_and_nothing_is_swapped_again() -> None:
-    """S0060 red team r2 M1 for the restore: both outside saves are kept, one in the file, one in the restore temp."""
-    w = crashed(CLOSE)
-    first, second = b"; outside 1\n", b"; outside 2\n"
-    swaps = 0
-
-    def on(_: int, label: str) -> None:
-        nonlocal swaps
-        if label == "swap /w/L:.main.bean.ft-restore-j7.tmp,main.bean":
-            swaps += 1
-            w.fs.outside_write("/w/L/main.bean", first if swaps == 1 else second, new_inode=True)
-
-    w.fs.on_effect = on
-    out = recover(w.fs)
-    assert out == Stopped(Cause.DISPLACED, "/w/L/main.bean")
-    assert swaps == 2
-    assert {w.fs.file("/w/L/main.bean"), w.fs.file("/w/L/.main.bean.ft-restore-j7.tmp")} == {first, second}
-    for state in w.fs.power_loss_states():
-        assert {state.file("/w/L/main.bean"), state.file("/w/L/.main.bean.ft-restore-j7.tmp")} == {first, second}
-
-
 # ---- step 2: every cause stops the journal before anything is written ---------------------------------------------
 
 
@@ -349,14 +291,6 @@ def test_a_file_holding_neither_pre_nor_post_stops_the_journal() -> None:
     w = crashed(CLOSE)
     w.fs.outside_write("/w/L/inc/a.bean", FOREIGN)
     _stops_with_nothing_written(w, Cause.FOREIGN, "/w/L/inc/a.bean")
-
-
-def test_a_temp_holding_an_outside_save_beside_a_file_at_post_stops_the_journal() -> None:
-    """§6.4 review 6 P1, model finding F2."""
-    w = crashed(FIRST_REMOVE)
-    w.fs.outside_write(w.targets[2].temp, FOREIGN)
-    _stops_with_nothing_written(w, Cause.OUTSIDE_SAVE_IN_TEMP, "/w/L/main.bean")
-    assert w.fs.file(w.targets[2].temp) == FOREIGN
 
 
 def test_a_temp_cut_off_beside_a_file_at_pre_is_deleted_and_blocks_nothing() -> None:
@@ -561,18 +495,6 @@ def test_a_backup_changed_after_the_checks_is_hashed_again_and_stops_the_restore
     assert set(journals(w.fs)) == {State.OPEN}
 
 
-def test_an_outside_write_into_a_save_temp_after_the_checks_keeps_it_and_stops() -> None:
-    """S0060 red team finding 2 for recovery: the temp beside a file at post is checked again right before its
-    removal; an editor that held the displaced file open may have written into it."""
-    w = crashed(FIRST_REMOVE)
-    first, t = w.targets[0], w.targets[2]  # written into main.bean's temp while a.bean's is being removed
-    _hook(w.fs, f"remove {first.folder}:.{first.base}.ft-j7.tmp", lambda: w.fs.outside_write(t.temp, FOREIGN))
-    out = recover(w.fs, listed=False)
-    assert out == Stopped(Cause.OUTSIDE_SAVE_IN_TEMP, t.path)
-    assert w.fs.file(t.temp) == FOREIGN
-    assert set(journals(w.fs)) == {State.OPEN}
-
-
 def test_an_io_error_while_checking_stops_the_journal_with_nothing_written(monkeypatch: pytest.MonkeyPatch) -> None:
     """§8.1 step 2: "Any failure ... the journal stays and counts as unrecoverable"."""
     from tests.fakes.memfs import MemDir
@@ -600,15 +522,227 @@ def test_a_folder_renamed_in_case_only_counts_as_moved() -> None:
     _stops_with_nothing_written(w, Cause.PATH_MOVED, "/w/L/inc/a.bean")
 
 
-def test_an_outside_save_by_rename_with_our_post_bytes_at_the_restore_swap_is_kept_and_stops() -> None:
-    """The displaced entry must be the object step 2 saw (`st_dev`, `st_ino`), not only the same bytes: a new file
-    an editor put under the name is never deleted, whatever it holds."""
+# ---- the kept name at the restore (owner, 2026-10-29: "Yes"; ADR-0013 amendment; S0061 round 1) -------------------
+
+
+def _delete(w: World, path: str) -> None:
+    """The user deletes a file (Finder, the shell)."""
+    d, name = w.fs._parent_and_name(path)  # pyright: ignore[reportPrivateUsage]
+    del d.entries[name.lower()]
+
+
+@pytest.mark.parametrize("by_rename", [False, True])
+def test_an_outside_write_between_the_check_and_the_restore_swap_is_moved_to_the_kept_name(by_rename: bool) -> None:
+    """§6.4 as decided: never swapped back; the outside save goes at once to `main.bean.kept-j7`, the folder is
+    synced, the journal stops; every later try stops on the kept copy until the user deletes it."""
     w = crashed(CLOSE)
-    post = w.targets[2].post
+    t = w.targets[2]
     _hook(
         w.fs,
         "swap /w/L:.main.bean.ft-restore-j7.tmp,main.bean",
-        lambda: w.fs.outside_write("/w/L/main.bean", post, new_inode=True),
+        lambda: w.fs.outside_write(t.path, FOREIGN, new_inode=by_rename),
     )
-    assert recover(w.fs, listed=False) == Stopped(Cause.DISPLACED, "/w/L/main.bean")
+    out = recover(w.fs)
+    assert out == Stopped(Cause.DISPLACED, t.path)
+    assert (w.fs.file(t.path), w.fs.file(t.kept), w.fs.file(t.rtemp)) == (t.pre, FOREIGN, None)
+    assert w.fs.effects[-2:] == ["rename /w/L:.main.bean.ft-restore-j7.tmp,main.bean.kept-j7", "sync /w/L:"]
+    assert w.fs.effects.count("swap /w/L:.main.bean.ft-restore-j7.tmp,main.bean") == 1, "never swapped back"
     assert set(journals(w.fs)) == {State.OPEN}
+    for state in w.fs.power_loss_states():
+        assert FOREIGN in {state.file(t.path), state.file(t.rtemp), state.file(t.kept)}
+        assert set(journals(state)) == {State.OPEN}
+    assert recover(w.fs) == Stopped(Cause.KEPT_COPY, t.path)
+    _delete(w, t.kept)
+    check_recovered(w.fs, w, recover(w.fs))
+
+
+def test_an_outside_write_during_a_created_files_removal_is_moved_to_the_kept_name() -> None:
+    w = crashed(CLOSE)
+    t = w.targets[1]
+    _hook(w.fs, "rename /w/L:prices.bean,.prices.bean.ft-restore-j7.tmp", lambda: w.fs.outside_write(t.path, FOREIGN))
+    out = recover(w.fs)
+    assert out == Stopped(Cause.DISPLACED, t.path)
+    assert (w.fs.file(t.path), w.fs.file(t.kept)) == (None, FOREIGN)
+    assert w.fs.effects[-1] == "sync /w/L:"
+    for state in w.fs.power_loss_states():
+        assert FOREIGN in (state.file(t.path), state.file(t.rtemp), state.file(t.kept))
+        assert set(journals(state)) == {State.OPEN}
+
+
+def test_A1_an_outside_save_with_our_post_bytes_at_the_restore_swap_is_ours_and_a_later_one_is_never_deleted() -> None:
+    """S0061 red team H2: outside save 1 by rename holds our post bytes (a sync tool writing the same content): the
+    swap displaces it and it is ours by bytes (deleting it loses nothing); outside save 2 replaces main.bean right
+    after: it is an edit made after the restore, kept in the file."""
+    w = crashed(CLOSE)
+    t = w.targets[2]
+    second = b"; outside 2: the user's real edit\n"
+
+    def on(_: int, label: str) -> None:
+        if label == "swap /w/L:.main.bean.ft-restore-j7.tmp,main.bean":
+            w.fs.outside_write(t.path, t.post, new_inode=True)
+        if label == "remove /w/L:.main.bean.ft-restore-j7.tmp":
+            w.fs.on_effect = None
+            w.fs.outside_write(t.path, second, new_inode=True)
+
+    w.fs.on_effect = on
+    out = recover(w.fs)
+    assert out == Resolved(NAME)
+    assert w.fs.file(t.path) == second
+    for state in w.fs.power_loss_states():
+        assert state.file(t.path) == second
+
+
+def test_a_temp_holding_an_outside_save_beside_a_file_at_post_is_moved_to_the_kept_name_and_stops() -> None:
+    """§6.4 review 6 P1 (the temp rule's stop), model finding F2; S0061 red team M1: moved out of the temp rule's
+    reach at once, so a later revert of the file cannot get it deleted."""
+    w = crashed(FIRST_REMOVE)
+    t = w.targets[2]
+    w.fs.outside_write(t.temp, FOREIGN)
+    n = len(w.fs.effects)
+    out = recover(w.fs, listed=False)
+    assert out == Stopped(Cause.OUTSIDE_SAVE_IN_TEMP, t.path)
+    assert w.fs.effects[n:] == ["rename /w/L:.main.bean.ft-j7.tmp,main.bean.kept-j7", "sync /w/L:"]
+    assert (w.fs.file(t.temp), w.fs.file(t.kept)) == (None, FOREIGN)
+    w.fs.outside_write(t.path, t.pre or b"")  # the user puts the file back to its old version
+    assert recover(w.fs) == Stopped(Cause.KEPT_COPY, t.path)
+    assert w.fs.file(t.kept) == FOREIGN
+
+
+def test_an_outside_write_into_a_save_temp_after_the_checks_is_moved_to_the_kept_name() -> None:
+    """S0060 red team finding 2 for recovery: re-checked right before its removal."""
+    w = crashed(FIRST_REMOVE)
+    first, t = w.targets[0], w.targets[2]
+    _hook(w.fs, f"remove {first.folder}:.{first.base}.ft-j7.tmp", lambda: w.fs.outside_write(t.temp, FOREIGN))
+    out = recover(w.fs, listed=False)
+    assert out == Stopped(Cause.OUTSIDE_SAVE_IN_TEMP, t.path)
+    assert (w.fs.file(t.temp), w.fs.file(t.kept)) == (None, FOREIGN)
+    assert set(journals(w.fs)) == {State.OPEN}
+
+
+def test_an_outside_save_by_rename_with_our_post_bytes_at_the_restore_swap_is_ours() -> None:
+    """Owner, 2026-10-29 (step 2 of the kept-name design): byte-identical to bytes we hold, so deleting it loses
+    nothing; the restore goes on and resolves."""
+    w = crashed(CLOSE)
+    t = w.targets[2]
+    _hook(
+        w.fs,
+        "swap /w/L:.main.bean.ft-restore-j7.tmp,main.bean",
+        lambda: w.fs.outside_write(t.path, t.post, new_inode=True),
+    )
+    out = recover(w.fs)
+    assert out == Resolved(NAME)
+    check_recovered(w.fs, w, out)
+
+
+def test_a_kept_name_already_taken_uses_the_next_number_and_still_stops() -> None:
+    from ledger_engine.ledger.handles import keep
+
+    w = crashed(CLOSE)
+    w.fs.outside_write("/w/L/x.tmp", FOREIGN)
+    w.fs.outside_write("/w/L/main.bean.kept-j7", b"an earlier kept copy\n")
+    with w.fs.open_dir("/w/L") as h:
+        assert keep(h, "x.tmp", "main.bean", "j7") == "main.bean.kept-j7-2"
+    assert w.fs.file("/w/L/main.bean.kept-j7-2") == FOREIGN
+    assert recover(w.fs) == Stopped(Cause.KEPT_COPY, "/w/L/main.bean")
+
+
+# ---- S0061 round 1: the verifier's V1, V2, L3, L4 and the red team's L1, L3, L4 ---------------------------------
+
+
+def test_a_folder_the_save_made_that_cannot_be_removed_stops_before_anything_is_written() -> None:
+    """Verifier V1: the folder's own deletion denied (an ACL), or entry changes denied in its parent: stopped at the
+    checks with `permission`, not failed for ever after the files were restored."""
+    from tests.ledger.worlds import commit_for
+
+    base = world(new_dir=True)
+    only = (base.targets[1],)  # the created file in the created folder: nothing else in /w/L is written
+    w = World(base.fs, commit_for(only), only, base.before, base.new_dirs)
+    probe = World(world(new_dir=True).fs, w.commit, only, base.before, base.new_dirs)
+    durable_commit(probe.fs, probe.commit)
+    w.fs.inject(probe.fs.effects.index(f"rename {JD}:{NAME}.open,{NAME}.closed"), crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    w.fs.outside_deny("/w/L", Right.CHANGE_ENTRIES)  # the parent made read-only (chmod 0555), as in V1's repro
+    _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/y2026")
+
+
+def test_a_non_file_at_the_restore_temp_name_stops_before_anything_is_written() -> None:
+    """Verifier V2: a folder where a leftover restore temp would be is not ours."""
+    w = crashed(CLOSE)
+    w.fs.outside_mkdirs("/w/L/.main.bean.ft-restore-j7.tmp")
+    _stops_with_nothing_written(w, Cause.FOREIGN, "/w/L/main.bean")
+
+
+def test_a_leftover_restore_temp_beside_a_file_at_pre_in_a_read_only_folder_stops_before_anything_is_written() -> None:
+    """Red team L4: its removal needs the folder's entry-change right."""
+    w = crashed(EFFECTS.index("create /w/L/inc:.a.bean.ft-j7.tmp"))  # no temp of the save there
+    w.fs.outside_write("/w/L/inc/.a.bean.ft-restore-j7.tmp", b"cut\n")
+    w.fs.outside_deny("/w/L/inc", Right.CHANGE_ENTRIES)
+    _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/inc/a.bean")
+
+
+def test_a_file_at_post_whose_extended_attributes_cannot_be_read_stops_before_anything_is_written() -> None:
+    """Red team L1: the restore temp copies them, so it is checked at step 2."""
+    w = crashed(FIRST_REMOVE)
+    w.fs.outside_deny("/w/L/main.bean", Right.READ_XATTRS)
+    _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/main.bean")
+
+
+def test_the_restored_file_keeps_its_extended_attributes() -> None:
+    """Verifier L3 (mutant m09): the restore temp is made `like` the file it replaces."""
+    w = world()
+    w.fs.outside_setxattr("/w/L/main.bean", "com.apple.metadata:_kMDItemUserTags", b"tag")
+    w.fs.inject(CLOSE, crash=True)
+    with pytest.raises(Crash):
+        durable_commit(w.fs, w.commit)
+    assert isinstance(recover(w.fs), Resolved)
+    assert w.fs.xattrs("/w/L/main.bean") == {"com.apple.metadata:_kMDItemUserTags": b"tag"}
+
+
+def test_a_file_at_post_on_a_volume_without_the_swap_stops_before_anything_is_written() -> None:
+    """Verifier L4 (mutant m21): the owner's no-swap rule holds for the restore swap too."""
+    w = crashed(CLOSE)
+    w.fs.outside_no_swap("/w/L")
+    _stops_with_nothing_written(w, Cause.VOLUME_NO_SWAP, "/w/L/prices.bean")
+
+
+def test_a_file_that_vanishes_between_its_stat_and_its_read_is_foreign(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Red team L3: one `stat` for the kind, then the bytes; a read that finds nothing is a change, never a crash of
+    the job."""
+    from tests.fakes.memfs import MemDir
+
+    w = crashed(CLOSE)
+    real = MemDir.read
+
+    def vanishing(self: MemDir, name: str) -> bytes | None:
+        return None if name == "main.bean" else real(self, name)
+
+    monkeypatch.setattr(MemDir, "read", vanishing)
+    n = len(w.fs.effects)
+    assert recover(w.fs, listed=False) == Stopped(Cause.FOREIGN, "/w/L/main.bean")
+    assert w.fs.effects[n:] == []
+
+
+def test_a_folder_the_save_made_whose_own_deletion_is_denied_stops_before_anything_is_written() -> None:
+    """Verifier V1, second half: an ACL denying the folder's deletion (the created file not written yet)."""
+    w = crashed(NEW_DIR_EFFECTS.index("create /w/L/y2026:.prices.bean.ft-j7.tmp"), new_dir=True)
+    assert "/w/L/y2026" in w.fs.snapshot()
+    w.fs.outside_deny("/w/L/y2026", Right.DELETE)
+    _stops_with_nothing_written(w, Cause.PERMISSION, "/w/L/y2026")
+
+
+def test_a_created_file_that_vanishes_between_its_stat_and_its_read_is_foreign_not_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Red team L3 for a created file: "absent" would be its pre state, and the try would resolve over a file that is
+    there."""
+    from tests.fakes.memfs import MemDir
+
+    w = crashed(CLOSE)
+    real = MemDir.read
+
+    def vanishing(self: MemDir, name: str) -> bytes | None:
+        return None if name == "prices.bean" else real(self, name)
+
+    monkeypatch.setattr(MemDir, "read", vanishing)
+    assert recover(w.fs, listed=False) == Stopped(Cause.FOREIGN, "/w/L/prices.bean")

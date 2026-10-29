@@ -323,3 +323,14 @@ def test_the_fakes_locks_are_taken_without_waiting_and_released() -> None:
     a.release()
     assert locks.held == set()
     assert locks.taken == ["/k/a", "/k/a", "/k/b"]
+
+
+def test_a_removed_folders_handle_answers_its_old_path_as_apfs_does() -> None:
+    """S0061 red team L5 (probed on APFS: `F_GETPATH` on a removed folder's descriptor answers the old path, and a sync
+    of it succeeds)."""
+    fs = fs_with("/d/gone")
+    h = fs.open_dir("/d/gone")
+    with fs.open_dir("/d") as d:
+        d.rmdir("gone")
+    assert h.path() == "/d/gone"
+    h.sync()

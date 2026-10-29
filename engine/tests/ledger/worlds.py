@@ -10,8 +10,9 @@ save, a rollback or a recovery, written from §10's rows and §13's write-protoc
 - a `.closed` journal only with every target at post, a `.resolved` one only with every target at pre, and with
   either no temp or restore temp of ours left and no folder the save made (`temps_after_close`,
   `resolve_before_restores_synced`, `CutTempNeverBlocks`'s "no temp of a save outlives its journal");
-- nothing changed outside the recorded paths, the save's temps and restore temps, its backups and its journal
-  (INV-32, `RecoveryWritesOnlyRecordedPaths`), and nothing that was there before removed.
+- nothing changed outside the recorded paths, the save's temps, restore temps and kept names, its backups and its
+  journal (INV-32, `RecoveryWritesOnlyRecordedPaths`), and nothing that was there before removed; `.resolved` never
+  beside a kept copy.
 `check_recovered` adds what recovery must end with when no outside program acts: no `.open` journal, every target at
 pre or (only under `.closed`) at post, in the disk as it is and in every power-loss state of it.
 """
@@ -53,6 +54,11 @@ class Target:
     @property
     def rtemp(self) -> str:
         return f"{self.folder}/.{self.base}.ft-restore-j7.tmp"
+
+    @property
+    def kept(self) -> str:
+        """The first kept name of this file (§6.4 as decided on 2026-10-29): where an outside save we met goes."""
+        return f"{self.folder}/{self.base}.kept-j7"
 
 
 @dataclass(frozen=True)
@@ -140,10 +146,13 @@ def check_disk(fs: MemFS, w: World) -> None:
             assert fs.file(t.path) == want, f"{state}, but {t.path} is not at {'post' if want == t.post else 'pre'}"
             assert t.temp not in snap, f"{state} with a temp of ours left: {t.temp}"
             assert t.rtemp not in snap, f"{state} with a restore temp of ours left: {t.rtemp}"
+            if state is State.RESOLVED:
+                assert t.kept not in snap, f"resolved while a kept copy exists: {t.kept}"
     if state is State.RESOLVED:
         for d in w.new_dirs:
             assert d not in snap, f"resolved, but the folder the save made is left: {d}"
     ours = {t.path for t in w.targets} | {t.temp for t in w.targets} | {t.rtemp for t in w.targets}
+    ours |= {t.kept for t in w.targets}
     ours |= set(w.new_dirs) | {SAVE_DIR, JD, BD}
     for path, entry in snap.items():
         if path in ours or path.startswith((SAVE_DIR + "/", JD + "/")):

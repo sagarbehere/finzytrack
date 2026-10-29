@@ -154,6 +154,36 @@ def restore_temp_name(name: str, job: str) -> str:
     return full if _fits(full) else f".{_short(name)}.ft-restore-{job}.tmp"
 
 
+MAX_KEPT: Final = 999  # numbered kept names tried before the save or the try stops without one
+
+
+def kept_name(name: str, job: str, n: int = 1) -> str:
+    """The visible name beside a file for an outside save that a swap, a removal or a temp check of this save met
+    (§6.4; owner, 2026-10-29: "Yes" to the kept-name design, ADR-0013 amendment): `<name>.kept-<job>`, then
+    `<name>.kept-<job>-2` and on when that is taken; `<sha16>.kept-<job>...` past NAME_MAX. Nothing of ours ever
+    deletes a kept name, and a journal stops while one exists for any of its files (`is_kept_name`)."""
+    if not 1 <= n <= MAX_KEPT:
+        raise BadRecordError("kept_number")
+    suffix = f".kept-{check_id(job)}" + ("" if n == 1 else f"-{n}")
+    full = name + suffix
+    return full if _fits(full) else _short(name) + suffix
+
+
+_KEPT_TAIL: Final = re.compile(r"(?:-[0-9]{1,3})?")
+
+
+def is_kept_name(entry: str, name: str, job: str) -> bool:
+    """`entry` is a kept name of the file `name` for the save `job` (any number), compared after the widest folding,
+    so a volume's own spelling of it still matches (more matches only stop more journals: fail closed)."""
+    wide = FoldRule(nfd=True, casefold=True)
+    e = fold(entry, wide)
+    for stem in (name, _short(name)):
+        head = fold(f"{stem}.kept-{job}", wide)
+        if e.startswith(head) and _KEPT_TAIL.fullmatch(e[len(head) :]):
+            return True
+    return False
+
+
 def backup_name(index: int, name: str) -> str:
     """The backup of the file at `index` in the record: `<index>-<name>`, or `<index>-<sha16>` past NAME_MAX."""
     full = f"{index}-{name}"
@@ -233,6 +263,10 @@ def _check(record: Record) -> None:
     taken += [tuple(fold(c, wide) for c in _parts(d.canonical_path)) for d in record.created_dirs]
     temps = [tuple(fold(c, wide) for c in (*fc[:-1], f.temp)) for (fc, _), f in zip(files, record.files, strict=True)]
     temps += [tuple(fold(c, wide) for c in (*fc[:-1], restore_temp_name(fc[-1], record.job))) for fc, _ in files]
+    for fc, _ in files:  # no file of the record at another file's kept name: recovery would stop on it for ever
+        for gc, _ in files:
+            if fc[:-1] == gc[:-1] and is_kept_name(gc[-1], fc[-1], record.job):
+                raise BadRecordError("temp_is_a_path")
     if len(set(temps)) != len(temps):
         raise BadRecordError("duplicate_temp")
     if any(p[: len(tp)] == tp for tp in temps for p in taken):
