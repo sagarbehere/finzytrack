@@ -20,9 +20,10 @@ resolution, or a tool that restores the mtime, would pass a stat (ADR-0064's spe
 `digest` is `sha256:` + the SHA-256 of `encode`, a canonical JSON encoding with a version (`v`). Changing what the
 encoding means bumps `v`; the price of any change is one mirror rebuild per workspace (a cache, ADR-0015).
 
-Paths are keyed as the load named them. The spec keys them by `path_key` (§6.3), which does not exist yet
-(TODO(BL-0109)); for equality this is safe: the same ledger set is always observed under the same names, and two
-names for one file only make two entries that change together.
+Paths are keyed as the load named them. The spec keys them by `path_key` (§6.3), which exists since S0060
+(`ledger_engine.ledger.paths`) and keys the fingerprint with the save's gate (TODO(BL-0151)); for equality this is
+safe: the same ledger set is always observed under the same names, and two names for one file only make two entries
+that change together.
 """
 
 from __future__ import annotations

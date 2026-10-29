@@ -224,12 +224,18 @@ engine/src/ledger_engine/
                  open only ledgers you trust (ADR-0040 amendment "no trust prompt on desktop in v0.4.0"); a later
                  trust prompt is BL-0156 and the hosted body ADR-0041, both post-v0.4) (S0049)
     contract.py  the write-safety contract as a pipeline of steps (ADR-0008), each fail-closed
-    writer.py    the single commit path: locks -> fingerprint -> backup -> atomic write -> read-back
-    journal.py   the write-intent journal for multi-file commits (ADR-0012)
+    writer.py    the single commit path: locks -> fingerprint -> backup -> atomic write -> read-back; built:
+                 durable_commit, the durable order of engine-jobs §6.1 step 8 through `fs.port` (S0060)
+    paths.py     canonical_path, path_key over `fs.port` (engine-jobs §6.3; S0060); core/paths.py the folding
+    core/journal.py  the write-intent journal's record: fields, versioned encoding, names (ADR-0012; S0060)
     grammar.py   parse_account(text, roots), parse_currency, transaction_balance, balance_assertion, via
                  beancount_port (ADR-0024) (S0049)
     beancount_port.py  the only module that imports beancount.*: typed facade, its LOAD_STAGES and WRAPPERS;
                  untyped Beancount modules have local stubs in engine/typings/ (S0049)
+  fs/            the file-system port for writes (S0060): port.py (FileSystem.resolve, open_dir -> DirHandle: read,
+                 create exclusively and sync, swap, exclusive rename, remove, mkdir, sync, path by F_GETPATH),
+                 darwin.py (F_FULLFSYNC, renameatx_np on the folder's descriptor; other OSes refuse, BL-0087); the
+                 in-memory fake with a durable layer and crash/power-loss injection is engine/tests/fakes/memfs.py
   mirror/        the build half: projection of a LoadResult into SQLite.
     core/        schema.py: the tables, the DDL, the r_* and compatibility views (S0050); rows.py: the row
                  builders, pure (S0050)
@@ -275,6 +281,7 @@ Each slice has the same internal layout, so an agent finds things by convention:
 | `FileSystem` | `platform.adapters.fs` (read, `atomic_replace` = temp + fsync + `os.replace` + `fsync_dir`, stat, list, `newline=""`) | in-memory FS with crash injection at every call | Confined: takes `WorkspacePath` / `AppPath` only (§2.6) |
 | `Locks` | portalocker 3.2.0 semantics (`flock` on POSIX; `msvcrt.locking` for exclusive locks on Windows), per canonical file; a one-shot non-blocking try of a legacy `.write.lock`, never waited for; the app-instance lock (ADR-0062) | in-process fake with an interleaving scheduler | The primitive is pinned in ADR-0005 |
 | Ledger store | `ledger.overlay` + `ledger.writer` over `FileSystem` and `Locks`, in the engine | the same code over the fake FS | Not a separate port inside the engine: it *is* the kernel; its I/O goes through `FileSystem` |
+| Engine `FileSystem` (writes) | `ledger_engine.fs.darwin` (S0060): a handle per directory, so the path check and the write use one descriptor; `F_FULLFSYNC`; `RENAME_SWAP` and `RENAME_EXCL`, never `os.replace` (ADR-0012 amendment of 2026-10-25, ADR-0013); macOS only until BL-0087 | `engine/tests/fakes/memfs.py`: in-memory, a separate durable layer, crash, I/O-error and power-loss injection at every effect (§13's file-system assumptions) | `engine/tests/architecture/test_write_port.py`: the write path imports nothing that touches files |
 | `EnginePort` (main sidecar) | `platform.adapters.engine_client.EngineClient` (spawn, handshake, our ends and the process group, bounded restarts; S0035, S0057; driven by the statechart `platform.engine_supervision`, S0040) | a fake `EnginePort` | The only way the main sidecar reaches the ledger engine (§2.0); results are tagged unions (EP-13) |
 | Mirror | `mirror.publish` / `mirror.reader` over SQLite files in the cache dir | the same over a temp dir | Generation files behind a symlink or pointer file |
 | `Clock` | `zoneinfo`-aware system clock | `FrozenClock` | `today(tz)` derives from it (INV-07) |

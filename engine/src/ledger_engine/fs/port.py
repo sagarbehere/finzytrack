@@ -1,0 +1,133 @@
+"""The engine's file-system port: every write of a ledger file, a backup or a journal goes through it
+(`design/specs/engine-jobs.md` §6.1 step 8, §6.2, §6.3; ADR-0012, ADR-0013; S0060).
+
+Writes act on a **handle on one directory** (`DirHandle`), never on a path: a check of where the directory is
+(`DirHandle.path`) and the write that follows use the same descriptor, so the directory cannot be swapped for a link
+between them (§6.3 "Path guard"; `renameatx_np` on macOS). Names given to a handle are single components (no `/`,
+never `.` or `..`); a name is never followed through a link.
+
+Durability (§6.2, §13 "File-system assumptions"): a file's data is durable after `DirHandle.create` returns (it
+syncs the data before it returns); an entry made by `create`, `swap`, `rename_excl`, `remove` or `mkdir` is durable
+only after the directory's `sync`, which makes everything done before it in that directory durable. A swap and an
+exclusive rename are one operation: a power loss keeps or drops each whole. Nothing is assumed about the order in
+which unsynced operations reach the disk. Every sync is `durable_sync`: `F_FULLFSYNC` on macOS.
+
+Every operation may raise `OSError`. The real adapter is `ledger_engine.fs.darwin` (macOS); the test adapter is the
+in-memory fake `tests/fakes/memfs.py`, with a separate durable layer, crash, I/O-error and power-loss injection.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Protocol, Self
+
+
+@dataclass(frozen=True, slots=True)
+class FoldRule:
+    """How a directory's volume compares the names in it (§6.3): `nfd` (macOS: always), `casefold` (a
+    case-insensitive volume or directory)."""
+
+    nfd: bool
+    casefold: bool
+
+
+@dataclass(frozen=True, slots=True)
+class Resolved:
+    """A path resolved as far as it exists (§6.3).
+
+    `existing`: the components of the deepest existing ancestor's canonical path (every link resolved, each
+    component in the volume's stored spelling; `()` for the root). `rest`: the remaining components, as written.
+    `rules`: one per component of `existing + rest`, the rule of the directory that holds it (for `rest`, the
+    deepest existing ancestor's)."""
+
+    existing: tuple[str, ...]
+    rest: tuple[str, ...]
+    rules: tuple[FoldRule, ...]
+
+
+class DirHandle(Protocol):
+    """An open directory. Close it (or use it as a context manager) when done."""
+
+    def path(self) -> str:
+        """The directory's canonical path now (`F_GETPATH`): after the directory moved, its new place."""
+        ...
+
+    def read(self, name: str) -> bytes | None:
+        """The bytes of the regular file `name`, or None when there is no entry of that name. A link, a directory or
+        any other kind of entry raises `OSError`."""
+        ...
+
+    def mode(self, name: str) -> int:
+        """The permission bits of the entry `name` (not followed through a link)."""
+        ...
+
+    def create(self, name: str, data: bytes, mode: int) -> None:
+        """Create the file `name` exclusively (it fails if any entry of that name exists), write `data` and sync its
+        data. The entry is durable only after `sync`."""
+        ...
+
+    def swap(self, a: str, b: str) -> None:
+        """Exchange the entries `a` and `b` in one operation (`RENAME_SWAP`); both must exist."""
+        ...
+
+    def rename_excl(self, src: str, dst: str) -> None:
+        """Rename `src` to `dst` in one operation that fails if `dst` exists (`RENAME_EXCL`)."""
+        ...
+
+    def remove(self, name: str) -> None:
+        """Remove the file `name` (not a directory)."""
+        ...
+
+    def mkdir(self, name: str) -> None:
+        """Make the directory `name`; it fails if any entry of that name exists."""
+        ...
+
+    def names(self) -> list[str]:
+        """The names in this directory, sorted."""
+        ...
+
+    def sync(self) -> None:
+        """`durable_sync` of the directory: every entry operation made in it before this call is durable."""
+        ...
+
+    def close(self) -> None: ...
+
+    def __enter__(self) -> Self: ...
+
+    def __exit__(self, *exc: object) -> None: ...
+
+
+class FileSystem(Protocol):
+    def resolve(self, path: str) -> Resolved:
+        """Resolve an absolute path as far as it exists (§6.3). A missing component ends the existing part; any other
+        error raises `OSError`. A relative path, or a `.` or `..` component, raises `ValueError`."""
+        ...
+
+    def open_dir(self, path: str) -> DirHandle:
+        """Open the directory at the absolute `path` (links in it are followed)."""
+        ...
+
+
+class MalformedPathError(ValueError):
+    """A caller's error: a path or a name the port does not take (nothing was done)."""
+
+    def __init__(self, what: str) -> None:
+        super().__init__(f"malformed path: {what}")
+
+
+def check_name(name: str) -> str:
+    """A single path component, or `ValueError`."""
+    if not name or name in (".", "..") or "/" in name or "\0" in name:
+        raise MalformedPathError("not_one_component")
+    return name
+
+
+def split_absolute(path: str) -> tuple[str, ...]:
+    """The components of an absolute POSIX path; `ValueError` for a relative path or a `.`/`..` component (they would
+    change meaning with links)."""
+    if not path.startswith("/"):
+        raise MalformedPathError("not_absolute")
+    parts = tuple(p for p in path.split("/") if p)
+    for p in parts:
+        check_name(p)
+    return parts
